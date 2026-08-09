@@ -24,7 +24,7 @@ import tarfile
 import tempfile
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -65,6 +65,7 @@ PROCESS_ENVIRONMENT_ALLOWLIST = (
     "PANTHEON_STATUS_ROOT",
     "PYTHONDONTWRITEBYTECODE",
 )
+MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID = "<mutable-bootstrap-dynamic-flock-id>"
 GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT = (
     "PANTHEON_COMMAND_BASE_REF",
     "PANTHEON_COMMAND_REMOTE",
@@ -133,6 +134,40 @@ ALLOWED_GENERATED_UNTRACKED_FILES = frozenset(
     }
 )
 
+# A mutable incumbent is the old, running dev-root checkout used only to
+# materialize a rollback runtime.  Unlike an immutable candidate, that root
+# necessarily contains these Git-ignored runtime products.  They are never
+# copied into the immutable rollback checkout: the rollback is materialized
+# from the bound HEAD/tree and the governed launch sources remain tracked,
+# regular files.  Keep this list deliberately narrower than .gitignore so an
+# ignored source still fails closed.
+MUTABLE_INCUMBENT_IGNORED_RUNTIME_FILES = frozenset(
+    {
+        PurePosixPath(".claude/settings.local.json"),
+        PurePosixPath(".orchestrator/activity-audit.lock"),
+        PurePosixPath(".orchestrator/model-rotation-cooldowns.json"),
+        PurePosixPath(".orchestrator/provider_capabilities.json"),
+        PurePosixPath(".orchestrator/runtime-admission.lock"),
+        PurePosixPath(".orchestrator/state.json"),
+        PurePosixPath(".orchestrator/supervisor.pid"),
+        PurePosixPath(".orchestrator/task-state.lock"),
+        PurePosixPath(".orchestrator/watchdog-state.json"),
+        PurePosixPath("docs-site/ai-activity-log.jsonl"),
+        PurePosixPath("docs-site/orchestrator-state.json"),
+    }
+)
+MUTABLE_INCUMBENT_IGNORED_RUNTIME_PREFIXES = (
+    PurePosixPath(".orchestrator/backups"),
+    PurePosixPath(".orchestrator/chair-reviews"),
+    PurePosixPath(".orchestrator/evidence"),
+    PurePosixPath(".orchestrator/logs"),
+    PurePosixPath(".orchestrator/metrics"),
+    PurePosixPath(".orchestrator/worker-runtime"),
+    PurePosixPath(".pytest_cache"),
+    PurePosixPath(".venv-pantheon"),
+    PurePosixPath("archive/logs"),
+)
+
 
 @dataclass(frozen=True)
 class GitRemoteIdentity:
@@ -193,7 +228,12 @@ class TrackedGitlinkIdentity:
 class ProcessGeneration:
     pid: int
     starttime_ticks: int
-    state: str
+    # Linux scheduler state is an observation, not generation identity.  A
+    # live process can legitimately move between R and S while a promotion
+    # reads the incumbent's state.  PID reuse is instead bound by the stable
+    # (pid, starttime_ticks) pair; zombie rejection remains explicit at each
+    # guarded process read.
+    state: str = field(compare=False)
 
 
 @dataclass(frozen=True)
@@ -220,6 +260,25 @@ class SupervisorAdmissionLockIdentity:
     kernel_lock_end: str
     owner_pid: int
     owner_starttime_ticks: int
+
+
+def _normalize_mutable_bootstrap_admission_lock(
+    lock: SupervisorAdmissionLockIdentity,
+) -> SupervisorAdmissionLockIdentity:
+    """Hide only the kernel-assigned FLOCK handle during legacy bootstrap.
+
+    Linux can assign a fresh ``/proc/locks`` identifier when the incumbent
+    supervisor briefly releases and reacquires its advisory FLOCK while a
+    promotion preflight is reading its multi-gigabyte state log.  That handle
+    is not durable identity: every path, inode, content, time, lock range,
+    mode, and owner-generation field remains bound and is still compared.
+    This normalization is deliberately used only for the one mutable-root
+    bootstrap; immutable candidate and rollback runtimes remain exact.
+    """
+    return replace(
+        lock,
+        kernel_lock_id=MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID,
+    )
 
 
 @dataclass(frozen=True)
@@ -1622,6 +1681,27 @@ def _is_allowed_generated_untracked_path(path: str) -> bool:
     if candidate in ALLOWED_GENERATED_UNTRACKED_FILES:
         return True
     return _is_task_brief_path(path)
+
+
+def _is_allowed_mutable_incumbent_ignored_runtime_path(path: str) -> bool:
+    """Accept only known runtime debris from the mutable bootstrap root.
+
+    This exception is intentionally unavailable to immutable candidate
+    cleanliness checks and does not accept arbitrary ignored source files.
+    """
+    candidate = PurePosixPath(path.rstrip("/"))
+    if not candidate.parts or candidate.is_absolute():
+        return False
+    if "__pycache__" in candidate.parts:
+        return True
+    if candidate in MUTABLE_INCUMBENT_IGNORED_RUNTIME_FILES:
+        return True
+    if candidate.parts[0].startswith(".venv-"):
+        return True
+    return any(
+        candidate == prefix or prefix in candidate.parents
+        for prefix in MUTABLE_INCUMBENT_IGNORED_RUNTIME_PREFIXES
+    )
 
 
 def _is_task_brief_path(path: str) -> bool:
@@ -3195,6 +3275,8 @@ def discover_incumbent_supervisor_process(
         [ProcessCwdIdentity], tuple[str, str]
     ] = _read_process_cwd_git_identity,
     candidate_revalidator: Callable[[], None] | None = None,
+    allow_legacy_environment_contract: bool = False,
+    allow_legacy_admission_lock_id_churn: bool = False,
 ) -> SupervisorProcessIdentity:
     """Discover and bind exactly one incumbent to the immutable candidate."""
     runtime_reader = reader or ProcfsRuntimeProcessReader()
@@ -3385,13 +3467,31 @@ def discover_incumbent_supervisor_process(
         # incumbents without ``-B`` remain capturable for their one governed
         # migration; candidate and rollback variants both receive the flag.
         expected_environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    _guarded_process_compare(
-        runtime_reader,
-        generation,
-        label="environment allowlist",
-        actual=set(environment_contract),
-        expected=set(expected_environment),
-    )
+    if set(environment_contract) != set(expected_environment):
+        # Candidate and rollback launches always bind the complete command
+        # runtime. A mutable incumbent that predates that binding is admitted
+        # only during its one governed bootstrap migration: all of its process
+        # identity, argv, config, cwd, Git tree, status root, and admission
+        # lock checks remain exact.
+        legacy_environment = {"PANTHEON_STATUS_ROOT": expected.status_root}
+        if "PYTHONDONTWRITEBYTECODE" in environment_contract:
+            legacy_environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        if not allow_legacy_environment_contract:
+            _guarded_process_compare(
+                runtime_reader,
+                generation,
+                label="environment allowlist",
+                actual=set(environment_contract),
+                expected=set(expected_environment),
+            )
+        _guarded_process_compare(
+            runtime_reader,
+            generation,
+            label="legacy environment allowlist",
+            actual=set(environment_contract),
+            expected=set(legacy_environment),
+        )
+        expected_environment = legacy_environment
     for name in expected_environment:
         _guarded_process_compare(
             runtime_reader,
@@ -3411,12 +3511,21 @@ def discover_incumbent_supervisor_process(
     lock_after = runtime_reader.read_admission_lock(
         expected.admission_lock_path
     )
+    comparison_lock_before = lock_before
+    comparison_lock_after = lock_after
+    if allow_legacy_admission_lock_id_churn:
+        comparison_lock_before = _normalize_mutable_bootstrap_admission_lock(
+            lock_before
+        )
+        comparison_lock_after = _normalize_mutable_bootstrap_admission_lock(
+            lock_after
+        )
     _guarded_process_compare(
         runtime_reader,
         generation,
         label="admission lock generation",
-        actual=lock_after,
-        expected=lock_before,
+        actual=comparison_lock_after,
+        expected=comparison_lock_before,
     )
     _guarded_process_compare(
         runtime_reader,
@@ -3450,7 +3559,7 @@ def discover_incumbent_supervisor_process(
             (name, environment_contract[name])
             for name in expected_environment
         ),
-        admission_lock=lock_after,
+        admission_lock=comparison_lock_after,
     )
 
 
@@ -3591,40 +3700,57 @@ def build_candidate_runtime_identity(
             expected_head=head,
             expected_tree=tracked_tree,
         )
-        final_remote_url = parse_origin_url(root_handle)
-        final_remote = validate_remote_url(final_remote_url)
-        if final_remote_url != remote_url or final_remote.slug != remote.slug:
-            raise ValueError("Candidate remote identity changed during capture")
+        # A freshly materialized checkout can refresh and atomically replace
+        # its index while the read-only cleanliness probes run.  Re-open the
+        # candidate only after every such probe, then bind the returned
+        # snapshot to those final metadata identities.  Later revalidation
+        # still rejects any replacement after this capture point.
+        final_handle = _open_candidate_root_handle(resolved_root)
+        try:
+            if final_handle.identity != root_identity:
+                raise ValueError(
+                    "Candidate root file identity changed during capture"
+                )
+            _assert_candidate_handle_path(final_handle)
+            final_head, final_tree = _read_head_tree(final_handle)
+            if (final_head, final_tree) != (head, tracked_tree):
+                raise ValueError("Candidate HEAD/tree changed during capture")
+            final_remote_url = parse_origin_url(final_handle)
+            final_remote = validate_remote_url(final_remote_url)
+            if final_remote_url != remote_url or final_remote.slug != remote.slug:
+                raise ValueError("Candidate remote identity changed during capture")
 
-        return CandidateRuntimeIdentity(
-            candidate_root=resolved_root,
-            candidate_root_device=root_identity.device,
-            candidate_root_inode=root_identity.inode,
-            git_directory_device=root_handle.git_identity.device,
-            git_directory_inode=root_handle.git_identity.inode,
-            git_objects_device=root_handle.git_objects_identity.device,
-            git_objects_inode=root_handle.git_objects_identity.inode,
-            git_config_device=root_handle.git_config_identity.device,
-            git_config_inode=root_handle.git_config_identity.inode,
-            git_head_device=root_handle.git_head_identity.device,
-            git_head_inode=root_handle.git_head_identity.inode,
-            git_index_device=root_handle.git_index_identity.device,
-            git_index_inode=root_handle.git_index_identity.inode,
-            basename=basename,
-            head_commit=head,
-            tracked_tree_identity=tracked_tree,
-            accepted_dev_commit=trusted_dev.commit,
-            remote_url=remote_url,
-            canonical_remote=f"github.com/{remote.slug}",
-            repository_slug=remote.slug,
-            config_path=selected_config_path,
-            config_device=config_identity.device,
-            config_inode=config_identity.inode,
-            config_path_components=config_path_components,
-            config_bytes=config_bytes,
-            config_byte_length=len(config_bytes),
-            config_sha256=hashlib.sha256(config_bytes).hexdigest(),
-        )
+            return CandidateRuntimeIdentity(
+                candidate_root=resolved_root,
+                candidate_root_device=root_identity.device,
+                candidate_root_inode=root_identity.inode,
+                git_directory_device=final_handle.git_identity.device,
+                git_directory_inode=final_handle.git_identity.inode,
+                git_objects_device=final_handle.git_objects_identity.device,
+                git_objects_inode=final_handle.git_objects_identity.inode,
+                git_config_device=final_handle.git_config_identity.device,
+                git_config_inode=final_handle.git_config_identity.inode,
+                git_head_device=final_handle.git_head_identity.device,
+                git_head_inode=final_handle.git_head_identity.inode,
+                git_index_device=final_handle.git_index_identity.device,
+                git_index_inode=final_handle.git_index_identity.inode,
+                basename=basename,
+                head_commit=head,
+                tracked_tree_identity=tracked_tree,
+                accepted_dev_commit=trusted_dev.commit,
+                remote_url=remote_url,
+                canonical_remote=f"github.com/{remote.slug}",
+                repository_slug=remote.slug,
+                config_path=selected_config_path,
+                config_device=config_identity.device,
+                config_inode=config_identity.inode,
+                config_path_components=config_path_components,
+                config_bytes=config_bytes,
+                config_byte_length=len(config_bytes),
+                config_sha256=hashlib.sha256(config_bytes).hexdigest(),
+            )
+        finally:
+            _close_candidate_root_handle(final_handle)
     finally:
         _close_candidate_root_handle(root_handle)
 
@@ -4589,6 +4715,11 @@ def capture_runtime_observation(
     reader: RuntimeProcessReader | None = None,
     now: datetime | None = None,
     require_current_dev_identity: bool = True,
+    allow_legacy_environment_contract: bool = False,
+    allow_legacy_admission_lock_id_churn: bool = False,
+    cwd_git_identity_reader: Callable[
+        [ProcessCwdIdentity], tuple[str, str]
+    ] = _read_process_cwd_git_identity,
 ) -> RuntimeObservation:
     """Capture one exact process/state/config postcheck observation."""
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -4604,7 +4735,12 @@ def capture_runtime_observation(
         expected_argv=expected_argv,
         expected_contract=expected_process_contract,
         reader=runtime_reader,
+        cwd_git_identity_reader=cwd_git_identity_reader,
         candidate_revalidator=revalidate_identity,
+        allow_legacy_environment_contract=allow_legacy_environment_contract,
+        allow_legacy_admission_lock_id_churn=(
+            allow_legacy_admission_lock_id_churn
+        ),
     )
     if expected_generation is not None and process.generation != expected_generation:
         raise ValueError(
@@ -5160,12 +5296,12 @@ def _verify_legacy_task_brief_binding_provenance(
             root,
             "merge-base",
             "--is-ancestor",
-            binding.prevention_boundary_sha,
             expected_head,
+            binding.prevention_boundary_sha,
         )
     except ValueError as exc:
         raise ValueError(
-            "Mutable incumbent task brief prevention boundary SHA is not an ancestor of expected_head: "
+            "Mutable incumbent task brief expected_head is not before the prevention boundary SHA: "
             f"{binding.prevention_boundary_sha}"
         ) from exc
 
@@ -5525,6 +5661,10 @@ def _verify_mutable_tracked_cleanliness(
             raise ValueError(f"Malformed mutable git status record: {record!r}")
         status_code = record[:2]
         relative_path = record[3:]
+        if status_code == "!!" and _is_allowed_mutable_incumbent_ignored_runtime_path(
+            relative_path
+        ):
+            continue
         if status_code in {"??", "!!"}:
             if relative_path.endswith("/"):
                 kind = "ignored" if status_code == "!!" else "untracked"
@@ -5788,6 +5928,8 @@ def capture_mutable_incumbent_snapshot(
     seed_argv: tuple[str, ...],
     seed_cwd: ProcessCwdIdentity,
     allow_legacy_task_brief_drift: bool = False,
+    allow_legacy_environment_contract: bool = False,
+    allow_legacy_admission_lock_id_churn: bool = False,
 ) -> MutableIncumbentSnapshot:
     binding = _mutable_root_binding(
         seed_cwd,
@@ -5827,6 +5969,10 @@ def capture_mutable_incumbent_snapshot(
         reader=reader,
         cwd_git_identity_reader=lambda _cwd: (head, tree),
         candidate_revalidator=revalidate_root,
+        allow_legacy_environment_contract=allow_legacy_environment_contract,
+        allow_legacy_admission_lock_id_churn=(
+            allow_legacy_admission_lock_id_churn
+        ),
     )
     if process.generation != seed_generation:
         raise ValueError("Mutable incumbent generation changed during capture")
@@ -6168,6 +6314,8 @@ class OSPromotionBackend:
                 seed_argv=seed_argv,
                 seed_cwd=seed_cwd,
                 allow_legacy_task_brief_drift=True,
+                allow_legacy_environment_contract=True,
+                allow_legacy_admission_lock_id_churn=True,
             )
             if (
                 mutable_incumbent.accepted_dev_commit
@@ -6225,6 +6373,16 @@ class OSPromotionBackend:
             expected_process_contract=mutable_expected,
             expected_generation=incumbent_process.generation,
             reader=self.reader,
+            allow_legacy_environment_contract=bootstrap_mutable_incumbent,
+            allow_legacy_admission_lock_id_churn=bootstrap_mutable_incumbent,
+            cwd_git_identity_reader=(
+                lambda _cwd: (
+                    mutable_incumbent.head_commit,
+                    mutable_incumbent.tracked_tree_identity,
+                )
+                if mutable_incumbent is not None
+                else _read_process_cwd_git_identity(_cwd)
+            ),
         )
         if baseline.invariant_failures:
             raise ValueError(
@@ -6296,6 +6454,8 @@ class OSPromotionBackend:
             seed_argv=current_seed[1],
             seed_cwd=current_seed[2],
             allow_legacy_task_brief_drift=True,
+            allow_legacy_environment_contract=True,
+            allow_legacy_admission_lock_id_churn=True,
         )
         if current_mutable != plan.mutable_incumbent:
             raise ValueError("Mutable incumbent snapshot drift detected")
@@ -6312,6 +6472,12 @@ class OSPromotionBackend:
             expected_process_contract=expected,
             expected_generation=plan.incumbent_process.generation,
             reader=self.reader,
+            allow_legacy_environment_contract=True,
+            allow_legacy_admission_lock_id_churn=True,
+            cwd_git_identity_reader=lambda _cwd: (
+                plan.mutable_incumbent.head_commit,
+                plan.mutable_incumbent.tracked_tree_identity,
+            ),
         )
 
     def observe(

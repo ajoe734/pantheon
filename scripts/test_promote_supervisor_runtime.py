@@ -19,6 +19,7 @@ from unittest.mock import Mock, patch
 
 from promote_supervisor_runtime import (
     CandidateRuntimeIdentity,
+    ExpectedSupervisorProcessContract,
     FilesystemIdentity,
     GovernedSupervisorLaunchContract,
     LegacyTaskBriefDrift,
@@ -1477,7 +1478,9 @@ def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
         assert identity.git_objects_inode == (candidate / ".git" / "objects").stat().st_ino
         assert identity.git_config_inode == (candidate / ".git" / "config").stat().st_ino
         assert identity.git_head_inode == (candidate / ".git" / "HEAD").stat().st_ino
-        assert identity.git_index_inode == (candidate / ".git" / "index").stat().st_ino
+        assert identity.git_index_inode == (
+            candidate / ".git" / "index"
+        ).stat().st_ino
         assert identity.basename == commit
         assert identity.head_commit == commit
         assert identity.tracked_tree_identity == tree
@@ -1496,6 +1499,40 @@ def test_candidate_runtime_identity_captures_and_revalidates_exact_snapshot(
         assert parse_origin_url(candidate) == "https://github.com/ajoe734/pantheon.git"
         assert verify_git_head_and_dev_ancestry(candidate, commit) == commit
         assert verify_working_tree_cleanliness(candidate) == tree
+
+
+def test_candidate_identity_recaptures_git_metadata_after_cleanliness_probe(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    parent_patch, remote_patch, config_patch = _identity_policy_patches(
+        parent, remote, live_config
+    )
+    original_cleanliness = promotion.verify_working_tree_cleanliness
+    cleanliness_calls = 0
+
+    def replace_index_after_final_cleanliness_probe(*args: Any, **kwargs: Any) -> str:
+        nonlocal cleanliness_calls
+        result = original_cleanliness(*args, **kwargs)
+        cleanliness_calls += 1
+        if cleanliness_calls == 2:
+            index = candidate / ".git" / "index"
+            replacement = candidate / ".git" / "index.replacement"
+            replacement.write_bytes(index.read_bytes())
+            os.replace(replacement, index)
+        return result
+
+    with parent_patch, remote_patch, config_patch, patch(
+        "promote_supervisor_runtime.verify_working_tree_cleanliness",
+        side_effect=replace_index_after_final_cleanliness_probe,
+    ):
+        identity = build_candidate_runtime_identity(candidate)
+        assert cleanliness_calls == 2
+        assert identity.git_index_inode == (candidate / ".git" / "index").stat().st_ino
+        identity.verify_immutable_snapshot()
 
 
 def test_candidate_identity_survives_closed_standard_stream_descriptors(
@@ -3036,6 +3073,8 @@ def _discover_injected(
     reader: InjectedRuntimeProcessReader,
     *,
     git_identity: tuple[str, str] | None = None,
+    allow_legacy_environment_contract: bool = False,
+    allow_legacy_admission_lock_id_churn: bool = False,
 ) -> SupervisorProcessIdentity:
     return discover_incumbent_supervisor_process(
         identity,
@@ -3044,6 +3083,10 @@ def _discover_injected(
             lambda _cwd: git_identity
             if git_identity is not None
             else (identity.head_commit, identity.tracked_tree_identity)
+        ),
+        allow_legacy_environment_contract=allow_legacy_environment_contract,
+        allow_legacy_admission_lock_id_churn=(
+            allow_legacy_admission_lock_id_churn
         ),
     )
 
@@ -3113,6 +3156,92 @@ def test_mutable_incumbent_snapshot_binds_exact_process_and_sources(
     assert snapshot.repository_slug == "ajoe734/pantheon"
 
 
+def test_mutable_incumbent_snapshot_tolerates_scheduler_state_churn(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    seed_generation = reader.generations[1717]
+    reader.generations[1717] = replace(seed_generation, state="R")
+    binding = _mutable_binding_stub(identity)
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        return_value=binding,
+    ):
+        snapshot = promotion.capture_mutable_incumbent_snapshot(
+            identity,
+            reader=reader,
+            seed_generation=seed_generation,
+            seed_argv=argv,
+            seed_cwd=reader.cwd[1717],
+        )
+
+    assert snapshot.process.generation.pid == seed_generation.pid
+    assert (
+        snapshot.process.generation.starttime_ticks
+        == seed_generation.starttime_ticks
+    )
+    assert snapshot.process.generation.state == "R"
+
+
+def test_runtime_observation_uses_bound_mutable_cwd_git_identity(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    status_root = identity.config_path.parent.parent / "status-root"
+    provider_path = status_root / ".orchestrator" / "provider-capabilities.json"
+    provider_path.write_text('{"providers": {}}\n', encoding="utf-8")
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["paths"].__setitem__(
+            "provider_capabilities", str(provider_path)
+        ),
+    )
+    mutable_root = tmp_path / "dev-root"
+    mutable_root.mkdir()
+    mutable_stat = mutable_root.stat()
+    reader.cwd[1717] = ProcessCwdIdentity(
+        path=mutable_root,
+        device=mutable_stat.st_dev,
+        inode=mutable_stat.st_ino,
+    )
+    mutable_head = "c" * 40
+    mutable_tree = "d" * 40
+    expected = ExpectedSupervisorProcessContract(
+        executable=Path(argv[0]),
+        argv=argv,
+        entrypoint=Path(argv[3]),
+        config_path=identity.config_path,
+        cwd=mutable_root,
+        cwd_device=mutable_stat.st_dev,
+        cwd_inode=mutable_stat.st_ino,
+        cwd_commit=mutable_head,
+        cwd_tree=mutable_tree,
+        command_root=str(identity.candidate_root),
+        runtime_sha=identity.head_commit,
+        status_root=str(status_root),
+        admission_lock_path=status_root / ".orchestrator" / "supervisor.lock",
+    )
+
+    with patch.object(CandidateRuntimeIdentity, "verify_immutable_snapshot"), patch.object(
+        CandidateRuntimeIdentity,
+        "verify_against_live_config",
+    ):
+        observation = promotion.capture_runtime_observation(
+            identity,
+            expected_argv=argv,
+            expected_process_contract=expected,
+            expected_generation=reader.generations[1717],
+            reader=reader,
+            require_current_dev_identity=False,
+            cwd_git_identity_reader=lambda _cwd: (mutable_head, mutable_tree),
+        )
+
+    assert observation.process.cwd.path == mutable_root
+    assert observation.process.cwd_commit == mutable_head
+    assert observation.process.cwd_tree == mutable_tree
+
+
 def test_mutable_incumbent_snapshot_rejects_ambiguous_processes(
     tmp_path: Path,
 ) -> None:
@@ -3179,6 +3308,92 @@ def test_mutable_incumbent_root_rejects_tracked_source_drift(
         remote.as_uri(),
     ):
         with pytest.raises(ValueError, match="Tracked git tree is dirty"):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=source,
+                    device=source_stat.st_dev,
+                    inode=source_stat.st_ino,
+                )
+            )
+
+
+def test_mutable_incumbent_bootstrap_accepts_ignored_runtime_residue(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    (source / ".gitignore").write_text(
+        ".claude/settings.local.json\n"
+        "__pycache__/\n"
+        ".pytest_cache/\n"
+        ".venv-pantheon/\n"
+        ".orchestrator/evidence/\n"
+        ".orchestrator/state.json\n"
+        "docs-site/orchestrator-state.json\n"
+        "archive/logs/\n",
+        encoding="utf-8",
+    )
+    _git(source, "add", ".gitignore")
+    _git(source, "commit", "-m", "ignore mutable runtime residue")
+    _git(source, "push", str(remote), "HEAD:dev")
+    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
+
+    (source / ".claude").mkdir()
+    (source / ".claude" / "settings.local.json").write_text("{}\n")
+    (source / ".orchestrator" / "evidence").mkdir(parents=True)
+    (source / ".orchestrator" / "evidence" / "run.json").write_text("{}\n")
+    (source / ".orchestrator" / "state.json").write_text("{}\n")
+    (source / "scripts" / "__pycache__").mkdir(parents=True)
+    (source / "scripts" / "__pycache__" / "status.pyc").write_bytes(b"pyc")
+    (source / ".pytest_cache" / "v").mkdir(parents=True)
+    (source / ".venv-pantheon" / "bin").mkdir(parents=True)
+    (source / "archive" / "logs").mkdir(parents=True)
+    (source / "docs-site").mkdir(exist_ok=True)
+    (source / "docs-site" / "orchestrator-state.json").write_text("{}\n")
+    source_stat = source.stat()
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        promotion._mutable_root_binding(
+            ProcessCwdIdentity(
+                path=source,
+                device=source_stat.st_dev,
+                inode=source_stat.st_ino,
+            )
+        )
+
+
+def test_mutable_incumbent_bootstrap_rejects_ignored_source_file(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    ignored_source = source / "scripts" / "untracked_source.py"
+    (source / ".gitignore").write_text(
+        "scripts/untracked_source.py\n",
+        encoding="utf-8",
+    )
+    _git(source, "add", ".gitignore")
+    _git(source, "commit", "-m", "ignore prohibited source")
+    _git(source, "push", str(remote), "HEAD:dev")
+    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
+    ignored_source.write_text("print('must not be accepted')\n", encoding="utf-8")
+    source_stat = source.stat()
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        with pytest.raises(
+            ValueError,
+            match="Forbidden ignored file found in mutable root",
+        ):
             promotion._mutable_root_binding(
                 ProcessCwdIdentity(
                     path=source,
@@ -4393,6 +4608,65 @@ def test_process_identity_allows_one_governed_legacy_incumbent_migration(
     }
 
 
+def test_process_identity_allows_bootstrap_legacy_environment_contract(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    legacy_argv = tuple(argument for argument in argv if argument != "-B")
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command",
+            list(legacy_argv),
+        ),
+    )
+    reader.argv[1717] = legacy_argv
+    reader.environment[1717].pop("PANTHEON_COMMAND_ROOT")
+    reader.environment[1717].pop("PANTHEON_COMMAND_RUNTIME_SHA")
+
+    with pytest.raises(ValueError, match="environment allowlist mismatch"):
+        _discover_injected(candidate, reader)
+
+    identity = _discover_injected(
+        candidate,
+        reader,
+        allow_legacy_environment_contract=True,
+    )
+
+    assert dict(identity.environment_contract) == {
+        "PANTHEON_STATUS_ROOT": str(tmp_path / "status-root"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+
+
+def test_process_identity_rejects_wrong_bootstrap_legacy_status_root(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, argv = _injected_process_fixture(tmp_path)
+    legacy_argv = tuple(argument for argument in argv if argument != "-B")
+    candidate = _replace_identity_live_config(
+        candidate,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command",
+            list(legacy_argv),
+        ),
+    )
+    reader.argv[1717] = legacy_argv
+    reader.environment[1717].pop("PANTHEON_COMMAND_ROOT")
+    reader.environment[1717].pop("PANTHEON_COMMAND_RUNTIME_SHA")
+    reader.environment[1717]["PANTHEON_STATUS_ROOT"] = "/wrong-status-root"
+
+    with pytest.raises(
+        ValueError,
+        match="environment PANTHEON_STATUS_ROOT mismatch",
+    ):
+        _discover_injected(
+            candidate,
+            reader,
+            allow_legacy_environment_contract=True,
+        )
+
+
 def test_process_identity_revalidates_candidate_inside_lock_bracket(
     tmp_path: Path,
 ) -> None:
@@ -4600,6 +4874,44 @@ def test_process_identity_rejects_admission_lock_generation_drift(
 
     with pytest.raises(ValueError, match="admission lock generation mismatch"):
         _discover_injected(candidate, reader)
+
+
+def test_mutable_bootstrap_accepts_only_dynamic_flock_id_churn(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(original, kernel_lock_id="72")
+
+    identity = _discover_injected(
+        candidate,
+        reader,
+        allow_legacy_admission_lock_id_churn=True,
+    )
+
+    assert (
+        identity.admission_lock.kernel_lock_id
+        == promotion.MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID
+    )
+
+
+def test_mutable_bootstrap_rejects_other_admission_lock_drift(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(
+        original,
+        kernel_lock_id="72",
+        mtime_ns=34,
+    )
+
+    with pytest.raises(ValueError, match="admission lock generation mismatch"):
+        _discover_injected(
+            candidate,
+            reader,
+            allow_legacy_admission_lock_id_churn=True,
+        )
 
 
 def test_process_identity_rejects_admission_lock_owner_generation_mismatch(
@@ -5987,15 +6299,31 @@ def test_mutable_incumbent_bootstrap_accepts_second_live_byte_legacy_task_brief_
 
 def test_verify_legacy_task_brief_binding_provenance_success() -> None:
     real_root = Path(".")
-    expected_head = promotion._run_mutable_git(real_root, "rev-parse", "HEAD").stdout.strip()
     binding = promotion.CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS[0]
 
-    # Must not raise on real repository where provenance commits exist
+    # The registered legacy runtime remains admissible until the prevention
+    # boundary, even though this checkout is newer than that boundary.
     promotion._verify_legacy_task_brief_binding_provenance(
         real_root,
         binding=binding,
-        expected_head=expected_head,
+        expected_head=binding.legacy_command_runtime_sha,
     )
+
+
+def test_verify_legacy_task_brief_binding_rejects_head_after_prevention_boundary() -> None:
+    real_root = Path(".")
+    binding = promotion.CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS[0]
+    expected_head = promotion._run_mutable_git(real_root, "rev-parse", "HEAD").stdout.strip()
+
+    with pytest.raises(
+        ValueError,
+        match="expected_head is not before the prevention boundary SHA",
+    ):
+        promotion._verify_legacy_task_brief_binding_provenance(
+            real_root,
+            binding=binding,
+            expected_head=expected_head,
+        )
 
 
 def test_mutable_incumbent_bootstrap_rejects_missing_authoritative_historical_event(
