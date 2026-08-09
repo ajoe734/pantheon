@@ -20978,7 +20978,16 @@ def _run_once_locked(
                 state["assistant_dev_bridge"] = deepcopy(bridge_state)
                 changed = bool(assistant_dev_bridge_snapshot.get("changed")) or changed
         if watch:
-            changed = _safe_phase("run_scan", _run_scan_locked, config, state, replay=replay, provider_capabilities=provider_report, quiet=quiet) or changed
+            changed = _safe_phase(
+                "run_scan",
+                _run_scan_locked,
+                config,
+                state,
+                replay=replay,
+                provider_capabilities=provider_report,
+                queue_event_fn=queue_delivery_event,
+                quiet=quiet,
+            ) or changed
             state = load_runtime_state(config)
             stamp_supervisor_runtime_state(
                 config,
