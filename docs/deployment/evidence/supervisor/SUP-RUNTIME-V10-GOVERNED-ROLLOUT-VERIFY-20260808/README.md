@@ -59,6 +59,17 @@ dispatch and must again prove the launch contract, three fresh loops,
 authoritative-shadow catch-up, queue/worker parity, provider baseline, and
 rollback evidence.
 
+The signed packet was queued at `12:31:51Z` and supervisor-owned draining
+processed it at `12:32:54Z`. The receipt is `admitted` with no errors, and
+canonical readback materialized
+`SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809` as `todo`,
+owned by `Claude2` and independently reviewed by `Antigravity`. Its packet
+digest is `4bb1892e77ed5fb001f7b98a402f8632e2acd004aaf2732ac8d101acdfde9612`
+and task-spec hash is
+`2b7c1b3b845ef15a46f8cc9c8b94635c2dede7638c1c4b2440bf6708a75f0f57`.
+This establishes only the governed source-repair handoff, not a live rollout
+or a successful candidate runtime.
+
 ## 2026-08-09 governed retry after PR #4648
 
 The prerequisite source repair was independently reviewed at exact head
