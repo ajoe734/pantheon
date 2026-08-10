@@ -4263,7 +4263,7 @@ def evaluate_promotion_invariants(
         if isinstance(w_info, dict):
             task_id = w_info.get("current_task_id") or w_info.get("task_id")
             w_status = w_info.get("status")
-            if w_status in ("running", "started", "active") and task_id:
+            if w_status in ("running", "started", "active", "retry_backoff") and task_id:
                 if task_id in active_worker_tasks:
                     duplicate_workers.append(f"{w_name}:{task_id}")
                 else:
@@ -4370,7 +4370,7 @@ def evaluate_promotion_invariants(
         # Find active workers reverse-linked to this event (matching canonical run_id == lease_owner)
         matched_workers: list[tuple[str, dict[str, Any]]] = []
         for w_name, w_info in workers.items():
-            if isinstance(w_info, dict) and w_info.get("status") in ("running", "started", "active"):
+            if isinstance(w_info, dict) and w_info.get("status") in ("running", "started", "active", "retry_backoff"):
                 c_run_id = get_canonical_run_id(w_name, w_info)
                 if c_run_id == q_lease_owner or w_info.get("queue_event_id") == evt_id:
                     matched_workers.append((w_name, w_info))
@@ -4548,6 +4548,25 @@ class RuntimeObservation:
             self.state_sha256,
             self.status_sha256,
             self.provider_document_sha256,
+            self.config_sha256,
+        )
+
+    @property
+    def admission_identity_key(self) -> tuple[Any, ...]:
+        """Return the immutable incumbent facts that must survive admission.
+
+        State, status, and provider documents legitimately advance while a
+        rollback runtime is materialized.  The admission lock still requires
+        the incumbent process, source identity, and live configuration to be
+        exactly the prepared ones; current health invariants are re-evaluated
+        immediately before TERM.
+        """
+
+        return (
+            self.process.generation,
+            self.process.cwd,
+            self.process.cwd_commit,
+            self.process.cwd_tree,
             self.config_sha256,
         )
 
@@ -7284,9 +7303,17 @@ class PromotionTransaction:
             )
             with lock.held():
                 locked_observation = self.backend.revalidate(plan)
-                if locked_observation.exact_snapshot_key != plan.baseline.exact_snapshot_key:
+                if locked_observation.invariant_failures:
                     raise ValueError(
-                        "Incumbent state/config/process snapshot changed before TERM"
+                        "Incumbent health invariants failed before TERM: "
+                        + ",".join(locked_observation.invariant_failures)
+                    )
+                if (
+                    locked_observation.admission_identity_key
+                    != plan.baseline.admission_identity_key
+                ):
+                    raise ValueError(
+                        "Incumbent process/config identity changed before TERM"
                     )
                 self._transition(PromotionState.ADMISSION_LOCKED)
                 self.backend.record_intent(
