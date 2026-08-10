@@ -1,0 +1,28 @@
+{
+  "schema_version": "assistant_dev_bridge_live_path_isolation.v1",
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809",
+  "captured_at": "2026-08-09T08:25:00Z",
+  "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+  "trace_command": "strace -f -e trace=%file -o /tmp/SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809-files.trace <command>",
+  "result": "69 passed in 73.93s",
+  "trace": {
+    "path": "/tmp/SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809-files.trace",
+    "sha256": "9b9cbf4d4013932acace2eaa8a88989adc3897d9635a851213aa2e059a49f6e1",
+    "forbidden_path_pattern": "/home/lupin/pantheon/(ai-activity-log.jsonl|.orchestrator/state.json|.orchestrator/assistant-dev-packets)",
+    "forbidden_path_syscalls": 0
+  },
+  "live_audit_target_counter": {
+    "predicate": "type=assign and task_id=RELIABLE-TASK-001",
+    "before": 71,
+    "after": 71,
+    "delta": 0
+  },
+  "live_inbox_inventory": {
+    "algorithm": "sha256(sorted path,size,mtime inventory at max depth 2)",
+    "before_sha256": "b20d8ac8ebfb221ad2c6431f78946d1d22cf4e88990536e48956c7f49d57ec0a",
+    "after_sha256": "b20d8ac8ebfb221ad2c6431f78946d1d22cf4e88990536e48956c7f49d57ec0a",
+    "changed": false
+  },
+  "interpretation": "The focused R2 suite neither opened nor mutated the live Pantheon activity audit, canonical runtime state, or assistant dev bridge inbox. All governed status roots, activity logs, journals, and inboxes used by tests were explicit pytest temporary paths.",
+  "limitations": "The live supervisor and the rejected legacy worktree remained active outside this test process. Global live audit and runtime-state hashes are therefore not asserted immutable; the syscall trace and target-row delta isolate this suite's behavior."
+}

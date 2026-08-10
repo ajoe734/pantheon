@@ -102,21 +102,23 @@ same boundary with `PANTHEON_PROMOTION_AUTH_*`.
 
 ## Default dispatcher safety
 
-`deployment-outbox-consumer` is part of the default Compose service set.  It
-does not treat a POST response as successful execution.  It reads the exact
-`RuntimeBinding`, paper fleet controller state where applicable, and the joined
-DEP-003 terminal projection before consuming the corresponding outbox event.
+`deployment-outbox-consumer` is part of the default Compose service set. It
+does not treat a POST response as successful execution. It reads the exact
+`RuntimeBinding` and the joined DEP-003 terminal projection before consuming
+the corresponding outbox event. The Capital loop owns the subsequent paper
+fleet-controller start and readback, so Deployment does not wait for that
+downstream worker before recording its terminal plan.
 The consumer requires a non-empty `PANTHEON_RUNTIME_MANAGER_URL` and always
 dispatches to that remote Runtime Manager authority; missing configuration is a
 startup/dispatch failure, never permission to create an in-process manager or
 write a local binding store.
 Its startup waits only for the unconditional Deployment and Runtime Manager
-authorities.  Paper fleet and Incident service reachability is conditional on
-the event being applied, so an unavailable conditional target fails closed and
+authorities. Incident service reachability is conditional on a safe-mode
+compensation event, so an unavailable conditional target fails closed and
 follows that event's retry policy instead of blocking the consumer process
-from starting.  A terminal or exhausted binding/load failure is first handed
+from starting. A terminal or exhausted binding/load failure is first handed
 durably to saga compensation, then its predecessor receipt is written so the
-compensation event is not sequence-blocked.  The predecessor is never DLQ'd
+compensation event is not sequence-blocked. The predecessor is never DLQ'd
 after that handoff; a lost receipt response is retried.
 
 The dispatcher must be provisioned with
@@ -170,10 +172,11 @@ proof.  Missing or ambiguous lineage, invalid canonical proof, or a kill-wins
 state fails closed and routes to paused safe mode plus an exact IncidentCase
 instead of a blind replacement.
 
-Completed runtime-load history is not receipt-only.  Replay re-reads the exact
-active RuntimeBinding, paper fleet state where applicable, and terminal DEP-003
-projection before acknowledging the event, so a post-completion kill or stale
-projection cannot be mistaken for successful convergence.
+Completed runtime-load history is not receipt-only. Replay re-reads the exact
+active RuntimeBinding and terminal DEP-003 projection before acknowledging the
+event, so a post-completion kill or stale projection cannot be mistaken for
+successful convergence. Capital independently proves the downstream paper
+fleet state before it executes signals.
 
 ## Tests
 

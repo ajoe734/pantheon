@@ -876,6 +876,10 @@ def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: date
     # "missing", stalling ready-dispatch down to a single self-claiming worker.
     # See docs/decisions/supervisor-status-root-split-brain-2026-06-09.md.
     env = dict(os.environ)
+    # Persist the immutable-runtime no-bytecode contract across watchdog
+    # restarts.  The supervisor's ``-B`` argv protects its own interpreter;
+    # this inherited setting protects every Python child it later launches.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     try:
         env["PANTHEON_STATUS_ROOT"] = str(repo_root_for_config(config))
     except KeyError:

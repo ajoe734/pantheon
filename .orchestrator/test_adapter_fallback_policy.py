@@ -305,6 +305,68 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-test-token")
 
+    def test_claude_runtime_passes_model_and_effort_when_configured(self) -> None:
+        config = {
+            "paths": {"status_file": "ai-status.json"},
+            "providers": {
+                "claude": {
+                    "allow_inbox_fallback": False,
+                    "runtime": {
+                        "cli": ".orchestrator/bin/claude",
+                        "output_format": "stream-json",
+                        "include_hook_events": True,
+                        "model": "sonnet",
+                        "effort": "medium",
+                    },
+                }
+            },
+        }
+        request = DeliveryRequest(agent_id="claude", provider="claude", delivery_mode="claude_cli", message="wake")
+        adapter = ClaudeCLIAdapter(config=config, provider_capabilities={"providers": {"claude": {"supports_auto_approve": True}}})
+        fake_process = mock.Mock(pid=1234)
+
+        with (
+            mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
+            mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+            mock.patch("adapters.claude_cli.spawn_background_process", return_value=(fake_process, Path("/tmp/claude.log"))),
+        ):
+            result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        self.assertIn("--model", result.command)
+        self.assertEqual(result.command[result.command.index("--model") + 1], "sonnet")
+        self.assertIn("--effort", result.command)
+        self.assertEqual(result.command[result.command.index("--effort") + 1], "medium")
+
+    def test_claude_runtime_omits_model_and_effort_when_unset(self) -> None:
+        config = {
+            "paths": {"status_file": "ai-status.json"},
+            "providers": {
+                "claude": {
+                    "allow_inbox_fallback": False,
+                    "runtime": {
+                        "cli": ".orchestrator/bin/claude",
+                        "output_format": "stream-json",
+                        "include_hook_events": True,
+                    },
+                }
+            },
+        }
+        request = DeliveryRequest(agent_id="claude", provider="claude", delivery_mode="claude_cli", message="wake")
+        adapter = ClaudeCLIAdapter(config=config, provider_capabilities={"providers": {"claude": {"supports_auto_approve": True}}})
+        fake_process = mock.Mock(pid=1234)
+
+        with (
+            mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
+            mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+            mock.patch("adapters.claude_cli.spawn_background_process", return_value=(fake_process, Path("/tmp/claude.log"))),
+        ):
+            result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        self.assertNotIn("--model", result.command)
+        self.assertNotIn("--effort", result.command)
+
     def test_gemini_can_disable_inbox_fallback(self) -> None:
         config = {
             "agents": {"gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"}},

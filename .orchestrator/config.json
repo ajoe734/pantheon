@@ -39,7 +39,16 @@
     "observe_worker_commit_progress": true,
     "lease_requires_work_progress": true,
     "max_worker_history": 200,
-    "auto_refresh_provider_capabilities": true
+    "auto_refresh_provider_capabilities": false,
+    "provider_capability_refresh_interval_seconds": 300,
+    "provider_probe_failure_hysteresis_threshold": 3
+  },
+  "blocked_task_reconciliation": {
+    "enabled": false,
+    "shadow_only": true,
+    "interval_seconds": 300,
+    "max_tasks_per_run": 8,
+    "github_timeout_seconds": 15
   },
   "worker_runtime": {
     "worker_lease_seconds": 600,
@@ -128,6 +137,7 @@
   "worker_worktrees": {
     "enabled": true,
     "root": "/tmp/pantheon-worker-worktrees",
+    "source_root": "",
     "base_ref": "origin/dev",
     "reuse_existing": true,
     "execution_reasons": [
@@ -519,7 +529,9 @@
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
         "env": {
           "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
-        }
+        },
+        "model": "sonnet",
+        "effort": "medium"
       },
       "broker": {
         "approval_wait_seconds": 3600,
@@ -557,7 +569,9 @@
         "auto_permission_mode": "auto",
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
-        "home": "/home/lupin/.claude2"
+        "home": "/home/lupin/.claude2",
+        "model": "sonnet",
+        "effort": "medium"
       },
       "broker": {
         "approval_wait_seconds": 3600,
@@ -862,6 +876,174 @@
       "retry": {
         "fallback_mode": null
       }
+    },
+    "claude1-1": {
+      "delivery_mode": "claude_cli",
+      "account": "claude_account_shared_max_1",
+      "allow_inbox_fallback": false,
+      "file_inbox": {
+        "path": ".llm-inbox/claude.md",
+        "open_in_vscode": false
+      },
+      "runtime": {
+        "cli": ".orchestrator/bin/claude",
+        "output_format": "stream-json",
+        "include_hook_events": true,
+        "permission_mode": "acceptEdits",
+        "resume_permission_mode_after_approval": "acceptEdits",
+        "resume_use_allowed_tools_from_approval": true,
+        "enable_auto_mode_if_supported": true,
+        "auto_permission_mode": "auto",
+        "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
+        "env": {
+          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
+        },
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "broker": {
+        "approval_wait_seconds": 3600,
+        "http_host": "127.0.0.1",
+        "http_port": 8765,
+        "persist_allow_by_default": false
+      },
+      "approval": {
+        "workspace_permission_mode": "acceptEdits",
+        "allow_dangerous_skip": false,
+        "copilot_allow_dangerous_skip": false,
+        "rule_default_mode": "acceptEdits",
+        "disable_bypass_permissions": true
+      },
+      "retry": {
+        "fallback_mode": null
+      }
+    },
+    "claude1-2": {
+      "delivery_mode": "claude_cli",
+      "account": "claude_account_shared_max_1",
+      "allow_inbox_fallback": false,
+      "file_inbox": {
+        "path": ".llm-inbox/claude.md",
+        "open_in_vscode": false
+      },
+      "runtime": {
+        "cli": ".orchestrator/bin/claude",
+        "output_format": "stream-json",
+        "include_hook_events": true,
+        "permission_mode": "acceptEdits",
+        "resume_permission_mode_after_approval": "acceptEdits",
+        "resume_use_allowed_tools_from_approval": true,
+        "enable_auto_mode_if_supported": true,
+        "auto_permission_mode": "auto",
+        "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
+        "env": {
+          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
+        },
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "broker": {
+        "approval_wait_seconds": 3600,
+        "http_host": "127.0.0.1",
+        "http_port": 8765,
+        "persist_allow_by_default": false
+      },
+      "approval": {
+        "workspace_permission_mode": "acceptEdits",
+        "allow_dangerous_skip": false,
+        "copilot_allow_dangerous_skip": false,
+        "rule_default_mode": "acceptEdits",
+        "disable_bypass_permissions": true
+      },
+      "retry": {
+        "fallback_mode": null
+      }
+    },
+    "claude1-3": {
+      "delivery_mode": "claude_cli",
+      "account": "claude_account_shared_max_1",
+      "allow_inbox_fallback": false,
+      "file_inbox": {
+        "path": ".llm-inbox/claude.md",
+        "open_in_vscode": false
+      },
+      "runtime": {
+        "cli": ".orchestrator/bin/claude",
+        "output_format": "stream-json",
+        "include_hook_events": true,
+        "permission_mode": "acceptEdits",
+        "resume_permission_mode_after_approval": "acceptEdits",
+        "resume_use_allowed_tools_from_approval": true,
+        "enable_auto_mode_if_supported": true,
+        "auto_permission_mode": "auto",
+        "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
+        "env": {
+          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
+        },
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "broker": {
+        "approval_wait_seconds": 3600,
+        "http_host": "127.0.0.1",
+        "http_port": 8765,
+        "persist_allow_by_default": false
+      },
+      "approval": {
+        "workspace_permission_mode": "acceptEdits",
+        "allow_dangerous_skip": false,
+        "copilot_allow_dangerous_skip": false,
+        "rule_default_mode": "acceptEdits",
+        "disable_bypass_permissions": true
+      },
+      "retry": {
+        "fallback_mode": null
+      }
+    },
+    "claude1-4": {
+      "delivery_mode": "claude_cli",
+      "account": "claude_account_shared_max_1",
+      "allow_inbox_fallback": false,
+      "file_inbox": {
+        "path": ".llm-inbox/claude.md",
+        "open_in_vscode": false
+      },
+      "runtime": {
+        "cli": ".orchestrator/bin/claude",
+        "output_format": "stream-json",
+        "include_hook_events": true,
+        "permission_mode": "acceptEdits",
+        "resume_permission_mode_after_approval": "acceptEdits",
+        "resume_use_allowed_tools_from_approval": true,
+        "enable_auto_mode_if_supported": true,
+        "auto_permission_mode": "auto",
+        "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
+        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
+        "env": {
+          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
+        },
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "broker": {
+        "approval_wait_seconds": 3600,
+        "http_host": "127.0.0.1",
+        "http_port": 8765,
+        "persist_allow_by_default": false
+      },
+      "approval": {
+        "workspace_permission_mode": "acceptEdits",
+        "allow_dangerous_skip": false,
+        "copilot_allow_dangerous_skip": false,
+        "rule_default_mode": "acceptEdits",
+        "disable_bypass_permissions": true
+      },
+      "retry": {
+        "fallback_mode": null
+      }
     }
   },
   "underutilization_dispatch": {
@@ -896,7 +1078,6 @@
     ],
     "sidecar_only_agents": [],
     "disabled_agents": [
-      "Antigravity2",
       "Copilot"
     ],
     "dependency_done_statuses": [
@@ -937,19 +1118,19 @@
     "target_workload": {
       "Claude": 5,
       "Claude2": 5,
-      "Antigravity": 5,
-      "Antigravity2": 0,
-      "Codex": 30,
-      "Codex2": 30,
+      "Antigravity": 30,
+      "Antigravity2": 30,
+      "Codex": 5,
+      "Codex2": 6,
       "Copilot": 0
     },
     "max_tasks_per_agent_by_agent": {
       "Claude": 1,
       "Claude2": 1,
-      "Antigravity": 1,
-      "Antigravity2": 0,
-      "Codex": 4,
-      "Codex2": 4,
+      "Antigravity": 4,
+      "Antigravity2": 4,
+      "Codex": 2,
+      "Codex2": 2,
       "Copilot": 0
     },
     "max_dispatches_per_tick": 10,
@@ -958,10 +1139,10 @@
     "allow_legacy_provider_account_aliases": false,
     "max_concurrent_per_account": {
       "claude_account_shared_max_1": 1,
-      "antigravity": 1,
-      "antigravity2": 0,
-      "codex1": 4,
-      "codex2": 4,
+      "antigravity": 4,
+      "antigravity2": 4,
+      "codex1": 2,
+      "codex2": 2,
       "copilot": 0
     },
     "max_concurrent_workers": 13
@@ -999,7 +1180,8 @@
       "required_status_checks": [
         "Commit trailers",
         "Runtime mirror guard",
-        "Smoke acceptance"
+        "Smoke acceptance",
+        "Pantheon canonical review gate"
       ],
       "max_open_hours": 24
     },

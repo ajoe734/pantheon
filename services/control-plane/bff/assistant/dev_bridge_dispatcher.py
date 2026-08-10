@@ -20,11 +20,15 @@ service path or a repo-local script, never from a raw HTTP request handler.
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import subprocess
 import sys
+import stat
+import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
@@ -75,10 +79,323 @@ AUTO_WORKER_ENV_NAMES = (
     "ORCH_RUNNER_STATUS_PATH",
     "ORCH_HEARTBEAT_PATH",
 )
+ASSIGN_TIMEOUT_ENV = "PANTHEON_ASSISTANT_DEV_BRIDGE_ASSIGN_TIMEOUT_SECONDS"
+DISPATCH_CLAIM_TTL_ENV = "PANTHEON_ASSISTANT_DEV_BRIDGE_CLAIM_TTL_SECONDS"
+DEFAULT_ASSIGN_TIMEOUT_SECONDS = 10.0
+MAX_ASSIGN_TIMEOUT_SECONDS = 10.0
+DEFAULT_DISPATCH_CLAIM_TTL_SECONDS = 300.0
+DISPATCH_CLAIM_SCHEMA = "pantheon.assistant-dev-bridge-dispatch-claim.v1"
+
+
+class MaterializedTaskMissingError(ValueError):
+    """The governed task store authoritatively reports that an id is absent."""
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _bounded_seconds(
+    environment: Mapping[str, str],
+    name: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    try:
+        configured = float(str(environment.get(name) or default))
+    except (TypeError, ValueError):
+        configured = default
+    return min(maximum, max(minimum, configured))
+
+
+def _assign_timeout_seconds(environment: Mapping[str, str]) -> float:
+    return _bounded_seconds(
+        environment,
+        ASSIGN_TIMEOUT_ENV,
+        DEFAULT_ASSIGN_TIMEOUT_SECONDS,
+        minimum=0.1,
+        maximum=MAX_ASSIGN_TIMEOUT_SECONDS,
+    )
+
+
+def _dispatch_claim_ttl_seconds(environment: Mapping[str, str]) -> float:
+    return _bounded_seconds(
+        environment,
+        DISPATCH_CLAIM_TTL_ENV,
+        DEFAULT_DISPATCH_CLAIM_TTL_SECONDS,
+        minimum=5.0,
+        maximum=3600.0,
+    )
+
+
+def _dispatch_claim_path(repo_root: str, packet_id: str) -> Path:
+    identity = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+    return (
+        Path(repo_root)
+        / ".orchestrator"
+        / "assistant-dev-packet-claims"
+        / f"{identity}.json"
+    )
+
+
+def _dispatch_fence_path(repo_root: str, packet_id: str) -> Path:
+    identity = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+    return (
+        Path(repo_root)
+        / ".orchestrator"
+        / "assistant-dev-packet-claims"
+        / f"{identity}.lock"
+    )
+
+
+def _open_regular_fence_file(
+    root: Path,
+    directory_components: Tuple[str, ...],
+    filename: str,
+    *,
+    description: str,
+) -> int:
+    """Open one fence without following managed parent or leaf symlinks."""
+
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptors: List[int] = []
+    try:
+        descriptor = os.open(root, directory_flags)
+        descriptors.append(descriptor)
+        if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise ValueError(f"{description} root is not a directory: {root}")
+
+        for component in directory_components:
+            if component in {"", ".", ".."} or "/" in component:
+                raise ValueError(
+                    f"{description} has an unsafe directory component: {component!r}"
+                )
+            try:
+                child = os.open(component, directory_flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(component, mode=0o775, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+                child = os.open(component, directory_flags, dir_fd=descriptor)
+            if not stat.S_ISDIR(os.fstat(child).st_mode):
+                os.close(child)
+                raise ValueError(
+                    f"{description} parent is not a directory: {component}"
+                )
+            descriptors.append(child)
+            descriptor = child
+
+        flags = (
+            os.O_RDWR
+            | os.O_CREAT
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        fence = os.open(filename, flags, 0o600, dir_fd=descriptor)
+        if not stat.S_ISREG(os.fstat(fence).st_mode):
+            os.close(fence)
+            raise ValueError(f"{description} is not a regular file: {filename}")
+        return fence
+    except OSError as exc:
+        raise ValueError(f"{description} is unsafe under {root}") from exc
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _try_acquire_dispatch_fence(repo_root: str, packet_id: str) -> int | None:
+    """Hold a crash-released per-packet OS fence across governed work.
+
+    JSON claim expiry is recovery metadata, not permission to overlap a live
+    claimant.  The fence is not used by ai_status and therefore cannot recreate
+    the parent/child lock cycle repaired by this task.
+    """
+
+    path = _dispatch_fence_path(repo_root, packet_id)
+    descriptor = _open_regular_fence_file(
+        Path(repo_root),
+        (".orchestrator", "assistant-dev-packet-claims"),
+        path.name,
+        description="Bridge dispatch fence",
+    )
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(descriptor)
+            return None
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _release_dispatch_fence(descriptor: int) -> None:
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
+def _write_json_atomic(path: Path, payload: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            delete=False,
+        ) as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+        os.replace(temporary, path)
+        temporary = None
+        try:
+            directory_fd = os.open(
+                path.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+        except OSError:
+            return
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _load_dispatch_claim(path: Path) -> Dict[str, object] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Bridge dispatch claim is unreadable: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Bridge dispatch claim must be an object: {path}")
+    return payload
+
+
+def _parse_utc_timestamp(value: object) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _claim_identity(packet: DevTaskPacket, digest: str) -> Dict[str, object]:
+    return {
+        "packet_id": packet.packet_id,
+        "packet_digest": digest,
+        "tasks": [
+            {
+                "task_id": task.id,
+                "task_spec_hash": _task_spec_hash(task),
+            }
+            for task in packet.tasks
+        ],
+    }
+
+
+def _claim_packet_dispatch_locked(
+    packet: DevTaskPacket,
+    *,
+    repo_root: str,
+    digest: str,
+    environment: Mapping[str, str],
+) -> tuple[str, Dict[str, object]]:
+    """Claim one exact packet without holding the replay lock during shell work."""
+
+    replay = replay_record(packet.packet_id, repo_root=repo_root, lock_held=True)
+    if replay is not None:
+        return "replay", replay
+
+    path = _dispatch_claim_path(repo_root, packet.packet_id)
+    existing = _load_dispatch_claim(path)
+    expected_identity = _claim_identity(packet, digest)
+    now = datetime.now(timezone.utc)
+    if existing is not None:
+        observed_identity = {
+            key: existing.get(key)
+            for key in ("packet_id", "packet_digest", "tasks")
+        }
+        if observed_identity != expected_identity:
+            raise ValueError(
+                f"Packet id {packet.packet_id!r} has a mismatched dispatch claim"
+            )
+        expires_at = _parse_utc_timestamp(existing.get("expires_at"))
+        if expires_at is None:
+            raise ValueError(
+                f"Packet id {packet.packet_id!r} has an invalid dispatch claim expiry"
+            )
+        if expires_at > now:
+            return "busy", existing
+
+    token = os.urandom(24).hex()
+    ttl_seconds = _dispatch_claim_ttl_seconds(environment)
+    claim = {
+        "schema": DISPATCH_CLAIM_SCHEMA,
+        **expected_identity,
+        "claim_token": token,
+        "claimed_at": now.isoformat().replace("+00:00", "Z"),
+        "expires_at": datetime.fromtimestamp(
+            now.timestamp() + ttl_seconds,
+            tz=timezone.utc,
+        ).isoformat().replace("+00:00", "Z"),
+        "owner_pid": os.getpid(),
+    }
+    _write_json_atomic(path, claim)
+    return "claimed", claim
+
+
+def _remove_dispatch_claim_locked(
+    *,
+    repo_root: str,
+    packet_id: str,
+    claim_token: str,
+) -> bool:
+    path = _dispatch_claim_path(repo_root, packet_id)
+    claim = _load_dispatch_claim(path)
+    if claim is None or str(claim.get("claim_token") or "") != claim_token:
+        return False
+    path.unlink()
+    return True
+
+
+def _release_dispatch_claim(
+    *,
+    repo_root: str,
+    packet_id: str,
+    claim_token: str | None,
+) -> None:
+    if not claim_token:
+        return
+    with packet_replay_lock(repo_root=repo_root):
+        _remove_dispatch_claim_locked(
+            repo_root=repo_root,
+            packet_id=packet_id,
+            claim_token=claim_token,
+        )
 
 
 def _find_repo_root(start: Optional[str] = None) -> str:
@@ -539,17 +856,18 @@ def _run_readback_command(
     repo_root: str,
     label: str,
 ) -> Dict[str, object]:
+    timeout_seconds = _assign_timeout_seconds(environment)
     try:
         result = subprocess.run(
             command,
             env=dict(environment),
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout_seconds,
             cwd=repo_root,
         )
     except subprocess.TimeoutExpired as exc:
-        raise OSError(f"{label} timed out after 30s") from exc
+        raise OSError(f"{label} timed out after {timeout_seconds:g}s") from exc
     except OSError as exc:
         raise OSError(f"{label} could not execute: {exc}") from exc
 
@@ -569,11 +887,67 @@ def _run_readback_command(
     return payload
 
 
+def _run_governed_task_show(
+    *,
+    ai_status: str,
+    task_id: str,
+    environment: Mapping[str, str],
+    repo_root: str,
+) -> Dict[str, object]:
+    """Read one task through the governed command and classify exact absence.
+
+    `show` uses exit 1 for an unknown task.  Only its exact, id-bound error is
+    treated as an absent row; every other nonzero exit, malformed response, or
+    runtime failure remains fail-closed.
+    """
+
+    timeout_seconds = _assign_timeout_seconds(environment)
+    label = f"canonical task-state readback for {task_id}"
+    command = [sys.executable, ai_status, "show", task_id]
+    try:
+        result = subprocess.run(
+            command,
+            env=dict(environment),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            cwd=repo_root,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OSError(f"{label} timed out after {timeout_seconds:g}s") from exc
+    except OSError as exc:
+        raise OSError(f"{label} could not execute: {exc}") from exc
+
+    output = (result.stdout or "").strip()
+    error = (result.stderr or "").strip()
+    if result.returncode != 0:
+        if (
+            result.returncode == 1
+            and not output
+            and error == f"Unknown task: {task_id}"
+        ):
+            raise MaterializedTaskMissingError(
+                f"{label} reported exact absence: {error}"
+            )
+        detail = error or output or f"exit {result.returncode}"
+        if result.returncode in {3, 75}:
+            raise OSError(f"{label} unavailable: {detail[:500]}")
+        raise ValueError(f"{label} failed: {detail[:500]}")
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must return a JSON object")
+    return payload
+
+
 def _canonical_task_state_readback(
     packet: DevTaskPacket,
     *,
     repo_root: str,
     environment: Mapping[str, str],
+    tasks: Optional[List[BridgeTask]] = None,
 ) -> Dict[str, object]:
     task_state_env = _runtime_task_state_env(
         repo_root,
@@ -582,8 +956,12 @@ def _canonical_task_state_readback(
     required = str(
         environment.get(REQUIRE_TASK_STATE_READBACK_ENV) or ""
     ).strip().lower() in {"1", "true", "yes", "on"}
+    ai_status, status_env, governed = _status_command_context(
+        repo_root,
+        environment=environment,
+    )
     if not task_state_env:
-        if required:
+        if required or governed:
             raise ValueError(
                 "canonical task-state runtime binding is missing; "
                 "file/activity-only bridge dispatch is not admissible"
@@ -593,10 +971,6 @@ def _canonical_task_state_readback(
             "taskIds": [task.id for task in packet.tasks],
         }
 
-    ai_status, status_env, governed = _status_command_context(
-        repo_root,
-        environment=environment,
-    )
     if not governed:
         raise ValueError(
             "canonical task-state readback requires the governed command runtime"
@@ -606,13 +980,14 @@ def _canonical_task_state_readback(
         command_environment.pop(name, None)
     command_environment["AI_NAME"] = BRIDGE_STATUS_ACTOR
 
+    selected_tasks = list(tasks) if tasks is not None else list(packet.tasks)
     task_readbacks: List[Dict[str, object]] = []
-    for task in packet.tasks:
-        payload = _run_readback_command(
-            [sys.executable, ai_status, "show", task.id],
+    for task in selected_tasks:
+        payload = _run_governed_task_show(
+            ai_status=ai_status,
+            task_id=task.id,
             environment=command_environment,
             repo_root=repo_root,
-            label=f"canonical task-state readback for {task.id}",
         )
         source = str(payload.get("source") or "").strip()
         if source == "active":
@@ -662,7 +1037,7 @@ def _canonical_task_state_readback(
         "status": "verified",
         "storeMode": task_state_env[TASK_STATE_MODE_ENV],
         "eventLog": task_state_env[TASK_STATE_EVENT_LOG_ENV],
-        "taskIds": [task.id for task in packet.tasks],
+        "taskIds": [task.id for task in selected_tasks],
         "tasks": task_readbacks,
         "checkpoint": {
             "eventCount": projection.get("event_count"),
@@ -682,6 +1057,23 @@ def _validate_materialized_tasks(
     """Bind a successful dispatch/admission to canonical task-state readback."""
 
     command_environment = _merged_environment(environment)
+    task_state_env = _runtime_task_state_env(
+        repo_root,
+        environment=command_environment,
+    )
+    _ai_status, _status_env, governed = _status_command_context(
+        repo_root,
+        environment=command_environment,
+    )
+    if task_state_env or governed:
+        # Governed mode has exactly one read authority.  Repository-local
+        # projection and archive files are derived outputs and must never be a
+        # fallback when the authoritative `show` path is unavailable.
+        return _canonical_task_state_readback(
+            packet,
+            repo_root=repo_root,
+            environment=command_environment,
+        )
 
     for task in packet.tasks:
         candidates = _materialized_task_candidates(
@@ -769,6 +1161,49 @@ def _dispatch_task(
         ensure_ascii=False,
     )
 
+    # A previous exact attempt may have materialised this row before the
+    # parent observed a timeout/nonzero exit.  In governed mode, only the
+    # authoritative `show` command and journal parity check may establish that
+    # idempotent prefix; repository-local task files are never consulted.
+    if governed:
+        try:
+            _canonical_task_state_readback(
+                packet,
+                repo_root=repo_root,
+                environment=env,
+                tasks=[task],
+            )
+        except MaterializedTaskMissingError:
+            pass
+        except OSError as exc:
+            record.status = "retryable"
+            record.error = f"existing bridge task readback unavailable: {exc}"
+            return record
+        except ValueError as exc:
+            record.status = "error"
+            record.error = str(exc)
+            return record
+        else:
+            return record
+    else:
+        try:
+            existing_candidates = _materialized_task_candidates(
+                repo_root=repo_root,
+                task_id=task.id,
+            )
+            for candidate in existing_candidates:
+                _validate_materialized_task_candidate(packet, task, candidate)
+        except OSError as exc:
+            record.status = "retryable"
+            record.error = f"existing bridge task readback unavailable: {exc}"
+            return record
+        except ValueError as exc:
+            record.status = "error"
+            record.error = str(exc)
+            return record
+        if existing_candidates:
+            return record
+
     cmd = [
         sys.executable,
         ai_status,
@@ -779,24 +1214,64 @@ def _dispatch_task(
         task.title,
     ]
 
+    timeout_seconds = _assign_timeout_seconds(env)
+    failure_status: str | None = None
+    failure_error: str | None = None
     try:
         result = subprocess.run(
             cmd,
             env=env,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout_seconds,
             cwd=repo_root,
         )
         if result.returncode != 0:
-            record.status = "error"
-            record.error = (result.stderr or result.stdout or "non-zero exit").strip()[:500]
+            failure_status = "retryable" if result.returncode == 75 else "error"
+            failure_error = (
+                result.stderr or result.stdout or "non-zero exit"
+            ).strip()[:2000]
     except subprocess.TimeoutExpired:
-        record.status = "error"
-        record.error = "ai_status.py assign timed out after 30s"
+        failure_status = "retryable"
+        failure_error = f"ai_status.py assign timed out after {timeout_seconds:g}s"
     except OSError as exc:
-        record.status = "error"
-        record.error = str(exc)
+        failure_status = "error"
+        failure_error = str(exc)
+
+    if failure_error is None:
+        return record
+
+    if governed:
+        # A nonzero exit or timeout is not proof that the authoritative writer
+        # failed before commit.  Read the exact row back immediately and accept
+        # only complete signed spec/provenance plus journal parity.  Missing,
+        # unavailable, malformed, or mismatched readback never reaches
+        # admission and never falls back to local projections.
+        try:
+            _canonical_task_state_readback(
+                packet,
+                repo_root=repo_root,
+                environment=env,
+                tasks=[task],
+            )
+        except MaterializedTaskMissingError:
+            record.status = failure_status or "error"
+            record.error = failure_error
+        except OSError as exc:
+            record.status = "retryable"
+            record.error = (
+                f"{failure_error}; authoritative post-assign readback unavailable: {exc}"
+            )
+        except ValueError as exc:
+            record.status = "error"
+            record.error = (
+                f"{failure_error}; authoritative post-assign readback invalid: {exc}"
+            )
+        else:
+            return record
+    else:
+        record.status = failure_status or "error"
+        record.error = failure_error
 
     return record
 
@@ -805,201 +1280,400 @@ def _dispatch_task(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def dispatch_task_packet(
+def _replay_dispatch_result(
+    packet: DevTaskPacket,
+    *,
+    repo_root: str,
+    digest: str,
+    replay: Mapping[str, object],
+    dispatched_at: str,
+    dry_run: bool,
+    environment: Mapping[str, str],
+    audit_refs: Dict[str, object],
+) -> BridgeDispatchResult:
+    """Validate a terminal replay without holding the replay claim lock."""
+
+    recorded_digest = str(replay.get("digest") or "").strip() or None
+    if recorded_digest and recorded_digest != digest:
+        raise ValueError(
+            f"Packet id {packet.packet_id!r} is already bound to a different payload"
+        )
+    admission_record = None
+    replay_errors: List[str] = []
+    replay_retryable = False
+    if recorded_digest:
+        try:
+            admission_record = load_admission_record(
+                repo_root=repo_root,
+                packet_id=packet.packet_id,
+                packet_digest=digest,
+                expected_provenance=_admission_provenance(packet),
+            )
+        except (OSError, ValueError) as exc:
+            replay_errors.append(f"bridge admission replay validation: {exc}")
+            admission_status = "invalid_replay_admission"
+        else:
+            if admission_record is None:
+                replay_errors.append(
+                    "bridge admission replay validation: durable admission record is missing"
+                )
+                admission_status = "missing_replay_admission"
+            else:
+                started = time.monotonic()
+                try:
+                    readback = _validate_materialized_tasks(
+                        packet,
+                        repo_root=repo_root,
+                        environment=environment,
+                    )
+                except OSError as exc:
+                    replay_errors.append(
+                        f"bridge materialization replay validation: {exc}"
+                    )
+                    admission_status = "materialization_read_retryable"
+                    replay_retryable = True
+                except ValueError as exc:
+                    replay_errors.append(
+                        f"bridge materialization replay validation: {exc}"
+                    )
+                    admission_status = "invalid_replay_materialization"
+                else:
+                    admission_status = "admitted_replay"
+                    audit_refs["materializationReadback"] = readback
+                audit_refs.setdefault("phaseTimingsMs", {})[
+                    "replayReadback"
+                ] = round((time.monotonic() - started) * 1000, 3)
+    else:
+        replay_errors.append(
+            "bridge admission replay validation: legacy replay row has no digest "
+            "and is non-admitted"
+        )
+        admission_status = "legacy_non_admitted_replay"
+    return BridgeDispatchResult(
+        packetId=packet.packet_id,
+        dispatchedAt=dispatched_at,
+        taskRecords=[
+            TaskDispatchRecord(
+                taskId=task.id,
+                owner=task.owner,
+                reviewer=task.reviewer,
+                status="already_dispatched",
+            )
+            for task in packet.tasks
+        ],
+        replayRejected=True,
+        dryRun=dry_run,
+        auditRefs=audit_refs,
+        admissionRecord=admission_record,
+        admissionStatus=admission_status,
+        retryable=replay_retryable,
+        errors=replay_errors,
+    )
+
+
+def _dispatch_task_packet_under_fence(
     request: BridgeDispatchRequest,
     *,
     key_store: Optional[Dict[str, bytes]] = None,
     runtime_env: Optional[Mapping[str, str]] = None,
 ) -> BridgeDispatchResult:
-    """Verify, replay-check, and materialise all tasks in a signed DevTaskPacket.
+    """Verify, claim, and materialise one exact signed packet.
 
-    Returns BridgeDispatchResult.  Never raises for per-task failures — errors
-    are captured in result.errors and per-task TaskDispatchRecord.error.
-
-    Raises ValueError when:
-    - Packet signature is invalid.
-    - Packet constraints are violated.
-    (Replay rejection is not raised; it returns a result with replay_rejected=True.)
+    Replay and claim locks cover only local compare-and-swap state.  Governed
+    status subprocesses and canonical readback always execute after those
+    locks are released.  A transient writer timeout therefore leaves an exact
+    packet claim retryable instead of manufacturing a terminal failed receipt.
     """
+
+    operation_started = time.monotonic()
     packet = request.packet
     repo_root = request.repo_root or _find_repo_root()
     dry_run = request.dry_run
     dispatched_at = _now()
     environment = _merged_environment(runtime_env)
 
-    # 1. Signature verification (raises on failure)
+    verification_started = time.monotonic()
     verify_packet(packet, key_store=key_store)
-
-    # 2. Constraint check (raises on violation)
     violations = _check_constraints(packet)
     if violations:
         raise ValueError("Packet constraint violation: " + "; ".join(violations))
 
     digest = packet_digest(packet)
     audit_refs = _audit_refs(packet, dispatched_at)
+    phase_timings: Dict[str, float] = {
+        "verification": round((time.monotonic() - verification_started) * 1000, 3)
+    }
+    audit_refs["phaseTimingsMs"] = phase_timings
 
-    # Replay check and successful terminal mark share one cross-process lock.
-    # A failed/partial packet remains retryable; already successful tasks are
-    # made no-ops by the bridge assignment metadata in scripts/ai_status.py.
+    claim_token: str | None = None
+    replay: Mapping[str, object] | None = None
+    claim_started = time.monotonic()
     with packet_replay_lock(repo_root=repo_root):
-        replay = replay_record(packet.packet_id, repo_root=repo_root, lock_held=True)
-        if replay is not None:
-            recorded_digest = str(replay.get("digest") or "").strip() or None
-            if recorded_digest and recorded_digest != digest:
-                raise ValueError(
-                    f"Packet id {packet.packet_id!r} is already bound to a different payload"
-                )
-            admission_record = None
-            replay_errors: List[str] = []
-            replay_retryable = False
-            if recorded_digest:
-                try:
-                    admission_record = load_admission_record(
-                        repo_root=repo_root,
-                        packet_id=packet.packet_id,
-                        packet_digest=digest,
-                        expected_provenance=_admission_provenance(packet),
-                    )
-                except (OSError, ValueError) as exc:
-                    replay_errors.append(f"bridge admission replay validation: {exc}")
-                    admission_status = "invalid_replay_admission"
-                else:
-                    if admission_record is None:
-                        replay_errors.append(
-                            "bridge admission replay validation: durable admission record is missing"
-                        )
-                        admission_status = "missing_replay_admission"
-                    else:
-                        try:
-                            readback = _validate_materialized_tasks(
-                                packet,
-                                repo_root=repo_root,
-                                environment=environment,
-                            )
-                        except OSError as exc:
-                            replay_errors.append(
-                                f"bridge materialization replay validation: {exc}"
-                            )
-                            admission_status = "materialization_read_retryable"
-                            replay_retryable = True
-                        except ValueError as exc:
-                            replay_errors.append(
-                                f"bridge materialization replay validation: {exc}"
-                            )
-                            admission_status = "invalid_replay_materialization"
-                        else:
-                            admission_status = "admitted_replay"
-                            audit_refs["materializationReadback"] = readback
-            else:
-                replay_errors.append(
-                    "bridge admission replay validation: legacy replay row has no digest "
-                    "and is non-admitted"
-                )
-                admission_status = "legacy_non_admitted_replay"
-            return BridgeDispatchResult(
-                packetId=packet.packet_id,
-                dispatchedAt=dispatched_at,
-                taskRecords=[
-                    TaskDispatchRecord(
-                        taskId=task.id,
-                        owner=task.owner,
-                        reviewer=task.reviewer,
-                        status="already_dispatched",
-                    )
-                    for task in packet.tasks
-                ],
-                replayRejected=True,
-                dryRun=dry_run,
-                auditRefs=audit_refs,
-                admissionRecord=admission_record,
-                admissionStatus=admission_status,
-                retryable=replay_retryable,
-                errors=replay_errors,
-            )
-
-        task_records: List[TaskDispatchRecord] = []
-        errors: List[str] = []
-        for task in packet.tasks:
-            rec = _dispatch_task(
-                task,
-                packet=packet,
+        if dry_run:
+            replay = replay_record(
+                packet.packet_id,
                 repo_root=repo_root,
-                dry_run=dry_run,
+                lock_held=True,
+            )
+            claim_state = "dry_run"
+            claim = {}
+        else:
+            claim_state, claim = _claim_packet_dispatch_locked(
+                packet,
+                repo_root=repo_root,
+                digest=digest,
                 environment=environment,
             )
-            task_records.append(rec)
-            if rec.status == "error" and rec.error:
-                errors.append(f"{task.id}: {rec.error}")
+            if claim_state == "replay":
+                replay = claim
+            elif claim_state == "claimed":
+                claim_token = str(claim["claim_token"])
+    phase_timings["replayClaim"] = round(
+        (time.monotonic() - claim_started) * 1000,
+        3,
+    )
+    audit_refs["dispatchClaim"] = {
+        "state": claim_state,
+        "ownerPid": claim.get("owner_pid"),
+        "claimedAt": claim.get("claimed_at"),
+        "expiresAt": claim.get("expires_at"),
+        "taskSpecHashes": [
+            item["task_spec_hash"] for item in _claim_identity(packet, digest)["tasks"]
+        ],
+    }
 
-        admission_record = None
-        admission_status = "dry_run" if dry_run else "not_attempted"
-        retryable = False
-        if not dry_run and not errors:
-            try:
-                readback = _validate_materialized_tasks(
-                    packet,
-                    repo_root=repo_root,
-                    environment=environment,
+    if replay is not None:
+        result = _replay_dispatch_result(
+            packet,
+            repo_root=repo_root,
+            digest=digest,
+            replay=replay,
+            dispatched_at=dispatched_at,
+            dry_run=dry_run,
+            environment=environment,
+            audit_refs=audit_refs,
+        )
+        phase_timings["total"] = round(
+            (time.monotonic() - operation_started) * 1000,
+            3,
+        )
+        return result
+
+    if claim_state == "busy":
+        phase_timings["total"] = round(
+            (time.monotonic() - operation_started) * 1000,
+            3,
+        )
+        return BridgeDispatchResult(
+            packetId=packet.packet_id,
+            dispatchedAt=dispatched_at,
+            taskRecords=[
+                TaskDispatchRecord(
+                    taskId=task.id,
+                    owner=task.owner,
+                    reviewer=task.reviewer,
+                    status="already_dispatched",
                 )
-            except OSError as exc:
-                errors.append(f"bridge materialization: {exc}")
-                admission_status = "materialization_read_retryable"
-                retryable = True
-            except ValueError as exc:
-                errors.append(f"bridge materialization: {exc}")
-                admission_status = "invalid_materialization"
-            else:
-                audit_refs["materializationReadback"] = readback
-        if not dry_run and not errors:
-            try:
-                provenance = _admission_provenance(packet)
-                admission_record = persist_admission_record(
+                for task in packet.tasks
+            ],
+            # A concurrent exact duplicate is a replay attempt, but remains
+            # retryable until the owning claim reaches durable admission.
+            replayRejected=True,
+            dryRun=False,
+            auditRefs=audit_refs,
+            admissionRecord=None,
+            admissionStatus="dispatch_claim_retryable",
+            retryable=True,
+            errors=[
+                f"packet dispatch is already claimed by pid {claim.get('owner_pid')} "
+                f"until {claim.get('expires_at')}"
+            ],
+        )
+
+    task_records: List[TaskDispatchRecord] = []
+    errors: List[str] = []
+    retryable = False
+    dispatch_timings: Dict[str, float] = {}
+    for task in packet.tasks:
+        task_started = time.monotonic()
+        record = _dispatch_task(
+            task,
+            packet=packet,
+            repo_root=repo_root,
+            dry_run=dry_run,
+            environment=environment,
+        )
+        dispatch_timings[task.id] = round(
+            (time.monotonic() - task_started) * 1000,
+            3,
+        )
+        task_records.append(record)
+        if record.error and record.status in {"error", "retryable"}:
+            errors.append(f"{task.id}: {record.error}")
+        retryable = retryable or record.status == "retryable"
+    audit_refs["taskDispatchTimingsMs"] = dispatch_timings
+    phase_timings["taskDispatch"] = round(sum(dispatch_timings.values()), 3)
+
+    admission_record = None
+    admission_status = "dry_run" if dry_run else "not_attempted"
+    if errors:
+        if retryable:
+            admission_status = "task_state_mutation_retryable"
+        _release_dispatch_claim(
+            repo_root=repo_root,
+            packet_id=packet.packet_id,
+            claim_token=claim_token,
+        )
+    elif not dry_run:
+        readback_started = time.monotonic()
+        try:
+            readback = _validate_materialized_tasks(
+                packet,
+                repo_root=repo_root,
+                environment=environment,
+            )
+        except OSError as exc:
+            errors.append(f"bridge materialization: {exc}")
+            admission_status = "materialization_read_retryable"
+            retryable = True
+        except ValueError as exc:
+            errors.append(f"bridge materialization: {exc}")
+            admission_status = "invalid_materialization"
+        else:
+            audit_refs["materializationReadback"] = readback
+        phase_timings["materializationReadback"] = round(
+            (time.monotonic() - readback_started) * 1000,
+            3,
+        )
+        if errors:
+            _release_dispatch_claim(
+                repo_root=repo_root,
+                packet_id=packet.packet_id,
+                claim_token=claim_token,
+            )
+
+    became_replay: Mapping[str, object] | None = None
+    if not dry_run and not errors:
+        commit_started = time.monotonic()
+        with packet_replay_lock(repo_root=repo_root):
+            current_replay = replay_record(
+                packet.packet_id,
+                repo_root=repo_root,
+                lock_held=True,
+            )
+            if current_replay is not None:
+                became_replay = current_replay
+                _remove_dispatch_claim_locked(
                     repo_root=repo_root,
                     packet_id=packet.packet_id,
-                    packet_digest=digest,
-                    admitted_at=dispatched_at,
-                    packet_version=str(provenance["packet_version"]),
-                    actor=provenance["actor"],
-                    mode=str(provenance["mode"]),
-                    intent=str(provenance["intent"]),
-                    conversation_id=str(provenance["conversation_id"]),
-                    source_turn_ids=provenance["source_turn_ids"],
-                    documents=provenance["documents"],
-                    audit_conversation_href=provenance["audit_conversation_href"],
-                    emitted_at=str(provenance["emitted_at"]),
-                    constraints=provenance["constraints"],
-                    tasks=provenance["tasks"],
-                    dispatch_records=[
-                        record.model_dump(mode="json", by_alias=True)
-                        for record in task_records
-                    ],
+                    claim_token=claim_token or "",
                 )
-                admission_status = "admitted_unmarked"
-            except OSError as exc:
-                errors.append(f"bridge admission: {exc}")
-                admission_status = "admission_persistence_retryable"
-                retryable = True
-            except ValueError as exc:
-                errors.append(f"bridge admission: {exc}")
-                admission_status = "invalid_admission"
+            else:
+                claim_path = _dispatch_claim_path(repo_root, packet.packet_id)
+                current_claim = _load_dispatch_claim(claim_path)
+                if (
+                    current_claim is None
+                    or str(current_claim.get("claim_token") or "") != claim_token
+                    or {
+                        key: current_claim.get(key)
+                        for key in ("packet_id", "packet_digest", "tasks")
+                    }
+                    != _claim_identity(packet, digest)
+                ):
+                    errors.append("bridge dispatch claim changed before admission commit")
+                    admission_status = "dispatch_claim_lost_retryable"
+                    retryable = True
+                else:
+                    try:
+                        provenance = _admission_provenance(packet)
+                        admission_record = persist_admission_record(
+                            repo_root=repo_root,
+                            packet_id=packet.packet_id,
+                            packet_digest=digest,
+                            admitted_at=dispatched_at,
+                            packet_version=str(provenance["packet_version"]),
+                            actor=provenance["actor"],
+                            mode=str(provenance["mode"]),
+                            intent=str(provenance["intent"]),
+                            conversation_id=str(provenance["conversation_id"]),
+                            source_turn_ids=provenance["source_turn_ids"],
+                            documents=provenance["documents"],
+                            audit_conversation_href=provenance[
+                                "audit_conversation_href"
+                            ],
+                            emitted_at=str(provenance["emitted_at"]),
+                            constraints=provenance["constraints"],
+                            tasks=provenance["tasks"],
+                            dispatch_records=[
+                                record.model_dump(mode="json", by_alias=True)
+                                for record in task_records
+                            ],
+                        )
+                        admission_status = "admitted_unmarked"
+                        mark_packet_seen(
+                            packet.packet_id,
+                            repo_root=repo_root,
+                            digest=digest,
+                            lock_held=True,
+                        )
+                        admission_status = "admitted"
+                    except OSError as exc:
+                        operation = (
+                            "bridge replay mark"
+                            if admission_record is not None
+                            else "bridge admission"
+                        )
+                        errors.append(f"{operation}: {exc}")
+                        admission_status = (
+                            "replay_mark_persistence_retryable"
+                            if admission_record is not None
+                            else "admission_persistence_retryable"
+                        )
+                        retryable = True
+                    except ValueError as exc:
+                        operation = (
+                            "bridge replay mark"
+                            if admission_record is not None
+                            else "bridge admission"
+                        )
+                        errors.append(f"{operation}: {exc}")
+                        admission_status = (
+                            "invalid_replay_mark"
+                            if admission_record is not None
+                            else "invalid_admission"
+                        )
+                    finally:
+                        _remove_dispatch_claim_locked(
+                            repo_root=repo_root,
+                            packet_id=packet.packet_id,
+                            claim_token=claim_token or "",
+                        )
+        phase_timings["admissionCommit"] = round(
+            (time.monotonic() - commit_started) * 1000,
+            3,
+        )
 
-        if not dry_run and not errors:
-            try:
-                mark_packet_seen(
-                    packet.packet_id,
-                    repo_root=repo_root,
-                    digest=digest,
-                    lock_held=True,
-                )
-                admission_status = "admitted"
-            except OSError as exc:
-                errors.append(f"bridge replay mark: {exc}")
-                admission_status = "replay_mark_persistence_retryable"
-                retryable = True
-            except ValueError as exc:
-                errors.append(f"bridge replay mark: {exc}")
-                admission_status = "invalid_replay_mark"
+    if became_replay is not None:
+        result = _replay_dispatch_result(
+            packet,
+            repo_root=repo_root,
+            digest=digest,
+            replay=became_replay,
+            dispatched_at=dispatched_at,
+            dry_run=False,
+            environment=environment,
+            audit_refs=audit_refs,
+        )
+        phase_timings["total"] = round(
+            (time.monotonic() - operation_started) * 1000,
+            3,
+        )
+        return result
 
+    phase_timings["total"] = round(
+        (time.monotonic() - operation_started) * 1000,
+        3,
+    )
     return BridgeDispatchResult(
         packetId=packet.packet_id,
         dispatchedAt=dispatched_at,
@@ -1012,3 +1686,69 @@ def dispatch_task_packet(
         retryable=retryable,
         errors=errors,
     )
+
+
+def dispatch_task_packet(
+    request: BridgeDispatchRequest,
+    *,
+    key_store: Optional[Dict[str, bytes]] = None,
+    runtime_env: Optional[Mapping[str, str]] = None,
+) -> BridgeDispatchResult:
+    """Fence one verified packet before entering the off-lock dispatcher.
+
+    A JSON claim may expire for crash recovery, but a replacement must never
+    overlap an original claimant that is still executing.  `flock` releases on
+    process death and remains held across assignment, readback, and admission;
+    the governed child never opens this fence.
+    """
+
+    packet = request.packet
+    repo_root = request.repo_root or _find_repo_root()
+    if request.dry_run:
+        return _dispatch_task_packet_under_fence(
+            request,
+            key_store=key_store,
+            runtime_env=runtime_env,
+        )
+
+    verify_packet(packet, key_store=key_store)
+    violations = _check_constraints(packet)
+    if violations:
+        raise ValueError("Packet constraint violation: " + "; ".join(violations))
+
+    descriptor = _try_acquire_dispatch_fence(repo_root, packet.packet_id)
+    if descriptor is None:
+        dispatched_at = _now()
+        audit_refs = _audit_refs(packet, dispatched_at)
+        audit_refs["dispatchFence"] = {
+            "state": "busy",
+            "path": str(_dispatch_fence_path(repo_root, packet.packet_id)),
+        }
+        return BridgeDispatchResult(
+            packetId=packet.packet_id,
+            dispatchedAt=dispatched_at,
+            taskRecords=[
+                TaskDispatchRecord(
+                    taskId=task.id,
+                    owner=task.owner,
+                    reviewer=task.reviewer,
+                    status="already_dispatched",
+                )
+                for task in packet.tasks
+            ],
+            replayRejected=True,
+            dryRun=False,
+            auditRefs=audit_refs,
+            admissionRecord=None,
+            admissionStatus="dispatch_fence_retryable",
+            retryable=True,
+            errors=["packet dispatch is fenced by a live claimant"],
+        )
+    try:
+        return _dispatch_task_packet_under_fence(
+            request,
+            key_store=key_store,
+            runtime_env=runtime_env,
+        )
+    finally:
+        _release_dispatch_fence(descriptor)

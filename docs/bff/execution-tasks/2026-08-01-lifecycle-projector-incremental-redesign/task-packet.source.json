@@ -1,0 +1,215 @@
+{
+  "version": "pantheon.assistant.dev-task.v1",
+  "packetId": "lifecycle-projector-incremental-redesign-20260801-v1",
+  "intent": "implement_incremental_lifecycle_projector_through_governed_supervisor_tasks",
+  "emittedAt": "2026-08-01T09:30:00Z",
+  "actor": {
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ],
+    "capabilities": [
+      "assistant.kernel.repair",
+      "assistant.dev-task.dispatch",
+      "fleet.dispatch"
+    ]
+  },
+  "mode": "kernel_repair",
+  "sourceConversationId": "codex-lifecycle-projector-incident-20260801",
+  "sourceTurnIds": [
+    "incident-analysis",
+    "emergency-containment",
+    "incremental-redesign-plan"
+  ],
+  "documents": [
+    {
+      "path": "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/archive/LIFECYCLE_PROJECTOR_INCREMENTAL_REDESIGN_PLAN_2026-08-01.md",
+      "kind": "SA_SD_PLAN",
+      "sourceRefs": [
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-INCIDENT-20260801/evidence.json",
+        "docs/bff/execution-tasks/2026-08-01-lifecycle-projector-incremental-redesign/tasks.json",
+        "https://github.com/ajoe734/pantheon/pull/4448"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "LIFECYCLE-PROJ-STORE-001",
+      "title": "Build the lifecycle projection relational store",
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "phase": "wave-1-storage",
+      "dependsOn": [],
+      "artifacts": [
+        "services/trade_journey/projection_store.py",
+        "services/trade_journey/migrations/",
+        "services/trade_journey/test_projection_store.py",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-STORE-001/"
+      ],
+      "acceptance": [
+        "Implement the plan-required additive relational schema, keys, constraints, and indexes without mutating telemetry_events.",
+        "Atomically commit event disposition, identity/stage/aggregate mutations, projection revision, and contiguous checkpoint.",
+        "Prove duplicate/conflict/quarantine/rollback/retry/two-writer behavior against real Postgres and publish reviewed checksummed evidence."
+      ],
+      "summary": "Exact scope, non-goals, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-STORE-001.md."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-REDUCER-001",
+      "title": "Replace full rebuild with a bounded incremental reducer",
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "phase": "wave-2-worker",
+      "dependsOn": [
+        "LIFECYCLE-PROJ-STORE-001"
+      ],
+      "artifacts": [
+        "services/trade_journey/lifecycle_projector.py",
+        "services/trade_journey/incremental_materializer.py",
+        "services/trade_journey/test_lifecycle_projector.py",
+        "services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-REDUCER-001/"
+      ],
+      "acceptance": [
+        "Remove all-history runtime state, full-state deepcopy, and full-global rebuild from the active worker path.",
+        "Preserve lifecycle identity, idempotency, ordering, quarantine, mode, and freshness semantics with memory bounded by batch and affected aggregates.",
+        "Prove deterministic duplicate/out-of-order/replay/restart/SIGKILL/transaction-failure convergence and publish reviewed checksummed evidence."
+      ],
+      "summary": "Exact scope, non-goals, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-REDUCER-001.md."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-BFF-001",
+      "title": "Serve Trade Journey and loop-run reads from Postgres",
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "phase": "wave-2-read-api",
+      "dependsOn": [
+        "LIFECYCLE-PROJ-STORE-001"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/trade_journeys.py",
+        "services/control-plane/bff/trade_journey_projection_store.py",
+        "services/control-plane/bff/read_store.py",
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+        "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+        "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-BFF-001/"
+      ],
+      "acceptance": [
+        "Preserve existing BFF contracts through tenant/environment-scoped indexed queries and keyset pagination capped at 200.",
+        "Preserve protected 404, RBAC, redaction, freshness, and degraded/error truth; prohibit unscoped global reads.",
+        "Pass compatibility, token-tamper, isolation, and query-plan tests and publish reviewed checksummed evidence."
+      ],
+      "summary": "Exact scope, non-goals, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-BFF-001.md."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-MIGRATE-001",
+      "title": "Backfill, shadow, and prove lifecycle projection parity",
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "phase": "wave-3-migration",
+      "dependsOn": [
+        "LIFECYCLE-PROJ-REDUCER-001",
+        "LIFECYCLE-PROJ-BFF-001"
+      ],
+      "artifacts": [
+        "services/trade_journey/projection_migration.py",
+        "services/trade_journey/test_projection_migration.py",
+        "scripts/lifecycle_projector_migrate.py",
+        "scripts/lifecycle_projector_parity.py",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-MIGRATE-001/"
+      ],
+      "acceptance": [
+        "Backfill from canonical telemetry with bounded resumable transactions and a separate durable migration watermark.",
+        "Close the delta to shadow-live backlog zero and produce scoped controller/identity/stage/journey/loop parity with zero unexplained mismatch.",
+        "Prove interruption/restart without skipped or duplicate rows and publish reviewed redacted checksummed evidence."
+      ],
+      "summary": "Exact scope, non-goals, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-MIGRATE-001.md."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "title": "Prove bounded lifecycle projection capacity and failure behavior",
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "phase": "wave-3-capacity",
+      "dependsOn": [
+        "LIFECYCLE-PROJ-REDUCER-001",
+        "LIFECYCLE-PROJ-BFF-001"
+      ],
+      "artifacts": [
+        "services/trade_journey/lifecycle_projector_capacity.py",
+        "services/trade_journey/test_lifecycle_projector_capacity.py",
+        "services/trade_journey/test_lifecycle_projector_compose.py",
+        "docker-compose.yml",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/"
+      ],
+      "acceptance": [
+        "At one million events and 150,000 loop runs, meet steady RSS <=2.0 GiB, peak <=2.5 GiB, and memory-growth <=256 MiB from 500k to 1M.",
+        "Meet documented batch/backlog/catch-up/read latency and indexed-query gates on the target-dev profile.",
+        "Pass transactional fault/restart/second-writer cases with RPO=0 and publish reproducible reviewed checksummed evidence."
+      ],
+      "summary": "Exact scope, non-goals, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-CAPACITY-001.md."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-CUTOVER-001",
+      "title": "Canary and cut over target-dev lifecycle reads",
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "phase": "wave-4-cutover",
+      "dependsOn": [
+        "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801",
+        "LIFECYCLE-PROJ-MIGRATE-001",
+        "LIFECYCLE-PROJ-CAPACITY-001"
+      ],
+      "artifacts": [
+        "docker-compose.yml",
+        "services/trade_journey/hosted_lifecycle_probe.py",
+        "services/trade_journey/hosted_bff_readback.py",
+        "services/trade_journey/test_hosted_lifecycle_probe.py",
+        "services/trade_journey/test_hosted_bff_readback.py",
+        "docs/operations/lifecycle-projector-incremental-runbook.md",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CUTOVER-001/"
+      ],
+      "acceptance": [
+        "Deploy exact merged identities and pass parity, capacity, security, and freshness gates before an authorized target-dev paper canary.",
+        "Prove one real paper lifecycle through authenticated journey/loop/controller readback plus required negative cases.",
+        "Rehearse rollback and forward recovery, observe 24 hours, and publish independently reviewed deployment/checksummed evidence."
+      ],
+      "summary": "No production or live-capital action. Exact scope, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-CUTOVER-001.md."
+    },
+    {
+      "id": "LIFECYCLE-PROJ-RETIRE-001",
+      "title": "Retire legacy lifecycle JSON projection after accepted soak",
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "phase": "wave-5-retirement",
+      "dependsOn": [
+        "LIFECYCLE-PROJ-CUTOVER-001"
+      ],
+      "artifacts": [
+        "services/trade_journey/lifecycle_projector.py",
+        "services/control-plane/bff/trade_journeys.py",
+        "services/control-plane/bff/read_store.py",
+        "docker-compose.yml",
+        "scripts/lifecycle_projector_legacy_retire.py",
+        "docs/operations/lifecycle-projector-incremental-runbook.md",
+        "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RETIRE-001/"
+      ],
+      "acceptance": [
+        "Require seven accepted target-dev days before removing legacy JSON code/config through a reviewed PR.",
+        "Produce an exact-path checksum dry-run for obsolete dev generations and obtain explicit Human/Ops approval before any move/delete action.",
+        "Never delete telemetry_events or relational projection tables; prove Postgres-only restart/readback and publish checksummed retirement evidence."
+      ],
+      "summary": "Exact scope, non-goals, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-RETIRE-001.md."
+    }
+  ],
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "requiresBranchPrMerge": true,
+    "noDirectShellFromWeb": true
+  },
+  "auditConversationHref": "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-INCIDENT-20260801/README.md",
+  "signature": null
+}

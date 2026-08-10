@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import shutil
 import socket
 import subprocess
@@ -11,6 +12,7 @@ import threading
 import time
 import unittest
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -729,6 +731,245 @@ class TestPaperFleetReconcilerSignalQueueIsolation(unittest.TestCase):
         self.assertEqual(captured_envs["b-iso-a"], "pantheon:signals:pending:b-iso-a")
         self.assertEqual(captured_envs["b-iso-b"], "pantheon:signals:pending:b-iso-b")
         self.assertNotEqual(captured_envs["b-iso-a"], captured_envs["b-iso-b"])
+
+
+class TestPaperFleetMinimumFunctionalClosure(unittest.TestCase):
+    """One active paper binding must reach a durable paper-runtime readback."""
+
+    def test_binding_starts_worker_and_duplicate_replay_keeps_one_fill(self) -> None:
+        """L12-MIN-CAP: fleet → fill/position → telemetry stays paper-only."""
+        from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
+        from services.execution.lean_runtime.pending_signal_store import (
+            InMemoryPendingSignalStore,
+        )
+        from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+        from services.execution.lean_runtime.signal_producer import (
+            build_decision_signals,
+        )
+        from services.trade_journey.correlation_envelope import propagate_envelope
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        binding = _make_binding(
+            "binding-l12-min-cap",
+            runtime_id="runtime-l12-min-cap",
+            capital_pool_id="pool-l12-paper",
+            plan_id="plan-l12-min-dep",
+            metadata={"persona_id": "persona-l12-paper"},
+        )
+        [signal] = build_decision_signals(
+            {
+                "decision_id": "decision-l12-min-cap",
+                "signal_id": "signal-l12-min-cap",
+                "strategy_id": "strategy-l12-paper",
+                "timestamp": datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "tenant_id": "tenant-l12",
+                "environment": "paper",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 2,
+                "quantity_type": "SHARES",
+                "run_id": "run-l12-min-cap",
+                "metadata": {"capital_pool_id": binding["capital_pool_id"]},
+            },
+            binding_id=binding["binding_id"],
+            runtime_id=binding["runtime_id"],
+        )
+        store = InMemoryPendingSignalStore([signal])
+
+        class _RuntimeManagerClient:
+            def list_all(self):
+                return [dict(binding)]
+
+        class _TelemetryCapture:
+            enabled = True
+
+            def __init__(self) -> None:
+                self.events: List[Dict[str, Any]] = []
+
+            def build_event(
+                self,
+                event_type: str,
+                metrics: Dict[str, Any],
+                metadata: Optional[Dict[str, Any]] = None,
+                *,
+                event_id: Optional[str] = None,
+                created_at: Optional[str] = None,
+            ) -> Dict[str, Any]:
+                event_metadata = dict(metadata or {})
+                envelope = event_metadata.get("correlation_envelope")
+                sequence_no = event_metadata.get("sequence_no")
+                causal_parent_id = event_metadata.get("causal_parent_id")
+                payload: Dict[str, Any] = {
+                    "event_id": event_id,
+                    "event_type": event_type,
+                    "created_at": created_at,
+                    "metrics": dict(metrics),
+                    "metadata": event_metadata,
+                }
+                if (
+                    isinstance(envelope, dict)
+                    and isinstance(sequence_no, int)
+                    and event_id
+                    and created_at
+                    and causal_parent_id
+                ):
+                    outgoing_envelope = propagate_envelope(
+                        envelope,
+                        producer="execution.paper_runtime",
+                        event_id=event_id,
+                        event_time=created_at,
+                    )
+                    payload.update(
+                        {
+                            "aggregate_type": "trade_journey",
+                            "aggregate_id": outgoing_envelope["journey_id"],
+                            "sequence_no": sequence_no,
+                            "causal_parent_id": causal_parent_id,
+                            "correlation_envelope": outgoing_envelope,
+                        }
+                    )
+                return payload
+
+            def emit_payload(self, payload: Dict[str, Any]) -> bool:
+                self.events.append(json.loads(json.dumps(dict(payload))))
+                return True
+
+            def emit(
+                self,
+                event_type: str,
+                metrics: Dict[str, Any],
+                metadata: Optional[Dict[str, Any]] = None,
+            ) -> bool:
+                self.events.append(
+                    {
+                        "event_type": event_type,
+                        "metrics": dict(metrics),
+                        "metadata": dict(metadata or {}),
+                    }
+                )
+                return True
+
+            def emit_heartbeat(self, metadata: Optional[Dict[str, Any]] = None) -> bool:
+                return self.emit("heartbeat", {"heartbeat": 1}, metadata)
+
+            def snapshot(self) -> Dict[str, Any]:
+                return {
+                    "enabled": True,
+                    "url": "memory://l12-telemetry",
+                    "sent": len(self.events),
+                    "failed": 0,
+                    "last_error": None,
+                }
+
+        telemetry = _TelemetryCapture()
+        captured_envs: List[Dict[str, str]] = []
+        runtime_snapshots: List[Dict[str, Any]] = []
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            state_root = Path(tempdir) / "paper-performance"
+            lifecycle_path = Path(tempdir) / "lifecycle-outbox.json"
+            test_case = self
+
+            class _RuntimeWorkerReconciler(PaperFleetReconciler):
+                def _fetch_fleet_state(self):
+                    return ([dict(binding)], set())
+
+                def _spawn(self, binding_id, port, env):  # noqa: ANN001
+                    test_case.assertEqual(binding_id, binding["binding_id"])
+                    worker_env = dict(env)
+                    captured_envs.append(worker_env)
+                    with patch.dict(os.environ, worker_env, clear=False):
+                        service = PaperRuntimeService(
+                            store=store,
+                            identity=RuntimeIdentity.from_env(worker_env),
+                            runtime_manager_client=_RuntimeManagerClient(),
+                            telemetry_emitter=telemetry,
+                            lifecycle_outbox_path=lifecycle_path,
+                            poll_interval_seconds=3600,
+                        )
+                        service.drain_once()
+                        # A single fully delivered run is flushed immediately;
+                        # this is the normal rebalance completion boundary.
+                        service._consumer.flush_rebalance(
+                            signal["run_id"], service._algo
+                        )
+                        store.enqueue(dict(signal))
+                        runtime_snapshots.append(service.drain_once())
+                    return _FakeProcess(pid=1701)
+
+            reconciler = _RuntimeWorkerReconciler(
+                runtime_manager_url="http://runtime-manager.test",
+                runtime_manager_token="runtime-control-token",
+                worker_base_port=9130,
+                poll_interval_seconds=999,
+                performance_state_root=str(state_root),
+                leader_store=_unit_leader_store(),
+                extra_env={
+                    "PANTHEON_RUNTIME_ROLE": "pantheon-paper-execution-runtime",
+                    "PANTHEON_WORKSPACE_REF": "workspace-l12-paper",
+                    "PANTHEON_AUTH_PROFILE_REF": "auth-profile-l12-paper",
+                    "PANTHEON_SESSION_ID": "session-l12-paper",
+                    "PANTHEON_TRACE_ID": str(uuid.uuid4()),
+                    "PANTHEON_REQUEST_ID": "request-l12-paper",
+                },
+            )
+            fleet_snapshot = reconciler.reconcile_once()
+
+            self.assertEqual(fleet_snapshot["worker_count"], 1)
+            self.assertEqual(fleet_snapshot["running_count"], 1)
+            self.assertEqual(len(captured_envs), 1)
+            worker_env = captured_envs[0]
+            self.assertEqual(
+                worker_env["PANTHEON_SIGNAL_QUEUE_KEY"],
+                "pantheon:signals:pending:binding-l12-min-cap",
+            )
+            self.assertEqual(
+                worker_env["PANTHEON_RUNTIME_BINDING_ID"], binding["binding_id"]
+            )
+
+            self.assertEqual(len(runtime_snapshots), 1)
+            runtime_snapshot = runtime_snapshots[0]
+            self.assertEqual(runtime_snapshot["status"], "ok")
+            positions = runtime_snapshot["paper_state"]["positions"]
+            self.assertEqual(len(positions), 1)
+            self.assertEqual(positions[0]["quantity"], 2.0)
+            self.assertEqual(runtime_snapshot["paper_state"]["execution_event_count"], 2)
+            recent_event_types = [
+                event["event_type"]
+                for event in runtime_snapshot["paper_state"]["recent_order_events"]
+            ]
+            self.assertEqual(
+                recent_event_types,
+                ["paper_fill_simulated", "paper_order_simulated"],
+            )
+            duplicate_event = runtime_snapshot["paper_state"]["recent_order_events"][-1]
+            self.assertEqual(
+                duplicate_event["metadata"]["noop_reason"], "duplicate_signal_id"
+            )
+            self.assertEqual(
+                duplicate_event["metadata"]["duplicate_signal_id"],
+                signal["signal_id"],
+            )
+
+            ledger_path = Path(worker_env["PANTHEON_PERFORMANCE_STATE_PATH"])
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+            self.assertEqual(ledger["binding_id"], binding["binding_id"])
+            self.assertEqual(ledger["fill_count"], 1)
+            self.assertEqual(ledger["holdings"]["AAPL"], 2.0)
+
+        telemetry_types = [event["event_type"] for event in telemetry.events]
+        self.assertIn("paper_fill_simulated", telemetry_types)
+        self.assertIn("position_snapshot", telemetry_types)
+        fill_event = next(
+            event for event in telemetry.events
+            if event["event_type"] == "paper_fill_simulated"
+        )
+        self.assertFalse(fill_event["metadata"]["is_real_order"])
+        self.assertFalse(fill_event["metadata"]["is_real_capital"])
 
 
 class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):

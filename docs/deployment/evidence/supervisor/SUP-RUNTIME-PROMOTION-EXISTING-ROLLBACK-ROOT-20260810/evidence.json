@@ -1,0 +1,46 @@
+{
+  "task_id": "SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810",
+  "title": "Repair promotion bootstrap when rollback root already exists",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "status": "review",
+  "pr_number": 4711,
+  "pr_url": "https://github.com/ajoe734/pantheon/pull/4711",
+  "pre_evidence_implementation_head": "635d46694c3eb5ed7ffbe56790ae5515f1c9a03b",
+  "head_binding_policy": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py. This evidence manifest does not claim a commit can contain its own SHA.",
+  "changed_paths": [
+    "scripts/promote_supervisor_runtime.py",
+    "scripts/test_promote_supervisor_runtime.py",
+    "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810/evidence.json"
+  ],
+  "verification_commands": [
+    ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py -k test_materialize_immutable_rollback_runtime",
+    ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
+    "git diff --check"
+  ],
+  "verification_results": {
+    "focused_tests": "4 passed in 2.35s",
+    "full_tests": "300 passed in 71.14s",
+    "git_diff_check": "passed with 0 exit code"
+  },
+  "required_check_identities": [
+    "Commit trailers",
+    "Runtime mirror guard",
+    "Smoke acceptance",
+    "Pantheon canonical review gate"
+  ],
+  "dependency_and_merge_order": {
+    "depends_on_pr": "#4704",
+    "depends_on_commit": "f8c212d522191ede34c76015940b81fbe01ac6da",
+    "merge_order": "Merge after #4704",
+    "target_branch": "dev"
+  },
+  "no_live_rollout_boundary": "Only repairs same-root immutable rollback runtime materialization in scripts/promote_supervisor_runtime.py without executing live rollout or supervisor process restart.",
+  "normal_revert_plan": "Revert the commit on dev if candidate runtime identity verification or rollback materialization behavior regresses.",
+  "abort_evidence_and_root_analysis": {
+    "abort_reason": "Controlled promotion of dev merge f8c212d5 aborted before changing config because legacy mutable incumbent already occupied command-runtimes/5877... and materialize_immutable_rollback_runtime failed to handle existing same-root destination.",
+    "safety_analysis": "Reusing existing destination is safe ONLY if candidate identity matches snapshot (same root, same device/inode, same head commit, same tree identity, same accepted dev commit, same repo) and passes verify_immutable_snapshot(). Moving running root or accepting arbitrary existing roots remains unsafe and rejected."
+  },
+  "review_status": "pending_independent_review",
+  "reviewed_at": null
+}

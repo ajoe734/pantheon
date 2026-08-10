@@ -1,0 +1,37 @@
+{
+  "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-REVIEW-EVIDENCE-20260810",
+  "task_title": "Publish immutable review evidence for merged poll fail-open fix",
+  "evidence_version": "1.0",
+  "created_at": "2026-08-10T02:24:30Z",
+  "summary": "Pre-review proof and evidence binding for merged PR #4697 poll-worker fail-open source change. Legacy unpushed commit 0b690f019 is contained audit residue.",
+  "original_delivery": {
+    "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+    "pull_request": "https://github.com/ajoe734/pantheon/pull/4697",
+    "pull_request_number": 4697,
+    "reviewed_head_sha": "cc6b989a0ec1cce0d5271efad519ecd0b755059f",
+    "merge_commit_sha": "d27998250cac46c2d56b8b63e1784cd5cadeac19",
+    "changed_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py"
+    ]
+  },
+  "verification": {
+    "focused_tests": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q .orchestrator/test_supervisor.py -k \"test_prune_event_queue_drops_finished_retry_workers_without_processes\" && \"$PANTHEON_PY\" -m pytest -q scripts/test_promote_supervisor_runtime.py -k \"test_evaluate_promotion_invariants_accepts_retry_backoff_worker\" (2 passed)",
+    "full_supervisor_suite": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest .orchestrator/test_supervisor.py scripts/test_promote_supervisor_runtime.py (899 passed)",
+    "whitespace_check": "git diff --check (clean)",
+    "python_environment_provisioning": "python3 scripts/dev/provision_python_distribution.py (passed)"
+  },
+  "containment_audit": {
+    "legacy_worker_unpushed_commit": "0b690f019",
+    "containment_status": "contained_audit_residue",
+    "action": "Do not recover, push, or merge 0b690f019. Legacy task is superseded for audit safety."
+  },
+  "rollout_and_rollback": {
+    "scope": "evidence_only",
+    "merge_order": "PR into dev",
+    "live_runtime_rollout": false,
+    "rollback_plan": "Revert PR if evidence facts are found incorrect."
+  }
+}

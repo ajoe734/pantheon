@@ -1,0 +1,62 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "L12-MIN-CONS-20260808",
+    "title": "Register and run one consultation request to a terminal memo",
+    "phase": "M1 loop closure",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-MIN-CONS-20260808",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CONS-20260808/evidence.json",
+    "overall_admission": "review_approved"
+  },
+  "scope": {
+    "owned_layer": "Consultation request registration and durable workflow execution to a terminal ConsultMemo and acknowledged handoff",
+    "not_changing": "Shared Compose activation, governance policy, live broker authority",
+    "implementation_changed_files": [
+      "services/consultation/supervisor.py",
+      "services/consultation/workflow_executor.py",
+      "services/consultation/test_workflow_executor.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CONS-20260808/evidence.json"
+    ]
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Reuse the existing consultation reconciler.",
+      "status": "pass",
+      "evidence_refs": ["services/consultation/workflow_executor.py"]
+    },
+    {
+      "id": "AC2",
+      "statement": "Run one ConsultRequest to a persisted terminal ConsultMemo or outcome.",
+      "status": "pass",
+      "evidence_refs": ["services/consultation/test_workflow_executor.py"]
+    },
+    {
+      "id": "AC3",
+      "statement": "Expose the terminal identifier for Promotion/Deployment input.",
+      "status": "pass",
+      "evidence_refs": ["services/consultation/workflow_executor.py"]
+    },
+    {
+      "id": "AC4",
+      "statement": "Do not add broad governance or security work.",
+      "status": "pass",
+      "evidence_refs": ["services/consultation/supervisor.py"]
+    }
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest services/consultation/test_workflow_executor.py",
+        "result": "pass",
+        "conclusion": "11 passed in 11.23s"
+      }
+    ]
+  }
+}
