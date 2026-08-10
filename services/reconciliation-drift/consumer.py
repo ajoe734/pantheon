@@ -73,6 +73,35 @@ def _next_id(prefix: str, timestamp: str, existing: set[str]) -> str:
     return candidate
 
 
+def _terminal_incident_ids(response: dict[str, Any]) -> list[str]:
+    """Extract the durable incident references handed to Evolution.
+
+    Reconciliation can receive either the direct telemetry-consume response
+    (``incident_cases``) or a scheduler-shaped response (``incident_ids``).
+    Preserve response order while deduplicating so one event retry cannot
+    create a second Evolution input reference.
+    """
+    values: list[Any] = []
+    for field in ("terminal_incident_id", "incident_id"):
+        values.append(response.get(field))
+    for field in ("terminal_incident_ids", "incident_ids"):
+        raw = response.get(field)
+        if isinstance(raw, list):
+            values.extend(raw)
+    incident_cases = response.get("incident_cases")
+    if isinstance(incident_cases, list):
+        for case in incident_cases:
+            if isinstance(case, dict):
+                values.append(case.get("incident_id") or case.get("id"))
+
+    result: list[str] = []
+    for value in values:
+        incident_id = str(value or "").strip()
+        if incident_id and incident_id not in result:
+            result.append(incident_id)
+    return result
+
+
 def _status_rank(status: str) -> int:
     return {"ok": 0, "warning": 1, "critical": 2}.get(status, 0)
 
@@ -976,6 +1005,7 @@ def run_runtime_summary_consumer_once(
     delivery_errors: list[dict[str, Any]] = []
     drift_report_count = 0
     incident_case_count = 0
+    terminal_incident_ids: list[str] = []
     for key, record in list(state.pending.items()):
         while int(record.get("attempt_count") or 0) < max_attempts:
             record["attempt_count"] = int(record.get("attempt_count") or 0) + 1
@@ -991,11 +1021,16 @@ def run_runtime_summary_consumer_once(
             delivered_count += 1
             drift_report_count += int(response.get("drift_report_count") or 0)
             incident_case_count += int(response.get("incident_case_count") or 0)
+            event_terminal_incident_ids = _terminal_incident_ids(response)
+            for incident_id in event_terminal_incident_ids:
+                if incident_id not in terminal_incident_ids:
+                    terminal_incident_ids.append(incident_id)
             state.completed[key] = {
                 "completed_at": observed_at,
                 "attempt_count": record["attempt_count"],
                 "tenant_id": record["event"].get("tenant_id"),
                 "event_id": record["event"].get("event_id"),
+                "terminal_incident_ids": event_terminal_incident_ids,
             }
             del state.pending[key]
             state.save()
@@ -1042,6 +1077,10 @@ def run_runtime_summary_consumer_once(
         "delivered_event_count": delivered_count,
         "drift_report_count": drift_report_count,
         "incident_case_count": incident_case_count,
+        "terminal_incident_ids": terminal_incident_ids,
+        "terminal_incident_id": (
+            terminal_incident_ids[0] if len(terminal_incident_ids) == 1 else None
+        ),
         "pending_count": len(state.pending),
         "dead_letter_count": len(state.dead_letters),
         "backlog_count": backlog_count,

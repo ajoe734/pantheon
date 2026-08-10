@@ -149,6 +149,8 @@ def test_incident_listener_tick_triggers_reconciliation_without_manual_scheduled
     assert result["status"] == "ok"
     assert result["fetched_incident_count"] == 1
     assert result["triggered_incident_count"] == 1
+    assert result["terminal_incident_ids"] == ["inc-heartbeat-loss-001"]
+    assert result["terminal_incident_id"] == "inc-heartbeat-loss-001"
     fetch.assert_called_once_with(incidents_url="http://incidents:8090", timeout_seconds=30.0)
     post.assert_called_once_with(
         reconciliation_url="http://reconciliation-drift-svc:8102",
