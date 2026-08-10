@@ -6708,3 +6708,10 @@ def test_mutable_incumbent_bootstrap_rejects_missing_commit_object(
             binding=binding,
             expected_head=non_existent_head,
         )
+
+
+def test_allow_generated_untracked_logs_and_mutable_incumbent_task_briefs_prefix() -> None:
+    assert promotion.PurePosixPath(".orchestrator/logs") in promotion.ALLOWED_GENERATED_UNTRACKED_FILES
+    assert promotion.PurePosixPath(".orchestrator/task-briefs") in promotion.MUTABLE_INCUMBENT_IGNORED_RUNTIME_PREFIXES
+    assert promotion._is_allowed_generated_untracked_path(".orchestrator/logs")
+    assert promotion._is_allowed_mutable_incumbent_ignored_runtime_path(".orchestrator/task-briefs/some_brief.md")

@@ -1,0 +1,24 @@
+{
+  "task_id": "SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810",
+  "title": "Repair promotion validation for approved runtime debris and rollback snapshots",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "status": "review",
+  "summary": "Repaired promotion validation cleanliness checks to allow .orchestrator/logs in ALLOWED_GENERATED_UNTRACKED_FILES and added .orchestrator/task-briefs to MUTABLE_INCUMBENT_IGNORED_RUNTIME_PREFIXES for rollback snapshot materialization.",
+  "verifications": [
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
+      "outcome": "276 passed in 125.21s"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py -k test_allow_generated_untracked_logs_and_mutable_incumbent_task_briefs_prefix",
+      "outcome": "1 passed, 275 deselected in 2.09s"
+    }
+  ],
+  "anchor_commit": "34defee91d9f48162fe7352ffdbef77b8ed71462",
+  "exact_head_sha": "34defee91d9f48162fe7352ffdbef77b8ed71462",
+  "files_changed": [
+    "scripts/promote_supervisor_runtime.py",
+    "scripts/test_promote_supervisor_runtime.py"
+  ]
+}
