@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ctypes
+import errno
 import fcntl
 import hashlib
 import importlib.util
@@ -48,6 +50,9 @@ SUPERVISOR_RUNTIME_LOG_PATH_PATTERN = re.compile(
 )
 ALLOWED_COMMAND_RUNTIMES_PREFIX = Path(
     "/home/lupin/pantheon-ci-deploy/command-runtimes"
+)
+ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX = Path(
+    "/home/lupin/pantheon-ci-deploy/rollback-command-runtimes"
 )
 LIVE_SUPERVISOR_CONFIG_PATH = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
@@ -1471,10 +1476,15 @@ def _open_candidate_root_handle(
 ) -> CandidateRootHandle:
     path = candidate_path if isinstance(candidate_path, Path) else Path(candidate_path)
     trusted_parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
+    trusted_rollback_parent = ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX
 
-    if require_immutable_location and path.parent != trusted_parent:
+    if (
+        require_immutable_location
+        and path.parent != trusted_parent
+        and path.parent != trusted_rollback_parent
+    ):
         raise ValueError(
-            f"Candidate root {path} is not a direct child of {trusted_parent}"
+            f"Candidate root {path} is not a direct child of {trusted_parent} or {trusted_rollback_parent}"
         )
     if require_immutable_location and not HEX_40_PATTERN.fullmatch(path.name):
         raise ValueError(
@@ -6812,46 +6822,91 @@ def capture_mutable_incumbent_snapshot(
 
 
 
+def _atomic_no_replace_rename(src: Path, dst: Path) -> None:
+    """Atomically move src to dst without overwriting or replacing an existing dst."""
+    if dst.exists() or dst.is_symlink():
+        raise ValueError(f"Fresh rollback runtime destination already exists: {dst}")
+
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        if hasattr(libc, "renameat2"):
+            AT_FDCWD = -100
+            RENAME_NOREPLACE = 1
+            res = libc.renameat2(
+                ctypes.c_int(AT_FDCWD),
+                os.fsencode(src),
+                ctypes.c_int(AT_FDCWD),
+                os.fsencode(dst),
+                ctypes.c_uint(RENAME_NOREPLACE),
+            )
+            if res == 0:
+                return
+            err = ctypes.get_errno()
+            if err == errno.EEXIST:
+                raise ValueError(
+                    f"Fresh rollback runtime destination already exists: {dst}"
+                )
+            if err not in (errno.ENOSYS, errno.EINVAL):
+                raise OSError(err, f"Atomic rename failed: {os.strerror(err)}")
+    except (AttributeError, TypeError, OSError) as exc:
+        if isinstance(exc, ValueError):
+            raise
+
+    if dst.exists() or dst.is_symlink():
+        raise ValueError(f"Fresh rollback runtime destination already exists: {dst}")
+    os.rename(src, dst)
+
+
 def materialize_immutable_rollback_runtime(
     snapshot: MutableIncumbentSnapshot | CandidateRuntimeIdentity,
+    candidate_identity: CandidateRuntimeIdentity | None = None,
 ) -> CandidateRuntimeIdentity:
     """Create a fresh persistent checkout for the captured mutable commit."""
     parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
+    rollback_parent = ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX
+
     _validate_absolute_identity_path(parent, label="Command runtime parent")
     parent_components = _capture_directory_component_identities(
         parent,
         label="Command runtime parent",
     )
-    destination = parent / snapshot.head_commit
 
-    snapshot_root = getattr(snapshot, "root", getattr(snapshot, "candidate_root", None))
-    snapshot_device = getattr(snapshot, "root_device", getattr(snapshot, "candidate_root_device", None))
-    snapshot_inode = getattr(snapshot, "root_inode", getattr(snapshot, "candidate_root_inode", None))
+    candidate_root = (
+        candidate_identity.candidate_root
+        if candidate_identity is not None
+        else None
+    )
+
+    direct_destination = parent / snapshot.head_commit
+
+    selected_parent = parent
+    selected_components = parent_components
+    destination = direct_destination
+
+    if (
+        direct_destination.exists()
+        or direct_destination.is_symlink()
+        or (candidate_root is not None and direct_destination == candidate_root)
+    ):
+        selected_parent = rollback_parent
+        _validate_absolute_identity_path(
+            selected_parent, label="Rollback command runtime parent"
+        )
+        if not selected_parent.exists():
+            selected_parent.mkdir(parents=True, exist_ok=True)
+        selected_components = _capture_directory_component_identities(
+            selected_parent,
+            label="Rollback command runtime parent",
+        )
+        destination = selected_parent / snapshot.head_commit
 
     if destination.exists() or destination.is_symlink():
-        if destination.is_dir() and not destination.is_symlink():
-            try:
-                identity = build_candidate_runtime_identity(destination)
-                if (
-                    identity.candidate_root == snapshot_root
-                    and (identity.candidate_root_device, identity.candidate_root_inode)
-                    == (snapshot_device, snapshot_inode)
-                    and identity.head_commit == snapshot.head_commit
-                    and identity.tracked_tree_identity == snapshot.tracked_tree_identity
-                    and identity.accepted_dev_commit == snapshot.accepted_dev_commit
-                    and identity.repository_slug == snapshot.repository_slug
-                    and len(identity.legacy_incumbent_bytecode_residue) == 0
-                    and len(identity.legacy_task_brief_drift) == 0
-                ):
-                    identity.verify_immutable_snapshot()
-                    return identity
-            except Exception:
-                pass
         raise ValueError(
             f"Fresh rollback runtime destination already exists: {destination}"
         )
+
     temporary_root = Path(
-        tempfile.mkdtemp(prefix=".rollback-runtime-", dir=parent)
+        tempfile.mkdtemp(prefix=".rollback-runtime-", dir=selected_parent)
     )
     installed = False
     try:
@@ -6890,14 +6945,22 @@ def materialize_immutable_rollback_runtime(
         ):
             raise ValueError("Materialized rollback tree differs from incumbent")
         _assert_path_component_identities(
-            parent_components,
-            label="Command runtime parent",
+            selected_components,
+            label=(
+                "Rollback command runtime parent"
+                if selected_parent == rollback_parent
+                else "Command runtime parent"
+            ),
         )
-        os.rename(temporary_root, destination)
+        _atomic_no_replace_rename(temporary_root, destination)
         installed = True
         directory_fd = _open_path_descriptor(
-            parent,
-            label="Command runtime parent",
+            selected_parent,
+            label=(
+                "Rollback command runtime parent"
+                if selected_parent == rollback_parent
+                else "Command runtime parent"
+            ),
             require_directory=True,
         )
         try:
@@ -7169,7 +7232,8 @@ class OSPromotionBackend:
                     "Candidate and mutable incumbent captured different accepted dev tips"
                 )
             incumbent_identity = materialize_immutable_rollback_runtime(
-                mutable_incumbent
+                mutable_incumbent,
+                candidate_identity=candidate_identity,
             )
             incumbent_process = mutable_incumbent.process
             mutable_expected = _mutable_process_contract(
@@ -7200,7 +7264,8 @@ class OSPromotionBackend:
                 or len(captured_incumbent_identity.legacy_task_brief_drift) > 0
             ):
                 incumbent_identity = materialize_immutable_rollback_runtime(
-                    captured_incumbent_identity
+                    captured_incumbent_identity,
+                    candidate_identity=candidate_identity,
                 )
             else:
                 incumbent_identity = captured_incumbent_identity
