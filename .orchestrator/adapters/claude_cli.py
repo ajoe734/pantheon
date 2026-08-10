@@ -190,6 +190,13 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
         if mcp_config:
             command.extend(["--mcp-config", str(config_path(self.config, "claude_mcp_config"))])
 
+        model = runtime.get("model")
+        if model:
+            command.extend(["--model", str(model)])
+        effort = runtime.get("effort")
+        if effort:
+            command.extend(["--effort", str(effort)])
+
         run_id = new_runtime_id(provider_id)
         log_path = runtime_log_path(provider_id, request.agent_id)
         runtime_paths = worker_runtime_paths(self.config, run_id)
