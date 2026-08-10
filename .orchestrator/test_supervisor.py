@@ -366,7 +366,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         handle.flush()
         handle.close()
         self.addCleanup(Path(handle.name).unlink, missing_ok=True)
-        worker: dict[str, object] = {"log_path": handle.name, "provider": provider}
+        worker: dict[str, object] = {"log_path": handle.name, "provider": provider, "stream_json": True}
         if runner_failed:
             worker.update({"runner_status": "failed", "exit_code": 1})
         return worker
@@ -388,38 +388,36 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_detects_real_model_availability_failure(self) -> None:
+        line = '{"type":"result","is_error":true,"result":"Error: Model \\"grok-code-fast-1\\" from --model flag is not available."}'
         worker = self._worker_for_log(
-            'Error: Model "grok-code-fast-1" from --model flag is not available.\n',
+            line + "\n",
             runner_failed=True,
         )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
-            'Error: Model "grok-code-fast-1" from --model flag is not available.',
+            line,
         )
 
     def test_detects_real_gemini_quota_failure(self) -> None:
+        line = (
+            '{"type":"result","is_error":true,"result":'
+            '"Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",'
+            '"reason":"QUOTA_EXHAUSTED"}'
+        )
         worker = self._worker_for_log(
-            "\n".join(
-                [
-                    "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",
-                    "retryDelayMs: 1807388.816191,",
-                    "reason: 'QUOTA_EXHAUSTED'",
-                    "An unexpected critical error occurred:[object Object]",
-                ]
-            )
-            + "\n",
+            line + "\n",
             provider="gemini",
             runner_failed=True,
         )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
-            "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",
+            line,
         )
 
     def test_detects_copilot_monthly_quota_failure(self) -> None:
-        line = '402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}'
+        line = '{"type":"result","is_error":true,"status":"402","error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}'
         worker = self._worker_for_log(line + "\n", provider="copilot", runner_failed=True)
 
         self.assertEqual(supervisor.detect_worker_failure(worker), line)
@@ -442,6 +440,106 @@ class DetectWorkerFailureTests(unittest.TestCase):
         )
 
         self.assertEqual(supervisor.detect_worker_failure(worker), system_line)
+
+    def test_sigterm_worker_runner_failure_ignores_transcript_auth_and_does_not_pause(self) -> None:
+        auth_line = (
+            'Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 auth: '
+            'Failed to authenticate. API Error: 401 Not authenticated'
+        )
+        # 1. runner_status="failed", exit_code=143 without runner_signal (e.g. killed by SIGTERM)
+        worker1 = self._worker_for_log(
+            auth_line + "\n",
+            provider="codex2",
+        )
+        worker1.update({"runner_status": "failed", "exit_code": 143})
+        self.assertIsNone(supervisor.detect_worker_failure(worker1))
+
+        # 2. runner_status="failed", exit_code=143, runner_signal=15
+        worker2 = self._worker_for_log(
+            auth_line + "\n",
+            provider="codex2",
+        )
+        worker2.update({"runner_status": "failed", "exit_code": 143, "runner_signal": 15})
+        self.assertIsNone(supervisor.detect_worker_failure(worker2))
+
+        config: dict[str, object] = {}
+        state: dict[str, object] = {"provider_guardrails": {"dispatch_pauses": {}}}
+
+        # 2b. runner_status="failed", exit_code=143, runner_signal=15 with a structured is_error JSON envelope
+        sigterm_json_envelope = '{"type":"result","is_error":true,"result":"API Error: 401 Not authenticated"}'
+        worker_sigterm_json = self._worker_for_log(
+            sigterm_json_envelope + "\n",
+            provider="codex2",
+        )
+        worker_sigterm_json.update({"runner_status": "failed", "exit_code": 143, "runner_signal": 15})
+        self.assertEqual(supervisor.detect_worker_failure(worker_sigterm_json), sigterm_json_envelope)
+        self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, worker_sigterm_json))
+
+        # 3. Generic non-provider exit (runner_status="failed", exit_code=1) with transcript source snippet
+        worker3 = self._worker_for_log(
+            auth_line + "\n",
+            provider="codex2",
+        )
+        worker3.update({"runner_status": "failed", "exit_code": 1})
+        self.assertIsNone(supervisor.detect_worker_failure(worker3))
+
+        # 3b. Generic non-provider exit (exit_code=1) with non-authoritative prompt/source/assistant lines starting with 'Error:' or 'API Error:'
+        provider_looking_lines = [
+            "Error: invalid authentication credentials",
+            "API Error: 401 Unauthorized request in source snippet",
+            "reason: 'QUOTA_EXHAUSTED' in docstring fixture",
+            "status: 401 authentication failed",
+        ]
+        for line_text in provider_looking_lines:
+            w_plain = self._worker_for_log(line_text + "\n", provider="codex2")
+            w_plain.update({"runner_status": "failed", "exit_code": 1})
+            self.assertIsNone(supervisor.detect_worker_failure(w_plain))
+            self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, w_plain))
+
+            w_assistant = self._worker_for_log(
+                json.dumps({"type": "assistant", "message": {"role": "assistant", "content": line_text}}) + "\n",
+                provider="codex2",
+            )
+            w_assistant.update({"runner_status": "failed", "exit_code": 1})
+            self.assertIsNone(supervisor.detect_worker_failure(w_assistant))
+            self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, w_assistant))
+
+        # 3c. Unprovenanced standalone JSON lines with stream_json=False / structured_stream=False are ignored even if type=result and is_error=true
+        standalone_err = '{"type":"result","is_error":true,"result":"Error: 401 Not authenticated in standalone JSON fixture"}'
+        w_unprovenanced = self._worker_for_log(standalone_err + "\n", provider="codex2")
+        w_unprovenanced.update({"runner_status": "failed", "exit_code": 1, "stream_json": False})
+        self.assertIsNone(supervisor.detect_worker_failure(w_unprovenanced))
+
+        # 3d. Generic failed worker with no stream_json or structured_stream metadata returns None without manually setting stream_json=False
+        w_default_shape = {"log_path": w_unprovenanced["log_path"], "provider": "codex2", "runner_status": "failed", "exit_code": 1}
+        self.assertIsNone(supervisor.detect_worker_failure(w_default_shape))
+
+        # 4. Verify pause_dispatch_for_reaped_worker path returns None for worker1, worker2, and worker3
+        self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, worker1))
+        self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, worker2))
+        self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, worker3))
+        self.assertEqual(state.get("provider_guardrails", {}).get("dispatch_pauses", {}), {})
+
+        # 5. Verify structured JSON provider envelope still detects failure and pauses dispatch when exit_code=1 and stream_json=True
+        auth_envelope = '{"type":"result","is_error":true,"result":"API Error: 401 Not authenticated"}'
+        authoritative_worker = self._worker_for_log(
+            auth_envelope + "\n",
+            provider="codex2",
+        )
+        authoritative_worker.update({"runner_status": "failed", "exit_code": 1, "stream_json": True})
+        self.assertEqual(supervisor.detect_worker_failure(authoritative_worker), auth_envelope)
+        config_with_paths: dict[str, object] = {
+            "provider_guardrails": {"auth_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value="ref-1"),
+        ):
+            paused_reason = supervisor.pause_dispatch_for_reaped_worker(config_with_paths, state, authoritative_worker)
+        self.assertEqual(paused_reason, auth_envelope)
+        self.assertIn("codex2", state.get("provider_guardrails", {}).get("dispatch_pauses", {}))
+
 
     def test_ignores_auth_text_inside_tool_result_user_message(self) -> None:
         worker = self._worker_for_log(
@@ -543,18 +641,19 @@ class DetectWorkerFailureTests(unittest.TestCase):
                 },
             }
         )
-        worker = self._worker_for_log(line + "\n", provider="claude")
+        worker = self._worker_for_log(line + "\n", provider="claude", runner_failed=True)
 
         self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_detects_real_no_quota_line(self) -> None:
+        line = '{"type":"result","is_error":true,"result":"402 You have no quota"}'
         worker = self._worker_for_log(
-            "402 You have no quota\n",
+            line + "\n",
             provider="copilot",
             runner_failed=True,
         )
 
-        self.assertEqual(supervisor.detect_worker_failure(worker), "402 You have no quota")
+        self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_ignores_git_fatal_from_tool_command_output(self) -> None:
         worker = self._worker_for_log(
@@ -574,9 +673,10 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_detects_standalone_fatal_line(self) -> None:
-        worker = self._worker_for_log("fatal: provider process crashed\n", runner_failed=True)
+        line = '{"type":"result","is_error":true,"result":"fatal: provider process crashed"}'
+        worker = self._worker_for_log(line + "\n", runner_failed=True)
 
-        self.assertEqual(supervisor.detect_worker_failure(worker), "fatal: provider process crashed")
+        self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_ignores_log_search_result_json_that_mentions_quota(self) -> None:
         worker = self._worker_for_log(
@@ -629,8 +729,6 @@ class DetectWorkerFailureTests(unittest.TestCase):
             "TerminalQuotaError: You have exhausted your capacity on this model.",
             '402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}',
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits.",
-            '{"type":"result","subtype":"error_during_execution","is_error":true,'
-            '"result":"You\'ve hit your weekly limit · resets Jun 8, 12pm (UTC)"}',
         )
 
         for captured_line in captured_lines:
@@ -649,8 +747,18 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
     def test_authoritative_terminal_envelopes_preserve_failure_classes(self) -> None:
         cases = (
-            ("claude", "status: 401 unauthorized", True, "auth"),
-            ("gemini", "status: 429 RESOURCE_EXHAUSTED", True, "capacity_retryable"),
+            (
+                "claude",
+                json.dumps({"type": "system", "subtype": "api_error", "error_status": 401, "error": "unauthorized"}),
+                True,
+                "auth",
+            ),
+            (
+                "gemini",
+                json.dumps({"type": "system", "subtype": "api_retry", "error_status": 429, "error": "RESOURCE_EXHAUSTED"}),
+                True,
+                "capacity_retryable",
+            ),
             (
                 "claude",
                 json.dumps(
@@ -662,10 +770,15 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     },
                     separators=(",", ":"),
                 ),
-                False,
+                True,
                 "quota_terminal",
             ),
-            ("codex", "fatal: provider process crashed", True, "terminal"),
+            (
+                "codex",
+                json.dumps({"type": "result", "is_error": True, "error": "fatal: provider process crashed"}),
+                True,
+                "terminal",
+            ),
         )
 
         for provider, line, runner_failed, expected_kind in cases:
@@ -782,27 +895,137 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertFalse(result["transient"])
 
     def test_detects_codex_usage_limit_line_as_worker_failure(self) -> None:
+        line = '{"type":"result","is_error":true,"result":"ERROR: You\'ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM."}'
         worker = self._worker_for_log(
-            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.\n",
+            line + "\n",
             runner_failed=True,
         )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
-            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
+            line,
         )
 
     def test_detects_claude_weekly_rate_limit_line_as_worker_failure(self) -> None:
+        line = '{"type":"result","is_error":true,"result":"rate_limit: You\'ve hit your weekly limit · resets Jun 8, 12pm (UTC)"}'
         worker = self._worker_for_log(
-            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)\n",
+            line + "\n",
             provider="claude",
             runner_failed=True,
         )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
-            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+            line,
         )
+
+    def test_terminated_runner_never_promotes_transcript_quota_text(self) -> None:
+        """SIGTERM/preempted worker (runner_status=terminated, exit_code=143) must not scan transcript plaintext for provider failures."""
+        worker = self._worker_for_log(
+            "ERROR: You've hit your usage limit.\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "terminated", "exit_code": 143})
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_captured_live_sigterm_codex1_auth_source_line_does_not_pause(self) -> None:
+        """Replay codex-20260809T144540Z SIGTERM auth source-line event: quoted auth pattern in source code line under SIGTERM must not detect failure or pause codex1."""
+        auth_source_line = 'def is_auth_error(text: str) -> bool: return "invalid_api_key" in text or "unauthorized" in text'
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "Working on task...",
+                    auth_source_line,
+                    "Worker interrupted by supervisor SIGTERM",
+                ]
+            )
+            + "\n",
+            provider="codex",
+        )
+        worker.update({"agent_id": "codex1", "runner_status": "terminated", "exit_code": 143, "status": "failed"})
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNone(detected)
+
+        # When no failure was detected in transcript, failure classification returns None for empty reason
+        failure = supervisor.classify_worker_failure({}, worker, detected)
+        self.assertIsNone(failure)
+
+    def test_codex_production_shape_genuine_quota_failure_pauses(self) -> None:
+        """Codex worker with actual-style exec command and structured quota result envelope detects failure and pauses dispatch."""
+        quota_line = (
+            '{"type":"result","is_error":true,"result":'
+            '"Error: You have exhausted your capacity on this model. Your quota will reset after 89h52m2s."}'
+        )
+        handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)
+        handle.write(quota_line + "\n")
+        handle.flush()
+        handle.close()
+        self.addCleanup(Path(handle.name).unlink, missing_ok=True)
+
+        worker = {
+            "log_path": handle.name,
+            "provider": "codex",
+            "agent_id": "codex2",
+            "mode": "codex",
+            "command": [
+                "codex",
+                "exec",
+                "-C",
+                "/tmp/pantheon",
+                "-c",
+                'ask_for_approval="never"',
+                "-s",
+                "workspace-write",
+                "--skip-git-repo-check",
+                "do task",
+            ],
+            "runner_status": "failed",
+            "exit_code": 1,
+            "status": "failed",
+            "stream_json": True,
+        }
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNotNone(detected)
+
+        failure = supervisor.classify_worker_failure({}, worker, detected)
+        self.assertIsNotNone(failure)
+        self.assertEqual(failure["kind"], "quota_terminal")
+
+    def test_codex_production_shape_generic_exit_code_1_without_envelope_returns_none(self) -> None:
+        """Codex worker with exit_code=1 but without structured provider error envelope does not trigger false positive failure."""
+        handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)
+        handle.write("Tool execution failed: pytest failed\n")
+        handle.flush()
+        handle.close()
+        self.addCleanup(Path(handle.name).unlink, missing_ok=True)
+
+        worker = {
+            "log_path": handle.name,
+            "provider": "codex",
+            "agent_id": "codex2",
+            "mode": "codex",
+            "command": [
+                "codex",
+                "exec",
+                "-C",
+                "/tmp/pantheon",
+                "-c",
+                'ask_for_approval="never"',
+                "-s",
+                "workspace-write",
+                "--skip-git-repo-check",
+                "do task",
+            ],
+            "runner_status": "failed",
+            "exit_code": 1,
+            "status": "failed",
+        }
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNone(detected)
 
     def test_classifies_gemini_auth_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
@@ -962,10 +1185,11 @@ class DetectWorkerFailureTests(unittest.TestCase):
     def test_pause_dispatch_for_reaped_worker_quota_log_pauses_for_hint(self) -> None:
         from datetime import datetime, timezone
 
-        worker = self._worker_for_log(
-            "Error: You have exhausted your capacity on this model. "
-            "Your quota will reset after 89h52m2s.\n"
+        quota_line = (
+            '{"type":"result","is_error":true,"result":'
+            '"Error: You have exhausted your capacity on this model. Your quota will reset after 89h52m2s."}'
         )
+        worker = self._worker_for_log(quota_line + "\n")
         worker.update(
             {
                 "provider": "antigravity",
@@ -22495,13 +22719,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             )
             log_path = root / "gemini-quota.log"
             log_path.write_text(
-                "\n".join(
-                    [
-                        "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",
-                        "reason: 'QUOTA_EXHAUSTED'",
-                    ]
-                )
-                + "\n",
+                '{"type":"result","is_error":true,"result":"Error when talking to Gemini API TerminalQuotaError: You have exhausted your capacity on this model.","reason":"QUOTA_EXHAUSTED"}\n',
                 encoding="utf-8",
             )
             state = {
@@ -22513,6 +22731,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                         "status": "running",
                         "provider": "gemini",
                         "agent_id": "gemini",
+                        "stream_json": True,
                         "task_id": "OPS-LEASE-003",
                         "queue_event_id": "evt-gemini",
                         "pid": 987654,
@@ -23495,7 +23714,7 @@ class AllowedRateLimitNoticeTests(unittest.TestCase):
         self.addCleanup(os.unlink, handle.name)
         with handle:
             handle.write("\n".join(lines) + "\n")
-        return {"run_id": "claude1-2-run", "provider": "claude1-2", "log_path": handle.name}
+        return {"run_id": "claude1-2-run", "provider": "claude1-2", "log_path": handle.name, "runner_status": "failed", "exit_code": 1, "stream_json": True}
 
     def test_allowed_warning_event_is_not_detected_as_worker_failure(self) -> None:
         worker = self._worker_with_log(

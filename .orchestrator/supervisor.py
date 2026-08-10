@@ -423,7 +423,7 @@ NONTHROTTLING_RATE_LIMIT_LINE_PATTERN = re.compile(
     r'"status"\s*:\s*"(?:allowed|allowed_warning)"',
     re.IGNORECASE,
 )
-RUNNER_FAILURE_STATUSES = frozenset({"error", "failed", "terminated"})
+RUNNER_FAILURE_STATUSES = frozenset({"error", "failed"})
 PROVIDER_STREAM_FAILURE_STATUSES = frozenset(
     {"blocked", "denied", "error", "failed", "rate_limited", "rejected"}
 )
@@ -5911,6 +5911,20 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
                 break
 
 
+def worker_was_terminated_by_sigterm(worker: dict[str, Any]) -> bool:
+    """Return True if worker was reaped/terminated by SIGTERM or SIGKILL signal/exit code."""
+    sig = worker.get("runner_signal")
+    if sig in {9, 15, "9", "15", "SIGKILL", "SIGTERM"}:
+        return True
+    try:
+        exit_code = int(worker.get("exit_code", 0))
+    except (TypeError, ValueError):
+        exit_code = 0
+    if exit_code in {137, 143}:
+        return True
+    return False
+
+
 def worker_has_authoritative_runner_failure(worker: dict[str, Any]) -> bool:
     """Return whether worker_runner published a terminal failure marker.
 
@@ -5921,21 +5935,33 @@ def worker_has_authoritative_runner_failure(worker: dict[str, Any]) -> bool:
     worker record by ``update_worker_runtime_markers``.
     """
 
-    return str(worker.get("runner_status") or "").strip().lower() in RUNNER_FAILURE_STATUSES
+    status = str(worker.get("runner_status") or "").strip().lower()
+    if status not in RUNNER_FAILURE_STATUSES:
+        return False
+    return not worker_was_terminated_by_sigterm(worker)
 
 
 def worker_uses_structured_provider_stream(worker: dict[str, Any]) -> bool:
-    """Return whether top-level JSON lines are provider stream envelopes."""
+    """Return whether top-level JSON lines are provenanced provider stream envelopes.
 
-    provider = str(worker.get("provider") or worker.get("agent_id") or "").strip().lower()
-    mode = str(worker.get("mode") or "").strip().lower()
-    if provider.startswith(("claude", "qwen")) or mode in {"claude_cli", "qwen"}:
-        return True
-    command = worker.get("command")
-    if not isinstance(command, list):
+    Requires explicit stream_json command flag, provider stream configuration, or known
+    structured-stream CLI modes when stream_json or structured_stream is explicitly enabled
+    (or when command flags like --output-format stream-json or --json are present).
+    """
+
+    if worker.get("stream_json") is False or worker.get("structured_stream") is False:
         return False
-    normalized = [str(part).strip().lower() for part in command]
-    return "--output-format" in normalized and "stream-json" in normalized
+    command = worker.get("command")
+    if isinstance(command, list):
+        normalized = [str(part).strip().lower() for part in command]
+        if ("--output-format" in normalized and "stream-json" in normalized) or "--json" in normalized:
+            return True
+    if bool(worker.get("stream_json") or worker.get("structured_stream") or worker.get("provider_uses_stream_json")):
+        return True
+    mode = str(worker.get("mode") or "").strip().lower()
+    if mode in {"claude_cli", "qwen", "stream_json"}:
+        return True
+    return False
 
 
 def is_authoritative_provider_failure_envelope(
@@ -5994,6 +6020,16 @@ def is_runner_gated_provider_error_envelope(
     )
 
 
+def is_runner_owned_provider_failure_line(line: str) -> bool:
+    """Plain-text transcript lines are mixed-trust content and never authoritative evidence.
+
+    Worker log files combine runner stdout/stderr, assistant output, user prompts,
+    tool output, and source code. Plain-text lines carry no per-line provenance and
+    must not be treated as authoritative provider failure evidence regardless of prefix.
+    """
+    return False
+
+
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     log_path_value = worker.get("log_path")
     if not log_path_value:
@@ -6007,7 +6043,7 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         return None
 
     runner_failed = worker_has_authoritative_runner_failure(worker)
-    fallback: str | None = None
+    is_sigterm = worker_was_terminated_by_sigterm(worker)
     for idx in range(len(lines) - 1, -1, -1):
         line = lines[idx]
         stripped = line.strip()
@@ -6022,7 +6058,7 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         if isinstance(stream_payload, dict):
             if is_authoritative_provider_failure_envelope(worker, stream_payload):
                 return stripped
-            if runner_failed and is_runner_gated_provider_error_envelope(worker, stream_payload):
+            if runner_failed and not is_sigterm and is_runner_gated_provider_error_envelope(worker, stream_payload):
                 return stripped
             if is_captured_orchestrator_record(stream_payload):
                 continue
@@ -6033,36 +6069,9 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
             if stream_payload.get("type") == "user" or role == "user":
                 continue
             # A top-level JSON object which is not one of the provider control
-            # envelopes above is transcript content.  Do not regex its nested
-            # strings: assistant prose, tool results, fixtures, and source all
-            # legitimately contain words such as quota and authentication.
+            # envelopes above is transcript content. Do not inspect its nested strings.
             continue
-        if not runner_failed:
-            continue
-        if is_allowed_rate_limit_line(stripped):
-            continue
-        if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
-            continue
-        if JSON_FIELD_LINE_PATTERN.search(stripped):
-            continue
-        if SEARCH_RESULT_LOG_JSON_PATTERN.search(stripped):
-            continue
-        if is_tool_command_output_failure_line(lines, idx):
-            continue
-        if any(pattern.search(stripped) for pattern in WORKER_FAILURE_FALSE_POSITIVE_PATTERNS):
-            continue
-        if any(pattern.search(stripped) for pattern in WORKER_FAILURE_PATTERNS):
-            normalized = stripped.lower()
-            if (
-                "an unexpected critical error occurred" in normalized
-                or "[object object]" in normalized
-                or normalized.startswith("reason:")
-                or normalized.startswith("retrydelayms:")
-            ):
-                fallback = fallback or stripped
-                continue
-            return stripped
-    return fallback
+    return None
 
 
 def is_captured_orchestrator_record(payload: dict[str, Any]) -> bool:
@@ -6132,7 +6141,9 @@ def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
     return False
 
 
-def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any]:
+def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any] | None:
+    if not reason:
+        return None
     provider = str(worker.get("provider") or worker.get("agent_id") or "").strip().lower()
     normalized = str(reason or "").lower()
     retry = worker_retry_settings(config, worker.get("provider"))
@@ -7057,6 +7068,8 @@ def pause_dispatch_for_reaped_worker(
     every poll. Returns the detected reason when a pause was recorded, else
     None (caller keeps the generic lease-timeout message).
     """
+    if worker_was_terminated_by_sigterm(worker):
+        return None
     detected_reason = detect_worker_failure(worker)
     if not detected_reason:
         return None
