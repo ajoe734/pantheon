@@ -4551,6 +4551,25 @@ class RuntimeObservation:
             self.config_sha256,
         )
 
+    @property
+    def admission_identity_key(self) -> tuple[Any, ...]:
+        """Return the immutable incumbent facts that must survive admission.
+
+        State, status, and provider documents legitimately advance while a
+        rollback runtime is materialized.  The admission lock still requires
+        the incumbent process, source identity, and live configuration to be
+        exactly the prepared ones; current health invariants are re-evaluated
+        immediately before TERM.
+        """
+
+        return (
+            self.process.generation,
+            self.process.cwd,
+            self.process.cwd_commit,
+            self.process.cwd_tree,
+            self.config_sha256,
+        )
+
 
 @dataclass(frozen=True)
 class PromotionPlan:
@@ -7284,9 +7303,17 @@ class PromotionTransaction:
             )
             with lock.held():
                 locked_observation = self.backend.revalidate(plan)
-                if locked_observation.exact_snapshot_key != plan.baseline.exact_snapshot_key:
+                if locked_observation.invariant_failures:
                     raise ValueError(
-                        "Incumbent state/config/process snapshot changed before TERM"
+                        "Incumbent health invariants failed before TERM: "
+                        + ",".join(locked_observation.invariant_failures)
+                    )
+                if (
+                    locked_observation.admission_identity_key
+                    != plan.baseline.admission_identity_key
+                ):
+                    raise ValueError(
+                        "Incumbent process/config identity changed before TERM"
                     )
                 self._transition(PromotionState.ADMISSION_LOCKED)
                 self.backend.record_intent(
