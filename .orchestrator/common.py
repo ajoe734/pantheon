@@ -480,12 +480,25 @@ def relpath(path: Path) -> str:
         return str(path)
 
 
+def runtime_sidecar_dir() -> Path:
+    """Return the external sidecar root for governed runtimes when available."""
+
+    status_root_value = os.environ.get("PANTHEON_STATUS_ROOT", "").strip()
+    if not status_root_value:
+        return ORCHESTRATOR_DIR
+    status_root = Path(status_root_value).expanduser()
+    if not status_root.is_absolute():
+        raise ValueError("PANTHEON_STATUS_ROOT must be absolute for runtime sidecars")
+    return status_root / ".orchestrator"
+
+
 def evidence_dir(config: dict[str, Any]) -> Path:
     configured = config.get("paths", {}).get("evidence_dir")
-    path = resolve_path(configured) if configured else EVIDENCE_DIR
-    if path is None:
-        return EVIDENCE_DIR
-    return path
+    if configured:
+        path = resolve_path(configured)
+        if path is not None:
+            return path
+    return runtime_sidecar_dir() / "evidence"
 
 
 def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
@@ -4491,16 +4504,7 @@ def runtime_log_path(prefix: str, target: str) -> Path:
     slug = normalize_agent_id(target) or "unknown"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     suffix = uuid.uuid4().hex[:6]
-    status_root_value = os.environ.get("PANTHEON_STATUS_ROOT", "").strip()
-    if status_root_value:
-        status_root = Path(status_root_value).expanduser()
-        if not status_root.is_absolute():
-            raise ValueError("PANTHEON_STATUS_ROOT must be absolute for runtime logs")
-        log_root = status_root / ".orchestrator"
-    else:
-        # Local, non-governed invocations retain the repository-local default.
-        log_root = ORCHESTRATOR_DIR
-    return log_root / "logs" / f"{stamp}-{prefix}-{slug}-{suffix}.log"
+    return runtime_sidecar_dir() / "logs" / f"{stamp}-{prefix}-{slug}-{suffix}.log"
 
 
 def new_runtime_id(prefix: str) -> str:
