@@ -26,7 +26,8 @@
       "downstream": "L12-MIN-TELREC-20260808 consumes the emitted paper-runtime telemetry event."
     },
     "implementation_changed_files": [
-      "services/execution/runtime-manager/test_paper_fleet_reconciler.py"
+      "services/execution/runtime-manager/test_paper_fleet_reconciler.py",
+      "services/execution/lean_runtime/test_paper_runtime.py"
     ],
     "evidence_changed_files": [
       "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CAP-20260808/evidence.json"
@@ -107,6 +108,16 @@
         "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetMinimumFunctionalClosure::test_binding_starts_worker_and_duplicate_replay_keeps_one_fill",
         "result": "pass",
         "conclusion": "1 passed"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/execution/runtime-manager/test_paper_fleet_reconciler.py services/execution/lean_runtime/test_paper_runtime.py services/execution/lean_runtime/test_signal_consumer.py services/runtime-manager/test_fleet_desired_state.py",
+        "result": "pass",
+        "conclusion": "165 passed, 27 subtests passed"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m py_compile services/execution/runtime-manager/test_paper_fleet_reconciler.py services/execution/lean_runtime/paper_runtime.py services/execution/lean_runtime/signal_consumer.py services/runtime-manager/fleet_desired_state.py && git diff --check",
+        "result": "pass",
+        "conclusion": "exit 0"
       }
     ]
   },
