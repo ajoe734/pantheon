@@ -1791,6 +1791,7 @@ def worker_execution_context_files(task_id: str | None) -> list[str]:
     for relative_path in (
         ".orchestrator/skills/worker-anchor-commit.md",
         ".orchestrator/skills/task-closeout-finalization.md",
+        ".orchestrator/skills/reviewer-approval-binding.md",
     ):
         if (THIS_DIR.parent / relative_path).is_file():
             files.append(relative_path)

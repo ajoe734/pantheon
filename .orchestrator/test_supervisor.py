@@ -10112,6 +10112,7 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
                 ".orchestrator/task-briefs/ops_brief_queue_001.md",
                 ".orchestrator/skills/worker-anchor-commit.md",
                 ".orchestrator/skills/task-closeout-finalization.md",
+                ".orchestrator/skills/reviewer-approval-binding.md",
                 "ai-status.json",
             ],
         )
