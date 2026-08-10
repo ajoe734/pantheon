@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
   "title": "Promote merged alias reassignment guard into live supervisor runtime",
   "current_assignment": {
@@ -7,16 +7,13 @@
     "reviewer": "Claude",
     "review_decision": "pending"
   },
-  "initial_assignment": {
-    "owner": "Antigravity",
-    "reviewer": "Human/Ops"
-  },
-  "delivery_state": "blocked_preflight_existing_rollback_destination",
-  "live_runtime_mutation_performed": false,
+  "delivery_state": "live_promoted_awaiting_independent_review",
+  "live_runtime_mutation_performed": true,
   "immutable_candidate_prepared": true,
   "artifact_files": [
     "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.json",
     "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.md",
+    "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/raw/promotion-20260810T1924Z.json",
     "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/raw/resume-preflight-20260810T180330Z.json",
     "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/raw/revalidation-preflight-20260801T150539Z.json"
   ],
@@ -26,97 +23,204 @@
     "split_entrypoint_pull_request": 4724,
     "split_entrypoint_merge_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
     "same_commit_nonalias_pull_request": 4726,
-    "same_commit_nonalias_reviewed_head": "51eb129f72bac765b981a8aa42774e302f5e1b83",
     "same_commit_nonalias_merge_commit": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
-    "accepted_origin_dev_commit_at_preflight": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+    "collision_safe_destination_pull_request": 4728,
+    "collision_safe_destination_reviewed_head": "09378b8fd1628714cc23de353017288e73595b1c",
+    "collision_safe_destination_merge_commit": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+    "accepted_origin_dev_commit_at_transaction": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
     "alias_guard_is_candidate_ancestor": true,
-    "supervisor_source_blob": "4a6136f28ec2a23f77ca3060b0cdec279005b129",
-    "live_and_candidate_supervisor_blobs_equal": true
+    "collision_safe_destination_is_candidate_ancestor": true
   },
-  "resolved_historical_dependencies": [
-    {
-      "task_id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801",
-      "status": "done"
+  "verification": {
+    "python_provisioning": {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "passed; checkout-scoped .venv-pantheon verified from a foreign cwd"
     },
-    {
-      "task_id": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
-      "status": "done"
+    "collision_safe_focused_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py -k test_materialize_immutable_rollback_runtime",
+      "result": "9 passed, 324 deselected in 5.14s"
     },
-    {
-      "task_id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802",
-      "status": "done"
+    "promotion_helper_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
+      "result": "333 passed in 98.23s"
     },
-    {
-      "task_id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802",
-      "status": "done"
+    "candidate_validation": {
+      "command": "python3 -B <candidate>/scripts/provision_live_supervisor_config.py --command-root <candidate> --validate-command-root-only --json",
+      "result": "passed"
     },
-    {
-      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
-      "status": "done",
-      "pull_request": 4724,
-      "merge_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e"
+    "pre_promotion_discover": {
+      "command": "python3 -B <candidate>/scripts/promote_supervisor_runtime.py --repo <candidate> --config-path <live-config> --discover-only --json",
+      "exit_code": 1,
+      "result": "Only the expected legacy split cwd/entrypoint identity and launch-contract pair failed; all health, projection, lease, provider, duplicate-task, and readable-state invariants passed."
     },
-    {
-      "task_id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
-      "status": "done",
-      "pull_request": 4726,
-      "merge_commit": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
-      "durable_result": "Cross-root same-SHA rollback reuse is rejected before admission, config, signal, or launch."
+    "transaction": {
+      "command": "python3 -B <candidate>/scripts/promote_supervisor_runtime.py --repo <candidate> --promote --bootstrap-mutable-incumbent --evidence-path <external-evidence> --postcheck-timeout 600 --poll-interval 1 --lock-timeout 30 --termination-timeout 15",
+      "exit_code": 0,
+      "result": "promoted"
+    },
+    "post_promotion_discover": {
+      "command": "python3 -B <candidate>/scripts/promote_supervisor_runtime.py --repo <candidate> --config-path <live-config> --discover-only --json",
+      "exit_code": 0,
+      "result": "eligible_for_promotion=true; all 13 invariants passed"
     }
-  ],
-  "selected_candidate": {
-    "captured_at_utc": "2026-08-10T18:03:30.514208Z",
-    "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
-    "head_commit": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
-    "tracked_tree_identity": "231c719f5c7a1c774532983901046f1fefb40444",
-    "origin_url": "https://github.com/ajoe734/pantheon.git",
-    "basename_matches_head": true,
-    "git_status_clean": true,
-    "accepted_origin_dev_commit": true,
-    "validated_immutable_command_root": true,
-    "live_config_sha256_before_preparation": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
-    "live_config_sha256_after_preparation": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea"
   },
-  "live_readback": {
-    "captured_through_utc": "2026-08-10T18:06:53Z",
+  "pre_promotion": {
+    "captured_at_utc": "2026-08-10T19:23:04.474966Z",
+    "candidate": {
+      "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "head_commit": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "tracked_tree_identity": "d795eb696d0e3e2d49053f712ef353f3b1086ab8",
+      "origin_url": "https://github.com/ajoe734/pantheon.git",
+      "device": 2049,
+      "inode": 4043971,
+      "basename_matches_head": true,
+      "git_status_clean": true,
+      "accepted_origin_dev_commit": true
+    },
+    "incumbent": {
+      "pid": 1393542,
+      "starttime_ticks": 21477145,
+      "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "cwd_commit": "0305c861f54c4082060120afdfbc012622e5ac0a",
+      "cwd_tree": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
+      "entrypoint_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+      "is_split_entrypoint": true
+    },
     "live_config": {
       "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
-      "sha256_before": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
-      "sha256_after": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
-      "size_bytes": 40110,
+      "sha256": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
+      "byte_length": 40110,
       "device": 2049,
       "inode": 2205298,
-      "original_2026_07_31_sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
-      "original_hash_is_current": false,
-      "note": "The historical byte baseline changed before this dispatch. This task preserved the current bytes exactly and invoked no config writer."
-    },
-    "live_supervisor": {
-      "process_count": 1,
-      "pid_before": 1393542,
-      "pid_after": 1393542,
-      "start_ticks_before": 21477145,
-      "start_ticks_after": 21477145,
-      "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
-      "cwd_device": 2049,
-      "cwd_inode": 1876888,
-      "entrypoint_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
-      "cmdline": "/usr/bin/python3.12 -u -B /home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
-      "cwd_checkout_head": "0305c861f54c4082060120afdfbc012622e5ac0a",
-      "entrypoint_checkout_head": "0305c861f54c4082060120afdfbc012622e5ac0a",
-      "tracked_tree_identity": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
-      "supervisor_blob": "4a6136f28ec2a23f77ca3060b0cdec279005b129",
-      "last_loop_error": null
+      "historical_2026_07_31_sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
+      "historical_hash_is_current": false
     },
     "authoritative_projection": {
       "mode": "authoritative",
       "ok": true,
       "caught_up": true,
       "last_error": null,
-      "event_count": 16023,
-      "projected_state_sha256": "bb6de6a0fd50f6355f5a421983f6ebeeadd48a01a1487fdf6ab84de31b339083",
-      "expected_state_sha256": "bb6de6a0fd50f6355f5a421983f6ebeeadd48a01a1487fdf6ab84de31b339083"
+      "event_count": 16074,
+      "projected_state_sha256": "1ec33712ed6d8a326a2afe5d2019a01f2b132e80dea45934e6c0873067bd7601",
+      "expected_state_sha256": "1ec33712ed6d8a326a2afe5d2019a01f2b132e80dea45934e6c0873067bd7601"
     },
     "worker_queue_preflight": {
+      "worker_records": 14,
+      "queue_events": 1,
+      "worktree_leases": 29,
+      "duplicate_active_workers": [],
+      "parity_reasons": []
+    },
+    "regular_discover_expected_failures": [
+      "incumbent_supervisor_process_identity_immutable",
+      "governed_supervisor_launch_contract_immutable"
+    ]
+  },
+  "collision_safe_rollback": {
+    "captured_mutable_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "occupied_direct_destination": "/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
+    "occupied_direct_device": 2049,
+    "occupied_direct_inode": 13894090,
+    "materialized_root": "/home/lupin/pantheon-ci-deploy/rollback-command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
+    "materialized_device": 2049,
+    "materialized_inode": 13480162,
+    "head_commit": "0305c861f54c4082060120afdfbc012622e5ac0a",
+    "tracked_tree_identity": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
+    "origin_url": "https://github.com/ajoe734/pantheon.git",
+    "git_status_clean": true,
+    "distinct_from_occupied_direct_destination": true,
+    "cross_root_same_sha_reused": false,
+    "rollback_was_needed": false
+  },
+  "transaction_evidence": {
+    "external_path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731-0bd7cf8842a6-20260810T1924Z.json",
+    "sha256": "53de8dcc178db71689639661fe8afa7e142e9b28129473bf1fa03b5d28e3ae4b",
+    "byte_length": 19938,
+    "outcome": "promoted",
+    "exit_code": 0,
+    "state": "promoted",
+    "recorded_at_utc": "2026-08-10T19:33:26.862085Z",
+    "original_failure": null,
+    "rollback_failure": null,
+    "promotion_lock_path": "/home/lupin/pantheon/.orchestrator/supervisor-runtime-promotion.lock",
+    "runtime_admission_lock_path": "/home/lupin/pantheon/.orchestrator/runtime-admission.lock",
+    "state_history": [
+      "prepared",
+      "admission_locked",
+      "intent_recorded",
+      "incumbent_terminated",
+      "candidate_config_installed",
+      "candidate_launched",
+      "candidate_verifying",
+      "promoted"
+    ],
+    "intent_recorded_at_utc": "2026-08-10T19:26:52.254484Z",
+    "candidate_launched_at_utc": "2026-08-10T19:27:06.570265Z",
+    "promoted_at_utc": "2026-08-10T19:33:26.862059Z"
+  },
+  "config_transaction": {
+    "original_sha256": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
+    "candidate_sha256": "54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+    "candidate_installed_sha256": "54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+    "rollback_sha256": "afebcf7221ea310ffef03bd27633877f0e588f068dedb475c923d318d4ee04fa",
+    "rollback_installed_sha256": null,
+    "candidate_command_argv_sha256": "2d9441111b45bc8ad2e65344fb1426d614bbcee6ba2e7dfbe0cc47326f4c5b5f",
+    "note": "The governed transaction intentionally replaced the supervisor command root in the live config. The candidate hash stayed exact across all three transaction observations and the post-promotion discover readback."
+  },
+  "post_promotion": {
+    "captured_at_utc": "2026-08-10T19:34:05.146582Z",
+    "discover_exit_code": 0,
+    "eligible_for_promotion": true,
+    "all_invariants_passed": true,
+    "invariant_count": 13,
+    "candidate": {
+      "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "head_commit": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "tracked_tree_identity": "d795eb696d0e3e2d49053f712ef353f3b1086ab8"
+    },
+    "supervisor": {
+      "process_count": 1,
+      "pid": 3301275,
+      "starttime_ticks": 22907439,
+      "cwd": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "cwd_commit": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "cwd_tree": "d795eb696d0e3e2d49053f712ef353f3b1086ab8",
+      "entrypoint": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044/.orchestrator/supervisor.py",
+      "argv_sha256": "2d9441111b45bc8ad2e65344fb1426d614bbcee6ba2e7dfbe0cc47326f4c5b5f",
+      "runtime_sha_environment": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "command_root_environment": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "status_root_environment": "/home/lupin/pantheon"
+    },
+    "fresh_successful_loops": [
+      {
+        "observed_at_utc": "2026-08-10T19:28:45.386159Z",
+        "successful_loop_at_utc": "2026-08-10T19:28:28Z",
+        "pid": 3301275,
+        "invariant_failures": []
+      },
+      {
+        "observed_at_utc": "2026-08-10T19:30:10.416625Z",
+        "successful_loop_at_utc": "2026-08-10T19:30:04Z",
+        "pid": 3301275,
+        "invariant_failures": []
+      },
+      {
+        "observed_at_utc": "2026-08-10T19:33:19.070194Z",
+        "successful_loop_at_utc": "2026-08-10T19:31:51Z",
+        "pid": 3301275,
+        "invariant_failures": []
+      }
+    ],
+    "authoritative_projection": {
+      "mode": "authoritative",
+      "ok": true,
+      "caught_up": true,
+      "last_error": null,
+      "event_count": 16074,
+      "projected_state_sha256": "1ec33712ed6d8a326a2afe5d2019a01f2b132e80dea45934e6c0873067bd7601",
+      "expected_state_sha256": "1ec33712ed6d8a326a2afe5d2019a01f2b132e80dea45934e6c0873067bd7601"
+    },
+    "worker_queue_readback": {
       "worker_records": 14,
       "queue_events": 2,
       "worktree_leases": 29,
@@ -129,101 +233,33 @@
       "auth_ready": true,
       "local_cli_worker_supported": true,
       "selected_model": "gemini-3.6-flash-low",
-      "last_auth_probe_at_utc": "2026-08-10T17:52:01Z"
+      "last_auth_probe_at_utc": "2026-08-10T19:17:01Z",
+      "provider_configuration_changed": false
     }
   },
-  "verification": {
-    "promotion_helper_tests": {
-      "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH PYTHONDONTWRITEBYTECODE=1 .venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
-      "result": "329 passed in 69.70s"
-    },
-    "alias_guard_focused_tests": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q <four PR #4430 alias guard tests>",
-      "result": "4 passed in 1.85s"
-    },
-    "immutable_candidate_validation": "passed",
-    "config_hash_preservation": "passed"
-  },
-  "discover_only_result": {
-    "timestamp_utc": "2026-08-10T18:03:30.514208Z",
-    "candidate_commit": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
-    "eligible_for_promotion": false,
-    "safe_to_mutate": false,
-    "passing_invariants": [
-      "candidate_runtime_identity_immutable",
-      "config_and_state_files_readable",
-      "runtime_health_clean",
-      "supervisor_lifecycle_valid",
-      "supervisor_pid_bound_and_locked",
-      "ai_status_schema_valid",
-      "task_state_shadow_valid",
-      "fresh_loop_sequence",
-      "worker_lease_parity_and_no_duplicates",
-      "provider_readiness_baseline",
-      "no_orphaned_in_progress_tasks"
-    ],
-    "failing_invariants": [
-      {
-        "name": "incumbent_supervisor_process_identity_immutable",
-        "error": "Captured live config does not bind the exact canonical supervisor entrypoint"
-      },
-      {
-        "name": "governed_supervisor_launch_contract_immutable",
-        "error": "Candidate/process identity is unavailable"
-      }
-    ],
-    "interpretation": "The two failures are the regular discover-only mode's expected rejection of the legacy split cwd/entrypoint layout. Bootstrap preparation must independently prove the split layout before any promotion."
-  },
-  "bootstrap_preparation_result": {
-    "mode": "OSPromotionBackend.prepare_bootstrap_only",
-    "candidate_commit": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
-    "candidate_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
-    "bootstrap_mutable_incumbent": true,
-    "split_entrypoint_capture": "passed_before_failure",
-    "resolved_rollback_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
-    "resolved_rollback_head": "0305c861f54c4082060120afdfbc012622e5ac0a",
-    "resolved_rollback_tree": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
-    "resolved_rollback_device": 2049,
-    "resolved_rollback_inode": 13894090,
-    "mutable_incumbent_root": "/home/lupin/pantheon-ci-deploy/dev-root",
-    "mutable_incumbent_device": 2049,
-    "mutable_incumbent_inode": 1876888,
-    "error": "Fresh rollback runtime destination already exists: /home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
-    "prepared": false,
-    "admission_lock_acquired": false,
-    "restart_intent_recorded": false,
-    "config_write_performed": false,
-    "signal_sent": false,
-    "process_launched": false,
-    "rollback_launched": false
-  },
-  "current_blocker": {
-    "waiting_for": "Human/Ops or supervisor dispatch",
-    "reason": "The accepted PR #4726 guard correctly rejects reusing an existing same-SHA checkout when it is not the exact captured mutable root/device/inode. The SHA-derived rollback destination 0305c861 already exists as a sibling immutable checkout, so bootstrap preparation cannot materialize a distinct rollback identity.",
-    "required_follow_up": "Admit a narrow source-only task that defines and proves a collision-safe, descriptor-bound rollback destination for an already-occupied commit path while preserving cross-root same-SHA rejection. Do not delete, move, overwrite, or guess-reuse the existing 0305c861 runtime.",
-    "task_id_proposed": false,
-    "why_existing_task_does_not_apply": "Archived task SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810 permits reuse only when destination path/device/inode is the exact mutable snapshot root; those identities differ here."
-  },
-  "resume_gate": [
-    "A governed source-only follow-up is admitted, independently reviewed, merged to dev, and preserves all existing candidate, process, config, admission, projection, lease, provider, and rollback gates.",
-    "A fresh exact-tip discover-only run repeats the green health/projection/lease/provider gates.",
-    "Bootstrap preparation returns distinct immutable candidate and rollback roots plus exact candidate and rollback launch contracts without deleting or rewriting an existing runtime.",
-    "Only then may this task invoke --promote --bootstrap-mutable-incumbent and require automatic rollback on any failed postcheck.",
-    "Post-promotion evidence must prove the new immutable runtime, three fresh loops, equal authoritative projection hashes, lease parity, provider readiness, and unchanged transaction-bound config bytes."
-  ],
   "acceptance_result": {
-    "alias_guard_source_present_in_live_entrypoint": "pass",
-    "clean_exact_tip_candidate": "pass",
-    "config_unchanged_during_candidate_preparation_and_preflight": "pass",
-    "single_supervisor_discovery": "pass",
-    "authoritative_projection_equal": "pass",
-    "provider_readiness": "pass",
-    "worker_queue_lease_safety": "pass",
-    "split_incumbent_capture": "pass_before_rollback_failure",
-    "distinct_immutable_rollback_runtime": "blocked_existing_destination",
-    "governed_launch_contract": "blocked_before_derivation",
-    "transactional_live_promotion": "not_run",
-    "three_fresh_post_promotion_loops": "not_run",
-    "overall": "blocked_preflight_no_live_mutation"
+    "alias_guard_source_present_in_live_runtime": "pass",
+    "collision_safe_destination_source_present_in_live_runtime": "pass",
+    "clean_exact_origin_dev_candidate": "pass",
+    "single_supervisor_preflight": "pass",
+    "authoritative_projection_equal_preflight": "pass",
+    "provider_readiness_preflight": "pass",
+    "worker_queue_lease_safety_preflight": "pass",
+    "distinct_immutable_rollback_runtime": "pass",
+    "governed_intentional_restart_and_admission_lock": "pass",
+    "transactional_live_promotion": "pass",
+    "three_fresh_post_promotion_loops": "pass",
+    "exact_candidate_process_and_launch_contract": "pass",
+    "authoritative_projection_equal_post_promotion": "pass",
+    "provider_readiness_post_promotion": "pass",
+    "worker_queue_lease_safety_post_promotion": "pass",
+    "overall": "live_promoted_awaiting_independent_review_pr_merge_and_owner_closeout"
+  },
+  "review_contract": {
+    "manifest_must_be_committed_before_review": true,
+    "required_reviewer": "Claude",
+    "required_decision": "review_approved",
+    "required_head_binding": "Reviewer must bind the exact final PR head after this manifest is committed.",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.json"
   }
 }
