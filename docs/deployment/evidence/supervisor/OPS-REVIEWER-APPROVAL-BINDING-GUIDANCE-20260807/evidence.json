@@ -1,0 +1,113 @@
+{
+  "schema_version": "reviewer_approval_binding_guidance_evidence.v1",
+  "schema_status": {
+    "status": "owner_evidence_ready_for_independent_review",
+    "product_level_required": false,
+    "note": "Task-scoped pre-review evidence for reviewer CLI guidance and worker-context discoverability. This task changes no approval decision, task-state persistence, merge-gate, deployment, or capital authority."
+  },
+  "task": {
+    "id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+    "title": "Surface the REVIEW_PR/REVIEW_HEAD_SHA approval-binding requirement so reviewer workers stop landing unbound approves",
+    "phase": "Supervisor Runtime Repair / Review Gate Reliability",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+    "review_file": "docs/deployment/evidence/supervisor/OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Reviewer-facing approve usage and unbound-warning text, a dedicated exact-head binding skill, and injection of that skill into every task worker's context file list.",
+    "not_changing": [
+      "resolve_approval_binding decision branches and binding validation rules",
+      "discover_open_pr_binding live GitHub discovery behavior from current dev",
+      "approval-state persistence, GitHub review bridge behavior, and merge-gate enforcement",
+      "supervisor scheduling, worker eligibility, task ownership, and dispatch authority"
+    ],
+    "implementation_files": [
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      ".orchestrator/skills/reviewer-approval-binding.md",
+      ".orchestrator/skills/chairman-review.md",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "task_record_files": [
+      ".orchestrator/task-briefs/ops_reviewer_approval_binding_guidance_20260807.md",
+      "docs/deployment/evidence/supervisor/OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807/evidence.json"
+    ]
+  },
+  "root_cause": {
+    "summary": "The approve usage string did not mention REVIEW_PR or REVIEW_HEAD_SHA, and no reviewer-facing worker context explained how to bind approval to the exact PR head. When a binding was unavailable, reviewers could receive only a late warning or merge-gate rejection and had to repeat review.",
+    "repair_boundary": "Expose actionable environment-variable and gh lookup guidance at the CLI and prompt/documentation layers while preserving the existing binding and live-discovery logic."
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "approve usage and missing-binding diagnostics name REVIEW_PR and REVIEW_HEAD_SHA and show how to fetch headRefOid.",
+      "status": "pass",
+      "evidence": "approval_binding_guidance() is reused by command usage, the PR-backed refusal, and the unbound warning; regression tests assert REVIEW_PR and the exact gh pr view command."
+    },
+    {
+      "id": "AC2",
+      "statement": "A dedicated reviewer skill documents exact-head capture, optional REVIEW_BASE, REVIEW_FILE preconditions, and re-review after head movement.",
+      "status": "pass",
+      "evidence": ".orchestrator/skills/reviewer-approval-binding.md contains the governed command and failure-handling procedure."
+    },
+    {
+      "id": "AC3",
+      "statement": "Reviewer workers receive the new skill through an existing dispatch context path instead of relying on an unlinked file.",
+      "status": "pass",
+      "evidence": "worker_execution_context_files() includes reviewer-approval-binding.md; its exact ordered output is covered by test_queue_delivery_event_seeds_non_materializing_worker_context. chairman-review.md also points chair recommendations to the same skill."
+    },
+    {
+      "id": "AC4",
+      "statement": "The complete scripts/test_ai_status.py suite and focused supervisor context regression pass.",
+      "status": "pass",
+      "evidence": "208 tests and 31 subtests passed in scripts/test_ai_status.py; 1 focused supervisor context-builder test passed."
+    },
+    {
+      "id": "AC5",
+      "statement": "The task does not modify resolve_approval_binding's core decision logic.",
+      "status": "pass",
+      "evidence": "The diff adds a shared guidance formatter and substitutes diagnostic text only. Current dev's live PR discovery, explicit-pair validation, returned binding shapes, and unbound decision branches are preserved."
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "pass; checkout-scoped .venv-pantheon provisioned and import-verified"
+      },
+      {
+        "command": "$PANTHEON_PY -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests",
+        "result": "58 passed"
+      },
+      {
+        "command": "$PANTHEON_PY -m pytest -q .orchestrator/test_supervisor.py::SupervisorRuntimeAdmissionLockTests::test_queue_delivery_event_seeds_non_materializing_worker_context",
+        "result": "1 passed"
+      },
+      {
+        "command": "$PANTHEON_PY -m pytest -q scripts/test_ai_status.py",
+        "result": "208 passed, 31 subtests passed"
+      },
+      {
+        "command": "python3 -m py_compile scripts/ai_status.py && git diff --check",
+        "result": "pass"
+      }
+    ]
+  },
+  "reviewer_instructions": {
+    "independent_checks_requested": [
+      "Confirm the usage, PR-backed refusal, and unbound warning all expose REVIEW_PR, REVIEW_HEAD_SHA, and the headRefOid lookup command.",
+      "Confirm reviewer-approval-binding.md requires the exact reviewed PR head and an already-committed evidence manifest.",
+      "Confirm worker_execution_context_files injects the new skill without changing dispatch selection or scheduling.",
+      "Confirm resolve_approval_binding and discover_open_pr_binding retain current dev decision behavior."
+    ]
+  },
+  "rollout_and_rollback": {
+    "rollout": "Merge the task PR into dev; the next promoted command runtime and supervisor runtime will expose the CLI text and worker-context skill.",
+    "rollback": "Revert the task PR. No task-state migration or runtime data rollback is required."
+  }
+}
