@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
   "current_assignment": {
     "owner": "Codex",
@@ -10,7 +10,7 @@
     "owner": "Antigravity",
     "reviewer": "Human/Ops"
   },
-  "delivery_state": "blocked_preflight_split_incumbent_entrypoint",
+  "delivery_state": "blocked_preflight_same_commit_rollback_alias",
   "mutation_performed": false,
   "promoted_target_commit": "012dab969455e7146f2437159d7d38fc5904a195",
   "historical_evidence": {
@@ -41,10 +41,18 @@
       "task_id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802",
       "status": "done",
       "terminal_outcome": "completed"
+    },
+    {
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pull_request": 4724,
+      "reviewed_head": "6920db97b1fbd6b78546a41f809fa1a6857f5f62",
+      "merge_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e"
     }
   ],
   "selected_newer_accepted_candidate": {
-    "captured_at_utc": "2026-08-10T16:00:13.824471Z",
+    "captured_at_utc": "2026-08-10T17:25:29Z",
     "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
     "head_commit": "0305c861f54c4082060120afdfbc012622e5ac0a",
     "tracked_tree_identity": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
@@ -55,10 +63,20 @@
     "alias_guard_target_is_ancestor": true,
     "supervisor_blob": "4a6136f28ec2a23f77ca3060b0cdec279005b129"
   },
+  "merged_helper_runtime": {
+    "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/8b77e779efed6a3a8eea574969c4374a78e22c1e",
+    "head_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
+    "tracked_tree_identity": "7beef71ea781996c1798167dd15bd8bac7849868",
+    "origin_url": "https://github.com/ajoe734/pantheon.git",
+    "basename_matches_head": true,
+    "git_status_clean": true,
+    "purpose": "Execute the reviewed split-entrypoint promotion helper while retaining 0305c861 as the exact clean rollout candidate and dependency reproduction baseline."
+  },
   "current_readback": {
-    "discover_only_started_at_utc": "2026-08-10T15:59:25.932954Z",
-    "candidate_discover_only_completed_at_utc": "2026-08-10T16:00:13.824471Z",
-    "post_readback_config_check_at_utc": "2026-08-10T16:02:28Z",
+    "discover_only_started_at_utc": "2026-08-10T17:19:26Z",
+    "candidate_discover_only_completed_at_utc": "2026-08-10T17:19:38.273909Z",
+    "bootstrap_preparation_completed_at_utc": "2026-08-10T17:22:48Z",
+    "post_readback_config_check_at_utc": "2026-08-10T17:25:29Z",
     "live_config": {
       "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
       "sha256_before": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
@@ -84,8 +102,8 @@
       "entrypoint_supervisor_blob": "4a6136f28ec2a23f77ca3060b0cdec279005b129",
       "entrypoint_bytes_equal_candidate": true,
       "alias_guard_target_is_ancestor": true,
-      "last_heartbeat_at_utc": "2026-08-10T16:01:44Z",
-      "last_successful_loop_at_utc": "2026-08-10T16:01:44Z",
+      "last_heartbeat_at_utc": "2026-08-10T17:24:15Z",
+      "last_successful_loop_at_utc": "2026-08-10T17:24:15Z",
       "last_loop_error": null
     },
     "authoritative_projection": {
@@ -93,20 +111,19 @@
       "ok": true,
       "caught_up": true,
       "last_error": null,
-      "event_count": 15941,
-      "projected_state_sha256": "64f17f42312fd2fd32c1d92e130c3a8346888058fd43fc750c27b954ecbf15be",
-      "expected_state_sha256": "64f17f42312fd2fd32c1d92e130c3a8346888058fd43fc750c27b954ecbf15be"
+      "event_count": 16002,
+      "projected_state_sha256": "471709bbcfd9e145033efac610ea73afdb9ce3b93cfbe6253855d21aa75f3310",
+      "expected_state_sha256": "471709bbcfd9e145033efac610ea73afdb9ce3b93cfbe6253855d21aa75f3310"
     },
     "worker_queue_and_provider_preflight": {
-      "worker_records": 16,
-      "queue_events": 3,
-      "worktree_leases": 31,
+      "worker_records": 15,
+      "queue_events": 2,
+      "worktree_leases": 30,
       "duplicate_active_workers": [],
       "parity_reasons": [],
       "active_providers_required": [
-        "antigravity2",
         "codex1-2",
-        "codex2-2"
+        "codex2-1"
       ],
       "required_provider_readiness_reasons": []
     },
@@ -121,6 +138,9 @@
     }
   },
   "discover_only_result": {
+    "helper_source_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
+    "candidate_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
+    "captured_at_utc": "2026-08-10T17:19:38.273909Z",
     "eligible_for_promotion": false,
     "safe_to_mutate": false,
     "passing_invariants": [
@@ -147,16 +167,34 @@
       }
     ]
   },
+  "bootstrap_preparation_result": {
+    "mode": "read_only_backend_prepare",
+    "helper_source_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
+    "candidate_commit": "0305c861f54c4082060120afdfbc012622e5ac0a",
+    "bootstrap_mutable_incumbent": true,
+    "split_entrypoint_capture": "passed_before_failure",
+    "candidate_and_incumbent_accepted_dev_tip_match": true,
+    "rollback_materialization": "failed_non_alias_requirement",
+    "resolved_rollback_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
+    "error": "Candidate runtime equals the rollback runtime",
+    "admission_lock_acquired": false,
+    "restart_intent_recorded": false,
+    "config_write_performed": false,
+    "signal_sent": false,
+    "process_launched": false,
+    "rollback_launched": false
+  },
   "current_blocker": {
-    "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
-    "status_at_capture": "in_progress",
-    "owner": "Antigravity2",
-    "reviewer": "Codex2",
-    "reason": "The active source-only remediation binds the legacy split cwd and argv entrypoint roots. Its acceptance reproduces PID 1393542 and the exact incumbent error above. It explicitly reserves any rollout retry for a separate governed supervisor dispatch."
+    "recommended_follow_up_task_id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+    "task_admission": "not_created_active_lease_guard",
+    "waiting_for": "Human/Ops",
+    "recommended_owner": "Antigravity2",
+    "recommended_reviewer": "Codex2",
+    "reason": "The merged helper now captures the legacy split cwd and entrypoint roots but reuses the standard 0305c861 candidate directory as rollback when candidate and incumbent share the accepted commit. Preparation then fails its own non-alias guard. This worker is leased to the live-promotion task and the governed status command correctly rejected cross-task creation."
   },
   "resume_gate": [
-    "The split-entrypoint source task is independently reviewed, merged to dev, and present in a fresh clean SHA-named candidate runtime.",
-    "A new discover-only run passes candidate, incumbent, launch-contract, projection, worker/queue, provider, and config-CAS gates.",
+    "Human/Ops or the supervisor admits a narrow source-only same-commit non-alias rollback follow-up and its exact-head fix is reviewed and merged to dev.",
+    "A new regular discover-only run preserves candidate, projection, worker/queue, provider, and config gates; a read-only bootstrap preparation also returns a distinct clean immutable rollback root plus exact candidate and rollback launch contracts.",
     "Only then may this task invoke the governed --promote --bootstrap-mutable-incumbent transaction and require automatic rollback on any failed postcheck.",
     "Post-promotion evidence must prove the new immutable runtime, three fresh loops, equal authoritative projection hashes, lease parity, provider readiness, and unchanged transaction-bound config bytes."
   ],
@@ -168,8 +206,9 @@
     "authoritative_projection_equal": "pass",
     "provider_readiness": "pass",
     "worker_queue_lease_safety": "pass",
-    "immutable_incumbent_identity": "fail",
-    "governed_launch_contract": "blocked",
+    "immutable_incumbent_identity": "pass_in_bootstrap_preparation",
+    "distinct_immutable_rollback_runtime": "fail",
+    "governed_launch_contract": "blocked_before_derivation",
     "transactional_live_promotion": "not_run",
     "three_fresh_post_promotion_loops": "not_run",
     "overall": "blocked_preflight_no_mutation"

@@ -8,8 +8,8 @@ Current reviewer: `Claude`
 
 Review decision: **pending**
 
-Current delivery state: **blocked at split-incumbent-entrypoint preflight; no
-mutation performed**
+Current delivery state: **blocked at same-commit rollback non-alias preflight;
+no mutation performed**
 
 ## Outcome first
 
@@ -23,12 +23,13 @@ while its cwd is the mutable `/home/lupin/pantheon-ci-deploy/dev-root`. The
 entrypoint checkout has since advanced to `0305c861...`, so its directory
 basename no longer matches its Git HEAD.
 
-The merged promotion helper therefore failed closed before config, signal,
-launch, or rollback:
+The split-entrypoint helper merged through PR #4724 and now captures this
+legacy process layout. The next read-only preparation gate failed before the
+admission lock, config, signal, launch, or rollback because the immutable
+rollback materializer reused the clean candidate directory:
 
 ```text
-incumbent_supervisor_process_identity_immutable = false
-Captured live config does not bind the exact canonical supervisor entrypoint
+ValueError: Candidate runtime equals the rollback runtime
 ```
 
 No restart, TERM, launch, config writer, canonical state edit, queue edit, or
@@ -51,8 +52,10 @@ The former rollback-helper blocker is resolved:
 | `SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802` | done / completed |
 | `SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802` | done / completed |
 
-The current blocker is narrower and was discovered only after those layers
-were live: the incumbent uses separate cwd and argv entrypoint roots.
+The split-root blocker is now resolved by PR #4724 (reviewed head
+`6920db97...`, merge `8b77e779...`). The current blocker is narrower: candidate
+and incumbent share accepted commit `0305c861...`, and rollback materialization
+must still choose a distinct immutable path.
 
 ## Exact newer accepted candidate
 
@@ -90,34 +93,45 @@ tests introduced by PR #4430 pass against the current composed source:
 
 ## Current read-only preflight
 
-Two discover-only probes ran with the merged transaction helper.
+The regular `--discover-only` probe ran from the clean SHA-named
+`8b77e779...` helper runtime. It reconfirmed candidate identity, runtime health,
+projection equality, lease parity, provider readiness, and the expected legacy
+split-layout rejection because that CLI mode deliberately does not enable
+`--bootstrap-mutable-incumbent`.
 
-The first used the live command root and rejected it because basename
-`5877b644...` did not match HEAD `0305c861...`.
+To preserve gate-before-switch semantics, the same merged backend then ran only
+its preparation stage with `bootstrap_mutable_incumbent=True` against the clean
+exact `0305c861...` candidate. This stage does not acquire the runtime-admission
+lock, record restart intent, write config, signal, or launch a process.
 
-The second used the clean exact `0305c861...` candidate. Candidate identity
-passed, but incumbent process identity and the immutable launch contract failed
-because the captured config/argv/cwd use the split legacy layout.
+The merged split-root code advanced past legacy incumbent capture. It then
+resolved the rollback checkout to the same
+`command-runtimes/0305c861...` directory as the candidate and failed its
+explicit non-alias guard:
 
-Passing gates from the second probe:
+```text
+ValueError: Candidate runtime equals the rollback runtime
+```
+
+Passing gates from the regular probe plus the bootstrap capture:
 
 - clean SHA-named candidate identity and accepted-dev ancestry;
 - readable config and canonical state files;
 - healthy running supervisor, PID alive, and singleton lock held;
 - authoritative projection `ok=true`, `caught_up=true`, no error, with
-  equal `64f17f42...` projected and expected hashes;
+  equal `471709bb...` projected and expected hashes;
 - fresh loop sequence;
 - worker/queue/worktree-lease parity with no duplicate active workers;
-- readiness for active providers `antigravity2`, `codex1-2`, and
-  `codex2-2`;
+- readiness for active providers `codex1-2` and `codex2-1`;
 - no orphaned in-progress task.
 
 Failing gates:
 
 | Gate | Result |
 |---|---|
-| Immutable incumbent process identity | fail: config does not bind the exact canonical entrypoint |
-| Immutable governed launch contract | blocked because incumbent identity is unavailable |
+| Split incumbent capture | pass in bootstrap preparation |
+| Distinct immutable rollback runtime | fail: resolved rollback root aliases candidate |
+| Candidate and rollback launch contracts | blocked before derivation |
 | Eligible for promotion | false |
 | Safe to mutate | false |
 
@@ -130,18 +144,22 @@ to imitate the old baseline.
 ## Active blocker and resume gate
 
 Canonical task
-`SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810` is
-`in_progress`, owned by `Antigravity2` and reviewed by `Codex2`. Its
-acceptance reproduces this exact PID, cwd, argv root, candidate, and preflight
-failure. It is source-only and explicitly reserves rollout retry for a separate
-governed supervisor dispatch.
+`SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810` is complete and
+archived after PR #4724 merged as `8b77e779...`.
+
+The recommended narrow follow-up ID is
+`SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810`, with owner
+`Antigravity2` and reviewer `Codex2`. This worker could not admit that task:
+the governed active-lease guard correctly rejected a cross-task `assign` while
+this worker is leased to the live-promotion task. Human/Ops or the supervisor
+must create the source-only follow-up through the normal task packet path.
 
 This task may resume live rollout only after:
 
-1. the split-entrypoint task is independently reviewed, merged to `dev`, and
-   present in a fresh clean SHA-named candidate;
-2. a new `--discover-only` run passes candidate, incumbent, launch-contract,
-   projection, lease, provider, and config-CAS gates;
+1. the same-commit non-alias rollback follow-up is admitted, independently
+   reviewed, and merged to `dev`;
+2. regular discover-only gates remain green and read-only bootstrap preparation
+   returns distinct clean candidate/rollback roots with exact launch contracts;
 3. the governed `--promote --bootstrap-mutable-incumbent` transaction is run,
    with automatic rollback on any failed postcheck;
 4. post-promotion readback proves one immutable supervisor, three fresh loops,
