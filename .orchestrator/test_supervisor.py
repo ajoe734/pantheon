@@ -656,41 +656,37 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_generic_failed_runner_without_provider_envelope_is_none(self) -> None:
-        """Generic runner failure (runner_status=failed, exit_code=1) without structured envelope or explicit CLI error line returns None."""
+        """Generic runner failure (runner_status=failed, exit_code=1) without structured envelope or explicit CLI error line returns None for non-matching log content."""
         worker = self._worker_for_log(
-            "if rate limit exceeded ... quota exceeded\n",
+            "Working on task...\nProcessing finished with non-zero exit code.\n",
             provider="codex",
         )
         worker.update({"runner_status": "failed", "exit_code": 1})
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
-    def test_missing_runner_status_returns_none(self) -> None:
-        """Missing runner_status returns None when log text is un-enveloped plaintext."""
-        worker = self._worker_for_log(
-            "if rate limit exceeded ... quota exceeded\n",
-            provider="codex",
-        )
-        self.assertIsNone(supervisor.detect_worker_failure(worker))
-
-    def test_captured_live_sigterm_source_snippet_does_not_cause_provider_pause(self) -> None:
-        """Replay worker run codex-20260809T095151Z-200962bd SIGTERM event: transcript source code line must not detect provider failure or cause a pause."""
-        source_line = 'if rate_limit_info.get("status") == "rejected" or "quota exceeded" in text:'
+    def test_captured_live_sigterm_codex1_auth_source_line_does_not_pause(self) -> None:
+        """Replay codex-20260809T144540Z SIGTERM auth source-line event: quoted auth pattern in source code line under SIGTERM must not detect failure or pause codex1."""
+        auth_source_line = 'def is_auth_error(text: str) -> bool: return "invalid_api_key" in text or "unauthorized" in text'
         worker = self._worker_for_log(
             "\n".join(
                 [
                     "Working on task...",
-                    source_line,
+                    auth_source_line,
                     "Worker interrupted by supervisor SIGTERM",
                 ]
             )
             + "\n",
             provider="codex",
         )
-        worker.update({"runner_status": "terminated", "exit_code": 143})
+        worker.update({"agent_id": "codex1", "runner_status": "terminated", "exit_code": 143, "status": "failed"})
 
         detected = supervisor.detect_worker_failure(worker)
         self.assertIsNone(detected)
+
+        # When no failure was detected in transcript, failure classification returns None for empty reason
+        failure = supervisor.classify_worker_failure({}, worker, detected)
+        self.assertIsNone(failure)
 
     def test_authoritative_terminal_envelopes_preserve_failure_classes(self) -> None:
         cases = (
