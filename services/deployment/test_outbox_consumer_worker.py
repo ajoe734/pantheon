@@ -1140,7 +1140,10 @@ class TestRunPoll:
             timeout_seconds=10.0,
         )
 
-    def test_runtime_load_requires_active_authoritative_readback(self, worker):
+    def test_runtime_load_completes_from_authoritative_binding_without_fleet(
+        self, worker, monkeypatch
+    ):
+        monkeypatch.delenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", raising=False)
         record = _outbox_record("evt-load", sequence_no=2)
         record["event"].update(
             {
@@ -1154,26 +1157,7 @@ class TestRunPoll:
             status="awaiting_runtime_load",
         )
         binding = _runtime_binding()
-        fleet = {
-            "cycle_count": 2,
-            "last_reconcile_at": "2026-07-14T08:00:00Z",
-            "last_error": None,
-            "workers": [
-                {
-                    "binding_id": "rb-001",
-                    "runtime_id": "rt-001",
-                    "capital_pool_id": "pool-001",
-                    "status": "running",
-                    "pid": 4242,
-                }
-            ],
-        }
-
         with (
-            patch.dict(
-                worker.os.environ,
-                {"PANTHEON_PAPER_FLEET_RECONCILER_URL": "http://fleet:8011"},
-            ),
             patch.object(worker, "fetch_pending_outbox", return_value=[record]),
             patch.object(
                 worker,
@@ -1183,7 +1167,6 @@ class TestRunPoll:
             patch.object(
                 worker, "fetch_saga", side_effect=[saga, _completed_saga(saga)]
             ),
-            patch.object(worker, "fetch_paper_fleet_state", return_value=fleet),
             patch.object(
                 worker,
                 "fetch_projection",
@@ -1207,143 +1190,6 @@ class TestRunPoll:
             note="runtime active confirmed by authoritative RuntimeBinding readback",
             timeout_seconds=10.0,
         )
-
-    def test_runtime_load_waits_for_matching_running_paper_worker(self, worker):
-        record = _outbox_record("evt-load-wait", sequence_no=2)
-        record["event"].update(
-            {
-                "event_type": "runtime.load.requested",
-                "aggregate_id": "saga-001",
-                "payload": {"binding_id": "rb-001"},
-            }
-        )
-        saga = _binding_saga(
-            binding_id="rb-001",
-            status="awaiting_runtime_load",
-        )
-        binding = _runtime_binding()
-        fleet = {
-            "cycle_count": 3,
-            "last_reconcile_at": "2026-07-14T08:00:00Z",
-            "last_error": None,
-            "workers": [],
-        }
-
-        with (
-            patch.dict(
-                worker.os.environ,
-                {"PANTHEON_PAPER_FLEET_RECONCILER_URL": "http://fleet:8011"},
-            ),
-            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
-            patch.object(
-                worker,
-                "fetch_applied_inbox",
-                return_value=[_applied_receipt(1)],
-            ),
-            patch.object(worker, "fetch_saga", return_value=saga),
-            patch.object(worker, "fetch_paper_fleet_state", return_value=fleet),
-            patch.object(
-                worker,
-                "_record_failure_best_effort",
-                return_value=({"status": "pending"}, None),
-            ),
-            patch.object(worker, "record_runtime_active") as mock_active,
-            patch.object(worker, "RuntimeManagerClient") as client_cls,
-        ):
-            client_cls.return_value.get.return_value = binding
-            result = worker.run_poll(
-                api_url="http://localhost:8095",
-                consumer_name="test-consumer",
-                record_failures=True,
-            )
-
-        assert result["retry_scheduled"] == 1
-        assert "paper fleet post-state is not running yet" in " ".join(result["errors"])
-        mock_active.assert_not_called()
-
-    def test_runtime_load_fleet_exhaustion_hands_off_then_acks_predecessor(self, worker):
-        record = _outbox_record("evt-load-fleet-exhausted", sequence_no=2)
-        record["delivery_attempts"] = 0
-        record["event"].update(
-            {
-                "event_type": "runtime.load.requested",
-                "aggregate_id": "saga-001",
-                "payload": {"binding_id": "rb-001"},
-            }
-        )
-        saga = {
-            "saga_id": "saga-001",
-            "plan_id": "plan-001",
-            "approval_decision_id": "approval-001",
-            "strategy_id": "strategy-001",
-            "artifact_id": "artifact-001",
-            "artifact_version": "v1.0.0",
-            "capital_pool_id": "pool-001",
-            "target_stage": "paper",
-            "binding_id": "rb-001",
-            "status": "awaiting_runtime_load",
-            "current_step": "runtime_load_requested",
-        }
-        compensating = {
-            **saga,
-            "status": "compensating",
-            "current_step": "compensation_requested",
-            "compensation": {"command_type": "mark_binding_failed_inactive"},
-        }
-        binding = _runtime_binding()
-        fleet = {
-            "cycle_count": 3,
-            "last_reconcile_at": "2026-07-14T08:00:00Z",
-            "last_error": None,
-            "workers": [],
-        }
-        operations: list[str] = []
-
-        def _record_saga_failure(**_kwargs):
-            operations.append("saga_failure")
-            return {"command_type": "mark_binding_failed_inactive"}
-
-        def _ack(**_kwargs):
-            operations.append("ack")
-            return _inbox_receipt("evt-load-fleet-exhausted")
-
-        with (
-            patch.dict(
-                worker.os.environ,
-                {"PANTHEON_PAPER_FLEET_RECONCILER_URL": "http://fleet:8011"},
-            ),
-            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
-            patch.object(
-                worker,
-                "fetch_applied_inbox",
-                return_value=[_applied_receipt(1)],
-            ),
-            patch.object(
-                worker,
-                "fetch_saga",
-                side_effect=[saga, saga, compensating],
-            ),
-            patch.object(worker, "fetch_paper_fleet_state", return_value=fleet),
-            patch.object(
-                worker, "record_saga_failure", side_effect=_record_saga_failure
-            ) as saga_failure,
-            patch.object(worker, "consume_event", side_effect=_ack),
-            patch.object(worker, "record_runtime_active") as runtime_active,
-            patch.object(worker, "RuntimeManagerClient") as client_class,
-        ):
-            client_class.return_value.get.return_value = binding
-            result = worker.run_poll(
-                api_url="http://localhost:8095",
-                consumer_name="test-consumer",
-                record_failures=True,
-                max_attempts=1,
-            )
-
-        assert result["dead_lettered"] == 0
-        assert result["consumed"] == 1
-        assert operations == ["saga_failure", "ack"]
-        assert saga_failure.call_args.kwargs["failed_step"] == "runtime_load_requested"
-        runtime_active.assert_not_called()
 
     def test_runtime_load_projection_exhaustion_hands_off_then_acks_predecessor(
         self, worker
