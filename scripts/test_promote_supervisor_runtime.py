@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import errno
 import fcntl
 import hashlib
 import importlib.util
@@ -7352,6 +7353,211 @@ def test_materialize_immutable_rollback_runtime_end_to_end_occupied_direct_desti
     assert rollback_launch.cwd_device == rollback_identity.candidate_root_device
     assert rollback_launch.cwd_inode == rollback_identity.candidate_root_inode
     assert rollback_launch.status_command_root == rollback_identity.candidate_root
+
+
+def test_materialize_immutable_rollback_runtime_rejects_unsupported_renameat2_and_collision_without_os_rename_or_side_effects(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, commit, tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    prefix = tmp_path / "command-runtimes"
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+
+    direct_dest = prefix / commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+
+    rollback_dest = rollback_prefix / commit
+    rollback_dest.mkdir(parents=True, exist_ok=True)
+    (rollback_dest / "preexisting.txt").write_text("attacker content", encoding="utf-8")
+
+    process = _transaction_process_identity(
+        tmp_path / "source",
+        ProcessGeneration(77, 88, "S"),
+        commit=commit,
+        tree=tree,
+    )
+    snapshot = MutableIncumbentSnapshot(
+        root=tmp_path / "source",
+        root_device=1,
+        root_inode=2,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        repository_slug="ajoe734/pantheon",
+        process=process,
+        source_identities=(),
+    )
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "ctypes.CDLL",
+        side_effect=AttributeError("no renameat2 available"),
+    ), patch(
+        "os.rename",
+        side_effect=AssertionError("os.rename must never be called"),
+    ) as mock_rename:
+        with pytest.raises(
+            ValueError,
+            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    mock_rename.assert_not_called()
+    assert rollback_dest.exists()
+    assert (rollback_dest / "preexisting.txt").read_text(encoding="utf-8") == "attacker content"
+    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
+    assert len(leftovers) == 0
+
+
+def test_materialize_immutable_rollback_runtime_handles_syscall_level_eexist_after_precheck_without_os_rename_or_side_effects(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, commit, tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    prefix = tmp_path / "command-runtimes"
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+
+    direct_dest = prefix / commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+
+    rollback_dest = rollback_prefix / commit
+
+    process = _transaction_process_identity(
+        tmp_path / "source",
+        ProcessGeneration(77, 88, "S"),
+        commit=commit,
+        tree=tree,
+    )
+    snapshot = MutableIncumbentSnapshot(
+        root=tmp_path / "source",
+        root_device=1,
+        root_inode=2,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        repository_slug="ajoe734/pantheon",
+        process=process,
+        source_identities=(),
+    )
+
+    def mock_renameat2(*args: Any, **kwargs: Any) -> int:
+        rollback_dest.mkdir(parents=True, exist_ok=True)
+        (rollback_dest / "post_precheck_collision.txt").write_text(
+            "syscall collision", encoding="utf-8"
+        )
+        return -1
+
+    mock_libc = Mock()
+    mock_libc.renameat2 = mock_renameat2
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "ctypes.CDLL",
+        return_value=mock_libc,
+    ), patch(
+        "ctypes.get_errno",
+        return_value=errno.EEXIST,
+    ), patch(
+        "os.rename",
+        side_effect=AssertionError("os.rename must never be called"),
+    ) as mock_rename:
+        with pytest.raises(
+            ValueError,
+            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    mock_rename.assert_not_called()
+    assert rollback_dest.exists()
+    assert (rollback_dest / "post_precheck_collision.txt").read_text(
+        encoding="utf-8"
+    ) == "syscall collision"
+    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
+    assert len(leftovers) == 0
+
+
+def test_materialize_immutable_rollback_runtime_rejects_unsupported_renameat2_when_destination_free_fails_closed_without_os_rename(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, commit, tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    prefix = tmp_path / "command-runtimes"
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+
+    direct_dest = prefix / commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+
+    rollback_dest = rollback_prefix / commit
+
+    process = _transaction_process_identity(
+        tmp_path / "source",
+        ProcessGeneration(77, 88, "S"),
+        commit=commit,
+        tree=tree,
+    )
+    snapshot = MutableIncumbentSnapshot(
+        root=tmp_path / "source",
+        root_device=1,
+        root_inode=2,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        repository_slug="ajoe734/pantheon",
+        process=process,
+        source_identities=(),
+    )
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "ctypes.CDLL",
+        side_effect=AttributeError("no renameat2 available"),
+    ), patch(
+        "os.rename",
+        side_effect=AssertionError("os.rename must never be called"),
+    ) as mock_rename:
+        with pytest.raises(
+            OSError,
+            match="Atomic no-replace rename is unavailable",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    mock_rename.assert_not_called()
+    assert not rollback_dest.exists()
+    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
+    assert len(leftovers) == 0
 
 
 def test_immutable_incumbent_legacy_task_brief_provenance_binding_registered() -> None:

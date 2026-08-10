@@ -6829,32 +6829,34 @@ def _atomic_no_replace_rename(src: Path, dst: Path) -> None:
 
     try:
         libc = ctypes.CDLL(None, use_errno=True)
-        if hasattr(libc, "renameat2"):
-            AT_FDCWD = -100
-            RENAME_NOREPLACE = 1
-            res = libc.renameat2(
-                ctypes.c_int(AT_FDCWD),
-                os.fsencode(src),
-                ctypes.c_int(AT_FDCWD),
-                os.fsencode(dst),
-                ctypes.c_uint(RENAME_NOREPLACE),
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is None:
+            raise OSError(
+                errno.ENOSYS,
+                "Atomic no-replace rename is unavailable (renameat2 missing)",
             )
-            if res == 0:
-                return
-            err = ctypes.get_errno()
-            if err == errno.EEXIST:
-                raise ValueError(
-                    f"Fresh rollback runtime destination already exists: {dst}"
-                )
-            if err not in (errno.ENOSYS, errno.EINVAL):
-                raise OSError(err, f"Atomic rename failed: {os.strerror(err)}")
-    except (AttributeError, TypeError, OSError) as exc:
-        if isinstance(exc, ValueError):
-            raise
+        AT_FDCWD = -100
+        RENAME_NOREPLACE = 1
+        res = renameat2(
+            ctypes.c_int(AT_FDCWD),
+            os.fsencode(src),
+            ctypes.c_int(AT_FDCWD),
+            os.fsencode(dst),
+            ctypes.c_uint(RENAME_NOREPLACE),
+        )
+    except (AttributeError, TypeError) as exc:
+        raise OSError(
+            errno.ENOSYS,
+            f"Atomic no-replace rename is unavailable: {exc}",
+        ) from exc
 
-    if dst.exists() or dst.is_symlink():
-        raise ValueError(f"Fresh rollback runtime destination already exists: {dst}")
-    os.rename(src, dst)
+    if res != 0:
+        err = ctypes.get_errno()
+        if err == errno.EEXIST:
+            raise ValueError(
+                f"Fresh rollback runtime destination already exists: {dst}"
+            )
+        raise OSError(err, f"Atomic rename failed ({err}): {os.strerror(err)}")
 
 
 def materialize_immutable_rollback_runtime(
