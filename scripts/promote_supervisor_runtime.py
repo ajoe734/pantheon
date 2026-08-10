@@ -125,6 +125,7 @@ ALLOWED_GENERATED_UNTRACKED_FILES = frozenset(
         PurePosixPath(".orchestrator/auto-integrator.lock"),
         PurePosixPath(".orchestrator/auto_commit_archive.lock"),
         PurePosixPath(".orchestrator/dashboard-autostart.lock"),
+        PurePosixPath(".orchestrator/logs"),
         PurePosixPath(".orchestrator/planning-state.lock"),
         PurePosixPath(".orchestrator/reap-in-progress.lock"),
         PurePosixPath(".orchestrator/runtime-admission.lock"),
@@ -162,6 +163,7 @@ MUTABLE_INCUMBENT_IGNORED_RUNTIME_PREFIXES = (
     PurePosixPath(".orchestrator/evidence"),
     PurePosixPath(".orchestrator/logs"),
     PurePosixPath(".orchestrator/metrics"),
+    PurePosixPath(".orchestrator/task-briefs"),
     PurePosixPath(".orchestrator/worker-runtime"),
     PurePosixPath(".pytest_cache"),
     PurePosixPath(".venv-pantheon"),
@@ -3856,6 +3858,7 @@ def capture_promotion_snapshot(
                 candidate_revalidator=(
                     candidate_identity.verify_immutable_snapshot
                 ),
+                allow_legacy_admission_lock_id_churn=True,
             )
         except Exception as exc:
             supervisor_process_error = str(exc)
