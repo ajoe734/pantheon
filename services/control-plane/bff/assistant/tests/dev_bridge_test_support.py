@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
+from typing import Any
 
 
 MATERIALIZING_AI_STATUS_SCRIPT = """import json
@@ -59,3 +62,27 @@ def write_materializing_ai_status(repo_root: Path) -> None:
         MATERIALIZING_AI_STATUS_SCRIPT,
         encoding="utf-8",
     )
+
+
+def bind_isolated_ai_status_module(ai_status_module: Any, status_root: Path) -> Path:
+    """Bind imported governed-status helpers to a test-only root and audit."""
+
+    status_root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "init", "-q", str(status_root)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    ai_status_module.configure_status_root_paths(status_root)
+    state = ai_status_module.default_state()
+    state["tasks"] = []
+    state["handoffs"] = []
+    state["blockers"] = []
+    state["wave_state"] = {"status": "open"}
+    (status_root / "ai-status.json").write_text(
+        json.dumps(state, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (status_root / "ai-activity-log.jsonl").write_text("", encoding="utf-8")
+    return status_root

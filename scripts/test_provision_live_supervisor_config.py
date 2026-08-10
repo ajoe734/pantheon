@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -37,6 +39,37 @@ def _git(cwd: Path, *args: str) -> str:
         text=True,
     )
     return result.stdout.strip()
+
+
+def test_cli_imports_candidate_modules_without_writing_bytecode(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "candidate" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    for name in (
+        "provision_live_supervisor_config.py",
+        "promote_supervisor_runtime.py",
+        "supervisor_runtime_health.py",
+    ):
+        shutil.copy2(Path(__file__).with_name(name), scripts_dir / name)
+
+    environment = os.environ.copy()
+    environment.pop("PYTHONDONTWRITEBYTECODE", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(scripts_dir / "provision_live_supervisor_config.py"),
+            "--help",
+        ],
+        cwd=scripts_dir.parent,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (scripts_dir / "__pycache__").exists()
 
 
 def _immutable_runtime_fixture(
@@ -281,6 +314,7 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
     assert rendered["watchdog"]["supervisor_command"] == [
         str(python),
         "-u",
+        "-B",
         str(command_root / ".orchestrator" / "supervisor.py"),
         "--config",
         str(live_config),
@@ -789,7 +823,7 @@ def test_main_existing_config_is_noop_or_requires_promotion(
     assert live_config.stat().st_ino == inode
 
     changed = json.loads(before)
-    changed["watchdog"]["supervisor_command"][2] = "/mutable/dev-root/.orchestrator/supervisor.py"
+    changed["watchdog"]["supervisor_command"][3] = "/mutable/dev-root/.orchestrator/supervisor.py"
     live_config.write_text(json.dumps(changed) + "\n", encoding="utf-8")
     drifted = live_config.read_bytes()
 

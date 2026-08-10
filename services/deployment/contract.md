@@ -621,14 +621,16 @@ and batch size use `DEPLOYMENT_OUTBOX_CONSUMER_LEASE_SECONDS` and
 wire these values before accepting the dispatcher as active.
 
 Compose startup waits only for the unconditional Deployment and Runtime
-Manager authorities.  Paper fleet reconciliation is required only for a paper
-activation event, and Incident service reachability is required only for the
-safe-mode compensation path.  An unavailable conditional target fails the
-affected event closed and follows its retry policy; it does not prevent the
-consumer process from starting or handling unrelated events.  At retry
-exhaustion, the worker first persists saga compensation and then acknowledges
-the failed predecessor so the compensation successor can run.  It never DLQs a
-side-effect predecessor while leaving its successor sequence-blocked.
+Manager authorities. Deployment completes a paper plan from the authoritative
+RuntimeBinding and DEP-003 readback; the Capital paper-fleet reconciler is the
+next consumer and owns worker-start readback. Incident service reachability is
+required only for the safe-mode compensation path. An unavailable conditional
+target fails the affected event closed and follows its retry policy; it does
+not prevent the consumer process from starting or handling unrelated events.
+At retry exhaustion, the worker first persists saga compensation and then
+acknowledges the failed predecessor so the compensation successor can run. It
+never DLQs a side-effect predecessor while leaving its successor
+sequence-blocked.
 
 Forward dispatch invariants:
 

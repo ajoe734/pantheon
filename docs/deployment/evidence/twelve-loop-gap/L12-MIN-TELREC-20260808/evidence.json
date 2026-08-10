@@ -1,0 +1,128 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "L12-MIN-TELREC-20260808",
+    "title": "Run one runtime event through telemetry and reconciliation to a terminal incident",
+    "phase": "M1 loop closure",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-MIN-TELREC-20260808",
+    "merge_target": "dev",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TELREC-20260808/evidence.json",
+    "overall_admission": "ready_for_independent_review"
+  },
+  "scope": {
+    "owned_layer": "Paper-runtime telemetry acceptance, reconciliation DriftReport persistence, and terminal incident identifier handoff for Evolution.",
+    "not_changing": [
+      "incidents service ownership or persistence implementation",
+      "Telemetry transport or infrastructure hardening",
+      "live-capital activation, broker credentials, or RuntimeBinding authority"
+    ],
+    "composes_with": {
+      "upstream": "L12-MIN-CAP-20260808 emits the paper-only paper_fill_simulated runtime event.",
+      "downstream": "L12-MIN-EVO-20260808 consumes terminal_incident_id from the reconciliation worker result."
+    },
+    "implementation_changed_files": [
+      "services/telemetry/test_l12_tel_001_durable_ingest.py",
+      "services/reconciliation-drift/consumer.py",
+      "services/reconciliation-drift/scheduler_worker.py",
+      "services/reconciliation-drift/incident_listener.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py",
+      "services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TELREC-20260808/evidence.json"
+    ]
+  },
+  "normal_path_proof": {
+    "mode": "deterministic, isolated in-process telemetry and reconciliation integration",
+    "trigger": "One paper-only Capital paper_fill_simulated runtime event with a committed ledger fill.",
+    "event": {
+      "event_id": "evt-l12-min-cap-runtime-001",
+      "binding_id": "binding-l12-min-cap",
+      "runtime_id": "runtime-l12-min-cap",
+      "tenant_id": "tenant-l12",
+      "deployment_stage": "paper",
+      "is_real_order": false,
+      "is_real_capital": false
+    },
+    "event_sequence": [
+      "TelemetryIngestService accepts the schema-valid Capital event and retains its immutable accepted-event readback.",
+      "The telemetry-owned runtime summary records the same event, binding, and runtime identity.",
+      "The existing reconciliation telemetry-consume endpoint evaluates the fill_quantity breach, persists DriftReport drift-evt-l12-min-cap-runtime-001, and calls the existing incident classifier.",
+      "Consumer, scheduler, and incident-listener worker results expose deduplicated terminal_incident_ids and a single terminal_incident_id when one terminal incident is present."
+    ],
+    "terminal_readback": {
+      "telemetry_event_id": "evt-l12-min-cap-runtime-001",
+      "drift_report_id": "drift-evt-l12-min-cap-runtime-001",
+      "terminal_incident_id": "inc-l12-min-telrec-001",
+      "evolution_input_field": "terminal_incident_id"
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Consume the Capital runtime event through the existing telemetry ingest.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/telemetry/test_l12_tel_001_durable_ingest.py::DurableIngestReceiptTest::test_capital_runtime_event_is_accepted_for_reconciliation_readback"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Run reconciliation and persist one terminal DriftReport or IncidentCase.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py::test_capital_runtime_event_persists_terminal_incident_for_evolution"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Expose the terminal incident identifier for Evolution input.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/reconciliation-drift/consumer.py::run_runtime_summary_consumer_once",
+        "services/reconciliation-drift/scheduler_worker.py::_decorate_result",
+        "services/reconciliation-drift/incident_listener.py::run_tick",
+        "services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py::test_scheduler_exposes_terminal_incident_id_for_evolution",
+        "services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py::test_incident_listener_tick_triggers_reconciliation_without_manual_scheduled_post"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Do not add unrelated incident service or infrastructure hardening.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/reconciliation-drift/consumer.py",
+        "services/reconciliation-drift/scheduler_worker.py",
+        "services/reconciliation-drift/incident_listener.py"
+      ]
+    }
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/telemetry/test_l12_tel_001_durable_ingest.py services/telemetry/test_runtime_summary_projection.py services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_reconciliation_drift_worker_resilience.py",
+        "result": "pass",
+        "conclusion": "79 passed, 1 skipped (optional PANTHEON_TEST_NATS_URL crash probe), 1 existing Starlette TestClient deprecation warning"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m py_compile services/telemetry/test_l12_tel_001_durable_ingest.py services/reconciliation-drift/consumer.py services/reconciliation-drift/scheduler_worker.py services/reconciliation-drift/incident_listener.py services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py && git diff --check",
+        "result": "pass",
+        "conclusion": "exit 0"
+      }
+    ]
+  },
+  "safety": {
+    "no_live_capital": "pass; the test event asserts is_real_order=false and is_real_capital=false.",
+    "incident_ownership": "unchanged; reconciliation uses the existing incident classifier boundary and does not alter the incidents service.",
+    "infrastructure": "unchanged; the optional real JetStream crash probe remains separately environment-gated."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer": "Antigravity",
+    "required_review": "Verify the paper-only Capital event, immutable telemetry readback, persisted DriftReport, terminal incident identifier handoff, focused validation, and task scope before approving this manifest through the governed status command."
+  }
+}

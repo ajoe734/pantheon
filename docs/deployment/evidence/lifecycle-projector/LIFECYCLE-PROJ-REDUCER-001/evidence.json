@@ -1,0 +1,122 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-reducer-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-REDUCER-001",
+    "title": "Replace full rebuild with a bounded incremental reducer",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "task_branch": "task/LIFECYCLE-PROJ-REDUCER-001",
+    "code_head_sha": "b80826a1b90d83566ab8281b08dc0ff5526a4d89",
+    "head_sha_note": "code_head_sha is the commit this manifest describes and verifies. This manifest is committed on top of it, so the PR head is one commit later and is NOT self-referenced here.",
+    "authorship_note": "The prior task history (8718741f3 through b81e9191e) is retained only for audit after CI rejected three anchor subjects over 72 characters. Codex2 reconstructed the verified reducer patch from the current dev tip as b80826a1b. Antigravity is reviewer of record and must review the reconstructed exact head before approval.",
+    "evidence_cut_at": "2026-08-06T00:00:00Z"
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/incremental_materializer.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-REDUCER-001/"
+    ],
+    "unchanged_in_this_revision": [
+      "services/trade_journey/materializer.py",
+      "services/trade_journey/test_canonical_paper_lifecycle_integration.py"
+    ],
+    "not_changing": [
+      "telemetry_events canonical source schema",
+      "projection_store schema or migrations",
+      "BFF routes or read selection"
+    ],
+    "composes_with": [
+      "LIFECYCLE-PROJ-STORE-001",
+      "LIFECYCLE-PROJ-BFF-001"
+    ]
+  },
+  "file_checksums_cwd": "repository root; run `sha256sum -c docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-REDUCER-001/SHA256SUMS` from there",
+  "file_checksums": {
+    "services/trade_journey/lifecycle_projector.py": "b434a79639cb163ff96713b8ff6bf03dae07aac0a2402d07255de9180e54d550",
+    "services/trade_journey/incremental_materializer.py": "c87b23a24eb30c493f6f52e0f70b7378d2aed20deca1c840c738995630944230",
+    "services/trade_journey/materializer.py": "bd6c6e76411b452c5a6e8db16eb8b55cdd735ed7ebe9042df253184be82feb96",
+    "services/trade_journey/test_lifecycle_projector.py": "c03ab79b0bc1da226a32955d55f2650f24d8a12e568b8c5424b8794b724c6c07",
+    "services/trade_journey/test_canonical_paper_lifecycle_integration.py": "e339fef9222738b55718632ce430ae29199b5f56ef4f4345ace7ad5630d04ba6"
+  },
+  "reopen_blockers_resolved": [
+    {
+      "id": "BLOCKER 1",
+      "claim": "copy.deepcopy(self.state) was still the first statement of project_records, record_poll and record_source_failure.",
+      "fix": "Replaced by LifecycleProjector._bounded_state_copy, which copies scalars, the fixed controller dict, the <=1000 entry quarantine ring and identity_chains keys only. _admit_identity replaces chain entries rather than mutating them, so the shallow key copy is safe.",
+      "measurement": "measure_reducer.py R3 deepcopied_state_bytes: old 859, 37352, 73710, 110068, 146426 across five polls; new 0 on every poll (no whole-state dict is ever handed to copy.deepcopy). Pinned by test_reducer_work_is_bounded_by_batch_and_affected_aggregates, which spies on copy.deepcopy."
+    },
+    {
+      "id": "BLOCKER 2",
+      "claim": "agg.events_by_id accumulated every event forever and render_full_payloads re-derived every journey on every publish, so per-poll work was O(total history).",
+      "fix": "BoundedAggregateState now stores folded read-model state only (derived journey events, per-event fingerprints and source modes, folded loop counters, cached loop record); events_by_id and canonical_events are removed. stage_batch deep-copies and rebuilds only the aggregates the batch touches; render_full_payloads concatenates cached slices and derives nothing.",
+      "measurement": "measure_reducer.py R3, one new 8-event journey per poll, total history growing 8 -> 40: canonical entries pushed through _journey_events were old 16, 24, 32, 40, 48 and are new 8, 8, 8, 8, 8; a duplicate replay poll was old 40 and is new 0. Pinned by test_reducer_work_is_bounded_by_batch_and_affected_aggregates."
+    },
+    {
+      "id": "BLOCKER 3",
+      "claim": "A recovery event re-delivered live no longer reached loop_runs.json; the published record stayed source_modes=['recovery'] accepted_live=False projection_mode=recovery.",
+      "fix": "The live promotion is staged as promotions={journey_id: {event_id}}, patches the cached read-model events for that canonical id, and forces a rematerialization of the aggregate so the loop record follows.",
+      "measurement": "measure_reducer.py R2: old stayed ['recovery']/False/recovery after live re-delivery; new becomes ['live']/True/live. Pinned by test_recovery_events_redelivered_live_promote_the_published_read_model."
+    },
+    {
+      "id": "BLOCKER 4",
+      "claim": "Intra-batch duplicate event_ids were not detected, apply_batch's counters were discarded, and same-batch conflicts raised after checkpoint/generation/controller had already been mutated.",
+      "fix": "The ingest loop resolves idempotency against committed aggregate fingerprints and against the entries already accepted from the same batch, so a conflict raises before any controller mutation. The accepted count is now taken from stage_batch's return value instead of being counted independently.",
+      "measurement": "measure_reducer.py R1, a batch of 8 rows plus one byte-identical copy of row 0: old ProjectionResult(accepted=9, duplicates=0); new accepted=8, duplicates=1. Pinned by test_intra_batch_duplicate_is_counted_and_intra_batch_conflict_fails_closed, which also asserts nothing is published and no state file is written when a same-batch conflict fails closed."
+    },
+    {
+      "id": "BLOCKER 5",
+      "claim": "SHA256SUMS and evidence.json.file_checksums disagreed, and SHA256SUMS could not be verified because no cwd was documented.",
+      "fix": "Both regenerated from the same command at code head fced1de9c and reconciled; the verification cwd is recorded in file_checksums_cwd and in README.md.",
+      "measurement": "sha256sum -c from the repository root reports OK for all five files."
+    },
+    {
+      "id": "GAP (acceptance 3)",
+      "claim": "No SIGKILL and no transaction-failure convergence proof existed anywhere in services/trade_journey.",
+      "fix": "test_sigkill_mid_publish_converges_on_restart forks a child and sends it a real SIGKILL at two distinct publish crash points (before the bundle switch, and after the bundle switch but before the controller state commit), asserts the child died by signal 9, asserts no torn state, and asserts a restarted projector converges to the independent full-rebuild baseline. test_state_transaction_failure_leaves_no_torn_state_and_restart_converges injects an OSError on the controller_state.json commit and asserts the in-memory aggregates were never committed and that a restart converges."
+    },
+    {
+      "id": "NOTE (equivalence test)",
+      "claim": "The old equivalence test compared render_full_payloads against _render on state that _render had been given a fallback to read, so both sides read the same new data.",
+      "fix": "_render, _loop_records, _loop_records_for_entries and _entry_sort_key are deleted from the projector. test_reducer_output_matches_independent_full_rebuild_baseline compares the published bundle against _baseline_full_rebuild, which reconstructs every canonical entry from the raw source rows the projector was handed and reruns the pre-incremental full-rebuild algorithm. It shares no state with the reducer and covers out-of-order arrival, replay, duplicates, a second journey, and a recovery -> live promotion."
+    }
+  ],
+  "contract_proof": {
+    "reducer_bounded": "Per-poll materialization work is bounded by the batch and the aggregates it affects: canonical entries derived, aggregates rematerialized and aggregates deep-copied are each <= the affected-aggregate set and are flat as total history grows (measured 8/1/1 per poll while history grows 8 -> 40). No full-state deepcopy remains on any active worker path.",
+    "residual_cost_disclosed": "Two costs remain proportional to total read-model size and are structural to snapshot-file publishing rather than to the reducer: concatenating and ordering the already-materialized events into the published bundle, and serializing controller_state.json. Neither re-derives an event or rebuilds an aggregate. Per-aggregate persistence is the LIFECYCLE-PROJ-STORE-001 surface and is explicitly out of scope here.",
+    "no_all_history_raw_log": "events_by_id and canonical_events are removed from runtime state. What an aggregate retains is its own read-model slice plus per-event fingerprints and source modes required for idempotency and mode semantics.",
+    "loop_record_preserved": "Loop records are cached per aggregate and the controller-dependent fields are stamped at render time, so record_poll and record_source_failure republish the same aggregate-derived record with a current controller stamp instead of an empty records map.",
+    "idempotency_preserved": "Exact duplicates short-circuit and are counted once, including within a single batch; conflicting fingerprints fail closed before checkpoint, generation or controller move.",
+    "freshness_mode": "Only live records update live freshness; recovery, backfill and replay retain distinct modes, and last_live_event_at is folded per aggregate instead of scanning all history.",
+    "crash_atomicity": "Aggregates are staged and committed only after the bundle and controller state have landed, so a publish failure, an injected state-commit failure or a SIGKILL leaves committed state untouched and a restart converges."
+  },
+  "validation": [
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/trade_journey",
+      "result": "pass; 128 passed, 19 skipped"
+    },
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+      "result": "pass; 29 passed"
+    },
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py scripts/test_wait_for_bff_lifecycle_readiness.py",
+      "result": "pass; 76 passed"
+    },
+    {
+      "command": "git archive 06c94cae0 | tar -x -C /tmp/old-reducer; cp measure_reducer.py into each tree and run it under /home/lupin/pantheon/.venv/bin/python from that tree root",
+      "result": "old-vs-new differential recorded in reopen_blockers_resolved[*].measurement; the script is a throwaway reviewer harness and is intentionally not committed"
+    },
+    {
+      "command": "sha256sum -c docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-REDUCER-001/SHA256SUMS  # from the repository root",
+      "result": "pass; 5 files OK"
+    },
+    {
+      "command": "git diff --check",
+      "result": "pass"
+    }
+  ]
+}

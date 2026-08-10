@@ -262,6 +262,23 @@ class WorkflowDispatchContractTests(unittest.TestCase):
             "${{ github.event.inputs.head_sha || github.event.pull_request.head.sha }}",
         )
 
+    def test_publisher_job_does_not_collide_with_required_status_context(self) -> None:
+        """The initial pre-review run publishes a failing required status.
+
+        Its Actions check-run must have a different name so the later
+        workflow_dispatch success status is not left competing with a stale
+        same-name failure on the PR head.
+        """
+
+        gate_job = self.workflow["jobs"]["gate"]
+        self.assertNotEqual(gate_job["name"], bridge.CANONICAL_REVIEW_CONTEXT)
+        self.assertEqual(gate_job["name"], "Publish canonical review status")
+
+        (gate_step,) = [step for step in gate_job["steps"] if "env" in step]
+        self.assertIn('gate_rc=0', gate_step["run"])
+        self.assertIn('|| gate_rc=$?', gate_step["run"])
+        self.assertIn('if [[ "$gate_rc" -ne 0 && "$gate_rc" -ne 1 ]]', gate_step["run"])
+
     def test_concurrency_group_is_defined_for_a_dispatch_run(self) -> None:
         """On workflow_dispatch there is no `pull_request` context, so a group
         keyed only on the PR number would collapse every dispatch run into one

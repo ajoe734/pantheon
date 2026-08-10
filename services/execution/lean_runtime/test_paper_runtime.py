@@ -294,6 +294,7 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             "signal_id": "signal-001",
             "version": "1.0",
             "strategy_id": "strategy-paper",
+            "runtime_id": "paper-runtime-001",
             "timestamp": datetime.now(timezone.utc)
             .replace(microsecond=0)
             .isoformat()

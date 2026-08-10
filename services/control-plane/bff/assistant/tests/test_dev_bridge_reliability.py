@@ -30,7 +30,10 @@ from ..dev_bridge_signer import (
     packet_digest,
     sign_packet,
 )
-from .dev_bridge_test_support import write_materializing_ai_status
+from .dev_bridge_test_support import (
+    bind_isolated_ai_status_module,
+    write_materializing_ai_status,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -75,6 +78,70 @@ if command == "show":
 raise SystemExit(f"unsupported command: {command}")
 """
 
+NONZERO_MATERIALIZING_AI_STATUS_SCRIPT = """import json
+import os
+import sys
+from pathlib import Path
+
+root = Path(os.environ["PANTHEON_STATUS_ROOT"])
+status_path = root / "ai-status.json"
+state = json.loads(status_path.read_text(encoding="utf-8"))
+command = sys.argv[1]
+if command == "assign":
+    metadata = json.loads(os.environ["TASK_METADATA_JSON"])
+    spec = metadata["dev_bridge"]["task_spec"]
+    task = {
+        "id": spec["id"],
+        "title": spec["title"],
+        "owner": spec["owner"],
+        "reviewer": spec["reviewer"],
+        "phase": spec["phase"],
+        "depends_on": spec["depends_on"],
+        "artifacts": spec["artifacts"],
+        "acceptance": spec["acceptance"],
+        "summary_zh": spec["summary"],
+        "dev_bridge": metadata["dev_bridge"],
+    }
+    state["tasks"] = [item for item in state.get("tasks", []) if item.get("id") != task["id"]]
+    state["tasks"].append(task)
+    status_path.write_text(json.dumps(state), encoding="utf-8")
+    with (root / "ai-activity-log.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "assign", "task_id": task["id"]}) + "\\n")
+    with (root / "calls.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"command": "assign", "task_id": task["id"]}) + "\\n")
+    print("injected nonzero after canonical commit", file=sys.stderr)
+    raise SystemExit(9)
+if command == "show":
+    task_id = sys.argv[2]
+    task = next((item for item in state.get("tasks", []) if item.get("id") == task_id), None)
+    if task is None:
+        print(f"Unknown task: {task_id}", file=sys.stderr)
+        raise SystemExit(1)
+    mode = os.environ.get("BRIDGE_TEST_SHOW_MODE", "exact")
+    if mode == "missing":
+        print(f"Unknown task: {task_id}", file=sys.stderr)
+        raise SystemExit(1)
+    if mode == "unavailable":
+        print("injected governed show unavailable", file=sys.stderr)
+        raise SystemExit(75)
+    if mode == "malformed":
+        print("not-json")
+        raise SystemExit(0)
+    print(json.dumps({"source": "active", "task": task}))
+    raise SystemExit(0)
+raise SystemExit(f"unsupported command: {command}")
+"""
+
+VERIFY_TASK_STATE_STORE_SCRIPT = """import json
+print(json.dumps({
+    "ok": True,
+    "event_count": 1,
+    "last_event_id": "bridge-test-event",
+    "expected_state_sha256": "a" * 64,
+    "projected_state_sha256": "a" * 64,
+}))
+"""
+
 
 @pytest.fixture(autouse=True)
 def _bridge_signing_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,6 +180,50 @@ def _load_task_state_latency_benchmark():
 
 
 AI_STATUS = _load_ai_status_module()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_bridge_status_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Make every reliability test inherit an explicit scratch status/audit."""
+
+    status_root = bind_isolated_ai_status_module(
+        AI_STATUS,
+        tmp_path / "ambient-status-root",
+    )
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    monkeypatch.setenv(
+        "PANTHEON_ASSISTANT_DEV_PACKET_INBOX",
+        ".orchestrator/assistant-dev-packets",
+    )
+    for name in (
+        "PANTHEON_COMMAND_ROOT",
+        "PANTHEON_COMMAND_RUNTIME_SHA",
+        "PANTHEON_COMMAND_REMOTE",
+        "PANTHEON_COMMAND_BASE_REF",
+        "PANTHEON_TASK_STATE_STORE_MODE",
+        "PANTHEON_TASK_STATE_EVENT_LOG",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_focused_harness_never_binds_live_status_or_audit_paths() -> None:
+    live_root = Path("/home/lupin/pantheon").resolve()
+    bound_paths = (
+        AI_STATUS.STATUS_ROOT,
+        AI_STATUS.STATUS_FILE,
+        AI_STATUS.LOG_FILE,
+        Path(os.environ["PANTHEON_STATUS_ROOT"]),
+    )
+    assert all(
+        path.resolve() != live_root
+        and live_root not in path.resolve().parents
+        for path in bound_paths
+    )
+    assert AI_STATUS.LOG_FILE.name == "ai-activity-log.jsonl"
+    assert AI_STATUS.LOG_FILE.read_text(encoding="utf-8") == ""
 
 
 def _task(task_id: str) -> BridgeTask:
@@ -201,6 +312,45 @@ def _authoritative_status_root(tmp_path: Path) -> tuple[Path, Path, dict]:
     event_log.parent.mkdir()
     AI_STATUS.append_state_commit(event_log, state, source="bridge-test-fixture")
     return root, event_log, state
+
+
+def _nonzero_command_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    status_root = tmp_path / "nonzero-status-root"
+    status_root.mkdir()
+    state = AI_STATUS.default_state()
+    state["tasks"] = []
+    state["handoffs"] = []
+    state["blockers"] = []
+    state["wave_state"] = {"status": "open"}
+    (status_root / "ai-status.json").write_text(
+        json.dumps(state),
+        encoding="utf-8",
+    )
+    (status_root / "ai-activity-log.jsonl").write_text("", encoding="utf-8")
+    command_root = tmp_path / "nonzero-command-root"
+    scripts = command_root / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "ai_status.py").write_text(
+        NONZERO_MATERIALIZING_AI_STATUS_SCRIPT,
+        encoding="utf-8",
+    )
+    (scripts / "verify_task_state_store.py").write_text(
+        VERIFY_TASK_STATE_STORE_SCRIPT,
+        encoding="utf-8",
+    )
+    event_log = tmp_path / "nonzero-runtime" / "task-state-events.jsonl"
+    event_log.parent.mkdir()
+    event_log.touch()
+    return status_root, {
+        "PANTHEON_STATUS_ROOT": str(status_root),
+        "PANTHEON_COMMAND_ROOT": str(command_root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": "isolated-nonzero-fixture",
+        "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+        "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
+    }
 
 
 def test_verified_bridge_uses_trusted_status_actor_without_worker_lease(
@@ -786,6 +936,126 @@ def test_supervisor_required_readback_rejects_missing_journal_binding(
     assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
 
 
+def test_nonzero_governed_assign_requires_and_accepts_exact_readback(
+    tmp_path: Path,
+) -> None:
+    status_root, runtime_env = _nonzero_command_fixture(tmp_path)
+    packet = _signed("pkt_nonzero_exact_readback")
+
+    result = dispatch_task_packet(
+        BridgeDispatchRequest(packet=packet, repoRoot=str(status_root)),
+        key_store=KEY_STORE,
+        runtime_env=runtime_env,
+    )
+
+    assert result.errors == []
+    assert result.task_records[0].status == "dispatched"
+    assert result.admission_status == "admitted"
+    assert result.admission_record is not None
+    assert result.admission_record["packet_digest"] == packet_digest(packet)
+    assert result.admission_record["actor"] == packet.actor.model_dump(
+        mode="json",
+        by_alias=True,
+    )
+    isolated_audit = status_root / "ai-activity-log.jsonl"
+    assert json.loads(isolated_audit.read_text(encoding="utf-8")) == {
+        "type": "assign",
+        "task_id": packet.tasks[0].id,
+    }
+
+
+@pytest.mark.parametrize(
+    ("show_mode", "expected_status", "expected_retryable", "error_fragment"),
+    [
+        ("missing", "not_attempted", False, "nonzero after canonical commit"),
+        ("unavailable", "task_state_mutation_retryable", True, "unavailable"),
+        ("malformed", "not_attempted", False, "invalid JSON"),
+    ],
+)
+def test_nonzero_governed_assign_rejects_missing_unavailable_or_malformed_show(
+    tmp_path: Path,
+    show_mode: str,
+    expected_status: str,
+    expected_retryable: bool,
+    error_fragment: str,
+) -> None:
+    status_root, runtime_env = _nonzero_command_fixture(tmp_path)
+    runtime_env["BRIDGE_TEST_SHOW_MODE"] = show_mode
+    packet = _signed(f"pkt_nonzero_{show_mode}_readback")
+
+    result = dispatch_task_packet(
+        BridgeDispatchRequest(packet=packet, repoRoot=str(status_root)),
+        key_store=KEY_STORE,
+        runtime_env=runtime_env,
+    )
+
+    assert result.admission_record is None
+    assert result.admission_status == expected_status
+    assert result.retryable is expected_retryable
+    assert error_fragment in result.errors[0]
+    assert not has_seen_packet(packet.packet_id, repo_root=str(status_root))
+
+
+def test_governed_readback_never_falls_back_to_local_task_projection(
+    tmp_path: Path,
+) -> None:
+    status_root, runtime_env = _nonzero_command_fixture(tmp_path)
+    packet = _signed("pkt_no_local_projection_fallback")
+
+    with (
+        patch.object(
+            dev_bridge_dispatcher,
+            "_canonical_task_state_readback",
+            side_effect=ValueError("injected governed readback malformed"),
+        ),
+        patch.object(
+            dev_bridge_dispatcher,
+            "_materialized_task_candidates",
+            side_effect=AssertionError("repository-local fallback was used"),
+        ),
+        pytest.raises(ValueError, match="governed readback malformed"),
+    ):
+        dev_bridge_dispatcher._validate_materialized_tasks(
+            packet,
+            repo_root=str(status_root),
+            environment=runtime_env,
+        )
+
+
+def test_replacement_packet_id_for_materialized_task_fails_before_assign(
+    tmp_path: Path,
+) -> None:
+    status_root, runtime_env = _nonzero_command_fixture(tmp_path)
+    original = _signed("pkt_original_materialized_id")
+    first = dispatch_task_packet(
+        BridgeDispatchRequest(packet=original, repoRoot=str(status_root)),
+        key_store=KEY_STORE,
+        runtime_env=runtime_env,
+    )
+    assert first.admission_status == "admitted"
+    replacement = _packet("pkt_replacement_materialized_id").model_copy(
+        update={"tasks": original.tasks}
+    )
+    replacement = sign_packet(replacement, key_store=KEY_STORE)
+
+    rejected = dispatch_task_packet(
+        BridgeDispatchRequest(packet=replacement, repoRoot=str(status_root)),
+        key_store=KEY_STORE,
+        runtime_env=runtime_env,
+    )
+
+    assert rejected.admission_record is None
+    assert rejected.admission_status == "not_attempted"
+    assert "signed bridge provenance" in rejected.errors[0]
+    calls = [
+        json.loads(line)
+        for line in (status_root / "calls.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    assert calls == [{"command": "assign", "task_id": original.tasks[0].id}]
+
+
 def test_partial_dispatch_failure_is_retryable_and_only_full_success_marks_seen(
     tmp_path: Path,
 ) -> None:
@@ -847,6 +1117,16 @@ def test_assign_timeout_before_task_is_retryable_and_unadmitted(
     assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
     state = json.loads((repo_root / "ai-status.json").read_text(encoding="utf-8"))
     assert state["tasks"] == []
+
+
+def test_assign_timeout_defaults_and_caps_at_ten_seconds() -> None:
+    assert dev_bridge_dispatcher._assign_timeout_seconds({}) == 10.0
+    assert dev_bridge_dispatcher._assign_timeout_seconds(
+        {dev_bridge_dispatcher.ASSIGN_TIMEOUT_ENV: "30"}
+    ) == 10.0
+    assert dev_bridge_dispatcher._assign_timeout_seconds(
+        {dev_bridge_dispatcher.ASSIGN_TIMEOUT_ENV: "3"}
+    ) == 3.0
 
 
 def test_timeout_after_one_task_resumes_exact_packet_without_duplicate_rows(
