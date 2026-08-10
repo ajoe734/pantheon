@@ -1,0 +1,119 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "L12-MIN-DEP-20260808",
+    "title": "Run one approved paper deployment command to RuntimeBinding",
+    "phase": "M1 loop closure",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-MIN-DEP-20260808",
+    "merge_target": "dev",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DEP-20260808/evidence.json",
+    "overall_admission": "ready_for_independent_review"
+  },
+  "scope": {
+    "owned_layer": "Deployment outbox convergence for an approved paper command through RuntimeBinding authority readback and terminal DEP-003 projection",
+    "not_changing": [
+      "RuntimeBinding write ownership",
+      "Capital paper-fleet worker start and signal execution",
+      "live or canary deployment",
+      "unrelated governance hardening"
+    ],
+    "composes_with": {
+      "upstream": "L12-MIN-CONS-20260808 supplies the approved consultation input",
+      "downstream": "L12-MIN-CAP-20260808 consumes the completed paper RuntimeBinding to start the paper fleet"
+    },
+    "implementation_changed_files": [
+      "services/deployment/outbox_consumer_worker.py",
+      "services/deployment/test_l12_dep_001_dispatcher.py",
+      "services/deployment/test_outbox_consumer_worker.py"
+    ],
+    "contract_changed_files": [
+      "services/deployment/README.md",
+      "services/deployment/contract.md"
+    ]
+  },
+  "normal_path_proof": {
+    "mode": "deterministic, isolated in-process service integration",
+    "trigger": "POST approved paper DeploymentPlan dispatch, followed by two existing deployment-outbox-consumer polls",
+    "event_sequence": [
+      "runtime.binding.requested creates and authority-reads one paper RuntimeBinding",
+      "runtime.load.requested reads that binding, records runtime-active, and validates the DEP-003 projection before acknowledgement"
+    ],
+    "terminal_readback": {
+      "deployment_plan_status": "executed",
+      "deployment_saga_status": "completed",
+      "runtime_binding_status": "active",
+      "projection_sources": [
+        "deployment_plan=canonical",
+        "runtime_binding=canonical",
+        "deployment_saga=canonical"
+      ],
+      "capital_readback": "PoolRuntimeCompatibilityService finds exactly the one active RuntimeBinding for the completed plan's pool"
+    },
+    "downstream_boundary": "No paper-fleet URL is configured or read by Deployment; Capital owns fleet start and readback after the completed binding is visible."
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Submit one approved paper deployment command through the existing outbox consumer.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/deployment/test_l12_dep_001_dispatcher.py::test_approved_paper_command_reaches_terminal_plan_and_binding"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Persist a terminal DeploymentPlan and one valid RuntimeBinding.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/deployment/test_l12_dep_001_dispatcher.py::test_approved_paper_command_reaches_terminal_plan_and_binding",
+        "services/deployment/test_outbox_consumer_worker.py::TestRunPoll::test_runtime_load_completes_from_authoritative_binding_without_fleet"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Prove Capital can read the binding and remove the missing-plan inconsistency.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/deployment/test_l12_dep_001_dispatcher.py::test_approved_paper_command_reaches_terminal_plan_and_binding"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Do not implement live deployment or unrelated governance hardening.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/deployment/outbox_consumer_worker.py",
+        "services/runtime-manager/deploy_authority.py"
+      ]
+    }
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/deployment/test_l12_dep_001_dispatcher.py services/deployment/test_outbox_consumer_worker.py services/deployment/test_service.py services/deployment/test_runtime_manager_dispatch_adapter.py services/runtime-manager/test_deploy_authority.py",
+        "result": "pass",
+        "conclusion": "170 passed, 1 existing Starlette TestClient deprecation warning"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m py_compile services/deployment/outbox_consumer_worker.py services/deployment/service.py services/deployment/test_l12_dep_001_dispatcher.py services/deployment/test_outbox_consumer_worker.py",
+        "result": "pass",
+        "conclusion": "exit 0"
+      }
+    ]
+  },
+  "safety": {
+    "no_live_capital": "pass",
+    "runtime_binding_write_owner": "Runtime Manager remains the only writer; the Deployment worker uses its client/adapter path.",
+    "fleet_ownership": "Capital retains paper-fleet start/readback responsibility.",
+    "hosted_deployment": "not_applicable; this task supplies deterministic source-level proof only."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer": "Antigravity",
+    "required_review": "Verify the committed evidence, no-fleet Deployment completion boundary, focused validation, and exact task scope before approving this manifest through the governed status command."
+  }
+}
