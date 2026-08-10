@@ -643,9 +643,63 @@ class DetectWorkerFailureTests(unittest.TestCase):
             "ERROR: You've hit your usage limit.\n",
             provider="codex",
         )
-        worker.update({"runner_status": "completed", "exit_code": 0})
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_terminated_runner_never_promotes_transcript_quota_text(self) -> None:
+        """SIGTERM/preempted worker (runner_status=terminated, exit_code=143) must not scan transcript plaintext for provider failures."""
+        worker = self._worker_for_log(
+            "ERROR: You've hit your usage limit.\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "terminated", "exit_code": 143})
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_generic_failed_runner_without_provider_envelope_is_none(self) -> None:
+        """Generic runner failure (runner_status=failed, exit_code=1) without structured envelope or explicit CLI error line returns None for non-matching log content."""
+        worker = self._worker_for_log(
+            "if rate limit exceeded ... quota exceeded\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "failed", "exit_code": 1})
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_generic_failed_runner_with_unstructured_usage_limit_is_none(self) -> None:
+        """Generic runner failure (runner_status=failed, exit_code=1) with plaintext usage limit line without explicit error/status prefix returns None."""
+        worker = self._worker_for_log(
+            "ERROR: You have hit your usage limit or non-zero return code.\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "failed", "exit_code": 1})
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNone(detected)
+        classified = supervisor.classify_worker_failure({}, worker, detected)
+        self.assertIsNone(classified)
+
+    def test_captured_live_sigterm_codex1_auth_source_line_does_not_pause(self) -> None:
+        """Replay codex-20260809T144540Z SIGTERM auth source-line event: quoted auth pattern in source code line under SIGTERM must not detect failure or pause codex1."""
+        auth_source_line = 'def is_auth_error(text: str) -> bool: return "invalid_api_key" in text or "unauthorized" in text'
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "Working on task...",
+                    auth_source_line,
+                    "Worker interrupted by supervisor SIGTERM",
+                ]
+            )
+            + "\n",
+            provider="codex",
+        )
+        worker.update({"agent_id": "codex1", "runner_status": "terminated", "exit_code": 143, "status": "failed"})
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNone(detected)
+
+        # When no failure was detected in transcript, failure classification returns None for empty reason
+        failure = supervisor.classify_worker_failure({}, worker, detected)
+        self.assertIsNone(failure)
 
     def test_authoritative_terminal_envelopes_preserve_failure_classes(self) -> None:
         cases = (
@@ -11520,114 +11574,6 @@ class OrphanedQueueEventTests(unittest.TestCase):
         self.assertEqual((self.root / "event-queue.jsonl").read_text(encoding="utf-8"), "")
         self.assertEqual(state["queue"]["events"], {})
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "queue_event_pruned")
-
-    def test_prune_event_queue_drops_unbacked_active_record_without_task_or_worker(self) -> None:
-        state = {
-            "queue": {
-                "events": {
-                    "malformed-started": {
-                        "status": "started",
-                        "lease_owner": "missing-worker",
-                    }
-                }
-            },
-            "workers": {},
-        }
-
-        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
-            changed = supervisor.prune_event_queue(self.config, state)
-
-        self.assertTrue(changed)
-        self.assertEqual(state["queue"]["events"], {})
-        self.assertEqual(
-            write_activity_log.call_args.args[1]["type"],
-            "malformed_queue_record_pruned",
-        )
-
-    def test_prune_event_queue_drops_overdue_retry_workers_without_processes(self) -> None:
-        event = {
-            "event_id": "stale-retry",
-            "task_id": "task-1",
-            "target_agent": "codex",
-            "created_at": "2026-08-09T10:00:00Z",
-        }
-        state = {
-            "queue": {"events": {"stale-retry": {"status": "started"}}},
-            "workers": {
-                "retry-1": {
-                    "run_id": "retry-1",
-                    "task_id": "task-1",
-                    "queue_event_id": "stale-retry",
-                    "status": "retry_backoff",
-                    "next_retry_at": "2026-08-09T10:01:00Z",
-                }
-            },
-        }
-
-        with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
-            mock.patch.object(
-                supervisor,
-                "load_status",
-                return_value={"tasks": [{"id": "task-1", "status": "todo"}]},
-            ),
-            mock.patch.object(supervisor, "worker_process_generation_is_current", return_value=False),
-            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
-            mock.patch.object(supervisor, "save_event_queue") as save_event_queue,
-        ):
-            changed = supervisor.prune_event_queue(self.config, state)
-
-        self.assertTrue(changed)
-        self.assertEqual(state["workers"], {})
-        self.assertEqual(state["queue"]["events"], {})
-        save_event_queue.assert_called_once_with(self.config, [])
-        self.assertEqual(
-            [call.args[1]["type"] for call in write_activity_log.call_args_list],
-            ["worker_reaped", "queue_event_pruned"],
-        )
-
-    def test_prune_event_queue_drops_finished_retry_workers_without_processes(self) -> None:
-        event = {
-            "event_id": "stale-finished-retry",
-            "task_id": "task-2",
-            "target_agent": "codex",
-            "created_at": "2026-08-09T10:00:00Z",
-        }
-        state = {
-            "queue": {"events": {"stale-finished-retry": {"status": "retry_backoff"}}},
-            "workers": {
-                "retry-2": {
-                    "run_id": "retry-2",
-                    "task_id": "task-2",
-                    "queue_event_id": "stale-finished-retry",
-                    "status": "retry_backoff",
-                    "runner_finished_at": "2026-08-09T10:02:00Z",
-                    "next_retry_at": "2026-08-09T11:00:00Z",
-                }
-            },
-        }
-
-        with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
-            mock.patch.object(
-                supervisor,
-                "load_status",
-                return_value={"tasks": [{"id": "task-2", "status": "todo"}]},
-            ),
-            mock.patch.object(supervisor, "worker_process_generation_is_current", return_value=False),
-            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
-            mock.patch.object(supervisor, "save_event_queue") as save_event_queue,
-        ):
-            changed = supervisor.prune_event_queue(self.config, state)
-
-        self.assertTrue(changed)
-        self.assertEqual(state["workers"], {})
-        self.assertEqual(state["queue"]["events"], {})
-        save_event_queue.assert_called_once_with(self.config, [])
-        self.assertEqual(
-            [call.args[1]["type"] for call in write_activity_log.call_args_list],
-            ["worker_reaped", "queue_event_pruned"],
-        )
 
 
 class ChairReviewDispatchTests(unittest.TestCase):

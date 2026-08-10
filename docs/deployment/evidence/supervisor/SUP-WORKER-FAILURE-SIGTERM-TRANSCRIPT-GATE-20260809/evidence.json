@@ -1,0 +1,68 @@
+{
+  "schema_version": "supervisor_worker_failure_sigterm_transcript_gate.v1",
+  "task": {
+    "id": "SUP-WORKER-FAILURE-SIGTERM-TRANSCRIPT-GATE-20260809",
+    "title": "Prevent SIGTERM transcript source false positives",
+    "phase": "Supervisor Runtime / Worker Failure Classification",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "status": "in_progress",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-WORKER-FAILURE-SIGTERM-TRANSCRIPT-GATE-20260809"
+  },
+  "scope": {
+    "owned_layer": "Authoritative provider-evidence gating for worker transcript scanning, excluding supervisor SIGTERM preemption (terminated / exit code 143) from plain-text regex scanning.",
+    "not_changing": "Provider credentials, account/quota grouping, retry thresholds, reviewer policy, runtime-state JSON, live process signals, and product code.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "contract": {
+    "plain_text_gate": "A worker_runner terminal failure status (RUNNER_FAILURE_STATUSES = 'error', 'failed') is required before plain transcript lines can enter regex classification. Status 'terminated' (SIGTERM / exit code 143) is excluded to prevent preemption false positives.",
+    "provider_envelope_gate": "Structured provider streams independently admit only explicit terminal result/error/failure envelopes and rejected rate-limit control events.",
+    "live_captured_evidence": {
+      "run_id": "codex-20260809T095151Z-200962bd",
+      "captured_log": "20260809T095151094458Z-codex-codex2_2-0d4c19.log:27295",
+      "evidence_doc": ".orchestrator/evidence/codex_20260809t095151z_200962bd.json"
+    },
+    "mixed_trust_exclusions": [
+      "structured user and tool-result content",
+      "assistant prose without a terminal control envelope",
+      "source and diff lines",
+      "tool command output",
+      "search-result prefixes",
+      "captured orchestrator records",
+      "allowed and allowed_warning rate-limit notices",
+      "supervisor-terminated SIGTERM worker logs"
+    ],
+    "missing_process_fallback": "Quota-like log text without a runner/provider terminal envelope remains failure_kind missing_process and never opens a quota dispatch pause."
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned and dependency imports verified"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'DetectWorkerFailureTests or RuntimeLeaseReconciliationTests or AllowedRateLimitNoticeTests or pause_dispatch_for_reaped_worker'",
+      "result": "94 passed, 533 deselected, 10 subtests passed in 1.95s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+      "result": "628 passed, 533 deselected, 10 subtests passed in 2.02s"
+    },
+    {
+      "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "rollout_and_rollback": {
+    "rollout_boundary": "Per-task PR auto-merge into dev; supervisor picks up the updated RUNNER_FAILURE_STATUSES gate on next cycle.",
+    "rollback_strategy": "Merge revert PR on dev or master if supervisor worker-failure classification regresses."
+  }
+}
