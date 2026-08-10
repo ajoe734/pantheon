@@ -1,0 +1,41 @@
+{
+  "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+  "title": "Bind historical task-brief residue on immutable incumbent promotion",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "status": "review",
+  "pr_number": 4716,
+  "pr_url": "https://github.com/ajoe734/pantheon/pull/4716",
+  "pre_evidence_implementation_head": "208cecfa1",
+  "head_binding_policy": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py. This evidence manifest does not claim a commit can contain its own SHA.",
+  "changed_paths": [
+    "scripts/promote_supervisor_runtime.py",
+    "scripts/test_promote_supervisor_runtime.py",
+    "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810/evidence.json"
+  ],
+  "verification_commands": [
+    ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py -k \"test_immutable_incumbent or test_immutable_candidate or test_os_launch_filesystem\"",
+    ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_sync_dev_root.py",
+    "git diff --check"
+  ],
+  "verification_results": {
+    "focused_tests": "7 passed, 302 deselected cleanly in 1.47s",
+    "full_tests": "316 passed cleanly in 67.59s",
+    "git_diff_check": "passed with 0 exit code"
+  },
+  "incident_reproduction_analysis": {
+    "event_id": "supervisor-task-failure-streak-a9d6b8a54889ffae650c47e67d004eff0dd93f691a92791345e2bcd38cbdccf6",
+    "historical_retry": "963bb20c",
+    "cause": "The live incumbent running at accepted dev ancestor 5877b64425c8d6aede147d6cbbc6fbb9e228c259 carried historical tracked task brief .orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md. When promote_supervisor_runtime.py captured the incumbent via build_candidate_runtime_identity with allow_legacy_task_brief_drift=False, verify_working_tree_cleanliness raised ValueError('Tracked git tree is dirty ( M): .orchestrator/task-briefs/...'), aborting promotion before baseline/revalidation.",
+    "repair": "Updated CandidateRuntimeIdentity and verify_working_tree_cleanliness to accept allow_legacy_task_brief_drift=True when capturing an incumbent in OSPromotionBackend.prepare. Added registered provenance binding for SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808. Hard-link rejection added to OSLaunchFilesystem.capture_regular_file (st_nlink == 1 requirement). Strict cleanliness gates remain enforced for candidate_root."
+  },
+  "safety_and_coherence_invariants": {
+    "incumbent_root_mutation": "Zero incumbent root mutations (no reset, checkout, stash, clean, or file modification).",
+    "candidate_cleanliness": "candidate_root cleanliness requirement remains strictly 100% clean with allow_legacy_task_brief_drift=False.",
+    "provenance_binding": "Incumbent legacy task brief drift is bound to exact PID, starttime, cwd, commit, tree, remote, config, byte provenance, and st_nlink == 1, failing closed on unverified, hard-linked, symlinked, or changed residue.",
+    "launch_identity": "Launch source contracts, config CAS, process signalling, -B / PYTHONDONTWRITEBYTECODE=1, 3 fresh loops, and rollback cleanup remain preserved."
+  },
+  "no_live_rollout_boundary": "This task is source-only. No live config edits, direct process signals, live runtime promotions, candidate deletions, canonical state edits, or fleet scheduling changes were performed.",
+  "review_status": "pending_independent_review",
+  "reviewed_at": null
+}

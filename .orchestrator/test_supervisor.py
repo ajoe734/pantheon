@@ -28,6 +28,7 @@ import supervisor
 import provider_permissions
 import runtime_state
 import common
+import watch_events
 
 
 _OLD_ENV = {}
@@ -246,30 +247,30 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(report["providers"]["copilot"]["auth_ready"], True)
         build_provider_capabilities.assert_not_called()
 
-    def test_codex_accounts_allow_four_concurrent_slots(self) -> None:
+    def test_codex_accounts_allow_two_concurrent_slots(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
         account_caps = config["ready_dispatcher"]["max_concurrent_per_account"]
 
         self.assertNotIn("max_tasks_per_agent", ready_dispatcher)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex"], 4)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex2"], 4)
-        self.assertEqual(account_caps["codex1"], 4)
-        self.assertEqual(account_caps["codex2"], 4)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex"], 2)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex2"], 2)
+        self.assertEqual(account_caps["codex1"], 2)
+        self.assertEqual(account_caps["codex2"], 2)
         self.assertEqual(config["providers"]["codex"]["account"], "codex1")
         self.assertEqual(config["providers"]["codex2"]["account"], "codex2")
         self.assertGreaterEqual(len(config["agents"]["codex"]["worker_slots"]), 4)
         self.assertGreaterEqual(len(config["agents"]["codex2"]["worker_slots"]), 4)
-        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 4)
-        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 2)
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 2)
 
     def test_claude_lanes_are_enabled_with_shared_account_limit(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
 
-        self.assertEqual(ready_dispatcher["disabled_agents"], ["Antigravity2", "Copilot"])
+        self.assertEqual(ready_dispatcher["disabled_agents"], ["Copilot"])
         self.assertEqual(ready_dispatcher["target_workload"]["Claude"], 5)
         self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude"], 1)
@@ -293,7 +294,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(config["providers"]["claude2"]["account"], "claude_account_shared_max_1")
         self.assertNotIn("Claude2", ready_dispatcher["disabled_agents"])
 
-    def test_primary_antigravity_lane_is_enabled_and_alternate_stays_disabled(self) -> None:
+    def test_primary_and_alternate_antigravity_lanes_are_enabled(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
@@ -302,14 +303,14 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertIn("antigravity2", config["agents"])
         self.assertEqual(config["providers"]["antigravity"]["delivery_mode"], "antigravity")
         self.assertEqual(config["providers"]["antigravity2"]["delivery_mode"], "antigravity")
-        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity"], 5)
-        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity2"], 0)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity"], 1)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 0)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity"], 1)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity2"], 0)
+        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity"], 30)
+        self.assertEqual(ready_dispatcher["target_workload"]["Antigravity2"], 30)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity"], 4)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 4)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity"], 4)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity2"], 4)
         self.assertNotIn("Antigravity", ready_dispatcher["disabled_agents"])
-        self.assertIn("Antigravity2", ready_dispatcher["disabled_agents"])
+        self.assertNotIn("Antigravity2", ready_dispatcher["disabled_agents"])
 
     def test_live_provider_account_schema_is_strict_and_complete(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
@@ -365,7 +366,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         handle.flush()
         handle.close()
         self.addCleanup(Path(handle.name).unlink, missing_ok=True)
-        worker: dict[str, object] = {"log_path": handle.name, "provider": provider}
+        worker: dict[str, object] = {"log_path": handle.name, "provider": provider, "stream_json": True}
         if runner_failed:
             worker.update({"runner_status": "failed", "exit_code": 1})
         return worker
@@ -387,38 +388,36 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_detects_real_model_availability_failure(self) -> None:
+        line = '{"type":"result","is_error":true,"result":"Error: Model \\"grok-code-fast-1\\" from --model flag is not available."}'
         worker = self._worker_for_log(
-            'Error: Model "grok-code-fast-1" from --model flag is not available.\n',
+            line + "\n",
             runner_failed=True,
         )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
-            'Error: Model "grok-code-fast-1" from --model flag is not available.',
+            line,
         )
 
     def test_detects_real_gemini_quota_failure(self) -> None:
+        line = (
+            '{"type":"result","is_error":true,"result":'
+            '"Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",'
+            '"reason":"QUOTA_EXHAUSTED"}'
+        )
         worker = self._worker_for_log(
-            "\n".join(
-                [
-                    "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",
-                    "retryDelayMs: 1807388.816191,",
-                    "reason: 'QUOTA_EXHAUSTED'",
-                    "An unexpected critical error occurred:[object Object]",
-                ]
-            )
-            + "\n",
+            line + "\n",
             provider="gemini",
             runner_failed=True,
         )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
-            "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",
+            line,
         )
 
     def test_detects_copilot_monthly_quota_failure(self) -> None:
-        line = '402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}'
+        line = '{"type":"result","is_error":true,"status":"402","error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}'
         worker = self._worker_for_log(line + "\n", provider="copilot", runner_failed=True)
 
         self.assertEqual(supervisor.detect_worker_failure(worker), line)
@@ -441,6 +440,106 @@ class DetectWorkerFailureTests(unittest.TestCase):
         )
 
         self.assertEqual(supervisor.detect_worker_failure(worker), system_line)
+
+    def test_sigterm_worker_runner_failure_ignores_transcript_auth_and_does_not_pause(self) -> None:
+        auth_line = (
+            'Auto-reassigned ownership from Codex2 to Claude after repeated Codex2 auth: '
+            'Failed to authenticate. API Error: 401 Not authenticated'
+        )
+        # 1. runner_status="failed", exit_code=143 without runner_signal (e.g. killed by SIGTERM)
+        worker1 = self._worker_for_log(
+            auth_line + "\n",
+            provider="codex2",
+        )
+        worker1.update({"runner_status": "failed", "exit_code": 143})
+        self.assertIsNone(supervisor.detect_worker_failure(worker1))
+
+        # 2. runner_status="failed", exit_code=143, runner_signal=15
+        worker2 = self._worker_for_log(
+            auth_line + "\n",
+            provider="codex2",
+        )
+        worker2.update({"runner_status": "failed", "exit_code": 143, "runner_signal": 15})
+        self.assertIsNone(supervisor.detect_worker_failure(worker2))
+
+        config: dict[str, object] = {}
+        state: dict[str, object] = {"provider_guardrails": {"dispatch_pauses": {}}}
+
+        # 2b. runner_status="failed", exit_code=143, runner_signal=15 with a structured is_error JSON envelope
+        sigterm_json_envelope = '{"type":"result","is_error":true,"result":"API Error: 401 Not authenticated"}'
+        worker_sigterm_json = self._worker_for_log(
+            sigterm_json_envelope + "\n",
+            provider="codex2",
+        )
+        worker_sigterm_json.update({"runner_status": "failed", "exit_code": 143, "runner_signal": 15})
+        self.assertEqual(supervisor.detect_worker_failure(worker_sigterm_json), sigterm_json_envelope)
+        self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, worker_sigterm_json))
+
+        # 3. Generic non-provider exit (runner_status="failed", exit_code=1) with transcript source snippet
+        worker3 = self._worker_for_log(
+            auth_line + "\n",
+            provider="codex2",
+        )
+        worker3.update({"runner_status": "failed", "exit_code": 1})
+        self.assertIsNone(supervisor.detect_worker_failure(worker3))
+
+        # 3b. Generic non-provider exit (exit_code=1) with non-authoritative prompt/source/assistant lines starting with 'Error:' or 'API Error:'
+        provider_looking_lines = [
+            "Error: invalid authentication credentials",
+            "API Error: 401 Unauthorized request in source snippet",
+            "reason: 'QUOTA_EXHAUSTED' in docstring fixture",
+            "status: 401 authentication failed",
+        ]
+        for line_text in provider_looking_lines:
+            w_plain = self._worker_for_log(line_text + "\n", provider="codex2")
+            w_plain.update({"runner_status": "failed", "exit_code": 1})
+            self.assertIsNone(supervisor.detect_worker_failure(w_plain))
+            self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, w_plain))
+
+            w_assistant = self._worker_for_log(
+                json.dumps({"type": "assistant", "message": {"role": "assistant", "content": line_text}}) + "\n",
+                provider="codex2",
+            )
+            w_assistant.update({"runner_status": "failed", "exit_code": 1})
+            self.assertIsNone(supervisor.detect_worker_failure(w_assistant))
+            self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, w_assistant))
+
+        # 3c. Unprovenanced standalone JSON lines with stream_json=False / structured_stream=False are ignored even if type=result and is_error=true
+        standalone_err = '{"type":"result","is_error":true,"result":"Error: 401 Not authenticated in standalone JSON fixture"}'
+        w_unprovenanced = self._worker_for_log(standalone_err + "\n", provider="codex2")
+        w_unprovenanced.update({"runner_status": "failed", "exit_code": 1, "stream_json": False})
+        self.assertIsNone(supervisor.detect_worker_failure(w_unprovenanced))
+
+        # 3d. Generic failed worker with no stream_json or structured_stream metadata returns None without manually setting stream_json=False
+        w_default_shape = {"log_path": w_unprovenanced["log_path"], "provider": "codex2", "runner_status": "failed", "exit_code": 1}
+        self.assertIsNone(supervisor.detect_worker_failure(w_default_shape))
+
+        # 4. Verify pause_dispatch_for_reaped_worker path returns None for worker1, worker2, and worker3
+        self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, worker1))
+        self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, worker2))
+        self.assertIsNone(supervisor.pause_dispatch_for_reaped_worker(config, state, worker3))
+        self.assertEqual(state.get("provider_guardrails", {}).get("dispatch_pauses", {}), {})
+
+        # 5. Verify structured JSON provider envelope still detects failure and pauses dispatch when exit_code=1 and stream_json=True
+        auth_envelope = '{"type":"result","is_error":true,"result":"API Error: 401 Not authenticated"}'
+        authoritative_worker = self._worker_for_log(
+            auth_envelope + "\n",
+            provider="codex2",
+        )
+        authoritative_worker.update({"runner_status": "failed", "exit_code": 1, "stream_json": True})
+        self.assertEqual(supervisor.detect_worker_failure(authoritative_worker), auth_envelope)
+        config_with_paths: dict[str, object] = {
+            "provider_guardrails": {"auth_pause_seconds": 900},
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        }
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value="ref-1"),
+        ):
+            paused_reason = supervisor.pause_dispatch_for_reaped_worker(config_with_paths, state, authoritative_worker)
+        self.assertEqual(paused_reason, auth_envelope)
+        self.assertIn("codex2", state.get("provider_guardrails", {}).get("dispatch_pauses", {}))
+
 
     def test_ignores_auth_text_inside_tool_result_user_message(self) -> None:
         worker = self._worker_for_log(
@@ -542,18 +641,19 @@ class DetectWorkerFailureTests(unittest.TestCase):
                 },
             }
         )
-        worker = self._worker_for_log(line + "\n", provider="claude")
+        worker = self._worker_for_log(line + "\n", provider="claude", runner_failed=True)
 
         self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_detects_real_no_quota_line(self) -> None:
+        line = '{"type":"result","is_error":true,"result":"402 You have no quota"}'
         worker = self._worker_for_log(
-            "402 You have no quota\n",
+            line + "\n",
             provider="copilot",
             runner_failed=True,
         )
 
-        self.assertEqual(supervisor.detect_worker_failure(worker), "402 You have no quota")
+        self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_ignores_git_fatal_from_tool_command_output(self) -> None:
         worker = self._worker_for_log(
@@ -573,9 +673,10 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
     def test_detects_standalone_fatal_line(self) -> None:
-        worker = self._worker_for_log("fatal: provider process crashed\n", runner_failed=True)
+        line = '{"type":"result","is_error":true,"result":"fatal: provider process crashed"}'
+        worker = self._worker_for_log(line + "\n", runner_failed=True)
 
-        self.assertEqual(supervisor.detect_worker_failure(worker), "fatal: provider process crashed")
+        self.assertEqual(supervisor.detect_worker_failure(worker), line)
 
     def test_ignores_log_search_result_json_that_mentions_quota(self) -> None:
         worker = self._worker_for_log(
@@ -628,8 +729,6 @@ class DetectWorkerFailureTests(unittest.TestCase):
             "TerminalQuotaError: You have exhausted your capacity on this model.",
             '402 {"error":{"message":"You have exceeded your monthly quota","code":"quota_exceeded"}}',
             "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits.",
-            '{"type":"result","subtype":"error_during_execution","is_error":true,'
-            '"result":"You\'ve hit your weekly limit · resets Jun 8, 12pm (UTC)"}',
         )
 
         for captured_line in captured_lines:
@@ -648,8 +747,18 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
     def test_authoritative_terminal_envelopes_preserve_failure_classes(self) -> None:
         cases = (
-            ("claude", "status: 401 unauthorized", True, "auth"),
-            ("gemini", "status: 429 RESOURCE_EXHAUSTED", True, "capacity_retryable"),
+            (
+                "claude",
+                json.dumps({"type": "system", "subtype": "api_error", "error_status": 401, "error": "unauthorized"}),
+                True,
+                "auth",
+            ),
+            (
+                "gemini",
+                json.dumps({"type": "system", "subtype": "api_retry", "error_status": 429, "error": "RESOURCE_EXHAUSTED"}),
+                True,
+                "capacity_retryable",
+            ),
             (
                 "claude",
                 json.dumps(
@@ -661,10 +770,15 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     },
                     separators=(",", ":"),
                 ),
-                False,
+                True,
                 "quota_terminal",
             ),
-            ("codex", "fatal: provider process crashed", True, "terminal"),
+            (
+                "codex",
+                json.dumps({"type": "result", "is_error": True, "error": "fatal: provider process crashed"}),
+                True,
+                "terminal",
+            ),
         )
 
         for provider, line, runner_failed, expected_kind in cases:
@@ -781,27 +895,137 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertFalse(result["transient"])
 
     def test_detects_codex_usage_limit_line_as_worker_failure(self) -> None:
+        line = '{"type":"result","is_error":true,"result":"ERROR: You\'ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM."}'
         worker = self._worker_for_log(
-            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.\n",
+            line + "\n",
             runner_failed=True,
         )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
-            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:00 PM.",
+            line,
         )
 
     def test_detects_claude_weekly_rate_limit_line_as_worker_failure(self) -> None:
+        line = '{"type":"result","is_error":true,"result":"rate_limit: You\'ve hit your weekly limit · resets Jun 8, 12pm (UTC)"}'
         worker = self._worker_for_log(
-            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)\n",
+            line + "\n",
             provider="claude",
             runner_failed=True,
         )
 
         self.assertEqual(
             supervisor.detect_worker_failure(worker),
-            "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
+            line,
         )
+
+    def test_terminated_runner_never_promotes_transcript_quota_text(self) -> None:
+        """SIGTERM/preempted worker (runner_status=terminated, exit_code=143) must not scan transcript plaintext for provider failures."""
+        worker = self._worker_for_log(
+            "ERROR: You've hit your usage limit.\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "terminated", "exit_code": 143})
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_captured_live_sigterm_codex1_auth_source_line_does_not_pause(self) -> None:
+        """Replay codex-20260809T144540Z SIGTERM auth source-line event: quoted auth pattern in source code line under SIGTERM must not detect failure or pause codex1."""
+        auth_source_line = 'def is_auth_error(text: str) -> bool: return "invalid_api_key" in text or "unauthorized" in text'
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "Working on task...",
+                    auth_source_line,
+                    "Worker interrupted by supervisor SIGTERM",
+                ]
+            )
+            + "\n",
+            provider="codex",
+        )
+        worker.update({"agent_id": "codex1", "runner_status": "terminated", "exit_code": 143, "status": "failed"})
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNone(detected)
+
+        # When no failure was detected in transcript, failure classification returns None for empty reason
+        failure = supervisor.classify_worker_failure({}, worker, detected)
+        self.assertIsNone(failure)
+
+    def test_codex_production_shape_genuine_quota_failure_pauses(self) -> None:
+        """Codex worker with actual-style exec command and structured quota result envelope detects failure and pauses dispatch."""
+        quota_line = (
+            '{"type":"result","is_error":true,"result":'
+            '"Error: You have exhausted your capacity on this model. Your quota will reset after 89h52m2s."}'
+        )
+        handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)
+        handle.write(quota_line + "\n")
+        handle.flush()
+        handle.close()
+        self.addCleanup(Path(handle.name).unlink, missing_ok=True)
+
+        worker = {
+            "log_path": handle.name,
+            "provider": "codex",
+            "agent_id": "codex2",
+            "mode": "codex",
+            "command": [
+                "codex",
+                "exec",
+                "-C",
+                "/tmp/pantheon",
+                "-c",
+                'ask_for_approval="never"',
+                "-s",
+                "workspace-write",
+                "--skip-git-repo-check",
+                "do task",
+            ],
+            "runner_status": "failed",
+            "exit_code": 1,
+            "status": "failed",
+            "stream_json": True,
+        }
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNotNone(detected)
+
+        failure = supervisor.classify_worker_failure({}, worker, detected)
+        self.assertIsNotNone(failure)
+        self.assertEqual(failure["kind"], "quota_terminal")
+
+    def test_codex_production_shape_generic_exit_code_1_without_envelope_returns_none(self) -> None:
+        """Codex worker with exit_code=1 but without structured provider error envelope does not trigger false positive failure."""
+        handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)
+        handle.write("Tool execution failed: pytest failed\n")
+        handle.flush()
+        handle.close()
+        self.addCleanup(Path(handle.name).unlink, missing_ok=True)
+
+        worker = {
+            "log_path": handle.name,
+            "provider": "codex",
+            "agent_id": "codex2",
+            "mode": "codex",
+            "command": [
+                "codex",
+                "exec",
+                "-C",
+                "/tmp/pantheon",
+                "-c",
+                'ask_for_approval="never"',
+                "-s",
+                "workspace-write",
+                "--skip-git-repo-check",
+                "do task",
+            ],
+            "runner_status": "failed",
+            "exit_code": 1,
+            "status": "failed",
+        }
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNone(detected)
 
     def test_classifies_gemini_auth_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
@@ -961,10 +1185,11 @@ class DetectWorkerFailureTests(unittest.TestCase):
     def test_pause_dispatch_for_reaped_worker_quota_log_pauses_for_hint(self) -> None:
         from datetime import datetime, timezone
 
-        worker = self._worker_for_log(
-            "Error: You have exhausted your capacity on this model. "
-            "Your quota will reset after 89h52m2s.\n"
+        quota_line = (
+            '{"type":"result","is_error":true,"result":'
+            '"Error: You have exhausted your capacity on this model. Your quota will reset after 89h52m2s."}'
         )
+        worker = self._worker_for_log(quota_line + "\n")
         worker.update(
             {
                 "provider": "antigravity",
@@ -2196,6 +2421,84 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             copied_brief = Path(request.metadata["workspace_path"]) / ".orchestrator" / "task-briefs" / "ops_brief_001.md"
             self.assertEqual(copied_brief.read_text(encoding="utf-8"), "# Source brief\n")
             self.assertEqual(request.metadata["materialized_context_files"], [".orchestrator/task-briefs/ops_brief_001.md"])
+
+    def test_prepare_worker_workspace_generates_missing_brief_only_in_isolated_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            status_path = repo_root / "ai-status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "OPS-BRIEF-002",
+                                "title": "Materialize isolated context",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Codex2",
+                                "summary_zh": "Keep generated context out of the command checkout.",
+                                "next": "Continue in the isolated task worktree.",
+                            }
+                        ]
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {
+                    "status_file": str(status_path),
+                    "activity_log": str(repo_root / "activity-log.jsonl"),
+                },
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            relative_brief = ".orchestrator/task-briefs/ops_brief_002.md"
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-BRIEF-002",
+                reason="owned_in_progress_dispatch",
+                context_files=[relative_brief],
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-brief-generated",
+                    target_agent="Codex",
+                )
+
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+            self.assertFalse((repo_root / relative_brief).exists())
+            generated_brief = Path(request.metadata["workspace_path"]) / relative_brief
+            rendered = generated_brief.read_text(encoding="utf-8")
+            self.assertIn("# Task Brief: OPS-BRIEF-002", rendered)
+            self.assertIn("- Title: Materialize isolated context", rendered)
+            self.assertIn("- Owner: Codex", rendered)
+            self.assertIn("- Reviewer: Codex2", rendered)
+            self.assertEqual(
+                request.metadata["materialized_context_files"],
+                [relative_brief],
+            )
 
     def test_prepare_worker_workspace_blocks_dirty_reused_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4013,6 +4316,569 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertFalse(changed)
         persist.assert_not_called()
         queue_delivery_event.assert_not_called()
+
+    def test_dispatcher_does_not_helper_claim_busy_l12_lane_to_codex_family(self) -> None:
+        """A busy provider-first owner must not leak L12 work to a Codex lane.
+
+        The reported gap: Claude2 was busy finalizing L12-OBS work, so the
+        helper-claim path treated the SUP-L12 task as claimable and handed it
+        to idle Codex2 purely because Codex2 sat in ``owner_fallbacks``. Being
+        busy is not a reason to leave the provider-first family.
+        """
+
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "require_owner_higher_priority_load": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Claude2": ["Codex2", "Antigravity"],
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-l12-obs": {
+                    "run_id": "run-l12-obs",
+                    "task_id": "L12-OBS-001",
+                    "provider": "claude2",
+                    "agent_id": "claude2",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "L12-OBS-001",
+                    "status": "review_approved",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+                {
+                    "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex2"],
+            )
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        queue_delivery_event.assert_not_called()
+
+    def test_dispatcher_helper_claims_busy_l12_lane_to_provider_first_fallback(self) -> None:
+        """Deferring Codex must not stall the task: a family lane still claims."""
+
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "require_owner_higher_priority_load": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Claude2": ["Codex2", "Antigravity"],
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-l12-obs": {
+                    "run_id": "run-l12-obs",
+                    "task_id": "L12-OBS-001",
+                    "provider": "claude2",
+                    "agent_id": "claude2",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+        }
+        initial_status = {
+            "tasks": [
+                {
+                    "id": "L12-OBS-001",
+                    "status": "review_approved",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+                {
+                    "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "L12-OBS-001",
+                    "status": "review_approved",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+                {
+                    "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+                    "status": "todo",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "last_update": "2026-07-29T15:04:20Z",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity"],
+            )
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        self.assertEqual(persist.call_args.kwargs["task_id"], "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729")
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["target_agent"], "Antigravity")
+
+    def test_dispatcher_helper_claim_keeps_codex_fallback_for_non_l12_task(self) -> None:
+        """The provider-first rule is scoped to L12 recovery work only."""
+
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "require_owner_higher_priority_load": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Claude2": ["Codex2", "Antigravity"],
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-l12-obs": {
+                    "run_id": "run-l12-obs",
+                    "task_id": "L12-OBS-001",
+                    "provider": "claude2",
+                    "agent_id": "claude2",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            },
+        }
+        initial_status = {
+            "tasks": [
+                {
+                    "id": "L12-OBS-001",
+                    "status": "review_approved",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+                {
+                    "id": "SUP-HELPER-CLAIM-NON-L12-20260729",
+                    "status": "todo",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "L12-OBS-001",
+                    "status": "review_approved",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                },
+                {
+                    "id": "SUP-HELPER-CLAIM-NON-L12-20260729",
+                    "status": "todo",
+                    "owner": "Codex2",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "last_update": "2026-07-29T15:04:20Z",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex2"],
+            )
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex2")
+
+    def test_dispatcher_helper_claim_skips_codex_preferred_lane_when_owner_paused(self) -> None:
+        """A declared Codex lane must not win the paused-owner wait slot."""
+
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "paused_owner_task_statuses": ["in_progress"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Claude2": ["Codex2", "Antigravity"],
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "claude2": {
+                        "provider": "claude2",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "summary": "capacity pause",
+                    }
+                }
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+                    "status": "in_progress",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                    "preferred_lane_order": ["Claude2", "Codex2", "Antigravity"],
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(
+                supervisor,
+                "_cached_provider_capabilities",
+                return_value={"providers": {}},
+            ),
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex2"],
+            )
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        queue_delivery_event.assert_not_called()
+
+    def test_dispatcher_helper_claim_hands_paused_owner_slot_to_provider_first_lane(self) -> None:
+        """The wait slot skips past Codex2 to the next provider-first lane.
+
+        Before the fix ``task_next_preferred_helper_lane`` returned Codex2, so
+        Antigravity — the only eligible family lane — was rejected for not
+        being the next lane. Filtering the declared order provider-first lets
+        the family lane take over instead of the task stalling.
+        """
+
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "paused_owner_task_statuses": ["in_progress"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Claude2": ["Codex2", "Antigravity"],
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "claude2": {
+                        "provider": "claude2",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "summary": "capacity pause",
+                    }
+                }
+            },
+        }
+        initial_status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+                    "status": "in_progress",
+                    "owner": "Claude2",
+                    "reviewer": "Antigravity",
+                    "depends_on": [],
+                    "preferred_lane_order": ["Claude2", "Codex2", "Antigravity"],
+                },
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude2",
+                    "depends_on": [],
+                    "preferred_lane_order": ["Claude2", "Codex2", "Antigravity"],
+                    "last_update": "2026-07-29T15:04:20Z",
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(
+                supervisor,
+                "_cached_provider_capabilities",
+                return_value={"providers": {}},
+            ),
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity"],
+            )
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["target_agent"], "Antigravity")
+
+    def test_task_next_preferred_helper_lane_skips_codex_for_l12_work(self) -> None:
+        config = {
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+            },
+        }
+        lanes = ["Claude2", "Codex2", "Antigravity"]
+
+        with mock.patch.object(supervisor, "agent_can_take_task", return_value=True):
+            l12_lane = supervisor.task_next_preferred_helper_lane(
+                config,
+                task={"id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729", "preferred_lane_order": lanes},
+                owner_name="Claude2",
+            )
+            plain_lane = supervisor.task_next_preferred_helper_lane(
+                config,
+                task={"id": "SUP-HELPER-CLAIM-NON-L12-20260729", "preferred_lane_order": lanes},
+                owner_name="Claude2",
+            )
+
+        self.assertEqual(l12_lane, "Antigravity")
+        self.assertEqual(plain_lane, "Codex2")
+
+    def test_plan_helper_claim_assignment_filters_codex_out_of_l12_fallbacks(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Claude2": ["Codex2", "Antigravity"],
+                }
+            },
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+            },
+            "providers": {},
+        }
+        task = {
+            "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+            "status": "todo",
+            "owner": "Claude2",
+            "reviewer": "Antigravity",
+            "depends_on": [],
+        }
+        helper_settings = {"enabled": True, "task_statuses": ["todo"], "claim_idle_work": True}
+
+        codex_plan = supervisor.plan_helper_claim_assignment(
+            config,
+            task=task,
+            owner_name="Claude2",
+            reviewer_name="Antigravity",
+            idle_agent_name="Codex2",
+            agent_loads={},
+            helper_settings=helper_settings,
+        )
+        family_plan = supervisor.plan_helper_claim_assignment(
+            config,
+            task=task,
+            owner_name="Claude2",
+            reviewer_name="Antigravity",
+            idle_agent_name="Antigravity",
+            agent_loads={},
+            helper_settings=helper_settings,
+        )
+
+        self.assertIsNone(codex_plan)
+        self.assertIsNotNone(family_plan)
+        self.assertEqual(family_plan[0], "Antigravity")
 
     def test_dispatcher_helper_claim_uses_next_preferred_lane_when_owner_paused(self) -> None:
         config = {
@@ -9298,7 +10164,7 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             ],
         )
 
-    def test_process_queue_builds_full_task_brief_outside_runtime_admission(self) -> None:
+    def test_process_queue_references_task_brief_without_rewriting_command_root(self) -> None:
         task_id = "OPS-TASK-BRIEF-LOCK-ORDER-TEST"
         dependency_id = "OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY"
         task = {
@@ -9365,7 +10231,9 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             "providers": {"codex": {"delivery_mode": "codex"}},
         }
         state = {"queue": {"events": {}}, "workers": {}}
-        brief_path = self.root / "task-brief.md"
+        brief_path = self.root / ".orchestrator" / "task-briefs" / "ops_task_brief_lock_order_test.md"
+        brief_path.parent.mkdir(parents=True, exist_ok=True)
+        brief_path.write_text("tracked command-root brief\n", encoding="utf-8")
         lock_trace_path = self.root / "lock-trace.jsonl"
         captured_requests: list[supervisor.DeliveryRequest] = []
         real_build_request = supervisor.build_request
@@ -9412,23 +10280,18 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(len(captured_requests), 1)
-        self.assertIn(str(brief_path), captured_requests[0].context_files)
+        self.assertIn(
+            ".orchestrator/task-briefs/ops_task_brief_lock_order_test.md",
+            captured_requests[0].context_files,
+        )
         self.assertNotEqual(
             captured_requests[0].context_files,
             ["AI_COLLABORATION_GUIDE.md", "ai-status.json"],
         )
-        self.assertTrue(brief_path.is_file())
-        rendered = brief_path.read_text(encoding="utf-8")
-        self.assertIn("# Task Brief: OPS-TASK-BRIEF-LOCK-ORDER-TEST", rendered)
-        self.assertIn("- Status: todo", rendered)
-        self.assertIn("- Owner: Codex", rendered)
-        self.assertIn("- Reviewer: Codex2", rendered)
-        self.assertIn("- Next: Use the complete task-scoped context", rendered)
-        self.assertIn(
-            "- OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY: done · Archived dependency",
-            rendered,
+        self.assertEqual(
+            brief_path.read_text(encoding="utf-8"),
+            "tracked command-root brief\n",
         )
-        self.assertIn("## Artifacts\n- .orchestrator/common.py", rendered)
         common_activity_log.assert_not_called()
         lock_trace = [
             line.split(":", 3)[:2]
@@ -9451,6 +10314,219 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         )
         self.assertLess(prior_runtime_release, task_acquire)
         self.assertLess(task_acquire, next_runtime_acquire)
+
+    def test_queue_delivery_event_seeds_non_materializing_worker_context(self) -> None:
+        event = {
+            "task_id": "OPS-BRIEF-QUEUE-001",
+            "target_agent": "Codex",
+        }
+
+        with mock.patch.object(
+            supervisor,
+            "_queue_delivery_event_with_runtime_context",
+            return_value=True,
+        ) as queue_event:
+            queued = supervisor.queue_delivery_event(self.config, event)
+
+        self.assertTrue(queued)
+        self.assertEqual(
+            event["context_files"],
+            [
+                "AI_COLLABORATION_GUIDE.md",
+                ".orchestrator/task-briefs/ops_brief_queue_001.md",
+                ".orchestrator/skills/worker-anchor-commit.md",
+                ".orchestrator/skills/task-closeout-finalization.md",
+                "ai-status.json",
+            ],
+        )
+        queue_event.assert_called_once_with(self.config, event)
+
+    def test_run_once_watch_materializes_missing_brief_only_in_isolated_worktree(self) -> None:
+        task_id = "OPS-WATCH-BRIEF-001"
+        task = {
+            "id": task_id,
+            "title": "Keep watcher context out of the command root",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "summary_zh": "Materialize the generated brief in the worker worktree.",
+            "next": "Continue the isolated worker task.",
+            "artifacts": [".orchestrator/supervisor.py"],
+        }
+        self.status_path.write_text(
+            json.dumps({"tasks": [task], "handoffs": []}) + "\n",
+            encoding="utf-8",
+        )
+        command_brief = (
+            self.root
+            / ".orchestrator"
+            / "task-briefs"
+            / "ops_watch_brief_001.md"
+        )
+        worker_root = self.root / "workers"
+        config = {
+            **self.config,
+            "paths": {
+                **self.config["paths"],
+                "provider_capabilities": str(self.root / "provider-capabilities.json"),
+            },
+            "schema": {
+                **self.config["schema"],
+                "status_field": "status",
+                "handoffs_path": "handoffs",
+            },
+            "events": {
+                "enqueue_runtime_events": True,
+                "status_targets": {"in_progress": "owner"},
+                "review_statuses": ["review"],
+                "pending_handoff_statuses": ["pending"],
+                "watch_handoffs": True,
+            },
+            "watcher": {
+                "max_seen_events": 2000,
+                "recent_terminal_limit": 10,
+            },
+            "agents": {
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "adapter": "file_inbox",
+                }
+            },
+            "providers": {"codex": {"delivery_mode": "file_inbox"}},
+            "worker_worktrees": {
+                "enabled": True,
+                "root": str(worker_root),
+                "source_root": str(self.root),
+                "base_ref": "origin/dev",
+                "reuse_existing": True,
+                "execution_reasons": ["status:*"],
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
+            "supervisor": {},
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+        }
+        initial_state = runtime_state.default_state()
+        initial_state["supervisor"] = {
+            "pid": 61209,
+            "started_at": "2026-08-08T23:00:00Z",
+            "last_heartbeat_at": "2026-08-08T23:00:00Z",
+        }
+        self.state_path.write_text(
+            json.dumps(initial_state) + "\n",
+            encoding="utf-8",
+        )
+        captured_request: list[supervisor.DeliveryRequest] = []
+
+        def create_worktree(
+            _repo_root: Path,
+            worktree_path: Path,
+            _branch: str,
+            _base_ref: str,
+        ) -> tuple[bool, None]:
+            worktree_path.mkdir(parents=True)
+            return True, None
+
+        def process_queued_event(
+            queued_config: dict[str, object],
+            state: dict[str, object],
+            _provider_report: dict[str, object],
+        ) -> bool:
+            events = supervisor.load_event_queue(queued_config)
+            self.assertEqual(len(events), 1)
+            request = supervisor.build_request(queued_config, events[0])
+            ok, message = supervisor.prepare_worker_workspace(
+                queued_config,
+                state,
+                request,
+                queue_event_id=events[0]["event_id"],
+                target_agent=events[0]["target_display_name"],
+            )
+            self.assertTrue(ok, message)
+            captured_request.append(request)
+            return True
+
+        def run_reserved_phase(
+            _config: dict[str, object],
+            phase: str,
+            operation: object,
+        ) -> bool:
+            if phase != "process_queue":
+                return False
+            state = supervisor.load_runtime_state(config)
+            return bool(operation(state))
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(supervisor, "write_supervisor_pid"))
+            stack.enter_context(mock.patch.object(supervisor, "continue_or_skip_empty"))
+            stack.enter_context(mock.patch.object(supervisor, "drain_assistant_dev_packet_inbox", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})))
+            stack.enter_context(mock.patch.object(supervisor, "prefetch_task_state_shadow", return_value=None))
+            stack.enter_context(mock.patch.object(supervisor, "prefetch_ownerless_merged_pr_snapshots", return_value={}))
+            stack.enter_context(mock.patch.object(supervisor, "pending_worker_base_refs", return_value=set()))
+            stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_blocked_tasks", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "persist_blocked_task_reconciliation_runtime", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_runtime_on_boot", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "expire_provider_dispatch_pauses", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_stale_approvals", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_fresh_provider_probe_failures", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_provider_pause_recovery", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_provider_auth_recovery", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "sync_coordination_files", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "maybe_reassign_tasks_from_failure_streaks", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_queue_records", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "prune_event_queue", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "reconcile_ownerless_in_progress_tasks", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "refresh_chair_review_state", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "load_discussion_planning_state", return_value=None))
+            stack.enter_context(mock.patch.object(supervisor, "auto_materialize_discussion_planning", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "watchdog_safe_mode_active", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "chair_review_failure_loop_details", return_value=[]))
+            stack.enter_context(mock.patch.object(supervisor, "dispatch_ready_tasks", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "dispatch_chair_review", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "maybe_auto_commit_archive", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "process_queue", side_effect=process_queued_event))
+            stack.enter_context(mock.patch.object(supervisor, "_run_reserved_runtime_phase", side_effect=run_reserved_phase))
+            stack.enter_context(mock.patch.object(supervisor, "_finalize_runtime_cycle_locked", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))
+            stack.enter_context(mock.patch.object(supervisor, "log_runtime_summary"))
+            stack.enter_context(mock.patch.object(supervisor, "persist_complete_cycle_metrics", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None))
+            stack.enter_context(mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "_create_worker_worktree", side_effect=create_worktree))
+            stack.enter_context(mock.patch.object(watch_events, "recent_terminal_summaries", return_value=[]))
+            stack.enter_context(
+                mock.patch.object(
+                    watch_events,
+                    "execution_context_files",
+                    side_effect=AssertionError(
+                        "run_once watcher must use the injected pure context builder"
+                    ),
+                )
+            )
+
+            changed = supervisor.run_once(config, watch=True, replay=True)
+
+        self.assertTrue(changed)
+        self.assertFalse(command_brief.exists())
+        self.assertEqual(len(captured_request), 1)
+        request = captured_request[0]
+        self.assertEqual(
+            request.context_files,
+            supervisor.worker_execution_context_files(task_id),
+        )
+        generated_brief = Path(request.metadata["workspace_path"]) / command_brief.relative_to(self.root)
+        rendered = generated_brief.read_text(encoding="utf-8")
+        self.assertIn(f"# Task Brief: {task_id}", rendered)
+        self.assertIn("- Status: in_progress", rendered)
+        self.assertEqual(
+            request.metadata["materialized_context_files"],
+            [str(command_brief.relative_to(self.root))],
+        )
 
     def test_waiting_prune_recovers_after_queue_writer_is_killed_before_replace(self) -> None:
         original_events = [
@@ -10668,6 +11744,114 @@ class OrphanedQueueEventTests(unittest.TestCase):
         self.assertEqual((self.root / "event-queue.jsonl").read_text(encoding="utf-8"), "")
         self.assertEqual(state["queue"]["events"], {})
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "queue_event_pruned")
+
+    def test_prune_event_queue_drops_unbacked_active_record_without_task_or_worker(self) -> None:
+        state = {
+            "queue": {
+                "events": {
+                    "malformed-started": {
+                        "status": "started",
+                        "lease_owner": "missing-worker",
+                    }
+                }
+            },
+            "workers": {},
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.prune_event_queue(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["queue"]["events"], {})
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"],
+            "malformed_queue_record_pruned",
+        )
+
+    def test_prune_event_queue_drops_overdue_retry_workers_without_processes(self) -> None:
+        event = {
+            "event_id": "stale-retry",
+            "task_id": "task-1",
+            "target_agent": "codex",
+            "created_at": "2026-08-09T10:00:00Z",
+        }
+        state = {
+            "queue": {"events": {"stale-retry": {"status": "started"}}},
+            "workers": {
+                "retry-1": {
+                    "run_id": "retry-1",
+                    "task_id": "task-1",
+                    "queue_event_id": "stale-retry",
+                    "status": "retry_backoff",
+                    "next_retry_at": "2026-08-09T10:01:00Z",
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [{"id": "task-1", "status": "todo"}]},
+            ),
+            mock.patch.object(supervisor, "worker_process_generation_is_current", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "save_event_queue") as save_event_queue,
+        ):
+            changed = supervisor.prune_event_queue(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"], {})
+        self.assertEqual(state["queue"]["events"], {})
+        save_event_queue.assert_called_once_with(self.config, [])
+        self.assertEqual(
+            [call.args[1]["type"] for call in write_activity_log.call_args_list],
+            ["worker_reaped", "queue_event_pruned"],
+        )
+
+    def test_prune_event_queue_drops_finished_retry_workers_without_processes(self) -> None:
+        event = {
+            "event_id": "stale-finished-retry",
+            "task_id": "task-2",
+            "target_agent": "codex",
+            "created_at": "2026-08-09T10:00:00Z",
+        }
+        state = {
+            "queue": {"events": {"stale-finished-retry": {"status": "retry_backoff"}}},
+            "workers": {
+                "retry-2": {
+                    "run_id": "retry-2",
+                    "task_id": "task-2",
+                    "queue_event_id": "stale-finished-retry",
+                    "status": "retry_backoff",
+                    "runner_finished_at": "2026-08-09T10:02:00Z",
+                    "next_retry_at": "2026-08-09T11:00:00Z",
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [{"id": "task-2", "status": "todo"}]},
+            ),
+            mock.patch.object(supervisor, "worker_process_generation_is_current", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "save_event_queue") as save_event_queue,
+        ):
+            changed = supervisor.prune_event_queue(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"], {})
+        self.assertEqual(state["queue"]["events"], {})
+        save_event_queue.assert_called_once_with(self.config, [])
+        self.assertEqual(
+            [call.args[1]["type"] for call in write_activity_log.call_args_list],
+            ["worker_reaped", "queue_event_pruned"],
+        )
 
 
 class ChairReviewDispatchTests(unittest.TestCase):
@@ -21535,13 +22719,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             )
             log_path = root / "gemini-quota.log"
             log_path.write_text(
-                "\n".join(
-                    [
-                        "Error when talking to Gemini API Full report available at: /tmp/gemini-client-error.json TerminalQuotaError: You have exhausted your capacity on this model.",
-                        "reason: 'QUOTA_EXHAUSTED'",
-                    ]
-                )
-                + "\n",
+                '{"type":"result","is_error":true,"result":"Error when talking to Gemini API TerminalQuotaError: You have exhausted your capacity on this model.","reason":"QUOTA_EXHAUSTED"}\n',
                 encoding="utf-8",
             )
             state = {
@@ -21553,6 +22731,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                         "status": "running",
                         "provider": "gemini",
                         "agent_id": "gemini",
+                        "stream_json": True,
                         "task_id": "OPS-LEASE-003",
                         "queue_event_id": "evt-gemini",
                         "pid": 987654,
@@ -22535,7 +23714,7 @@ class AllowedRateLimitNoticeTests(unittest.TestCase):
         self.addCleanup(os.unlink, handle.name)
         with handle:
             handle.write("\n".join(lines) + "\n")
-        return {"run_id": "claude1-2-run", "provider": "claude1-2", "log_path": handle.name}
+        return {"run_id": "claude1-2-run", "provider": "claude1-2", "log_path": handle.name, "runner_status": "failed", "exit_code": 1, "stream_json": True}
 
     def test_allowed_warning_event_is_not_detected_as_worker_failure(self) -> None:
         worker = self._worker_with_log(

@@ -1,0 +1,151 @@
+{
+  "schema_version": "supervisor_mutable_tracked_drift_source_boundary.v1",
+  "task": {
+    "id": "SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+    "title": "Repair mutable bootstrap handling of generated tracked drift",
+    "phase": "Supervisor Runtime / Source-only Mutable Bootstrap Repair",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-TRACKED-DRIFT-FOLLOWUP-20260808/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Supervisor worker-context path selection, watcher queue callback injection, and isolated-worktree task-brief materialization, plus mutable-bootstrap regression fixtures.",
+    "not_changing": [
+      "Governed launch-source identity or byte capture",
+      "Mutable or immutable promotion cleanliness policy",
+      "Supervisor scheduling, task-state governance, provider policy, or fleet routing",
+      "Live config, process generations, runtime candidates, or deployment state"
+    ],
+    "source_anchor": "12a2eedcc23146b3983f37549a1b28a413c802ff",
+    "watch_queue_anchor": "c8e5eb51a5fcd228e05baf3ba584ec81a2e19ba9",
+    "composed_origin_dev": "4b93f81005edc256eb933fdeea9aa70ea8072f03",
+    "composition_merge": "b6608df5aacd0f9c053fad222ad47f2d58206d54",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/watch_events.py",
+      "scripts/test_promote_supervisor_runtime.py"
+    ],
+    "promotion_source_modified": false,
+    "runtime_config_modified": false
+  },
+  "incident": {
+    "authorized_rollout_runtime_sha": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+    "evidence_path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T225515388905Z-3787166.json",
+    "evidence_sha256": "0b60885dcf2e0434e92c3ae02b0478dce800ca8ff0330a5f7ba9a87d1d50c33b",
+    "outcome": "aborted_before_mutation",
+    "original_failure": "ValueError: Tracked git tree is dirty",
+    "only_tracked_drift": ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md",
+    "cause": "Supervisor dispatch built execution context before leasing the isolated worker worktree. common.execution_context_files regenerated a task brief beside the mutable command source, overwriting a tracked task-brief blob and correctly tripping mutable-incumbent cleanliness validation."
+  },
+  "decision": {
+    "selected_boundary": "prevent_command_checkout_generation",
+    "summary": "Supervisor queue and request construction now describe repository-relative context paths without calling the materializing common helper. prepare_worker_workspace remains the write boundary: it copies a status-root brief when available or renders the fallback directly under the isolated task worktree.",
+    "why_not_relax_promotion": "The task-brief overwrite is preventable at its source. Keeping promotion unchanged preserves one simple invariant: every tracked or staged difference from HEAD remains fatal, including task briefs and all governed launch sources.",
+    "command_checkout_task_brief_write_required": false,
+    "isolated_worker_context_preserved": true
+  },
+  "implementation": {
+    "worker_execution_context_files": "Purely returns AI_COLLABORATION_GUIDE.md, the normalized task-brief destination, both worker process skills when present, and ai-status.json; it performs no status read or file write.",
+    "queue_delivery_event": "Supervisor-local wrapper seeds the pure context list before delegating to watch_events, preventing watch_events from falling back to its materializing common helper.",
+    "watch_events_scan": "The watcher scan accepts an optional queue callback. Supervisor run_once injects its non-materializing wrapper, while the standalone watcher keeps its existing default queue and lock behavior.",
+    "build_request": "Direct or replayed queue records that omit context_files use the same pure list, closing the non-wrapper request path.",
+    "materialize_worker_context_files": "Unchanged write boundary; destinations remain under request.metadata.workspace_path in an isolated task worktree."
+  },
+  "security_preservation": {
+    "mutable_tracked_drift_rejected": true,
+    "staged_drift_rejected": true,
+    "index_flags_rejected": true,
+    "governed_sources_captured_and_revalidated": true,
+    "mutable_gitfile_layout_bound": true,
+    "symlink_and_git_identity_hazards_rejected": true,
+    "immutable_candidate_guard_unchanged": true,
+    "config_cas_and_transaction_order_unchanged": true,
+    "rollback_contract_unchanged": true,
+    "bytecode_self_rejection_contract_unchanged": true
+  },
+  "regressions": [
+    {
+      "test": "test_process_queue_references_task_brief_without_rewriting_command_root",
+      "proof": "A pre-existing command-root task brief remains byte-identical while process_queue builds the worker request."
+    },
+    {
+      "test": "test_queue_delivery_event_seeds_non_materializing_worker_context",
+      "proof": "The supervisor wrapper supplies the complete relative context list before the legacy queue renderer can materialize anything."
+    },
+    {
+      "test": "test_run_once_watch_materializes_missing_brief_only_in_isolated_worktree",
+      "proof": "A real run_once(watch=True, replay=True) watcher event is queued through the injected pure builder and prepared into an isolated worktree; common.execution_context_files is fail-on-call, the command-root brief stays absent, and the isolated brief contains the canonical task fields."
+    },
+    {
+      "test": "test_prepare_worker_workspace_generates_missing_brief_only_in_isolated_worktree",
+      "proof": "When no status-root brief exists, canonical task fields are rendered below the isolated workspace and no command/status-root task brief is created."
+    },
+    {
+      "test": "test_mutable_incumbent_root_rejects_regenerated_tracked_task_brief_in_linked_worktree",
+      "proof": "A linked worktree with a regular .git gitfile and exactly one unstaged tracked task-brief overwrite reproduces the incident and still fails closed with Tracked git tree is dirty."
+    }
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_promote_supervisor_runtime.py",
+      "result": "235 passed in 51.98s",
+      "coverage": "Immutable candidate guard, mutable gitfile binding, config CAS, transaction lock/order, rollback, evidence location, and bytecode self-rejection all remain green."
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q .orchestrator/test_supervisor.py -k 'process_queue_references_task_brief_without_rewriting_command_root or queue_delivery_event_seeds_non_materializing_worker_context or run_once_watch_materializes_missing_brief_only_in_isolated_worktree or prepare_worker_workspace_materializes_task_brief_into_isolated_worktree or prepare_worker_workspace_generates_missing_brief_only_in_isolated_worktree or generated_worker_task_brief_mentions_inherited_status_root'",
+      "result": "6 passed, 616 deselected in 3.31s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_root_rejects_regenerated_tracked_task_brief_in_linked_worktree scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_root_rejects_tracked_source_drift scripts/test_promote_supervisor_runtime.py::test_mutable_incumbent_root_accepts_bound_worktree_gitfile",
+      "result": "3 passed in 2.40s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q .orchestrator/test_supervisor.py",
+      "result": "622 passed, 162 subtests passed in 162.20s"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python -m pytest -q test_watch_events.py",
+      "result": "9 passed in 0.98s"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "git diff origin/dev -- scripts/promote_supervisor_runtime.py .orchestrator/config.json",
+      "result": "empty; promotion policy and runtime config are byte-unchanged by this task"
+    }
+  ],
+  "prohibited_actions": {
+    "live_config_edit": false,
+    "process_signal": false,
+    "manual_checkout_reset_or_stash": false,
+    "candidate_creation_or_deletion": false,
+    "runtime_promotion": false,
+    "supervisor_service_mutation": false,
+    "scheduling_or_fleet_policy_change": false
+  },
+  "review": {
+    "decision": "pending_independent_review",
+    "reviewer": "Codex2",
+    "required_checks": [
+      "Confirm supervisor run_once injects its pure queue wrapper into the watcher scan and queue/build paths cannot call common.execution_context_files when context_files is absent.",
+      "Confirm missing task briefs are still materialized only below the isolated workspace path.",
+      "Confirm scripts/promote_supervisor_runtime.py is absent from the task diff and the exact tracked task-brief reproduction remains fail-closed.",
+      "Confirm no live rollout, config mutation, scheduling change, or fleet-routing change is present."
+    ]
+  },
+  "rollout": {
+    "this_task": "Source PR and merge only.",
+    "next": "Any runtime promotion or rollout retry requires a separately authorized governed task after this source change is merged."
+  },
+  "rollback": {
+    "source": "Revert the reviewed task PR if worker context is not materialized in isolated task worktrees.",
+    "live": "Not applicable; this task performs no live mutation."
+  }
+}

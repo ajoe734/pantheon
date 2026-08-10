@@ -388,55 +388,6 @@ def create_incident(
         )
 
 
-def fetch_paper_fleet_state(
-    *, base_url: str, timeout_seconds: float = 10.0
-) -> dict[str, Any]:
-    """Read actual paper worker/controller state from the fleet reconciler."""
-    url = base_url.rstrip("/") + "/api/fleet/state"
-    request = urllib.request.Request(
-        url, headers={"Accept": "application/json"}, method="GET"
-    )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        body = response.read().decode("utf-8")
-    return json.loads(body) if body else {}
-
-
-def validate_paper_fleet_readback(
-    *, saga: dict[str, Any], binding: dict[str, Any], fleet: dict[str, Any]
-) -> str | None:
-    """Return why paper controller truth is not yet the requested running state."""
-    binding_id = binding.get("binding_id")
-    matches = [
-        worker
-        for worker in fleet.get("workers", [])
-        if worker.get("binding_id") == binding_id
-    ]
-    mismatches: list[str] = []
-    if fleet.get("last_error"):
-        mismatches.append(f"fleet last_error={fleet.get('last_error')!r}")
-    if not fleet.get("last_reconcile_at") or int(fleet.get("cycle_count") or 0) < 1:
-        mismatches.append("fleet has not completed an authoritative reconcile cycle")
-    if len(matches) != 1:
-        mismatches.append(
-            f"expected one fleet worker for binding_id={binding_id!r}, found {len(matches)}"
-        )
-    else:
-        worker = matches[0]
-        expected = {
-            "runtime_id": binding.get("runtime_id"),
-            "capital_pool_id": saga.get("capital_pool_id"),
-            "status": "running",
-        }
-        mismatches.extend(
-            f"fleet worker {field} expected {value!r}, got {worker.get(field)!r}"
-            for field, value in expected.items()
-            if worker.get(field) != value
-        )
-        if not worker.get("pid"):
-            mismatches.append("fleet worker is missing a live process id")
-    return "; ".join(mismatches) or None
-
-
 def run_compatibility_check(
     *,
     api_url: str,
@@ -2347,27 +2298,6 @@ def run_poll(
                     duplicates += duplicate
                     errors.append(reason)
                     continue
-
-                if saga.get("target_stage") == "paper":
-                    fleet_url = os.getenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", "").strip()
-                    if not fleet_url:
-                        raise RuntimeError(
-                            "PANTHEON_PAPER_FLEET_RECONCILER_URL is required for "
-                            "authoritative paper controller readback"
-                        )
-                    fleet = fetch_paper_fleet_state(
-                        base_url=fleet_url,
-                        timeout_seconds=timeout_seconds,
-                    )
-                    fleet_mismatch = validate_paper_fleet_readback(
-                        saga=saga,
-                        binding=binding,
-                        fleet=fleet,
-                    )
-                    if fleet_mismatch:
-                        raise RuntimeError(
-                            f"paper fleet post-state is not running yet: {fleet_mismatch}"
-                        )
 
                 if saga_status in {"awaiting_binding", "awaiting_runtime_load"}:
                     record_runtime_active(

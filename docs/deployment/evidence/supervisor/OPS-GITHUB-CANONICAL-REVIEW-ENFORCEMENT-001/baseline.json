@@ -1,0 +1,106 @@
+{
+  "schema": "pantheon.github-canonical-review-baseline/v1",
+  "repository": "ajoe734/pantheon",
+  "capture": {
+    "primary_window_started_at": "2026-07-28T14:52:27Z",
+    "primary_window_ended_at": "2026-07-28T14:52:29Z",
+    "actor": "Codex",
+    "method": "read-only gh api",
+    "mutations_performed": []
+  },
+  "historical_risk_baseline": {
+    "source": "governed show OPS-PR-REVIEW-BEFORE-MERGE-GATE-001, archived handoff created_at 2026-07-27T00:25:26Z",
+    "dev": {
+      "required_approving_review_count": 0,
+      "dismiss_stale_reviews": false,
+      "require_last_push_approval": false,
+      "enforce_admins": false
+    },
+    "meaning": "The dependency task explicitly left the GitHub web and raw API boundary open: zero GitHub approvals and admin bypass meant the shared owner credential could merge outside repository helpers."
+  },
+  "current_readback": {
+    "repository": {
+      "captured_at": "2026-07-28T14:52:05Z",
+      "default_branch": "dev",
+      "allow_auto_merge": true,
+      "allow_merge_commit": true,
+      "allow_squash_merge": true,
+      "allow_rebase_merge": true,
+      "delete_branch_on_merge": false,
+      "raw_response_sha256": "0893aa151e375567a2dcb0ce35c77468864ba6d0050e5589e8d0163f88d5ae83"
+    },
+    "dev": {
+      "full_protection_captured_at": "2026-07-28T14:52:05Z",
+      "full_protection_raw_response_sha256": "f309b74cac894a2b0f982a9c193483d6f26bb61cc777d2da4e61a7a9569c6c2d",
+      "strict_required_status_checks": true,
+      "required_status_checks": [
+        {
+          "context": "Commit trailers",
+          "app_id": 15368
+        },
+        {
+          "context": "Runtime mirror guard",
+          "app_id": 15368
+        },
+        {
+          "context": "Smoke acceptance",
+          "app_id": 15368
+        },
+        {
+          "context": "Pantheon canonical review gate",
+          "app_id": null
+        },
+        {
+          "context": "Pantheon root merge freeze 2026-07-27",
+          "app_id": null
+        }
+      ],
+      "full_response_required_pull_request_reviews_present": false,
+      "scoped_review_endpoint": {
+        "captured_between": [
+          "2026-07-28T14:52:27Z",
+          "2026-07-28T14:52:29Z"
+        ],
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews": false,
+        "require_last_push_approval": false
+      },
+      "enforce_admins": true,
+      "readback_drift": "The full protection response omitted required_pull_request_reviews while the immediately adjacent scoped endpoint returned count=1. Activation must re-read both endpoints and must not infer an omitted block as zero."
+    },
+    "master": {
+      "captured_at": "2026-07-28T14:52:05Z",
+      "raw_response_sha256": "eb423bb6ab856aba85ed6a09c2e0b2a2cdcbbdd79b6c6a2dac1c628498208ec5",
+      "strict_required_status_checks": true,
+      "required_status_checks": [
+        {
+          "context": "Commit trailers",
+          "app_id": 15368
+        },
+        {
+          "context": "Runtime mirror guard",
+          "app_id": 15368
+        },
+        {
+          "context": "Smoke acceptance",
+          "app_id": 15368
+        }
+      ],
+      "required_approving_review_count": 0,
+      "dismiss_stale_reviews": false,
+      "require_last_push_approval": false,
+      "enforce_admins": false
+    },
+    "rulesets": {
+      "dev": [],
+      "master": []
+    }
+  },
+  "conclusion": {
+    "historical_hole_proven": true,
+    "current_master_hole_present": true,
+    "current_dev_is_under_external_temporary_controls": true,
+    "safe_to_apply_stale_payload": false,
+    "human_ops_authorization_present": false
+  }
+}

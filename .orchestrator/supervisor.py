@@ -44,7 +44,6 @@ from common import (
     canonical_task_state_lock_file,
     config_path,
     display_name_for,
-    execution_context_files,
     load_config,
     load_json,
     load_jsonl,
@@ -96,7 +95,11 @@ from rebase_helper import continue_or_skip_empty
 from runtime_state import load_approval_state, load_event_queue, load_runtime_state, load_runtime_state_snapshot, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
 from runtime_state import enqueue_event
 from task_archive import TaskResolver
-from watch_events import queue_delivery_event, _run_scan_locked, trim_seen_events
+from watch_events import (
+    queue_delivery_event as _queue_delivery_event_with_runtime_context,
+    _run_scan_locked,
+    trim_seen_events,
+)
 
 # SUPERVISOR-REWRITE cutover modules (parallel package, pure — no supervisor
 # import, so this is not circular). These are the phase-1/phase-3 clean
@@ -420,7 +423,7 @@ NONTHROTTLING_RATE_LIMIT_LINE_PATTERN = re.compile(
     r'"status"\s*:\s*"(?:allowed|allowed_warning)"',
     re.IGNORECASE,
 )
-RUNNER_FAILURE_STATUSES = frozenset({"error", "failed", "terminated"})
+RUNNER_FAILURE_STATUSES = frozenset({"error", "failed"})
 PROVIDER_STREAM_FAILURE_STATUSES = frozenset(
     {"blocked", "denied", "error", "failed", "rate_limited", "rejected"}
 )
@@ -1767,6 +1770,44 @@ def select_dispatch_agent_id(
     return None
 
 
+def worker_execution_context_files(task_id: str | None) -> list[str]:
+    """Describe worker context without writing into the command checkout.
+
+    The common context helper materializes a generated task brief beside the
+    supervisor source.  That is appropriate for an interactive source
+    checkout, but a mutable bootstrap incumbent must keep its tracked source
+    tree byte-clean until promotion captures it.  Isolated worker preparation
+    already copies a status-root brief when one exists and otherwise renders
+    the brief inside the task worktree, so queue construction only needs the
+    stable repository-relative destination here.
+    """
+
+    files = ["AI_COLLABORATION_GUIDE.md"]
+    normalized_task_id = normalize_agent_id(task_id or "")
+    if normalized_task_id:
+        files.append(
+            f".orchestrator/task-briefs/{normalized_task_id}.md"
+        )
+    for relative_path in (
+        ".orchestrator/skills/worker-anchor-commit.md",
+        ".orchestrator/skills/task-closeout-finalization.md",
+    ):
+        if (THIS_DIR.parent / relative_path).is_file():
+            files.append(relative_path)
+    files.append("ai-status.json")
+    return files
+
+
+def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
+    """Queue one event without regenerating task briefs in the command root."""
+
+    if not event.get("context_files"):
+        event["context_files"] = worker_execution_context_files(
+            event.get("task_id")
+        )
+    return _queue_delivery_event_with_runtime_context(config, event)
+
+
 def build_request(
     config: dict[str, Any],
     event: dict[str, Any],
@@ -1800,7 +1841,7 @@ def build_request(
         metadata["target_display_name"] = event.get("target_display_name") or display_name_for(config, logical_agent_id)
     context_files = event.get("context_files")
     if context_files is None:
-        context_files = execution_context_files(config, event.get("task_id"))
+        context_files = worker_execution_context_files(event.get("task_id"))
     return DeliveryRequest(
         agent_id=agent["id"],
         provider=agent.get("provider", agent["id"]),
@@ -5870,6 +5911,20 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
                 break
 
 
+def worker_was_terminated_by_sigterm(worker: dict[str, Any]) -> bool:
+    """Return True if worker was reaped/terminated by SIGTERM or SIGKILL signal/exit code."""
+    sig = worker.get("runner_signal")
+    if sig in {9, 15, "9", "15", "SIGKILL", "SIGTERM"}:
+        return True
+    try:
+        exit_code = int(worker.get("exit_code", 0))
+    except (TypeError, ValueError):
+        exit_code = 0
+    if exit_code in {137, 143}:
+        return True
+    return False
+
+
 def worker_has_authoritative_runner_failure(worker: dict[str, Any]) -> bool:
     """Return whether worker_runner published a terminal failure marker.
 
@@ -5880,21 +5935,33 @@ def worker_has_authoritative_runner_failure(worker: dict[str, Any]) -> bool:
     worker record by ``update_worker_runtime_markers``.
     """
 
-    return str(worker.get("runner_status") or "").strip().lower() in RUNNER_FAILURE_STATUSES
+    status = str(worker.get("runner_status") or "").strip().lower()
+    if status not in RUNNER_FAILURE_STATUSES:
+        return False
+    return not worker_was_terminated_by_sigterm(worker)
 
 
 def worker_uses_structured_provider_stream(worker: dict[str, Any]) -> bool:
-    """Return whether top-level JSON lines are provider stream envelopes."""
+    """Return whether top-level JSON lines are provenanced provider stream envelopes.
 
-    provider = str(worker.get("provider") or worker.get("agent_id") or "").strip().lower()
-    mode = str(worker.get("mode") or "").strip().lower()
-    if provider.startswith(("claude", "qwen")) or mode in {"claude_cli", "qwen"}:
-        return True
-    command = worker.get("command")
-    if not isinstance(command, list):
+    Requires explicit stream_json command flag, provider stream configuration, or known
+    structured-stream CLI modes when stream_json or structured_stream is explicitly enabled
+    (or when command flags like --output-format stream-json or --json are present).
+    """
+
+    if worker.get("stream_json") is False or worker.get("structured_stream") is False:
         return False
-    normalized = [str(part).strip().lower() for part in command]
-    return "--output-format" in normalized and "stream-json" in normalized
+    command = worker.get("command")
+    if isinstance(command, list):
+        normalized = [str(part).strip().lower() for part in command]
+        if ("--output-format" in normalized and "stream-json" in normalized) or "--json" in normalized:
+            return True
+    if bool(worker.get("stream_json") or worker.get("structured_stream") or worker.get("provider_uses_stream_json")):
+        return True
+    mode = str(worker.get("mode") or "").strip().lower()
+    if mode in {"claude_cli", "qwen", "stream_json"}:
+        return True
+    return False
 
 
 def is_authoritative_provider_failure_envelope(
@@ -5953,6 +6020,16 @@ def is_runner_gated_provider_error_envelope(
     )
 
 
+def is_runner_owned_provider_failure_line(line: str) -> bool:
+    """Plain-text transcript lines are mixed-trust content and never authoritative evidence.
+
+    Worker log files combine runner stdout/stderr, assistant output, user prompts,
+    tool output, and source code. Plain-text lines carry no per-line provenance and
+    must not be treated as authoritative provider failure evidence regardless of prefix.
+    """
+    return False
+
+
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     log_path_value = worker.get("log_path")
     if not log_path_value:
@@ -5966,7 +6043,7 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         return None
 
     runner_failed = worker_has_authoritative_runner_failure(worker)
-    fallback: str | None = None
+    is_sigterm = worker_was_terminated_by_sigterm(worker)
     for idx in range(len(lines) - 1, -1, -1):
         line = lines[idx]
         stripped = line.strip()
@@ -5981,7 +6058,7 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
         if isinstance(stream_payload, dict):
             if is_authoritative_provider_failure_envelope(worker, stream_payload):
                 return stripped
-            if runner_failed and is_runner_gated_provider_error_envelope(worker, stream_payload):
+            if runner_failed and not is_sigterm and is_runner_gated_provider_error_envelope(worker, stream_payload):
                 return stripped
             if is_captured_orchestrator_record(stream_payload):
                 continue
@@ -5992,36 +6069,9 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
             if stream_payload.get("type") == "user" or role == "user":
                 continue
             # A top-level JSON object which is not one of the provider control
-            # envelopes above is transcript content.  Do not regex its nested
-            # strings: assistant prose, tool results, fixtures, and source all
-            # legitimately contain words such as quota and authentication.
+            # envelopes above is transcript content. Do not inspect its nested strings.
             continue
-        if not runner_failed:
-            continue
-        if is_allowed_rate_limit_line(stripped):
-            continue
-        if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
-            continue
-        if JSON_FIELD_LINE_PATTERN.search(stripped):
-            continue
-        if SEARCH_RESULT_LOG_JSON_PATTERN.search(stripped):
-            continue
-        if is_tool_command_output_failure_line(lines, idx):
-            continue
-        if any(pattern.search(stripped) for pattern in WORKER_FAILURE_FALSE_POSITIVE_PATTERNS):
-            continue
-        if any(pattern.search(stripped) for pattern in WORKER_FAILURE_PATTERNS):
-            normalized = stripped.lower()
-            if (
-                "an unexpected critical error occurred" in normalized
-                or "[object object]" in normalized
-                or normalized.startswith("reason:")
-                or normalized.startswith("retrydelayms:")
-            ):
-                fallback = fallback or stripped
-                continue
-            return stripped
-    return fallback
+    return None
 
 
 def is_captured_orchestrator_record(payload: dict[str, Any]) -> bool:
@@ -6091,7 +6141,9 @@ def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
     return False
 
 
-def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any]:
+def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> dict[str, Any] | None:
+    if not reason:
+        return None
     provider = str(worker.get("provider") or worker.get("agent_id") or "").strip().lower()
     normalized = str(reason or "").lower()
     retry = worker_retry_settings(config, worker.get("provider"))
@@ -7016,6 +7068,8 @@ def pause_dispatch_for_reaped_worker(
     every poll. Returns the detected reason when a pause was recorded, else
     None (caller keeps the generic lease-timeout message).
     """
+    if worker_was_terminated_by_sigterm(worker):
+        return None
     detected_reason = detect_worker_failure(worker)
     if not detected_reason:
         return None
@@ -18126,15 +18180,54 @@ def save_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> No
 
 def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
     events = load_event_queue(config)
-    if not events:
-        return False
     task_map = task_index_from_status(config, load_status(config))
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     redispatch_statuses = redispatch_candidate_statuses(config)
     queue_events = state.setdefault("queue", {}).setdefault("events", {})
+    workers = state.setdefault("workers", {})
     kept: list[dict[str, Any]] = []
     kept_ids: set[str] = set()
     changed = False
+    now = datetime.now(timezone.utc)
+
+    # Queue records are only authoritative while their durable event still
+    # exists.  A started record without a task, durable event, or worker cannot
+    # be resumed or finalized through any normal worker path; retaining it
+    # falsely advertises an active lease and blocks promotion preflight.
+    durable_event_ids = {
+        str(event.get("event_id") or "")
+        for event in events
+        if isinstance(event, dict) and str(event.get("event_id") or "")
+    }
+    for event_id, record in list(queue_events.items()):
+        if event_id in durable_event_ids or not isinstance(record, dict):
+            continue
+        if record.get("status") not in active_statuses:
+            continue
+        if str(record.get("task_id") or ""):
+            continue
+        if any(
+            worker.get("queue_event_id") == event_id
+            for worker in state.get("workers", {}).values()
+            if isinstance(worker, dict)
+        ):
+            continue
+        queue_events.pop(event_id, None)
+        write_activity_log(
+            config,
+            {
+                "type": "malformed_queue_record_pruned",
+                "queue_event_id": event_id,
+                "message": (
+                    "Pruned an active queue record with no durable event, "
+                    "task, or worker."
+                ),
+            },
+        )
+        changed = True
+
+    if not events:
+        return changed
 
     for event in events:
         event_id = event.get("event_id")
@@ -18143,8 +18236,67 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
             continue
 
         record = queue_events.get(event_id, {})
-        related_workers = [worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id]
+        related_worker_items = [
+            (run_id, worker)
+            for run_id, worker in workers.items()
+            if worker.get("queue_event_id") == event_id
+        ]
+        related_workers = [worker for _, worker in related_worker_items]
         has_active_worker = any(worker.get("status") in active_statuses for worker in related_workers)
+
+        # ``retry_backoff`` is a scheduler hold, not a live process.  If every
+        # linked retry is overdue and its recorded process generation is gone,
+        # retaining the old ``started`` lease blocks promotion while no worker
+        # can complete it.  Drop that expired delivery lineage so the normal
+        # dispatcher may construct a fresh durable event for the still-open
+        # task on a later cycle.
+        stale_retry_workers = (
+            record.get("status") in {"started", "retry_backoff"}
+            and bool(related_worker_items)
+            and all(
+                str(worker.get("status") or "") == "retry_backoff"
+                and (
+                    ((next_retry_at := _parse_iso_utc(worker.get("next_retry_at"))) is not None and next_retry_at <= now)
+                    or worker.get("runner_finished_at") is not None
+                )
+                and not worker_process_generation_is_current(worker)
+                for _, worker in related_worker_items
+            )
+        )
+        if stale_retry_workers:
+            for run_id, worker in related_worker_items:
+                workers.pop(run_id, None)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_reaped",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "worker_run_id": worker.get("run_id"),
+                        "queue_event_id": event_id,
+                        "message": (
+                            "Dropped an overdue retry-backoff worker whose "
+                            "recorded process generation is absent."
+                        ),
+                    },
+                )
+            write_activity_log(
+                config,
+                {
+                    "type": "queue_event_pruned",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "queue_event_id": event_id,
+                    "message": (
+                        "Pruned a started queue lease after every linked "
+                        "retry-backoff worker exceeded its retry deadline "
+                        "without a live process."
+                    ),
+                },
+            )
+            changed = True
+            continue
+
         if queue_event_is_orphaned(config, event, record, related_workers):
             age_seconds = queue_event_age_seconds(event)
             write_activity_log(
@@ -18665,6 +18817,7 @@ def plan_helper_claim_assignment(
             owner_name=owner_name,
         ),
     )
+    fallbacks = l12_provider_first_candidates(task, fallbacks)
     if not fallbacks:
         return None
     idle_agent_name = canonical_agent_name(config, idle_agent_name)
@@ -18726,11 +18879,12 @@ def task_preferred_lane_blocks_helper_claim(
     owner_paused: bool = False,
     state: dict[str, Any] | None = None,
 ) -> bool:
-    preferred_lanes = task_preferred_lane_order(config, task)
-    if not preferred_lanes:
+    declared_lanes = task_preferred_lane_order(config, task)
+    if not declared_lanes:
         return False
     idle_agent_name = canonical_agent_name(config, idle_agent_name)
     owner_name = canonical_agent_name(config, owner_name)
+    preferred_lanes = l12_provider_first_candidates(task, declared_lanes)
     if idle_agent_name not in preferred_lanes:
         return True
     if owner_paused:
@@ -18753,7 +18907,10 @@ def task_next_preferred_helper_lane(
     owner_name: str,
     state: dict[str, Any] | None = None,
 ) -> str | None:
-    preferred_lanes = task_preferred_lane_order(config, task)
+    preferred_lanes = l12_provider_first_candidates(
+        task,
+        task_preferred_lane_order(config, task),
+    )
     if not preferred_lanes:
         return None
     owner_name = canonical_agent_name(config, owner_name)
@@ -20932,7 +21089,16 @@ def _run_once_locked(
                 state["assistant_dev_bridge"] = deepcopy(bridge_state)
                 changed = bool(assistant_dev_bridge_snapshot.get("changed")) or changed
         if watch:
-            changed = _safe_phase("run_scan", _run_scan_locked, config, state, replay=replay, provider_capabilities=provider_report, quiet=quiet) or changed
+            changed = _safe_phase(
+                "run_scan",
+                _run_scan_locked,
+                config,
+                state,
+                replay=replay,
+                provider_capabilities=provider_report,
+                queue_event_fn=queue_delivery_event,
+                quiet=quiet,
+            ) or changed
             state = load_runtime_state(config)
             stamp_supervisor_runtime_state(
                 config,

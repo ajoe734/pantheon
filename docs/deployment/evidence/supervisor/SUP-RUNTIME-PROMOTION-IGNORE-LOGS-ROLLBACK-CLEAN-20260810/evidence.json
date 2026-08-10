@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "task_id": "SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810",
+  "title": "Repair promotion validation for approved runtime debris and rollback snapshots",
+  "owner": "Codex",
+  "reviewer": "Human/Ops",
+  "status": "review_pending",
+  "scope": [
+    "scripts/promote_supervisor_runtime.py",
+    "scripts/test_promote_supervisor_runtime.py",
+    "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810/evidence.json"
+  ],
+  "transaction_provenance": [
+    {
+      "path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T005423158659Z-2166207.json",
+      "candidate_failure": "Forbidden ignored directory found in candidate root: .orchestrator/logs/",
+      "rollback_failure": "Tracked git tree is dirty ( M): .orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md"
+    },
+    {
+      "path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T014233704894Z-2613250.json",
+      "preflight_failure": "Supervisor process admission lock generation mismatch"
+    }
+  ],
+  "diagnosis": [
+    "Git reports the ignored .orchestrator/logs directory as one directory record, so adding that path to a regular-file allowlist cannot admit or validate its leaves.",
+    "The mutable tracked task brief is provenance-bound bootstrap residue; rollback must use the separately materialized immutable checkout at the captured HEAD/tree and must not copy mutable worktree bytes.",
+    "A /proc/locks row identifier can change across release and reacquire even when the same verified supervisor FLOCK, owner generation, file and range remain bound."
+  ],
+  "implemented_guards": [
+    "Admit only the exact .orchestrator/logs directory and enumerate it through anchored descriptors; each leaf must be a same-filesystem, single-link, non-executable regular .log file with a safe direct filename.",
+    "Keep unknown ignored directories, nested log payloads, symlinks, executable logs, arbitrary task-brief ignored directories, tracked-tree drift and importable source fail-closed.",
+    "Materialize rollback from the captured commit/tree and prove contaminated mutable task-brief bytes are absent from the rollback checkout.",
+    "With explicit opt-in, normalize kernel_lock_id only when both observations have the verified FLOCK/ADVISORY/WRITE/0..EOF shape; compare every path, device, inode, content, time, class, mode, range and owner-generation field exactly."
+  ],
+  "verification": [
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py -k 'runtime_log or generated_logs or admission_lock_id_churn or dynamic_flock or every_other_identity_drift or capture_promotion_snapshot_passes_allow_legacy_admission_lock_id_churn or materialized_rollback_uses_head or ignored_task_brief_source_directory'",
+      "outcome": "24 passed, 272 deselected in 7.64s"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
+      "outcome": "296 passed in 76.49s"
+    },
+    {
+      "command": "git diff --check",
+      "outcome": "passed before replacement-head commit"
+    }
+  ],
+  "github_review_binding": {
+    "repository": "ajoe734/pantheon",
+    "pr": 4704,
+    "head_branch": "task/SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810",
+    "base": "dev",
+    "base_sha": "f8da01542b8eee102b4f6e0906969e53a993079f",
+    "exact_head": "The governed review must bind the post-commit PR head with REVIEW_HEAD_SHA; a commit cannot contain its own SHA.",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810/evidence.json",
+    "required_checks": [
+      "Commit trailers",
+      "Runtime mirror guard",
+      "Smoke acceptance",
+      "Pantheon canonical review gate"
+    ]
+  },
+  "delivery": {
+    "source_merge_order": [
+      "Merge protected PR #4704 into dev after Human/Ops exact-head independent approval and required checks.",
+      "Only after merge may a separate operator-controlled task decide whether to run a new runtime promotion."
+    ],
+    "live_rollout": "not performed; promotion, service restart, live config/state and command-runtime mutation are prohibited in this source task",
+    "rollback": "Use a normal protected merge revert of PR #4704's merge commit; do not force-update dev or alter live runtime state from this task."
+  }
+}

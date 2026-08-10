@@ -8633,5 +8633,82 @@ class ProgramProofOwnershipTests(unittest.TestCase):
         self.assertIn("quarantined", ai_status.ACTIVE_TASK_STATUSES)
 
 
+class TestSentinelTimestampOverflow(unittest.TestCase):
+    def test_format_display_timestamp_sentinel_max_utc(self) -> None:
+        raw_str = "9999-12-31T23:59:59Z"
+        result = ai_status.format_display_timestamp(raw_str)
+        self.assertEqual(result, "9999-12-31T23:59:59Z")
+
+    def test_format_display_timestamp_datetime_sentinel_max_utc(self) -> None:
+        dt_sentinel = ai_status.parse_timestamp("9999-12-31T23:59:59Z")
+        self.assertIsNotNone(dt_sentinel)
+        result = ai_status.format_display_timestamp(dt_sentinel)
+        self.assertEqual(result, "9999-12-31T23:59:59+00:00")
+
+    def test_format_display_timestamp_normal_utc(self) -> None:
+        raw_str = "2026-08-09T06:15:00Z"
+        result = ai_status.format_display_timestamp(raw_str)
+        self.assertEqual(result, "2026-08-09 14:15:00")
+
+    def test_format_display_timestamp_malformed_and_none(self) -> None:
+        self.assertEqual(ai_status.format_display_timestamp(None), "-")
+        self.assertEqual(ai_status.format_display_timestamp(""), "-")
+        self.assertEqual(ai_status.format_display_timestamp("invalid-date"), "invalid-date")
+
+    def test_localize_embedded_timestamps_with_sentinel(self) -> None:
+        text = "Task created at 9999-12-31T23:59:59Z and active at 2026-08-09T06:15:00Z"
+        expected = "Task created at 9999-12-31T23:59:59Z and active at 2026-08-09 14:15:00"
+        result = ai_status.localize_embedded_timestamps(text)
+        self.assertEqual(result, expected)
+
+    def test_derived_view_refresh_with_sentinel_activity_log(self) -> None:
+        _setup_test_isolation(self)
+        try:
+            with mock.patch.object(ai_status, "STATUS_FILE", self._test_status_file), \
+                 mock.patch.object(ai_status, "LOG_FILE", self._test_log_file), \
+                 mock.patch.object(ai_status, "CURRENT_WORK_FILE", self._test_root / "current-work.md"):
+                state = {
+                    "project": "pantheon",
+                    "sprint": "test-sprint",
+                    "sprint_started_at": "2026-08-09T00:00:00Z",
+                    "objective": "Test objective with sentinel timestamp 9999-12-31T23:59:59Z",
+                    "updated_at": "9999-12-31T23:59:59Z",
+                    "canonical_files": ["AI_COLLABORATION_GUIDE.md", "ai-status.json"],
+                    "tasks": [
+                        {
+                            "id": "TEST-001",
+                            "title": "Sentinel Test Task",
+                            "status": "in_progress",
+                            "owner": "Antigravity2",
+                            "reviewer": "Claude",
+                            "phase": "Test Phase",
+                            "depends_on": [],
+                            "artifacts": [],
+                            "last_update": "9999-12-31T23:59:59Z",
+                        }
+                    ],
+                    "handoffs": [],
+                    "blockers": [],
+                    "agents": [],
+                }
+                logs = [
+                    {
+                        "ts": "9999-12-31T23:59:59Z",
+                        "agent": "Antigravity2",
+                        "action": "progress",
+                        "task_id": "TEST-001",
+                        "message": "Activity entry containing sentinel timestamp 9999-12-31T23:59:59Z",
+                    }
+                ]
+
+                # Must not raise OverflowError when rendering derived views
+                ai_status.write_current_work(state, logs)
+                self.assertTrue((self._test_root / "current-work.md").exists())
+                content = (self._test_root / "current-work.md").read_text(encoding="utf-8")
+                self.assertIn("9999-12-31T23:59:59Z", content)
+        finally:
+            self._test_temp_dir.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

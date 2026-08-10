@@ -569,6 +569,22 @@ def _dispatch_canonical_review_gate_workflow(
     shows success, but GitHub's own mergeable_state stays blocked until the
     workflow itself runs again. None of that workflow's pull_request event
     types fire from a bare tag push, so dispatch it explicitly here.
+
+    Dispatch against `binding.base` (the PR's base branch, e.g. "dev"), not
+    `binding.head_branch`. GitHub's workflow-dispatch API validates that the
+    workflow_dispatch trigger exists in the workflow file AS IT EXISTS ON THE
+    TARGET REF being dispatched -- not on the default branch. A task branch
+    created before this trigger existed (or during any later regression that
+    dropped it, e.g. a stale-branch squash-merge reverting the file) does not
+    carry it in its own history, so dispatching against that branch 422s with
+    "Workflow does not have 'workflow_dispatch' trigger" even though the
+    workflow definitively has that trigger on dev right now -- verified
+    empirically against a live, indefinitely-stuck PR. The checked-out ref
+    only supplies the script file to run; canonical_review_gate_ci.py acts
+    entirely on the explicit --head-ref/--head-sha inputs below regardless of
+    what commit is physically checked out, so targeting the base branch is
+    always correct and always has the current trigger definition.
+
     Failure to dispatch is not fatal: the tag is the durable proof, and the
     next natural push to the PR (or a manual re-run) picks it up either way.
     """
@@ -586,7 +602,7 @@ def _dispatch_canonical_review_gate_workflow(
                 "-",
             ],
             payload={
-                "ref": binding.head_branch,
+                "ref": binding.base,
                 "inputs": {
                     "head_ref": binding.head_branch,
                     "head_sha": binding.head_sha,

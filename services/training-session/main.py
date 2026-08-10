@@ -398,6 +398,7 @@ class QueuePreviewJobBody(BaseModel):
     mode: str = "refresh"
     requested_by: str = "operator"
     requested_at: Optional[str] = None
+    terminalize_session: bool = False
 
 
 class RunPreviewJobBody(BaseModel):
@@ -1716,6 +1717,7 @@ def queue_preview_job(
             "session_id": session_id,
             "mode": body.mode,
             "requested_by": requested_by,
+            "terminalize_session": body.terminalize_session,
         }
     )
     existing = store.get_preview_job(job_id)
@@ -1737,6 +1739,7 @@ def queue_preview_job(
             "eval_id": eval_id,
             "mode": body.mode,
             "requested_by": requested_by,
+            "terminalize_session": body.terminalize_session,
             "request_hash": request_hash,
         },
         recorded_at=timestamp,
@@ -1748,6 +1751,7 @@ def queue_preview_job(
         "eval_id": eval_id,
         "status": "queued",
         "mode": body.mode,
+        "terminalize_session": body.terminalize_session,
         "requested_by": requested_by,
         "requested_at": timestamp,
         "client_requested_at": body.requested_at,
@@ -1772,7 +1776,11 @@ def queue_preview_job(
         summary="Async trainer preview evaluation queued.",
         timestamp=timestamp,
         eval_ref={"eval_id": eval_id, "job_id": job_id},
-        payload={"mode": body.mode, "job_id": job_id},
+        payload={
+            "mode": body.mode,
+            "job_id": job_id,
+            "terminalize_session": body.terminalize_session,
+        },
     )
     return stored
 
