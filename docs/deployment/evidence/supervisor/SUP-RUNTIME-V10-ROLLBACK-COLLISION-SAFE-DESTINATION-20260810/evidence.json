@@ -16,8 +16,8 @@
     "git diff --check"
   ],
   "verification_results": {
-    "focused_tests": "5 passed",
-    "full_tests": "329 passed",
+    "focused_tests": "4 passed",
+    "full_tests": "328 passed",
     "git_diff_check": "passed with 0 exit code"
   },
   "required_check_identities": [

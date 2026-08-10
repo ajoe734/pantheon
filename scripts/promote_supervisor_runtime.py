@@ -6834,66 +6834,13 @@ def materialize_immutable_rollback_runtime(
         label="Command runtime parent",
     )
 
-    snapshot_root = getattr(snapshot, "root", getattr(snapshot, "candidate_root", None))
-    snapshot_device = getattr(snapshot, "root_device", getattr(snapshot, "candidate_root_device", None))
-    snapshot_inode = getattr(snapshot, "root_inode", getattr(snapshot, "candidate_root_inode", None))
-
     candidate_root = (
         candidate_identity.candidate_root
         if candidate_identity is not None
         else None
     )
-    candidate_device = (
-        candidate_identity.candidate_root_device
-        if candidate_identity is not None
-        else None
-    )
-    candidate_inode = (
-        candidate_identity.candidate_root_inode
-        if candidate_identity is not None
-        else None
-    )
 
     direct_destination = parent / snapshot.head_commit
-
-    if (
-        direct_destination.exists()
-        and direct_destination.is_dir()
-        and not direct_destination.is_symlink()
-    ):
-        same_root = False
-        try:
-            identity = build_candidate_runtime_identity(direct_destination)
-            same_root = (
-                identity.candidate_root == snapshot_root
-                and (identity.candidate_root_device, identity.candidate_root_inode)
-                == (snapshot_device, snapshot_inode)
-            )
-            if (
-                same_root
-                and identity.head_commit == snapshot.head_commit
-                and identity.tracked_tree_identity == snapshot.tracked_tree_identity
-                and identity.accepted_dev_commit == snapshot.accepted_dev_commit
-                and identity.repository_slug == snapshot.repository_slug
-                and len(identity.legacy_incumbent_bytecode_residue) == 0
-                and len(identity.legacy_task_brief_drift) == 0
-                and (
-                    candidate_root is None
-                    or (
-                        identity.candidate_root != candidate_root
-                        and (
-                            identity.candidate_root_device,
-                            identity.candidate_root_inode,
-                        )
-                        != (candidate_device, candidate_inode)
-                    )
-                )
-            ):
-                identity.verify_immutable_snapshot()
-                return identity
-        except Exception:
-            if same_root:
-                raise
 
     selected_parent = parent
     selected_components = parent_components
@@ -6917,41 +6864,6 @@ def materialize_immutable_rollback_runtime(
         destination = selected_parent / snapshot.head_commit
 
     if destination.exists() or destination.is_symlink():
-        if destination.is_dir() and not destination.is_symlink():
-            try:
-                identity = build_candidate_runtime_identity(destination)
-                if (
-                    identity.head_commit == snapshot.head_commit
-                    and identity.tracked_tree_identity == snapshot.tracked_tree_identity
-                    and identity.accepted_dev_commit == snapshot.accepted_dev_commit
-                    and identity.repository_slug == snapshot.repository_slug
-                    and len(identity.legacy_incumbent_bytecode_residue) == 0
-                    and len(identity.legacy_task_brief_drift) == 0
-                    and identity.candidate_root != snapshot_root
-                    and (
-                        snapshot_device is None
-                        or (
-                            identity.candidate_root_device,
-                            identity.candidate_root_inode,
-                        )
-                        != (snapshot_device, snapshot_inode)
-                    )
-                    and (
-                        candidate_root is None
-                        or (
-                            identity.candidate_root != candidate_root
-                            and (
-                                identity.candidate_root_device,
-                                identity.candidate_root_inode,
-                            )
-                            != (candidate_device, candidate_inode)
-                        )
-                    )
-                ):
-                    identity.verify_immutable_snapshot()
-                    return identity
-            except Exception:
-                pass
         raise ValueError(
             f"Fresh rollback runtime destination already exists: {destination}"
         )
