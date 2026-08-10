@@ -11,6 +11,7 @@ import argparse
 import copy
 import fcntl
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -426,6 +427,33 @@ class LegacyTaskBriefDrift:
     canonical_sha256: str
 
 
+@dataclass(frozen=True, order=True)
+class LegacyIncumbentBytecodeDirectoryResidue:
+    """One descriptor-bound legacy incumbent __pycache__ directory residue."""
+
+    relative_path: str
+    device: int
+    inode: int
+    mode: int
+
+
+@dataclass(frozen=True, order=True)
+class LegacyIncumbentBytecodeResidue:
+    """One provenance-bound legacy incumbent bytecode residue path."""
+
+    relative_path: str
+    device: int
+    inode: int
+    mode: int
+    nlink: int
+    byte_length: int
+    sha256: str
+    cpython_tag: str
+    source_relative_path: str
+
+
+
+
 class LaunchFilesystem(Protocol):
     def capture_regular_file(
         self,
@@ -493,6 +521,10 @@ class CandidateRuntimeIdentity:
     config_byte_length: int
     config_sha256: str
     legacy_task_brief_drift: tuple[LegacyTaskBriefDrift, ...] = ()
+    legacy_incumbent_bytecode_residue: tuple[
+        LegacyIncumbentBytecodeResidue | LegacyIncumbentBytecodeDirectoryResidue, ...
+    ] = ()
+
 
     def verify_against_live_config(self, live_config_path: Path) -> None:
         """Re-read and compare the exact live-config path and byte identity."""
@@ -610,6 +642,10 @@ class CandidateRuntimeIdentity:
                 expected_tree=self.tracked_tree_identity,
                 allow_legacy_task_brief_drift=(len(self.legacy_task_brief_drift) > 0),
                 expected_legacy_task_brief_drift=self.legacy_task_brief_drift,
+                allow_legacy_incumbent_bytecode_residue=(
+                    len(self.legacy_incumbent_bytecode_residue) > 0
+                ),
+                expected_legacy_incumbent_bytecode_residue=self.legacy_incumbent_bytecode_residue,
                 config_bytes=self.config_bytes,
             )
             _assert_candidate_handle_path(root_handle)
@@ -2112,6 +2148,14 @@ def verify_working_tree_cleanliness(
     expected_tree: str | None = None,
     allow_legacy_task_brief_drift: bool = False,
     expected_legacy_task_brief_drift: tuple[LegacyTaskBriefDrift, ...] | None = None,
+    allow_legacy_incumbent_bytecode_residue: bool = False,
+    expected_legacy_incumbent_bytecode_residue: (
+        tuple[
+            LegacyIncumbentBytecodeResidue | LegacyIncumbentBytecodeDirectoryResidue,
+            ...,
+        ]
+        | None
+    ) = None,
     config_bytes: bytes | None = None,
     filesystem: LaunchFilesystem | None = None,
 ) -> str:
@@ -2170,6 +2214,9 @@ def verify_working_tree_cleanliness(
                 continue
             if relative_path.endswith("/"):
                 kind = "ignored" if status_code == "!!" else "untracked"
+                if status_code == "!!" and allow_legacy_incumbent_bytecode_residue:
+                    if _is_allowed_incumbent_bytecode_residue_path(relative_path):
+                        continue
                 if not _is_allowed_generated_untracked_directory(relative_path):
                     raise ValueError(
                         f"Forbidden {kind} directory found in candidate root: "
@@ -2180,6 +2227,9 @@ def verify_working_tree_cleanliness(
                     relative_path,
                 )
                 continue
+            if status_code == "!!" and allow_legacy_incumbent_bytecode_residue:
+                if _is_allowed_incumbent_bytecode_residue_path(relative_path):
+                    continue
             if not _is_allowed_generated_untracked_path(relative_path):
                 kind = "ignored" if status_code == "!!" else "untracked"
                 raise ValueError(
@@ -2222,6 +2272,25 @@ def verify_working_tree_cleanliness(
             and legacy_task_brief_drift != expected_legacy_task_brief_drift
         ):
             raise ValueError("Incumbent legacy task-brief drift changed during validation")
+
+        if allow_legacy_incumbent_bytecode_residue:
+            legacy_incumbent_bytecode_residue = (
+                _capture_legacy_incumbent_bytecode_residue(
+                    handle,
+                    filesystem=filesystem or OSLaunchFilesystem(),
+                )
+            )
+        else:
+            legacy_incumbent_bytecode_residue = ()
+
+        if (
+            expected_legacy_incumbent_bytecode_residue is not None
+            and legacy_incumbent_bytecode_residue
+            != expected_legacy_incumbent_bytecode_residue
+        ):
+            raise ValueError(
+                "Incumbent legacy bytecode residue changed during validation"
+            )
 
         _assert_tracked_gitlink_worktrees(handle, gitlinks_before)
         head, tree = _read_head_tree(handle)
@@ -3830,6 +3899,7 @@ def build_candidate_runtime_identity(
     config_path: Path | None = None,
     *,
     allow_legacy_task_brief_drift: bool = False,
+    allow_legacy_incumbent_bytecode_residue: bool = False,
 ) -> CandidateRuntimeIdentity:
     """Capture one candidate or incumbent root, Git tree, and live-config snapshot."""
     root_handle = _open_candidate_root_handle(candidate_path)
@@ -3857,6 +3927,7 @@ def build_candidate_runtime_identity(
             expected_head=head,
             expected_tree=tracked_tree,
             allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+            allow_legacy_incumbent_bytecode_residue=allow_legacy_incumbent_bytecode_residue,
             config_bytes=config_bytes,
         )
 
@@ -3870,6 +3941,16 @@ def build_candidate_runtime_identity(
         else:
             legacy_task_brief_drift = ()
 
+        if allow_legacy_incumbent_bytecode_residue:
+            legacy_incumbent_bytecode_residue = (
+                _capture_legacy_incumbent_bytecode_residue(
+                    root_handle,
+                    filesystem=OSLaunchFilesystem(),
+                )
+            )
+        else:
+            legacy_incumbent_bytecode_residue = ()
+
         # Repeat descriptor-bound root/tree/status checks after reading the
         # external config so a deleted/replaced root or concurrent mutation
         # cannot yield a mixed identity object.
@@ -3880,6 +3961,8 @@ def build_candidate_runtime_identity(
             expected_tree=tracked_tree,
             allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
             expected_legacy_task_brief_drift=legacy_task_brief_drift,
+            allow_legacy_incumbent_bytecode_residue=allow_legacy_incumbent_bytecode_residue,
+            expected_legacy_incumbent_bytecode_residue=legacy_incumbent_bytecode_residue,
             config_bytes=config_bytes,
         )
         # A freshly materialized checkout can refresh and atomically replace
@@ -3923,7 +4006,7 @@ def build_candidate_runtime_identity(
                 remote_url=remote_url,
                 canonical_remote=f"github.com/{remote.slug}",
                 repository_slug=remote.slug,
-                config_path=selected_config_path,
+                config_path=LIVE_SUPERVISOR_CONFIG_PATH,
                 config_device=config_identity.device,
                 config_inode=config_identity.inode,
                 config_path_components=config_path_components,
@@ -3931,6 +4014,7 @@ def build_candidate_runtime_identity(
                 config_byte_length=len(config_bytes),
                 config_sha256=hashlib.sha256(config_bytes).hexdigest(),
                 legacy_task_brief_drift=legacy_task_brief_drift,
+                legacy_incumbent_bytecode_residue=legacy_incumbent_bytecode_residue,
             )
         finally:
             _close_candidate_root_handle(final_handle)
@@ -3969,6 +4053,36 @@ def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str,
     else:
         drift_summary = []
 
+    bytecode_residues = getattr(identity, "legacy_incumbent_bytecode_residue", ())
+    if isinstance(bytecode_residues, (list, tuple)):
+        bytecode_summary = []
+        for item in bytecode_residues:
+            if hasattr(item, "sha256"):
+                bytecode_summary.append(
+                    {
+                        "relative_path": item.relative_path,
+                        "device": item.device,
+                        "inode": item.inode,
+                        "mode": item.mode,
+                        "nlink": item.nlink,
+                        "byte_length": item.byte_length,
+                        "sha256": item.sha256,
+                        "cpython_tag": item.cpython_tag,
+                        "source_relative_path": item.source_relative_path,
+                    }
+                )
+            elif hasattr(item, "relative_path"):
+                bytecode_summary.append(
+                    {
+                        "relative_path": item.relative_path,
+                        "device": item.device,
+                        "inode": item.inode,
+                        "mode": item.mode,
+                    }
+                )
+    else:
+        bytecode_summary = []
+
     return {
         "candidate_root": str(identity.candidate_root),
         "candidate_root_device": identity.candidate_root_device,
@@ -4005,6 +4119,7 @@ def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str,
         "config_byte_length": identity.config_byte_length,
         "config_sha256": identity.config_sha256,
         "legacy_task_brief_drift": drift_summary,
+        "legacy_incumbent_bytecode_residue": bytecode_summary,
     }
 
 
@@ -5853,6 +5968,290 @@ def _capture_legacy_mutable_task_brief_drift(
     return tuple(drifts)
 
 
+def _is_allowed_incumbent_bytecode_residue_path(relative_path: str) -> bool:
+    candidate = PurePosixPath(relative_path.rstrip("/"))
+    if candidate.is_absolute() or not candidate.parts:
+        return False
+    if any(part in {"", ".", ".."} for part in candidate.parts):
+        return False
+    if candidate.parts.count("__pycache__") != 1:
+        return False
+    if relative_path.endswith("/"):
+        return candidate.parts[-1] == "__pycache__"
+    if candidate.parts[-2] != "__pycache__":
+        return False
+    if candidate.suffix == ".pyc":
+        return "pyo" not in candidate.suffixes and not relative_path.endswith(".pyo")
+    return False
+
+
+def _validate_and_capture_incumbent_bytecode_file(
+    handle: CandidateRootHandle,
+    relative_path: str,
+    filesystem: LaunchFilesystem | None = None,
+) -> LegacyIncumbentBytecodeResidue:
+    path = PurePosixPath(relative_path)
+    if (
+        path.is_absolute()
+        or not path.parts
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise ValueError(f"Invalid incumbent bytecode path: {relative_path!r}")
+
+    if path.suffix != ".pyc":
+        raise ValueError(
+            f"Incumbent bytecode residue permits only .pyc files, found: {relative_path}"
+        )
+    if "pyo" in path.suffixes or relative_path.endswith(".pyo"):
+        raise ValueError(
+            f"Incumbent bytecode residue rejects .pyo files: {relative_path}"
+        )
+
+    parts = list(path.parts)
+    if parts.count("__pycache__") != 1 or parts[-2] != "__pycache__":
+        raise ValueError(
+            f"Incumbent bytecode file not directly inside __pycache__ directory: {relative_path}"
+        )
+
+    stem = path.stem
+    if "." not in stem:
+        raise ValueError(
+            f"Incumbent bytecode filename missing CPython tag: {relative_path}"
+        )
+    source_stem, cpython_tag = stem.rsplit(".", 1)
+
+    current_cache_tag = getattr(sys.implementation, "cache_tag", "")
+    if current_cache_tag and cpython_tag != current_cache_tag:
+        raise ValueError(
+            f"Incumbent bytecode tag mismatch ({cpython_tag} != {current_cache_tag}): {relative_path}"
+        )
+
+    pycache_idx = len(parts) - 2
+    source_parts = parts[:pycache_idx] + [f"{source_stem}.py"]
+    source_relative_path = "/".join(source_parts)
+
+    source_descriptors = [os.dup(handle.descriptor)]
+    try:
+        for component in source_parts[:-1]:
+            source_descriptors.append(
+                _open_relative_descriptor(
+                    source_descriptors[-1],
+                    component,
+                    label=f"Source component {component!r}",
+                    require_directory=True,
+                )
+            )
+        leaf_src_fd = _open_relative_descriptor(
+            source_descriptors[-1],
+            source_parts[-1],
+            label=f"Source file {source_relative_path!r}",
+            require_directory=False,
+        )
+        source_descriptors.append(leaf_src_fd)
+        src_st = os.fstat(leaf_src_fd)
+        if not stat.S_ISREG(src_st.st_mode):
+            raise ValueError(
+                f"Source file is not a regular file: {source_relative_path}"
+            )
+    except (FileNotFoundError, ValueError) as exc:
+        raise ValueError(
+            f"Source-less incumbent bytecode file rejected: {relative_path} "
+            f"(missing or invalid source {source_relative_path}): {exc}"
+        ) from exc
+    finally:
+        for fd in reversed(source_descriptors):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    descriptors = [os.dup(handle.descriptor)]
+    try:
+        for component in path.parts[:-1]:
+            descriptors.append(
+                _open_relative_descriptor(
+                    descriptors[-1],
+                    component,
+                    label=f"Incumbent bytecode component {component!r}",
+                    require_directory=True,
+                )
+            )
+        leaf_fd = _open_relative_descriptor(
+            descriptors[-1],
+            path.parts[-1],
+            label=f"Incumbent bytecode file {relative_path!r}",
+            require_directory=False,
+        )
+        descriptors.append(leaf_fd)
+        st = os.fstat(leaf_fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(
+                f"Incumbent bytecode file is not a regular file: {relative_path}"
+            )
+        if st.st_nlink != 1:
+            raise ValueError(
+                f"Incumbent bytecode file is hard linked (nlink={st.st_nlink}): {relative_path}"
+            )
+
+        content = os.read(leaf_fd, st.st_size if st.st_size > 0 else 65536)
+        if len(content) < 16:
+            raise ValueError(
+                f"Incumbent bytecode file header truncated (<16 bytes): {relative_path}"
+            )
+
+        expected_magic = importlib.util.MAGIC_NUMBER
+        if content[:4] != expected_magic:
+            raise ValueError(
+                f"Incumbent bytecode magic number mismatch ({content[:4]!r} != {expected_magic!r}): {relative_path}"
+            )
+
+        digest = hashlib.sha256(content).hexdigest()
+        return LegacyIncumbentBytecodeResidue(
+            relative_path=relative_path,
+            device=st.st_dev,
+            inode=st.st_ino,
+            mode=st.st_mode,
+            nlink=st.st_nlink,
+            byte_length=len(content),
+            sha256=digest,
+            cpython_tag=cpython_tag,
+            source_relative_path=source_relative_path,
+        )
+    finally:
+        for fd in reversed(descriptors):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def _capture_legacy_incumbent_bytecode_residue(
+    handle: CandidateRootHandle,
+    filesystem: LaunchFilesystem | None = None,
+) -> tuple[
+    LegacyIncumbentBytecodeResidue | LegacyIncumbentBytecodeDirectoryResidue, ...
+]:
+    fs = filesystem or OSLaunchFilesystem()
+    status_output = _run_git(
+        handle,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--ignored=matching",
+        "--ignore-submodules=all",
+    ).stdout
+
+    pycache_dirs: set[str] = set()
+    pyc_files: set[str] = set()
+
+    for record in status_output.split("\0"):
+        if not record or len(record) < 4:
+            continue
+        status_code = record[:2]
+        relative_path = record[3:]
+        if status_code != "!!":
+            continue
+        rel_posix = PurePosixPath(relative_path.rstrip("/"))
+        if "pycache" in relative_path or "__pycache__" in rel_posix.parts:
+            if not _is_allowed_incumbent_bytecode_residue_path(relative_path):
+                raise ValueError(
+                    f"Forbidden file or directory found in incumbent bytecode residue: {relative_path}"
+                )
+            if relative_path.endswith("/"):
+                pycache_dirs.add(relative_path.rstrip("/"))
+            else:
+                pyc_files.add(relative_path)
+
+    dir_residues: list[LegacyIncumbentBytecodeDirectoryResidue] = []
+    for dir_rel in sorted(pycache_dirs):
+        dir_path = PurePosixPath(dir_rel)
+        dir_descriptors = [os.dup(handle.descriptor)]
+        try:
+            for component in dir_path.parts:
+                next_fd = _open_relative_descriptor(
+                    dir_descriptors[-1],
+                    component,
+                    label=f"Incumbent bytecode directory component {component!r}",
+                    require_directory=True,
+                )
+                dir_descriptors.append(next_fd)
+            pycache_fd = dir_descriptors[-1]
+            dir_st = os.fstat(pycache_fd)
+            if not stat.S_ISDIR(dir_st.st_mode):
+                raise ValueError(
+                    f"Incumbent bytecode residue directory is not a directory: {dir_rel}"
+                )
+            dir_residues.append(
+                LegacyIncumbentBytecodeDirectoryResidue(
+                    relative_path=dir_rel,
+                    device=dir_st.st_dev,
+                    inode=dir_st.st_ino,
+                    mode=dir_st.st_mode,
+                )
+            )
+            entries = os.listdir(pycache_fd)
+            if not entries:
+                raise ValueError(
+                    f"Incumbent bytecode residue directory is empty: {dir_rel}"
+                )
+            for entry_name in sorted(entries):
+                try:
+                    entry_stat = os.stat(
+                        entry_name, dir_fd=pycache_fd, follow_symlinks=False
+                    )
+                except OSError as exc:
+                    raise ValueError(
+                        f"Failed to stat incumbent bytecode entry {dir_rel}/{entry_name}: {exc}"
+                    ) from exc
+
+                if stat.S_ISLNK(entry_stat.st_mode):
+                    raise ValueError(
+                        f"Incumbent bytecode residue rejects symlinks: {dir_rel}/{entry_name}"
+                    )
+                if stat.S_ISDIR(entry_stat.st_mode):
+                    raise ValueError(
+                        f"Forbidden sub-directory in incumbent bytecode residue: {dir_rel}/{entry_name}"
+                    )
+                if not stat.S_ISREG(entry_stat.st_mode):
+                    raise ValueError(
+                        f"Incumbent bytecode residue entry is not a regular file: {dir_rel}/{entry_name}"
+                    )
+                if entry_stat.st_nlink != 1:
+                    raise ValueError(
+                        f"Incumbent bytecode file is hard linked (nlink={entry_stat.st_nlink}): {dir_rel}/{entry_name}"
+                    )
+                if not entry_name.endswith(".pyc") or entry_name.endswith(".pyo"):
+                    raise ValueError(
+                        f"Forbidden non-pyc file in incumbent bytecode residue: {dir_rel}/{entry_name}"
+                    )
+                pyc_files.add(f"{dir_rel}/{entry_name}")
+        finally:
+            for fd in reversed(dir_descriptors):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    if pycache_dirs and not pyc_files:
+        raise ValueError(
+            "Incumbent bytecode residue directory yielded no valid bytecode files"
+        )
+
+    residues: list[
+        LegacyIncumbentBytecodeResidue | LegacyIncumbentBytecodeDirectoryResidue
+    ] = []
+    residues.extend(dir_residues)
+    for relative_path in sorted(pyc_files):
+        item = _validate_and_capture_incumbent_bytecode_file(
+            handle,
+            relative_path,
+            filesystem=fs,
+        )
+        residues.append(item)
+    return tuple(residues)
+
+
 def _verify_mutable_tracked_cleanliness(
     root: Path,
     *,
@@ -6226,7 +6625,7 @@ def capture_mutable_incumbent_snapshot(
 
 
 def materialize_immutable_rollback_runtime(
-    snapshot: MutableIncumbentSnapshot,
+    snapshot: MutableIncumbentSnapshot | CandidateRuntimeIdentity,
 ) -> CandidateRuntimeIdentity:
     """Create a fresh persistent checkout for the captured mutable commit."""
     parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
@@ -6236,18 +6635,35 @@ def materialize_immutable_rollback_runtime(
         label="Command runtime parent",
     )
     destination = parent / snapshot.head_commit
+
+    snapshot_root = getattr(snapshot, "root", getattr(snapshot, "candidate_root", None))
+    snapshot_device = getattr(snapshot, "root_device", getattr(snapshot, "candidate_root_device", None))
+    snapshot_inode = getattr(snapshot, "root_inode", getattr(snapshot, "candidate_root_inode", None))
+
     if destination.exists() or destination.is_symlink():
         if destination.is_dir() and not destination.is_symlink():
             try:
                 identity = build_candidate_runtime_identity(destination)
                 if (
-                    identity.candidate_root == snapshot.root
+                    identity.candidate_root == snapshot_root
                     and (identity.candidate_root_device, identity.candidate_root_inode)
-                    == (snapshot.root_device, snapshot.root_inode)
+                    == (snapshot_device, snapshot_inode)
                     and identity.head_commit == snapshot.head_commit
                     and identity.tracked_tree_identity == snapshot.tracked_tree_identity
                     and identity.accepted_dev_commit == snapshot.accepted_dev_commit
                     and identity.repository_slug == snapshot.repository_slug
+                    and len(identity.legacy_incumbent_bytecode_residue) == 0
+                    and len(identity.legacy_task_brief_drift) == 0
+                ):
+                    identity.verify_immutable_snapshot()
+                    return identity
+                elif (
+                    identity.head_commit == snapshot.head_commit
+                    and identity.tracked_tree_identity == snapshot.tracked_tree_identity
+                    and identity.accepted_dev_commit == snapshot.accepted_dev_commit
+                    and identity.repository_slug == snapshot.repository_slug
+                    and len(identity.legacy_incumbent_bytecode_residue) == 0
+                    and len(identity.legacy_task_brief_drift) == 0
                 ):
                     identity.verify_immutable_snapshot()
                     return identity
@@ -6587,19 +7003,31 @@ class OSPromotionBackend:
             )
             baseline_identity = candidate_identity
         else:
-            incumbent_identity = build_candidate_runtime_identity(
+            captured_incumbent_identity = build_candidate_runtime_identity(
                 seed_cwd.path,
                 allow_legacy_task_brief_drift=True,
+                allow_legacy_incumbent_bytecode_residue=True,
             )
             incumbent_process = discover_incumbent_supervisor_process(
-                incumbent_identity,
+                captured_incumbent_identity,
                 expected_argv=seed_argv,
                 reader=self.reader,
-                candidate_revalidator=incumbent_identity.verify_immutable_snapshot,
+                candidate_revalidator=captured_incumbent_identity.verify_immutable_snapshot,
             )
             if incumbent_process.generation != seed_generation:
                 raise ValueError("Incumbent changed during promotion preparation")
-            baseline_identity = incumbent_identity
+
+            if (
+                len(captured_incumbent_identity.legacy_incumbent_bytecode_residue) > 0
+                or len(captured_incumbent_identity.legacy_task_brief_drift) > 0
+            ):
+                incumbent_identity = materialize_immutable_rollback_runtime(
+                    captured_incumbent_identity
+                )
+            else:
+                incumbent_identity = captured_incumbent_identity
+
+            baseline_identity = captured_incumbent_identity
         if incumbent_identity.config_bytes != candidate_identity.config_bytes:
             raise ValueError("Candidate and rollback captured different config bytes")
         if incumbent_identity.candidate_root == candidate_identity.candidate_root:
