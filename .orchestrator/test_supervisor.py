@@ -2313,6 +2313,77 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertIn("$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh", brief)
         self.assertNotIn("./scripts/ai-status.sh", brief)
 
+    def test_finalize_dispatch_preserves_existing_task_brief_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            brief_path = workspace / ".orchestrator/task-briefs/task_001.md"
+            brief_path.parent.mkdir(parents=True)
+            reviewed_bytes = "# Task Brief: TASK-001\n\n- Status: review\n"
+            brief_path.write_text(reviewed_bytes, encoding="utf-8")
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="owner finalize",
+                task_id="TASK-001",
+                reason="owned_finalize_dispatch",
+                context_files=[".orchestrator/task-briefs/task_001.md"],
+                target_files=[],
+                metadata={},
+            )
+
+            materialized = supervisor.materialize_worker_context_files(
+                {"paths": {"status_file": str(root / "ai-status.json")}},
+                request,
+                workspace,
+            )
+
+            self.assertEqual(materialized, [".orchestrator/task-briefs/task_001.md"])
+            self.assertEqual(brief_path.read_text(encoding="utf-8"), reviewed_bytes)
+
+    def test_finalize_dispatch_generates_a_nontranscribing_task_brief(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            task = {
+                "id": "TASK-001",
+                "title": "Close safely",
+                "status": "review_approved",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "next": "This approval must remain exact-head bound",
+            }
+            (root / "ai-status.json").write_text(
+                json.dumps({"tasks": [task]}),
+                encoding="utf-8",
+            )
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="owner finalize",
+                task_id="TASK-001",
+                reason="owned_finalize_dispatch",
+                context_files=[".orchestrator/task-briefs/task_001.md"],
+                target_files=[],
+                metadata={},
+            )
+
+            supervisor.materialize_worker_context_files(
+                {"paths": {"status_file": str(root / "ai-status.json")}},
+                request,
+                workspace,
+            )
+            rendered = (workspace / ".orchestrator/task-briefs/task_001.md").read_text(
+                encoding="utf-8"
+            )
+
+        self.assertIn("query the governed `ai-status.sh show` command", rendered)
+        self.assertIn("do not commit this generated brief as an approval record", rendered)
+        self.assertNotIn("- Status: review_approved", rendered)
+        self.assertNotIn("This approval must remain exact-head bound", rendered)
+
     def test_prepare_worker_workspace_allocates_chair_review_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"

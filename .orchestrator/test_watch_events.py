@@ -173,6 +173,8 @@ class WakeupMessageRoleGuardrailTests(unittest.TestCase):
 
         self.assertIn("角色是已通過審查後的 task owner", message)
         self.assertIn("不得重新指派 owner/reviewer", message)
+        self.assertIn("不得為記錄 `review_approved` 或 closeout 而修改或提交它", message)
+        self.assertIn("governed `ai-status.sh approve`", message)
         self.assertIn("才執行 `done`", message)
         self.assertNotIn("角色是 reviewer，不是 task owner", message)
 
