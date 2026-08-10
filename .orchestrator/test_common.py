@@ -68,6 +68,20 @@ class RuntimeLogPathTests(unittest.TestCase):
         self.assertEqual(log_path.parent, status_root / ".orchestrator" / "logs")
         self.assertNotIn(candidate_orchestrator, log_path.parents)
 
+    def test_governed_runtime_evidence_uses_external_status_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "status-root"
+            candidate_orchestrator = Path(tmpdir) / "candidate" / ".orchestrator"
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": str(status_root)},
+                clear=False,
+            ), mock.patch.object(common, "ORCHESTRATOR_DIR", candidate_orchestrator):
+                evidence_path = common.evidence_dir({})
+
+        self.assertEqual(evidence_path, status_root / ".orchestrator" / "evidence")
+        self.assertNotIn(candidate_orchestrator, evidence_path.parents)
+
     def test_local_runtime_logs_keep_repository_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             orchestrator_dir = Path(tmpdir) / ".orchestrator"
@@ -79,6 +93,18 @@ class RuntimeLogPathTests(unittest.TestCase):
                 log_path = common.runtime_log_path("codex", "Codex2")
 
         self.assertEqual(log_path.parent, orchestrator_dir / "logs")
+
+    def test_local_runtime_evidence_keeps_repository_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            orchestrator_dir = Path(tmpdir) / ".orchestrator"
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": ""},
+                clear=False,
+            ), mock.patch.object(common, "ORCHESTRATOR_DIR", orchestrator_dir):
+                evidence_path = common.evidence_dir({})
+
+        self.assertEqual(evidence_path, orchestrator_dir / "evidence")
 
 
 class PlanningSharedFilesTests(unittest.TestCase):
