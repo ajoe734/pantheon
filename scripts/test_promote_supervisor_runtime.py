@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import fcntl
 import hashlib
+import importlib.util
 import os
 import shutil
 import stat
@@ -240,6 +241,7 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     identity.config_byte_length = len(config_bytes)
     identity.config_sha256 = promotion.hashlib.sha256(config_bytes).hexdigest()
     identity.legacy_task_brief_drift = ()
+    identity.legacy_incumbent_bytecode_residue = ()
     return identity
 
 
@@ -7013,6 +7015,8 @@ def test_materialize_immutable_rollback_runtime_reuses_exact_matching_destinatio
     identity.tracked_tree_identity = "b" * 40
     identity.accepted_dev_commit = "c" * 40
     identity.repository_slug = "ajoe734/pantheon"
+    identity.legacy_task_brief_drift = ()
+    identity.legacy_incumbent_bytecode_residue = ()
 
     with patch(
         "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
@@ -7055,6 +7059,8 @@ def test_materialize_immutable_rollback_runtime_reuses_existing_same_root_destin
     identity.tracked_tree_identity = "b" * 40
     identity.accepted_dev_commit = "c" * 40
     identity.repository_slug = "ajoe734/pantheon"
+    identity.legacy_task_brief_drift = ()
+    identity.legacy_incumbent_bytecode_residue = ()
 
     with patch(
         "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
@@ -7451,6 +7457,7 @@ def test_prepare_clean_sha_named_immutable_incumbent_succeeds(
         config_path: Path | None = None,
         *,
         allow_legacy_task_brief_drift: bool = False,
+        **kwargs: Any,
     ) -> promotion.CandidateRuntimeIdentity:
         if path == candidate_root:
             return candidate_identity
@@ -7482,3 +7489,542 @@ def test_prepare_clean_sha_named_immutable_incumbent_succeeds(
         assert plan.incumbent_identity.legacy_task_brief_drift == ()
         assert mock_build_identity.call_count == 2
         assert mock_build_identity.call_args_list[1].kwargs.get("allow_legacy_task_brief_drift") is True
+
+
+def test_incumbent_bytecode_residue_admitted_when_capturing_incumbent(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
+    magic = importlib.util.MAGIC_NUMBER
+    pyc_content = magic + b"\x00" * 12 + b"header_data_payload_and_compiled_code_here"
+    pyc_file.write_bytes(pyc_content)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            cmd = args[0]
+            if cmd == "ls-files":
+                return Mock(stdout="")
+            elif cmd == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            elif cmd in ("diff-index", "diff-files"):
+                return Mock(stdout="")
+            return Mock(stdout="")
+
+        with patch(
+            "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+            tmp_path,
+        ), patch(
+            "promote_supervisor_runtime._candidate_handle",
+            return_value=(handle, False),
+        ), patch(
+            "promote_supervisor_runtime._read_head_tree",
+            return_value=("a" * 40, "b" * 40),
+        ), patch(
+            "promote_supervisor_runtime._capture_bound_gitlinks",
+            return_value=(),
+        ), patch(
+            "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
+        ), patch(
+            "promote_supervisor_runtime._assert_candidate_handle_path",
+        ), patch(
+            "promote_supervisor_runtime._run_git",
+            side_effect=mock_run_git,
+        ):
+            residues = promotion._capture_legacy_incumbent_bytecode_residue(handle)
+            assert len(residues) == 2
+            assert residues[0].relative_path == ".orchestrator/__pycache__"
+            assert isinstance(residues[0], promotion.LegacyIncumbentBytecodeDirectoryResidue)
+            assert residues[1].relative_path == f".orchestrator/__pycache__/supervisor.{tag}.pyc"
+            assert residues[1].source_relative_path == ".orchestrator/supervisor.py"
+            assert residues[1].cpython_tag == tag
+            assert residues[1].byte_length == len(pyc_content)
+            assert residues[1].sha256 == hashlib.sha256(pyc_content).hexdigest()
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_candidate_cleanliness_rejects_bytecode_residue(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator" / "__pycache__"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    (orch_dir / f"supervisor.{tag}.pyc").write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.path = real_root
+
+    def mock_run_git(h: Any, *args: str) -> Mock:
+        cmd = args[0]
+        if cmd == "ls-files":
+            return Mock(stdout="")
+        elif cmd == "status":
+            return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+        elif cmd in ("diff-index", "diff-files"):
+            return Mock(stdout="")
+        return Mock(stdout="")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        tmp_path,
+    ), patch(
+        "promote_supervisor_runtime._candidate_handle",
+        return_value=(handle, False),
+    ), patch(
+        "promote_supervisor_runtime._read_head_tree",
+        return_value=("a" * 40, "b" * 40),
+    ), patch(
+        "promote_supervisor_runtime._capture_bound_gitlinks",
+        return_value=(),
+    ), patch(
+        "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
+    ), patch(
+        "promote_supervisor_runtime._assert_candidate_handle_path",
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+        side_effect=mock_run_git,
+    ):
+        with pytest.raises(ValueError, match="Forbidden ignored .* found in candidate root"):
+            promotion.verify_working_tree_cleanliness(
+                real_root,
+                allow_legacy_incumbent_bytecode_residue=False,
+            )
+
+
+def test_incumbent_bytecode_residue_rejects_pyo_files(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator" / "__pycache__"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyo_file = orch_dir / f"supervisor.{tag}.pyo"
+    pyo_file.write_bytes(b"pyo_content")
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            cmd = args[0]
+            if cmd == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyo\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="rejects .pyo files|Forbidden file"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_sourceless_pyc(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator" / "__pycache__"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = orch_dir / f"orphan_module.{tag}.pyc"
+    pyc_file.write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12 + b"code")
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/orphan_module.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="Source-less incumbent bytecode file rejected"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_prepare_incumbent_with_bytecode_residue_materializes_clean_rollback_runtime(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / ("a" * 40)
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    incumbent_root = tmp_path / ("b" * 40)
+    incumbent_root.mkdir(parents=True, exist_ok=True)
+    rollback_dest = tmp_path / "command-runtimes" / ("b" * 40)
+    rollback_dest.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(incumbent_root)
+    create_realistic_healthy_fixture(rollback_dest)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    incumbent_identity = _verified_identity_dependency(incumbent_root)
+    incumbent_identity.config_path = candidate_identity.config_path
+    incumbent_identity.config_bytes = candidate_identity.config_bytes
+    incumbent_identity.config_sha256 = candidate_identity.config_sha256
+    incumbent_identity.legacy_incumbent_bytecode_residue = (
+        promotion.LegacyIncumbentBytecodeResidue(
+            relative_path=".orchestrator/__pycache__/supervisor.cpython-312.pyc",
+            device=1,
+            inode=2,
+            mode=33188,
+            nlink=1,
+            byte_length=100,
+            sha256="abc",
+            cpython_tag="cpython-312",
+            source_relative_path=".orchestrator/supervisor.py",
+        ),
+    )
+
+    clean_rollback_identity = _verified_identity_dependency(rollback_dest)
+    clean_rollback_identity.config_path = candidate_identity.config_path
+    clean_rollback_identity.config_bytes = candidate_identity.config_bytes
+    clean_rollback_identity.config_sha256 = candidate_identity.config_sha256
+
+    incumbent_process = _verified_process_identity_dependency(incumbent_root)
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    def _mock_build_identity(path: Path, *args: Any, **kwargs: Any) -> promotion.CandidateRuntimeIdentity:
+        if path == candidate_root:
+            return candidate_identity
+        if path == incumbent_root:
+            return incumbent_identity
+        if path == rollback_dest:
+            return clean_rollback_identity
+        raise ValueError(f"Unexpected path: {path}")
+
+    with patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        side_effect=_mock_build_identity,
+    ), patch(
+        "promote_supervisor_runtime._discover_supervisor_seed",
+        return_value=(
+            incumbent_process.generation,
+            incumbent_process.argv,
+            incumbent_process.cwd,
+        ),
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=incumbent_process,
+    ), patch(
+        "promote_supervisor_runtime.materialize_immutable_rollback_runtime",
+        return_value=clean_rollback_identity,
+    ) as mock_mat, patch(
+        "promote_supervisor_runtime.capture_runtime_observation",
+        return_value=Mock(invariant_failures=()),
+    ):
+        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+        assert mock_mat.called
+        assert plan.incumbent_identity == clean_rollback_identity
+        assert plan.incumbent_identity.candidate_root == rollback_dest
+        assert len(plan.incumbent_identity.legacy_incumbent_bytecode_residue) == 0
+
+
+def test_incumbent_bytecode_residue_rejects_symlink_directory(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    symlink_target = tmp_path / "target_dir"
+    symlink_target.mkdir(parents=True, exist_ok=True)
+    os.symlink(symlink_target, pycache_dir / "__pycache__")
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout="!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="rejects symlinks|Forbidden file or directory"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_symlink_file(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    symlink_target = tmp_path / "outside.pyc"
+    symlink_target.write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12 + b"data")
+    os.symlink(symlink_target, pycache_dir / f"supervisor.{tag}.pyc")
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="rejects symlinks|is a symlink"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_nested_directory(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    nested_dir = pycache_dir / "nested"
+    nested_dir.mkdir(parents=True, exist_ok=True)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout="!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="Forbidden sub-directory in incumbent bytecode residue"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_empty_directory(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout="!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="Incumbent bytecode residue directory is empty"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_hardlink(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
+    pyc_file.write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12 + b"data")
+    hardlink_file = pycache_dir / f"hardlink.{tag}.pyc"
+    os.link(pyc_file, hardlink_file)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="hard linked"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_foreign_magic(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
+    pyc_file.write_bytes(b"BAD_MAGIC_HEADER_TEST_BYTES")
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="magic number mismatch"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_post_capture_mutation(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
+    magic = importlib.util.MAGIC_NUMBER
+    pyc_content = magic + b"\x00" * 12 + b"original_compiled_code"
+    pyc_file.write_bytes(pyc_content)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._read_head_tree", return_value=("a" * 40, "b" * 40)), \
+             patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            residues = promotion._capture_legacy_incumbent_bytecode_residue(handle)
+            assert len(residues) == 2
+
+            # Mutate pyc file after capture
+            pyc_file.write_bytes(magic + b"\x00" * 12 + b"MUTATED_compiled_code")
+
+            with pytest.raises(ValueError, match="Incumbent legacy bytecode residue changed during validation"):
+                promotion.verify_working_tree_cleanliness(
+                    handle,
+                    expected_head="a" * 40,
+                    expected_tree="b" * 40,
+                    allow_legacy_incumbent_bytecode_residue=True,
+                    expected_legacy_incumbent_bytecode_residue=residues,
+                )
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_post_capture_directory_replacement(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
+    magic = importlib.util.MAGIC_NUMBER
+    pyc_content = magic + b"\x00" * 12 + b"original_compiled_code"
+    pyc_file.write_bytes(pyc_content)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(
+                    stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0"
+                )
+            return Mock(stdout="")
+
+        with patch(
+            "promote_supervisor_runtime._read_head_tree",
+            return_value=("a" * 40, "b" * 40),
+        ), patch(
+            "promote_supervisor_runtime._capture_bound_gitlinks",
+            return_value=(),
+        ), patch(
+            "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
+        ), patch(
+            "promote_supervisor_runtime._assert_candidate_handle_path",
+        ), patch(
+            "promote_supervisor_runtime._run_git",
+            side_effect=mock_run_git,
+        ):
+            residues = promotion._capture_legacy_incumbent_bytecode_residue(handle)
+            assert len(residues) == 2
+
+            # Replace admitted directory while preserving exact pyc file (same inode/digest/path)
+            backup_dir = tmp_path / "backup"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            temp_pyc = backup_dir / pyc_file.name
+            shutil.move(str(pyc_file), str(temp_pyc))
+            pycache_dir.rmdir()
+            # Create a dummy dir to consume the freed inode so recreated pycache_dir gets a new inode
+            (orch_dir / "dummy_claim_inode").mkdir(parents=True, exist_ok=True)
+            pycache_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(temp_pyc), str(pyc_file))
+
+            with pytest.raises(
+                ValueError,
+                match="Incumbent legacy bytecode residue changed during validation",
+            ):
+                promotion.verify_working_tree_cleanliness(
+                    handle,
+                    expected_head="a" * 40,
+                    expected_tree="b" * 40,
+                    allow_legacy_incumbent_bytecode_residue=True,
+                    expected_legacy_incumbent_bytecode_residue=residues,
+                )
+    finally:
+        os.close(handle.descriptor)
