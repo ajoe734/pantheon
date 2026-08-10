@@ -12,11 +12,12 @@
   "verification_commands": [
     "python3 scripts/dev/provision_python_distribution.py",
     "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -v scripts/test_promote_supervisor_runtime.py",
+    "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -v scripts/test_promote_supervisor_runtime.py -k split",
     "git diff --check"
   ],
   "verification_results": {
-    "full_tests": "130 passed in scripts/test_promote_supervisor_runtime.py",
-    "split_tests": "7 passed in scripts/test_promote_supervisor_runtime.py (-k split)",
+    "full_tests": "328 passed in scripts/test_promote_supervisor_runtime.py",
+    "split_tests": "7 passed, 321 deselected in scripts/test_promote_supervisor_runtime.py (-k split)",
     "git_diff_check": "passed with 0 exit code"
   },
   "incident_reproduction_analysis": {
