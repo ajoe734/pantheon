@@ -1,0 +1,21 @@
+{
+  "task_id": "SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810",
+  "title": "Repair promotion bootstrap when rollback root already exists",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "status": "in_progress",
+  "verification": {
+    "command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python) $PANTHEON_PY -m pytest -q -k materialize scripts/test_promote_supervisor_runtime.py",
+    "result": "passed (3 passed, 293 deselected)"
+  },
+  "changes": [
+    {
+      "file": "scripts/promote_supervisor_runtime.py",
+      "summary": "In materialize_immutable_rollback_runtime, check if destination exists; if it is a directory matching head_commit, tracked_tree_identity, accepted_dev_commit, and repository_slug, reuse its CandidateRuntimeIdentity instead of raising ValueError."
+    },
+    {
+      "file": "scripts/test_promote_supervisor_runtime.py",
+      "summary": "Added unit test verifying that calling materialize_immutable_rollback_runtime when destination already exists reuses the directory when identity matches."
+    }
+  ]
+}

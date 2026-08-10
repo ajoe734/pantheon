@@ -4355,6 +4355,55 @@ def test_materialize_rollback_runtime_binds_incumbent_commit_and_tree(
     assert identity.tracked_tree_identity == tree
     assert identity.repository_slug == "ajoe734/pantheon"
 
+    # Subsequent call reuses the existing matching destination when path/device/inode match snapshot
+    dest_stat = (rollback_parent / commit).stat()
+    matching_snapshot = replace(
+        snapshot,
+        root=rollback_parent / commit,
+        root_device=dest_stat.st_dev,
+        root_inode=dest_stat.st_ino,
+    )
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        rollback_parent,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
+        live_config,
+    ):
+        reused_identity = promotion.materialize_immutable_rollback_runtime(
+            matching_snapshot
+        )
+
+    assert reused_identity.candidate_root == rollback_parent / commit
+    assert reused_identity.head_commit == commit
+    assert reused_identity.tracked_tree_identity == tree
+    assert reused_identity.repository_slug == "ajoe734/pantheon"
+
+    # Reject reuse if root/device/inode differs despite matching SHA/tree/repo
+    mismatched_snapshot = replace(
+        snapshot,
+        root=tmp_path / "different-root",
+        root_device=999,
+        root_inode=888,
+    )
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        rollback_parent,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
+        live_config,
+    ):
+        with pytest.raises(
+            ValueError, match="Fresh rollback runtime destination already exists"
+        ):
+            promotion.materialize_immutable_rollback_runtime(mismatched_snapshot)
+
 
 def test_materialized_rollback_uses_head_not_mutable_task_brief_bytes(
     tmp_path: Path,
