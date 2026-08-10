@@ -199,6 +199,7 @@ def _verified_identity_dependency(repo: Path) -> Mock:
         "paths": {
             "status_file": str(status_root / "ai-status.json"),
             "state_file": str(status_root / ".orchestrator" / "state.json"),
+            "provider_capabilities": str(status_root / ".orchestrator" / "provider_capabilities.json"),
         },
         "task_state_store": {
             "mode": "authoritative",
@@ -238,6 +239,7 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     identity.config_bytes = config_bytes
     identity.config_byte_length = len(config_bytes)
     identity.config_sha256 = promotion.hashlib.sha256(config_bytes).hexdigest()
+    identity.legacy_task_brief_drift = ()
     return identity
 
 
@@ -7154,3 +7156,329 @@ def test_materialize_immutable_rollback_runtime_rejects_existing_destination_whe
             match="Fresh rollback runtime destination already exists",
         ):
             promotion.materialize_immutable_rollback_runtime(snapshot)
+
+
+def test_immutable_incumbent_legacy_task_brief_provenance_binding_registered() -> None:
+    binding = promotion._find_candidate_tracked_legacy_task_brief_provenance_binding(
+        task_id="SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+        relative_path=".orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md",
+        byte_length=2577,
+        sha256="435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289",
+    )
+    assert binding is not None
+    assert binding.task_id == "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808"
+    assert binding.byte_length == 2577
+    assert binding.sha256 == "435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289"
+    assert binding.legacy_command_runtime_sha == "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    assert binding.prevention_boundary_sha == "f5570754e6b9534893fc65744e82abe7f0ff0a74"
+
+
+def test_immutable_candidate_cleanliness_rejects_task_brief_drift(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.path = real_root
+
+    def mock_run_git(h: Any, *args: str) -> Mock:
+        cmd = args[0]
+        if cmd == "ls-files":
+            return Mock(stdout="")
+        elif cmd == "status":
+            return Mock(stdout=" M .orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md\0")
+        elif cmd in ("diff-index", "diff-files"):
+            return Mock(stdout="")
+        return Mock(stdout="")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        tmp_path,
+    ), patch(
+        "promote_supervisor_runtime._candidate_handle",
+        return_value=(handle, False),
+    ), patch(
+        "promote_supervisor_runtime._read_head_tree",
+        return_value=("a" * 40, "b" * 40),
+    ), patch(
+        "promote_supervisor_runtime._capture_bound_gitlinks",
+        return_value=(),
+    ), patch(
+        "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
+    ), patch(
+        "promote_supervisor_runtime._assert_candidate_handle_path",
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+        side_effect=mock_run_git,
+    ):
+        with pytest.raises(ValueError, match="Tracked git tree is dirty"):
+            promotion.verify_working_tree_cleanliness(
+                real_root,
+                allow_legacy_task_brief_drift=False,
+            )
+
+
+def test_immutable_incumbent_cleanliness_rejects_non_task_brief_dirty_file(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.path = real_root
+
+    def mock_run_git(h: Any, *args: str) -> Mock:
+        cmd = args[0]
+        if cmd == "ls-files":
+            return Mock(stdout="")
+        elif cmd == "status":
+            return Mock(stdout=" M services/telemetry/metrics.py\0")
+        elif cmd in ("diff-index", "diff-files"):
+            return Mock(stdout="")
+        return Mock(stdout="")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        tmp_path,
+    ), patch(
+        "promote_supervisor_runtime._candidate_handle",
+        return_value=(handle, False),
+    ), patch(
+        "promote_supervisor_runtime._read_head_tree",
+        return_value=("a" * 40, "b" * 40),
+    ), patch(
+        "promote_supervisor_runtime._capture_bound_gitlinks",
+        return_value=(),
+    ), patch(
+        "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
+    ), patch(
+        "promote_supervisor_runtime._assert_candidate_handle_path",
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+        side_effect=mock_run_git,
+    ):
+        with pytest.raises(ValueError, match="Tracked git tree is dirty \\( M\\): services/telemetry/metrics.py"):
+            promotion.verify_working_tree_cleanliness(
+                real_root,
+                allow_legacy_task_brief_drift=True,
+            )
+
+
+def test_immutable_incumbent_revalidate_detects_task_brief_drift_change(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.path = real_root
+    drift = promotion.LegacyTaskBriefDrift(
+        relative_path=".orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md",
+        device=1,
+        inode=2,
+        mode=33188,
+        byte_length=2577,
+        sha256="435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289",
+        canonical_byte_length=2577,
+        canonical_sha256="435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289",
+    )
+
+    def mock_run_git(h: Any, *args: str) -> Mock:
+        cmd = args[0]
+        if cmd == "ls-files":
+            return Mock(stdout="")
+        elif cmd == "status":
+            return Mock(stdout=" M .orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md\0")
+        elif cmd == "diff-index":
+            return Mock(stdout="")
+        elif cmd == "diff-files":
+            raise ValueError("Candidate tracked worktree differs from index")
+        return Mock(stdout="")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        tmp_path,
+    ), patch(
+        "promote_supervisor_runtime._candidate_handle",
+        return_value=(handle, False),
+    ), patch(
+        "promote_supervisor_runtime._read_head_tree",
+        return_value=("a" * 40, "b" * 40),
+    ), patch(
+        "promote_supervisor_runtime._capture_bound_gitlinks",
+        return_value=(),
+    ), patch(
+        "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
+    ), patch(
+        "promote_supervisor_runtime._assert_candidate_handle_path",
+    ), patch(
+        "promote_supervisor_runtime._capture_legacy_mutable_task_brief_drift",
+        return_value=(),
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+        side_effect=mock_run_git,
+    ):
+        with pytest.raises(
+            ValueError,
+            match="Incumbent legacy task-brief drift changed during validation",
+        ):
+            promotion.verify_working_tree_cleanliness(
+                real_root,
+                allow_legacy_task_brief_drift=True,
+                expected_legacy_task_brief_drift=(drift,),
+                config_bytes=b"{}",
+            )
+
+
+def test_os_launch_filesystem_capture_regular_file_rejects_hard_link(
+    tmp_path: Path,
+) -> None:
+    original = tmp_path / "original.txt"
+    original.write_text("hello", encoding="utf-8")
+    hard_link = tmp_path / "hard_link.txt"
+    os.link(original, hard_link)
+
+    fs = promotion.OSLaunchFilesystem()
+    with pytest.raises(ValueError, match="must not be hard-linked"):
+        fs.capture_regular_file(
+            hard_link,
+            role="test_hard_link",
+            require_executable=False,
+        )
+
+
+def test_immutable_incumbent_bootstrap_rejects_hard_linked_legacy_task_brief(
+    tmp_path: Path,
+) -> None:
+    remote, mutable_root, regenerated_brief, root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    extra_link = tmp_path / "extra_link.md"
+    os.link(regenerated_brief, extra_link)
+
+    with (
+        patch(
+            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+            remote.as_uri(),
+        ),
+    ):
+        with pytest.raises(
+            ValueError,
+            match="must not be hard-linked",
+        ):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=mutable_root,
+                    device=root_stat.st_dev,
+                    inode=root_stat.st_ino,
+                ),
+                allow_legacy_task_brief_drift=True,
+                canonical_config_bytes=b"{}",
+            )
+
+
+def test_immutable_incumbent_bootstrap_rejects_symlinked_legacy_task_brief(
+    tmp_path: Path,
+) -> None:
+    remote, mutable_root, regenerated_brief, root_stat = (
+        _legacy_mutable_task_brief_drift_fixture(tmp_path)
+    )
+    target_file = tmp_path / "target_file.md"
+    target_file.write_text(regenerated_brief.read_text(encoding="utf-8"), encoding="utf-8")
+    regenerated_brief.unlink()
+    regenerated_brief.symlink_to(target_file)
+
+    with (
+        patch(
+            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+            remote.as_uri(),
+        ),
+    ):
+        with pytest.raises(
+            ValueError,
+            match="is a symlink|permits only modified tracked task briefs, found 'T'",
+        ):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=mutable_root,
+                    device=root_stat.st_dev,
+                    inode=root_stat.st_ino,
+                ),
+                allow_legacy_task_brief_drift=True,
+                canonical_config_bytes=b"{}",
+            )
+
+
+def test_capture_legacy_mutable_task_brief_drift_admits_zero_residue(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+
+    with patch(
+        "promote_supervisor_runtime._run_mutable_git",
+        return_value=Mock(stdout=""),
+    ):
+        result = promotion._capture_legacy_mutable_task_brief_drift(
+            real_root,
+            expected_head="a" * 40,
+            config_bytes=b"{}",
+            filesystem=promotion.OSLaunchFilesystem(),
+        )
+        assert result == ()
+
+
+def test_prepare_clean_sha_named_immutable_incumbent_succeeds(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / ("a" * 40)
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    incumbent_root = tmp_path / ("b" * 40)
+    incumbent_root.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(incumbent_root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    incumbent_identity = _verified_identity_dependency(incumbent_root)
+    incumbent_identity.config_path = candidate_identity.config_path
+    incumbent_identity.config_bytes = candidate_identity.config_bytes
+    incumbent_identity.config_sha256 = candidate_identity.config_sha256
+    incumbent_process = _verified_process_identity_dependency(incumbent_root)
+
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    def _mock_build_identity(
+        path: Path,
+        config_path: Path | None = None,
+        *,
+        allow_legacy_task_brief_drift: bool = False,
+    ) -> promotion.CandidateRuntimeIdentity:
+        if path == candidate_root:
+            return candidate_identity
+        if path == incumbent_root:
+            if not allow_legacy_task_brief_drift:
+                raise ValueError("Pre-fix prepare path failed: allow_legacy_task_brief_drift is False")
+            return incumbent_identity
+        raise ValueError(f"Unexpected candidate root: {path}")
+
+    with patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        side_effect=_mock_build_identity,
+    ) as mock_build_identity, patch(
+        "promote_supervisor_runtime._discover_supervisor_seed",
+        return_value=(
+            incumbent_process.generation,
+            incumbent_process.argv,
+            incumbent_process.cwd,
+        ),
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=incumbent_process,
+    ), patch(
+        "promote_supervisor_runtime.capture_runtime_observation",
+        return_value=Mock(invariant_failures=()),
+    ):
+        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+        assert plan.incumbent_identity.candidate_root == incumbent_root
+        assert plan.incumbent_identity.legacy_task_brief_drift == ()
+        assert mock_build_identity.call_count == 2
+        assert mock_build_identity.call_args_list[1].kwargs.get("allow_legacy_task_brief_drift") is True

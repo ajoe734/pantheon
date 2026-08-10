@@ -492,6 +492,7 @@ class CandidateRuntimeIdentity:
     config_bytes: bytes
     config_byte_length: int
     config_sha256: str
+    legacy_task_brief_drift: tuple[LegacyTaskBriefDrift, ...] = ()
 
     def verify_against_live_config(self, live_config_path: Path) -> None:
         """Re-read and compare the exact live-config path and byte identity."""
@@ -607,6 +608,9 @@ class CandidateRuntimeIdentity:
                 root_handle,
                 expected_head=self.head_commit,
                 expected_tree=self.tracked_tree_identity,
+                allow_legacy_task_brief_drift=(len(self.legacy_task_brief_drift) > 0),
+                expected_legacy_task_brief_drift=self.legacy_task_brief_drift,
+                config_bytes=self.config_bytes,
             )
             _assert_candidate_handle_path(root_handle)
         finally:
@@ -2106,6 +2110,10 @@ def verify_working_tree_cleanliness(
     *,
     expected_head: str | None = None,
     expected_tree: str | None = None,
+    allow_legacy_task_brief_drift: bool = False,
+    expected_legacy_task_brief_drift: tuple[LegacyTaskBriefDrift, ...] | None = None,
+    config_bytes: bytes | None = None,
+    filesystem: LaunchFilesystem | None = None,
 ) -> str:
     """Reject tracked, hidden-gitlink, and non-enumerated generated dirt."""
     handle, close_handle = _candidate_handle(candidate_root)
@@ -2151,9 +2159,15 @@ def verify_working_tree_cleanliness(
             status_code = record[:2]
             relative_path = record[3:]
             if status_code not in {"??", "!!"}:
-                raise ValueError(
-                    f"Tracked git tree is dirty ({status_code}): {relative_path}"
-                )
+                if not (
+                    allow_legacy_task_brief_drift
+                    and status_code in {" M", "M "}
+                    and _is_task_brief_path(relative_path)
+                ):
+                    raise ValueError(
+                        f"Tracked git tree is dirty ({status_code}): {relative_path}"
+                    )
+                continue
             if relative_path.endswith("/"):
                 kind = "ignored" if status_code == "!!" else "untracked"
                 if not _is_allowed_generated_untracked_directory(relative_path):
@@ -2186,7 +2200,28 @@ def verify_working_tree_cleanliness(
                 "--",
             )
         except ValueError as exc:
-            raise ValueError("Candidate tracked worktree differs from index") from exc
+            if not allow_legacy_task_brief_drift:
+                raise ValueError("Candidate tracked worktree differs from index") from exc
+            if config_bytes is None:
+                _, config_snapshot, _ = _capture_config_bytes(
+                    LIVE_SUPERVISOR_CONFIG_PATH,
+                    expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
+                )
+                config_bytes = config_snapshot[0]
+            legacy_task_brief_drift = _capture_legacy_mutable_task_brief_drift(
+                handle.path,
+                expected_head=head_before,
+                config_bytes=config_bytes,
+                filesystem=filesystem or OSLaunchFilesystem(),
+            )
+        else:
+            legacy_task_brief_drift = ()
+
+        if (
+            expected_legacy_task_brief_drift is not None
+            and legacy_task_brief_drift != expected_legacy_task_brief_drift
+        ):
+            raise ValueError("Incumbent legacy task-brief drift changed during validation")
 
         _assert_tracked_gitlink_worktrees(handle, gitlinks_before)
         head, tree = _read_head_tree(handle)
@@ -2472,6 +2507,8 @@ class OSLaunchFilesystem:
         )
         try:
             before = os.fstat(descriptor)
+            if before.st_nlink != 1:
+                raise ValueError(f"Governed launch {role} must not be hard-linked: {path}")
             with os.fdopen(descriptor, "rb", closefd=False) as handle:
                 content = handle.read()
             after = os.fstat(descriptor)
@@ -2481,6 +2518,7 @@ class OSLaunchFilesystem:
             before.st_dev,
             before.st_ino,
             before.st_mode,
+            before.st_nlink,
             before.st_size,
             before.st_mtime_ns,
             before.st_ctime_ns,
@@ -2489,6 +2527,7 @@ class OSLaunchFilesystem:
             after.st_dev,
             after.st_ino,
             after.st_mode,
+            after.st_nlink,
             after.st_size,
             after.st_mtime_ns,
             after.st_ctime_ns,
@@ -3789,8 +3828,10 @@ def _governed_launch_contract_summary(
 def build_candidate_runtime_identity(
     candidate_path: Path,
     config_path: Path | None = None,
+    *,
+    allow_legacy_task_brief_drift: bool = False,
 ) -> CandidateRuntimeIdentity:
-    """Capture one immutable candidate root, Git tree, and live-config snapshot."""
+    """Capture one candidate or incumbent root, Git tree, and live-config snapshot."""
     root_handle = _open_candidate_root_handle(candidate_path)
     try:
         resolved_root = root_handle.path
@@ -3804,17 +3845,30 @@ def build_candidate_runtime_identity(
             basename,
         )
         _assert_candidate_handle_path(root_handle)
-        verify_working_tree_cleanliness(
-            root_handle,
-            expected_head=head,
-            expected_tree=tracked_tree,
-        )
 
         selected_config_path = config_path or LIVE_SUPERVISOR_CONFIG_PATH
         config_bytes, config_identity, config_path_components = _capture_config_bytes(
             selected_config_path,
             expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
         )
+
+        verify_working_tree_cleanliness(
+            root_handle,
+            expected_head=head,
+            expected_tree=tracked_tree,
+            allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+            config_bytes=config_bytes,
+        )
+
+        if allow_legacy_task_brief_drift:
+            legacy_task_brief_drift = _capture_legacy_mutable_task_brief_drift(
+                resolved_root,
+                expected_head=head,
+                config_bytes=config_bytes,
+                filesystem=OSLaunchFilesystem(),
+            )
+        else:
+            legacy_task_brief_drift = ()
 
         # Repeat descriptor-bound root/tree/status checks after reading the
         # external config so a deleted/replaced root or concurrent mutation
@@ -3824,6 +3878,9 @@ def build_candidate_runtime_identity(
             root_handle,
             expected_head=head,
             expected_tree=tracked_tree,
+            allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+            expected_legacy_task_brief_drift=legacy_task_brief_drift,
+            config_bytes=config_bytes,
         )
         # A freshly materialized checkout can refresh and atomically replace
         # its index while the read-only cleanliness probes run.  Re-open the
@@ -3873,6 +3930,7 @@ def build_candidate_runtime_identity(
                 config_bytes=config_bytes,
                 config_byte_length=len(config_bytes),
                 config_sha256=hashlib.sha256(config_bytes).hexdigest(),
+                legacy_task_brief_drift=legacy_task_brief_drift,
             )
         finally:
             _close_candidate_root_handle(final_handle)
@@ -3892,6 +3950,25 @@ def load_json_strict(path: Path) -> dict[str, Any]:
 
 
 def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str, Any]:
+    drifts = getattr(identity, "legacy_task_brief_drift", ())
+    if isinstance(drifts, (list, tuple)):
+        drift_summary = [
+            {
+                "relative_path": drift.relative_path,
+                "device": drift.device,
+                "inode": drift.inode,
+                "mode": drift.mode,
+                "byte_length": drift.byte_length,
+                "sha256": drift.sha256,
+                "canonical_byte_length": drift.canonical_byte_length,
+                "canonical_sha256": drift.canonical_sha256,
+            }
+            for drift in drifts
+            if hasattr(drift, "relative_path")
+        ]
+    else:
+        drift_summary = []
+
     return {
         "candidate_root": str(identity.candidate_root),
         "candidate_root_device": identity.candidate_root_device,
@@ -3927,6 +4004,7 @@ def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str,
         ],
         "config_byte_length": identity.config_byte_length,
         "config_sha256": identity.config_sha256,
+        "legacy_task_brief_drift": drift_summary,
     }
 
 
@@ -5343,6 +5421,15 @@ CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS: tuple[
         legacy_command_runtime_sha="5877b64425c8d6aede147d6cbbc6fbb9e228c259",
         prevention_boundary_sha="f5570754e6b9534893fc65744e82abe7f0ff0a74",
     ),
+    CandidateTrackedLegacyTaskBriefProvenanceBinding(
+        task_id="SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+        relative_path=".orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md",
+        byte_length=2577,
+        sha256="435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289",
+        authoritative_event_id="supervisor-task-failure-streak-a9d6b8a54889ffae650c47e67d004eff0dd93f691a92791345e2bcd38cbdccf6",
+        legacy_command_runtime_sha="5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        prevention_boundary_sha="f5570754e6b9534893fc65744e82abe7f0ff0a74",
+    ),
 )
 
 
@@ -5708,7 +5795,9 @@ def _capture_legacy_mutable_task_brief_drift(
     records = output.split("\0")
     if records and records[-1] == "":
         records.pop()
-    if not records or len(records) % 2:
+    if not records:
+        return ()
+    if len(records) % 2:
         raise ValueError("Mutable incumbent task-brief drift report is malformed")
 
     paths: set[str] = set()
@@ -6498,7 +6587,10 @@ class OSPromotionBackend:
             )
             baseline_identity = candidate_identity
         else:
-            incumbent_identity = build_candidate_runtime_identity(seed_cwd.path)
+            incumbent_identity = build_candidate_runtime_identity(
+                seed_cwd.path,
+                allow_legacy_task_brief_drift=True,
+            )
             incumbent_process = discover_incumbent_supervisor_process(
                 incumbent_identity,
                 expected_argv=seed_argv,
