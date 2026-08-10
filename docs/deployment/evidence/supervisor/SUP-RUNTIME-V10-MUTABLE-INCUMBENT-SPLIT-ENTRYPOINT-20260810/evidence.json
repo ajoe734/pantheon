@@ -10,11 +10,13 @@
     "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810/evidence.json"
   ],
   "verification_commands": [
-    ".venv-pantheon/bin/python3 -m pytest -v scripts/test_promote_supervisor_runtime.py",
+    "python3 scripts/dev/provision_python_distribution.py",
+    "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -v scripts/test_promote_supervisor_runtime.py",
     "git diff --check"
   ],
   "verification_results": {
-    "full_tests": "327 passed cleanly",
+    "full_tests": "130 passed in scripts/test_promote_supervisor_runtime.py",
+    "split_tests": "7 passed in scripts/test_promote_supervisor_runtime.py (-k split)",
     "git_diff_check": "passed with 0 exit code"
   },
   "incident_reproduction_analysis": {
@@ -25,12 +27,12 @@
     "incumbent_starttime_ticks": 21477145,
     "incumbent_cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
     "incumbent_entrypoint_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
-    "cause": "The clean 0305c861 candidate was aborted because live PID 1393542 had cwd /home/lupin/pantheon-ci-deploy/dev-root while its configured supervisor_command executed /home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259/.orchestrator/supervisor.py. The promotion preflight failed on ValueError('Mutable incumbent argv does not bind its exact cwd entrypoint').",
-    "repair": "Added explicit descriptor-bound split-entrypoint provenance capture for legacy mutable incumbents. The operator binds PID/starttime/executable/full argv/live config, the cwd and argv-derived entrypoint root as separate descriptor identities, path component chains, device/inode/mode, Git HEAD/tree/remote/accepted-dev ancestry, and launch-source byte identity. Both roots must prove the same repo (ajoe734/pantheon) and identical commit/tree. Relative/repeated entrypoints, symlink substitution, path traversal, dirty trees, and root races remain strictly fail-closed. Rollback materializes a separately clean immutable checkout from the accepted commit/tree."
+    "cause": "The clean 0305c861 candidate was aborted because live PID 1393542 had cwd /home/lupin/pantheon-ci-deploy/dev-root while its configured supervisor_command executed /home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259/.orchestrator/supervisor.py. Discovery failed because ExpectedSupervisorProcessContract.command_root was hardcoded to cwd instead of entrypoint_root.",
+    "repair": "Updated _mutable_process_contract to set ExpectedSupervisorProcessContract.command_root=str(entrypoint_root), binding the legacy split expected contract to the descriptor-validated entrypoint-root identity in capture, prepare baseline, and transaction revalidation. Added live-like positive test and adversarial wrong-command-root test while keeping candidate/rollback single-root contracts strict."
   },
   "safety_and_coherence_invariants": {
-    "split_root_provenance": "When cwd and entrypoint_root differ for a legacy mutable incumbent, both roots are validated independently for Git HEAD, tree, remote URL/slug (ajoe734/pantheon), accepted origin/dev ancestry, cleanliness, and governed launch source byte equality (sha256/byte_length). Any mismatch aborts immediately.",
-    "strict_rejection_boundaries": "Relative entrypoints, multiple supervisor.py arguments, symlinks/path traversal in entrypoint path or root, dirty tracked files, untracked/ignored debris outside allowlist, commit/tree mismatches between roots, and launch source byte drift are rejected.",
+    "split_root_provenance": "When cwd and entrypoint_root differ for a legacy mutable incumbent, both roots are validated independently for Git HEAD, tree, remote URL/slug (ajoe734/pantheon), accepted origin/dev ancestry, cleanliness, and governed launch source byte equality (sha256/byte_length). PANTHEON_COMMAND_ROOT in environment matches the descriptor-validated entrypoint_root. Any mismatch aborts immediately.",
+    "strict_rejection_boundaries": "Relative entrypoints, multiple supervisor.py arguments, symlinks/path traversal in entrypoint path or root, dirty tracked files, untracked/ignored debris outside allowlist, commit/tree mismatches between roots, wrong PANTHEON_COMMAND_ROOT, and launch source byte drift are rejected.",
     "clean_rollback_materialization": "Rollback launches use a separately materialized 100% clean immutable checkout from the descriptor-bound accepted commit/tree in command-runtimes/. Neither dirty live root is ever relaunched from or mutated.",
     "launch_identity": "Governed launch source contracts, config CAS, process signalling, -B / PYTHONDONTWRITEBYTECODE=1, 3-loop postchecks, and promotion lock boundaries remain intact."
   },

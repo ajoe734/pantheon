@@ -6606,7 +6606,7 @@ def _mutable_process_contract(
         cwd_inode=cwd.inode,
         cwd_commit=head_commit,
         cwd_tree=tracked_tree_identity,
-        command_root=str(cwd.path),
+        command_root=str(entrypoint_root),
         runtime_sha=head_commit,
         status_root=str(status_root),
         admission_lock_path=status_root / ".orchestrator" / "supervisor.lock",

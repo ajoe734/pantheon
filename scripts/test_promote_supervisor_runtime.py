@@ -8066,6 +8066,7 @@ def test_mutable_incumbent_snapshot_accepts_split_entrypoint_root(
         *argv[4:],
     )
     reader.argv[1717] = split_argv
+    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
     identity = _replace_identity_live_config(
         identity,
         lambda payload: payload["watchdog"].__setitem__(
@@ -8099,6 +8100,73 @@ def test_mutable_incumbent_snapshot_accepts_split_entrypoint_root(
     assert snapshot.process.argv == split_argv
 
 
+def test_mutable_incumbent_snapshot_rejects_split_entrypoint_wrong_command_root(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    entrypoint_root = (
+        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    )
+    (entrypoint_root / ".orchestrator").mkdir(parents=True)
+    (entrypoint_root / "scripts").mkdir(parents=True)
+
+    source_specs = [
+        (".orchestrator/supervisor.py", False),
+        (".orchestrator/supervisor_watchdog.py", True),
+        ("scripts/run-supervisor-watchdog.sh", True),
+        ("scripts/sync-dev-root.sh", True),
+        ("scripts/ai-status.sh", True),
+        ("scripts/ai_status.py", False),
+        ("scripts/provision_live_supervisor_config.py", False),
+    ]
+    for rel_path, is_exec in source_specs:
+        src = identity.candidate_root / rel_path
+        dst = entrypoint_root / rel_path
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+        if is_exec:
+            dst.chmod(0o755)
+
+    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
+    split_argv = (
+        argv[0],
+        argv[1],
+        argv[2],
+        str(split_entrypoint),
+        *argv[4:],
+    )
+    reader.argv[1717] = split_argv
+    # Wrong command root in process environment (leaving it at cwd candidate instead of entrypoint_root)
+    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(identity.candidate_root)
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(split_argv)
+        ),
+    )
+
+    binding_cwd = _mutable_binding_stub(identity)
+    binding_ep = _mutable_binding_stub(identity)
+
+    def mock_binding(cwd, **kwargs):
+        if cwd.path == entrypoint_root:
+            return binding_ep
+        return binding_cwd
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        side_effect=mock_binding,
+    ):
+        with pytest.raises(ValueError, match="PANTHEON_COMMAND_ROOT"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=split_argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
 def test_mutable_incumbent_snapshot_rejects_split_entrypoint_commit_mismatch(
     tmp_path: Path,
 ) -> None:
@@ -8111,6 +8179,7 @@ def test_mutable_incumbent_snapshot_rejects_split_entrypoint_commit_mismatch(
     split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
     split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
     reader.argv[1717] = split_argv
+    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
     identity = _replace_identity_live_config(
         identity,
         lambda payload: payload["watchdog"].__setitem__(
@@ -8154,6 +8223,7 @@ def test_mutable_incumbent_snapshot_rejects_split_entrypoint_tree_mismatch(
     split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
     split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
     reader.argv[1717] = split_argv
+    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
     identity = _replace_identity_live_config(
         identity,
         lambda payload: payload["watchdog"].__setitem__(
@@ -8197,6 +8267,7 @@ def test_mutable_incumbent_snapshot_rejects_split_entrypoint_governed_source_dri
     split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
     split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
     reader.argv[1717] = split_argv
+    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
     identity = _replace_identity_live_config(
         identity,
         lambda payload: payload["watchdog"].__setitem__(
