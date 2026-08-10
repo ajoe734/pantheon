@@ -8028,3 +8028,243 @@ def test_incumbent_bytecode_residue_rejects_post_capture_directory_replacement(
                 )
     finally:
         os.close(handle.descriptor)
+
+
+def test_mutable_incumbent_snapshot_accepts_split_entrypoint_root(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    entrypoint_root = (
+        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    )
+    (entrypoint_root / ".orchestrator").mkdir(parents=True)
+    (entrypoint_root / "scripts").mkdir(parents=True)
+
+    source_specs = [
+        (".orchestrator/supervisor.py", False),
+        (".orchestrator/supervisor_watchdog.py", True),
+        ("scripts/run-supervisor-watchdog.sh", True),
+        ("scripts/sync-dev-root.sh", True),
+        ("scripts/ai-status.sh", True),
+        ("scripts/ai_status.py", False),
+        ("scripts/provision_live_supervisor_config.py", False),
+    ]
+    for rel_path, is_exec in source_specs:
+        src = identity.candidate_root / rel_path
+        dst = entrypoint_root / rel_path
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+        if is_exec:
+            dst.chmod(0o755)
+
+    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
+    split_argv = (
+        argv[0],
+        argv[1],
+        argv[2],
+        str(split_entrypoint),
+        *argv[4:],
+    )
+    reader.argv[1717] = split_argv
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(split_argv)
+        ),
+    )
+
+    binding_cwd = _mutable_binding_stub(identity)
+    binding_ep = _mutable_binding_stub(identity)
+
+    def mock_binding(cwd, **kwargs):
+        if cwd.path == entrypoint_root:
+            return binding_ep
+        return binding_cwd
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        side_effect=mock_binding,
+    ):
+        snapshot = promotion.capture_mutable_incumbent_snapshot(
+            identity,
+            reader=reader,
+            seed_generation=reader.generations[1717],
+            seed_argv=split_argv,
+            seed_cwd=reader.cwd[1717],
+        )
+
+    assert snapshot.is_split_entrypoint is True
+    assert snapshot.entrypoint_root == entrypoint_root
+    assert snapshot.root == reader.cwd[1717].path
+    assert snapshot.process.argv == split_argv
+
+
+def test_mutable_incumbent_snapshot_rejects_split_entrypoint_commit_mismatch(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    entrypoint_root = (
+        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    )
+    (entrypoint_root / ".orchestrator").mkdir(parents=True)
+    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
+    split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
+    split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
+    reader.argv[1717] = split_argv
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(split_argv)
+        ),
+    )
+
+    binding_cwd = _mutable_binding_stub(identity)
+    binding_ep_list = list(binding_cwd)
+    binding_ep_list[0] = "b" * 40
+    binding_ep = tuple(binding_ep_list)
+
+    def mock_binding(cwd, **kwargs):
+        if cwd.path == entrypoint_root:
+            return binding_ep
+        return binding_cwd
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        side_effect=mock_binding,
+    ):
+        with pytest.raises(ValueError, match="HEAD commit differs from cwd"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=split_argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
+def test_mutable_incumbent_snapshot_rejects_split_entrypoint_tree_mismatch(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    entrypoint_root = (
+        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    )
+    (entrypoint_root / ".orchestrator").mkdir(parents=True)
+    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
+    split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
+    split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
+    reader.argv[1717] = split_argv
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(split_argv)
+        ),
+    )
+
+    binding_cwd = _mutable_binding_stub(identity)
+    binding_ep_list = list(binding_cwd)
+    binding_ep_list[1] = "c" * 40
+    binding_ep = tuple(binding_ep_list)
+
+    def mock_binding(cwd, **kwargs):
+        if cwd.path == entrypoint_root:
+            return binding_ep
+        return binding_cwd
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        side_effect=mock_binding,
+    ):
+        with pytest.raises(ValueError, match="tracked tree differs from cwd"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=split_argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
+def test_mutable_incumbent_snapshot_rejects_split_entrypoint_governed_source_drift(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    entrypoint_root = (
+        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    )
+    (entrypoint_root / ".orchestrator").mkdir(parents=True)
+    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
+    split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
+    split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
+    reader.argv[1717] = split_argv
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(split_argv)
+        ),
+    )
+
+    dummy_source = promotion.LaunchFileIdentity(
+        role="supervisor",
+        path=tmp_path / "supervisor.py",
+        device=1,
+        inode=1,
+        mode=33188,
+        byte_length=10,
+        sha256="a" * 64,
+    )
+    binding_cwd = _mutable_binding_stub(identity)
+    binding_cwd_list = list(binding_cwd)
+    binding_cwd_list[5] = (dummy_source,)
+    binding_cwd = tuple(binding_cwd_list)
+
+    binding_ep_list = list(binding_cwd)
+    sources_ep = [replace(dummy_source, sha256="b" * 64)]
+    binding_ep_list[5] = tuple(sources_ep)
+    binding_ep = tuple(binding_ep_list)
+
+    def mock_binding(cwd, **kwargs):
+        if cwd.path == entrypoint_root:
+            return binding_ep
+        return binding_cwd
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        side_effect=mock_binding,
+    ):
+        with pytest.raises(ValueError, match="governed source byte drift"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=split_argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
+
+def test_mutable_incumbent_snapshot_rejects_relative_split_entrypoint(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    rel_argv = (argv[0], argv[1], argv[2], ".orchestrator/supervisor.py", *argv[4:])
+    reader.argv[1717] = rel_argv
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(rel_argv)
+        ),
+    )
+    binding = _mutable_binding_stub(identity)
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        return_value=binding,
+    ):
+        with pytest.raises(ValueError, match="entrypoint path must be absolute"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=rel_argv,
+                seed_cwd=reader.cwd[1717],
+            )
