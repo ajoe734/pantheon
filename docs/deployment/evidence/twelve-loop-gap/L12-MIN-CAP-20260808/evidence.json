@@ -1,0 +1,123 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "L12-MIN-CAP-20260808",
+    "title": "Run one paper RuntimeBinding through fleet execution to order, fill, and position",
+    "phase": "M1 loop closure",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-MIN-CAP-20260808",
+    "merge_target": "dev",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CAP-20260808/evidence.json",
+    "overall_admission": "ready_for_independent_review"
+  },
+  "scope": {
+    "owned_layer": "Deterministic paper-fleet to paper-runtime normal-path proof, including durable fill/position readback and duplicate replay handling.",
+    "not_changing": [
+      "RuntimeBinding write authority",
+      "Deployment outbox completion",
+      "Telemetry/Reconciliation terminal processing",
+      "live-capital activation, broker credentials, or shared deployment configuration"
+    ],
+    "composes_with": {
+      "upstream": "L12-MIN-DEP-20260808 supplies a completed active paper RuntimeBinding.",
+      "downstream": "L12-MIN-TELREC-20260808 consumes the emitted paper-runtime telemetry event."
+    },
+    "implementation_changed_files": [
+      "services/execution/runtime-manager/test_paper_fleet_reconciler.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CAP-20260808/evidence.json"
+    ]
+  },
+  "normal_path_proof": {
+    "mode": "deterministic, isolated in-process fleet worker integration",
+    "trigger": "One active paper RuntimeBinding is returned by the fleet desired-state boundary and reconciled into one paper-runtime worker.",
+    "event_sequence": [
+      "PaperFleetReconciler acquires its fenced lease and starts exactly one binding-scoped worker with the binding's runtime, pool, plan, and queue identity.",
+      "The worker resolves that exact RuntimeBinding, drains the produced canonical paper signal, and flushes its completed one-signal run.",
+      "PaperExecutionAlgorithm persists one committed paper fill and one position in its binding-scoped performance ledger.",
+      "PaperRuntimeService emits canonical paper_fill_simulated and position_snapshot runtime events through its telemetry emitter."
+    ],
+    "terminal_readback": {
+      "fleet_worker_count": 1,
+      "fleet_running_count": 1,
+      "binding_scoped_queue": "pantheon:signals:pending:binding-l12-min-cap",
+      "performance_ledger": {
+        "binding_id": "binding-l12-min-cap",
+        "fill_count": 1,
+        "holding": {
+          "symbol": "AAPL",
+          "quantity": 2.0
+        }
+      },
+      "runtime_snapshot": {
+        "position_quantity": 2.0,
+        "recent_order_events": [
+          "paper_fill_simulated",
+          "paper_order_simulated"
+        ]
+      },
+      "telemetry_events": [
+        "paper_fill_simulated",
+        "position_snapshot"
+      ]
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Start the paper fleet reconciler for the RuntimeBinding produced by Deployment.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetMinimumFunctionalClosure::test_binding_starts_worker_and_duplicate_replay_keeps_one_fill"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Consume one paper signal and persist paper order, fill, and position readback.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetMinimumFunctionalClosure::test_binding_starts_worker_and_duplicate_replay_keeps_one_fill"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Duplicate replay retains the original single fill and records duplicate_signal_id as a paper no-op.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetMinimumFunctionalClosure::test_binding_starts_worker_and_duplicate_replay_keeps_one_fill",
+        "services/execution/lean_runtime/test_signal_consumer.py::TestPersistentDedup"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Emit paper runtime events for Telemetry without enabling real orders or real capital.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetMinimumFunctionalClosure::test_binding_starts_worker_and_duplicate_replay_keeps_one_fill"
+      ]
+    }
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/execution/runtime-manager/test_paper_fleet_reconciler.py::TestPaperFleetMinimumFunctionalClosure::test_binding_starts_worker_and_duplicate_replay_keeps_one_fill",
+        "result": "pass",
+        "conclusion": "1 passed"
+      }
+    ]
+  },
+  "safety": {
+    "no_live_capital": "pass; the test asserts is_real_order=false and is_real_capital=false on the emitted paper fill.",
+    "runtime_binding_write_owner": "Runtime Manager remains the binding authority; the test consumes an already active binding.",
+    "deployment": "not_applicable; this task proves the downstream Capital execution boundary only."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer": "Antigravity",
+    "required_review": "Verify the committed normal-path fixture, binding-scoped persistence, duplicate no-op readback, emitted telemetry event types, and no-live-capital boundary before approving this manifest through the governed status command."
+  }
+}
