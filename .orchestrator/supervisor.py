@@ -18238,12 +18238,14 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
         # dispatcher may construct a fresh durable event for the still-open
         # task on a later cycle.
         stale_retry_workers = (
-            record.get("status") == "started"
+            record.get("status") in {"started", "retry_backoff"}
             and bool(related_worker_items)
             and all(
                 str(worker.get("status") or "") == "retry_backoff"
-                and (next_retry_at := _parse_iso_utc(worker.get("next_retry_at"))) is not None
-                and next_retry_at <= now
+                and (
+                    ((next_retry_at := _parse_iso_utc(worker.get("next_retry_at"))) is not None and next_retry_at <= now)
+                    or worker.get("runner_finished_at") is not None
+                )
                 and not worker_process_generation_is_current(worker)
                 for _, worker in related_worker_items
             )

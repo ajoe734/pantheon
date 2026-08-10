@@ -1131,6 +1131,47 @@ def test_evaluate_promotion_invariants_rejects_duplicate_canonical_run_id() -> N
     assert "duplicate_canonical_run_id:run_dup" in worker_inv["details"]["reasons"]
 
 
+def test_evaluate_promotion_invariants_accepts_retry_backoff_worker() -> None:
+    health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 100}}
+    state = {
+        "supervisor": {"lifecycle": "running"},
+        "workers": {
+            "w_retry": {
+                "status": "retry_backoff",
+                "current_task_id": "T1",
+                "queue_event_id": "evt1",
+                "run_id": "run_retry",
+                "runner_finished_at": "2026-08-09T18:00:00Z",
+            },
+        },
+        "queue": {
+            "events": {
+                "evt1": {
+                    "id": "evt1",
+                    "task_id": "T1",
+                    "status": "retry_backoff",
+                    "run_id": "run_retry",
+                    "lease_owner": "run_retry",
+                }
+            }
+        },
+        "worker_worktrees": {
+            "leases": {"l1": {"task_id": "T1", "queue_event_id": "evt1", "run_id": "run_retry"}}
+        },
+    }
+    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
+        invariants = evaluate_promotion_invariants(
+            health_report=health_report,
+            ai_status={"tasks": []},
+            state=state,
+            lock_path=Path("/tmp/fake.lock"),
+        )
+
+    worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
+    assert worker_inv["ok"] is True
+    assert worker_inv["details"]["reasons"] == []
+
+
 def _git(repo: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", *args],
@@ -5217,8 +5258,20 @@ class _FakePromotionBackend:
     def revalidate(self, plan: PromotionPlan) -> RuntimeObservation:
         assert plan is self.plan
         self.events.append("revalidate")
-        if self.fault == "snapshot_drift":
-            return replace(self.baseline, state_sha256="changed-under-lock")
+        if self.fault == "runtime_document_churn":
+            return replace(
+                self.baseline,
+                state_sha256="state-advanced-under-lock",
+                status_sha256="status-advanced-under-lock",
+                provider_document_sha256="provider-advanced-under-lock",
+            )
+        if self.fault == "admission_identity_drift":
+            return replace(self.baseline, config_sha256="config-changed-under-lock")
+        if self.fault == "admission_health_failure":
+            return replace(
+                self.baseline,
+                invariant_failures=("provider_readiness_baseline",),
+            )
         return self.baseline
 
     def observe(
@@ -5899,16 +5952,44 @@ def test_os_launch_reports_unknown_live_child_when_containment_cannot_prove_abse
     assert "kill:RuntimeError:kill unavailable" in error.cleanup_error
 
 
-def test_snapshot_drift_under_admission_lock_aborts_without_termination(
+def test_runtime_document_churn_under_admission_lock_revalidates_before_termination(
     tmp_path: Path,
 ) -> None:
     result, backend, _evidence_path = _run_fake_transaction(
         tmp_path,
-        fault="snapshot_drift",
+        fault="runtime_document_churn",
+    )
+
+    assert result["outcome"] == "promoted"
+    assert backend.intents == [(100, "b" * 40)]
+    assert backend.terminated == [backend.incumbent_generation]
+
+
+def test_process_or_config_identity_drift_under_admission_lock_aborts_without_termination(
+    tmp_path: Path,
+) -> None:
+    result, backend, _evidence_path = _run_fake_transaction(
+        tmp_path,
+        fault="admission_identity_drift",
     )
 
     assert result["outcome"] == "aborted"
-    assert "snapshot changed before TERM" in result["original_failure"]
+    assert "process/config identity changed before TERM" in result["original_failure"]
+    assert backend.intents == []
+    assert backend.terminated == []
+
+
+def test_admission_health_failure_aborts_without_termination(
+    tmp_path: Path,
+) -> None:
+    result, backend, _evidence_path = _run_fake_transaction(
+        tmp_path,
+        fault="admission_health_failure",
+    )
+
+    assert result["outcome"] == "aborted"
+    assert "health invariants failed before TERM" in result["original_failure"]
+    assert "provider_readiness_baseline" in result["original_failure"]
     assert backend.intents == []
     assert backend.terminated == []
 
