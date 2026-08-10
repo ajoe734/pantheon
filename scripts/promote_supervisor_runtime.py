@@ -6148,6 +6148,22 @@ def materialize_immutable_rollback_runtime(
     )
     destination = parent / snapshot.head_commit
     if destination.exists() or destination.is_symlink():
+        if destination.is_dir() and not destination.is_symlink():
+            try:
+                identity = build_candidate_runtime_identity(destination)
+                if (
+                    identity.candidate_root == snapshot.root
+                    and (identity.candidate_root_device, identity.candidate_root_inode)
+                    == (snapshot.root_device, snapshot.root_inode)
+                    and identity.head_commit == snapshot.head_commit
+                    and identity.tracked_tree_identity == snapshot.tracked_tree_identity
+                    and identity.accepted_dev_commit == snapshot.accepted_dev_commit
+                    and identity.repository_slug == snapshot.repository_slug
+                ):
+                    identity.verify_immutable_snapshot()
+                    return identity
+            except Exception:
+                pass
         raise ValueError(
             f"Fresh rollback runtime destination already exists: {destination}"
         )
