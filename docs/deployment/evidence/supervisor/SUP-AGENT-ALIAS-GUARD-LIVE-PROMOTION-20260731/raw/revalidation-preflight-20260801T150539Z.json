@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "label": "alias-guard-revalidation-preflight-20260801",
+  "snapshot_started_at_utc": "2026-08-01T15:05:39Z",
+  "supplemental_lease_and_provider_queries_completed_after_snapshot": true,
+  "capture_command": "SNAPSHOT_RUNTIME_ROOT=/home/lupin/pantheon-ci-deploy/dev-root python3 docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/handoff/runtime-snapshot.py alias-guard-revalidation-preflight-20260801",
+  "mutation_performed": false,
+  "live_config": {
+    "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
+    "size_bytes": 39742,
+    "mtime_utc": "2026-07-31T22:47:27Z",
+    "watchdog_supervisor_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "task_state_store_mode": "authoritative",
+    "event_log": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl"
+  },
+  "repository": {
+    "origin_dev": "76bbb04b569331a81916330d1cf713d068527c89"
+  },
+  "live_supervisor": {
+    "process_count": 1,
+    "pid": 2933948,
+    "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "cmdline": "/usr/bin/python3.12 -u /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
+    "started_at_utc": "2026-08-01T14:19:34Z",
+    "head_commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
+    "head_tree": "6e9f5c440c3d7c9571cfc8038464989743201998",
+    "origin": "https://github.com/ajoe734/pantheon.git",
+    "git_status_entry_count": 47,
+    "log": "/home/lupin/pantheon/.orchestrator/logs/supervisor-watchdog-restart-20260801T141934Z.log"
+  },
+  "recent_live_loops": [
+    {
+      "log_timestamp": "2026-08-01 23:00:41",
+      "heartbeat_utc": "2026-08-01T15:00:39Z",
+      "lifecycle": "running",
+      "queue_count": 9,
+      "active_worker_count": 9
+    },
+    {
+      "log_timestamp": "2026-08-01 23:01:40",
+      "heartbeat_utc": "2026-08-01T15:01:39Z",
+      "lifecycle": "running",
+      "queue_count": 9,
+      "active_worker_count": 9
+    },
+    {
+      "log_timestamp": "2026-08-01 23:02:58",
+      "heartbeat_utc": "2026-08-01T15:02:56Z",
+      "lifecycle": "running",
+      "queue_count": 9,
+      "active_worker_count": 9
+    },
+    {
+      "log_timestamp": "2026-08-01 23:04:25",
+      "heartbeat_utc": "2026-08-01T15:04:24Z",
+      "lifecycle": "running",
+      "queue_count": 9,
+      "active_worker_count": 9
+    }
+  ],
+  "authoritative_projection": {
+    "shadow": {
+      "mode": "authoritative",
+      "ok": true,
+      "caught_up": true,
+      "last_error": null,
+      "event_count": 7504,
+      "projected_state_sha256": "781bcee399cc00b3236ecb963e6e84fb15e3626415ad1fa8624fb2991761457f",
+      "expected_state_sha256": "781bcee399cc00b3236ecb963e6e84fb15e3626415ad1fa8624fb2991761457f"
+    },
+    "independent_verify": {
+      "ok": true,
+      "event_count": 7522,
+      "projected_state_sha256": "d33d6cf307b8aeb261fe3721a3a3635a6199fcd2a76051e24e52e75e15478cd9",
+      "expected_state_sha256": "d33d6cf307b8aeb261fe3721a3a3635a6199fcd2a76051e24e52e75e15478cd9"
+    },
+    "race_note": "The event journal advanced during the initial independent projection. The helper's final verify_projection reload returned the equal hashes above."
+  },
+  "active_worker_check": {
+    "method": "Select state.workers records in active lifecycle states; check PID existence; group by task_id for duplicates.",
+    "active_record_count": 8,
+    "duplicate_task_ids": [],
+    "duplicate_task_count": 0,
+    "unsafe_pid_records": [
+      {
+        "run_id": "codex-20260801T145808Z-d58e22be",
+        "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+        "recorded_pid": 3208750,
+        "pid_alive": false,
+        "last_heartbeat_at_utc": "2026-08-01T15:04:09Z",
+        "queue_event_id": "evt-20260801T145747Z-12974c33"
+      }
+    ]
+  },
+  "alias_task_lease": {
+    "run_id": "codex-20260801T145820Z-8cc1b389",
+    "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+    "status": "running",
+    "pid": 3211377,
+    "pid_alive": true,
+    "last_heartbeat_at_utc": "2026-08-01T15:07:20Z",
+    "queue_event_id": "evt-20260801T145756Z-701cba39",
+    "queue_status": "started",
+    "queue_run_id": "codex-20260801T145820Z-8cc1b389",
+    "queue_lease_owner": "codex-20260801T145820Z-8cc1b389",
+    "queue_lease_expires_at_utc": "2026-08-01T15:37:33Z",
+    "worktree": "/tmp/pantheon-worker-worktrees/pantheon/sup-agent-alias-guard-live-promotion-20260731",
+    "worktree_branch": "task/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731"
+  },
+  "provider_readiness": {
+    "provider": "antigravity",
+    "installed": true,
+    "auth_ready": true,
+    "local_cli_worker_supported": true,
+    "verified": "verified",
+    "configured_primary_model": "gemini-3.6-flash-low",
+    "last_auth_probe_at_utc": "2026-08-01T14:13:25Z"
+  },
+  "rollback_root": {
+    "path": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "head_commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
+    "head_tree": "6e9f5c440c3d7c9571cfc8038464989743201998",
+    "origin": "https://github.com/ajoe734/pantheon.git",
+    "available": true,
+    "tracked_tree_clean": false,
+    "git_status_entry_count": 47
+  },
+  "previous_candidate_root": {
+    "path": "/home/lupin/pantheon-ci-deploy/command-runtimes/012dab969455e7146f2437159d7d38fc5904a195",
+    "head_commit": "012dab969455e7146f2437159d7d38fc5904a195",
+    "head_tree": "0314e0ccfad93c0deb57cb47b189f14f12a8ac6f",
+    "origin": "https://github.com/ajoe734/pantheon.git",
+    "tracked_tree_clean": false,
+    "reusable": false
+  },
+  "watchdog_chronology": [
+    {
+      "at_utc": "2026-08-01T05:29:29Z",
+      "reason": "pid_not_alive",
+      "old_pid": 3523046,
+      "new_pid": 6272,
+      "replacement_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+    },
+    {
+      "at_utc": "2026-08-01T14:19:34Z",
+      "reason": "intentional_deploy_restart",
+      "old_pid": 777098,
+      "new_pid": 2933948,
+      "target_sha": "cbb36ff1fe385f3bc2690124ff22d8edc0056896"
+    }
+  ],
+  "preflight_result": {
+    "safe_to_mutate": false,
+    "reasons": [
+      "live_supervisor_not_at_promoted_target",
+      "previous_candidate_root_has_tracked_dirty_state",
+      "active_worker_record_references_dead_pid",
+      "governed_automatic_rollback_transaction_not_available"
+    ]
+  }
+}
