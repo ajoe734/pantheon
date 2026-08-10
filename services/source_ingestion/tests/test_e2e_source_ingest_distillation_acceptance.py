@@ -60,7 +60,9 @@ def _state(**overrides: Any) -> ControllerState:
     return ControllerState(**values)
 
 
-def test_real_bounded_source_ingestion_tick_persistence_readback_and_distillation_consumption(tmp_path: Path) -> None:
+def test_real_bounded_source_ingestion_tick_persistence_readback_and_distillation_consumption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # 1. Setup isolated directories and env for main.py persistence
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -80,45 +82,62 @@ def test_real_bounded_source_ingestion_tick_persistence_readback_and_distillatio
     reconcile_lock_path = data_dir / "reconcile.lock"
     controller_token_path = data_dir / "controller_token"
 
-    # Patch module paths in main
-    main_module.DATA_DIR = data_dir
-    main_module.PROPOSAL_STORE_PATH = proposal_store_path
-    main_module.SCHEDULE_STORE_PATH = schedule_store_path
-    main_module.CONNECTOR_STORE_PATH = connector_store_path
-    main_module.SOURCE_EVIDENCE_STORE_PATH = evidence_store_path
-    main_module.DLQ_STORE_PATH = dlq_store_path
-    main_module.AUDIT_STORE_PATH = audit_store_path
-    main_module.CONNECTOR_SCHEDULE_CONFIG_PATH = schedule_config_path
-    main_module.SOURCE_HEALTH_STORE_PATH = source_health_path
-    main_module.SOURCE_USAGE_STORE_PATH = source_usage_path
-    main_module.MARKET_DATA_STORAGE_ROOT = market_data_root
-    main_module.CONTROLLER_STATE_PATH = controller_state_path
-    main_module.REQUIREMENT_STATE_PATH = requirement_state_path
-    main_module.RECONCILE_TRANSACTION_LOCK_PATH = reconcile_lock_path
-    main_module.CONTROLLER_TOKEN_PATH = controller_token_path
+    # Patch module paths in main using monkeypatch
+    monkeypatch.setattr(main_module, "DATA_DIR", data_dir)
+    monkeypatch.setattr(main_module, "PROPOSAL_STORE_PATH", proposal_store_path)
+    monkeypatch.setattr(main_module, "SCHEDULE_STORE_PATH", schedule_store_path)
+    monkeypatch.setattr(main_module, "CONNECTOR_STORE_PATH", connector_store_path)
+    monkeypatch.setattr(main_module, "SOURCE_EVIDENCE_STORE_PATH", evidence_store_path)
+    monkeypatch.setattr(main_module, "DLQ_STORE_PATH", dlq_store_path)
+    monkeypatch.setattr(main_module, "AUDIT_STORE_PATH", audit_store_path)
+    monkeypatch.setattr(main_module, "CONNECTOR_SCHEDULE_CONFIG_PATH", schedule_config_path)
+    monkeypatch.setattr(main_module, "SOURCE_HEALTH_STORE_PATH", source_health_path)
+    monkeypatch.setattr(main_module, "SOURCE_USAGE_STORE_PATH", source_usage_path)
+    monkeypatch.setattr(main_module, "MARKET_DATA_STORAGE_ROOT", market_data_root)
+    monkeypatch.setattr(main_module, "CONTROLLER_STATE_PATH", controller_state_path)
+    monkeypatch.setattr(main_module, "REQUIREMENT_STATE_PATH", requirement_state_path)
+    monkeypatch.setattr(main_module, "RECONCILE_TRANSACTION_LOCK_PATH", reconcile_lock_path)
+    monkeypatch.setattr(main_module, "CONTROLLER_TOKEN_PATH", controller_token_path)
 
     # Re-initialize stores & components on main
-    main_module.proposal_store = main_module.SourceChangeProposalStore.from_jsonl(proposal_store_path)
-    main_module.llm_proposal_adapter = main_module.LLMSourceProposalAdapter(main_module.proposal_store)
-    main_module.store = main_module.JsonlIngestScheduleStore(schedule_store_path)
-    main_module.connector_store = main_module.JsonlConfiguredConnectorStore(connector_store_path)
-    main_module.schedule_config_store = main_module.JsonlConnectorScheduleStore(schedule_config_path)
-    main_module.configured_fetcher = main_module.ConfiguredConnectorFetcher(main_module.connector_store)
-    main_module.evidence_repository = main_module.build_source_evidence_repository(evidence_store_path)
-    main_module.evidence_builder = main_module.EvidenceBundleBuilder(main_module.evidence_repository)
-    main_module.dead_letter_queue = main_module.DeadLetterQueue(dlq_store_path)
-    main_module.dead_letter_queue.load_from_spill()
-    main_module.manager = main_module.IngestManager()
-    main_module.scheduler = main_module.IngestionScheduler(
-        manager=main_module.manager,
-        store=main_module.store,
-        dead_letter_queue=main_module.dead_letter_queue,
+    proposal_store = main_module.SourceChangeProposalStore.from_jsonl(proposal_store_path)
+    llm_proposal_adapter = main_module.LLMSourceProposalAdapter(proposal_store)
+    store = main_module.JsonlIngestScheduleStore(schedule_store_path)
+    connector_store = main_module.JsonlConfiguredConnectorStore(connector_store_path)
+    schedule_config_store = main_module.JsonlConnectorScheduleStore(schedule_config_path)
+    configured_fetcher = main_module.ConfiguredConnectorFetcher(connector_store)
+    evidence_repository = main_module.build_source_evidence_repository(evidence_store_path)
+    evidence_builder = main_module.EvidenceBundleBuilder(evidence_repository)
+    dead_letter_queue = main_module.DeadLetterQueue(dlq_store_path)
+    dead_letter_queue.load_from_spill()
+    manager = main_module.IngestManager()
+    scheduler = main_module.IngestionScheduler(
+        manager=manager,
+        store=store,
+        dead_letter_queue=dead_letter_queue,
     )
-    main_module.source_health_store = main_module.SourceHealthStore.from_jsonl(source_health_path)
-    main_module.source_usage_store = main_module.SourceUsageDailyStore.from_jsonl(source_usage_path)
-    main_module.requirement_snapshot_store = main_module.RequirementSnapshotStore(requirement_state_path)
-    main_module.controller_token = main_module.load_controller_token(token_path=controller_token_path, create=True)
-    main_module.market_data_storage_writer = main_module.MarketDataStorageWriter(market_data_root)
+    source_health_store = main_module.SourceHealthStore.from_jsonl(source_health_path)
+    source_usage_store = main_module.SourceUsageDailyStore.from_jsonl(source_usage_path)
+    requirement_snapshot_store = main_module.RequirementSnapshotStore(requirement_state_path)
+    controller_token = main_module.load_controller_token(token_path=controller_token_path, create=True)
+    market_data_storage_writer = main_module.MarketDataStorageWriter(market_data_root)
+
+    monkeypatch.setattr(main_module, "proposal_store", proposal_store)
+    monkeypatch.setattr(main_module, "llm_proposal_adapter", llm_proposal_adapter)
+    monkeypatch.setattr(main_module, "store", store)
+    monkeypatch.setattr(main_module, "connector_store", connector_store)
+    monkeypatch.setattr(main_module, "schedule_config_store", schedule_config_store)
+    monkeypatch.setattr(main_module, "configured_fetcher", configured_fetcher)
+    monkeypatch.setattr(main_module, "evidence_repository", evidence_repository)
+    monkeypatch.setattr(main_module, "evidence_builder", evidence_builder)
+    monkeypatch.setattr(main_module, "dead_letter_queue", dead_letter_queue)
+    monkeypatch.setattr(main_module, "manager", manager)
+    monkeypatch.setattr(main_module, "scheduler", scheduler)
+    monkeypatch.setattr(main_module, "source_health_store", source_health_store)
+    monkeypatch.setattr(main_module, "source_usage_store", source_usage_store)
+    monkeypatch.setattr(main_module, "requirement_snapshot_store", requirement_snapshot_store)
+    monkeypatch.setattr(main_module, "controller_token", controller_token)
+    monkeypatch.setattr(main_module, "market_data_storage_writer", market_data_storage_writer)
 
     # 2. Configure connector via FastAPI TestClient (real HTTP/service boundary)
     client = TestClient(main_module.app)
@@ -265,21 +284,17 @@ def test_real_bounded_source_ingestion_tick_persistence_readback_and_distillatio
         }
         return actual
 
-    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr("services.source_ingestion.controller_worker.load_desired_state", fake_load_desired_state)
     monkeypatch.setattr("services.source_ingestion.controller_worker.reconcile_desired_state", fake_reconcile_desired_state)
     monkeypatch.setattr("services.source_ingestion.controller_worker.run_schedule_tick", fake_run_schedule_tick)
     monkeypatch.setattr("services.source_ingestion.controller_worker.read_actual_state", fake_read_actual_state)
 
-    try:
-        tick_summary = run_controller_tick(
-            config=config,
-            state=state,
-            store=controller_store,
-            writer=DummyLoopWriter(),
-        )
-    finally:
-        monkeypatch.undo()
+    tick_summary = run_controller_tick(
+        config=config,
+        state=state,
+        store=controller_store,
+        writer=DummyLoopWriter(),
+    )
     assert tick_summary["status"] == "ok"
     assert tick_summary["provider_egress_attempted"] is True
 

@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-08-09T19:17:12Z",
-    "evidence_cut_semantics": "Owner evidence cut v9.0.0. Proof of SourceIngestion scheduler/controller tick, SourceRecord persistence, readback, and Strategy Distillation consumption.",
+    "evidence_cut_at": "2026-08-10T01:53:00Z",
+    "evidence_cut_semantics": "Owner evidence cut v10.0.0. Proof of SourceIngestion scheduler/controller tick, SourceRecord persistence, readback, Strategy Distillation consumption, monkeypatch isolation fix, and httpx dependency declaration.",
     "id": "L12-MIN-SRC-20260808",
     "overall_admission": "pending_review",
     "owner": "Antigravity",
@@ -36,6 +36,7 @@
       "services/source_ingestion/controller_worker.py (sequence 2191)",
       "services/source_ingestion/scheduler_worker.py",
       "services/source_ingestion/main.py",
+      "services/source_ingestion/requirements.txt",
       "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py"
     ],
     "desired_state": [
@@ -54,76 +55,29 @@
       "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808/evidence.sha256"
     ],
     "implementation_changed_files": [
+      "services/source_ingestion/requirements.txt",
       "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py"
     ],
     "not_changing": "Shared catalog, Compose, BFF binding, security, or orchestration files.",
     "owned_layer": "Source Ingestion runner execution, SourceRecord creation, readback verification"
   },
   "implementation_delivery": {
-    "anchor_commits": [
-      {
-        "bound_content_digest": "content-digest:sha256:f7f7072517f1354616308b88f648ead4f973ef43",
-        "delivery_state": "in_progress",
-        "receipt_role": "current_delivery_receipt",
-        "sha": "f7f7072517f1354616308b88f648ead4f973ef43",
-        "subject": "L12-MIN-SRC-20260808: prove source ingestion tick and readback"
-      }
-    ],
+    "anchor_commits": [],
     "pull_request": {
       "base": "dev",
-      "head_sha": "f7f7072517f1354616308b88f648ead4f973ef43",
+      "head_sha": "5d55ca7dd368a9123f92d0efa50c724e235be33b",
       "number": 4672,
       "url": "https://github.com/ajoe734/pantheon/pull/4672"
     },
     "pull_requests": [
       {
         "base": "dev",
-        "head_sha": "f7f7072517f1354616308b88f648ead4f973ef43",
+        "head_sha": "5d55ca7dd368a9123f92d0efa50c724e235be33b",
         "number": 4672,
         "url": "https://github.com/ajoe734/pantheon/pull/4672"
       }
     ],
-    "required_checks": [
-      {
-        "conclusion": "success",
-        "event": "pull_request",
-        "head_sha": "f7f7072517f1354616308b88f648ead4f973ef43",
-        "jobs": {
-          "Commit trailers": "success",
-          "Runtime mirror guard": "success",
-          "Smoke acceptance": "success"
-        },
-        "run_id": 30500000000,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30500000000",
-        "workflow": "Commit trailers"
-      },
-      {
-        "conclusion": "success",
-        "event": "pull_request",
-        "head_sha": "f7f7072517f1354616308b88f648ead4f973ef43",
-        "jobs": {
-          "Commit trailers": "success",
-          "Runtime mirror guard": "success",
-          "Smoke acceptance": "success"
-        },
-        "run_id": 30500000000,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30500000000",
-        "workflow": "Runtime mirror guard"
-      },
-      {
-        "conclusion": "success",
-        "event": "pull_request",
-        "head_sha": "f7f7072517f1354616308b88f648ead4f973ef43",
-        "jobs": {
-          "Commit trailers": "success",
-          "Runtime mirror guard": "success",
-          "Smoke acceptance": "success"
-        },
-        "run_id": 30500000000,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30500000000",
-        "workflow": "Smoke acceptance"
-      }
-    ]
+    "required_checks": []
   },
   "validation": {
     "commands": [
@@ -141,13 +95,13 @@
       },
       {
         "claim_scope": "current",
-        "command": "/tmp/pantheon-worker-worktrees/pantheon/l12-min-src-20260808/.venv-pantheon/bin/python3 -m pytest -v services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py",
-        "conclusion": "1 passed",
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/l12-min-src-20260808/.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRegistryFailureIsTruthful::test_existing_draft_with_conflicting_lineage_is_not_terminal",
+        "conclusion": "2 passed (order-sensitive regression resolved)",
         "result": "pass"
       }
     ],
-    "validated_at": "2026-08-09T19:17:12Z",
-    "validated_head_sha": "content-digest:sha256:88df414afd601d48da0af135de462d5da607d8e66b3c8b7bd150e88afe362ffd"
+    "validated_at": "2026-08-10T02:08:00Z",
+    "validated_head_sha": "5d55ca7dd368a9123f92d0efa50c724e235be33b"
   },
   "deployment": {
     "applicable": false,
@@ -279,10 +233,10 @@
       "description": "Canonical snapshot sequence 2191 is current for this cut."
     },
     "delivery_receipt_intermediate_state": {
-      "description": "Delivery receipt f7f7072517f1354616308b88f648ead4f973ef43 is in progress during task review."
+      "description": "Delivery receipt 5d55ca7dd368a9123f92d0efa50c724e235be33b is in progress during task review."
     },
     "independent_review": {
-      "description": "Independent review by Codex2 on exact head f7f7072517f1354616308b88f648ead4f973ef43 is pending."
+      "description": "Independent review by Codex2 on exact head 5d55ca7dd368a9123f92d0efa50c724e235be33b is pending."
     }
   },
   "integrity": {
@@ -300,8 +254,8 @@
     "self_hash_omitted": true,
     "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      ".orchestrator/task-briefs/l12_min_src_20260808.md": "a6720c1465a7ff6b643ab057508a7b4ef4dbc71c15e1be653f79b4b624ca7cd3",
-      "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py": "1916dbc6862885bf009ccc425f67c1362449ce1d3b23872e82f42a7d727ff90c"
+      "services/source_ingestion/requirements.txt": "7528ed4859599ba028a109a04ac4d2cb009c904afd9ad98f09ec3ed97034d265",
+      "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py": "9c03bb1776a3b3a3f6690f118212bcfeb95c25d9127095db1af7f57ac1ee6664"
     }
   },
   "record_log": [
@@ -321,6 +275,24 @@
       "reference": "https://github.com/ajoe734/pantheon/pull/4672",
       "sequence": 2,
       "sha": "5c18d51e8a2da637e941caeb1c171a8a71c33eef",
+      "status": "pass"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-10T01:53:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4672",
+      "sequence": 3,
+      "sha": "38f837d4ce12d048c73540a25c522a3fcd401433",
+      "status": "pass"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-10T02:08:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4672",
+      "sequence": 4,
+      "sha": "5d55ca7dd368a9123f92d0efa50c724e235be33b",
       "status": "pass"
     }
   ]
