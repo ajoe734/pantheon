@@ -8,162 +8,163 @@ Current reviewer: `Claude`
 
 Review decision: **pending**
 
-Current delivery state: **blocked at same-commit rollback non-alias preflight;
-no mutation performed**
+Current delivery state: **blocked at distinct rollback destination preflight;
+no live mutation performed**
 
 ## Outcome first
 
-The alias guard from PR #4430 is present in the bytes used by the live
-supervisor, but the governed runtime promotion task is not yet safe to close.
+The exact accepted `origin/dev` candidate is prepared and clean, and every
+runtime-health, projection, lease, duplicate-task, and provider gate is green.
+The live supervisor still cannot be promoted safely.
 
-The current live process is the sole supervisor PID `1393542`. Its argv
-executes
-`command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259/.orchestrator/supervisor.py`,
-while its cwd is the mutable `/home/lupin/pantheon-ci-deploy/dev-root`. The
-entrypoint checkout has since advanced to `0305c861...`, so its directory
-basename no longer matches its Git HEAD.
-
-The split-entrypoint helper merged through PR #4724 and now captures this
-legacy process layout. The next read-only preparation gate failed before the
-admission lock, config, signal, launch, or rollback because the immutable
-rollback materializer reused the clean candidate directory:
+Bootstrap preparation stops before the promotion lock, runtime-admission lock,
+restart intent, config write, signal, launch, or rollback launch:
 
 ```text
-ValueError: Candidate runtime equals the rollback runtime
+ValueError: Fresh rollback runtime destination already exists:
+/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a
 ```
 
-No restart, TERM, launch, config writer, canonical state edit, queue edit, or
-provider change was performed.
+PR #4726 correctly removed cross-root same-SHA reuse. The existing `0305c861…`
+checkout is not the same path/device/inode as the captured mutable incumbent
+`dev-root`, so it cannot be guessed as rollback merely because commit and tree
+match.
 
-## What changed since the 2026-08-01 evidence
+No config writer, `sync-dev-root.sh`, process signal, service restart,
+canonical state edit, queue edit, provider change, or scheduler change ran.
 
-The old evidence correctly preserved the deleted-cwd incident, Human/Ops
-rescue, temporary target process, and later watchdog fallback. It is retained
-in
-[`raw/revalidation-preflight-20260801T150539Z.json`](raw/revalidation-preflight-20260801T150539Z.json)
-as incident history, but its live readback is stale.
-
-The former rollback-helper blocker is resolved:
-
-| Dependency | Current durable result |
-|---|---|
-| `SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801` | done / completed |
-| `SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801` | done / completed |
-| `SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802` | done / completed |
-| `SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802` | done / completed |
-
-The split-root blocker is now resolved by PR #4724 (reviewed head
-`6920db97...`, merge `8b77e779...`). The current blocker is narrower: candidate
-and incumbent share accepted commit `0305c861...`, and rollback materialization
-must still choose a distinct immutable path.
-
-## Exact newer accepted candidate
-
-The clean current candidate is:
+## Exact accepted candidate
 
 | Field | Exact value |
 |---|---|
-| Root | `/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a` |
-| HEAD | `0305c861f54c4082060120afdfbc012622e5ac0a` |
-| Tree | `249eecac3a5a1a3eb41e80006afee566bfabdd92` |
+| Root | `/home/lupin/pantheon-ci-deploy/command-runtimes/37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d` |
+| HEAD | `37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d` |
+| Tree | `231c719f5c7a1c774532983901046f1fefb40444` |
 | Origin | `https://github.com/ajoe734/pantheon.git` |
 | Status | clean |
 | Basename = HEAD | true |
-| Accepted `origin/dev` | true |
-| PR #4430 merge `012dab969...` is ancestor | true |
+| Accepted `origin/dev` | exact |
+| Immutable command-root validation | passed |
 
-The live entrypoint, clean candidate, and `origin/dev` supervisor source all
-have Git blob `4a6136f28ec2a23f77ca3060b0cdec279005b129`. This proves
-the running source bytes include the guard even though the incumbent root
-identity is not acceptable for a transaction.
+The alias guard merge `012dab969…` is an ancestor. The live entrypoint,
+previous clean `0305c861…` runtime, and exact-tip candidate all have supervisor
+blob `4a6136f2…`; the running bytes include the guard.
 
-The live implementation of `known_agent_display_names` excludes dispatch
-slots, empty names, and display names containing `legacy alias`. The four
-tests introduced by PR #4430 pass against the current composed source:
+Creating this immutable checkout did not switch the live runtime. The live
+config hash remained
+`61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea`
+before and after preparation.
 
-```text
-.venv-pantheon/bin/python3 -m pytest -q \
-  .orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_known_agent_display_names_filters_legacy_aliases \
-  .orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reassign_after_worker_failure_never_assigns_legacy_alias \
-  .orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reassignment_with_legacy_alias_config_uses_real_persist_task_reassignment \
-  .orchestrator/test_supervisor.py::WorkerReassignmentTests::test_normalize_mainline_task_assignment_never_assigns_legacy_alias
+## Source verification
 
-4 passed in 1.78s
-```
+The source chain is:
 
-## Current read-only preflight
+- alias guard: PR #4430, merge `012dab969…`;
+- split mutable cwd/entrypoint capture: PR #4724, merge `8b77e779…`;
+- cross-root same-SHA non-alias guard: PR #4726, reviewed head `51eb129f…`,
+  merge `37ee6c5d…`.
 
-The regular `--discover-only` probe ran from the clean SHA-named
-`8b77e779...` helper runtime. It reconfirmed candidate identity, runtime health,
-projection equality, lease parity, provider readiness, and the expected legacy
-split-layout rejection because that CLI mode deliberately does not enable
-`--bootstrap-mutable-incumbent`.
+Local source verification passed:
 
-To preserve gate-before-switch semantics, the same merged backend then ran only
-its preparation stage with `bootstrap_mutable_incumbent=True` against the clean
-exact `0305c861...` candidate. This stage does not acquire the runtime-admission
-lock, record restart intent, write config, signal, or launch a process.
+- full `scripts/test_promote_supervisor_runtime.py`: `329 passed in 69.70s`;
+- four PR #4430 alias-guard focused tests: `4 passed in 1.85s`.
 
-The merged split-root code advanced past legacy incumbent capture. It then
-resolved the rollback checkout to the same
-`command-runtimes/0305c861...` directory as the candidate and failed its
-explicit non-alias guard:
+## Fresh exact-tip discover-only result
 
-```text
-ValueError: Candidate runtime equals the rollback runtime
-```
+The exact-tip probe completed at `2026-08-10T18:03:30.514208Z` against the
+live config. It made no writes and returned ineligible, as expected for the
+legacy split process layout.
 
-Passing gates from the regular probe plus the bootstrap capture:
+Passing invariants:
 
-- clean SHA-named candidate identity and accepted-dev ancestry;
-- readable config and canonical state files;
-- healthy running supervisor, PID alive, and singleton lock held;
-- authoritative projection `ok=true`, `caught_up=true`, no error, with
-  equal `471709bb...` projected and expected hashes;
+- immutable exact-tip candidate identity;
+- readable live config and canonical state;
+- healthy singleton supervisor with PID lock held;
+- authoritative projection caught up with equal `bb6de6a0…` hashes;
 - fresh loop sequence;
 - worker/queue/worktree-lease parity with no duplicate active workers;
-- readiness for active providers `codex1-2` and `codex2-1`;
-- no orphaned in-progress task.
+- required provider readiness;
+- no orphaned in-progress tasks.
 
-Failing gates:
+The only regular discover-only failures were the expected split-layout pair:
 
 | Gate | Result |
 |---|---|
-| Split incumbent capture | pass in bootstrap preparation |
-| Distinct immutable rollback runtime | fail: resolved rollback root aliases candidate |
-| Candidate and rollback launch contracts | blocked before derivation |
-| Eligible for promotion | false |
-| Safe to mutate | false |
+| incumbent process identity | `Captured live config does not bind the exact canonical supervisor entrypoint` |
+| governed launch contract | `Candidate/process identity is unavailable` |
 
-The live config SHA-256 was
-`61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea`
-before and after the readback. The historic 2026-07-31 hash
-`728a6d90...` is no longer current; this task does not rewrite current bytes
-to imitate the old baseline.
+The regular mode intentionally does not enable mutable-incumbent bootstrap.
+The separate prepare-only call is therefore the deciding pre-mutation gate.
 
-## Active blocker and resume gate
+## Bootstrap preparation result
 
-Canonical task
-`SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810` is complete and
-archived after PR #4724 merged as `8b77e779...`.
+`OSPromotionBackend.prepare(candidate, bootstrap_mutable_incumbent=True)`
+successfully captured the legacy split layout, then resolved the rollback
+commit and tree:
 
-The recommended narrow follow-up ID is
-`SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810`, with owner
-`Antigravity2` and reviewer `Codex2`. This worker could not admit that task:
-the governed active-lease guard correctly rejected a cross-task `assign` while
-this worker is leased to the live-promotion task. Human/Ops or the supervisor
-must create the source-only follow-up through the normal task packet path.
+| Identity | Root | Device / inode | HEAD |
+|---|---|---|---|
+| mutable incumbent cwd | `/home/lupin/pantheon-ci-deploy/dev-root` | `2049 / 1876888` | `0305c861…` |
+| live entrypoint root | `command-runtimes/5877b644…` | `2049 / 12655621` | checkout HEAD `0305c861…` |
+| occupied rollback destination | `command-runtimes/0305c861…` | `2049 / 13894090` | `0305c861…` |
+| candidate | `command-runtimes/37ee6c5d…` | `2049 / 6665320` | `37ee6c5d…` |
 
-This task may resume live rollout only after:
+The occupied rollback destination has tree `249eecac…`, but it is a different
+root and inode from the mutable snapshot. PR #4726 therefore rejects it. This
+is the safe behavior.
 
-1. the same-commit non-alias rollback follow-up is admitted, independently
-   reviewed, and merged to `dev`;
-2. regular discover-only gates remain green and read-only bootstrap preparation
-   returns distinct clean candidate/rollback roots with exact launch contracts;
-3. the governed `--promote --bootstrap-mutable-incumbent` transaction is run,
-   with automatic rollback on any failed postcheck;
-4. post-promotion readback proves one immutable supervisor, three fresh loops,
-   equal authoritative hashes, lease parity, provider readiness, and unchanged
+The archived PR #4711 task does not authorize reuse here. Its contract allows
+reuse only when the destination is the exact snapshot root with identical
+path/device/inode. Deleting, moving, overwriting, or accepting the sibling
+checkout would violate that reviewed contract.
+
+## No-mutation readback
+
+After prepare failed:
+
+- supervisor PID remained `1393542`;
+- process generation remained start ticks `21477145`;
+- cwd remained `/home/lupin/pantheon-ci-deploy/dev-root`;
+- entrypoint remained `command-runtimes/5877b644…/.orchestrator/supervisor.py`;
+- config SHA-256 remained `61c8aed0…`;
+- authoritative projection remained `ok=true`, `caught_up=true`, with equal
+  `bb6de6a0…` hashes;
+- no admission lock, restart intent, signal, candidate launch, or rollback
+  launch occurred.
+
+The original 2026-07-31 config hash `728a6d90…` is historical and was already
+not current before this dispatch. This worker preserved the exact current bytes
+instead of rewriting config to imitate that old baseline.
+
+Antigravity readiness also remains healthy: installed, authenticated, local
+CLI worker supported, and selected model `gemini-3.6-flash-low` (last probe
+`2026-08-10T17:52:01Z`). No provider configuration changed.
+
+## Blocker and resume gate
+
+Human/Ops or the supervisor must admit a narrow source-only follow-up that
+defines a collision-safe, descriptor-bound rollback destination when the
+commit-derived path is already occupied. This task does not invent or dispatch
+that task, and the follow-up must preserve PR #4726's cross-root same-SHA
+rejection.
+
+It must not solve the collision by deleting, moving, overwriting, or
+guess-reusing the existing `0305c861…` runtime.
+
+This live-promotion task may resume only after:
+
+1. the source-only follow-up is independently reviewed and merged;
+2. exact-tip discover-only health/projection/lease/provider gates remain green;
+3. prepare-only returns distinct immutable candidate and rollback roots plus
+   exact launch contracts;
+4. the governed `--promote --bootstrap-mutable-incumbent` transaction is then
+   allowed to run with automatic rollback;
+5. post-promotion readback proves one exact runtime, three fresh loops, equal
+   projection hashes, lease parity, provider readiness, and unchanged
    transaction-bound config bytes.
 
 Overall result: **blocked preflight, no live mutation**.
+
+Machine-readable details are in
+[`evidence.json`](evidence.json) and
+[`raw/resume-preflight-20260810T180330Z.json`](raw/resume-preflight-20260810T180330Z.json).

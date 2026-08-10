@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Promote merged alias reassignment guard into live supervisor runtime
-- Status: in_progress
+- Status: blocked
 - Owner: Codex
 - Reviewer: Claude
-- Next: Source-only rollback identity repair is canonically done via PR #4726 merge 37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d; return parent to supervisor dispatch for fresh discover-only preflight. Preserve all no-live-mutation gates until governed promotion admission.
+- Next: Exact-tip candidate 37ee6c5d is clean and regular discover-only gates pass except the expected legacy split-entrypoint pair. Bootstrap preparation then fails closed before admission/config/signal/launch because immutable rollback destination 0305c861 already exists at a different root/inode. Human/Ops or the supervisor must admit a source-only collision-safe rollback destination follow-up; do not delete, move, or guess-reuse the existing runtime.
 
 ## Summary
 Supervisor-dispatched Antigravity runtime promotion only. Expected branch task/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731, clean governed worktree, merge target dev. Owner capability: supervisor runtime deployment and readback. Reviewer capability: independent Human/Ops exact-head/runtime evidence validation.

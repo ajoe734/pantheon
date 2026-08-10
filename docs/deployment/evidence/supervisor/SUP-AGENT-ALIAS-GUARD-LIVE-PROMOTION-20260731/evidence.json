@@ -1,6 +1,7 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+  "title": "Promote merged alias reassignment guard into live supervisor runtime",
   "current_assignment": {
     "owner": "Codex",
     "reviewer": "Claude",
@@ -10,100 +11,100 @@
     "owner": "Antigravity",
     "reviewer": "Human/Ops"
   },
-  "delivery_state": "blocked_preflight_same_commit_rollback_alias",
-  "mutation_performed": false,
-  "promoted_target_commit": "012dab969455e7146f2437159d7d38fc5904a195",
-  "historical_evidence": {
-    "raw_sample": "raw/revalidation-preflight-20260801T150539Z.json",
-    "first_attempt_disposable_worktree_pid": 3497098,
-    "human_ops_rescue_commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
-    "temporary_target_pid": 3523046,
-    "watchdog_fallback_reason": "pid_not_alive",
-    "historical_disposition": "The 2026-08-01 blocked-preflight evidence is retained as incident history; it is not current live truth."
+  "delivery_state": "blocked_preflight_existing_rollback_destination",
+  "live_runtime_mutation_performed": false,
+  "immutable_candidate_prepared": true,
+  "artifact_files": [
+    "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.json",
+    "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.md",
+    "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/raw/resume-preflight-20260810T180330Z.json",
+    "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/raw/revalidation-preflight-20260801T150539Z.json"
+  ],
+  "source_chain": {
+    "alias_guard_pull_request": 4430,
+    "alias_guard_merge_commit": "012dab969455e7146f2437159d7d38fc5904a195",
+    "split_entrypoint_pull_request": 4724,
+    "split_entrypoint_merge_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
+    "same_commit_nonalias_pull_request": 4726,
+    "same_commit_nonalias_reviewed_head": "51eb129f72bac765b981a8aa42774e302f5e1b83",
+    "same_commit_nonalias_merge_commit": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+    "accepted_origin_dev_commit_at_preflight": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+    "alias_guard_is_candidate_ancestor": true,
+    "supervisor_source_blob": "4a6136f28ec2a23f77ca3060b0cdec279005b129",
+    "live_and_candidate_supervisor_blobs_equal": true
   },
   "resolved_historical_dependencies": [
     {
       "task_id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801",
-      "status": "done",
-      "terminal_outcome": "completed"
+      "status": "done"
     },
     {
       "task_id": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
-      "status": "done",
-      "terminal_outcome": "completed"
+      "status": "done"
     },
     {
       "task_id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802",
-      "status": "done",
-      "terminal_outcome": "completed"
+      "status": "done"
     },
     {
       "task_id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802",
-      "status": "done",
-      "terminal_outcome": "completed"
+      "status": "done"
     },
     {
       "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
       "status": "done",
-      "terminal_outcome": "completed",
       "pull_request": 4724,
-      "reviewed_head": "6920db97b1fbd6b78546a41f809fa1a6857f5f62",
       "merge_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e"
+    },
+    {
+      "task_id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
+      "status": "done",
+      "pull_request": 4726,
+      "merge_commit": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+      "durable_result": "Cross-root same-SHA rollback reuse is rejected before admission, config, signal, or launch."
     }
   ],
-  "selected_newer_accepted_candidate": {
-    "captured_at_utc": "2026-08-10T17:25:29Z",
-    "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
-    "head_commit": "0305c861f54c4082060120afdfbc012622e5ac0a",
-    "tracked_tree_identity": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
+  "selected_candidate": {
+    "captured_at_utc": "2026-08-10T18:03:30.514208Z",
+    "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+    "head_commit": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+    "tracked_tree_identity": "231c719f5c7a1c774532983901046f1fefb40444",
     "origin_url": "https://github.com/ajoe734/pantheon.git",
     "basename_matches_head": true,
     "git_status_clean": true,
     "accepted_origin_dev_commit": true,
-    "alias_guard_target_is_ancestor": true,
-    "supervisor_blob": "4a6136f28ec2a23f77ca3060b0cdec279005b129"
+    "validated_immutable_command_root": true,
+    "live_config_sha256_before_preparation": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
+    "live_config_sha256_after_preparation": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea"
   },
-  "merged_helper_runtime": {
-    "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/8b77e779efed6a3a8eea574969c4374a78e22c1e",
-    "head_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
-    "tracked_tree_identity": "7beef71ea781996c1798167dd15bd8bac7849868",
-    "origin_url": "https://github.com/ajoe734/pantheon.git",
-    "basename_matches_head": true,
-    "git_status_clean": true,
-    "purpose": "Execute the reviewed split-entrypoint promotion helper while retaining 0305c861 as the exact clean rollout candidate and dependency reproduction baseline."
-  },
-  "current_readback": {
-    "discover_only_started_at_utc": "2026-08-10T17:19:26Z",
-    "candidate_discover_only_completed_at_utc": "2026-08-10T17:19:38.273909Z",
-    "bootstrap_preparation_completed_at_utc": "2026-08-10T17:22:48Z",
-    "post_readback_config_check_at_utc": "2026-08-10T17:25:29Z",
+  "live_readback": {
+    "captured_through_utc": "2026-08-10T18:06:53Z",
     "live_config": {
       "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
       "sha256_before": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
       "sha256_after": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
       "size_bytes": 40110,
-      "mtime_utc": "2026-08-10T15:28:10.205973873Z",
       "device": 2049,
       "inode": 2205298,
       "original_2026_07_31_sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
       "original_hash_is_current": false,
-      "note": "The historical byte baseline is no longer current. This read-only attempt preserved the current bytes exactly and did not invoke a config writer."
+      "note": "The historical byte baseline changed before this dispatch. This task preserved the current bytes exactly and invoked no config writer."
     },
     "live_supervisor": {
       "process_count": 1,
-      "pid": 1393542,
-      "started_at_utc": "2026-08-10T15:28:44Z",
+      "pid_before": 1393542,
+      "pid_after": 1393542,
+      "start_ticks_before": 21477145,
+      "start_ticks_after": 21477145,
       "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "cwd_device": 2049,
+      "cwd_inode": 1876888,
       "entrypoint_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
       "cmdline": "/usr/bin/python3.12 -u -B /home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
+      "cwd_checkout_head": "0305c861f54c4082060120afdfbc012622e5ac0a",
       "entrypoint_checkout_head": "0305c861f54c4082060120afdfbc012622e5ac0a",
-      "entrypoint_checkout_tree": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
-      "entrypoint_basename_matches_head": false,
-      "entrypoint_supervisor_blob": "4a6136f28ec2a23f77ca3060b0cdec279005b129",
-      "entrypoint_bytes_equal_candidate": true,
-      "alias_guard_target_is_ancestor": true,
-      "last_heartbeat_at_utc": "2026-08-10T17:24:15Z",
-      "last_successful_loop_at_utc": "2026-08-10T17:24:15Z",
+      "tracked_tree_identity": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
+      "supervisor_blob": "4a6136f28ec2a23f77ca3060b0cdec279005b129",
       "last_loop_error": null
     },
     "authoritative_projection": {
@@ -111,36 +112,41 @@
       "ok": true,
       "caught_up": true,
       "last_error": null,
-      "event_count": 16002,
-      "projected_state_sha256": "471709bbcfd9e145033efac610ea73afdb9ce3b93cfbe6253855d21aa75f3310",
-      "expected_state_sha256": "471709bbcfd9e145033efac610ea73afdb9ce3b93cfbe6253855d21aa75f3310"
+      "event_count": 16023,
+      "projected_state_sha256": "bb6de6a0fd50f6355f5a421983f6ebeeadd48a01a1487fdf6ab84de31b339083",
+      "expected_state_sha256": "bb6de6a0fd50f6355f5a421983f6ebeeadd48a01a1487fdf6ab84de31b339083"
     },
-    "worker_queue_and_provider_preflight": {
-      "worker_records": 15,
+    "worker_queue_preflight": {
+      "worker_records": 14,
       "queue_events": 2,
-      "worktree_leases": 30,
+      "worktree_leases": 29,
       "duplicate_active_workers": [],
-      "parity_reasons": [],
-      "active_providers_required": [
-        "codex1-2",
-        "codex2-1"
-      ],
-      "required_provider_readiness_reasons": []
+      "parity_reasons": []
     },
-    "alias_guard_source_proof": {
-      "merge_commit": "012dab969455e7146f2437159d7d38fc5904a195",
-      "merge_subject": "SUP-AGENT-ALIAS-REASSIGN-GUARD-20260731: guard canonical identity (#4430)",
-      "live_behavior": "known_agent_display_names excludes dispatch slots, empty display names, and display names containing legacy alias.",
-      "focused_tests": {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_known_agent_display_names_filters_legacy_aliases .orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reassign_after_worker_failure_never_assigns_legacy_alias .orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reassignment_with_legacy_alias_config_uses_real_persist_task_reassignment .orchestrator/test_supervisor.py::WorkerReassignmentTests::test_normalize_mainline_task_assignment_never_assigns_legacy_alias",
-        "result": "4 passed in 1.78s"
-      }
+    "provider_readiness": {
+      "provider": "antigravity",
+      "installed": true,
+      "auth_ready": true,
+      "local_cli_worker_supported": true,
+      "selected_model": "gemini-3.6-flash-low",
+      "last_auth_probe_at_utc": "2026-08-10T17:52:01Z"
     }
   },
+  "verification": {
+    "promotion_helper_tests": {
+      "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA -u PANTHEON_WORKTREE_ROOT -u ORCH_WORKSPACE_PATH PYTHONDONTWRITEBYTECODE=1 .venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
+      "result": "329 passed in 69.70s"
+    },
+    "alias_guard_focused_tests": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q <four PR #4430 alias guard tests>",
+      "result": "4 passed in 1.85s"
+    },
+    "immutable_candidate_validation": "passed",
+    "config_hash_preservation": "passed"
+  },
   "discover_only_result": {
-    "helper_source_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
-    "candidate_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
-    "captured_at_utc": "2026-08-10T17:19:38.273909Z",
+    "timestamp_utc": "2026-08-10T18:03:30.514208Z",
+    "candidate_commit": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
     "eligible_for_promotion": false,
     "safe_to_mutate": false,
     "passing_invariants": [
@@ -165,18 +171,25 @@
         "name": "governed_supervisor_launch_contract_immutable",
         "error": "Candidate/process identity is unavailable"
       }
-    ]
+    ],
+    "interpretation": "The two failures are the regular discover-only mode's expected rejection of the legacy split cwd/entrypoint layout. Bootstrap preparation must independently prove the split layout before any promotion."
   },
   "bootstrap_preparation_result": {
-    "mode": "read_only_backend_prepare",
-    "helper_source_commit": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
-    "candidate_commit": "0305c861f54c4082060120afdfbc012622e5ac0a",
+    "mode": "OSPromotionBackend.prepare_bootstrap_only",
+    "candidate_commit": "37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+    "candidate_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
     "bootstrap_mutable_incumbent": true,
     "split_entrypoint_capture": "passed_before_failure",
-    "candidate_and_incumbent_accepted_dev_tip_match": true,
-    "rollback_materialization": "failed_non_alias_requirement",
     "resolved_rollback_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
-    "error": "Candidate runtime equals the rollback runtime",
+    "resolved_rollback_head": "0305c861f54c4082060120afdfbc012622e5ac0a",
+    "resolved_rollback_tree": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
+    "resolved_rollback_device": 2049,
+    "resolved_rollback_inode": 13894090,
+    "mutable_incumbent_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "mutable_incumbent_device": 2049,
+    "mutable_incumbent_inode": 1876888,
+    "error": "Fresh rollback runtime destination already exists: /home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
+    "prepared": false,
     "admission_lock_acquired": false,
     "restart_intent_recorded": false,
     "config_write_performed": false,
@@ -185,32 +198,32 @@
     "rollback_launched": false
   },
   "current_blocker": {
-    "recommended_follow_up_task_id": "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810",
-    "task_admission": "not_created_active_lease_guard",
-    "waiting_for": "Human/Ops",
-    "recommended_owner": "Antigravity2",
-    "recommended_reviewer": "Codex2",
-    "reason": "The merged helper now captures the legacy split cwd and entrypoint roots but reuses the standard 0305c861 candidate directory as rollback when candidate and incumbent share the accepted commit. Preparation then fails its own non-alias guard. This worker is leased to the live-promotion task and the governed status command correctly rejected cross-task creation."
+    "waiting_for": "Human/Ops or supervisor dispatch",
+    "reason": "The accepted PR #4726 guard correctly rejects reusing an existing same-SHA checkout when it is not the exact captured mutable root/device/inode. The SHA-derived rollback destination 0305c861 already exists as a sibling immutable checkout, so bootstrap preparation cannot materialize a distinct rollback identity.",
+    "required_follow_up": "Admit a narrow source-only task that defines and proves a collision-safe, descriptor-bound rollback destination for an already-occupied commit path while preserving cross-root same-SHA rejection. Do not delete, move, overwrite, or guess-reuse the existing 0305c861 runtime.",
+    "task_id_proposed": false,
+    "why_existing_task_does_not_apply": "Archived task SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810 permits reuse only when destination path/device/inode is the exact mutable snapshot root; those identities differ here."
   },
   "resume_gate": [
-    "Human/Ops or the supervisor admits a narrow source-only same-commit non-alias rollback follow-up and its exact-head fix is reviewed and merged to dev.",
-    "A new regular discover-only run preserves candidate, projection, worker/queue, provider, and config gates; a read-only bootstrap preparation also returns a distinct clean immutable rollback root plus exact candidate and rollback launch contracts.",
-    "Only then may this task invoke the governed --promote --bootstrap-mutable-incumbent transaction and require automatic rollback on any failed postcheck.",
+    "A governed source-only follow-up is admitted, independently reviewed, merged to dev, and preserves all existing candidate, process, config, admission, projection, lease, provider, and rollback gates.",
+    "A fresh exact-tip discover-only run repeats the green health/projection/lease/provider gates.",
+    "Bootstrap preparation returns distinct immutable candidate and rollback roots plus exact candidate and rollback launch contracts without deleting or rewriting an existing runtime.",
+    "Only then may this task invoke --promote --bootstrap-mutable-incumbent and require automatic rollback on any failed postcheck.",
     "Post-promotion evidence must prove the new immutable runtime, three fresh loops, equal authoritative projection hashes, lease parity, provider readiness, and unchanged transaction-bound config bytes."
   ],
   "acceptance_result": {
     "alias_guard_source_present_in_live_entrypoint": "pass",
-    "clean_newer_accepted_candidate": "pass",
-    "config_unchanged_during_current_readback": "pass",
+    "clean_exact_tip_candidate": "pass",
+    "config_unchanged_during_candidate_preparation_and_preflight": "pass",
     "single_supervisor_discovery": "pass",
     "authoritative_projection_equal": "pass",
     "provider_readiness": "pass",
     "worker_queue_lease_safety": "pass",
-    "immutable_incumbent_identity": "pass_in_bootstrap_preparation",
-    "distinct_immutable_rollback_runtime": "fail",
+    "split_incumbent_capture": "pass_before_rollback_failure",
+    "distinct_immutable_rollback_runtime": "blocked_existing_destination",
     "governed_launch_contract": "blocked_before_derivation",
     "transactional_live_promotion": "not_run",
     "three_fresh_post_promotion_loops": "not_run",
-    "overall": "blocked_preflight_no_mutation"
+    "overall": "blocked_preflight_no_live_mutation"
   }
 }
