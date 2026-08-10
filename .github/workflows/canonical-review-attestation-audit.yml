@@ -1,0 +1,177 @@
+name: Canonical Review Attestation Audit
+
+# This repository workflow is diagnostic only. It has no check-write
+# permission and must never be configured as the canonical required check:
+# every repository workflow runs as the generic github-actions App and can be
+# imitated by candidate code. The merge-authoritative check is issued by a
+# dedicated external GitHub App whose installation token is unavailable to
+# repository Actions and shared owner credentials.
+#
+# Before any checkout, every event path accepts only dev/master and captures
+# the immutable base SHA. Candidate code is never checked out or executed.
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+      - edited
+  issue_comment:
+    types:
+      - created
+      - edited
+      - deleted
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Open PR whose exact head must be re-evaluated"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  discover:
+    name: Discover PR heads to evaluate
+    if: >-
+      github.event_name != 'issue_comment' ||
+      github.event.issue.pull_request != null
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EVENT_PR_NUMBER: >-
+        ${{ github.event.pull_request.number ||
+            github.event.issue.number ||
+            inputs.pr_number }}
+    outputs:
+      pr_numbers: ${{ steps.discover.outputs.pr_numbers }}
+
+    steps:
+      - name: Resolve event PR or scheduled open PRs
+        id: discover
+        shell: bash
+        run: |
+          set -euo pipefail
+          numbers_file="$RUNNER_TEMP/canonical-review-pr-numbers.txt"
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+              --jq '.[] | select(.base.ref == "dev" or .base.ref == "master") | .number' \
+              > "$numbers_file"
+          else
+            if [[ ! "$EVENT_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+              echo "PR number must be a positive integer" >&2
+              exit 1
+            fi
+            printf '%s\n' "$EVENT_PR_NUMBER" > "$numbers_file"
+          fi
+          pr_numbers="$(
+            jq -Rsc \
+              'split("\n") | map(select(length > 0) | tonumber) | unique' \
+              "$numbers_file"
+          )"
+          echo "pr_numbers=$pr_numbers" >> "$GITHUB_OUTPUT"
+
+  evaluate:
+    name: Audit signed canonical review (not required issuer)
+    needs:
+      - discover
+    if: needs.discover.outputs.pr_numbers != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        pr_number: ${{ fromJSON(needs.discover.outputs.pr_numbers) }}
+    concurrency:
+      group: canonical-review-${{ github.repository }}-${{ matrix.pr_number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ matrix.pr_number }}
+
+    steps:
+      - name: Capture and validate exact PR base and head
+        id: snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "PR number must be a positive integer" >&2
+            exit 1
+          fi
+          pr_json="$RUNNER_TEMP/canonical-review-pr.json"
+          comments_json="$RUNNER_TEMP/canonical-review-comments.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$pr_json"
+          base_ref="$(jq -r '.base.ref // empty' "$pr_json")"
+          base_sha="$(jq -r '.base.sha // empty' "$pr_json")"
+          base_repository="$(jq -r '.base.repo.full_name // empty' "$pr_json")"
+          head_sha="$(jq -r '.head.sha // empty' "$pr_json")"
+          if [[ "$base_ref" != "dev" && "$base_ref" != "master" ]]; then
+            echo "Untrusted PR base '$base_ref'; only dev or master is allowed" >&2
+            exit 1
+          fi
+          if [[ "$base_repository" != "$GITHUB_REPOSITORY" ]]; then
+            echo "PR base repository does not match $GITHUB_REPOSITORY" >&2
+            exit 1
+          fi
+          if [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ || ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "GitHub did not return an exact PR base/head identity" >&2
+            exit 1
+          fi
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq '.[]' \
+            > "$comments_json"
+          {
+            echo "base_ref=$base_ref"
+            echo "base_sha=$base_sha"
+            echo "head_sha=$head_sha"
+            echo "pr_json=$pr_json"
+            echo "comments_json=$comments_json"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout trusted base-branch verifier
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.snapshot.outputs.base_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Evaluate exact-head signed attestation for diagnostics
+        id: evaluate
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/git/canonical_review_check.py check \
+            --repository "$GITHUB_REPOSITORY" \
+            --pr-json "${{ steps.snapshot.outputs.pr_json }}" \
+            --comments-json "${{ steps.snapshot.outputs.comments_json }}" \
+            --trusted-keys-file .github/canonical-review-keys.json \
+            --result-file "$RUNNER_TEMP/canonical-review-result.json"
+          checker_rc=$?
+          set -e
+          if [[ "$checker_rc" -ne 0 && "$checker_rc" -ne 1 ]]; then
+            checker_rc=1
+          fi
+          result_json="$RUNNER_TEMP/canonical-review-result.json"
+          if [[ ! -s "$result_json" ]]; then
+            jq -n \
+              --arg check_name "Pantheon canonical reviewer attestation" \
+              '{
+                check_name: $check_name,
+                conclusion: "failure",
+                reason: "checker_result_missing",
+                title: "Canonical review checker failed closed",
+                summary: "The trusted verifier produced no result."
+              }' > "$result_json"
+          fi
+          jq -r '"diagnostic \(.conclusion): \(.title) — \(.summary)"' \
+            "$result_json" >> "$GITHUB_STEP_SUMMARY"
+          exit "$checker_rc"

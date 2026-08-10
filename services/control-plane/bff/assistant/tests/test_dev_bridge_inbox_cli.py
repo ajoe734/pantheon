@@ -2,12 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
+from .. import dev_bridge_inbox
+from ..dev_bridge_inbox import (
+    drain_task_packet_inbox,
+    queue_task_packet,
+    recover_failed_task_packet,
+)
 from ..dev_bridge_models import BridgeActor, BridgeTask, DevTaskPacket
-from ..dev_bridge_signer import sign_packet
+from ..dev_bridge_models import BridgeDispatchResult, TaskDispatchRecord
+from ..dev_bridge_signer import packet_digest, sign_packet
 from .dev_bridge_test_support import write_materializing_ai_status
 
 
@@ -44,6 +53,86 @@ def _write_fake_repo(tmp_path: Path) -> Path:
     repo_root.mkdir()
     write_materializing_ai_status(repo_root)
     return repo_root
+
+
+def _drain_as_failed(
+    repo_root: Path,
+    packet: DevTaskPacket,
+    *,
+    error: str,
+    dispatched_at: str,
+) -> Path:
+    failed_result = BridgeDispatchResult(
+        packetId=packet.packet_id,
+        dispatchedAt=dispatched_at,
+        taskRecords=[
+            TaskDispatchRecord(
+                taskId=task.id,
+                owner=task.owner,
+                reviewer=task.reviewer,
+                status="error",
+                error=error,
+            )
+            for task in packet.tasks
+        ],
+        auditRefs={
+            "packetId": packet.packet_id,
+            "packetDigest": packet_digest(packet),
+        },
+        admissionStatus="not_attempted",
+        errors=[error],
+    )
+    with patch.object(
+        dev_bridge_inbox,
+        "dispatch_task_packet",
+        return_value=failed_result,
+    ):
+        drained = drain_task_packet_inbox(repo_root=str(repo_root))
+    assert drained["errorCount"] == 1
+    failed = (
+        repo_root
+        / ".orchestrator"
+        / "assistant-dev-packets"
+        / "failed"
+        / f"{packet.packet_id}.json"
+    )
+    assert failed.is_file()
+    return failed
+
+
+def _copy_cli_to_isolated_worktree(tmp_path: Path, script: Path) -> tuple[Path, Path]:
+    worktree_root = tmp_path / "isolated-worktree"
+    worktree_script = worktree_root / "scripts" / script.name
+    worktree_script.parent.mkdir(parents=True)
+    shutil.copy2(script, worktree_script)
+    return worktree_root, worktree_script
+
+
+def _isolated_worktree_env(repo_root: Path) -> dict[str, str]:
+    bff_dir = REPO_ROOT / "services" / "control-plane" / "bff"
+    inherited_pythonpath = os.environ.get("PYTHONPATH")
+    env = {
+        **os.environ,
+        "BRIDGE_SIGNING_KEY": TEST_KEY.hex(),
+        "PANTHEON_STATUS_ROOT": str(repo_root),
+        "PYTHONPATH": os.pathsep.join(
+            part for part in (str(bff_dir), inherited_pythonpath) if part
+        ),
+    }
+    for name in (
+        "PANTHEON_COMMAND_ROOT",
+        "PANTHEON_COMMAND_RUNTIME_SHA",
+        "PANTHEON_COMMAND_REMOTE",
+        "PANTHEON_COMMAND_BASE_REF",
+        "PANTHEON_STATUS_COMMAND_ROOT",
+        "PANTHEON_STATUS_COMMAND_SHA",
+        "PANTHEON_STATUS_COMMAND_REMOTE",
+        "PANTHEON_STATUS_COMMAND_BASE_REF",
+        "PANTHEON_TASK_STATE_STORE_MODE",
+        "PANTHEON_TASK_STATE_EVENT_LOG",
+    ):
+        env.pop(name, None)
+    return env
 
 
 def test_queue_cli_accepts_dev_docs_generate_envelope(tmp_path: Path) -> None:
@@ -114,6 +203,72 @@ def test_drain_cli_materializes_queued_packet(tmp_path: Path) -> None:
     assert body["processedCount"] == 1
     assert body["packets"][0]["packetId"] == "pkt_inbox_cli_drain"
     assert "INBOX-CLI-TASK-001" in (repo_root / "assigned.txt").read_text(encoding="utf-8")
+
+
+def test_queue_cli_uses_status_root_when_invoked_from_isolated_worktree(tmp_path: Path) -> None:
+    repo_root = _write_fake_repo(tmp_path)
+    worktree_root, worktree_script = _copy_cli_to_isolated_worktree(tmp_path, QUEUE_SCRIPT)
+    signed = sign_packet(_make_packet("pkt_inbox_cli_status_root_queue"), key_store={"assistant-bridge-dev": TEST_KEY})
+    packet_path = tmp_path / "queue-packet.json"
+    packet_path.write_text(
+        json.dumps({"taskPacket": signed.model_dump(mode="json", by_alias=True)}),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(worktree_script), "--packet-file", str(packet_path)],
+        cwd=str(worktree_root),
+        env=_isolated_worktree_env(repo_root),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body["inbox"] == str(repo_root / ".orchestrator" / "assistant-dev-packets")
+    assert (repo_root / ".orchestrator" / "assistant-dev-packets" / "pending" / "pkt_inbox_cli_status_root_queue.json").exists()
+    assert not (worktree_root / ".orchestrator").exists()
+
+
+def test_drain_cli_uses_status_root_when_invoked_from_isolated_worktree(tmp_path: Path) -> None:
+    repo_root = _write_fake_repo(tmp_path)
+    worktree_root, worktree_script = _copy_cli_to_isolated_worktree(tmp_path, DRAIN_SCRIPT)
+    signed = sign_packet(_make_packet("pkt_inbox_cli_status_root_drain"), key_store={"assistant-bridge-dev": TEST_KEY})
+    packet_path = tmp_path / "drain-packet.json"
+    packet_path.write_text(
+        json.dumps({"taskPacket": signed.model_dump(mode="json", by_alias=True)}),
+        encoding="utf-8",
+    )
+    env = _isolated_worktree_env(repo_root)
+    queue_result = subprocess.run(
+        [
+            sys.executable,
+            str(QUEUE_SCRIPT),
+            "--packet-file",
+            str(packet_path),
+            "--repo-root",
+            str(repo_root),
+        ],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert queue_result.returncode == 0, queue_result.stderr
+
+    result = subprocess.run(
+        [sys.executable, str(worktree_script), "--limit", "1"],
+        cwd=str(worktree_root),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body["processedCount"] == 1
+    assert "INBOX-CLI-TASK-001" in (repo_root / "assigned.txt").read_text(encoding="utf-8")
+    assert not (worktree_root / ".orchestrator").exists()
 
 
 def test_queue_cli_serializes_concurrent_writers(tmp_path: Path) -> None:
@@ -201,3 +356,66 @@ def test_drain_cli_serializes_concurrent_drainers(tmp_path: Path) -> None:
     assert [path.name for path in processed.glob("*.json")] == [
         "pkt_inbox_cli_drain_concurrent.json"
     ]
+
+
+def test_drain_cli_rearms_a_recovered_packet_after_a_new_failed_drain(
+    tmp_path: Path,
+) -> None:
+    repo_root = _write_fake_repo(tmp_path)
+    packet = sign_packet(
+        _make_packet("pkt_inbox_cli_rearm"),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+    queue_task_packet(
+        packet,
+        repo_root=str(repo_root),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+    _drain_as_failed(
+        repo_root,
+        packet,
+        error="injected initial CLI recovery failure",
+        dispatched_at="2026-08-09T08:10:00Z",
+    )
+    recover_failed_task_packet(
+        packet.packet_id,
+        repo_root=str(repo_root),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+    failed = _drain_as_failed(
+        repo_root,
+        packet,
+        error="injected recovered-packet CLI drain failure",
+        dispatched_at="2026-08-09T08:11:00Z",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(DRAIN_SCRIPT),
+            "--repo-root",
+            str(repo_root),
+            "--recover-failed-packet-id",
+            packet.packet_id,
+        ],
+        cwd=str(REPO_ROOT),
+        env=_isolated_worktree_env(repo_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    evidence_path = (
+        failed.parent.parent
+        / "recovery-rearms"
+        / failed.stem
+        / "000001.json"
+    )
+    assert body["status"] == "rearmed"
+    assert body["rearmAttempt"] == 1
+    assert body["rearmEvidencePath"] == str(evidence_path)
+    assert evidence_path.is_file()
+    assert not failed.exists()
+    assert (failed.parent.parent / "pending" / failed.name).is_file()

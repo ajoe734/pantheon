@@ -1,0 +1,81 @@
+{
+  "task_id": "SUP-L12-FLEET-BOOTSTRAP-ROOT-COHERENCE-GATE-20260801",
+  "task_title": "Gate fleet bootstrap on exact runtime root coherence",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "timestamp": "2026-08-06T14:59:30Z",
+  "verification_results": {
+    "acceptance_1_supervisor_process_binding": {
+      "status": "PASSED",
+      "command": "ps aux | grep supervisor | grep -v grep",
+      "details": "Verified exactly one supervisor process running bound to /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json with runtime SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745."
+    },
+    "acceptance_2_source_and_runner_root": {
+      "status": "PASSED",
+      "command": "cat /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json; git -C /home/lupin/pantheon-ci-deploy/dev-root merge-base --is-ancestor f90e0aae6cb5e86f18b20db9f30bc834f6115745 origin/dev",
+      "details": "Supervisor source root & runner root are set to /home/lupin/pantheon-ci-deploy/dev-root (ancestor of origin/dev). Note: live config contains no explicit source_root key."
+    },
+    "acceptance_3_command_root_coherence": {
+      "status": "FAILED",
+      "command": "echo PANTHEON_COMMAND_ROOT=$PANTHEON_COMMAND_ROOT",
+      "details": "PANTHEON_COMMAND_ROOT=/home/lupin/pantheon-ci-deploy/dev-root is not under a content-addressed command-runtimes/<40-hex> directory."
+    },
+    "acceptance_4_worker_worktree_source_root": {
+      "status": "FAILED",
+      "command": "python3 -c 'import json, glob; print(sum(1 for f in glob.glob(\"/home/lupin/pantheon/.orchestrator/worker-runtime/status/*.json\") if \"workspace_source_root\" in json.load(open(f))))'",
+      "details": "live-supervisor-mainroot-config.json lacks explicit worker_worktrees.source_root key. Additionally, 0 out of 3272 worker status records in /home/lupin/pantheon/.orchestrator/worker-runtime/status/ contain workspace_source_root."
+    },
+    "acceptance_5_status_root_isolation": {
+      "status": "FAILED",
+      "command": "git rev-parse --git-common-dir",
+      "details": "Canonical status root /home/lupin/pantheon IS acting as Git worktree source authority for worker worktrees."
+    },
+    "acceptance_6_watchdog_config_binding": {
+      "status": "FAILED",
+      "command": "grep -n -E 'python3.*supervisor\\.py' /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor_watchdog.py; grep -n 'config\\.json' /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py",
+      "details": "Code inspection shows supervisor_watchdog.py:79 and :870 fall back to ['python3', '-u', '.orchestrator/supervisor.py', '--verbose'] without --config, and supervisor.py:623 defaults --config to .orchestrator/config.json. The forbidden fallback demonstrably exists in code."
+    },
+    "acceptance_7_stale_held_token_clearance": {
+      "status": "FAILED",
+      "command": "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
+      "details": "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 remains in status todo (owner Claude); no gate-clearing or terminalizing recovery action was attempted."
+    },
+    "acceptance_8_canary_workers_execution": {
+      "status": "FAILED",
+      "command": "ls -la /home/lupin/pantheon/.orchestrator/worker-runtime/status/",
+      "details": "Listing status directory alone cannot prove start/heartbeat/governed-progress/terminal-outcome for a named canary without missing-process reconciliation. Execution log analysis of 2026-08-06 status files showed worker runs terminating exit 143 and exit 1."
+    },
+    "acceptance_9_projection_checkpoint_and_lease_parity": {
+      "status": "FAILED",
+      "command": "ls -la /home/lupin/pantheon/.orchestrator/worker-runtime/status/",
+      "details": "Directory listing alone cannot prove projection checkpoint parity across state stores."
+    },
+    "acceptance_10_config_sha_tracking": {
+      "status": "FAILED",
+      "command": "sha256sum /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "details": "Previously recorded SHA f90e0aae6cb5e86f18b20db9f30bc834f6115745 is the command-root Git commit sha, not the live config file digest. Live config sha256 is bde28509c694ffa2fcdce35c3e8bb9041ced69b1bb0a027b8091b0981309c2cd."
+    },
+    "acceptance_11_product_tasks_gate_enforcement": {
+      "status": "PASSED",
+      "details": "28 L12 product tasks remain held fail-closed while root coherence gate fails criteria 3, 4, 5, 6, 7, 8, 9, and 10."
+    },
+    "acceptance_12_no_manual_action_attestation": {
+      "status": "PASSED",
+      "details": "All state interactions conducted strictly through governed status scripts and background worker runner."
+    }
+  },
+  "acceptance_checklist_status": {
+    "Read back exactly one supervisor process bound to exact config": true,
+    "Prove supervisor source root and worker runner root are immutable dev ancestors": true,
+    "Prove canonical command root is content-addressed command-runtimes/<40-hex>": false,
+    "Prove worker_worktrees.source_root is clean writable distinct checkout": false,
+    "Prove status root is used only for state and never as Git worktree source authority": false,
+    "Prove watchdog restart uses exact absolute live config path": false,
+    "Clear or terminalize stale SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731": false,
+    "Run two Antigravity owner workers and one Claude review worker": false,
+    "Prove projection checkpoint parity and no duplicate leases": false,
+    "Record config SHA before and after": false,
+    "Do not materialize 28 L12 product tasks until every gate passes": true,
+    "No chatbox implementation or unreviewed config mutation": true
+  }
+}

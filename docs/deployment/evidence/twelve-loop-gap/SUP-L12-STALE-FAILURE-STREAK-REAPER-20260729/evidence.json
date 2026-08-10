@@ -1,0 +1,139 @@
+{
+  "schema_version": "pantheon.supervisor.stale_l12_failure_streak_reaper_evidence.v1",
+  "task": {
+    "id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+    "title": "Durable stale L12 failure-streak reaper",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "ready_for_independent_review",
+    "phase": "L12 runtime/fleet guardrails",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
+    "evidence_cut_at": "2026-07-30T16:10:48Z"
+  },
+  "scope": {
+    "owned_layer": "Supervisor policy that reaps stale blocking L12 missing_process failure streaks before reassignment/chair triage and on direct or self-claim dispatch paths.",
+    "not_changing": [
+      ".orchestrator/config.json",
+      "generic quota or authentication failure handling",
+      "non-L12 failure-loop policy",
+      "provider credentials or readiness",
+      "product services or hosted deployment"
+    ],
+    "changed_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/task-briefs/sup_l12_stale_failure_streak_reaper_20260729.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json"
+    ]
+  },
+  "implementation": {
+    "anchor_commit": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
+    "policy_function": "reap_stale_l12_missing_process_failure_streaks",
+    "per_cycle_limit": 4,
+    "eligibility": [
+      "Task id begins with L12- or SUP-L12-.",
+      "Streak count meets the configured chair failure-loop threshold.",
+      "last_failure_kind is exactly missing_process.",
+      "The failed logical lane is the current owner for owned/finalize states or current reviewer for review.",
+      "The task last_update is strictly newer than the streak last_failure_at.",
+      "No matching active worker or pending delivery exists for the task and logical lane."
+    ],
+    "integration_points": [
+      "_run_once_locked invokes the reaper after worker polling and before failure-streak reassignment or chair failure-loop triage.",
+      "dispatch_ready_tasks invokes the same idempotent policy before computing failure-loop exclusions, covering direct dispatch and worker self-claim."
+    ],
+    "fail_closed_exclusions": [
+      "Fresh missing_process failures",
+      "Missing or malformed timestamps",
+      "Below-threshold streaks",
+      "Quota, auth, terminal, transient, and generic failures",
+      "Non-L12 tasks",
+      "Streaks for a lane no longer assigned to the task",
+      "Task/lane pairs with active or pending runtime evidence"
+    ],
+    "audit_event": "stale_l12_missing_process_streaks_reaped"
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "criterion": "Reproduce the stale L12 missing_process streak blocker.",
+      "status": "pass",
+      "proof": "Dispatcher regressions seed above-threshold stale streaks that previously entered failure_loop_task_ids and suppressed owner, helper, or reviewer dispatch."
+    },
+    {
+      "id": "AC2",
+      "criterion": "Add a bounded reaper or eligibility check.",
+      "status": "pass",
+      "proof": "The reaper applies six fail-closed predicates and removes at most four records per cycle; the bounded regression leaves the fifth eligible record intact."
+    },
+    {
+      "id": "AC3",
+      "criterion": "Prove Claude2/Antigravity dispatch before Codex-family fallback.",
+      "status": "pass",
+      "proof": "One regression offers Codex2 before Claude2 and observes only Claude2 owner dispatch; one seeds a review-stage Claude2 reviewer blocker and observes review_ready_dispatch; another offers Codex2 before Antigravity with Claude2 paused and observes only the next preferred Antigravity helper claim."
+    },
+    {
+      "id": "AC4",
+      "criterion": "No config edits.",
+      "status": "pass",
+      "proof": "git diff --quiet -- .orchestrator/config.json passed after implementation and full regression."
+    },
+    {
+      "id": "AC5",
+      "criterion": "Full supervisor regression passes.",
+      "status": "pass",
+      "proof": "462 supervisor tests passed in 12.639 seconds after rebase onto origin/dev 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e."
+    }
+  ],
+  "verification": {
+    "checkout_python": "python3",
+    "commands": [
+      {
+        "command": "PYTHONPATH=.orchestrator python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
+        "result": "pass",
+        "conclusion": "5 focused regressions passed in 0.007 seconds."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python3 .orchestrator/test_supervisor.py",
+        "result": "pass",
+        "conclusion": "462 supervisor tests passed in 12.639 seconds."
+      },
+      {
+        "command": "git diff --check",
+        "result": "pass",
+        "conclusion": "No whitespace errors before the anchor commit."
+      },
+      {
+        "command": "git diff --quiet -- .orchestrator/config.json",
+        "result": "pass",
+        "conclusion": "No supervisor configuration change."
+      }
+    ],
+    "validated_at": "2026-07-30T16:10:48Z",
+    "command_runtime_sha": "not_applicable_local_task_worktree",
+    "base_sha": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e"
+  },
+  "delivery": {
+    "anchor_commit": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
+    "pull_request": 4385,
+    "merge_commit": null,
+    "deployment": "not_applicable_repository_supervisor_policy"
+  },
+  "review": {
+    "reviewer": "Antigravity",
+    "status": "pending_independent_review",
+    "decision": null,
+    "reviewed_head_sha": null,
+    "reviewed_at": null,
+    "notes": []
+  },
+  "known_limitations": [
+    "The policy does not claim current Claude2 or Antigravity provider readiness; readiness remains governed by live provider probes.",
+    "The policy does not clear a fresh process-loss loop merely because no process is alive.",
+    "This repository change does not mutate the current live runtime state or provider configuration."
+  ]
+}

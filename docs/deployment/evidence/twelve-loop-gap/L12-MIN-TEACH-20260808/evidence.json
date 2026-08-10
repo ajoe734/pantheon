@@ -1,0 +1,127 @@
+{
+  "schema_version": "pantheon.twelve_loop_minimum_teaching_evidence.v1",
+  "task": {
+    "id": "L12-MIN-TEACH-20260808",
+    "title": "Register and run the existing Teaching worker to a terminal session",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "pending_independent_review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-MIN-TEACH-20260808",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/evidence.json",
+    "evidence_cut_at": "2026-08-09T14:12:00Z"
+  },
+  "scope": {
+    "owned_layer": "Training-session preview/evaluation job intent, existing worker terminalization, persisted session readback, and Learning-verifier identifier output.",
+    "not_changing": [
+      "shared loop catalog or controller maturity declarations",
+      "Docker Compose or deployment manifests",
+      "BFF inventory and health projection",
+      "Learning verifier implementation",
+      "persona target commit decisions or live execution"
+    ],
+    "changed_files": [
+      ".orchestrator/task-briefs/l12_min_teach_20260808.md",
+      "services/training-session/main.py",
+      "services/training-session/preview_eval_worker.py",
+      "services/training-session/tests/test_preview_eval_worker.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/real-vectorbt-terminal-readback.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/real_vectorbt_probe.py"
+    ]
+  },
+  "implementation": {
+    "anchor_commit": "35785197cc077fa086a40db048efe4429124df08",
+    "strategy": "Reuse preview_eval_worker.py. The queue contract carries an opt-in terminalize_session intent; a completed job with that intent calls the existing completion API and then verifies the persisted session through the existing GET API.",
+    "normal_preview_compatibility": "terminalize_session defaults false, so ordinary preview jobs remain preview-only and leave active trainer sessions open.",
+    "learning_handoff": {
+      "field": "terminal_session_ids",
+      "terminal_readback_path_template": "/api/training/sessions/{session_id}",
+      "required_readback": [
+        "matching session_id",
+        "terminal status",
+        "non-empty ended_at"
+      ]
+    },
+    "failure_semantics": "Completion or readback HTTP errors, identity mismatch, non-terminal status, or missing ended_at increment worker failure and suppress the terminal identifier."
+  },
+  "functional_proof": {
+    "tier": "bounded_local_real_framework",
+    "command": ".venv-pantheon/bin/python docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/real_vectorbt_probe.py",
+    "result_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/real-vectorbt-terminal-readback.json",
+    "result": "pass",
+    "framework": "vectorbt==0.26.2",
+    "framework_run_id": "vbt-real-f055bb6df5dd",
+    "job_id": "pvjob-ad33a7839d8de1a4",
+    "terminal_session_id": "trn-20260715-6e97c3975e26",
+    "evaluation_proof_ref": "trainer-eval-proof:trn-20260715-6e97c3975e26:teval-2b99857d613e",
+    "persisted_status": "completed",
+    "ended_at": "2026-07-15T12:00:00Z",
+    "governance_gate_state": "passed",
+    "limitations": [
+      "The proof uses ephemeral local file persistence, not hosted Postgres HA.",
+      "The source DatasetVersion and threshold policy are bounded development authorities generated under a temporary directory.",
+      "The persona target pre-read boundary is a test double; this task does not perform persona commit.",
+      "Actual Learning consumption, shared catalog registration, Compose activation, and hosted proof belong to downstream M2/M3/M4 tasks."
+    ]
+  },
+  "validation": {
+    "validated_at": "2026-08-09T14:12:00Z",
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/training-session/tests/test_preview_eval_worker.py services/training-session/tests/test_http_service.py",
+        "result": "18 passed, 1 warning in 7.97s",
+        "conclusion": "focused worker and service lifecycle tests pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/training-session",
+        "result": "130 passed, 2 skipped, 1 warning in 26.19s",
+        "conclusion": "full training-session regression suite passes"
+      },
+      {
+        "command": ".venv-pantheon/bin/python docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/real_vectorbt_probe.py",
+        "result": "exit 0; vectorbt_portfolio vbt-real-f055bb6df5dd; terminal session trn-20260715-6e97c3975e26 completed",
+        "conclusion": "real-framework Teaching command reaches persisted terminal session and exposes its identifier"
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit 0",
+        "conclusion": "pass"
+      }
+    ]
+  },
+  "acceptance": {
+    "reuse_existing_worker": "pass",
+    "one_terminal_teaching_command": "pass",
+    "terminal_session_identifier_for_learning": "pass",
+    "shared_catalog_unchanged": "pass",
+    "compose_unchanged": "pass"
+  },
+  "rollout_and_rollback": {
+    "rollout": "Merge this dormant component capability through the task PR into dev. L12-MIN-INTEGRATE-20260808 owns shared catalog/Compose activation and L12-MIN-E2E-20260808 owns cross-loop invocation.",
+    "rollback": "Revert the task PR. Ordinary preview jobs remain compatible because terminalize_session defaults false.",
+    "live_change": false
+  },
+  "review": {
+    "reviewer": "Antigravity",
+    "status": "pending_independent_exact_head_review",
+    "decision": null,
+    "reviewed_head_sha": null,
+    "reviewed_at": null,
+    "notes": [
+      "Confirm terminalization is opt-in and ordinary preview sessions remain active.",
+      "Confirm the worker suppresses terminal_session_ids unless persisted identity, status, and ended_at all pass.",
+      "Confirm no shared catalog or Compose file is changed.",
+      "Bind this committed manifest with REVIEW_FILE when approving the exact PR head."
+    ]
+  },
+  "delivery": {
+    "task_pull_request": null,
+    "reviewed_head_sha": null,
+    "merge_commit": null,
+    "protected_merge_complete": false,
+    "governed_closeout_complete": false
+  }
+}

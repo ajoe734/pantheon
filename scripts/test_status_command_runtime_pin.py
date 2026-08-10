@@ -468,6 +468,79 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("must execute the installed command runtime", proc.stderr + proc.stdout)
 
+    def test_supervisor_and_worker_status_entrypoints_leave_command_root_bytecode_free(self) -> None:
+        task_id = "RUNTIME-PIN-NO-BYTECODE"
+        with tempfile.TemporaryDirectory(prefix="status-command-bytecode-") as tmpdir:
+            command_root = Path(tmpdir) / "command-root"
+            self._init_repo(command_root)
+            self._copy_full_status_tooling(command_root)
+            self._write_status_state(command_root, task_id=task_id)
+            command_sha = self._commit_all(
+                command_root,
+                "install no-bytecode status command runtime",
+            )
+            env = self._base_env(
+                status_root=command_root,
+                worktree=command_root,
+                command_root=command_root,
+                command_sha=command_sha,
+            )
+            for name in (
+                "ORCH_RUN_ID",
+                "ORCH_RUNNER_STATUS_PATH",
+                "ORCH_HEARTBEAT_PATH",
+                "PANTHEON_WORKTREE_ROOT",
+                "ORCH_WORKSPACE_PATH",
+            ):
+                env.pop(name, None)
+            env["AI_NAME"] = "Human/Ops"
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+            supervisor_style = subprocess.run(
+                [
+                    sys.executable,
+                    str(command_root / "scripts" / "ai_status.py"),
+                    "show",
+                    task_id,
+                ],
+                cwd=command_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            env.pop("PYTHONDONTWRITEBYTECODE")
+            worker_style = subprocess.run(
+                [
+                    "bash",
+                    str(command_root / "scripts" / "ai-status.sh"),
+                    "show",
+                    task_id,
+                ],
+                cwd=command_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            bytecode_paths = sorted(
+                str(path.relative_to(command_root))
+                for path in command_root.rglob("*")
+                if path.name == "__pycache__" or path.suffix == ".pyc"
+            )
+
+        self.assertEqual(
+            supervisor_style.returncode,
+            0,
+            supervisor_style.stderr + supervisor_style.stdout,
+        )
+        self.assertEqual(
+            worker_style.returncode,
+            0,
+            worker_style.stderr + worker_style.stdout,
+        )
+        self.assertEqual(bytecode_paths, [])
+
     def test_active_lease_allows_mutation_and_preserves_worktree(self) -> None:
         task_id = "RUNTIME-PIN-001"
         run_id = "codex-runtime-pin-active"

@@ -411,6 +411,8 @@ def run_tick(
             "last_success_at": listener_state.last_success_at,
             "last_failure_at": observed_at,
             "state_path": str(listener_state.path) if listener_state.path else None,
+            "terminal_incident_ids": [],
+            "terminal_incident_id": None,
             "results": [],
         }
 
@@ -574,6 +576,12 @@ def run_tick(
         controller_status = "unhealthy"
         errors.append(_error_record(exc, attempt=0, phase="persist_state"))
 
+    terminal_incident_ids: list[str] = []
+    for item in results:
+        incident_id = str(item.get("incident_id") or "").strip()
+        if incident_id and incident_id not in terminal_incident_ids:
+            terminal_incident_ids.append(incident_id)
+
     return {
         "status": (
             "ok"
@@ -601,6 +609,10 @@ def run_tick(
             "max_attempts": max_attempts,
             "retry_backoff_seconds": retry_backoff_seconds,
         },
+        "terminal_incident_ids": terminal_incident_ids,
+        "terminal_incident_id": (
+            terminal_incident_ids[0] if len(terminal_incident_ids) == 1 else None
+        ),
         "results": results,
     }
 

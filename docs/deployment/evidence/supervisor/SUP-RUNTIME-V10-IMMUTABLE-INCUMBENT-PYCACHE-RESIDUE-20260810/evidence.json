@@ -1,0 +1,39 @@
+{
+  "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+  "title": "Bind immutable incumbent bytecode residue without trusting it",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "status": "review",
+  "changed_paths": [
+    "scripts/promote_supervisor_runtime.py",
+    "scripts/test_promote_supervisor_runtime.py",
+    "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810/evidence.json"
+  ],
+  "verification_commands": [
+    ".venv-pantheon/bin/python3 -m pytest -v scripts/test_promote_supervisor_runtime.py",
+    "git diff --check"
+  ],
+  "verification_results": {
+    "full_tests": "322 passed cleanly",
+    "git_diff_check": "passed with 0 exit code"
+  },
+  "incident_reproduction_analysis": {
+    "event_id": "promotion-evidence-20260810T140901039717Z-636096",
+    "rejected_directory": ".orchestrator/__pycache__/",
+    "incumbent_bytecode_files": 36,
+    "incumbent_pycache_directories": 3,
+    "candidate_sha": "6607b6a706b59670009965375e0a5dd6b5824fcf",
+    "candidate_tree": "5eb3d3a18ba01bb2e2f53e442842aa7c86fec23c",
+    "incumbent_sha": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+    "incumbent_pid": 2272245,
+    "cause": "The clean 6607b6a7 candidate reached an older ignored-bytecode residue (.orchestrator/__pycache__/) in live incumbent PID 2272245 running at dev ancestor 5877b644. build_candidate_runtime_identity on the incumbent root raised ValueError('Forbidden ignored directory found in candidate root: .orchestrator/__pycache__/'), correctly aborting promotion before mutation.",
+    "repair": "Added a capture-only legacy boundary for incumbent bytecode residue (LegacyIncumbentBytecodeResidue and LegacyIncumbentBytecodeDirectoryResidue) with descriptor metadata, directory device/inode/mode binding, S_ISREG, st_nlink==1, CPython tag matching sys.implementation.cache_tag, MAGIC_NUMBER header verification, tracked .py source relation, and SHA256 digest binding. Candidate root cleanliness remains 100% deny-by-default. Rollback for incumbents carrying bytecode residue is materialized as a clean, immutable checkout at head_commit/tracked_tree; live incumbent root is never relaunched from or mutated."
+  },
+  "safety_and_coherence_invariants": {
+    "candidate_cleanliness": "candidate_root cleanliness remains 100% deny-by-default (zero __pycache__, pyc, pyo, or arbitrary prefix allowlisting).",
+    "bytecode_provenance": "Admitted incumbent bytecode residue is strictly bound to PID/starttime/cwd/commit/tree/remote/config/environment, descriptor, S_ISREG, st_nlink==1, CPython tag/magic, tracked .py source relation, SHA256 digest, directory device/inode/mode identity, and revalidation. Hard links, symlinks, pyo, source-less pyc, foreign-tag pyc, unknown directories, directory substitution, and post-capture races are fail-closed.",
+    "clean_rollback_materialization": "Rollback launch root uses a separately materialized 100% clean immutable checkout proving zero __pycache__, pyc, or pyo. Live incumbent root is never reset, cleaned, stashed, checked out, edited, renamed, or copied as rollback source.",
+    "launch_identity": "Launch source contracts, config CAS, process signalling, -B / PYTHONDONTWRITEBYTECODE=1, 3 fresh loops, and rollback cleanup remain preserved."
+  },
+  "no_live_rollout_boundary": "This task is source-only. No live config edits, direct process signals, live runtime promotions, candidate deletions, canonical state edits, or fleet scheduling changes were performed."
+}

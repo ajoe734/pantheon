@@ -1,0 +1,30 @@
+{
+  "evaluation": {
+    "backend": "vectorbt_portfolio",
+    "framework": "vectorbt",
+    "framework_version": "0.26.2",
+    "governance_gate_state": "passed",
+    "proof_ref": "trainer-eval-proof:trn-20260715-6e97c3975e26:teval-2b99857d613e",
+    "run_id": "vbt-real-f055bb6df5dd"
+  },
+  "persisted_readback": {
+    "ended_at": "2026-07-15T12:00:00Z",
+    "path": "/api/training/sessions/trn-20260715-6e97c3975e26",
+    "session_id": "trn-20260715-6e97c3975e26",
+    "status": "completed"
+  },
+  "task_id": "L12-MIN-TEACH-20260808",
+  "trigger": {
+    "job_id": "pvjob-ad33a7839d8de1a4",
+    "session_id": "trn-20260715-6e97c3975e26",
+    "terminalize_session": true
+  },
+  "worker": {
+    "completed": 1,
+    "failed": 0,
+    "jobs_found": 1,
+    "terminal_session_ids": [
+      "trn-20260715-6e97c3975e26"
+    ]
+  }
+}

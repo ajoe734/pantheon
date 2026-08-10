@@ -1,0 +1,68 @@
+{
+  "schema_version": "supervisor_worker_failure_sigterm_transcript_gate.v1",
+  "task": {
+    "id": "SUP-WORKER-FAILURE-SIGTERM-TRANSCRIPT-GATE-20260809",
+    "title": "Prevent SIGTERM transcript source false positives",
+    "phase": "Supervisor reliability / authoritative failure detection",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "status": "in_progress",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-WORKER-FAILURE-SIGTERM-TRANSCRIPT-GATE-20260809"
+  },
+  "captured_incidents": [
+    {
+      "run_id": "codex-20260809T095151Z-200962bd",
+      "summary": "Codex2 worker terminated by supervisor SIGTERM (signal 15 / exit_code 143); transcript rescanned and source snippet misclassified as auth failure.",
+      "evidence_ref": ".orchestrator/evidence/codex_20260809t095151z_200962bd.json",
+      "log_ref": "log:20260809T095151094458Z-codex-codex2_2-0d4c19.log:27295"
+    }
+  ],
+  "exact_changed_paths": [
+    ".orchestrator/supervisor.py",
+    ".orchestrator/test_supervisor.py",
+    "docs/deployment/evidence/supervisor/SUP-WORKER-FAILURE-SIGTERM-TRANSCRIPT-GATE-20260809/evidence.json"
+  ],
+  "scope": {
+    "owned_layer": "Supervisor worker-failure evidence admission: restrict worker failure detection strictly to authoritative structured provider terminal envelopes (and runner-gated control envelopes). Deprecate plaintext transcript regex scanning to prevent non-authoritative prompt/assistant/source lines from triggering dispatch pauses.",
+    "not_changing": "Provider credentials, account/quota grouping, retry thresholds, reviewer policy, runtime-state JSON, live process signals, and product code.",
+    "rollout_boundary": "Supervisor worker failure classification loop and provider guardrails in .orchestrator/supervisor.py.",
+    "merge_revert_rollback": "Revert the commit on task/SUP-WORKER-FAILURE-SIGTERM-TRANSCRIPT-GATE-20260809 or dev branch; detect_worker_failure falls back to previous plaintext parsing behavior."
+  },
+  "contract": {
+    "structured_envelope_authority": "Plaintext transcript lines are treated as unprovenanced mixed-trust content and never admit failure status regardless of prefix (e.g. Error:, API Error:). Failure detection requires an authoritative structured JSON provider envelope.",
+    "sigterm_exclusion": "A worker_runner status failed with signal 15/9 (SIGTERM/SIGKILL) or exit_code 143/137 is excluded from worker_has_authoritative_runner_failure, preventing transcript text from being rescanned.",
+    "guardrails_protection": "Suppressing false failure detection on SIGTERM or exit_code=1 non-provider failures prevents provider_guardrails dispatch_pauses from being incorrectly triggered."
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned and dependency imports verified"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m unittest discover -s .orchestrator -p 'test_supervisor.py' -k 'DetectWorkerFailureTests'",
+      "result": "71 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m unittest discover -s .orchestrator -p 'test_supervisor.py'",
+      "result": "630 passed + 161 subtests"
+    },
+    {
+      "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "adversarial test: unprovenanced standalone JSON fixture line with default worker shape (no stream_json flag)",
+      "result": "passed: returns None without false positive detection"
+    },
+    {
+      "command": "adversarial test: SIGTERM worker with structured provider envelope",
+      "result": "passed: detect_worker_failure returns structured provider failure envelope while pause_dispatch_for_reaped_worker suppresses dispatch pause"
+    }
+  ]
+}

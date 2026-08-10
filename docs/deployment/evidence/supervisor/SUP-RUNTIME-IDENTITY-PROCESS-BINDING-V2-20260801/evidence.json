@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "task_id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+  "title": "Bind one incumbent supervisor process to immutable runtime identity",
+  "owner": "Codex",
+  "reviewer": "Human/Ops",
+  "review_decision": "review_pending",
+  "recorded_at": "2026-08-02T08:08:15Z",
+  "repository": "ajoe734/pantheon",
+  "branch": "task/SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+  "base_branch": "dev",
+  "base_commit": "11d766efbd8bf81aca447d4ccf213109d7263dac",
+  "pre_evidence_head": "1103c674d267400fb1d96669d1bc2f053629b0a2",
+  "pull_request": 4495,
+  "implementation_commits": [
+    "20ff6325f678f02481fc0f43bd40cf5680786fe8",
+    "1103c674d267400fb1d96669d1bc2f053629b0a2"
+  ],
+  "dependency": {
+    "task_id": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
+    "merge_commit": "11d766efbd8bf81aca447d4ccf213109d7263dac",
+    "pull_request": 4443,
+    "is_ancestor": true
+  },
+  "review_binding": {
+    "policy": "review_before_merge",
+    "reviewer": "Human/Ops",
+    "pull_request": 4495,
+    "head_before_evidence_refresh": "1fcd61f9f7a6eaf6d236b337645642d7188445e1",
+    "required": "REVIEW_PR=4495 and REVIEW_HEAD_SHA=<final PR head after this evidence refresh>"
+  },
+  "scope": {
+    "owned": [
+      "exact procfs supervisor candidate enumeration",
+      "PID and starttime process-generation binding before every comparison",
+      "exact executable, full argv, canonical entrypoint, and live config argument binding",
+      "cwd realpath/device/inode and descriptor-bound Git commit/tree binding",
+      "allowlisted command root, runtime SHA, and status root environment binding",
+      "singleton supervisor admission-lock file/kernel/owner generation bracket",
+      "safe process identity summary without full argv or environment",
+      "injected-reader and temporary-flock deterministic regression matrix",
+      "production-required incumbent process invariant"
+    ],
+    "not_changed": [
+      "immutable candidate root/config/Git implementation from PR #4443",
+      "governed launch or watchdog behavior",
+      "process mutation, signal delivery, rollback, or live promotion",
+      "live or repository config files",
+      "canonical task-state JSON or provider policy",
+      "product controllers or live services"
+    ]
+  },
+  "process_identity_contract": {
+    "candidate_count": "exactly one",
+    "generation": [
+      "pid",
+      "proc_stat_starttime_ticks"
+    ],
+    "process_fields": [
+      "resolved executable",
+      "boundary-preserving full argv identity",
+      "canonical supervisor entrypoint",
+      "captured live --config path",
+      "cwd realpath/device/inode",
+      "cwd Git commit/tree"
+    ],
+    "environment_allowlist": [
+      "PANTHEON_COMMAND_ROOT",
+      "PANTHEON_COMMAND_RUNTIME_SHA",
+      "PANTHEON_STATUS_ROOT"
+    ],
+    "admission_lock": {
+      "path": "<captured-status-root>/.orchestrator/supervisor.lock",
+      "file_generation": [
+        "device",
+        "inode",
+        "byte_length",
+        "sha256",
+        "mtime_ns",
+        "ctime_ns"
+      ],
+      "kernel_generation": [
+        "lock_id",
+        "FLOCK",
+        "ADVISORY",
+        "WRITE",
+        "0",
+        "EOF"
+      ],
+      "owner_generation": [
+        "file_pid",
+        "kernel_pid",
+        "owner_starttime_ticks"
+      ],
+      "bracket": "exact identity equal before and after discovery plus candidate revalidation"
+    }
+  },
+  "privacy": {
+    "full_environment_emitted": false,
+    "full_argv_emitted": false,
+    "argv_summary": [
+      "argument_count",
+      "boundary_preserving_sha256"
+    ],
+    "environment_output": "three allowlisted contract values only"
+  },
+  "acceptance": {
+    "exactly_one_incumbent": "passed",
+    "exact_entrypoint_and_config_argv": "passed",
+    "pid_starttime_reread_before_comparison": "passed",
+    "vanished_reused_zombie_and_unreadable_denial": "passed",
+    "executable_cwd_commit_tree_binding": "passed",
+    "command_root_runtime_sha_status_root_binding": "passed",
+    "same_admission_lock_generation_and_owner": "passed",
+    "no_secret_environment_evidence": "passed",
+    "deterministic_negative_matrix": "passed",
+    "production_invariant_required": "passed",
+    "merged_root_config_git_regression": "passed",
+    "scope_boundary_no_live_mutation": "passed"
+  },
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
+      "result": "145 tests passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_promote_supervisor_runtime.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check origin/dev...HEAD",
+      "result": "passed at implementation head 1103c674d267400fb1d96669d1bc2f053629b0a2"
+    },
+    {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+      "result": "passed"
+    },
+    {
+      "command": "git merge-base --is-ancestor <rejected-head> HEAD",
+      "result": "exit 1 for every listed rejected head"
+    }
+  ],
+  "rejected_ancestry": [
+    {
+      "commit": "07316c73b8f9b574d659aa95616680301198392f",
+      "is_ancestor": false
+    },
+    {
+      "commit": "77af55015c5630c18f10670f5cb877ef7c40b115",
+      "is_ancestor": false
+    },
+    {
+      "commit": "94e3b6f34bda69711b16254f7623085bd41eecf5",
+      "is_ancestor": false
+    },
+    {
+      "commit": "d616beaae7249dd76ee32749b7daa5096a9b484d",
+      "is_ancestor": false
+    },
+    {
+      "commit": "35056b716108812d784cf9d902fd0a0d5a07777c",
+      "is_ancestor": false
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "scripts/promote_supervisor_runtime.py",
+      "sha256": "4b7a7bb01c3d8d1b16610c8e6b20fcc38db27f8bcd872d032251f0f44ea564bc"
+    },
+    {
+      "path": "scripts/test_promote_supervisor_runtime.py",
+      "sha256": "71f1e52ab738231d997a321b43eebd3b1e8657fd1a189870f5c5b6784e181069"
+    }
+  ],
+  "rollout": "source merge only",
+  "rollback": "revert the eventual task merge commit",
+  "live_discovery_probe": "not run",
+  "live_claims": [],
+  "next_gate": "Push this evidence refresh and obtain independent Human/Ops approval bound to PR #4495 and its final exact head before merge."
+}

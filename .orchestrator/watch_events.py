@@ -9,7 +9,7 @@ import stat
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
@@ -462,17 +462,35 @@ def trim_seen_events(state: dict[str, Any], max_entries: int) -> None:
     state["seen_event_keys"] = dict(ordered[-max_entries:])
 
 
-def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provider_capabilities: dict[str, Any]) -> bool:
+QueueDeliveryEvent = Callable[[dict[str, Any], dict[str, Any]], bool]
+
+
+def run_scan(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    replay: bool,
+    provider_capabilities: dict[str, Any],
+    *,
+    queue_event_fn: QueueDeliveryEvent | None = None,
+) -> bool:
     with runtime_state_lock(config, shared=False, nonblocking=False):
         return _run_scan_locked(
             config,
             state,
             replay=replay,
             provider_capabilities=provider_capabilities,
+            queue_event_fn=queue_event_fn,
         )
 
 
-def _run_scan_locked(config: dict[str, Any], state: dict[str, Any], replay: bool, provider_capabilities: dict[str, Any]) -> bool:
+def _run_scan_locked(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    replay: bool,
+    provider_capabilities: dict[str, Any],
+    *,
+    queue_event_fn: QueueDeliveryEvent | None = None,
+) -> bool:
     recent_limit = int(config.get("watcher", {}).get("recent_terminal_limit", DEFAULT_RECENT_LIMIT))
     recent_terminal_tasks = recent_terminal_summaries(limit=recent_limit)
     with canonical_task_state_lock_file(
@@ -504,10 +522,11 @@ def _run_scan_locked(config: dict[str, Any], state: dict[str, Any], replay: bool
     seen = state.setdefault("seen_event_keys", {})
     changed = False
     if enqueue_runtime_events_enabled(config):
+        enqueue = queue_event_fn or queue_delivery_event
         for event in events:
             if event["key"] in seen and not replay:
                 continue
-            queued = queue_delivery_event(config, event)
+            queued = enqueue(config, event)
             if queued:
                 seen[event["key"]] = utc_now()
                 changed = True

@@ -63450,11 +63450,43 @@ async def bff_v5_downstream_health_dlq_replay(
 @app.get("/bff/v5/loop-runs")
 async def bff_list_loop_runs(
     status: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    environment: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = 50,
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF B2.2: list v5 loop runs from the read surface store."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    projection_reader = read_store.trade_journey_projection_reader()
+    if projection_reader is not None:
+        scoped_tenant, scoped_environment = _authenticated_loop_truth_scope(
+            identity,
+            requested_tenant=tenant_id,
+            requested_environment=environment,
+        )
+        requested_statuses = sorted({item.strip().lower() for item in (status or "").split(",") if item.strip()})
+        try:
+            records, next_token = projection_reader.page_loop_runs(
+                tenant_id=scoped_tenant,
+                environment=scoped_environment,
+                statuses=requested_statuses,
+                page_size=page_size,
+                page_token=page_token,
+            )
+            controller = projection_reader.controller_freshness(
+                tenant_id=scoped_tenant,
+                environment=scoped_environment,
+            ) or {}
+        except InvalidPageToken:
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Invalid page_token", "page_token does not match this tenant/environment scope")
+        except ProjectionReadUnavailable:
+            return _sem_final_list_response([], dataset="loop_runs", surface_key="loop_runs", source="missing")
+        formal = controller.get("accepted_live") is True and controller.get("status") == "ready" and controller.get("mode") == "live"
+        response = _sem_final_list_response(records, dataset="loop_runs", surface_key="loop_runs", source="postgres_lifecycle_projection", surface={"status": "ok" if formal else "degraded", "source": "postgres_lifecycle_projection", "projection_schema_version": "pantheon.trade-journey-projection.v1", "controller": controller, "accepted_live": controller.get("accepted_live"), "projection_mode": controller.get("mode"), "truth_status": "formal" if formal else "degraded"})
+        response["page_info"].update({"next_page_token": next_token, "page_size": page_size, "returned": len(records), "has_more": next_token is not None})
+        return response
     available, records = read_store.list_loop_runs()
     if status:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
@@ -63472,12 +63504,28 @@ async def bff_list_loop_runs(
 @app.get("/bff/v5/loop-runs/{loop_run_id}")
 async def bff_get_loop_run(
     loop_run_id: str,
+    tenant_id: Optional[str] = None,
+    environment: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
 ):
     """BFF B2.2: get a v5 loop run by ID."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     clean_id = loop_run_id.strip()
+    projection_reader = read_store.trade_journey_projection_reader()
+    if projection_reader is not None:
+        scoped_tenant, scoped_environment = _authenticated_loop_truth_scope(
+            identity,
+            requested_tenant=tenant_id,
+            requested_environment=environment,
+        )
+        try:
+            record = projection_reader.get_loop_run(tenant_id=scoped_tenant, environment=scoped_environment, loop_run_id=clean_id)
+            controller = projection_reader.controller_freshness(tenant_id=scoped_tenant, environment=scoped_environment) or {}
+        except ProjectionReadUnavailable:
+            return _sem_final_degraded_detail(entity_id=clean_id, label="Loop run", dataset="loop_runs", surface_key="loop_run_detail", source="missing")
+        formal = controller.get("accepted_live") is True and controller.get("status") == "ready" and controller.get("mode") == "live"
+        return _sem_final_read_model_detail(record, entity_id=clean_id, label="Loop run", dataset="loop_runs", surface_key="loop_run_detail", source="postgres_lifecycle_projection", source_available=True, surface={"status": "ok" if formal else "degraded", "source": "postgres_lifecycle_projection", "projection_schema_version": "pantheon.trade-journey-projection.v1", "controller": controller, "accepted_live": controller.get("accepted_live"), "projection_mode": controller.get("mode"), "truth_status": "formal" if formal else "degraded"})
     available, record = read_store.get_loop_run(clean_id)
     lr_src_dataset, source, surface = _loop_run_surface_status(available)
     return _sem_final_read_model_detail(
@@ -69038,11 +69086,13 @@ app.include_router(_create_trade_journal_router(
 
 # TJ-E2E-005: canonical Trade Journey read API via isolated module
 import trade_journeys as _trade_journeys  # noqa: E402
+from trade_journey_projection_store import InvalidPageToken, ProjectionReadUnavailable  # noqa: E402
 from trade_journeys import create_trade_journeys_router as _create_trade_journeys_router  # noqa: E402
 app.include_router(_create_trade_journeys_router(
     extract_identity=_extract_identity,
     require_read_role=_require_read_role,
     require_operator_role=_require_operator_role,
+    get_projection_reader=lambda: read_store.trade_journey_projection_reader(),
 ))
 
 

@@ -14,6 +14,14 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# Sixteen tasks keep the worst-case governed assign + per-task authoritative
+# readback budget below the 300-second compatibility claim TTL even when every
+# subprocess consumes the ten-second hard timeout.  The OS packet fence in the
+# dispatcher remains the concurrency authority; this bound also prevents one
+# signed packet from monopolising a supervisor tick indefinitely.
+MAX_TASKS_PER_PACKET = 16
+
+
 class BridgeBaseModel(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
@@ -87,7 +95,10 @@ class DevTaskPacket(BridgeBaseModel):
     source_turn_ids: List[str] = Field(default_factory=list, alias="sourceTurnIds")
 
     documents: List[BridgeDocument] = Field(default_factory=list)
-    tasks: List[BridgeTask] = Field(default_factory=list)
+    tasks: List[BridgeTask] = Field(
+        default_factory=list,
+        max_length=MAX_TASKS_PER_PACKET,
+    )
     constraints: BridgeConstraints = Field(default_factory=BridgeConstraints)
 
     signature: Optional[PacketSignature] = None

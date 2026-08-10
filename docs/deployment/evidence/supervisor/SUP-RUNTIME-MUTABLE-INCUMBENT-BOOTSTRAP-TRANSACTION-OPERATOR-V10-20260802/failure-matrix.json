@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "task_id": "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802",
+  "test_file": "scripts/test_promote_supervisor_runtime.py",
+  "families": [
+    {
+      "name": "explicit_bootstrap_gate",
+      "selectors": [
+        "test_mutable_bootstrap_flag_requires_explicit_promote",
+        "test_normal_promote_fails_closed_without_explicit_mutable_bootstrap",
+        "test_capture_promotion_snapshot_fail_closed_on_missing_files"
+      ]
+    },
+    {
+      "name": "mutable_process_identity",
+      "selectors": [
+        "test_mutable_incumbent_snapshot_binds_exact_process_and_sources",
+        "test_mutable_incumbent_snapshot_rejects_ambiguous_processes",
+        "test_mutable_incumbent_snapshot_rejects_pid_reuse",
+        "test_process_identity_rejects_reused_pid_starttime",
+        "test_process_identity_rejects_zombie_candidate",
+        "test_process_identity_rejects_deleted_cwd"
+      ]
+    },
+    {
+      "name": "mutable_git_and_source_identity",
+      "selectors": [
+        "test_mutable_incumbent_root_rejects_tracked_source_drift",
+        "test_mutable_incumbent_root_rejects_unaccepted_git_head",
+        "test_git_identity_rejects_candidate_tree_mismatch",
+        "test_remote_identity_structural_parser_rejects_spoofs"
+      ]
+    },
+    {
+      "name": "symlink_and_path_swaps",
+      "selectors": [
+        "test_candidate_root_rejects_leaf_symlink",
+        "test_candidate_root_rejects_symlinked_trusted_parent",
+        "test_candidate_root_parent_swap_during_capture_is_rejected",
+        "test_live_config_rejects_exact_leaf_symlink",
+        "test_live_config_rejects_symlinked_parent_component",
+        "test_live_config_parent_swap_during_open_is_rejected",
+        "test_live_config_same_inode_parent_replacement_during_capture_is_rejected"
+      ]
+    },
+    {
+      "name": "immutable_rollback_materialization",
+      "selectors": [
+        "test_materialize_rollback_runtime_binds_incumbent_commit_and_tree",
+        "test_materialize_rollback_runtime_directory_fsync_failure_fails_closed"
+      ]
+    },
+    {
+      "name": "single_capture_config_derivation",
+      "selectors": [
+        "test_config_variants_are_derived_from_one_capture_without_external_write",
+        "test_live_config_revalidation_rejects_inode_replacement",
+        "test_live_config_revalidation_rejects_same_length_byte_drift"
+      ]
+    },
+    {
+      "name": "config_write_crash_windows",
+      "selectors": [
+        "test_atomic_config_install_crash_windows_never_expose_partial_bytes",
+        "test_atomic_config_install_directory_fsync_failure_is_fatal"
+      ],
+      "stages": [
+        "after_temp_fsync",
+        "before_replace",
+        "after_replace",
+        "after_directory_fsync"
+      ]
+    },
+    {
+      "name": "config_replacement_race",
+      "selectors": [
+        "test_atomic_config_install_rejects_last_moment_replacement_race",
+        "test_snapshot_drift_under_admission_lock_aborts_without_termination"
+      ]
+    },
+    {
+      "name": "promotion_and_watchdog_lock_order",
+      "selectors": [
+        "test_transaction_serializes_prepare_config_and_launch_under_lock_order",
+        "test_promotion_lock_preserves_bounded_external_contention",
+        "test_promotion_lock_rejects_symlink_leaf",
+        "test_runtime_admission_lock_preserves_bounded_external_contention",
+        "test_runtime_admission_lock_composes_with_watchdog_intent_writer"
+      ]
+    },
+    {
+      "name": "candidate_failure_rollback",
+      "selectors": [
+        "test_candidate_failure_matrix_rolls_back_to_new_verified_pid",
+        "test_candidate_loop_markers_must_be_post_launch_and_strictly_increasing"
+      ],
+      "faults": [
+        "candidate config install failure",
+        "candidate launch failure",
+        "missing heartbeat",
+        "wrong cwd commit or tree",
+        "projection lease duplicate-worker or provider failure",
+        "config drift"
+      ]
+    },
+    {
+      "name": "rollback_failure",
+      "selectors": [
+        "test_rollback_failure_is_nonzero_and_records_both_failures",
+        "test_rollback_loop_markers_must_be_post_launch_and_strictly_increasing"
+      ],
+      "faults": [
+        "rollback config install failure",
+        "rollback launch failure",
+        "rollback config drift",
+        "projection worker or provider baseline drift",
+        "stale equal regressing or out-of-order loop markers"
+      ]
+    },
+    {
+      "name": "unknown_child_containment",
+      "selectors": [
+        "test_unknown_live_candidate_blocks_rollback_launch_and_is_durable",
+        "test_os_launch_contains_and_reaps_child_when_generation_capture_fails",
+        "test_os_launch_reports_unknown_live_child_when_containment_cannot_prove_absence"
+      ]
+    }
+  ]
+}
