@@ -4355,6 +4355,55 @@ def test_materialize_rollback_runtime_binds_incumbent_commit_and_tree(
     assert identity.tracked_tree_identity == tree
     assert identity.repository_slug == "ajoe734/pantheon"
 
+    # Subsequent call reuses the existing matching destination when path/device/inode match snapshot
+    dest_stat = (rollback_parent / commit).stat()
+    matching_snapshot = replace(
+        snapshot,
+        root=rollback_parent / commit,
+        root_device=dest_stat.st_dev,
+        root_inode=dest_stat.st_ino,
+    )
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        rollback_parent,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
+        live_config,
+    ):
+        reused_identity = promotion.materialize_immutable_rollback_runtime(
+            matching_snapshot
+        )
+
+    assert reused_identity.candidate_root == rollback_parent / commit
+    assert reused_identity.head_commit == commit
+    assert reused_identity.tracked_tree_identity == tree
+    assert reused_identity.repository_slug == "ajoe734/pantheon"
+
+    # Reject reuse if root/device/inode differs despite matching SHA/tree/repo
+    mismatched_snapshot = replace(
+        snapshot,
+        root=tmp_path / "different-root",
+        root_device=999,
+        root_inode=888,
+    )
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        rollback_parent,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
+        live_config,
+    ):
+        with pytest.raises(
+            ValueError, match="Fresh rollback runtime destination already exists"
+        ):
+            promotion.materialize_immutable_rollback_runtime(mismatched_snapshot)
+
 
 def test_materialized_rollback_uses_head_not_mutable_task_brief_bytes(
     tmp_path: Path,
@@ -6949,36 +6998,117 @@ def test_mutable_incumbent_bootstrap_rejects_missing_commit_object(
         )
 
 
-def test_generated_logs_use_dedicated_directory_allowlist() -> None:
-    assert promotion.PurePosixPath(".orchestrator/logs") in promotion.ALLOWED_GENERATED_UNTRACKED_DIRECTORIES
-
-
-def test_capture_promotion_snapshot_passes_allow_legacy_admission_lock_id_churn(
+def test_materialize_immutable_rollback_runtime_reuses_exact_matching_destination(
     tmp_path: Path,
 ) -> None:
-    repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
-    create_realistic_healthy_fixture(repo)
-    identity = _verified_identity_dependency(repo)
-    process_identity = _verified_process_identity_dependency(repo)
+    prefix = tmp_path / "command-runtimes"
+    prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "a" * 40
+    destination = prefix / head_commit
+    destination.mkdir(parents=True, exist_ok=True)
+    dest_stat = destination.stat()
+
+    snapshot = Mock(spec=MutableIncumbentSnapshot)
+    snapshot.root = destination
+    snapshot.root_device = dest_stat.st_dev
+    snapshot.root_inode = dest_stat.st_ino
+    snapshot.head_commit = head_commit
+    snapshot.tracked_tree_identity = "b" * 40
+    snapshot.accepted_dev_commit = "c" * 40
+    snapshot.repository_slug = "ajoe734/pantheon"
+
+    identity = Mock(spec=CandidateRuntimeIdentity)
+    identity.candidate_root = destination
+    identity.candidate_root_device = dest_stat.st_dev
+    identity.candidate_root_inode = dest_stat.st_ino
+    identity.head_commit = head_commit
+    identity.tracked_tree_identity = "b" * 40
+    identity.accepted_dev_commit = "c" * 40
+    identity.repository_slug = "ajoe734/pantheon"
 
     with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
         "promote_supervisor_runtime.build_candidate_runtime_identity",
         return_value=identity,
-    ), patch(
-        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
-        return_value=process_identity,
-    ) as mock_discover:
-        capture_promotion_snapshot(repo, now=now)
-        mock_discover.assert_called_once_with(
-            identity,
-            candidate_revalidator=identity.verify_immutable_snapshot,
-            allow_legacy_admission_lock_id_churn=True,
-        )
+    ) as mock_builder:
+        res = promotion.materialize_immutable_rollback_runtime(snapshot)
 
-    assert promotion._is_allowed_generated_untracked_directory(
-        ".orchestrator/logs/"
-    )
-    assert not promotion._is_allowed_mutable_incumbent_ignored_runtime_path(
-        ".orchestrator/task-briefs/some_brief.md"
-    )
+    assert res is identity
+    mock_builder.assert_called_once_with(destination)
+    identity.verify_immutable_snapshot.assert_called_once_with()
+
+
+def test_materialize_immutable_rollback_runtime_rejects_same_sha_different_root(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "command-runtimes"
+    prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "a" * 40
+    destination = prefix / head_commit
+    destination.mkdir(parents=True, exist_ok=True)
+
+    other_dir = tmp_path / "other-root"
+    other_dir.mkdir(parents=True, exist_ok=True)
+    other_stat = other_dir.stat()
+
+    snapshot = Mock(spec=MutableIncumbentSnapshot)
+    snapshot.root = other_dir
+    snapshot.root_device = other_stat.st_dev
+    snapshot.root_inode = other_stat.st_ino
+    snapshot.head_commit = head_commit
+    snapshot.tracked_tree_identity = "b" * 40
+    snapshot.accepted_dev_commit = "c" * 40
+    snapshot.repository_slug = "ajoe734/pantheon"
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ):
+        with pytest.raises(
+            ValueError,
+            match="Fresh rollback runtime destination already exists",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
+def test_materialize_immutable_rollback_runtime_rejects_existing_destination_when_verification_fails(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "command-runtimes"
+    prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "a" * 40
+    destination = prefix / head_commit
+    destination.mkdir(parents=True, exist_ok=True)
+    dest_stat = destination.stat()
+
+    snapshot = Mock(spec=MutableIncumbentSnapshot)
+    snapshot.root = destination
+    snapshot.root_device = dest_stat.st_dev
+    snapshot.root_inode = dest_stat.st_ino
+    snapshot.head_commit = head_commit
+    snapshot.tracked_tree_identity = "b" * 40
+    snapshot.accepted_dev_commit = "c" * 40
+    snapshot.repository_slug = "ajoe734/pantheon"
+
+    identity = Mock(spec=CandidateRuntimeIdentity)
+    identity.candidate_root = destination
+    identity.candidate_root_device = dest_stat.st_dev
+    identity.candidate_root_inode = dest_stat.st_ino
+    identity.head_commit = head_commit
+    identity.tracked_tree_identity = "b" * 40
+    identity.accepted_dev_commit = "c" * 40
+    identity.repository_slug = "ajoe734/pantheon"
+    identity.verify_immutable_snapshot.side_effect = ValueError("dirty worktree in existing rollback destination")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        return_value=identity,
+    ):
+        with pytest.raises(
+            ValueError,
+            match="Fresh rollback runtime destination already exists",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)

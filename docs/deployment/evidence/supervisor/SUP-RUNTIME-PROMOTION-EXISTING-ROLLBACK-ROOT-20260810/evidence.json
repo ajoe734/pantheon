@@ -1,0 +1,43 @@
+{
+  "task_id": "SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810",
+  "title": "Repair promotion bootstrap when rollback root already exists",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "status": "in_progress",
+  "pr_identity": {
+    "pr_number": 4711,
+    "pr_url": "https://github.com/ajoe734/pantheon/pull/4711",
+    "base_branch": "dev",
+    "head_branch": "task/SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810",
+    "status_context": "Pantheon canonical review gate",
+    "status_id": 51924918946
+  },
+  "dependency_promotion": {
+    "dependency_pr": 4704,
+    "dependency_merge_commit": "f8c212d522191ede34c76015940b81fbe01ac6da",
+    "durable_evidence_file": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T031415268036Z-3633691.json"
+  },
+  "changed_paths": [
+    "scripts/promote_supervisor_runtime.py",
+    "scripts/test_promote_supervisor_runtime.py",
+    "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810/evidence.json"
+  ],
+  "verification": {
+    "focused_command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python) $PANTHEON_PY -m pytest -q -k materialize scripts/test_promote_supervisor_runtime.py",
+    "focused_result": "passed (6 passed, 291 deselected)",
+    "full_command": "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python) $PANTHEON_PY -m pytest -q scripts/test_promote_supervisor_runtime.py",
+    "full_result": "passed (297 passed)",
+    "diff_check_command": "git diff --check",
+    "diff_check_result": "passed (exit code 0)"
+  },
+  "implementation_summary": {
+    "code_guard": "In materialize_immutable_rollback_runtime, check if destination exists. If it is a directory matching destination path, root device/inode, head commit, tracked tree, accepted dev commit, and repository slug, verify its immutable snapshot (verify_immutable_snapshot) and reuse its CandidateRuntimeIdentity instead of failing.",
+    "descriptor_binding": "Path, device, inode, commit, tree, accepted dev commit, and repository slug are verified against descriptor-bound handles and path identities.",
+    "test_coverage": "Added unit tests covering: 1) exact destination path/device/inode match reuse with verify_immutable_snapshot, 2) same-SHA different-root rejection, 3) identity/cleanliness failure in existing destination rejection (verify_immutable_snapshot failure)."
+  },
+  "delivery_and_operations": {
+    "merge_order": "PR #4711 merges to dev after PR #4704 (f8c212d522191ede34c76015940b81fbe01ac6da)",
+    "live_rollout": "No live rollout from source task. Handoff to controlled promotion validation.",
+    "rollback_plan": "Normal git revert of PR #4711 commit"
+  }
+}
