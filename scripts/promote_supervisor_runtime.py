@@ -6845,16 +6845,6 @@ def materialize_immutable_rollback_runtime(
                 ):
                     identity.verify_immutable_snapshot()
                     return identity
-                elif (
-                    identity.head_commit == snapshot.head_commit
-                    and identity.tracked_tree_identity == snapshot.tracked_tree_identity
-                    and identity.accepted_dev_commit == snapshot.accepted_dev_commit
-                    and identity.repository_slug == snapshot.repository_slug
-                    and len(identity.legacy_incumbent_bytecode_residue) == 0
-                    and len(identity.legacy_task_brief_drift) == 0
-                ):
-                    identity.verify_immutable_snapshot()
-                    return identity
             except Exception:
                 pass
         raise ValueError(

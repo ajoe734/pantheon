@@ -7149,6 +7149,53 @@ def test_materialize_immutable_rollback_runtime_rejects_existing_destination_whe
             promotion.materialize_immutable_rollback_runtime(snapshot)
 
 
+def test_materialize_immutable_rollback_runtime_rejects_same_sha_candidate_rollback_aliasing(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "command-runtimes"
+    prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
+    candidate_destination = prefix / head_commit
+    candidate_destination.mkdir(parents=True, exist_ok=True)
+
+    other_dir = tmp_path / "dev-root"
+    other_dir.mkdir(parents=True, exist_ok=True)
+    other_stat = other_dir.stat()
+
+    snapshot = Mock(spec=MutableIncumbentSnapshot)
+    snapshot.root = other_dir
+    snapshot.root_device = other_stat.st_dev
+    snapshot.root_inode = other_stat.st_ino
+    snapshot.head_commit = head_commit
+    snapshot.tracked_tree_identity = "b" * 40
+    snapshot.accepted_dev_commit = "c" * 40
+    snapshot.repository_slug = "ajoe734/pantheon"
+
+    candidate_identity = Mock(spec=CandidateRuntimeIdentity)
+    candidate_identity.candidate_root = candidate_destination
+    candidate_identity.candidate_root_device = candidate_destination.stat().st_dev
+    candidate_identity.candidate_root_inode = candidate_destination.stat().st_ino
+    candidate_identity.head_commit = head_commit
+    candidate_identity.tracked_tree_identity = "b" * 40
+    candidate_identity.accepted_dev_commit = "c" * 40
+    candidate_identity.repository_slug = "ajoe734/pantheon"
+    candidate_identity.legacy_task_brief_drift = ()
+    candidate_identity.legacy_incumbent_bytecode_residue = ()
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        return_value=candidate_identity,
+    ):
+        with pytest.raises(
+            ValueError,
+            match="Fresh rollback runtime destination already exists",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
+
+
 def test_immutable_incumbent_legacy_task_brief_provenance_binding_registered() -> None:
     binding = promotion._find_candidate_tracked_legacy_task_brief_provenance_binding(
         task_id="SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
