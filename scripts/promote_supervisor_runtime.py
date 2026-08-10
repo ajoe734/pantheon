@@ -42,6 +42,9 @@ from supervisor_runtime_health import (
 
 HEX_40_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 TASK_BRIEF_PATH_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*\.md$")
+SUPERVISOR_RUNTIME_LOG_PATH_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,249}\.log$"
+)
 ALLOWED_COMMAND_RUNTIMES_PREFIX = Path(
     "/home/lupin/pantheon-ci-deploy/command-runtimes"
 )
@@ -131,6 +134,11 @@ ALLOWED_GENERATED_UNTRACKED_FILES = frozenset(
         PurePosixPath(".orchestrator/status-derived-views.lock"),
         PurePosixPath(".orchestrator/supervisor.lock"),
         PurePosixPath(".orchestrator/task-state.lock"),
+    }
+)
+ALLOWED_GENERATED_UNTRACKED_DIRECTORIES = frozenset(
+    {
+        PurePosixPath(".orchestrator/logs"),
     }
 )
 
@@ -262,22 +270,52 @@ class SupervisorAdmissionLockIdentity:
     owner_starttime_ticks: int
 
 
-def _normalize_mutable_bootstrap_admission_lock(
-    lock: SupervisorAdmissionLockIdentity,
-) -> SupervisorAdmissionLockIdentity:
-    """Hide only the kernel-assigned FLOCK handle during legacy bootstrap.
+def _normalize_verified_flock_admission_lock_pair(
+    before: SupervisorAdmissionLockIdentity,
+    after: SupervisorAdmissionLockIdentity,
+) -> tuple[SupervisorAdmissionLockIdentity, SupervisorAdmissionLockIdentity]:
+    """Hide only a verified FLOCK pair's kernel-assigned row identifiers.
 
     Linux can assign a fresh ``/proc/locks`` identifier when the incumbent
     supervisor briefly releases and reacquires its advisory FLOCK while a
-    promotion preflight is reading its multi-gigabyte state log.  That handle
-    is not durable identity: every path, inode, content, time, lock range,
-    mode, and owner-generation field remains bound and is still compared.
-    This normalization is deliberately used only for the one mutable-root
-    bootstrap; immutable candidate and rollback runtimes remain exact.
+    promotion preflight is reading its multi-gigabyte state log.  The row
+    identifier is not durable identity, but the exception is safe only for
+    the exact supervisor FLOCK shape already enforced by the procfs reader.
+    Every path, inode, content, time, range, mode, class, and owner-generation
+    field remains in the dataclass comparison.  A non-FLOCK or malformed pair
+    is returned unchanged and therefore remains fail-closed on identifier
+    churn.
     """
-    return replace(
-        lock,
-        kernel_lock_id=MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID,
+    verified_flock_shape = (
+        "FLOCK",
+        "ADVISORY",
+        "WRITE",
+        "0",
+        "EOF",
+    )
+    if (
+        before.kernel_lock_kind,
+        before.kernel_lock_class,
+        before.kernel_lock_mode,
+        before.kernel_lock_start,
+        before.kernel_lock_end,
+    ) != verified_flock_shape or (
+        after.kernel_lock_kind,
+        after.kernel_lock_class,
+        after.kernel_lock_mode,
+        after.kernel_lock_start,
+        after.kernel_lock_end,
+    ) != verified_flock_shape:
+        return before, after
+    return (
+        replace(
+            before,
+            kernel_lock_id=MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID,
+        ),
+        replace(
+            after,
+            kernel_lock_id=MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID,
+        ),
     )
 
 
@@ -1685,6 +1723,11 @@ def _is_allowed_generated_untracked_path(path: str) -> bool:
     return _is_task_brief_path(path)
 
 
+def _is_allowed_generated_untracked_directory(path: str) -> bool:
+    candidate = PurePosixPath(path.rstrip("/"))
+    return candidate in ALLOWED_GENERATED_UNTRACKED_DIRECTORIES
+
+
 def _is_allowed_mutable_incumbent_ignored_runtime_path(path: str) -> bool:
     """Accept only known runtime debris from the mutable bootstrap root.
 
@@ -1759,6 +1802,79 @@ def _assert_allowed_generated_untracked_file(
                 )
         finally:
             os.close(leaf)
+    finally:
+        _close_descriptors(*reversed(descriptors))
+
+
+def _assert_allowed_generated_untracked_directory(
+    handle: CandidateRootHandle,
+    relative_path: str,
+) -> None:
+    """Admit only regular, non-executable ``.log`` leaves in the logs root."""
+    candidate = PurePosixPath(relative_path.rstrip("/"))
+    if candidate not in ALLOWED_GENERATED_UNTRACKED_DIRECTORIES:
+        raise ValueError(
+            f"Generated directory is not allowlisted: {relative_path!r}"
+        )
+
+    descriptors = [os.dup(handle.descriptor)]
+    try:
+        for component in candidate.parts:
+            descriptor = _open_relative_descriptor(
+                descriptors[-1],
+                component,
+                label=f"Allowed generated directory component {component!r}",
+                require_directory=True,
+            )
+            if os.fstat(descriptor).st_dev != handle.identity.device:
+                os.close(descriptor)
+                raise ValueError(
+                    "Allowed generated directory escaped the candidate filesystem: "
+                    f"{relative_path}"
+                )
+            descriptors.append(descriptor)
+
+        try:
+            with os.scandir(descriptors[-1]) as entries:
+                names = tuple(entry.name for entry in entries)
+        except OSError as exc:
+            raise ValueError(
+                f"Cannot enumerate allowed generated directory {relative_path!r}: {exc}"
+            ) from exc
+
+        for name in names:
+            if SUPERVISOR_RUNTIME_LOG_PATH_PATTERN.fullmatch(name) is None:
+                raise ValueError(
+                    "Forbidden entry in allowed generated log directory: "
+                    f"{candidate / name}"
+                )
+            leaf = _open_relative_descriptor(
+                descriptors[-1],
+                name,
+                label=f"Allowed generated log file {str(candidate / name)!r}",
+                require_directory=False,
+            )
+            try:
+                leaf_stat = os.fstat(leaf)
+                if leaf_stat.st_dev != handle.identity.device:
+                    raise ValueError(
+                        "Allowed generated log file escaped the candidate filesystem: "
+                        f"{candidate / name}"
+                    )
+                if leaf_stat.st_nlink != 1:
+                    raise ValueError(
+                        "Allowed generated log file must have exactly one link: "
+                        f"{candidate / name}"
+                    )
+                if leaf_stat.st_mode & (
+                    stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                ):
+                    raise ValueError(
+                        "Allowed generated log file must not be executable: "
+                        f"{candidate / name}"
+                    )
+            finally:
+                os.close(leaf)
     finally:
         _close_descriptors(*reversed(descriptors))
 
@@ -2040,10 +2156,16 @@ def verify_working_tree_cleanliness(
                 )
             if relative_path.endswith("/"):
                 kind = "ignored" if status_code == "!!" else "untracked"
-                raise ValueError(
-                    f"Forbidden {kind} directory found in candidate root: "
-                    f"{relative_path}"
+                if not _is_allowed_generated_untracked_directory(relative_path):
+                    raise ValueError(
+                        f"Forbidden {kind} directory found in candidate root: "
+                        f"{relative_path}"
+                    )
+                _assert_allowed_generated_untracked_directory(
+                    handle,
+                    relative_path,
                 )
+                continue
             if not _is_allowed_generated_untracked_path(relative_path):
                 kind = "ignored" if status_code == "!!" else "untracked"
                 raise ValueError(
@@ -3516,11 +3638,12 @@ def discover_incumbent_supervisor_process(
     comparison_lock_before = lock_before
     comparison_lock_after = lock_after
     if allow_legacy_admission_lock_id_churn:
-        comparison_lock_before = _normalize_mutable_bootstrap_admission_lock(
-            lock_before
-        )
-        comparison_lock_after = _normalize_mutable_bootstrap_admission_lock(
-            lock_after
+        (
+            comparison_lock_before,
+            comparison_lock_after,
+        ) = _normalize_verified_flock_admission_lock_pair(
+            lock_before,
+            lock_after,
         )
     _guarded_process_compare(
         runtime_reader,
@@ -3856,6 +3979,7 @@ def capture_promotion_snapshot(
                 candidate_revalidator=(
                     candidate_identity.verify_immutable_snapshot
                 ),
+                allow_legacy_admission_lock_id_churn=True,
             )
         except Exception as exc:
             supervisor_process_error = str(exc)
