@@ -3530,13 +3530,14 @@ def discover_incumbent_supervisor_process(
     reader: RuntimeProcessReader | None = None,
     cwd_git_identity_reader: Callable[
         [ProcessCwdIdentity], tuple[str, str]
-    ] = _read_process_cwd_git_identity,
+    ] | None = None,
     candidate_revalidator: Callable[[], None] | None = None,
     allow_legacy_environment_contract: bool = False,
     allow_legacy_admission_lock_id_churn: bool = False,
 ) -> SupervisorProcessIdentity:
     """Discover and bind exactly one incumbent to the immutable candidate."""
     runtime_reader = reader or ProcfsRuntimeProcessReader()
+    git_reader = cwd_git_identity_reader or _read_process_cwd_git_identity
     expected = expected_contract or _expected_supervisor_process_contract(
         identity,
         supervisor_argv=expected_argv,
@@ -3687,7 +3688,7 @@ def discover_incumbent_supervisor_process(
         runtime_reader,
         generation,
         label="cwd Git identity",
-        operation=lambda: cwd_git_identity_reader(cwd),
+        operation=lambda: git_reader(cwd),
     )
     _guarded_process_compare(
         runtime_reader,
@@ -7257,6 +7258,7 @@ class OSPromotionBackend:
                 expected_argv=seed_argv,
                 reader=self.reader,
                 candidate_revalidator=captured_incumbent_identity.verify_immutable_snapshot,
+                allow_legacy_admission_lock_id_churn=True,
             )
             if incumbent_process.generation != seed_generation:
                 raise ValueError("Incumbent changed during promotion preparation")
@@ -7300,7 +7302,7 @@ class OSPromotionBackend:
             expected_generation=incumbent_process.generation,
             reader=self.reader,
             allow_legacy_environment_contract=bootstrap_mutable_incumbent,
-            allow_legacy_admission_lock_id_churn=bootstrap_mutable_incumbent,
+            allow_legacy_admission_lock_id_churn=True,
             cwd_git_identity_reader=(
                 lambda _cwd: (
                     mutable_incumbent.head_commit,
@@ -7364,6 +7366,7 @@ class OSPromotionBackend:
                 expected_argv=plan.incumbent_process.argv,
                 expected_generation=plan.incumbent_process.generation,
                 reader=self.reader,
+                allow_legacy_admission_lock_id_churn=True,
             )
         current_seed = _discover_supervisor_seed(self.reader)
         expected_seed = (
@@ -7420,6 +7423,7 @@ class OSPromotionBackend:
             expected_generation=generation,
             reader=self.reader,
             require_current_dev_identity=require_current_dev_identity,
+            allow_legacy_admission_lock_id_churn=True,
         )
 
     def record_intent(

@@ -8132,6 +8132,113 @@ def test_prepare_incumbent_with_bytecode_residue_materializes_clean_rollback_run
         assert len(plan.incumbent_identity.legacy_incumbent_bytecode_residue) == 0
 
 
+def test_immutable_incumbent_promotion_prepare_and_revalidate_passes_flock_id_churn_opt_in(
+    tmp_path: Path,
+) -> None:
+    runtimes_dir = tmp_path / "command-runtimes"
+    candidate_root = runtimes_dir / ("a" * 40)
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    incumbent_root = runtimes_dir / ("b" * 40)
+    incumbent_root.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(incumbent_root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    incumbent_identity = _verified_identity_dependency(incumbent_root)
+    incumbent_identity.config_path = candidate_identity.config_path
+    incumbent_identity.config_bytes = candidate_identity.config_bytes
+    incumbent_identity.config_sha256 = candidate_identity.config_sha256
+    incumbent_process = replace(
+        _verified_process_identity_dependency(incumbent_root),
+        argv=tuple(json.loads(incumbent_identity.config_bytes)["watchdog"]["supervisor_command"]),
+    )
+
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    def _mock_build_identity(
+        path: Path,
+        config_path: Path | None = None,
+        *,
+        allow_legacy_task_brief_drift: bool = False,
+        **kwargs: Any,
+    ) -> promotion.CandidateRuntimeIdentity:
+        if path == candidate_root:
+            return candidate_identity
+        if path == incumbent_root:
+            return incumbent_identity
+        raise ValueError(f"Unexpected path: {path}")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        side_effect=_mock_build_identity,
+    ), patch(
+        "promote_supervisor_runtime._discover_supervisor_seed",
+        return_value=(
+            incumbent_process.generation,
+            incumbent_process.argv,
+            incumbent_process.cwd,
+        ),
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=incumbent_process,
+    ) as mock_discover, patch(
+        "promote_supervisor_runtime.capture_runtime_observation",
+        return_value=Mock(invariant_failures=()),
+    ) as mock_capture:
+        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+        assert plan.incumbent_process.generation == incumbent_process.generation
+
+        # Verify discover_incumbent_supervisor_process was called with allow_legacy_admission_lock_id_churn=True
+        assert mock_discover.call_args.kwargs.get("allow_legacy_admission_lock_id_churn") is True
+
+        # Verify capture_runtime_observation was called with allow_legacy_admission_lock_id_churn=True
+        assert mock_capture.call_args.kwargs.get("allow_legacy_admission_lock_id_churn") is True
+
+        # Test revalidate under immutable incumbent
+        mock_capture.reset_mock()
+        observation = backend.revalidate(plan)
+        assert observation is not None
+        assert mock_capture.call_args.kwargs.get("allow_legacy_admission_lock_id_churn") is True
+
+
+def test_immutable_incumbent_discover_process_accepts_verified_flock_id_churn(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(original, kernel_lock_id="72")
+
+    identity = _discover_injected(
+        candidate,
+        reader,
+        allow_legacy_admission_lock_id_churn=True,
+    )
+
+    assert (
+        identity.admission_lock.kernel_lock_id
+        == promotion.MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID
+    )
+
+
+def test_immutable_incumbent_discover_process_rejects_flock_id_churn_without_opt_in(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(original, kernel_lock_id="72")
+
+    with pytest.raises(ValueError, match="admission lock generation mismatch"):
+        _discover_injected(
+            candidate,
+            reader,
+            allow_legacy_admission_lock_id_churn=False,
+        )
+
+
 def test_incumbent_bytecode_residue_rejects_symlink_directory(
     tmp_path: Path,
 ) -> None:
