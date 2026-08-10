@@ -25,3 +25,22 @@ sources.
 Independent review must bind [evidence.json](evidence.json) to the exact PR
 head. No sync promotion, live config/process mutation, manual checkout,
 signal, candidate deletion, or runtime rollout is part of this task.
+
+## Closeout addendum — 2026-08-10
+
+The reviewed follow-up delivery culminated in PR #4702 at exact head
+`f6a510903fd7559d1b7be7381a4dcb4486125014`, merged to `dev` as
+`e5e53f9fdb6027924045a1f488dbbc8872aadc0a`. It routes governed runtime logs
+and failure or approval evidence outside immutable command-runtime roots while
+preserving explicit evidence paths, local fallback, and fail-closed path
+validation.
+
+Owner closeout re-ran the combined promotion and sync regression suites:
+`277 passed in 80.73s`. The reviewer-bound `evidence.json` is unchanged by
+this addendum.
+
+This source-delivery closeout does not claim a successful live promotion. A
+subsequent governed preflight progressed beyond the evidence-routing failure
+and then aborted on the supervisor process admission-lock generation check.
+That separate rollout-verifier scope is tracked by
+`SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810`.
