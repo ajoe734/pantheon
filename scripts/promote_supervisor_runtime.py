@@ -410,7 +410,22 @@ class MutableIncumbentSnapshot:
     repository_slug: str
     process: SupervisorProcessIdentity
     source_identities: tuple[LaunchFileIdentity, ...]
+    entrypoint_root: Path | None = None
+    entrypoint_root_device: int | None = None
+    entrypoint_root_inode: int | None = None
+    entrypoint_source_identities: tuple[LaunchFileIdentity, ...] = ()
     legacy_task_brief_drift: tuple["LegacyTaskBriefDrift", ...] = ()
+
+    @property
+    def is_split_entrypoint(self) -> bool:
+        return (
+            self.entrypoint_root is not None
+            and self.entrypoint_root != self.root
+        )
+
+    @property
+    def effective_entrypoint_root(self) -> Path:
+        return self.entrypoint_root if self.entrypoint_root is not None else self.root
 
 
 @dataclass(frozen=True, order=True)
@@ -6503,7 +6518,52 @@ def _mutable_process_contract(
         raise ValueError(
             "Mutable incumbent argv is not the exact captured watchdog command"
         )
-    expected_entrypoint = cwd.path / SUPERVISOR_ENTRYPOINT_RELATIVE
+    entrypoint_args = tuple(
+        argument
+        for argument in argv[1:]
+        if PurePosixPath(argument).name == "supervisor.py"
+    )
+    if len(entrypoint_args) != 1:
+        raise ValueError(
+            "Mutable incumbent argv must contain exactly one supervisor.py entrypoint"
+        )
+    entrypoint_path = Path(entrypoint_args[0])
+    if not entrypoint_path.is_absolute():
+        raise ValueError("Mutable incumbent entrypoint path must be absolute")
+    if (
+        entrypoint_path.name != "supervisor.py"
+        or entrypoint_path.parent.name != ".orchestrator"
+    ):
+        raise ValueError(
+            "Mutable incumbent entrypoint path must end in .orchestrator/supervisor.py"
+        )
+    try:
+        resolved_entrypoint = entrypoint_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(
+            "Mutable incumbent entrypoint path cannot be resolved"
+        ) from exc
+    if resolved_entrypoint != entrypoint_path:
+        raise ValueError(
+            "Mutable incumbent entrypoint path contains symlinks or path traversal"
+        )
+    entrypoint_root = entrypoint_path.parent.parent
+    if entrypoint_path != entrypoint_root / SUPERVISOR_ENTRYPOINT_RELATIVE:
+        raise ValueError(
+            "Mutable incumbent entrypoint path is not canonical relative to its root"
+        )
+    try:
+        resolved_entrypoint_root = entrypoint_root.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(
+            "Mutable incumbent entrypoint root cannot be resolved"
+        ) from exc
+    if resolved_entrypoint_root != entrypoint_root:
+        raise ValueError(
+            "Mutable incumbent entrypoint root contains symlinks or path traversal"
+        )
+
+    expected_entrypoint = entrypoint_path
     if argv.count(str(expected_entrypoint)) != 1:
         raise ValueError(
             "Mutable incumbent argv does not bind its exact cwd entrypoint"
@@ -6546,7 +6606,7 @@ def _mutable_process_contract(
         cwd_inode=cwd.inode,
         cwd_commit=head_commit,
         cwd_tree=tracked_tree_identity,
-        command_root=str(cwd.path),
+        command_root=str(entrypoint_root),
         runtime_sha=head_commit,
         status_root=str(status_root),
         admission_lock_path=status_root / ".orchestrator" / "supervisor.lock",
@@ -6563,9 +6623,53 @@ def capture_mutable_incumbent_snapshot(
     allow_legacy_task_brief_drift: bool = False,
     allow_legacy_environment_contract: bool = False,
     allow_legacy_admission_lock_id_churn: bool = False,
+    filesystem: LaunchFilesystem | None = None,
 ) -> MutableIncumbentSnapshot:
+    entrypoint_args = tuple(
+        argument
+        for argument in seed_argv[1:]
+        if PurePosixPath(argument).name == "supervisor.py"
+    )
+    if len(entrypoint_args) != 1:
+        raise ValueError(
+            "Mutable incumbent seed_argv must contain exactly one supervisor.py entrypoint"
+        )
+    entrypoint_path = Path(entrypoint_args[0])
+    if not entrypoint_path.is_absolute():
+        raise ValueError("Mutable incumbent entrypoint path must be absolute")
+    if (
+        entrypoint_path.name != "supervisor.py"
+        or entrypoint_path.parent.name != ".orchestrator"
+    ):
+        raise ValueError(
+            "Mutable incumbent entrypoint path must end in .orchestrator/supervisor.py"
+        )
+    try:
+        resolved_entrypoint = entrypoint_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Mutable incumbent entrypoint path cannot be resolved") from exc
+    if resolved_entrypoint != entrypoint_path:
+        raise ValueError(
+            "Mutable incumbent entrypoint path contains symlinks or path traversal"
+        )
+    entrypoint_root = entrypoint_path.parent.parent
+    if entrypoint_path != entrypoint_root / SUPERVISOR_ENTRYPOINT_RELATIVE:
+        raise ValueError(
+            "Mutable incumbent entrypoint path is not canonical relative to its root"
+        )
+    try:
+        resolved_entrypoint_root = entrypoint_root.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Mutable incumbent entrypoint root cannot be resolved") from exc
+    if resolved_entrypoint_root != entrypoint_root:
+        raise ValueError(
+            "Mutable incumbent entrypoint root contains symlinks or path traversal"
+        )
+
+    fs = filesystem or OSLaunchFilesystem()
     binding = _mutable_root_binding(
         seed_cwd,
+        filesystem=fs,
         allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
         canonical_config_bytes=config_identity.config_bytes,
     )
@@ -6578,6 +6682,75 @@ def capture_mutable_incumbent_snapshot(
         sources,
         legacy_task_brief_drift,
     ) = binding
+
+    if entrypoint_root != seed_cwd.path:
+        entrypoint_root_stat = entrypoint_root.stat()
+        entrypoint_root_device = entrypoint_root_stat.st_dev
+        entrypoint_root_inode = entrypoint_root_stat.st_ino
+        _capture_directory_component_identities(
+            entrypoint_root,
+            label="Mutable incumbent entrypoint root",
+        )
+        entrypoint_cwd_identity = ProcessCwdIdentity(
+            path=entrypoint_root,
+            device=entrypoint_root_device,
+            inode=entrypoint_root_inode,
+        )
+        binding_ep = _mutable_root_binding(
+            entrypoint_cwd_identity,
+            filesystem=fs,
+            allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+            canonical_config_bytes=config_identity.config_bytes,
+        )
+        (
+            head_ep,
+            tree_ep,
+            accepted_ep,
+            remote_url_ep,
+            remote_ep,
+            sources_ep,
+            legacy_task_brief_drift_ep,
+        ) = binding_ep
+
+        if remote_url_ep != remote_url:
+            raise ValueError(
+                "Mutable incumbent split entrypoint root remote URL differs from cwd"
+            )
+        if remote_ep.slug != remote.slug:
+            raise ValueError(
+                "Mutable incumbent split entrypoint root repository slug differs from cwd"
+            )
+        if head_ep != head:
+            raise ValueError(
+                f"Mutable incumbent split entrypoint root HEAD commit differs from cwd: {head_ep} != {head}"
+            )
+        if tree_ep != tree:
+            raise ValueError(
+                f"Mutable incumbent split entrypoint root tracked tree differs from cwd: {tree_ep} != {tree}"
+            )
+        if accepted_ep.commit != accepted.commit:
+            raise ValueError(
+                "Mutable incumbent split entrypoint root accepted dev commit differs from cwd"
+            )
+        if len(sources_ep) != len(sources):
+            raise ValueError(
+                "Mutable incumbent split entrypoint root governed launch sources count mismatch"
+            )
+        for src_ep, src_cwd in zip(sources_ep, sources):
+            if (src_ep.role, src_ep.sha256, src_ep.byte_length) != (
+                src_cwd.role,
+                src_cwd.sha256,
+                src_cwd.byte_length,
+            ):
+                raise ValueError(
+                    f"Mutable incumbent split entrypoint root governed source byte drift for {src_ep.role}"
+                )
+    else:
+        entrypoint_root_device = seed_cwd.device
+        entrypoint_root_inode = seed_cwd.inode
+        sources_ep = sources
+        binding_ep = binding
+
     expected = _mutable_process_contract(
         config_identity,
         cwd=seed_cwd,
@@ -6589,11 +6762,23 @@ def capture_mutable_incumbent_snapshot(
     def revalidate_root() -> None:
         current = _mutable_root_binding(
             seed_cwd,
+            filesystem=fs,
             allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
             canonical_config_bytes=config_identity.config_bytes,
         )
         if current != binding:
             raise ValueError("Mutable incumbent root/source binding drifted")
+        if entrypoint_root != seed_cwd.path:
+            current_ep = _mutable_root_binding(
+                entrypoint_cwd_identity,
+                filesystem=fs,
+                allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+                canonical_config_bytes=config_identity.config_bytes,
+            )
+            if current_ep != binding_ep:
+                raise ValueError(
+                    "Mutable incumbent split entrypoint root binding drifted"
+                )
 
     process = discover_incumbent_supervisor_process(
         config_identity,
@@ -6603,9 +6788,7 @@ def capture_mutable_incumbent_snapshot(
         cwd_git_identity_reader=lambda _cwd: (head, tree),
         candidate_revalidator=revalidate_root,
         allow_legacy_environment_contract=allow_legacy_environment_contract,
-        allow_legacy_admission_lock_id_churn=(
-            allow_legacy_admission_lock_id_churn
-        ),
+        allow_legacy_admission_lock_id_churn=allow_legacy_admission_lock_id_churn,
     )
     if process.generation != seed_generation:
         raise ValueError("Mutable incumbent generation changed during capture")
@@ -6620,8 +6803,13 @@ def capture_mutable_incumbent_snapshot(
         repository_slug=remote.slug,
         process=process,
         source_identities=sources,
+        entrypoint_root=entrypoint_root,
+        entrypoint_root_device=entrypoint_root_device,
+        entrypoint_root_inode=entrypoint_root_inode,
+        entrypoint_source_identities=sources_ep,
         legacy_task_brief_drift=legacy_task_brief_drift,
     )
+
 
 
 def materialize_immutable_rollback_runtime(
@@ -6649,16 +6837,6 @@ def materialize_immutable_rollback_runtime(
                     and (identity.candidate_root_device, identity.candidate_root_inode)
                     == (snapshot_device, snapshot_inode)
                     and identity.head_commit == snapshot.head_commit
-                    and identity.tracked_tree_identity == snapshot.tracked_tree_identity
-                    and identity.accepted_dev_commit == snapshot.accepted_dev_commit
-                    and identity.repository_slug == snapshot.repository_slug
-                    and len(identity.legacy_incumbent_bytecode_residue) == 0
-                    and len(identity.legacy_task_brief_drift) == 0
-                ):
-                    identity.verify_immutable_snapshot()
-                    return identity
-                elif (
-                    identity.head_commit == snapshot.head_commit
                     and identity.tracked_tree_identity == snapshot.tracked_tree_identity
                     and identity.accepted_dev_commit == snapshot.accepted_dev_commit
                     and identity.repository_slug == snapshot.repository_slug
@@ -7814,6 +7992,21 @@ class PromotionTransaction:
                     "root": str(plan.mutable_incumbent.root),
                     "root_device": plan.mutable_incumbent.root_device,
                     "root_inode": plan.mutable_incumbent.root_inode,
+                    "entrypoint_root": str(
+                        plan.mutable_incumbent.entrypoint_root
+                        or plan.mutable_incumbent.root
+                    ),
+                    "entrypoint_root_device": (
+                        plan.mutable_incumbent.entrypoint_root_device
+                        if plan.mutable_incumbent.entrypoint_root_device is not None
+                        else plan.mutable_incumbent.root_device
+                    ),
+                    "entrypoint_root_inode": (
+                        plan.mutable_incumbent.entrypoint_root_inode
+                        if plan.mutable_incumbent.entrypoint_root_inode is not None
+                        else plan.mutable_incumbent.root_inode
+                    ),
+                    "is_split_entrypoint": plan.mutable_incumbent.is_split_entrypoint,
                     "commit": plan.mutable_incumbent.head_commit,
                     "tree": plan.mutable_incumbent.tracked_tree_identity,
                     "accepted_dev_commit": (

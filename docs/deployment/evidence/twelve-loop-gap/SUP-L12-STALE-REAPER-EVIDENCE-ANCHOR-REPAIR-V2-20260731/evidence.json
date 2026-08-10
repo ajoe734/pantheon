@@ -1,0 +1,245 @@
+{
+  "schema_version": "pantheon.supervisor.stale_reaper_evidence_anchor_repair.v1",
+  "task": {
+    "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
+    "title": "Supersede Wave0X #4385 evidence-anchor repair with current-head spec",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout V2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
+    "evidence_cut_at": "2026-08-10T15:56:00Z"
+  },
+  "supersession": {
+    "prior_task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+    "failed_receipt": ".orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json",
+    "receipt_status": "failed",
+    "receipt_retryable": false,
+    "prior_packet_id": "pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z",
+    "prior_packet_digest": "24fcc3087b0aa6e1aa1d99cd1d03387f2f2fc59f36c1eab79314e5a8192986fc",
+    "prior_task_spec_hash": "c5a998ac1677d802a3929d63c2d65f5bd60970060ade7d5356776dfac59d39a2",
+    "conflict": "The prior task id was already immutable-bound to a different packet, digest, and spec, so the bridge rejected the requeue before admission.",
+    "replacement_packet_id": "pkt-l12-wave0x-pipeline-blockers-supersede-20260731T1255Z",
+    "replacement_packet_digest": "5d0c5d22c6409e151a39305a683f23b94fa8d5724807093b24e9fb3c7b06b5b7",
+    "replacement_task_spec_hash": "7c05f3a17fbc03f19adb3c12ed0e1a07e44e4098eece74c09275c6b7fe44741f"
+  },
+  "source_pull_requests": {
+    "subject": {
+      "number": 4385,
+      "state": "OPEN",
+      "expected_head": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+      "observed_head": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+      "head_moved": false
+    },
+    "reconciliation": {
+      "number": 4395,
+      "state": "OPEN",
+      "expected_head": "f68827c8e17d6a1f081afe24f62ba85c116166e8",
+      "observed_head": "edb1698aa6626d84039243d862dfdc33a8f87770",
+      "head_moved": true,
+      "response": "Use an equivalent superseding repair branch and preserve the subject commits as ancestors."
+    },
+    "observed_at": "2026-08-01T15:41:40Z"
+  },
+  "repair": {
+    "invalid_anchor": "9d53a94a265c55af4c8d15c50ab3751f1440ac0f",
+    "actual_anchor": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
+    "actual_anchor_is_commit": true,
+    "actual_anchor_is_ancestor_of_task_branch": true,
+    "locations": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json#/implementation/anchor_commit",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json#/delivery/anchor_commit"
+    ],
+    "composition": {
+      "subject_head": "f5e70e86e01bde005dae5fed94b151c9bc07f389",
+      "dev_head": "23ae23c2185d31d2aeacafaa9b051127a6d53136",
+      "merge_commit": "728fa361b917b1463eed0f86e71070bf253c2666"
+    },
+    "already_on_dev": {
+      "dev_commit": "87dd23dc84552dc58f72bd58cb58b968d358b684",
+      "dev_commit_subject": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731: anchor",
+      "dev_commit_date": "2026-08-01T14:26:50Z",
+      "merged_via_pr": 4452,
+      "note": "origin/dev (ab5caf7d4) already carries the identical corrected anchor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 in both subject artifacts, introduced by 87dd23dc84552dc58f72bd58cb58b968d358b684 from the superseded V1 task via PR #4452. The subject artifact diff between origin/dev and this branch HEAD is empty. Merging PR #4465 is therefore additive-only: 306 insertions, 0 deletions per git merge-tree against origin/dev. This PR contributes the durable V2 evidence packet; the dev-side repair itself was already delivered."
+    }
+  },
+  "scope": {
+    "owned_layer": "Evidence-anchor correction and superseding delivery composition for the stale L12 missing_process failure-streak reaper.",
+    "not_changing": [
+      ".orchestrator/config.json",
+      "stale-reaper implementation semantics",
+      "generic quota, authentication, or non-L12 failure handling",
+      "provider readiness or credentials",
+      "independent review, protected merge, root-freeze, or governed closeout gates"
+    ],
+    "task_changed_files": [
+      ".orchestrator/task-briefs/sup_l12_stale_reaper_evidence_anchor_repair_v2_20260731.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json"
+    ]
+  },
+  "observed_out_of_scope_conditions": [
+    {
+      "condition": "Dev-side supervisor import breakage",
+      "description": "At dev tip (23ae23c21 / 4ee7fc95fe5c8aafa9c3d8c60f4882b6a2fbaf4c), .orchestrator/supervisor.py line 88 imports provider_auth_probe_due from provider_permissions.py, which does not define it. The same ImportError reproduces at this task branch head because 728fa361b merged that dev tip in.",
+      "remediation": "Out of scope to fix in this evidence-anchor repair task; the supervisor test suite was executed at task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e, before merging dev 728fa361b."
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "criterion": "Verify the failed requeue receipt and record the prior immutable binding.",
+      "status": "pass",
+      "proof": "The receipt failed non-retryably with the exact prior packet, digest, and task-spec binding recorded in supersession."
+    },
+    {
+      "id": "AC2",
+      "criterion": "Verify PR #4385 and #4395 current heads before editing.",
+      "status": "pass",
+      "proof": "PR #4385 matched f5e70e86; PR #4395 had moved from f68827c8 to edb1698a, so the equivalent-fix path was selected."
+    },
+    {
+      "id": "AC3",
+      "criterion": "Replace every nonexistent subject evidence anchor with the actual rebased anchor.",
+      "status": "pass",
+      "proof": "The subject README and both manifest anchor fields now name 9d53a94a295d71ee49aea6f4b96e47fbcfd29093."
+    },
+    {
+      "id": "AC4",
+      "criterion": "Run focused stale-reaper tests, full supervisor tests, JSON, diff, trailer, and config-boundary checks.",
+      "status": "pass",
+      "proof": "Five focused regressions and all 473 supervisor tests passed on task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e (before merging dev 728fa361b); both JSON manifests, diff whitespace, commit trailers, anchor ancestry, and config boundary passed."
+    },
+    {
+      "id": "AC5",
+      "criterion": "Deliver through reviewed PR, visible checks, protected merge, and governed closeout.",
+      "status": "pending",
+      "proof": null
+    }
+  ],
+  "verification": {
+    "status": "pass",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "pass",
+        "conclusion": "Provisioned a checkout-scoped interpreter from the main worktree dependency environment and verified Pantheon imports plus pytest from a foreign cwd."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
+        "result": "pass",
+        "conclusion": "Five focused stale-reaper regressions passed on task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e (before merging dev 728fa361b); re-run independently by owner Claude on 2026-08-06 in a detached worktree at that head: Ran 5 tests, OK."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 .orchestrator/test_supervisor.py",
+        "result": "pass",
+        "conclusion": "All 473 supervisor tests passed on task-branch head 5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e (before merging dev 728fa361b); re-run independently by owner Claude on 2026-08-06 at that head with the checkout root on PYTHONPATH: Ran 473 tests in 9.422s, OK. The repository root must be importable because WorkerReassignmentTests.test_reassignment_with_legacy_alias_config_uses_real_persist_task_reassignment imports scripts.ai_status."
+      },
+      {
+        "command": "jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json && jq -e . docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
+        "result": "pass",
+        "conclusion": "Both subject and repair manifests are valid JSON."
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "result": "pass",
+        "conclusion": "No whitespace errors in the task PR delta."
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "result": "pass",
+        "conclusion": "Every non-merge commit in the task PR range passed the repository trailer gate."
+      },
+      {
+        "command": "git diff --quiet origin/dev...HEAD -- .orchestrator/config.json",
+        "result": "pass",
+        "conclusion": "The task PR delta does not change supervisor configuration."
+      },
+      {
+        "command": "git merge-base --is-ancestor 9d53a94a295d71ee49aea6f4b96e47fbcfd29093 HEAD && ! git cat-file -e 9d53a94a265c55af4c8d15c50ab3751f1440ac0f^{commit}",
+        "result": "pass",
+        "conclusion": "The corrected anchor is an ancestor of the task branch and the invalid object is absent."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python3 -c 'import test_supervisor'",
+        "result": "fail",
+        "conclusion": "Expected and out of scope: at this task branch head the import fails with ImportError: cannot import name 'provider_auth_probe_due' from 'provider_permissions' at .orchestrator/supervisor.py:88, because the merged dev tip 23ae23c21 removed the symbol. This is why the suite runs above are anchored at pre-merge head 5f6e91cb."
+      }
+    ],
+    "validated_at": "2026-08-06T16:08:00Z",
+    "command_runtime_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745"
+  },
+  "delivery": {
+    "supersedes_pull_request": 4385,
+    "implementation_anchor_commit": "5f6e91cb16bbca9d12fc360f4c3f2ea37ffd595e",
+    "pull_request": 4465,
+    "task_head_sha": "c8008bc14a750d01ecb457ec76f93f677d08c467",
+    "task_head_sha_scope": "A real ancestor of the reviewable PR head; a manifest revision cannot name its own commit sha. The reviewable head must be read from PR #4465 and bound by the reviewer at approve time.",
+    "merge_commit": null,
+    "deployment": "not_applicable_repository_supervisor_policy"
+  },
+  "prior_reviews": [
+    {
+      "reviewer": "Codex2",
+      "status": "superseded",
+      "decision": "approve",
+      "reviewed_head_sha": "dcc8d4c7897e8cf7ed8ae417af1fffcdcfe0915b",
+      "reviewed_at": "2026-08-01T16:01:33Z",
+      "notes": [
+        "Prior approval issued before task reassignment from Codex/Codex2 to Antigravity/Claude and prior to merge 728fa361b of dev tip."
+      ]
+    },
+    {
+      "reviewer": "Claude",
+      "status": "superseded_by_head_movement",
+      "decision": "reopen",
+      "rounds": [
+        {
+          "head_sha": "728fa361b917b1463eed0f86e71070bf253c2666",
+          "reviewed_at": "2026-08-06T13:29:53Z",
+          "tag": "pantheon-review/reopen/728fa361b917b1463eed0f86e71070bf253c2666"
+        },
+        {
+          "head_sha": "c44f0518fa49b94dc40bc153c147d5a86a280fdf",
+          "reviewed_at": "2026-08-06T13:46:05Z",
+          "tag": "pantheon-review/reopen/c44f0518fa49b94dc40bc153c147d5a86a280fdf"
+        },
+        {
+          "head_sha": "ebb6285eb52ba0be31c856ce53ac55ac4d535d48",
+          "reviewed_at": "2026-08-06T14:13:55Z",
+          "tag": "pantheon-review/reopen/ebb6285eb52ba0be31c856ce53ac55ac4d535d48"
+        },
+        {
+          "head_sha": "b1201b89130a419e23a6ccc2a3af28d3680628c5",
+          "reviewed_at": "2026-08-06T15:02:01Z",
+          "tag": "pantheon-review/reopen/b1201b89130a419e23a6ccc2a3af28d3680628c5"
+        }
+      ],
+      "notes": [
+        "Four reopen rounds issued by Claude while Claude was the assigned reviewer and Antigravity the owner.",
+        "Round 4 (b1201b891) required replacing verification head 941c15a3 with 5f6e91cb in four places; c8008bc14 applied three of them plus README.md but left observed_out_of_scope_conditions[0].remediation naming 941c15a3. This owner round repairs that last reference.",
+        "A 2026-08-06T15:56Z supervisor reassignment briefly made Claude owner and Antigravity reviewer; it was reverted before handoff and the binding of record is owner Antigravity / reviewer Claude, matching task.owner, task.reviewer and review.reviewer. These four rounds are superseded because each targeted an earlier head, not because the roles changed."
+      ]
+    },
+    {
+      "reviewer": "Claude",
+      "status": "superseded_by_reassignment",
+      "decision": null,
+      "note": "Claude held reviewer role through the four reopen rounds and the H1-H4 owner round (a68679666, authored while Antigravity was owner). A 2026-08-10T15:49:11Z chair reassignment (event_id supervisor-task-reassigned-f468bfdef50a83c4499cdde7357041dedcfae248a54754e08668670098e993e7) moved owner Antigravity -> Claude because Antigravity's run was blocked/terminal-errored, and returned the task to todo for a blocked-owner rescue dispatch. Reviewer was already Codex2 at the live canonical row before this reassignment (old_reviewer: Codex2 in the same event); this evidence packet had not yet been rebound to that reviewer change. Claude is now owner and cannot review its own commits, so review.reviewer is rebound to Codex2, distinct from owner Claude."
+    }
+  ],
+  "review": {
+    "reviewer": "Codex2",
+    "status": "pending_independent_review",
+    "decision": null,
+    "reviewed_head_sha": null,
+    "reviewed_at": null,
+    "notes": []
+  }
+}
