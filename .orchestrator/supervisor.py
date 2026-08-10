@@ -6061,7 +6061,17 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
             ):
                 fallback = fallback or stripped
                 continue
-            return stripped
+            if (
+                normalized.startswith("status:")
+                or normalized.startswith("error:")
+                or normalized.startswith("fatal:")
+                or normalized.startswith("reason:")
+                or normalized.startswith("retrydelayms:")
+                or normalized.startswith("rate_limit:")
+            ):
+                return stripped
+            fallback = fallback or stripped
+            continue
     return fallback
 
 

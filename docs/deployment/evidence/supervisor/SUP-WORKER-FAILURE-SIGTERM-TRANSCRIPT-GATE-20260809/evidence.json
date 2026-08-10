@@ -46,11 +46,11 @@
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'DetectWorkerFailureTests or RuntimeLeaseReconciliationTests or AllowedRateLimitNoticeTests or pause_dispatch_for_reaped_worker'",
-      "result": "93 passed, 533 deselected, 10 subtests passed in 11.94s"
+      "result": "94 passed, 533 deselected, 10 subtests passed in 1.95s"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-      "result": "626 passed, 74 subtests passed in 68.91s"
+      "result": "628 passed, 533 deselected, 10 subtests passed in 2.02s"
     },
     {
       "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",

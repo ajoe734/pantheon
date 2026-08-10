@@ -658,12 +658,25 @@ class DetectWorkerFailureTests(unittest.TestCase):
     def test_generic_failed_runner_without_provider_envelope_is_none(self) -> None:
         """Generic runner failure (runner_status=failed, exit_code=1) without structured envelope or explicit CLI error line returns None for non-matching log content."""
         worker = self._worker_for_log(
-            "Working on task...\nProcessing finished with non-zero exit code.\n",
+            "if rate limit exceeded ... quota exceeded\n",
             provider="codex",
         )
         worker.update({"runner_status": "failed", "exit_code": 1})
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_generic_failed_runner_with_unstructured_usage_limit_is_none(self) -> None:
+        """Generic runner failure (runner_status=failed, exit_code=1) with plaintext usage limit line without explicit error/status prefix returns None."""
+        worker = self._worker_for_log(
+            "ERROR: You have hit your usage limit or non-zero return code.\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "failed", "exit_code": 1})
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNone(detected)
+        classified = supervisor.classify_worker_failure({}, worker, detected)
+        self.assertIsNone(classified)
 
     def test_captured_live_sigterm_codex1_auth_source_line_does_not_pause(self) -> None:
         """Replay codex-20260809T144540Z SIGTERM auth source-line event: quoted auth pattern in source code line under SIGTERM must not detect failure or pause codex1."""
