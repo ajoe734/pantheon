@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import unittest
+import json
 import sys
+import unittest
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -24,6 +25,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         merge_lands_synchronously: bool = True,
         landed_merged_at: str = "2026-06-12T01:01:07Z",
         ephemeral_merge_returncode: int = 0,
+        commits: Mapping[str, Mapping[str, Any]] | None = None,
+        carry_forward_publish_fails: bool = False,
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -46,6 +49,11 @@ class FakeRunner(auto_integrator.CommandRunner):
         # call, the way a request that was only *enqueued* would.
         self.merge_lands_synchronously = merge_lands_synchronously
         self.landed_merged_at = landed_merged_at
+        self.commits = {str(sha): dict(payload) for sha, payload in (commits or {}).items()}
+        self.carry_forward_publish_fails = carry_forward_publish_fails
+        self.api_payloads: list[dict[str, Any]] = []
+        self.tag_refs: set[str] = set()
+        self._next_tag_sha = 200
 
     def _pr_for_command_state(self, command: Sequence[str]) -> Mapping[str, Any] | None:
         if "--state" not in command:
@@ -64,6 +72,11 @@ class FakeRunner(auto_integrator.CommandRunner):
         command = [str(arg) for arg in args]
         self.commands.append(command)
         joined = " ".join(command)
+        api_payload: dict[str, Any] | None = None
+        if "--input" in command:
+            input_path = Path(command[command.index("--input") + 1])
+            api_payload = json.loads(input_path.read_text(encoding="utf-8"))
+            self.api_payloads.append(api_payload)
         if command[:3] == ["gh", "pr", "list"]:
             pr = self._pr_for_command_state(command)
             stdout = "[]" if pr is None else '[{"number": %s}]' % pr["number"]
@@ -76,6 +89,31 @@ class FakeRunner(auto_integrator.CommandRunner):
                 if pr is not None and str(pr.get("number")) == number:
                     return completed(command, stdout=auto_integrator.json.dumps(dict(pr)))
             return completed(command, stdout="{}")
+        commit_prefix = "repos/ajoe734/pantheon/commits/"
+        if command[:2] == ["gh", "api"] and len(command) == 3 and command[2].startswith(commit_prefix):
+            head_sha = command[2][len(commit_prefix) :].partition("?")[0]
+            return completed(command, stdout=auto_integrator.json.dumps(self.commits.get(head_sha, {})))
+        if (
+            command[:2] == ["gh", "api"]
+            and "git/refs/tags/" in command[-1]
+            and "--method" not in command
+        ):
+            tag_name = command[-1].rsplit("git/refs/tags/", 1)[-1].replace("%2F", "/")
+            ref = f"refs/tags/{tag_name}"
+            if ref in self.tag_refs:
+                return completed(command, stdout=auto_integrator.json.dumps({"ref": ref}))
+            return completed(command, stdout="{}")
+        if command[:2] == ["gh", "api"] and "/git/tags" in joined and "POST" in command:
+            if self.carry_forward_publish_fails:
+                raise auto_integrator.CommandFailure(command, 1, "review-proof tag write failed")
+            self._next_tag_sha += 1
+            return completed(command, stdout=auto_integrator.json.dumps({"sha": f"tagobj{self._next_tag_sha}"}))
+        if command[:2] == ["gh", "api"] and "/git/refs" in joined and "POST" in command:
+            assert api_payload is not None
+            self.tag_refs.add(api_payload["ref"])
+            return completed(command, stdout=auto_integrator.json.dumps({"ref": api_payload["ref"]}))
+        if command[:2] == ["gh", "api"] and "/actions/workflows/" in joined and "POST" in command:
+            return completed(command)
         if command[:3] == ["git", "fetch", "origin"]:
             return completed(command)
         if command[:3] == ["git", "merge-base", "--is-ancestor"]:
@@ -246,7 +284,262 @@ class CheckSummaryTests(unittest.TestCase):
         self.assertEqual(summary.failing, ("ci",))
 
 
+class GitHubJsonCommandRunnerTests(unittest.TestCase):
+    def test_post_payload_is_available_to_gh_and_removed_afterward(self) -> None:
+        runner = FakeRunner()
+        client = auto_integrator.GitHubJsonCommandRunner(runner, root=REPO_ROOT)
+
+        result = client.run_json(
+            ["gh", "api", "--method", "POST", "repos/example/repo/example", "--input", "-"],
+            payload={"hello": "world"},
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(runner.api_payloads, [{"hello": "world"}])
+        command = runner.commands[-1]
+        self.assertNotEqual(command[-1], "-")
+        self.assertFalse(Path(command[-1]).exists())
+
+
 class IntegrationPlanTests(unittest.TestCase):
+    def test_task_brief_only_successor_is_carried_forward_automatically(self) -> None:
+        successor = "b" * 40
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr.update(
+            {
+                "url": "https://github.com/ajoe734/pantheon/pull/44",
+                "headRefOid": successor,
+                "commits": [{"oid": successor, "committedDate": "2026-06-12T00:50:00Z"}],
+            }
+        )
+        runner = FakeRunner(
+            pr=pr,
+            commits={
+                successor: {
+                    "sha": successor,
+                    "parents": [{"sha": APPROVED_HEAD}],
+                    "files": [
+                        {
+                            "filename": ".orchestrator/task-briefs/abc_001.md",
+                            "status": "modified",
+                        }
+                    ],
+                }
+            },
+        )
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=False,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(result.action, "would_merge")
+        self.assertIn("would merge", result.detail)
+        self.assertTrue(
+            any(
+                command[:2] == ["gh", "api"]
+                and command[-1].startswith(
+                    f"repos/ajoe734/pantheon/commits/{successor}?"
+                )
+                for command in runner.commands
+            )
+        )
+
+    def test_task_brief_successor_publishes_before_red_rollup_then_merges_green_pass(self) -> None:
+        successor = "b" * 40
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr.update(
+            {
+                "url": "https://github.com/ajoe734/pantheon/pull/44",
+                "headRefOid": successor,
+                "commits": [{"oid": successor, "committedDate": "2026-06-12T00:50:00Z"}],
+                "statusCheckRollup": [
+                    {
+                        "name": "Pantheon canonical review gate",
+                        "conclusion": "FAILURE",
+                        "status": "COMPLETED",
+                    },
+                    {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
+                ],
+            }
+        )
+        runner = FakeRunner(
+            pr=pr,
+            commits={
+                successor: {
+                    "sha": successor,
+                    "parents": [{"sha": APPROVED_HEAD}],
+                    "files": [{"filename": ".orchestrator/task-briefs/abc_001.md"}],
+                }
+            },
+        )
+
+        first_result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(first_result.action, "waiting")
+        self.assertIn("waiting for that successor check", first_result.detail)
+        self.assertTrue(any("/git/tags" in " ".join(command) for command in runner.commands))
+        self.assertTrue(any("/git/refs" in " ".join(command) for command in runner.commands))
+        self.assertTrue(any("/actions/workflows/" in " ".join(command) for command in runner.commands))
+        self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+        proof_index = next(index for index, command in enumerate(runner.commands) if "/git/tags" in " ".join(command))
+        dispatch_index = next(index for index, command in enumerate(runner.commands) if "/actions/workflows/" in " ".join(command))
+        self.assertLess(proof_index, dispatch_index)
+
+        runner.pr = {
+            **runner.pr,
+            "statusCheckRollup": [
+                {
+                    "name": "Pantheon canonical review gate",
+                    "conclusion": "SUCCESS",
+                    "status": "COMPLETED",
+                },
+                {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
+            ],
+        }
+        workflow_calls_after_first_pass = sum(
+            1 for command in runner.commands if "/actions/workflows/" in " ".join(command)
+        )
+
+        second_result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(second_result.action, "merged")
+        self.assertEqual(
+            workflow_calls_after_first_pass,
+            sum(1 for command in runner.commands if "/actions/workflows/" in " ".join(command)),
+        )
+        self.assertTrue(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_rejected_gate_never_publishes_task_brief_carry_forward_proof(self) -> None:
+        successor = "b" * 40
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr.update(
+            {
+                "url": "https://github.com/ajoe734/pantheon/pull/44",
+                "headRefOid": successor,
+                "commits": [{"oid": successor, "committedDate": "2026-06-12T00:50:00Z"}],
+            }
+        )
+        runner = FakeRunner(
+            pr=pr,
+            commits={
+                successor: {
+                    "sha": successor,
+                    "parents": [{"sha": APPROVED_HEAD}],
+                    "files": [{"filename": ".orchestrator/task-briefs/abc_001.md"}],
+                }
+            },
+        )
+        rejected_gate = auto_integrator.ReviewGate(
+            state={
+                "tasks": [
+                    {
+                        "id": "ABC-001",
+                        "title": "Ready",
+                        "status": "review",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                    }
+                ]
+            },
+            events=approved_gate().events,
+        )
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=True,
+            open_unblock=False,
+            gate=rejected_gate,
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("review_not_approved", result.detail)
+        self.assertTrue(any(f"/commits/{successor}" in " ".join(command) for command in runner.commands))
+        self.assertFalse(any("/git/tags" in " ".join(command) for command in runner.commands))
+        self.assertFalse(any("/git/refs" in " ".join(command) for command in runner.commands))
+        self.assertFalse(any("/actions/workflows/" in " ".join(command) for command in runner.commands))
+        self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_carry_forward_publication_failure_blocks_before_merging(self) -> None:
+        successor = "b" * 40
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr.update(
+            {
+                "url": "https://github.com/ajoe734/pantheon/pull/44",
+                "headRefOid": successor,
+                "commits": [{"oid": successor, "committedDate": "2026-06-12T00:50:00Z"}],
+            }
+        )
+        runner = FakeRunner(
+            pr=pr,
+            carry_forward_publish_fails=True,
+            commits={
+                successor: {
+                    "sha": successor,
+                    "parents": [{"sha": APPROVED_HEAD}],
+                    "files": [{"filename": ".orchestrator/task-briefs/abc_001.md"}],
+                }
+            },
+        )
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=True,
+            open_unblock=False,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("proof publication failed", result.detail)
+        self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
     def test_dry_run_would_merge_green_clean_pr(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",

@@ -24,7 +24,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol, Sequence
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 
 CANONICAL_REVIEW_CONTEXT = "Pantheon canonical review gate"
@@ -57,6 +57,13 @@ STATUS_STATES = {
 }
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 OID_RE = re.compile(r"^[0-9a-f]{40}$")
+TASK_BRIEF_PREFIX = ".orchestrator/task-briefs/"
+# GitHub's commit-files response is bounded. A closeout record should be a
+# tiny one-file successor. Request the largest supported page, then reject a
+# full page rather than risk treating an omitted later page as proof that no
+# code changed.
+COMMIT_FILES_PAGE_SIZE = 100
+MAX_SAFE_SUCCESSOR_FILES = COMMIT_FILES_PAGE_SIZE - 1
 
 
 class GitHubReviewBridgeError(RuntimeError):
@@ -202,6 +209,228 @@ def _require_repository_slug(value: str) -> str:
             f"GitHub repository must use owner/name form, got {slug!r}"
         )
     return slug
+
+
+def repository_from_pull_request_url(value: Any) -> str | None:
+    """Return a GitHub ``owner/repo`` slug from a normal pull-request URL."""
+
+    parsed = urlparse(str(value or "").strip())
+    if parsed.scheme != "https" or parsed.netloc.lower() != "github.com":
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 4 or parts[2] != "pull" or not parts[3].isdigit():
+        return None
+    slug = f"{parts[0]}/{parts[1]}"
+    try:
+        return _require_repository_slug(slug)
+    except GitHubReviewBridgeError:
+        return None
+
+
+def _is_task_brief_path(value: Any) -> bool:
+    path = str(value or "").strip().lstrip("/")
+    if not path.startswith(TASK_BRIEF_PREFIX):
+        return False
+    remainder = path[len(TASK_BRIEF_PREFIX) :]
+    return bool(remainder) and ".." not in remainder.split("/")
+
+
+def task_brief_only_successor(
+    *,
+    repository: str,
+    approved_head_sha: str,
+    successor_head_sha: str,
+    runner: JsonRunner | None = None,
+) -> dict[str, Any] | None:
+    """Classify one harmless generated-task-brief successor, or reject it.
+
+    This is intentionally much narrower than a generic docs-only exemption.
+    The successor must be a *single direct child* of the approved head, and
+    every reported new and previous filename must be inside task-briefs. Any
+    unavailable, truncated, malformed, renamed-from-code, or multi-commit
+    response fails closed by returning ``None``.
+
+    The caller may then carry the existing review forward to the successor
+    without pretending that a broader post-approval change was reviewed.
+    """
+
+    repository = _require_repository_slug(repository)
+    approved = str(approved_head_sha or "").strip().lower()
+    successor = str(successor_head_sha or "").strip().lower()
+    if not OID_RE.fullmatch(approved) or not OID_RE.fullmatch(successor):
+        return None
+    if approved == successor:
+        return None
+    client = runner or GhJsonRunner()
+    try:
+        payload = client.run_json(
+            [
+                "gh",
+                "api",
+                f"repos/{repository}/commits/{successor}"
+                f"?per_page={COMMIT_FILES_PAGE_SIZE}&page=1",
+            ]
+        )
+    except GitHubReviewBridgeError:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    if str(payload.get("sha") or "").strip().lower() != successor:
+        return None
+    parents = payload.get("parents")
+    if not isinstance(parents, list) or len(parents) != 1:
+        return None
+    parent = parents[0]
+    if not isinstance(parent, Mapping):
+        return None
+    if str(parent.get("sha") or "").strip().lower() != approved:
+        return None
+    files = payload.get("files")
+    if (
+        not isinstance(files, list)
+        or not files
+        or len(files) > MAX_SAFE_SUCCESSOR_FILES
+        or bool(payload.get("truncated"))
+    ):
+        return None
+    changed_paths: list[str] = []
+    for file in files:
+        if not isinstance(file, Mapping):
+            return None
+        filename = str(file.get("filename") or "").strip().lstrip("/")
+        if not _is_task_brief_path(filename):
+            return None
+        previous_filename = file.get("previous_filename")
+        if previous_filename is not None and not _is_task_brief_path(previous_filename):
+            return None
+        changed_paths.append(filename)
+    return {
+        "kind": "task_brief_only_successor",
+        "approved_head_sha": approved,
+        "successor_head_sha": successor,
+        "changed_paths": changed_paths,
+    }
+
+
+def carry_approval_to_task_brief_only_successor(
+    *,
+    repository: str,
+    task_id: str,
+    actor: str,
+    approved_head_sha: str,
+    successor_head_sha: str,
+    pr: int,
+    head_branch: str,
+    base: str,
+    publish: bool,
+    runner: JsonRunner | None = None,
+) -> dict[str, Any] | None:
+    """Carry one approved task-brief-only successor without a new review.
+
+    The classifier is deliberately fail-closed. When it accepts the direct
+    successor and ``publish`` is true, it records a git-native proof tag at
+    that successor and wakes the canonical gate workflow. No PR review, status
+    row, task brief, or branch commit is written as a side effect.
+    """
+
+    client = runner or GhJsonRunner()
+    carried = task_brief_only_successor(
+        repository=repository,
+        approved_head_sha=approved_head_sha,
+        successor_head_sha=successor_head_sha,
+        runner=client,
+    )
+    if carried is None:
+        return None
+    if not publish:
+        return carried
+    return publish_task_brief_only_successor_proof(
+        repository=repository,
+        task_id=task_id,
+        actor=actor,
+        carried=carried,
+        pr=pr,
+        head_branch=head_branch,
+        base=base,
+        runner=client,
+    )
+
+
+def publish_task_brief_only_successor_proof(
+    *,
+    repository: str,
+    task_id: str,
+    actor: str,
+    carried: Mapping[str, Any],
+    pr: int,
+    head_branch: str,
+    base: str,
+    dispatch_if_proof_exists: bool = True,
+    runner: JsonRunner | None = None,
+) -> dict[str, Any]:
+    """Publish a proof for an already-classified harmless successor.
+
+    Callers must first classify the successor and obtain an allow decision from
+    the full review gate.  Keeping this write-only step separate makes it
+    impossible for classification to create a GitHub proof for a head the gate
+    subsequently rejects.
+    """
+
+    if carried.get("kind") != "task_brief_only_successor":
+        raise GitHubReviewBridgeError("carry-forward proof requires a task-brief-only classification")
+    approved_head_sha = str(carried.get("approved_head_sha") or "").strip().lower()
+    successor_head_sha = str(carried.get("successor_head_sha") or "").strip().lower()
+    changed_paths = carried.get("changed_paths")
+    if (
+        not OID_RE.fullmatch(approved_head_sha)
+        or not OID_RE.fullmatch(successor_head_sha)
+        or approved_head_sha == successor_head_sha
+        or not isinstance(changed_paths, list)
+        or not changed_paths
+        or not all(_is_task_brief_path(path) for path in changed_paths)
+    ):
+        raise GitHubReviewBridgeError("carry-forward proof received an invalid task-brief classification")
+    binding = ReviewBinding.from_mapping(
+        {
+            "pr": pr,
+            "head_sha": successor_head_sha,
+            "head_branch": head_branch,
+            "base": base,
+        }
+    )
+    client = runner or GhJsonRunner()
+    proof = _push_review_proof_tag(
+        client,
+        repository=_require_repository_slug(repository),
+        binding=binding,
+        task_id=task_id,
+        actor=actor,
+        decision=APPROVE,
+        message=(
+            "Automatic carry-forward: this one direct successor changes only "
+            "generated .orchestrator/task-briefs/ paths after the approved head."
+        ),
+    )
+    proof_published = bool(proof.get("created"))
+    # A new proof always needs a workflow run.  If the ref already exists,
+    # callers can suppress a redundant dispatch only after observing the
+    # canonical check green on a later integration pass.  Keeping the retry
+    # path available matters when a worker died after creating the tag but
+    # before dispatching the workflow.
+    workflow_dispatched = proof_published or dispatch_if_proof_exists
+    if workflow_dispatched:
+        _dispatch_canonical_review_gate_workflow(
+            client,
+            repository=_require_repository_slug(repository),
+            binding=binding,
+            required=True,
+        )
+    return {
+        **dict(carried),
+        "review_proof_ref": str(proof.get("ref") or "") or None,
+        "proof_published": proof_published,
+        "workflow_dispatched": workflow_dispatched,
+    }
 
 
 def _review_marker(
@@ -506,7 +735,7 @@ def _push_review_proof_tag(
         # first time this exact head is approved/reopened -- not a failure.
         existing = None
     if isinstance(existing, Mapping) and existing.get("ref") == ref:
-        return dict(existing)
+        return {**dict(existing), "created": False}
 
     tag_message = json.dumps(
         {
@@ -544,7 +773,7 @@ def _push_review_proof_tag(
     )
     if not isinstance(created_ref, Mapping) or created_ref.get("ref") != ref:
         raise GitHubReviewBridgeError("GitHub did not expose the pushed review-proof tag ref")
-    return dict(created_ref)
+    return {**dict(created_ref), "created": True}
 
 
 CANONICAL_REVIEW_GATE_WORKFLOW_FILE = "canonical-review-gate.yml"
@@ -555,6 +784,7 @@ def _dispatch_canonical_review_gate_workflow(
     *,
     repository: str,
     binding: ReviewBinding,
+    required: bool = False,
 ) -> None:
     """Best-effort: wake the Canonical Review Gate workflow so it re-reads
     the tag just pushed and posts its own, correctly-attributed status.
@@ -569,7 +799,6 @@ def _dispatch_canonical_review_gate_workflow(
     shows success, but GitHub's own mergeable_state stays blocked until the
     workflow itself runs again. None of that workflow's pull_request event
     types fire from a bare tag push, so dispatch it explicitly here.
-
     Dispatch against `binding.base` (the PR's base branch, e.g. "dev"), not
     `binding.head_branch`. GitHub's workflow-dispatch API validates that the
     workflow_dispatch trigger exists in the workflow file AS IT EXISTS ON THE
@@ -585,8 +814,10 @@ def _dispatch_canonical_review_gate_workflow(
     what commit is physically checked out, so targeting the base branch is
     always correct and always has the current trigger definition.
 
-    Failure to dispatch is not fatal: the tag is the durable proof, and the
-    next natural push to the PR (or a manual re-run) picks it up either way.
+    Normal reviewer decisions treat dispatch as best-effort because their
+    proof is already durable. A carried approval is different: it exists only
+    to make the successor's required check re-evaluate, so its caller passes
+    ``required=True`` and must fail closed if the dispatch cannot be made.
     """
 
     try:
@@ -610,7 +841,8 @@ def _dispatch_canonical_review_gate_workflow(
             },
         )
     except GitHubReviewBridgeError:
-        pass
+        if required:
+            raise
 
 
 def bridge_review_decision(
