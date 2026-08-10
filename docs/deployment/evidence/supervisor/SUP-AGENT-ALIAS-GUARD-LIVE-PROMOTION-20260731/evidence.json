@@ -1,189 +1,177 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
   "current_assignment": {
-    "owner": "Codex2",
-    "reviewer": "Antigravity",
+    "owner": "Codex",
+    "reviewer": "Claude",
     "review_decision": "pending"
   },
   "initial_assignment": {
     "owner": "Antigravity",
     "reviewer": "Human/Ops"
   },
-  "delivery_state": "blocked_preflight",
+  "delivery_state": "blocked_preflight_split_incumbent_entrypoint",
+  "mutation_performed": false,
   "promoted_target_commit": "012dab969455e7146f2437159d7d38fc5904a195",
-  "pr_number": 4431,
-  "incident_chronology": {
-    "first_promotion_attempt": {
-      "pid": 3497098,
-      "root_type": "disposable_task_worktree",
-      "cwd_after_cleanup": "/tmp/pantheon-worker-worktrees/pantheon/sup-agent-alias-guard-live-promotion-20260731 (deleted)",
-      "worktree_head_drift": "ac4fc7fe0e03cbd125389a830efde2873aedb73e",
-      "false_lease_claim": "active_worker_leases_preserved=0"
-    },
-    "human_ops_live_rescue": {
-      "timestamp_utc": "2026-07-31T23:26:14Z",
-      "action": "admission-lock rollback",
-      "rollback_target_commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
-      "rollback_pid": 3509070,
-      "config_sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc"
-    },
-    "second_promotion_attempt": {
-      "pid": 3523046,
-      "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/012dab969455e7146f2437159d7d38fc5904a195",
-      "started_at_utc": "2026-07-31T23:28:30Z",
-      "last_reviewed_loops_utc": [
-        "2026-07-31T23:28:33Z",
-        "2026-07-31T23:29:07Z",
-        "2026-07-31T23:29:42Z",
-        "2026-07-31T23:30:16Z",
-        "2026-07-31T23:30:50Z"
-      ]
-    },
-    "watchdog_fallback": {
-      "detected_at_utc": "2026-08-01T05:29:29Z",
-      "reason": "pid_not_alive",
-      "dead_pid": 3523046,
-      "replacement_pid": 6272,
-      "replacement_root": "/home/lupin/pantheon-ci-deploy/dev-root",
-      "replacement_commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896"
-    },
-    "latest_intentional_deploy_restart": {
-      "timestamp_utc": "2026-08-01T14:19:34Z",
-      "reason": "intentional_deploy_restart",
-      "old_pid": 777098,
-      "new_pid": 2933948,
-      "target_commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896"
-    },
-    "automatic_rollback_exercised_by_original_promotion": false,
-    "chronology_note": "The first failed promotion required Human/Ops rescue. The later watchdog fallback occurred after PID 3523046 died and does not prove the missing promotion-transaction postcheck rollback contract."
-  },
-  "current_readback": {
-    "captured_at_utc": "2026-08-01T15:05:39Z",
+  "historical_evidence": {
     "raw_sample": "raw/revalidation-preflight-20260801T150539Z.json",
-    "live_config": {
-      "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
-      "sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
-      "expected_sha256_match": true,
-      "size_bytes": 39742,
-      "mtime_utc": "2026-07-31T22:47:27Z"
-    },
-    "live_supervisor": {
-      "process_count": 1,
-      "pid": 2933948,
-      "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
-      "commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
-      "tree": "6e9f5c440c3d7c9571cfc8038464989743201998",
-      "cmdline": "/usr/bin/python3.12 -u /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
-      "started_at_utc": "2026-08-01T14:19:34Z",
-      "log": "/home/lupin/pantheon/.orchestrator/logs/supervisor-watchdog-restart-20260801T141934Z.log",
-      "is_promoted_target": false
-    },
-    "authoritative_projection": {
-      "shadow_mode": "authoritative",
-      "shadow_ok": true,
-      "shadow_caught_up": true,
-      "shadow_projected_state_sha256": "781bcee399cc00b3236ecb963e6e84fb15e3626415ad1fa8624fb2991761457f",
-      "shadow_expected_state_sha256": "781bcee399cc00b3236ecb963e6e84fb15e3626415ad1fa8624fb2991761457f",
-      "independent_verify_ok": true,
-      "independent_projected_state_sha256": "d33d6cf307b8aeb261fe3721a3a3635a6199fcd2a76051e24e52e75e15478cd9",
-      "independent_expected_state_sha256": "d33d6cf307b8aeb261fe3721a3a3635a6199fcd2a76051e24e52e75e15478cd9",
-      "note": "The journal advanced during the first independent read; verify_projection then reloaded the journal and proved the equal final hashes recorded here."
-    },
-    "alias_task_worker_lease": {
-      "run_id": "codex-20260801T145820Z-8cc1b389",
-      "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
-      "status": "running",
-      "pid": 3211377,
-      "pid_alive": true,
-      "last_heartbeat_at_utc": "2026-08-01T15:07:20Z",
-      "queue_event_id": "evt-20260801T145756Z-701cba39",
-      "queue_lease_owner": "codex-20260801T145820Z-8cc1b389",
-      "queue_lease_expires_at_utc": "2026-08-01T15:37:33Z"
-    },
-    "duplicate_active_task_check": {
-      "method": "Group state.workers records in active lifecycle states by task_id and select groups with count greater than one.",
-      "active_record_count": 8,
-      "duplicate_task_ids": [],
-      "duplicate_task_count": 0
-    },
-    "provider_readiness": {
-      "provider": "antigravity",
-      "auth_ready": true,
-      "local_cli_worker_supported": true,
-      "verified": "verified",
-      "configured_primary_model": "gemini-3.6-flash-low",
-      "last_auth_probe_at_utc": "2026-08-01T14:13:25Z"
-    }
+    "first_attempt_disposable_worktree_pid": 3497098,
+    "human_ops_rescue_commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
+    "temporary_target_pid": 3523046,
+    "watchdog_fallback_reason": "pid_not_alive",
+    "historical_disposition": "The 2026-08-01 blocked-preflight evidence is retained as incident history; it is not current live truth."
   },
-  "root_identity": {
-    "rollback_root": {
-      "path": "/home/lupin/pantheon-ci-deploy/dev-root",
-      "head_commit": "cbb36ff1fe385f3bc2690124ff22d8edc0056896",
-      "head_tree": "6e9f5c440c3d7c9571cfc8038464989743201998",
-      "origin_url": "https://github.com/ajoe734/pantheon.git",
-      "available": true,
-      "git_status_entry_count": 47,
-      "tracked_tree_clean": false,
-      "currently_live": true
-    },
-    "previous_candidate_root": {
-      "path": "/home/lupin/pantheon-ci-deploy/command-runtimes/012dab969455e7146f2437159d7d38fc5904a195",
-      "head_commit": "012dab969455e7146f2437159d7d38fc5904a195",
-      "head_tree": "0314e0ccfad93c0deb57cb47b189f14f12a8ac6f",
-      "origin_url": "https://github.com/ajoe734/pantheon.git",
-      "tracked_tree_clean": false,
-      "reusable_as_immutable_candidate": false,
-      "reason": "Tracked canonical/derived status files are modified. The task forbids resetting or patching this root."
-    }
-  },
-  "preflight_blockers": [
-    {
-      "id": "live_target_not_promoted",
-      "detail": "The sole live supervisor is on cbb36ff1, not 012dab969."
-    },
-    {
-      "id": "candidate_root_not_immutable",
-      "detail": "The previous 012dab969 content-addressed root now has tracked dirty state and cannot be truthfully called clean or reused."
-    },
-    {
-      "id": "active_worker_pid_parity_unsafe",
-      "detail": "At capture time one of eight active worker records (codex-20260801T145808Z-d58e22be) referenced a non-live PID, so lease safety did not pass fail-closed preflight."
-    },
-    {
-      "id": "transactional_rollback_helper_unavailable",
-      "detail": "The rejected PR #4433 helper is superseded. Its replacement chain has snapshot invariants done, immutable identity in progress, rollback transaction todo, and failure-matrix integration todo."
-    }
-  ],
-  "transactional_helper_chain": [
+  "resolved_historical_dependencies": [
     {
       "task_id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801",
-      "status": "done"
+      "status": "done",
+      "terminal_outcome": "completed"
     },
     {
       "task_id": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
-      "status": "in_progress"
+      "status": "done",
+      "terminal_outcome": "completed"
     },
     {
-      "task_id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801",
-      "status": "todo"
+      "task_id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802",
+      "status": "done",
+      "terminal_outcome": "completed"
     },
     {
-      "task_id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801",
-      "status": "todo"
+      "task_id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802",
+      "status": "done",
+      "terminal_outcome": "completed"
     }
   ],
+  "selected_newer_accepted_candidate": {
+    "captured_at_utc": "2026-08-10T16:00:13.824471Z",
+    "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
+    "head_commit": "0305c861f54c4082060120afdfbc012622e5ac0a",
+    "tracked_tree_identity": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
+    "origin_url": "https://github.com/ajoe734/pantheon.git",
+    "basename_matches_head": true,
+    "git_status_clean": true,
+    "accepted_origin_dev_commit": true,
+    "alias_guard_target_is_ancestor": true,
+    "supervisor_blob": "4a6136f28ec2a23f77ca3060b0cdec279005b129"
+  },
+  "current_readback": {
+    "discover_only_started_at_utc": "2026-08-10T15:59:25.932954Z",
+    "candidate_discover_only_completed_at_utc": "2026-08-10T16:00:13.824471Z",
+    "post_readback_config_check_at_utc": "2026-08-10T16:02:28Z",
+    "live_config": {
+      "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "sha256_before": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
+      "sha256_after": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
+      "size_bytes": 40110,
+      "mtime_utc": "2026-08-10T15:28:10.205973873Z",
+      "device": 2049,
+      "inode": 2205298,
+      "original_2026_07_31_sha256": "728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc",
+      "original_hash_is_current": false,
+      "note": "The historical byte baseline is no longer current. This read-only attempt preserved the current bytes exactly and did not invoke a config writer."
+    },
+    "live_supervisor": {
+      "process_count": 1,
+      "pid": 1393542,
+      "started_at_utc": "2026-08-10T15:28:44Z",
+      "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "entrypoint_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+      "cmdline": "/usr/bin/python3.12 -u -B /home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
+      "entrypoint_checkout_head": "0305c861f54c4082060120afdfbc012622e5ac0a",
+      "entrypoint_checkout_tree": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
+      "entrypoint_basename_matches_head": false,
+      "entrypoint_supervisor_blob": "4a6136f28ec2a23f77ca3060b0cdec279005b129",
+      "entrypoint_bytes_equal_candidate": true,
+      "alias_guard_target_is_ancestor": true,
+      "last_heartbeat_at_utc": "2026-08-10T16:01:44Z",
+      "last_successful_loop_at_utc": "2026-08-10T16:01:44Z",
+      "last_loop_error": null
+    },
+    "authoritative_projection": {
+      "mode": "authoritative",
+      "ok": true,
+      "caught_up": true,
+      "last_error": null,
+      "event_count": 15941,
+      "projected_state_sha256": "64f17f42312fd2fd32c1d92e130c3a8346888058fd43fc750c27b954ecbf15be",
+      "expected_state_sha256": "64f17f42312fd2fd32c1d92e130c3a8346888058fd43fc750c27b954ecbf15be"
+    },
+    "worker_queue_and_provider_preflight": {
+      "worker_records": 16,
+      "queue_events": 3,
+      "worktree_leases": 31,
+      "duplicate_active_workers": [],
+      "parity_reasons": [],
+      "active_providers_required": [
+        "antigravity2",
+        "codex1-2",
+        "codex2-2"
+      ],
+      "required_provider_readiness_reasons": []
+    },
+    "alias_guard_source_proof": {
+      "merge_commit": "012dab969455e7146f2437159d7d38fc5904a195",
+      "merge_subject": "SUP-AGENT-ALIAS-REASSIGN-GUARD-20260731: guard canonical identity (#4430)",
+      "live_behavior": "known_agent_display_names excludes dispatch slots, empty display names, and display names containing legacy alias.",
+      "focused_tests": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_known_agent_display_names_filters_legacy_aliases .orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reassign_after_worker_failure_never_assigns_legacy_alias .orchestrator/test_supervisor.py::WorkerReassignmentTests::test_reassignment_with_legacy_alias_config_uses_real_persist_task_reassignment .orchestrator/test_supervisor.py::WorkerReassignmentTests::test_normalize_mainline_task_assignment_never_assigns_legacy_alias",
+        "result": "4 passed in 1.78s"
+      }
+    }
+  },
+  "discover_only_result": {
+    "eligible_for_promotion": false,
+    "safe_to_mutate": false,
+    "passing_invariants": [
+      "candidate_runtime_identity_immutable",
+      "config_and_state_files_readable",
+      "runtime_health_clean",
+      "supervisor_lifecycle_valid",
+      "supervisor_pid_bound_and_locked",
+      "ai_status_schema_valid",
+      "task_state_shadow_valid",
+      "fresh_loop_sequence",
+      "worker_lease_parity_and_no_duplicates",
+      "provider_readiness_baseline",
+      "no_orphaned_in_progress_tasks"
+    ],
+    "failing_invariants": [
+      {
+        "name": "incumbent_supervisor_process_identity_immutable",
+        "error": "Captured live config does not bind the exact canonical supervisor entrypoint"
+      },
+      {
+        "name": "governed_supervisor_launch_contract_immutable",
+        "error": "Candidate/process identity is unavailable"
+      }
+    ]
+  },
+  "current_blocker": {
+    "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+    "status_at_capture": "in_progress",
+    "owner": "Antigravity2",
+    "reviewer": "Codex2",
+    "reason": "The active source-only remediation binds the legacy split cwd and argv entrypoint roots. Its acceptance reproduces PID 1393542 and the exact incumbent error above. It explicitly reserves any rollout retry for a separate governed supervisor dispatch."
+  },
+  "resume_gate": [
+    "The split-entrypoint source task is independently reviewed, merged to dev, and present in a fresh clean SHA-named candidate runtime.",
+    "A new discover-only run passes candidate, incumbent, launch-contract, projection, worker/queue, provider, and config-CAS gates.",
+    "Only then may this task invoke the governed --promote --bootstrap-mutable-incumbent transaction and require automatic rollback on any failed postcheck.",
+    "Post-promotion evidence must prove the new immutable runtime, three fresh loops, equal authoritative projection hashes, lease parity, provider readiness, and unchanged transaction-bound config bytes."
+  ],
   "acceptance_result": {
-    "config_unchanged": "pass",
+    "alias_guard_source_present_in_live_entrypoint": "pass",
+    "clean_newer_accepted_candidate": "pass",
+    "config_unchanged_during_current_readback": "pass",
     "single_supervisor_discovery": "pass",
     "authoritative_projection_equal": "pass",
-    "provider_primary_readiness": "pass",
-    "no_duplicate_active_task_ids": "pass",
-    "live_target_commit": "fail",
-    "clean_immutable_candidate_root": "fail",
-    "active_worker_pid_and_lease_safety": "fail",
-    "automatic_postcheck_rollback_contract": "blocked",
-    "three_fresh_target_loops": "not_run",
+    "provider_readiness": "pass",
+    "worker_queue_lease_safety": "pass",
+    "immutable_incumbent_identity": "fail",
+    "governed_launch_contract": "blocked",
+    "transactional_live_promotion": "not_run",
+    "three_fresh_post_promotion_loops": "not_run",
     "overall": "blocked_preflight_no_mutation"
   }
 }

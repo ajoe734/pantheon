@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Promote merged alias reassignment guard into live supervisor runtime
-- Status: in_progress
+- Status: blocked
 - Owner: Codex
 - Reviewer: Claude
-- Next: Supervisor auto-started SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731 after successful dispatch.
+- Next: Read-only promotion preflight proves the clean 0305c861 candidate contains the alias guard and passes projection, lease, provider, and candidate-identity gates, but live PID 1393542 uses split cwd and argv entrypoint roots. Wait for independently reviewed and merged SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810, then rerun discover-only before any governed promotion retry.
 
 ## Summary
 Supervisor-dispatched Antigravity runtime promotion only. Expected branch task/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731, clean governed worktree, merge target dev. Owner capability: supervisor runtime deployment and readback. Reviewer capability: independent Human/Ops exact-head/runtime evidence validation.
