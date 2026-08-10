@@ -320,7 +320,11 @@ def test_promotion_snapshot_eligible_when_healthy(mock_matches, mock_sup_lock, m
     assert all(inv["ok"] for inv in snapshot["invariants"])
     identity_builder.assert_called_once_with(repo)
     assert identity.verify_immutable_snapshot.call_count == 4
-    process_discovery.assert_called_once()
+    process_discovery.assert_called_once_with(
+        identity,
+        candidate_revalidator=identity.verify_immutable_snapshot,
+        allow_legacy_admission_lock_id_churn=True,
+    )
     assert snapshot["incumbent_supervisor_process_identity"]["pid"] == 12345
     assert snapshot["governed_supervisor_launch_contract"]["cwd"] == str(repo)
     assert snapshot["identity_revalidation_stages"] == [
@@ -6712,6 +6716,32 @@ def test_mutable_incumbent_bootstrap_rejects_missing_commit_object(
 
 def test_allow_generated_untracked_logs_and_mutable_incumbent_task_briefs_prefix() -> None:
     assert promotion.PurePosixPath(".orchestrator/logs") in promotion.ALLOWED_GENERATED_UNTRACKED_FILES
+    assert promotion.PurePosixPath(".orchestrator/task-briefs") in promotion.MUTABLE_INCUMBENT_IGNORED_RUNTIME_PREFIXES
+
+
+def test_capture_promotion_snapshot_passes_allow_legacy_admission_lock_id_churn(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    create_realistic_healthy_fixture(repo)
+    identity = _verified_identity_dependency(repo)
+    process_identity = _verified_process_identity_dependency(repo)
+
+    with patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        return_value=identity,
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=process_identity,
+    ) as mock_discover:
+        capture_promotion_snapshot(repo, now=now)
+        mock_discover.assert_called_once_with(
+            identity,
+            candidate_revalidator=identity.verify_immutable_snapshot,
+            allow_legacy_admission_lock_id_churn=True,
+        )
+
     assert promotion.PurePosixPath(".orchestrator/task-briefs") in promotion.MUTABLE_INCUMBENT_IGNORED_RUNTIME_PREFIXES
     assert promotion._is_allowed_generated_untracked_path(".orchestrator/logs")
     assert promotion._is_allowed_mutable_incumbent_ignored_runtime_path(".orchestrator/task-briefs/some_brief.md")

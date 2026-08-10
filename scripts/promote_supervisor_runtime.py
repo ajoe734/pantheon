@@ -3858,6 +3858,7 @@ def capture_promotion_snapshot(
                 candidate_revalidator=(
                     candidate_identity.verify_immutable_snapshot
                 ),
+                allow_legacy_admission_lock_id_churn=True,
             )
         except Exception as exc:
             supervisor_process_error = str(exc)
