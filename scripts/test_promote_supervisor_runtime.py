@@ -320,7 +320,11 @@ def test_promotion_snapshot_eligible_when_healthy(mock_matches, mock_sup_lock, m
     assert all(inv["ok"] for inv in snapshot["invariants"])
     identity_builder.assert_called_once_with(repo)
     assert identity.verify_immutable_snapshot.call_count == 4
-    process_discovery.assert_called_once()
+    process_discovery.assert_called_once_with(
+        identity,
+        candidate_revalidator=identity.verify_immutable_snapshot,
+        allow_legacy_admission_lock_id_churn=True,
+    )
     assert snapshot["incumbent_supervisor_process_identity"]["pid"] == 12345
     assert snapshot["governed_supervisor_launch_contract"]["cwd"] == str(repo)
     assert snapshot["identity_revalidation_stages"] == [
@@ -2493,6 +2497,81 @@ def test_git_identity_rejects_ignored_directory_at_allowlisted_file_path(
             verify_working_tree_cleanliness(candidate)
 
 
+def test_git_identity_allows_verified_supervisor_runtime_log_directory(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    logs = candidate / ".orchestrator" / "logs"
+    logs.mkdir(parents=True)
+    (logs / "20260810T023847615369Z-codex-codex1_1-28cc7f.log").write_text(
+        "governed worker output\n",
+        encoding="utf-8",
+    )
+    exclude = candidate / ".git" / "info" / "exclude"
+    exclude.write_text("/.orchestrator/logs/\n", encoding="utf-8")
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        assert verify_working_tree_cleanliness(candidate) == tree
+
+
+@pytest.mark.parametrize("unsafe_entry", ["payload.py", "nested/payload.log"])
+def test_git_identity_rejects_unsafe_runtime_log_directory_entry(
+    tmp_path: Path,
+    unsafe_entry: str,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    unsafe = candidate / ".orchestrator" / "logs" / unsafe_entry
+    unsafe.parent.mkdir(parents=True, exist_ok=True)
+    unsafe.write_text("not a runtime log\n", encoding="utf-8")
+    exclude = candidate / ".git" / "info" / "exclude"
+    exclude.write_text("/.orchestrator/logs/\n", encoding="utf-8")
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="Forbidden entry|wrong type"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_executable_runtime_log(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    generated = candidate / ".orchestrator" / "logs" / "worker.log"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("executable debris\n", encoding="utf-8")
+    generated.chmod(0o755)
+    exclude = candidate / ".git" / "info" / "exclude"
+    exclude.write_text("/.orchestrator/logs/\n", encoding="utf-8")
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="must not be executable"):
+            verify_working_tree_cleanliness(candidate)
+
+
+def test_git_identity_rejects_symlinked_runtime_log(
+    tmp_path: Path,
+) -> None:
+    candidate, parent, _remote, _commit, _tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path)
+    )
+    external = tmp_path / "external.log"
+    external.write_text("external content\n", encoding="utf-8")
+    generated = candidate / ".orchestrator" / "logs" / "worker.log"
+    generated.parent.mkdir(parents=True)
+    generated.symlink_to(external)
+    exclude = candidate / ".git" / "info" / "exclude"
+    exclude.write_text("/.orchestrator/logs/\n", encoding="utf-8")
+
+    with patch("promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX", parent):
+        with pytest.raises(ValueError, match="symlink|wrong type"):
+            verify_working_tree_cleanliness(candidate)
+
+
 @pytest.mark.parametrize(
     ("relative_path", "ignored"),
     [
@@ -2984,7 +3063,6 @@ class InjectedRuntimeProcessReader:
     ) -> SupervisorAdmissionLockIdentity:
         self._raise("read_admission_lock")
         value = self.locks.pop(0) if len(self.locks) > 1 else self.locks[0]
-        assert value.path == path
         return value
 
 
@@ -3462,6 +3540,50 @@ def test_mutable_incumbent_bootstrap_rejects_ignored_source_file(
                     path=source,
                     device=source_stat.st_dev,
                     inode=source_stat.st_ino,
+                )
+            )
+
+
+def test_mutable_incumbent_rejects_ignored_task_brief_source_directory(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    (source / ".gitignore").write_text(
+        ".orchestrator/task-briefs/\n",
+        encoding="utf-8",
+    )
+    _git(source, "add", ".gitignore")
+    _git(source, "commit", "-m", "ignore task brief runtime directory")
+    _git(source, "push", str(remote), "HEAD:dev")
+    _git(
+        source,
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/ajoe734/pantheon.git",
+    )
+    source_payload = (
+        source
+        / ".orchestrator"
+        / "task-briefs"
+        / "replacement.py"
+    )
+    source_payload.parent.mkdir(parents=True, exist_ok=True)
+    source_payload.write_text("raise SystemExit\n", encoding="utf-8")
+
+    with patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ):
+        with pytest.raises(ValueError, match="Forbidden ignored directory"):
+            promotion._mutable_root_binding(
+                ProcessCwdIdentity(
+                    path=source,
+                    device=source.stat().st_dev,
+                    inode=source.stat().st_ino,
                 )
             )
 
@@ -4234,6 +4356,82 @@ def test_materialize_rollback_runtime_binds_incumbent_commit_and_tree(
     assert identity.repository_slug == "ajoe734/pantheon"
 
 
+def test_materialized_rollback_uses_head_not_mutable_task_brief_bytes(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, _commit, _tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    source = tmp_path / "source"
+    task_brief = (
+        source
+        / ".orchestrator"
+        / "task-briefs"
+        / "legacy_rollback_identity.md"
+    )
+    canonical_bytes = b"committed rollback task brief\n"
+    contaminated_bytes = b"mutable regenerated task brief\n"
+    task_brief.parent.mkdir(parents=True, exist_ok=True)
+    task_brief.write_bytes(canonical_bytes)
+    _git(source, "add", str(task_brief.relative_to(source)))
+    _git(source, "commit", "-m", "track rollback task brief")
+    _git(source, "push", str(remote), "HEAD:dev")
+    commit = _git(source, "rev-parse", "HEAD")
+    tree = _git(source, "rev-parse", "HEAD^{tree}")
+    task_brief.write_bytes(contaminated_bytes)
+    dirty_stat = task_brief.stat()
+
+    rollback_parent = tmp_path / "fresh-command-runtimes"
+    rollback_parent.mkdir()
+    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+    snapshot = MutableIncumbentSnapshot(
+        root=source,
+        root_device=source.stat().st_dev,
+        root_inode=source.stat().st_ino,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        repository_slug="ajoe734/pantheon",
+        process=_transaction_process_identity(
+            source,
+            ProcessGeneration(77, 88, "S"),
+            commit=commit,
+            tree=tree,
+        ),
+        source_identities=(),
+        legacy_task_brief_drift=(
+            LegacyTaskBriefDrift(
+                relative_path=str(task_brief.relative_to(source)),
+                device=dirty_stat.st_dev,
+                inode=dirty_stat.st_ino,
+                mode=dirty_stat.st_mode,
+                byte_length=len(contaminated_bytes),
+                sha256=hashlib.sha256(contaminated_bytes).hexdigest(),
+                canonical_byte_length=len(canonical_bytes),
+                canonical_sha256=hashlib.sha256(canonical_bytes).hexdigest(),
+            ),
+        ),
+    )
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        rollback_parent,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
+        live_config,
+    ):
+        identity = promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    rollback_brief = identity.candidate_root / task_brief.relative_to(source)
+    assert task_brief.read_bytes() == contaminated_bytes
+    assert rollback_brief.read_bytes() == canonical_bytes
+    assert _git(identity.candidate_root, "status", "--porcelain") == ""
+
+
 def test_materialize_rollback_runtime_directory_fsync_failure_fails_closed(
     tmp_path: Path,
 ) -> None:
@@ -4958,15 +5156,56 @@ def test_mutable_bootstrap_accepts_only_dynamic_flock_id_churn(
     )
 
 
-def test_mutable_bootstrap_rejects_other_admission_lock_drift(
+def test_admission_lock_id_churn_opt_in_rejects_non_flock_pair(
     tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks = [
+        replace(original, kernel_lock_kind="POSIX"),
+        replace(
+            original,
+            kernel_lock_id="72",
+            kernel_lock_kind="POSIX",
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="admission lock generation mismatch"):
+        _discover_injected(
+            candidate,
+            reader,
+            allow_legacy_admission_lock_id_churn=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"path": Path("/different/supervisor.lock")},
+        {"device": 130},
+        {"inode": 131},
+        {"byte_length": 6},
+        {"sha256": "d" * 64},
+        {"mtime_ns": 34},
+        {"ctime_ns": 35},
+        {"kernel_lock_class": "MANDATORY"},
+        {"kernel_lock_mode": "READ"},
+        {"kernel_lock_start": "1"},
+        {"kernel_lock_end": "100"},
+        {"owner_pid": 1818},
+        {"owner_starttime_ticks": 313131},
+    ],
+)
+def test_flock_id_churn_opt_in_rejects_every_other_identity_drift(
+    tmp_path: Path,
+    changes: dict[str, Any],
 ) -> None:
     candidate, reader, _argv = _injected_process_fixture(tmp_path)
     original = reader.locks[0]
     reader.locks[1] = replace(
         original,
         kernel_lock_id="72",
-        mtime_ns=34,
+        **changes,
     )
 
     with pytest.raises(ValueError, match="admission lock generation mismatch"):
@@ -6708,3 +6947,38 @@ def test_mutable_incumbent_bootstrap_rejects_missing_commit_object(
             binding=binding,
             expected_head=non_existent_head,
         )
+
+
+def test_generated_logs_use_dedicated_directory_allowlist() -> None:
+    assert promotion.PurePosixPath(".orchestrator/logs") in promotion.ALLOWED_GENERATED_UNTRACKED_DIRECTORIES
+
+
+def test_capture_promotion_snapshot_passes_allow_legacy_admission_lock_id_churn(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    create_realistic_healthy_fixture(repo)
+    identity = _verified_identity_dependency(repo)
+    process_identity = _verified_process_identity_dependency(repo)
+
+    with patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        return_value=identity,
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=process_identity,
+    ) as mock_discover:
+        capture_promotion_snapshot(repo, now=now)
+        mock_discover.assert_called_once_with(
+            identity,
+            candidate_revalidator=identity.verify_immutable_snapshot,
+            allow_legacy_admission_lock_id_churn=True,
+        )
+
+    assert promotion._is_allowed_generated_untracked_directory(
+        ".orchestrator/logs/"
+    )
+    assert not promotion._is_allowed_mutable_incumbent_ignored_runtime_path(
+        ".orchestrator/task-briefs/some_brief.md"
+    )
