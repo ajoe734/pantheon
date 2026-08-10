@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Supersede Wave0X #4385 evidence-anchor repair with current-head spec
 - Status: todo
-- Owner: Antigravity
-- Reviewer: Claude
-- Next: Auto-reassigned ownership from Claude to Antigravity after repeated Claude terminal: {"is_error":true,"duration_api_ms":246360,"num_turns":39,"stop_reason":"tool_use","session_id":"5e9bfbf8-1af1-41be-81c2-4f36e4379dc1","total_cost_usd":1.9043999999999999,"usage":{". Task returned to todo until Antigravity starts a fresh run.
+- Owner: Claude
+- Reviewer: Codex2
+- Next: Chair reassigned owner from Antigravity to Claude: This non-human blocked task is waiting for Claude and lists Claude as the viable fallback; Claude is auth-ready and unpaused, and remains distinct from reviewer Codex2. Return it to todo for a clean supervised handoff. Task returned to todo for a blocked-owner rescue dispatch.
 
 ## Summary
 Supersedes preempted immutable task SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731 after bridge rejected spec update. Repair #4385 nonexistent evidence anchor before stale-reaper can satisfy Wave 0.

@@ -3,15 +3,15 @@
   "task": {
     "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
     "title": "Supersede Wave0X #4385 evidence-anchor repair with current-head spec",
-    "owner": "Antigravity",
-    "reviewer": "Claude",
-    "status": "ready_for_independent_review",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "in_progress",
     "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout V2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-V2-20260731/evidence.json",
-    "evidence_cut_at": "2026-08-06T16:35:00Z"
+    "evidence_cut_at": "2026-08-10T15:56:00Z"
   },
   "supersession": {
     "prior_task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
@@ -226,10 +226,16 @@
         "Round 4 (b1201b891) required replacing verification head 941c15a3 with 5f6e91cb in four places; c8008bc14 applied three of them plus README.md but left observed_out_of_scope_conditions[0].remediation naming 941c15a3. This owner round repairs that last reference.",
         "A 2026-08-06T15:56Z supervisor reassignment briefly made Claude owner and Antigravity reviewer; it was reverted before handoff and the binding of record is owner Antigravity / reviewer Claude, matching task.owner, task.reviewer and review.reviewer. These four rounds are superseded because each targeted an earlier head, not because the roles changed."
       ]
+    },
+    {
+      "reviewer": "Claude",
+      "status": "superseded_by_reassignment",
+      "decision": null,
+      "note": "Claude held reviewer role through the four reopen rounds and the H1-H4 owner round (a68679666, authored while Antigravity was owner). A 2026-08-10T15:49:11Z chair reassignment (event_id supervisor-task-reassigned-f468bfdef50a83c4499cdde7357041dedcfae248a54754e08668670098e993e7) moved owner Antigravity -> Claude because Antigravity's run was blocked/terminal-errored, and returned the task to todo for a blocked-owner rescue dispatch. Reviewer was already Codex2 at the live canonical row before this reassignment (old_reviewer: Codex2 in the same event); this evidence packet had not yet been rebound to that reviewer change. Claude is now owner and cannot review its own commits, so review.reviewer is rebound to Codex2, distinct from owner Claude."
     }
   ],
   "review": {
-    "reviewer": "Claude",
+    "reviewer": "Codex2",
     "status": "pending_independent_review",
     "decision": null,
     "reviewed_head_sha": null,
