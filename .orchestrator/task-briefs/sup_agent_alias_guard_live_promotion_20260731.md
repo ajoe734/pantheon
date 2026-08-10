@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Promote merged alias reassignment guard into live supervisor runtime
-- Status: blocked
+- Status: in_progress
 - Owner: Codex
 - Reviewer: Claude
-- Next: Split-entrypoint support merged through PR #4724 at 8b77e779, but read-only bootstrap preparation on clean candidate 0305c861 aborts before admission lock, config, signal, or launch because rollback materialization aliases the candidate root (`Candidate runtime equals the rollback runtime`). Active-lease governance correctly rejected cross-task creation by this worker. Human/Ops or the supervisor must admit a narrow source-only non-alias rollback follow-up before any governed promotion retry.
+- Next: Source-only rollback identity repair is canonically done via PR #4726 merge 37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d; return parent to supervisor dispatch for fresh discover-only preflight. Preserve all no-live-mutation gates until governed promotion admission.
 
 ## Summary
 Supervisor-dispatched Antigravity runtime promotion only. Expected branch task/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731, clean governed worktree, merge target dev. Owner capability: supervisor runtime deployment and readback. Reviewer capability: independent Human/Ops exact-head/runtime evidence validation.
