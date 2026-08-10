@@ -6152,10 +6152,18 @@ def materialize_immutable_rollback_runtime(
             try:
                 identity = build_candidate_runtime_identity(destination)
                 if (
-                    identity.candidate_root == snapshot.root
-                    and (identity.candidate_root_device, identity.candidate_root_inode)
-                    == (snapshot.root_device, snapshot.root_inode)
-                    and identity.head_commit == snapshot.head_commit
+                    (
+                        identity.candidate_root == snapshot.root
+                        and (identity.candidate_root_device, identity.candidate_root_inode)
+                        == (snapshot.root_device, snapshot.root_inode)
+                    )
+                    or (
+                        snapshot.root.name == snapshot.head_commit
+                        and (identity.candidate_root_device, identity.candidate_root_inode)
+                        == (snapshot.root_device, snapshot.root_inode)
+                    )
+                ) and (
+                    identity.head_commit == snapshot.head_commit
                     and identity.tracked_tree_identity == snapshot.tracked_tree_identity
                     and identity.accepted_dev_commit == snapshot.accepted_dev_commit
                     and identity.repository_slug == snapshot.repository_slug

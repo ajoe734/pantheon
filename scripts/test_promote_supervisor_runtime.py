@@ -7026,6 +7026,48 @@ def test_materialize_immutable_rollback_runtime_reuses_exact_matching_destinatio
     identity.verify_immutable_snapshot.assert_called_once_with()
 
 
+def test_materialize_immutable_rollback_runtime_reuses_existing_same_root_destination(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "command-runtimes"
+    prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "a" * 40
+    destination = prefix / head_commit
+    destination.mkdir(parents=True, exist_ok=True)
+    dest_stat = destination.stat()
+
+    snapshot = Mock(spec=MutableIncumbentSnapshot)
+    snapshot.root = destination
+    snapshot.root_device = dest_stat.st_dev
+    snapshot.root_inode = dest_stat.st_ino
+    snapshot.head_commit = head_commit
+    snapshot.tracked_tree_identity = "b" * 40
+    snapshot.accepted_dev_commit = "c" * 40
+    snapshot.repository_slug = "ajoe734/pantheon"
+
+    identity = Mock(spec=CandidateRuntimeIdentity)
+    identity.candidate_root = destination
+    identity.candidate_root_device = dest_stat.st_dev
+    identity.candidate_root_inode = dest_stat.st_ino
+    identity.head_commit = head_commit
+    identity.tracked_tree_identity = "b" * 40
+    identity.accepted_dev_commit = "c" * 40
+    identity.repository_slug = "ajoe734/pantheon"
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        return_value=identity,
+    ) as mock_builder:
+        res = promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    assert res is identity
+    mock_builder.assert_called_once_with(destination)
+    identity.verify_immutable_snapshot.assert_called_once_with()
+
+
 def test_materialize_immutable_rollback_runtime_rejects_same_sha_different_root(
     tmp_path: Path,
 ) -> None:

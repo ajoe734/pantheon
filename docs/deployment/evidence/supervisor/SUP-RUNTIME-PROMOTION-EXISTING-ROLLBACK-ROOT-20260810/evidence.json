@@ -1,0 +1,10 @@
+{
+  "task_id": "SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810",
+  "title": "Repair promotion bootstrap when rollback root already exists",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "status": "in_progress",
+  "summary": "Fixed materialize_immutable_rollback_runtime to reuse an existing valid rollback directory when snapshot.root is snapshot.head_commit under command-runtimes/",
+  "verification": "pytest -k test_materialize_immutable_rollback_runtime passed (4/4 passed)",
+  "reviewed_at": "2026-08-10T04:21:00Z"
+}
