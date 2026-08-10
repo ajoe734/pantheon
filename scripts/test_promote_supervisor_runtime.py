@@ -6527,21 +6527,6 @@ def test_mutable_incumbent_bootstrap_accepts_live_byte_legacy_task_brief_drifts(
     )
     regenerated_brief.write_text(live_brief_1364_content, encoding="utf-8")
 
-    status_file = mutable_root / "ai-status.json"
-    status_file.write_text(
-        json.dumps({
-            "tasks": [
-                {
-                    "id": "SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-                    "title": "Commit the missing supervisor dispatch refactor proposal doc",
-                    "owner": "Antigravity",
-                    "reviewer": "Codex2",
-                }
-            ]
-        }),
-        encoding="utf-8",
-    )
-
     with (
         patch(
             "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
