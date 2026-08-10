@@ -347,6 +347,8 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         dispatch_guardrails = (
             "\n這次 dispatch 的角色是已通過審查後的 task owner。\n"
             "- 依 task-closeout-finalization checklist 收尾；不得重新指派 owner/reviewer。\n"
+            "- task brief 是 generated context；不得為記錄 `review_approved` 或 closeout 而修改或提交它。\n"
+            "- approval 的 durable record 已在 governed `ai-status.sh approve` 與 activity event；以 `show` 核對。\n"
             "- 只有必要交付與驗證完成後，才執行 `done`。\n"
         )
     branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}

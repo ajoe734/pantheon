@@ -63,6 +63,21 @@ If no evidence manifest was committed before review started, stop and get a
 fresh review of a commit that includes one -- do not paper over the gap with
 a post-approval evidence commit.
 
+## Generated Task-Brief Rule
+
+The task brief is generated execution context, not a git-backed approval
+ledger. Once a task is `review_approved`, do not edit or commit its task brief
+just to copy the current status, `next` message, review decision, or closeout
+note. `ai_status.py approve` has already recorded the canonical approval and
+the immutable activity event. A task-brief-only commit after approval moves the
+PR head and can invalidate the review it merely repeats.
+
+If a task brief appears changed during an owner-finalize dispatch, leave that
+generated state out of the closeout commit and inspect the canonical row with
+the governed `show` command instead. A task-specific artifact that genuinely
+needs review must be added before review begins and approved as part of the
+same PR head.
+
 For the twelve-loop delivery, the normal manifest is
 `docs/deployment/evidence/twelve-loop-gap/<TASK-ID>/evidence.json`. Confirm the
 selected file is present in the merged task PR and contains the independent

@@ -2549,7 +2549,12 @@ def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -
     return ordered
 
 
-def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
+def _generated_worker_task_brief(
+    config: dict[str, Any],
+    task_id: str | None,
+    *,
+    finalization_context: bool = False,
+) -> str:
     task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
     if not task:
         return "\n".join(
@@ -2564,6 +2569,25 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
                 "",
             ]
         )
+    task_lines = [
+        f"- Title: {task.get('title') or '-'}",
+        f"- Owner: {task.get('owner') or '-'}",
+        f"- Reviewer: {task.get('reviewer') or '-'}",
+    ]
+    if finalization_context:
+        task_lines.extend(
+            [
+                "- Status: query the governed `ai-status.sh show` command; do not transcribe it into this file.",
+                "- Next: close out only the already-reviewed delivery; do not commit this generated brief as an approval record.",
+            ]
+        )
+    else:
+        task_lines.extend(
+            [
+                f"- Status: {task.get('status') or '-'}",
+                f"- Next: {task.get('next') or '-'}",
+            ]
+        )
     return "\n".join(
         [
             f"# Task Brief: {task.get('id') or task_id}",
@@ -2571,11 +2595,7 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
             "Generated in the worker workspace because the supervisor root did not have a task brief file.",
             "",
             "## Task",
-            f"- Title: {task.get('title') or '-'}",
-            f"- Status: {task.get('status') or '-'}",
-            f"- Owner: {task.get('owner') or '-'}",
-            f"- Reviewer: {task.get('reviewer') or '-'}",
-            f"- Next: {task.get('next') or '-'}",
+            *task_lines,
             "",
             "## Summary",
             str(task.get("summary_zh") or "-"),
@@ -2606,6 +2626,30 @@ def materialize_worker_context_files(
             continue
         destination = workspace_path / rel_value
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if request.reason == "owned_finalize_dispatch":
+            if destination.exists():
+                # The branch already has the task-scoped context it was reviewed
+                # against. Rewriting it from the live `review_approved` row would
+                # manufacture a generated diff after approval, inviting an owner
+                # to commit a redundant closeout record that moves the exact head.
+                # Canonical status remains available through the governed `show`
+                # command; preserve the reviewed branch bytes here.
+                materialized.append(rel_value)
+                continue
+            # A fresh finalize worktree still needs the task context, but must
+            # not receive a branch-local transcription of the just-recorded
+            # approval. Render a stable closeout brief that directs the owner
+            # to governed state instead of copying status/next into git.
+            destination.write_text(
+                _generated_worker_task_brief(
+                    config,
+                    request.task_id,
+                    finalization_context=True,
+                ),
+                encoding="utf-8",
+            )
+            materialized.append(rel_value)
+            continue
         copied = False
         for candidate in _task_brief_context_candidates(request.task_id, rel_value):
             source = status_root / candidate
