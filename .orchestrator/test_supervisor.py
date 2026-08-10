@@ -804,6 +804,39 @@ class DetectWorkerFailureTests(unittest.TestCase):
             "rate_limit: You've hit your weekly limit · resets Jun 8, 12pm (UTC)",
         )
 
+    def test_terminated_runner_never_promotes_transcript_quota_text(self) -> None:
+        """SIGTERM/preempted worker (runner_status=terminated, exit_code=143) must not scan transcript plaintext for provider failures."""
+        worker = self._worker_for_log(
+            "ERROR: You've hit your usage limit.\n",
+            provider="codex",
+        )
+        worker.update({"runner_status": "terminated", "exit_code": 143})
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_captured_live_sigterm_codex1_auth_source_line_does_not_pause(self) -> None:
+        """Replay codex-20260809T144540Z SIGTERM auth source-line event: quoted auth pattern in source code line under SIGTERM must not detect failure or pause codex1."""
+        auth_source_line = 'def is_auth_error(text: str) -> bool: return "invalid_api_key" in text or "unauthorized" in text'
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "Working on task...",
+                    auth_source_line,
+                    "Worker interrupted by supervisor SIGTERM",
+                ]
+            )
+            + "\n",
+            provider="codex",
+        )
+        worker.update({"agent_id": "codex1", "runner_status": "terminated", "exit_code": 143, "status": "failed"})
+
+        detected = supervisor.detect_worker_failure(worker)
+        self.assertIsNone(detected)
+
+        # When no failure was detected in transcript, failure classification returns None for empty reason
+        failure = supervisor.classify_worker_failure({}, worker, detected)
+        self.assertIsNone(failure)
+
     def test_classifies_gemini_auth_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "gemini"}
