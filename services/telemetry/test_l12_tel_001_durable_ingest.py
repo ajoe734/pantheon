@@ -15,6 +15,8 @@ from pathlib import Path
 from services.telemetry.batch_writer import AsyncBatchWriter, WriteResult
 from services.telemetry.buffer import NatsJetStreamBuffer
 from services.telemetry.dead_letter import DeadLetterQueue
+from services.telemetry.ingest_svc import TelemetryIngestService
+from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 
 
 class _Message:
@@ -71,6 +73,35 @@ def _event() -> dict:
         "event_type": "heartbeat",
         "created_at": "2026-07-26T00:00:00Z",
         "deployment_stage": "paper",
+    }
+
+
+def _capital_runtime_event() -> dict:
+    """A paper-only event with the identity emitted by the Capital runtime."""
+    return {
+        "event_id": "evt-l12-min-cap-runtime-001",
+        "tenant_id": "tenant-l12",
+        "event_type": "paper_fill_simulated",
+        "created_at": "2026-08-10T03:15:00Z",
+        "execution_mode": "paper",
+        "environment": "paper",
+        "deployment_stage": "paper",
+        "binding_id": "binding-l12-min-cap",
+        "runtime_id": "runtime-l12-min-cap",
+        "capital_pool_id": "pool-l12-paper",
+        "artifact_id": "artifact-l12-paper",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-l12-min-dep",
+        "persona_capital_binding_id": "pcb-l12-paper",
+        "trace_id": "trace-l12-min-cap",
+        "target": {"strategy_id": "strategy-l12-paper"},
+        "metrics": {"fill_quantity": 2.0, "fill_price": 100.0},
+        "metadata": {
+            "runtime_package": "paper_execution_runtime",
+            "ledger_committed": True,
+            "is_real_order": False,
+            "is_real_capital": False,
+        },
     }
 
 
@@ -131,6 +162,28 @@ def _fetch_then_crash(
 
 
 class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
+    async def test_capital_runtime_event_is_accepted_for_reconciliation_readback(self):
+        """The exact paper-runtime event remains available after ingest admission."""
+        event = _capital_runtime_event()
+        with tempfile.TemporaryDirectory() as td:
+            projection = RuntimeSummaryProjectionStore(
+                Path(td) / "runtime-summaries.json"
+            )
+            service = TelemetryIngestService(runtime_summary_store=projection)
+            await service.start()
+            try:
+                self.assertTrue(await service.ingest(event))
+                self.assertEqual(
+                    service.get_accepted_event(event["event_id"], tenant_id="tenant-l12"),
+                    event,
+                )
+                [summary] = service.list_runtime_summaries(tenant_id="tenant-l12")
+                self.assertEqual(summary["last_event_id"], event["event_id"])
+                self.assertEqual(summary["binding_id"], event["binding_id"])
+                self.assertEqual(summary["runtime_id"], event["runtime_id"])
+            finally:
+                await service.stop(graceful=True)
+
     async def test_put_succeeds_only_after_jetstream_puback(self):
         calls: list[str] = []
         message = _Message(_event(), calls)
