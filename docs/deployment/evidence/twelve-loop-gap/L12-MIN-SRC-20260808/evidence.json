@@ -1,0 +1,299 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-MIN-SRC-20260808 task closeout v8.0.0.",
+    "note": "Minimum functional evidence demonstrating SourceRecord ingestion tick and Strategy Distillation readback.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR after this closeout manifest merges.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-10T01:53:00Z",
+    "evidence_cut_semantics": "Owner evidence cut v10.0.0. Proof of SourceIngestion scheduler/controller tick, SourceRecord persistence, readback, Strategy Distillation consumption, monkeypatch isolation fix, and httpx dependency declaration.",
+    "id": "L12-MIN-SRC-20260808",
+    "overall_admission": "pending_review",
+    "owner": "Antigravity",
+    "phase": "M1 loop closure",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-MIN-SRC-20260808",
+    "title": "Run Source Ingestion from one tick to SourceRecord readback"
+  },
+  "authorities": {
+    "actual_state": [
+      "services/source_ingestion/controller_worker.py (sequence 2191)",
+      "services/source_ingestion/scheduler_worker.py",
+      "services/source_ingestion/main.py",
+      "services/source_ingestion/requirements.txt",
+      "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py"
+    ],
+    "desired_state": [
+      "SourceRecord schema & readback"
+    ],
+    "task_packet": ".orchestrator/task-briefs/l12_min_src_20260808.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity for source ingestion tick execution and verification evidence",
+    "composes_with": [
+      "Strategy Distillation (L12-DIST-001)"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_min_src_20260808.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/source_ingestion/requirements.txt",
+      "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py"
+    ],
+    "not_changing": "Shared catalog, Compose, BFF binding, security, or orchestration files.",
+    "owned_layer": "Source Ingestion runner execution, SourceRecord creation, readback verification"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "5d55ca7dd368a9123f92d0efa50c724e235be33b",
+      "number": 4672,
+      "url": "https://github.com/ajoe734/pantheon/pull/4672"
+    },
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "5d55ca7dd368a9123f92d0efa50c724e235be33b",
+        "number": 4672,
+        "url": "https://github.com/ajoe734/pantheon/pull/4672"
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "claim_scope": "current",
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/l12-min-src-20260808/.venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduler_worker.py services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py",
+        "conclusion": "86 passed",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/l12-min-src-20260808/.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py",
+        "conclusion": "30 passed",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/l12-min-src-20260808/.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRegistryFailureIsTruthful::test_existing_draft_with_conflicting_lineage_is_not_terminal",
+        "conclusion": "2 passed (order-sensitive regression resolved)",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-08-10T02:08:00Z",
+    "validated_head_sha": "5d55ca7dd368a9123f92d0efa50c724e235be33b"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "Root deployment/profile composition remains delegated to L12-DIST-001."
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "This task proves the source controller and scheduler boundary in the task worktree sequence 2191 and merged CI; it does not claim hosted activation.",
+      "reason": "This task proves the source controller and scheduler boundary in the task worktree and merged CI; it does not claim hosted activation.",
+      "status": "not_applicable"
+    },
+    "public_bff_base_url": "not_applicable_internal_source_ingestion_service",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "No hosted publication is claimed by this source-owned slice."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "reason": "Hosted activation is delegated to L12-DIST-001 and later cross-loop verification; the bounded TWSE drill was task-worktree dev proof only.",
+      "status": "not_applicable"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "A multiprocessing-spawn acceptance raced two independent service modules against one SOURCE_INGEST_DATA_DIR and observed one connector config, one schedule, one frontier id, one ingest run id, and one SourceRecord.",
+        "JSONL mutation paths reload durable state while holding stable sidecar exclusive file locks; frontier enqueue and claim are atomic against the latest shared log."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "SourceHealth metadata.last_outcome reports success, policy_denial, credential_unavailable, or provider_failure with stable typed category and code.",
+        "One provider failure is isolated to its connector while the scheduler continues to account for other due connectors."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Persona.required_data_sources admission converges the deterministic connector and connector schedule before any provider execution.",
+        "Only the durable frontier claimant creates the correlated ingest run and normalized SourceRecord."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Controller state reports ticks missed while the worker was down and the startup missed-tick test proves the persisted restart readback.",
+        "A stale running frontier is durably recovered after restart without creating a duplicate SourceRecord."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Reconcile-only mode rejects the tick when SourceRecord, dead-letter, or frontier backlog counts change, so schedule intent cannot be misreported as a provider pull.",
+        "Frontier claim ownership and bounded retry state prevent a stale or competing worker from materializing duplicate downstream effects."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the task worktree bounded provider drill and merged Pantheon dev integration were exercised; shared runtime activation remains outside this task.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "Source ingestion has no broker or capital authority and the evidence explicitly excludes live trading claims.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Controller and scheduling mutation routes remain protected by the source controller bearer token boundary.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "This task did not alter the existing source-ingestion tenant boundary; the task-owned desired-state and scheduler records remain scoped to their source identities.",
+      "status": "not_applicable"
+    },
+    "two_person_approval": {
+      "proof": "Owner Antigravity and independent reviewer Codex2 sequence 2191 remained distinct; Codex2 records review_approved only after independently rerunning acceptance.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/source_ingestion/tests/test_scheduler_worker.py",
+        "services/source_ingestion/tests/test_controller_worker.py",
+        "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py"
+      ],
+      "id": "AC1",
+      "statement": "Fix the current readiness/worker blockage so one scheduled or manual tick completes.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/tests/test_controller_worker.py",
+        "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py"
+      ],
+      "id": "AC2",
+      "statement": "Persist one real SourceRecord and expose its identifier through actual-state readback.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py",
+        "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py"
+      ],
+      "id": "AC3",
+      "statement": "Prove Strategy Distillation can read that SourceRecord.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [],
+      "id": "AC4",
+      "statement": "Do not edit shared catalog, Compose, BFF binding, security, or orchestration files.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "canonical_snapshot_age": {
+      "description": "Canonical snapshot sequence 2191 is current for this cut."
+    },
+    "delivery_receipt_intermediate_state": {
+      "description": "Delivery receipt 5d55ca7dd368a9123f92d0efa50c724e235be33b is in progress during task review."
+    },
+    "independent_review": {
+      "description": "Independent review by Codex2 on exact head 5d55ca7dd368a9123f92d0efa50c724e235be33b is pending."
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808/evidence.json",
+    "normalized_hosted_readback": {
+      "bounded_task_worktree_provider_proof": true,
+      "hosted_activation_claimed": false
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "services/source_ingestion/requirements.txt": "7528ed4859599ba028a109a04ac4d2cb009c904afd9ad98f09ec3ed97034d265",
+      "services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py": "9c03bb1776a3b3a3f6690f118212bcfeb95c25d9127095db1af7f57ac1ee6664"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Antigravity",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-09T18:55:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4672",
+      "sequence": 1,
+      "sha": "c96319208767f917fd01989187c42290005ac012",
+      "status": "pass"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-09T19:17:12Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4672",
+      "sequence": 2,
+      "sha": "5c18d51e8a2da637e941caeb1c171a8a71c33eef",
+      "status": "pass"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-10T01:53:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4672",
+      "sequence": 3,
+      "sha": "38f837d4ce12d048c73540a25c522a3fcd401433",
+      "status": "pass"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-10T02:08:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4672",
+      "sequence": 4,
+      "sha": "5d55ca7dd368a9123f92d0efa50c724e235be33b",
+      "status": "pass"
+    }
+  ]
+}
