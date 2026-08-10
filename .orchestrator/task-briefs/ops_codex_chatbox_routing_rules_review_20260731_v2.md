@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Validate and hand off chatbox routing rules for independent review
-- Status: in_progress
+- Status: review
 - Owner: Codex
 - Reviewer: Claude
-- Next: Codex revalidates PR #4401 exact head against its authored base and hands the refreshed evidence to Claude for independent review.
+- Next: Claude independently reviews PR #4401 exact head and the refreshed task evidence in PR #4729; approve only with an exact-head governed binding, or reopen with a concrete defect.
 
 ## Summary
 Governed review handoff for the already published routing-policy PR. Codex
