@@ -3871,20 +3871,8 @@ def test_mutable_incumbent_bootstrap_accepts_provenance_validated_legacy_task_br
     )
     regenerated_brief.write_bytes(LIVE_FLEET_BRIEF_1364_BYTES)
 
-    status_file = mutable_root / "ai-status.json"
-    status_file.write_text(
-        json.dumps({
-            "tasks": [
-                {
-                    "id": "SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-                    "title": "Commit the missing supervisor dispatch refactor proposal doc",
-                    "owner": "Antigravity",
-                    "reviewer": "Codex2",
-                }
-            ]
-        }),
-        encoding="utf-8",
-    )
+    _git(mutable_root, "checkout", "ai-status.json")
+
 
     with (
         patch(
