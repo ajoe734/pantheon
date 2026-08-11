@@ -5,7 +5,7 @@ Covers:
 - HMAC-SHA256 signing and verification
 - Replay protection (duplicate packet rejected)
 - Dispatcher dry-run materialises no subprocess calls
-- Dispatcher live-run calls ai_status.py assign per task
+- Dispatcher live-run calls one atomic ai_status.py materialization batch
 - Constraint enforcement (noDirectShellFromWeb, allowedRepos)
 - Audit refs link packet_id, conversation_id, and documents
 """

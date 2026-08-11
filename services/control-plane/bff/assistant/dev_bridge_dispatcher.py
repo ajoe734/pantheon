@@ -13,8 +13,8 @@ Flow:
 4. Mark packet as seen so replays are rejected in subsequent calls.
 5. Return BridgeDispatchResult with per-task records and audit refs.
 
-The dispatcher never shells the VM outside the governed ai_status.py assignment
-and read-only task-state verification commands. Web API code must not call
+The dispatcher never shells the VM outside the governed ai_status.py batch
+materialization and read-only task-state verification commands. Web API code must not call
 dispatcher functions directly — they are invoked from a trusted internal
 service path or a repo-local script, never from a raw HTTP request handler.
 """
@@ -89,10 +89,6 @@ DISPATCH_CLAIM_SCHEMA = "pantheon.assistant-dev-bridge-dispatch-claim.v1"
 DEV_BRIDGE_BATCH_SCHEMA_VERSION = 1
 DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND = "dev-bridge-materialize-batch"
 DEV_BRIDGE_BATCH_READBACK_COMMAND = "dev-bridge-materialize-readback"
-
-
-class MaterializedTaskMissingError(ValueError):
-    """The governed task store authoritatively reports that an id is absent."""
 
 
 def _now() -> str:
@@ -950,61 +946,6 @@ def _run_readback_command(
     output = (result.stdout or "").strip()
     error = (result.stderr or "").strip()
     if result.returncode != 0:
-        detail = error or output or f"exit {result.returncode}"
-        if result.returncode in {3, 75}:
-            raise OSError(f"{label} unavailable: {detail[:500]}")
-        raise ValueError(f"{label} failed: {detail[:500]}")
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"{label} returned invalid JSON") from exc
-    if not isinstance(payload, dict):
-        raise ValueError(f"{label} must return a JSON object")
-    return payload
-
-
-def _run_governed_task_show(
-    *,
-    ai_status: str,
-    task_id: str,
-    environment: Mapping[str, str],
-    repo_root: str,
-) -> Dict[str, object]:
-    """Read one task through the governed command and classify exact absence.
-
-    `show` uses exit 1 for an unknown task.  Only its exact, id-bound error is
-    treated as an absent row; every other nonzero exit, malformed response, or
-    runtime failure remains fail-closed.
-    """
-
-    timeout_seconds = _assign_timeout_seconds(environment)
-    label = f"canonical task-state readback for {task_id}"
-    command = [sys.executable, ai_status, "show", task_id]
-    try:
-        result = subprocess.run(
-            command,
-            env=dict(environment),
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            cwd=repo_root,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise OSError(f"{label} timed out after {timeout_seconds:g}s") from exc
-    except OSError as exc:
-        raise OSError(f"{label} could not execute: {exc}") from exc
-
-    output = (result.stdout or "").strip()
-    error = (result.stderr or "").strip()
-    if result.returncode != 0:
-        if (
-            result.returncode == 1
-            and not output
-            and error == f"Unknown task: {task_id}"
-        ):
-            raise MaterializedTaskMissingError(
-                f"{label} reported exact absence: {error}"
-            )
         detail = error or output or f"exit {result.returncode}"
         if result.returncode in {3, 75}:
             raise OSError(f"{label} unavailable: {detail[:500]}")

@@ -4,98 +4,160 @@
     "id": "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811",
     "title": "Make signed packet materialization one canonical transaction",
     "phase": "Canonical Task Materialization / Atomic Packet Commit",
-    "owner": "Claude",
-    "reviewer": "Codex",
-    "status": "in_progress",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "ready_for_review",
     "review_file": "docs/deployment/evidence/supervisor/SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811/evidence.json",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811"
   },
   "scope": {
-    "owned_layer": "First increment only: (1) a bounded, exact-schema batch-materialization CLI command in scripts/ai_status.py (`dev-bridge-materialize-batch`) that applies every packet task row to one in-memory canonical snapshot inside the existing authoritative_task_state_transaction/snapshot_transaction primitive and reaches the journal through exactly one save at the end, so a failure on any row commits none -- not even earlier rows; (2) a correctness fix in dev_bridge_dispatcher.py's replay/readback validator (_validate_materialized_task_candidate) so a later Human/Ops or supervisor-governed owner/reviewer reassignment no longer fails an exact-packet replay, while the originally signed dev_bridge.task_spec provenance stays fully verified and forgery of that original assignment still fails closed.",
-    "not_changing": "dev_bridge_dispatcher.py's per-task dispatch loop still issues one `assign` subprocess call per packet task (not yet rewired to call the new batch command) -- see Remaining Work. No database, queue, service, scheduler, or recovery daemon was added. The admission-record/receipt projection layer, the replay/claim/fence locking, and the supervisor scheduler execution gate are unchanged.",
+    "owned_layer": "The signed assistant dev-bridge packet is verified once by dev_bridge_dispatcher.py, encoded into one bounded exact-schema payload, committed by one dev-bridge-materialize-batch authoritative transaction, and verified after the command by one dev-bridge-materialize-readback authority read. The dispatcher no longer invokes assign once per task.",
+    "not_changing": "The admission record, replay mark, receipt, current-work/dashboard views, task archives, and activity audit remain post-commit audit projections. The existing supervisor admission execution gate is intentionally retained for the dependent scheduler task. No database, queue, service, scheduler, recovery daemon, live runtime, or deployment was added or changed.",
     "changed_paths": [
       "scripts/ai_status.py",
+      "scripts/dispatch_assistant_dev_task_packet.py",
       "scripts/test_ai_status.py",
       "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/tests/dev_bridge_test_support.py",
       "services/control-plane/bff/assistant/tests/test_dev_bridge.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
       "docs/deployment/evidence/supervisor/SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811/evidence.json"
     ]
   },
-  "diagnosis": {
-    "failure_shapes": [
-      "dev_bridge_dispatcher.py materialized packet tasks by calling `scripts/ai_status.py assign` once per task in a Python loop, each call its own subprocess and its own canonical commit. A failure on task N left tasks 1..N-1 already committed -- the partial per-task materialization recorded in .orchestrator/assistant-dev-packets/receipts/pkt-two-blocker-dev-closeout-20260809T060036Z.json.",
-      "_validate_materialized_task_candidate compared the *live* top-level owner/reviewer of a materialized task row against the packet's originally signed task_spec.owner/reviewer. A legitimate later reassignment (Human/Ops or supervisor-governed) therefore made every subsequent exact-packet replay fail with 'does not match the signed task spec', even though the frozen dev_bridge provenance envelope was untouched and unforged. This is the exact shape of drift the task's own owner/reviewer row underwent (task_spec declares owner=Codex/reviewer=Antigravity; the canonical row is currently owner=Claude/reviewer=Codex)."
-    ],
-    "remediation": [
-      "Added DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND (`dev-bridge-materialize-batch`) plus load_dev_bridge_materialize_batch (bounded, exact-schema, 4 MiB / 64-row limits, cross-validates every row's task_metadata.dev_bridge.packet_id/packet_digest against the batch header) and run_dev_bridge_materialize_batch, which applies each row through the existing command_assign per-row-environment pattern (same TASK_METADATA_JSON contract dev_bridge_dispatcher.py already produces) against one shared in-memory state dict.",
-      "Wired the new command into main() using the same lock order and transaction shape as the existing supervisor-dispatch-batch command: canonical_task_state_lock -> authoritative_task_state_transaction -> one buffer_activity_events() window -> exactly one sync_all()/save_state() call after every row has been applied. A row that raises (owner==reviewer, wave-guard rejection, artifact-scope conflict, forged/mismatched bridge provenance, ...) propagates before that single save, so nothing commits.",
-      "Relaxed _validate_materialized_task_candidate to compare only the immutable declared-scope fields (id, title, phase, depends_on, artifacts, acceptance, summary) against the packet's signed task_spec; owner/reviewer are validated exclusively through the frozen dev_bridge provenance envelope comparison, which still fails closed on any forged/mismatched original assignment.",
-      "Applied a live Human/Ops acceptance clarification received mid-task: 'one authoritative event-store commit' means exactly one new task-state journal event for a successful batch, zero for a failed row, and zero for an exact duplicate retry -- a same-batch activity-log outbox flush does not count. Added commit_state_with_activity_outbox(..., defer_activity_recovery=True) / sync_all(..., defer_activity_recovery=True) so the batch command's own commit never performs that second flush-and-clear save, and made an all-rows-already-matching retry skip sync_all entirely (no save_state call at all, not even a deduped one) instead of relying on state_sha256 equality, which `updated_at` always defeats."
-    ]
+  "implementation": {
+    "canonical_write": {
+      "command": "dev-bridge-materialize-batch",
+      "schema": "bounded exact object; maximum 64 task rows and 4 MiB; packet id and digest must match every row",
+      "lock_and_transaction": "canonical_task_state_lock(exclusive) -> authoritative_task_state_transaction -> one in-memory run_dev_bridge_materialize_batch -> at most one sync_all/save_state",
+      "all_or_none": "Every row is validated and applied to the same in-memory snapshot before save. Any invalid row raises before save. A mixture of already-present and missing rows is rejected as a historical partial prefix and cannot commit a suffix.",
+      "event_count_contract": {
+        "new_valid_packet": 1,
+        "any_invalid_row": 0,
+        "immediate_exact_retry_without_recover_or_other_write": 0
+      }
+    },
+    "authoritative_readback": {
+      "command": "dev-bridge-materialize-readback",
+      "authority": "authoritative task-state journal under the canonical shared task lock",
+      "binding": "packet id, packet digest, ordered task ids, every task-spec hash, the complete frozen dev_bridge provenance envelope, and immutable top-level declared-scope fields",
+      "projection_policy": "Does not require ai-status.json parity, activity outbox recovery, archive output, admission output, or receipt output. Pending audit projections are reported but do not mutate or reject a matching canonical batch."
+    },
+    "provenance_and_routing": {
+      "immutable": "The original signed owner, reviewer, actor, source conversation, source turns, documents, declared scope, packet digest, and task-spec hash remain frozen in each task's dev_bridge envelope.",
+      "mutable": "Later governed top-level owner/reviewer routing changes are allowed and survive exact packet replay.",
+      "direct_assign_guard": "A direct assign command cannot create dev_bridge metadata. Only the in-process materialization guard around a verified batch may call command_assign with bridge provenance."
+    },
+    "audit_projection_recovery": "The materializer does not recover audit outboxes inside its event-count boundary. It preserves valid pending activity events alongside new events and leaves them for a later governed write or explicit recover. Admission or receipt persistence failure leaves the canonical batch intact; an exact retry adds zero task-state events and can finish the audit projection."
   },
   "acceptance": {
-    "atomic_all_or_none_batch_commit": {
+    "dispatcher_uses_one_atomic_batch": {
       "status": "proven",
-      "note": "Strict count per the Human/Ops clarification recorded on the canonical task row at 2026-08-11T12:48:21Z: a successful batch adds exactly one new journal event; a failed row adds zero; an exact retry adds zero. The deferred activity-log outbox flush is left as durable, self-describing recovery state for the next governed write (or an explicit `recover`) to pick up as its own, separately accounted event -- never folded into this batch's atomicity guarantee.",
-      "test": "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_batch_commits_every_task_in_exactly_one_journal_event"
+      "tests": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py::test_cli_materializes_raw_signed_packet_through_ai_status",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_authoritative_bridge_dispatch_survives_next_projection_cycle"
+      ]
     },
-    "second_row_failure_commits_nothing": {
+    "successful_batch_adds_exactly_one_event": {
       "status": "proven",
-      "test": "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_second_row_failure_commits_nothing_not_even_the_first_row"
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_batch_commits_every_task_in_exactly_one_journal_event",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_authoritative_bridge_dispatch_survives_next_projection_cycle"
+      ]
     },
-    "exact_duplicate_retry_is_idempotent": {
+    "invalid_second_row_adds_zero_events": {
       "status": "proven",
-      "note": "Adds zero new journal events (not merely non-erroring) once the prior commit's deferred activity outbox has settled.",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_second_row_failure_commits_nothing_not_even_the_first_row",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_full_supervisor_cycle_never_queues_partially_materialized_packet"
+      ]
+    },
+    "immediate_exact_retry_adds_zero_events": {
+      "status": "proven",
+      "note": "The test intentionally performs no recover, write, or projection operation between the first success and retry; the first activity outbox remains pending.",
       "test": "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_exact_duplicate_retry_is_idempotent"
     },
-    "digest_scope_mismatch_fails_closed": {
+    "partial_prefix_is_never_repeated_or_completed": {
       "status": "proven",
-      "test": "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_digest_mismatch_between_batch_and_row_fails_closed"
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_partial_preexisting_packet_refuses_missing_suffix_with_zero_events",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_historical_partial_prefix_is_not_completed_by_a_batch_retry"
+      ]
     },
-    "post_materialization_owner_reviewer_reassignment_survives_replay": {
+    "timeout_or_nonzero_requires_authoritative_readback": {
       "status": "proven",
-      "test": [
+      "tests": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_nonzero_governed_batch_requires_and_accepts_exact_readback",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_nonzero_governed_batch_rejects_invalid_authoritative_readback",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_timeout_after_atomic_commit_is_accepted_only_after_exact_readback",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_assign_timeout_before_task_is_retryable_and_unadmitted"
+      ]
+    },
+    "crash_boundaries": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_crash_before_commit_writes_zero_rows",
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_projection_crash_after_commit_keeps_one_authoritative_event"
+      ]
+    },
+    "audit_projection_failure_is_recoverable": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_authoritative_readback_ignores_pending_audit_projection",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_authoritative_admission_projection_retry_adds_no_task_state_event",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_receipt_persistence_failure_leaves_processing_for_safe_retry"
+      ]
+    },
+    "digest_scope_and_direct_forgery_fail_closed": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_digest_mismatch_between_batch_and_row_fails_closed",
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_direct_assign_cannot_forge_bridge_provenance",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_replacement_packet_id_for_materialized_task_fails_before_assign"
+      ]
+    },
+    "governed_reassignment_preserves_original_provenance": {
+      "status": "proven",
+      "tests": [
         "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_owner_reassignment_after_materialization_then_replay_row_is_a_no_op",
         "services/control-plane/bff/assistant/tests/test_dev_bridge.py::TestDispatcher::test_replay_after_live_reassignment_is_not_a_provenance_mismatch"
       ]
-    },
-    "batch_call_wired_into_dispatcher_dispatch_loop": {
-      "status": "not_started",
-      "note": "dev_bridge_dispatcher.py still issues one governed `assign` subprocess call per packet task (existing per-task loop in _dispatch_task / _dispatch_task_packet_under_fence). Rewiring it to call `dev-bridge-materialize-batch` once requires updating the fake governed-ai_status.py fixture in tests/dev_bridge_test_support.py and the assertions in test_dev_bridge.py, test_dev_bridge_reliability.py, and test_dev_bridge_dispatch_cli.py that key off the per-task assign argv/record shape. Left out of this increment to avoid a partially-verified rewrite of that surface; the atomic-commit primitive itself is complete, tested, and callable."
-    },
-    "crash_before_after_commit_and_timeout_plus_readback": {
-      "status": "not_started",
-      "note": "Not yet covered by a dedicated test in this increment; the existing per-task timeout/readback tests in test_dev_bridge_reliability.py (test_nonzero_governed_assign_requires_and_accepts_exact_readback, test_governed_readback_never_falls_back_to_local_task_projection) still pass unchanged because the dispatcher's dispatch loop is untouched in this increment."
-    },
-    "direct_assign_metadata_forgery": {
-      "status": "not_started",
-      "note": "Covered indirectly by existing _bridge_assignment_from_metadata validation (unchanged by this increment) but no new focused test was added here."
-    },
-    "projection_and_receipt_failure_recoverable": {
-      "status": "not_started",
-      "note": "Unchanged in this increment; admission-record/receipt persistence still happens after readback succeeds, downstream of the (still per-task) dispatch loop."
-    },
-    "deferred_activity_outbox_read_after_write_caveat": {
-      "status": "known_gap",
-      "note": "Leaving the activity-log outbox pending after a successful batch means an immediate read-only `show` on the governed root fails closed with 'canonical status recovery is pending' until some later write recovers it. The still-unwired dispatcher (see batch_call_wired_into_dispatcher_dispatch_loop) will need to account for this -- e.g. by calling `recover` as its own accounted post-commit step -- before its readback path can rely on `show` immediately after a batch commit. Not resolved in this increment."
     }
   },
   "verification": {
+    "status": "passed",
     "commands": [
-      "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); \"$PANTHEON_PY\" -m pytest -q scripts/test_ai_status.py",
-      "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge.py services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py .orchestrator/rewrite/test_task_state_store.py"
-    ],
-    "results": [
-      "scripts/test_ai_status.py: 219 passed, 39 subtests passed",
-      "services/control-plane/bff/assistant/tests/{test_dev_bridge,test_dev_bridge_reliability,test_dev_bridge_dispatch_cli}.py + .orchestrator/rewrite/test_task_state_store.py: 160 passed"
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "passed; checkout-scoped .venv-pantheon provisioned and imports verified from a foreign cwd"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
+        "result": "224 passed, 39 subtests passed in 37.56s at final pre-commit worktree"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/rewrite/test_task_state_store.py services/control-plane/bff/assistant/tests/test_dev_bridge.py services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py",
+        "result": "161 passed in 33.30s at final pre-commit worktree"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py scripts/dispatch_assistant_dev_task_packet.py services/control-plane/bff/assistant/dev_bridge_dispatcher.py services/control-plane/bff/assistant/tests/dev_bridge_test_support.py services/control-plane/bff/assistant/tests/test_dev_bridge.py services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py",
+        "result": "passed at final pre-commit worktree"
+      },
+      {
+        "command": "git diff --check && jq empty docs/deployment/evidence/supervisor/SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811/evidence.json",
+        "result": "passed at final pre-commit worktree"
+      }
     ]
   },
-  "remaining_work": [
-    "Rewire dev_bridge_dispatcher.py's per-task dispatch loop to call `dev-bridge-materialize-batch` once per packet instead of `assign` once per task, updating tests/dev_bridge_test_support.py's fixture and the three dependent dispatcher test files.",
-    "Add focused tests for: crash before the canonical commit, crash after the canonical commit but before receipt/admission persistence, timeout followed by authoritative readback at the batch (not per-task) level, and direct-assign bridge-provenance forgery attempts against the new batch command.",
-    "Confirm the admission artifact / receipt projection remains a pure audit projection once the dispatch loop is rewired, and that projection/receipt failure after a committed batch stays recoverable and non-gating.",
-    "Give the dispatcher's post-commit readback a way to tolerate or trigger recovery of a deferred activity outbox once it is wired to call the batch command (see the deferred_activity_outbox_read_after_write_caveat acceptance entry)."
-  ]
+  "independent_review": {
+    "reviewer": "Antigravity",
+    "status": "pending",
+    "required_binding": "Fresh exact-head review with REVIEW_FILE set to this manifest before merge."
+  },
+  "delivery": {
+    "rollback": "Normal source revert only. Do not remove or rewrite canonical task-state journal history.",
+    "remaining_dependent_work": "A separate scheduler task may remove the retained supervisor admission-artifact execution gate after this canonical transaction is merged. This task does not change that gate or any live runtime."
+  }
 }

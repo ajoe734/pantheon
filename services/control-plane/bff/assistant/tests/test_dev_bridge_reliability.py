@@ -134,7 +134,7 @@ if command == "dev-bridge-materialize-batch":
     print("injected nonzero after canonical commit", file=sys.stderr)
     raise SystemExit(9)
 if command == "dev-bridge-materialize-readback":
-    mode = os.environ.get("BRIDGE_TEST_SHOW_MODE", "exact")
+    mode = os.environ.get("BRIDGE_TEST_READBACK_MODE", "exact")
     if mode == "missing":
         print(f"Dev bridge materialize readback task is missing: {payload['tasks'][0]['task_id']}", file=sys.stderr)
         raise SystemExit(1)
@@ -170,17 +170,6 @@ if command == "dev-bridge-materialize-readback":
     raise SystemExit(0)
 raise SystemExit(f"unsupported command: {command}")
 """
-
-VERIFY_TASK_STATE_STORE_SCRIPT = """import json
-print(json.dumps({
-    "ok": True,
-    "event_count": 1,
-    "last_event_id": "bridge-test-event",
-    "expected_state_sha256": "a" * 64,
-    "projected_state_sha256": "a" * 64,
-}))
-"""
-
 
 @pytest.fixture(autouse=True)
 def _bridge_signing_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -371,10 +360,6 @@ def _nonzero_command_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     scripts.mkdir(parents=True)
     (scripts / "ai_status.py").write_text(
         NONZERO_MATERIALIZING_AI_STATUS_SCRIPT,
-        encoding="utf-8",
-    )
-    (scripts / "verify_task_state_store.py").write_text(
-        VERIFY_TASK_STATE_STORE_SCRIPT,
         encoding="utf-8",
     )
     event_log = tmp_path / "nonzero-runtime" / "task-state-events.jsonl"
@@ -588,7 +573,7 @@ def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
             "taskSpecHash": dev_bridge_dispatcher._task_spec_hash(packet.tasks[0]),
         }
     ]
-    assert readback["checkpoint"]["eventCount"] > initial_event_count
+    assert readback["checkpoint"]["eventCount"] == initial_event_count + 1
     assert readback["checkpoint"]["lastEventId"].startswith("task-state-")
     assert len(readback["checkpoint"]["stateSha256"]) == 64
     assert readback["pendingAuditProjections"] == ["status_activity_outbox"]
@@ -597,7 +582,7 @@ def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
     ]
     assert admission_path.is_file()
     snapshot = AI_STATUS.load_snapshot(event_log)
-    assert snapshot["event_count"] > initial_event_count
+    assert snapshot["event_count"] == initial_event_count + 1
     assert any(
         task.get("id") == packet.tasks[0].id
         for task in snapshot["state"].get("tasks", [])
@@ -949,7 +934,7 @@ def test_supervisor_required_readback_rejects_missing_journal_binding(
     assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
 
 
-def test_nonzero_governed_assign_requires_and_accepts_exact_readback(
+def test_nonzero_governed_batch_requires_and_accepts_exact_readback(
     tmp_path: Path,
 ) -> None:
     status_root, runtime_env = _nonzero_command_fixture(tmp_path)
@@ -978,23 +963,23 @@ def test_nonzero_governed_assign_requires_and_accepts_exact_readback(
 
 
 @pytest.mark.parametrize(
-    ("show_mode", "expected_status", "expected_retryable", "error_fragment"),
+    ("readback_mode", "expected_status", "expected_retryable", "error_fragment"),
     [
         ("missing", "invalid_materialization", False, "nonzero after canonical commit"),
         ("unavailable", "task_state_mutation_retryable", True, "unavailable"),
         ("malformed", "invalid_materialization", False, "invalid JSON"),
     ],
 )
-def test_nonzero_governed_assign_rejects_missing_unavailable_or_malformed_show(
+def test_nonzero_governed_batch_rejects_invalid_authoritative_readback(
     tmp_path: Path,
-    show_mode: str,
+    readback_mode: str,
     expected_status: str,
     expected_retryable: bool,
     error_fragment: str,
 ) -> None:
     status_root, runtime_env = _nonzero_command_fixture(tmp_path)
-    runtime_env["BRIDGE_TEST_SHOW_MODE"] = show_mode
-    packet = _signed(f"pkt_nonzero_{show_mode}_readback")
+    runtime_env["BRIDGE_TEST_READBACK_MODE"] = readback_mode
+    packet = _signed(f"pkt_nonzero_{readback_mode}_readback")
 
     result = dispatch_task_packet(
         BridgeDispatchRequest(packet=packet, repoRoot=str(status_root)),
@@ -1433,6 +1418,71 @@ def test_admission_persistence_failure_keeps_packet_retryable(tmp_path: Path) ->
     assert retry.errors == []
     assert retry.admission_record is not None
     assert has_seen_packet(packet.packet_id, repo_root=str(repo_root))
+
+
+def test_authoritative_admission_projection_retry_adds_no_task_state_event(
+    tmp_path: Path,
+) -> None:
+    """Admission is recoverable audit output, never a second task authority."""
+
+    status_root, event_log, _initial_state = _authoritative_status_root(tmp_path)
+    runtime_env = {
+        "PANTHEON_STATUS_ROOT": str(status_root),
+        "PANTHEON_COMMAND_ROOT": str(REPO_ROOT),
+        "PANTHEON_COMMAND_RUNTIME_SHA": _git_stdout(REPO_ROOT, "rev-parse", "HEAD"),
+        "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+        "PANTHEON_COMMAND_BASE_REF": "HEAD",
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
+    }
+    unsigned = _packet("pkt_authoritative_admission_projection_retry", task_count=2)
+    unsigned = unsigned.model_copy(
+        update={
+            "tasks": [
+                task.model_copy(
+                    update={
+                        "depends_on": [],
+                        "artifacts": [f"docs/deployment/evidence/{task.id}/"],
+                    }
+                )
+                for task in unsigned.tasks
+            ]
+        }
+    )
+    packet = sign_packet(unsigned, key_store=KEY_STORE)
+    request = BridgeDispatchRequest(packet=packet, repoRoot=str(status_root))
+    baseline = AI_STATUS.load_snapshot(event_log)["event_count"]
+
+    with patch.object(
+        dev_bridge_dispatcher,
+        "persist_admission_record",
+        side_effect=OSError("injected admission projection failure"),
+    ):
+        first = dispatch_task_packet(
+            request,
+            key_store=KEY_STORE,
+            runtime_env=runtime_env,
+        )
+
+    assert first.retryable is True
+    assert first.admission_status == "admission_persistence_retryable"
+    committed = AI_STATUS.load_snapshot(event_log)
+    assert committed["event_count"] == baseline + 1
+    assert {task.id for task in packet.tasks}.issubset(
+        {task["id"] for task in committed["state"]["tasks"]}
+    )
+
+    retry = dispatch_task_packet(
+        request,
+        key_store=KEY_STORE,
+        runtime_env=runtime_env,
+    )
+
+    assert retry.errors == []
+    assert retry.admission_status == "admitted"
+    assert retry.admission_record is not None
+    assert AI_STATUS.load_snapshot(event_log)["event_count"] == baseline + 1
 
 
 def test_crash_after_admission_before_replay_mark_recovers_exact_record(

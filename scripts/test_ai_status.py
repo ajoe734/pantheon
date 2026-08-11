@@ -1339,6 +1339,38 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             ai_status.get_task(ai_status.load_state(), "BATCH-PRECOMMIT-ONE")
         )
 
+    def test_projection_crash_after_commit_keeps_one_authoritative_event(self) -> None:
+        packet_id = "pkt-batch-postcommit-crash-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [
+            self._task_row(
+                "BATCH-POSTCOMMIT-ONE",
+                packet_id=packet_id,
+                packet_digest=digest,
+            )
+        ]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "refresh_derived_status_views_if_current",
+                side_effect=OSError("injected projection crash"),
+            ),
+            self.assertRaisesRegex(OSError, "injected projection crash"),
+        ):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 2)
+        state = ai_status.load_state()
+        self.assertIsNotNone(
+            ai_status.get_task(state, "BATCH-POSTCOMMIT-ONE")
+        )
+        before_readback = len(load_events(self.journal))
+        readback = self._run_readback(payload)
+        self.assertEqual(readback["status"], "verified")
+        self.assertEqual(len(load_events(self.journal)), before_readback)
+
     def test_digest_mismatch_between_batch_and_row_fails_closed(self) -> None:
         packet_id = "pkt-batch-mismatch-20260811T000000Z"
         digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
