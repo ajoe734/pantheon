@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify Phase-6 shadow task-state journal integrity and projection parity."""
+"""Offline verification for the authoritative Supervisor V2 task-state store."""
 from __future__ import annotations
 
 import argparse
@@ -17,9 +17,9 @@ if str(ORCHESTRATOR) not in sys.path:
 
 from common import canonical_task_state_lock_file
 from rewrite.task_state_store import (
-    FULL_REPLAY_ENV,
     TaskStateStoreError,
     load_snapshot,
+    verify_full_chain,
     verify_snapshot,
 )
 
@@ -38,13 +38,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
-        "--full-replay",
+        "--skip-full-chain",
         action="store_true",
-        help=(
-            "Re-parse and revalidate every event instead of accepting the "
-            "checkpointed prefix. Every byte is hashed either way; this only "
-            "repeats the per-event digest work for a deep audit."
-        ),
+        help="Skip offline validation of every V2 transition and frozen V1 archive.",
     )
     return parser.parse_args(argv)
 
@@ -67,8 +63,6 @@ def main(argv: list[str] | None = None) -> int:
         payload = {"ok": False, "error": "task-state event log path is not configured"}
         emit(payload, as_json=args.json)
         return 3
-    if args.full_replay:
-        os.environ[FULL_REPLAY_ENV] = "1"
     try:
         status_path = Path(args.status_file).expanduser()
         # The board and the journal must be sampled from one lock domain. Read
@@ -82,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("status projection must be a JSON object")
             snapshot = load_snapshot(Path(args.event_log).expanduser())
         report = verify_snapshot(snapshot, status)
+        if not args.skip_full_chain:
+            report["full_chain"] = verify_full_chain(Path(args.event_log).expanduser())
     except TaskStateStoreError as exc:
         payload = {"ok": False, "error": str(exc), "error_kind": "integrity"}
         emit(payload, as_json=args.json)

@@ -94,9 +94,7 @@ from runtime_state import (
 )
 from rewrite.task_state_store import (
     append_state_commit,
-    load_events,
     load_snapshot,
-    project_latest_state,
     snapshot_transaction,
 )
 from common import (
@@ -1576,9 +1574,8 @@ def load_state() -> dict[str, Any]:
     if store_mode == "authoritative":
         _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
-        # One validated pass over the journal: load_events followed by
-        # project_latest_state replayed and revalidated every event twice, which
-        # is the bulk of what a plain note command used to spend.
+        # One compact V2 head read plus a crash tail only.  The frozen archive
+        # and prior transition prefix are deliberately outside this hot path.
         transaction = getattr(_TASK_STATE_TRANSACTION_LOCAL, "transaction", None)
         snapshot = (
             transaction.load_snapshot()
