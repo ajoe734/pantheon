@@ -1,0 +1,83 @@
+{
+  "task_id": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+  "task_title": "Correct ENOTDIR review evidence and close merged delivery",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "status": "in_progress",
+  "scope": {
+    "owned_layer": "Evidence-only correction of docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json to record the already-approved and already-merged PR #4642 outcome that the committed manifest never captured.",
+    "not_changing": [
+      "scripts/promote_supervisor_runtime.py or any promotion/runtime source",
+      "the already-merged ENOTDIR source change or its test suite",
+      "live supervisor configuration or process state",
+      "the original task row for SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808 (currently blocked, waiting_for Human/Ops, per canonical ai-status.json)"
+    ],
+    "changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809/evidence.json"
+    ]
+  },
+  "canonical_facts_verified": {
+    "pr_4642": {
+      "state": "MERGED",
+      "baseRefName": "dev",
+      "headRefOid": "ebf8afe08bf5353db9f158acc496c03b5c4766a8",
+      "mergeCommit": "fee6f738a58b82ccc269ed8481ddc5a1a7a68b85",
+      "mergedAt": "2026-08-08T15:49:15Z",
+      "verification_command": "gh pr view 4642 --repo ajoe734/pantheon --json baseRefName,headRefOid,mergeCommit,mergedAt,state"
+    },
+    "merge_is_ancestor_of_dev": {
+      "command": "git merge-base --is-ancestor fee6f738a58b82ccc269ed8481ddc5a1a7a68b85 origin/dev",
+      "result": "exit 0"
+    },
+    "independent_review": {
+      "ref": "refs/tags/pantheon-review/approve/ebf8afe08bf5353db9f158acc496c03b5c4766a8",
+      "actor": "Codex2",
+      "decision": "approve",
+      "head_sha": "ebf8afe08bf5353db9f158acc496c03b5c4766a8",
+      "pr": 4642
+    },
+    "required_checks": {
+      "command": "gh pr view 4642 --repo ajoe734/pantheon --json statusCheckRollup",
+      "result": "all CheckRun/StatusContext entries conclusion=SUCCESS (Commit trailers x2, Pantheon canonical review gate, Check coordination truth drift, Mirror Pantheon handoffs, Forward to orchestrator, Runtime mirror guard x2, Python packaging provision x2, Smoke acceptance x2, StatusContext Pantheon canonical review gate)"
+    }
+  },
+  "correction_applied": {
+    "target_file": "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json",
+    "before": "task.status=pending_independent_review, task.reviewer=Claude2; review.reviewer=Claude2, review.status=pending_independent_exact_head_review, review.decision=null, review.reviewed_head_sha=null; delivery.task_pull_request=null, delivery.reviewed_head_sha=null, delivery.merge_commit=null, delivery.protected_merge_complete=false",
+    "after": "task.status=reviewed_and_merged, task.reviewer=Codex2; review.reviewer=Codex2, review.status=approved, review.decision=approve, review.reviewed_head_sha=ebf8afe08bf5353db9f158acc496c03b5c4766a8; delivery.task_pull_request=4642, delivery.reviewed_head_sha=ebf8afe08bf5353db9f158acc496c03b5c4766a8, delivery.merge_commit=fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, delivery.protected_merge_complete=true; governed_runtime_promotion_complete and governed_closeout_complete left false because no separately authorized rollout ran in that task and the original task row is still status=blocked, waiting_for=Human/Ops as of 2026-08-11",
+    "method": "append-only correction block added under a new top-level correction key explaining the stale placeholder; no validation, acceptance, or scope content was removed or reworded"
+  },
+  "not_in_scope_explicitly_confirmed": {
+    "note": "PR #4680/#4702/#4705 and the resulting closeout addendum in README.md are a separate, later downstream delivery for the same task id (runtime evidence-routing follow-up), already recorded by their own commits and explicitly declared to leave the reviewer-bound evidence.json unchanged. This closeout task does not touch that addendum or the original task's row; the original task remains status=blocked, waiting_for=Human/Ops for governed reconcile_merged_done, unchanged by this correction.",
+    "verification_command": "python3 -c \"import json; d=json.load(open('ai-status.json')); print([t for t in d['tasks'] if t['id']=='SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808'][0]['status'])\""
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "git merge-base --is-ancestor fee6f738a58b82ccc269ed8481ddc5a1a7a68b85 origin/dev",
+        "result": "exit 0",
+        "conclusion": "pass"
+      },
+      {
+        "command": "python3 -m json.tool docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json",
+        "result": "valid JSON",
+        "conclusion": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_promote_supervisor_runtime.py -k \"enotdir or gitfile or ENOTDIR or mutable\"",
+        "result": "69 passed, 288 deselected in 15.67s",
+        "conclusion": "pass"
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "result": "exit 0",
+        "conclusion": "pass"
+      }
+    ]
+  },
+  "rollout_and_rollback": {
+    "rollout": "Merge through the task PR into dev. Documentation/evidence-only change; no runtime or source impact.",
+    "rollback": "Revert the correction PR. The already-merged ENOTDIR source change and PR #4642 history are unaffected either way."
+  }
+}
