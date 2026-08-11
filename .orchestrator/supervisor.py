@@ -20716,15 +20716,6 @@ def run_once(
                     "workspace_source_root": str(repo_root),
                 },
             )
-    github_bus_changed = bool(
-        _safe_phase(
-            "sync_github_bus",
-            sync_github_bus,
-            config,
-            github_runtime_snapshot,
-            quiet=quiet,
-        )
-    )
     # This owns a separate, minute-level cadence. It can call GitHub but runs
     # before runtime admission; dispatch's locked hot path therefore never
     # waits on a PR check-rollup query.
@@ -20784,10 +20775,20 @@ def run_once(
                 ownerless_pr_snapshots=ownerless_pr_snapshots,
                 task_state_shadow_snapshot=task_state_shadow_snapshot,
                 assistant_dev_bridge_snapshot=assistant_dev_bridge_snapshot,
-                prelock_changed=github_bus_changed or blocked_reconciliation_changed,
+                prelock_changed=blocked_reconciliation_changed,
             )
         )
         changed = changed or pre_poll_changed
+        github_bus_changed = bool(
+            _safe_phase(
+                "sync_github_bus",
+                sync_github_bus,
+                config,
+                github_runtime_snapshot,
+                quiet=quiet,
+            )
+        )
+        changed = github_bus_changed or changed
         process_changed = bool(
             _safe_phase(
                 "process_queue_reserved",

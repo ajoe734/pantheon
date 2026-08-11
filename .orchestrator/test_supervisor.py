@@ -7411,7 +7411,7 @@ class DispatchStatusSyncTests(unittest.TestCase):
         locked_index = call_order.index("locked_cycle")
         self.assertEqual(call_order[locked_index - 1 : locked_index + 2], ["lock_enter", "locked_cycle", "lock_exit"])
 
-    def test_run_once_syncs_github_bus_before_taking_the_runtime_lock(self) -> None:
+    def test_run_once_syncs_github_bus_outside_runtime_lock(self) -> None:
         """No gh/API subprocess may extend the exclusive admission hold."""
 
         call_order: list[str] = []
@@ -7434,7 +7434,7 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
         def locked_cycle(*_args: object, **kwargs: object) -> bool:
             call_order.append("locked_cycle")
-            self.assertTrue(kwargs["prelock_changed"])
+            self.assertFalse(kwargs["prelock_changed"])
             return True
 
         with (
@@ -7451,7 +7451,7 @@ class DispatchStatusSyncTests(unittest.TestCase):
             changed = supervisor.run_once(self.config, watch=False)
 
         self.assertTrue(changed)
-        self.assertLess(call_order.index("github_sync"), call_order.index("lock_enter"))
+        self.assertGreater(call_order.index("github_sync"), call_order.index("lock_exit"))
         locked_index = call_order.index("locked_cycle")
         self.assertEqual(call_order[locked_index - 1 : locked_index + 2], ["lock_enter", "locked_cycle", "lock_exit"])
 

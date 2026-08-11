@@ -76,7 +76,7 @@
     },
     "supervisor_and_explain_dispatch_suite": {
       "status": "proven",
-      "test_summary": "880 passed, 200 subtests passed across test_supervisor.py, test_explain_dispatch.py, and test_ai_status.py in 292.63s"
+      "test_summary": "880 passed, 200 subtests passed across test_supervisor.py, test_explain_dispatch.py, and test_ai_status.py in 262.23s"
     }
   },
   "verification": {
@@ -88,7 +88,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_explain_dispatch.py scripts/test_ai_status.py",
-        "result": "880 passed, 200 subtests passed in 292.63s"
+        "result": "880 passed, 200 subtests passed in 262.23s"
       },
       {
         "command": "git diff --check",
