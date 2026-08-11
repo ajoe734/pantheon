@@ -26616,6 +26616,95 @@ class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
         )
         self.assertIs(copilot.get("local_cli_worker_supported"), False)
 
+    def test_persist_runtime_phase_launch_receipt_binds_worker_and_queue_lease_owner(self) -> None:
+        config = copy.deepcopy(
+            json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_file = tmp_path / "state.json"
+            event_queue = tmp_path / "event_queue.json"
+            approval_queue = tmp_path / "approval_queue.json"
+            status_file = tmp_path / "ai-status.json"
+            activity_log = tmp_path / "ai-activity-log.jsonl"
+            config.setdefault("paths", {})["state_file"] = str(state_file)
+            config["paths"]["event_queue"] = str(event_queue)
+            config["paths"]["approval_queue"] = str(approval_queue)
+            config["paths"]["status_file"] = str(status_file)
+            config["paths"]["activity_log"] = str(activity_log)
+            event_queue.write_text("", encoding="utf-8")
+            approval_queue.write_text('{"pending":[]}', encoding="utf-8")
+            status_file.write_text('{"tasks":[]}', encoding="utf-8")
+            activity_log.write_text("", encoding="utf-8")
+            initial_state = supervisor.load_runtime_state(config)
+            initial_state["supervisor"] = {
+                "runtime_phase_reservations": {
+                    "phase1": {
+                        "token": "tok1",
+                        "launch_intent": {
+                            "task_id": "T1",
+                            "queue_event_id": "evt-1",
+                        },
+                    }
+                }
+            }
+            initial_state["queue"] = {"events": {"evt-1": {"status": "queued", "task_id": "T1"}}}
+            supervisor.save_runtime_state(config, initial_state)
+            on_disk = supervisor.load_runtime_state(config)
+            digest = supervisor._runtime_state_cas_digest(on_disk)
+
+            token = supervisor._RUNTIME_PHASE_CONTEXT.set({
+                "phase_name": "phase1",
+                "reservation_token": "tok1",
+                "expected_digest": digest,
+            })
+            try:
+                worker_data = {
+                    "run_id": "run-100",
+                    "queue_event_id": "evt-1",
+                    "task_id": "T1",
+                    "status": "running",
+                    "provider": "claude",
+                }
+                scratch = copy.deepcopy(initial_state)
+                supervisor._persist_runtime_phase_launch_receipt(config, scratch, worker_data)
+
+                saved_state = json.loads(state_file.read_text(encoding="utf-8"))
+                receipt_rec = saved_state.get("supervisor", {}).get("runtime_phase_reservations", {}).get("phase1", {}).get("launch_receipt", {})
+                self.assertEqual(receipt_rec.get("worker", {}).get("run_id"), "run-100")
+            finally:
+                supervisor._RUNTIME_PHASE_CONTEXT.reset(token)
+
+    def test_process_queue_repairs_missing_lease_owner_on_active_worker(self) -> None:
+        config = copy.deepcopy(
+            json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        )
+        state = {
+            "workers": {
+                "w1": {
+                    "status": "running",
+                    "run_id": "run-w1",
+                    "queue_event_id": "evt-w1",
+                    "task_id": "T100",
+                }
+            },
+            "queue": {
+                "events": {
+                    "evt-w1": {
+                        "status": "started",
+                        "run_id": "run-w1",
+                        "task_id": "T100",
+                    }
+                }
+            },
+        }
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[{"event_id": "evt-w1", "task_id": "T100"}]), \
+             mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
+            supervisor.process_queue(config, state, provider_report={})
+
+        evt = state["queue"]["events"]["evt-w1"]
+        self.assertEqual(evt.get("lease_owner"), "run-w1")
+
 
 if __name__ == "__main__":
     unittest.main()

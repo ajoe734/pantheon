@@ -3256,6 +3256,16 @@ def start_worker_for_request(
         "last_error": None,
     }
     state.setdefault("workers", {})[worker_run_id] = worker_record
+    if queue_event_id:
+        q_record = queue_status(state, queue_event_id)
+        w_status = str(worker_record.get("status") or "running")
+        desired_status = "manual_pending" if w_status in {"manual_pending", "waiting_approval"} else "started"
+        q_record["status"] = desired_status
+        q_record["run_id"] = worker_run_id
+        q_record["lease_owner"] = worker_run_id
+        q_record["lease_acquired_at"] = worker_record.get("lease_acquired_at") or utc_now()
+        q_record["lease_expires_at"] = worker_record.get("lease_expires_at") or queue_lease_expiry(config)
+        q_record["processed_at"] = q_record.get("processed_at") or utc_now()
     record_worker_runtime_measurement(
         config,
         state,
@@ -3350,7 +3360,9 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         if event_key and record.get("event_key") != event_key:
             record["event_key"] = event_key
             changed = True
-        if record.get("status") in {"started", "manual_pending", "completed", "failed"}:
+        if record.get("status") in {"completed", "failed"}:
+            continue
+        if record.get("status") in {"started", "manual_pending"} and record.get("lease_owner") and record.get("run_id"):
             continue
         retry_was_held = (
             record.get("status") == RETRY_QUARANTINED_STATUS
@@ -3408,14 +3420,19 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         )
         if active_worker:
             desired_status = "manual_pending" if active_worker.get("status") in {"manual_pending", "waiting_approval"} else "started"
-            if record.get("status") != desired_status or record.get("run_id") != active_worker.get("run_id"):
+            active_run_id = active_worker.get("run_id") or event_id
+            if (
+                record.get("status") != desired_status
+                or record.get("run_id") != active_run_id
+                or record.get("lease_owner") != active_run_id
+            ):
                 observed_started_at = (
                     _parse_iso_utc(str(active_worker.get("lease_acquired_at") or ""))
                     or datetime.now(timezone.utc)
                 )
                 record["status"] = desired_status
-                record["run_id"] = active_worker.get("run_id") or event_id
-                record["lease_owner"] = active_worker.get("run_id") or event_id
+                record["run_id"] = active_run_id
+                record["lease_owner"] = active_run_id
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
@@ -15240,7 +15257,11 @@ def poll_worker_approval_stage(
                 },
             )
             if worker.get("queue_event_id"):
-                queue_status(state, worker["queue_event_id"])["status"] = "manual_pending"
+                q_rec = queue_status(state, worker["queue_event_id"])
+                q_rec["status"] = "manual_pending"
+                if worker.get("run_id"):
+                    q_rec["run_id"] = worker.get("run_id")
+                    q_rec["lease_owner"] = worker.get("run_id")
             changed = True
         return {"changed": changed, "stop": True}
 

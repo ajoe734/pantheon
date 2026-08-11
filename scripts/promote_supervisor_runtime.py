@@ -4702,6 +4702,11 @@ def evaluate_promotion_invariants(
         q_task = evt_info.get("task_id")
         q_run_id = evt_info.get("run_id")
         q_lease_owner = evt_info.get("lease_owner")
+        q_status = evt_info.get("status") or evt_info.get("state")
+
+        # Skip unstarted queued/pending events that do not have a lease owner assigned
+        if q_status in ("queued", "pending") and not (isinstance(q_lease_owner, str) and q_lease_owner.strip()):
+            continue
 
         # Active started event requires nonempty lease_owner
         if not q_lease_owner or not isinstance(q_lease_owner, str) or not q_lease_owner.strip():
