@@ -8842,3 +8842,105 @@ def test_mutable_incumbent_snapshot_rejects_relative_split_entrypoint(
                 seed_argv=rel_argv,
                 seed_cwd=reader.cwd[1717],
             )
+
+
+def test_worker_lease_parity_ignores_unstarted_queued_or_pending_events() -> None:
+    """Queued and pending events do not have lease_owner yet and should not trigger missing_lease_owner."""
+    health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 100}}
+    ai_status = {"tasks": []}
+    state = {
+        "supervisor": {"lifecycle": "running"},
+        "workers": {},
+        "queue": {
+            "events": {
+                "evt-queued-1": {"status": "queued", "task_id": "T1"},
+                "evt-pending-2": {"status": "pending", "task_id": "T2"},
+            }
+        },
+        "worker_worktrees": {"leases": {}},
+    }
+
+    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
+        invariants = evaluate_promotion_invariants(
+            health_report=health_report,
+            ai_status=ai_status,
+            state=state,
+            lock_path=Path("/tmp/fake.lock"),
+        )
+
+    worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
+    assert worker_inv["ok"] is True
+    assert len(worker_inv["details"]["reasons"]) == 0
+
+
+def test_worker_lease_parity_rejects_started_event_missing_lease_owner() -> None:
+    """A started queue event without a lease_owner must fail-closed with missing_lease_owner."""
+    health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 100}}
+    ai_status = {"tasks": []}
+    state = {
+        "supervisor": {"lifecycle": "running"},
+        "workers": {},
+        "queue": {
+            "events": {
+                "evt-started-1": {"status": "started", "task_id": "T1"},
+            }
+        },
+        "worker_worktrees": {"leases": {}},
+    }
+
+    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
+        invariants = evaluate_promotion_invariants(
+            health_report=health_report,
+            ai_status=ai_status,
+            state=state,
+            lock_path=Path("/tmp/fake.lock"),
+        )
+
+    worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
+    assert worker_inv["ok"] is False
+    assert "missing_lease_owner:evt-started-1" in worker_inv["details"]["reasons"]
+
+
+def test_worker_lease_parity_coherent_started_event_passes() -> None:
+    """A fully coherent started queue event with worker and lease passes invariant checks."""
+    health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 100}}
+    ai_status = {"tasks": []}
+    state = {
+        "supervisor": {"lifecycle": "running"},
+        "workers": {
+            "w1": {
+                "status": "running",
+                "current_task_id": "T1",
+                "run_id": "w1-run",
+                "queue_event_id": "evt-1",
+            }
+        },
+        "queue": {
+            "events": {
+                "evt-1": {
+                    "status": "started",
+                    "task_id": "T1",
+                    "run_id": "w1-run",
+                    "lease_owner": "w1-run",
+                }
+            }
+        },
+        "worker_worktrees": {
+            "leases": {
+                "l1": {"task_id": "T1", "run_id": "w1-run", "queue_event_id": "evt-1"}
+            }
+        },
+    }
+
+    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
+        invariants = evaluate_promotion_invariants(
+            health_report=health_report,
+            ai_status=ai_status,
+            state=state,
+            lock_path=Path("/tmp/fake.lock"),
+        )
+
+    worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
+    assert worker_inv["ok"] is True
+    assert len(worker_inv["details"]["reasons"]) == 0
+
