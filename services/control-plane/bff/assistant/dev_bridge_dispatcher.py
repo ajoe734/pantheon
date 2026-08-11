@@ -815,6 +815,25 @@ def _materialized_task_candidates(*, repo_root: str, task_id: str) -> List[Dict[
     return candidates
 
 
+# Fields that stay bound to the packet's originally signed task spec forever.
+# Owner/reviewer are deliberately excluded: they are live routing state that a
+# later Human/Ops or supervisor-governed reassignment may change, and replay
+# must validate immutable declared scope/provenance, not the current routing
+# choice. The original signed owner/reviewer are still checked below as part
+# of the frozen `dev_bridge.task_spec` provenance envelope, so a forged
+# original assignment is still rejected -- only a *subsequent* routing change
+# is now admissible.
+_IMMUTABLE_TASK_SPEC_FIELDS = (
+    "id",
+    "title",
+    "phase",
+    "depends_on",
+    "artifacts",
+    "acceptance",
+    "summary",
+)
+
+
 def _validate_materialized_task_candidate(
     packet: DevTaskPacket,
     task: BridgeTask,
@@ -831,15 +850,16 @@ def _validate_materialized_task_candidate(
     observed_spec = {
         "id": candidate.get("id"),
         "title": candidate.get("title"),
-        "owner": candidate.get("owner"),
-        "reviewer": candidate.get("reviewer"),
         "phase": candidate.get("phase"),
         "depends_on": list(candidate["depends_on"]),
         "artifacts": list(candidate["artifacts"]),
         "acceptance": list(candidate["acceptance"]),
         "summary": candidate.get("summary_zh"),
     }
-    if observed_spec != _task_spec(task):
+    signed_spec = _task_spec(task)
+    if observed_spec != {
+        field: signed_spec[field] for field in _IMMUTABLE_TASK_SPEC_FIELDS
+    }:
         raise ValueError(
             f"materialized task {task.id!r} does not match the signed task spec"
         )

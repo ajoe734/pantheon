@@ -133,6 +133,9 @@ STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
 SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
+DEV_BRIDGE_BATCH_SCHEMA_VERSION = 1
+DEV_BRIDGE_BATCH_MAX_TASKS = 64
+DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND = "dev-bridge-materialize-batch"
 GLOBAL_STATUS_LOCK_ORDER = (
     "runtime_admission",
     "task_state",
@@ -8192,6 +8195,174 @@ def run_supervisor_dispatch_batch(
             commands[command](state, command_args)
 
 
+def load_dev_bridge_materialize_batch(path_value: str) -> dict[str, Any]:
+    """Load one bounded, exact packet-materialization payload from a file.
+
+    The payload names the packet id/digest once and every task row's already
+    signed ``TASK_METADATA_JSON``-shaped envelope, so the caller never
+    re-derives bridge provenance -- it only carries what the dispatcher
+    already verified.
+    """
+
+    if not path_value:
+        raise SystemExit(
+            f"Usage: {DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND} <absolute-payload-path>"
+        )
+    path = Path(os.path.expanduser(path_value))
+    if not path.is_absolute():
+        raise SystemExit("Dev bridge materialize batch payload path must be absolute")
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise SystemExit(f"Unable to inspect dev bridge materialize batch payload: {exc}") from exc
+    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
+        raise SystemExit("Dev bridge materialize batch payload must be a non-symlink regular file")
+    if metadata.st_size > 4 * 1024 * 1024:
+        raise SystemExit("Dev bridge materialize batch payload exceeds 4 MiB")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Invalid dev bridge materialize batch payload: {exc}") from exc
+
+    exact_keys = {"schema_version", "packet_id", "packet_digest", "actor", "tasks"}
+    if not isinstance(payload, dict) or set(payload) != exact_keys:
+        raise SystemExit("Dev bridge materialize batch payload schema is not exact")
+    if payload.get("schema_version") != DEV_BRIDGE_BATCH_SCHEMA_VERSION:
+        raise SystemExit("Unsupported dev bridge materialize batch schema version")
+
+    packet_id = payload.get("packet_id")
+    packet_digest = payload.get("packet_digest")
+    actor = payload.get("actor")
+    if not isinstance(packet_id, str) or not packet_id.strip() or len(packet_id) > 256:
+        raise SystemExit("Dev bridge materialize batch packet_id is invalid")
+    if not isinstance(packet_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", packet_digest):
+        raise SystemExit("Dev bridge materialize batch packet_digest must be a SHA-256 hex digest")
+    if not isinstance(actor, str) or not actor.strip() or len(actor) > 80:
+        raise SystemExit("Dev bridge materialize batch actor is invalid")
+
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list) or not tasks or len(tasks) > DEV_BRIDGE_BATCH_MAX_TASKS:
+        raise SystemExit(
+            "Dev bridge materialize batch tasks must contain between 1 and "
+            f"{DEV_BRIDGE_BATCH_MAX_TASKS} rows"
+        )
+
+    row_keys = {"task_id", "owner", "reviewer", "title", "assignment_next", "task_metadata"}
+    normalized_tasks: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+    for index, row in enumerate(tasks):
+        if not isinstance(row, dict) or set(row) != row_keys:
+            raise SystemExit(f"Dev bridge materialize batch row {index} schema is not exact")
+        normalized: dict[str, Any] = {}
+        for field, limit in (
+            ("task_id", 256),
+            ("owner", 80),
+            ("reviewer", 80),
+            ("title", 240),
+        ):
+            value = row[field]
+            if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                raise SystemExit(f"Dev bridge materialize batch row {index} has invalid {field}")
+            normalized[field] = value.strip()
+        assignment_next = row["assignment_next"]
+        if assignment_next is None:
+            normalized["assignment_next"] = ""
+        elif isinstance(assignment_next, str) and len(assignment_next) <= 4096:
+            normalized["assignment_next"] = assignment_next.strip()
+        else:
+            raise SystemExit(
+                f"Dev bridge materialize batch row {index} has invalid assignment_next"
+            )
+        task_metadata = row["task_metadata"]
+        if not isinstance(task_metadata, dict):
+            raise SystemExit(
+                f"Dev bridge materialize batch row {index} task_metadata must be an object"
+            )
+        bridge = task_metadata.get("dev_bridge")
+        if not isinstance(bridge, dict):
+            raise SystemExit(
+                f"Dev bridge materialize batch row {index} task_metadata.dev_bridge is required"
+            )
+        if str(bridge.get("packet_id") or "") != packet_id:
+            raise SystemExit(
+                f"Dev bridge materialize batch row {index} packet_id does not match the batch"
+            )
+        if str(bridge.get("packet_digest") or "") != packet_digest:
+            raise SystemExit(
+                f"Dev bridge materialize batch row {index} packet_digest does not match the batch"
+            )
+        normalized["task_metadata"] = deepcopy(task_metadata)
+        task_id = normalized["task_id"]
+        if task_id in seen_task_ids:
+            raise SystemExit(f"Dev bridge materialize batch repeats task id: {task_id}")
+        seen_task_ids.add(task_id)
+        normalized_tasks.append(normalized)
+
+    return {
+        "schema_version": DEV_BRIDGE_BATCH_SCHEMA_VERSION,
+        "packet_id": packet_id.strip(),
+        "packet_digest": packet_digest,
+        "actor": actor.strip(),
+        "tasks": normalized_tasks,
+    }
+
+
+@contextmanager
+def dev_bridge_materialize_mutation_environment(row: Mapping[str, Any], actor: str):
+    """Bind one packet task row's signed metadata for exactly one assign call."""
+
+    tracked = ("AI_NAME", "TASK_METADATA_JSON", "TASK_TITLE", "TASK_NEXT")
+    previous = {name: os.environ.get(name) for name in tracked}
+    try:
+        for name in tracked:
+            os.environ.pop(name, None)
+        os.environ["AI_NAME"] = actor
+        os.environ["TASK_METADATA_JSON"] = json.dumps(
+            row["task_metadata"],
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        os.environ["TASK_TITLE"] = str(row["title"])
+        if row.get("assignment_next"):
+            os.environ["TASK_NEXT"] = str(row["assignment_next"])
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        _clear_status_command_lease_binding()
+
+
+def run_dev_bridge_materialize_batch(
+    state: dict[str, Any],
+    batch: Mapping[str, Any],
+    *,
+    commands: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Materialize every packet task against one in-memory canonical snapshot.
+
+    A row that raises (owner==reviewer, wave-guard rejection, artifact-scope
+    conflict, forged/mismatched bridge provenance, ...) propagates immediately.
+    The caller's transaction never reaches the single commit at the end of the
+    batch, so a second-row failure commits nothing -- not even the first row.
+    """
+
+    actor = str(batch["actor"])
+    results: list[dict[str, Any]] = []
+    for row in batch["tasks"]:
+        task_id = str(row["task_id"])
+        with dev_bridge_materialize_mutation_environment(row, actor):
+            outcome = commands["assign"](
+                state,
+                [task_id, row["owner"], row["reviewer"], row["title"]],
+            )
+        results.append({"task_id": task_id, "changed": outcome is not False})
+    return results
+
+
 def main(argv: list[str]) -> int:
     validate_status_command_runtime_binding()
     validate_status_root_binding()
@@ -8260,6 +8431,54 @@ def main(argv: list[str]) -> int:
                     "status": "committed",
                     "mutation_count": len(mutations),
                     "task_ids": [mutation["task_id"] for mutation in mutations],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if command == DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND:
+        if len(args) != 1:
+            raise SystemExit(
+                f"Usage: {DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND} <absolute-payload-path>"
+            )
+        # Same lock order as every other governed mutation:
+        # runtime_admission(shared, implicit no-op here) -> task_state(exclusive)
+        # -> activity_audit. Every packet task row is applied to one in-memory
+        # snapshot and reaches the journal/status file through exactly one
+        # save at the bottom of the transaction, so a failure on any row -- or
+        # the process dying before that save -- leaves zero rows committed.
+        batch = load_dev_bridge_materialize_batch(args[0])
+        committed_state: dict[str, Any] | None = None
+        with canonical_task_state_lock(shared=False):
+            validate_active_status_command_lease(
+                DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND, [batch["packet_id"]]
+            )
+            with authoritative_task_state_transaction():
+                state = load_state()
+                recover_status_archive_outbox(state)
+                recover_status_activity_outbox(state)
+                with buffer_activity_events():
+                    results = run_dev_bridge_materialize_batch(
+                        state, batch, commands=commands
+                    )
+                    sync_all(state, refresh_views=False)
+                committed_state = deepcopy(state)
+        if committed_state is not None:
+            refresh_derived_status_views_if_current(committed_state)
+        print(
+            json.dumps(
+                {
+                    "status": "committed",
+                    "packetId": batch["packet_id"],
+                    "packetDigest": batch["packet_digest"],
+                    "taskCount": len(results),
+                    "taskIds": [item["task_id"] for item in results],
+                    "changedTaskIds": [
+                        item["task_id"] for item in results if item["changed"]
+                    ],
                 },
                 sort_keys=True,
                 separators=(",", ":"),

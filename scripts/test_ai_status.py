@@ -1028,6 +1028,240 @@ class SupervisorDispatchBatchTests(unittest.TestCase):
         )
 
 
+class DevBridgeMaterializeBatchTests(unittest.TestCase):
+    """Covers SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811.
+
+    The dispatcher used to call ``assign`` once per packet task, so a second
+    (or later) row failing left the earlier rows already committed -- exactly
+    the partial materialization incident recorded in
+    ``.orchestrator/assistant-dev-packets/receipts/pkt-two-blocker-dev-closeout-20260809T060036Z.json``.
+    ``dev-bridge-materialize-batch`` applies every row to one in-memory
+    snapshot and reaches the journal through exactly one commit.
+    """
+
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+        self.addCleanup(_teardown_test_isolation, self)
+        self.journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        self.env_patch = mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: str(self.journal),
+                "AI_NAME": "Human/Ops",
+                "ORCH_RUN_ID": "",
+                "ORCH_TASK_ID": "",
+                "ORCH_AGENT_ID": "",
+                "ORCH_PROVIDER": "",
+                "ORCH_SESSION_ID": "",
+            },
+            clear=False,
+        )
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
+        ai_status.append_state_commit(
+            self.journal,
+            ai_status.default_state(),
+            source="test-bootstrap",
+        )
+
+    def _task_spec(self, task_id: str, *, owner: str = "Codex", reviewer: str = "Antigravity") -> dict[str, Any]:
+        return {
+            "id": task_id,
+            "title": f"Title for {task_id}",
+            "owner": owner,
+            "reviewer": reviewer,
+            "phase": "Canonical Task Materialization",
+            "depends_on": [],
+            "artifacts": ["docs/deployment/evidence/" + task_id + "/"],
+            "acceptance": ["Do the thing"],
+            "summary": f"Summary for {task_id}",
+        }
+
+    def _task_row(
+        self,
+        task_id: str,
+        *,
+        packet_id: str = "pkt-test-20260811T000000Z",
+        packet_digest: str | None = None,
+        owner: str = "Codex",
+        reviewer: str = "Antigravity",
+    ) -> dict[str, Any]:
+        spec = self._task_spec(task_id, owner=owner, reviewer=reviewer)
+        spec_hash = hashlib.sha256(
+            json.dumps(spec, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        ).hexdigest()
+        digest = packet_digest or hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        return {
+            "task_id": task_id,
+            "owner": owner,
+            "reviewer": reviewer,
+            "title": spec["title"],
+            "assignment_next": None,
+            "task_metadata": {
+                "dev_bridge": {
+                    "packet_id": packet_id,
+                    "packet_digest": digest,
+                    "task_spec_hash": spec_hash,
+                    "task_spec": spec,
+                    "conversation_id": "conversation-20260811",
+                    "source_turn_ids": ["turn-1"],
+                    "documents": [{"kind": "GOVERNANCE", "path": "AGENTS.md"}],
+                    "audit_conversation_href": None,
+                    "emitted_at": "2026-08-11T12:06:12Z",
+                    "intent": "governed_supervisor_architecture_cutover",
+                    "mode": "supervisor_architecture_governed_delivery",
+                    "actor": {"id": "Human/Ops", "roles": ["operator"], "capabilities": ["integration"]},
+                }
+            },
+        }
+
+    def _payload_path(self, rows: list[dict[str, Any]], *, packet_id: str, packet_digest: str) -> Path:
+        payload = self._test_root / "batch.json"
+        payload.write_text(
+            json.dumps(
+                {
+                    "schema_version": ai_status.DEV_BRIDGE_BATCH_SCHEMA_VERSION,
+                    "packet_id": packet_id,
+                    "packet_digest": packet_digest,
+                    "actor": "Human/Ops",
+                    "tasks": rows,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return payload
+
+    def _run_main(self, payload_path: Path) -> int:
+        with (
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(sys, "stdout", io.StringIO()),
+        ):
+            return ai_status.main(
+                ["ai_status.py", ai_status.DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND, str(payload_path)]
+            )
+
+    def test_batch_commits_every_task_in_exactly_one_journal_event(self) -> None:
+        packet_id = "pkt-batch-ok-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [
+            self._task_row("BATCH-ATOMIC-ONE", packet_id=packet_id, packet_digest=digest),
+            self._task_row("BATCH-ATOMIC-TWO", packet_id=packet_id, packet_digest=digest),
+        ]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        result = self._run_main(payload)
+
+        self.assertEqual(result, 0)
+        events = load_events(self.journal)
+        # One save_state call durably commits the tasks; a second event then
+        # clears the activity-outbox marker that same save set (existing
+        # protocol for every governed command, not unique to batching). What
+        # matters for atomicity is that both tasks are already present
+        # together in the FIRST new event -- never one row, then the other.
+        self.assertEqual(len(events), 3)
+        first_new_state = events[1]["state"]
+        batch_tasks = [
+            task
+            for task in first_new_state["tasks"]
+            if task["id"] in {"BATCH-ATOMIC-ONE", "BATCH-ATOMIC-TWO"}
+        ]
+        self.assertEqual(
+            sorted(task["id"] for task in batch_tasks),
+            ["BATCH-ATOMIC-ONE", "BATCH-ATOMIC-TWO"],
+        )
+        for task in batch_tasks:
+            self.assertEqual(task["dev_bridge"]["packet_id"], packet_id)
+            self.assertEqual(task["dev_bridge"]["packet_digest"], digest)
+
+    def test_second_row_failure_commits_nothing_not_even_the_first_row(self) -> None:
+        packet_id = "pkt-batch-partial-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [
+            self._task_row("BATCH-PARTIAL-ONE", packet_id=packet_id, packet_digest=digest),
+            # owner == reviewer is rejected by command_assign.
+            self._task_row(
+                "BATCH-PARTIAL-TWO",
+                packet_id=packet_id,
+                packet_digest=digest,
+                owner="Codex",
+                reviewer="Codex",
+            ),
+        ]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        with self.assertRaisesRegex(SystemExit, "Reviewer cannot equal owner"):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+        state = json.loads(self._test_status_file.read_text(encoding="utf-8"))
+        task_ids = {task["id"] for task in state.get("tasks", [])}
+        self.assertNotIn("BATCH-PARTIAL-ONE", task_ids)
+        self.assertNotIn("BATCH-PARTIAL-TWO", task_ids)
+
+    def test_exact_duplicate_retry_is_idempotent(self) -> None:
+        packet_id = "pkt-batch-retry-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [self._task_row("BATCH-RETRY-ONE", packet_id=packet_id, packet_digest=digest)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        self.assertEqual(self._run_main(payload), 0)
+        first_state = ai_status.load_state()
+        first_task = ai_status.get_task(first_state, "BATCH-RETRY-ONE")
+        self.assertIsNotNone(first_task)
+
+        # A retried exact packet must not error, duplicate the row, or drift
+        # its bound provenance -- even though the store still appends a fresh
+        # event (every governed command bumps `updated_at`, matching how a
+        # harmless repeated `note` already behaves in this store).
+        self.assertEqual(self._run_main(payload), 0)
+        second_state = ai_status.load_state()
+        second_task = ai_status.get_task(second_state, "BATCH-RETRY-ONE")
+        self.assertEqual(
+            len([t for t in second_state["tasks"] if t["id"] == "BATCH-RETRY-ONE"]),
+            1,
+        )
+        self.assertEqual(second_task["owner"], first_task["owner"])
+        self.assertEqual(second_task["reviewer"], first_task["reviewer"])
+        self.assertEqual(second_task["dev_bridge"], first_task["dev_bridge"])
+
+    def test_digest_mismatch_between_batch_and_row_fails_closed(self) -> None:
+        packet_id = "pkt-batch-mismatch-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        other_digest = hashlib.sha256(b"different-payload").hexdigest()
+        rows = [self._task_row("BATCH-MISMATCH-ONE", packet_id=packet_id, packet_digest=other_digest)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        with self.assertRaisesRegex(SystemExit, "packet_digest does not match the batch"):
+            ai_status.load_dev_bridge_materialize_batch(str(payload))
+
+    def test_owner_reassignment_after_materialization_then_replay_row_is_a_no_op(self) -> None:
+        """A later Human/Ops reassignment must not be clobbered by an exact replay."""
+
+        packet_id = "pkt-batch-reassign-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [self._task_row("BATCH-REASSIGN-ONE", packet_id=packet_id, packet_digest=digest)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+        self.assertEqual(self._run_main(payload), 0)
+
+        with mock.patch.object(ai_status, "validate_status_command_runtime_binding"),             mock.patch.object(ai_status, "validate_status_root_binding"):
+            ai_status.main(
+                ["ai_status.py", "assign", "BATCH-REASSIGN-ONE", "Claude", "Codex2"]
+            )
+        reassigned = ai_status.load_state()
+        task = ai_status.get_task(reassigned, "BATCH-REASSIGN-ONE")
+        self.assertEqual(task["owner"], "Claude")
+        self.assertEqual(task["reviewer"], "Codex2")
+        self.assertEqual(task["dev_bridge"]["task_spec"]["owner"], "Codex")
+
+        self.assertEqual(self._run_main(payload), 0)
+        state = ai_status.load_state()
+        task = ai_status.get_task(state, "BATCH-REASSIGN-ONE")
+        self.assertEqual(task["owner"], "Claude")
+        self.assertEqual(task["reviewer"], "Codex2")
+
+
 class StatusRootRoutingTests(unittest.TestCase):
     def _init_repo(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
