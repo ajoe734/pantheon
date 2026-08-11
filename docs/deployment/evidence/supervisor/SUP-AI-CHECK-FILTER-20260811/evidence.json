@@ -1,0 +1,33 @@
+{
+  "task_id": "SUP-AI-CHECK-FILTER-20260811",
+  "title": "Classify optional PR diagnostics without blocking merges",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "status": "review",
+  "reproduction": {
+    "pr_number": 4741,
+    "target_task": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+    "failing_check": "Audit signed canonical review (not required issuer) (4741)",
+    "workflow_name": "Canonical Review Attestation Audit",
+    "is_required_in_graphql": false,
+    "merge_state_status": "UNSTABLE",
+    "initial_result": {
+      "action": "blocked",
+      "detail": "PR #4741 has failing checks: Audit signed canonical review (not required issuer) (4741)."
+    }
+  },
+  "solution": {
+    "data_driven_classifier": "is_check_required() inspects isRequired / is_required boolean; is_required is False implies non-required diagnostic check.",
+    "fail_closed_policy": "Missing, ambiguous (None), required (True), stale-head, review-binding, trailer, or actual CI failures remain fail-closed blocking.",
+    "merge_state_status_support": "UNSTABLE added to ALLOWED_PRE_REBASE_MERGE_STATES and ALLOWED_DIRECT_MERGE_STATES when all required status checks pass.",
+    "remediated_result": {
+      "action": "would_merge",
+      "detail": "Dry-run: PR #4741 is green, exact_head_verified_clean, and approved by Codex2 for exact head 231125cf1b00c5dd758927d87ab1af9255aca347; would merge that exact head."
+    }
+  },
+  "verification": {
+    "unit_test_suite": "python3 -m unittest scripts/git/test_auto_integrator.py",
+    "tests_run": 24,
+    "tests_passed": 24
+  }
+}
