@@ -1211,9 +1211,69 @@ def _claim_processing_files(
         pending = list(_pending_files(inbox))
         for path in pending:
             processing.append(_move(path, inbox / "processing"))
-        claims: list[tuple[Path, str, int]] = []
         now = time.time()
+        # Partition processing candidates by retry scheduling state.
+        # Non-retryable (or ready retryable) candidates are inter-leaved so retryable items
+        # with backoff cannot monopolize claims or starve newer non-retryable processing packets.
+        ready_candidates: list[tuple[Path, Dict[str, str], float]] = []
+        deferred_candidates: list[tuple[Path, Dict[str, str], float]] = []
+
         for path in processing:
+            try:
+                _packet, identity = _packet_identity(path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                identity = {
+                    "packet_id": path.stem,
+                    "packet_digest": "invalid",
+                }
+            retry_path = _retry_path(inbox, path)
+            try:
+                retry = _read_optional_json(retry_path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                retry = None
+
+            if retry is not None:
+                if _identity_matches(retry, identity):
+                    next_attempt = _epoch(retry.get("next_attempt_epoch"))
+                    if next_attempt is not None and next_attempt > now:
+                        deferred_candidates.append((path, identity, next_attempt))
+                        continue
+                else:
+                    retry_path.unlink(missing_ok=True)
+
+            claim_path = _claim_path(inbox, path)
+            try:
+                existing = _read_optional_json(claim_path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                existing = None
+            if existing is not None and _identity_matches(existing, identity):
+                expires_at = _epoch(existing.get("expires_at_epoch"))
+                if expires_at is not None and expires_at > now:
+                    continue
+
+            is_retryable = retry is not None and _identity_matches(retry, identity)
+            # Give non-retryable (0) priority over retryable (1) when constructing buckets,
+            # but preserve sub-order within each bucket.
+            ready_candidates.append((path, identity, 1.0 if is_retryable else 0.0))
+
+        # Separate into non-retryable and retryable buckets
+        non_retryable_bucket = [item for item in ready_candidates if item[2] == 0.0]
+        retryable_bucket = [item for item in ready_candidates if item[2] > 0.0]
+
+        # Interleave buckets round-robin: non-retryable first, then retryable
+        ordered_candidates: list[tuple[Path, Dict[str, str]]] = []
+        idx_nr, idx_r = 0, 0
+        len_nr, len_r = len(non_retryable_bucket), len(retryable_bucket)
+        while idx_nr < len_nr or idx_r < len_r:
+            if idx_nr < len_nr:
+                ordered_candidates.append((non_retryable_bucket[idx_nr][0], non_retryable_bucket[idx_nr][1]))
+                idx_nr += 1
+            if idx_r < len_r:
+                ordered_candidates.append((retryable_bucket[idx_r][0], retryable_bucket[idx_r][1]))
+                idx_r += 1
+
+        claims: list[tuple[Path, str, int]] = []
+        for path, identity in ordered_candidates:
             if max_items is not None and len(claims) >= max_items:
                 break
             fence = _try_acquire_processing_fence(inbox, path)
@@ -1221,40 +1281,7 @@ def _claim_processing_files(
                 continue
             claimed = False
             try:
-                try:
-                    _packet, identity = _packet_identity(path)
-                except (OSError, ValueError, json.JSONDecodeError):
-                    # Invalid packet content is still claimed so the ordinary
-                    # drain error path can durably fail it instead of hot-looping.
-                    identity = {
-                        "packet_id": path.stem,
-                        "packet_digest": "invalid",
-                    }
-                retry_path = _retry_path(inbox, path)
-                try:
-                    retry = _read_optional_json(retry_path)
-                except (OSError, ValueError, json.JSONDecodeError):
-                    retry = None
-                if retry is not None:
-                    # Unsigned retry metadata is advisory only.  A forged or stale
-                    # identity cannot suppress a valid signed packet.
-                    if _identity_matches(retry, identity):
-                        next_attempt = _epoch(retry.get("next_attempt_epoch"))
-                        if next_attempt is not None and next_attempt > now:
-                            continue
-                    else:
-                        retry_path.unlink(missing_ok=True)
-
                 claim_path = _claim_path(inbox, path)
-                try:
-                    existing = _read_optional_json(claim_path)
-                except (OSError, ValueError, json.JSONDecodeError):
-                    existing = None
-                if existing is not None and _identity_matches(existing, identity):
-                    expires_at = _epoch(existing.get("expires_at_epoch"))
-                    if expires_at is not None and expires_at > now:
-                        continue
-
                 claim_token = os.urandom(24).hex()
                 _write_json_atomic(
                     claim_path,
