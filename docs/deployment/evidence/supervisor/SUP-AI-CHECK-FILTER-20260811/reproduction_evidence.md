@@ -52,6 +52,11 @@ the governed path; this source task did not directly merge it.
   failure or pending check, and exactly one ignored diagnostic audit. The PR
   remained `BLOCKED` pending independent review, and no merge was attempted.
 - `git diff --check`: passed.
+- After composing `origin/dev` commit
+  `7f93be09e3f40e9f11a28cf6c0766e116a54adc6` at merge commit
+  `2092d52ca3901a14a2956c2f02cb1f496033f4a7`, the same 30 tests, `py_compile`,
+  JSON validation, and `git diff --check origin/dev...HEAD` passed; the base
+  introduced no overlapping task-artifact changes.
 
 The final exact-head decision must be supplied by Antigravity2 through the
 governed review command with `evidence.json` bound as `REVIEW_FILE`; a committed

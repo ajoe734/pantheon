@@ -11,7 +11,9 @@
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-AI-CHECK-FILTER-20260811",
-    "base_commit": "51fbd16fcbbda1ec3b232cf1800bea9da77290bc"
+    "base_commit": "51fbd16fcbbda1ec3b232cf1800bea9da77290bc",
+    "composed_dev_commit": "7f93be09e3f40e9f11a28cf6c0766e116a54adc6",
+    "composition_commit": "2092d52ca3901a14a2956c2f02cb1f496033f4a7"
   },
   "scope": {
     "owned_layer": "Auto-integrator status-rollup requiredness enrichment, narrow diagnostic provenance classification, UNSTABLE eligibility, focused tests, contract, and task evidence.",
@@ -93,6 +95,10 @@
     {
       "command": "git diff --check",
       "result": "passed"
+    },
+    {
+      "command": "After merging origin/dev at 7f93be09e3f40e9f11a28cf6c0766e116a54adc6: rerun unit tests, py_compile, jq empty, and git diff --check origin/dev...HEAD",
+      "result": "30 tests passed; py_compile, JSON validation, and diff checks passed; current dev introduced no overlapping task-artifact changes"
     }
   ],
   "runtime_provenance": {
@@ -117,7 +123,7 @@
     ]
   },
   "delivery": {
-    "next": "Compose current dev if needed, commit this review manifest, publish PR #4744, obtain Antigravity2 exact-head approval, pass required checks, and merge through the protected governed path.",
+    "next": "Commit this composed review manifest, publish PR #4744, obtain Antigravity2 exact-head approval, pass required checks, and merge through the protected governed path.",
     "post_merge_operator_action": "The supervisor-owned integrator must run a fresh governed dry-run and merge attempt from the promoted source. This source-only task does not promote or restart the live runtime.",
     "rollback": "Revert the protected task PR merge commit; do not alter branch protection or canonical task state as rollback."
   }
