@@ -198,6 +198,83 @@ class BridgeResult:
         return {key: value for key, value in payload.items() if value not in (None, "")}
 
 
+def validate_result_evidence(
+    value: Mapping[str, Any],
+    *,
+    repository: str,
+    actor: str,
+    decision: str,
+    binding: Mapping[str, Any] | ReviewBinding,
+) -> dict[str, Any]:
+    """Validate the durable exact-head evidence returned by the bridge.
+
+    Canonical task state stores this payload after network I/O completes.  Keep
+    its shape and exact-head checks here beside the producer so status writers
+    do not grow a second, subtly different evidence validator.
+    """
+
+    repository = _require_repository_slug(repository)
+    reviewed = (
+        binding if isinstance(binding, ReviewBinding) else ReviewBinding.from_mapping(binding)
+    )
+    normalized_decision = str(decision or "").strip().lower()
+    if normalized_decision not in DECISIONS:
+        raise GitHubReviewBridgeError(f"unsupported review decision {decision!r}")
+    expected = {
+        "repository": repository,
+        "pr": reviewed.pr,
+        "head_sha": reviewed.head_sha,
+        "head_branch": reviewed.head_branch,
+        "base": reviewed.base,
+        "decision": normalized_decision,
+        "actor": str(actor or "").strip(),
+    }
+    try:
+        observed_pr = int(value.get("pr") or 0)
+    except (TypeError, ValueError) as exc:
+        raise GitHubReviewBridgeError("bridge result has an invalid PR number") from exc
+    observed = {
+        "repository": str(value.get("repository") or "").strip(),
+        "pr": observed_pr,
+        "head_sha": str(value.get("head_sha") or "").strip().lower(),
+        "head_branch": str(value.get("head_branch") or "").strip(),
+        "base": str(value.get("base") or "").strip(),
+        "decision": str(value.get("decision") or "").strip().lower(),
+        "actor": str(value.get("actor") or "").strip(),
+    }
+    if observed != expected:
+        raise GitHubReviewBridgeError(
+            f"bridge result exact-head mismatch: expected={expected!r} observed={observed!r}"
+        )
+
+    mode = str(value.get("mode") or "").strip()
+    review_recorded = bool(value.get("github_review_id"))
+    status_recorded = bool(
+        value.get("status_id")
+        and value.get("status_context") == CANONICAL_REVIEW_CONTEXT
+        and str(value.get("status_state") or "").strip().lower()
+        == STATUS_STATES[normalized_decision]
+    )
+    recognized = {
+        "pull_request_review": review_recorded,
+        "required_commit_status": status_recorded,
+        "pull_request_review_and_required_status": review_recorded and status_recorded,
+    }
+    if not recognized.get(mode, False):
+        raise GitHubReviewBridgeError(
+            f"bridge result has no recognized {normalized_decision} evidence for mode {mode!r}"
+        )
+    proof_ref = str(value.get("review_proof_ref") or "").strip()
+    expected_proof = (
+        f"refs/tags/{REVIEW_PROOF_TAG_PREFIX}/{normalized_decision}/{reviewed.head_sha}"
+    )
+    if proof_ref != expected_proof:
+        raise GitHubReviewBridgeError(
+            f"bridge result proof ref mismatch: {proof_ref!r} != {expected_proof!r}"
+        )
+    return dict(value)
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -982,7 +1059,7 @@ def bridge_review_decision(
     else:
         mode = "required_commit_status"
 
-    return BridgeResult(
+    result = BridgeResult(
         repository=repository,
         pr=normalized_binding.pr,
         head_sha=normalized_binding.head_sha,
@@ -1000,6 +1077,14 @@ def bridge_review_decision(
         recorded_at=_utc_now(),
         review_error=review_error if review is None else "",
     )
+    validate_result_evidence(
+        result.as_dict(),
+        repository=repository,
+        actor=actor,
+        decision=decision,
+        binding=normalized_binding,
+    )
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:

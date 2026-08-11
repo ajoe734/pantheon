@@ -100,8 +100,55 @@ def pid_is_alive(pid: int | None) -> bool:
     return True
 
 
-def pid_matches_supervisor(pid: int | None, repo_root: Path) -> bool:
+def expected_supervisor_command(
+    repo_root: Path,
+    config_path: Path,
+    config: dict[str, Any],
+) -> tuple[tuple[str, ...], Path] | None:
+    """Return the exact immutable command and cwd declared by live config."""
+    watchdog = config.get("watchdog") if isinstance(config.get("watchdog"), dict) else {}
+    raw_command = watchdog.get("supervisor_command")
+    if (
+        not isinstance(raw_command, list)
+        or not raw_command
+        or any(not isinstance(item, str) or not item for item in raw_command)
+    ):
+        return None
+    command = tuple(raw_command)
+    entrypoints = [
+        Path(item)
+        for item in command[1:]
+        if Path(item).name == "supervisor.py"
+    ]
+    if len(entrypoints) != 1 or not entrypoints[0].is_absolute():
+        return None
+    if command.count("--config") != 1:
+        return None
+    config_index = command.index("--config")
+    if config_index + 1 >= len(command):
+        return None
+    declared_config = Path(command[config_index + 1])
+    try:
+        if declared_config.resolve() != config_path.resolve():
+            return None
+    except OSError:
+        return None
+    entrypoint = entrypoints[0]
+    if entrypoint.parent.name != ".orchestrator":
+        return None
+    return command, entrypoint.parent.parent
+
+
+def pid_matches_supervisor(
+    pid: int | None,
+    *,
+    expected_command: tuple[str, ...] | None,
+    expected_cwd: Path | None,
+) -> bool:
+    """Bind health to the exact configured immutable runtime generation."""
     if not pid_is_alive(pid):
+        return False
+    if expected_command is None or expected_cwd is None:
         return False
     proc_dir = Path("/proc") / str(pid)
     try:
@@ -109,9 +156,12 @@ def pid_matches_supervisor(pid: int | None, repo_root: Path) -> bool:
         cwd = proc_dir.joinpath("cwd").resolve()
     except OSError:
         return False
-    parts = [part.decode("utf-8", errors="ignore") for part in cmdline.split(b"\x00") if part]
-    joined = " ".join(parts)
-    return cwd == repo_root and ".orchestrator/supervisor.py" in joined
+    parts = tuple(
+        part.decode("utf-8", errors="strict")
+        for part in cmdline.split(b"\x00")
+        if part
+    )
+    return cwd == expected_cwd and parts == expected_command
 
 
 def lock_held(lock_path: Path) -> bool:
@@ -185,13 +235,29 @@ def evaluate_runtime_health(
     coord_root = resolved_coordinator_status_root(repo_root, config)
     lock_path = coord_root / ".orchestrator" / "supervisor.lock"
     pid = read_pid(pid_path)
-    process_alive = pid_matches_supervisor(pid, repo_root)
+    declared_runtime = expected_supervisor_command(
+        repo_root,
+        config_path_resolved,
+        config,
+    )
+    expected_command, expected_cwd = declared_runtime or (None, None)
+    process_alive = pid_is_alive(pid)
+    runtime_identity_matches = pid_matches_supervisor(
+        pid,
+        expected_command=expected_command,
+        expected_cwd=expected_cwd,
+    )
     singleton_lock_held = lock_held(lock_path)
-    supervisor_alive = process_alive or singleton_lock_held
 
     supervisor = state.get("supervisor", {}) if isinstance(state.get("supervisor"), dict) else {}
     heartbeat = parse_utc_timestamp(supervisor.get("last_heartbeat_at"))
     heartbeat_age = (now - heartbeat).total_seconds() if heartbeat is not None else None
+    successful_loop = parse_utc_timestamp(supervisor.get("last_successful_loop_at"))
+    successful_loop_age = (
+        (now - successful_loop).total_seconds()
+        if successful_loop is not None
+        else None
+    )
     configured_watchdog = config.get("watchdog", {}) if isinstance(config.get("watchdog"), dict) else {}
     configured_supervisor = config.get("supervisor", {}) if isinstance(config.get("supervisor"), dict) else {}
     if max_heartbeat_age is None:
@@ -202,24 +268,68 @@ def evaluate_runtime_health(
             )
         )
 
-    checks = [
+    max_progress_age = float(
+        configured_supervisor.get("stall_after_seconds", max_heartbeat_age)
+    )
+    identity_checks = [
         check(
-            "supervisor_process_alive",
-            supervisor_alive,
-            {"pid": pid, "pid_matches": process_alive, "lock_held": singleton_lock_held},
+            "configured_runtime_identity_present",
+            declared_runtime is not None,
+            {
+                "expected_command": list(expected_command) if expected_command else None,
+                "expected_cwd": str(expected_cwd) if expected_cwd else None,
+            },
         ),
+        check(
+            "supervisor_runtime_identity_matches",
+            runtime_identity_matches,
+            {"pid": pid, "pid_matches": runtime_identity_matches},
+        ),
+    ]
+    liveness_checks = [
+        check("supervisor_process_alive", process_alive, {"pid": pid}),
+        check("supervisor_singleton_lock_held", singleton_lock_held, {"lock_path": str(lock_path)}),
         check("supervisor_heartbeat_present", heartbeat is not None, {"last_heartbeat_at": supervisor.get("last_heartbeat_at")}),
         check(
             "supervisor_heartbeat_fresh",
-            heartbeat_age is not None and heartbeat_age <= max_heartbeat_age,
+            heartbeat_age is not None and 0 <= heartbeat_age <= max_heartbeat_age,
             {"age_seconds": heartbeat_age, "max_age_seconds": max_heartbeat_age},
+        ),
+    ]
+    readiness_checks = [
+        check(
+            "supervisor_state_readable",
+            isinstance(state.get("supervisor"), dict),
+            {"state_file": str(state_path)},
         ),
         check(
             "supervisor_not_degraded",
-            str(supervisor.get("lifecycle") or "") != "degraded",
+            str(supervisor.get("lifecycle") or "") in {"running", "idle", "active"},
             {"lifecycle": supervisor.get("lifecycle"), "last_loop_error": supervisor.get("last_loop_error")},
         ),
     ]
+    progress_checks = [
+        check(
+            "successful_loop_present",
+            successful_loop is not None,
+            {"last_successful_loop_at": supervisor.get("last_successful_loop_at")},
+        ),
+        check(
+            "successful_loop_fresh",
+            successful_loop_age is not None
+            and 0 <= successful_loop_age <= max_progress_age,
+            {
+                "age_seconds": successful_loop_age,
+                "max_age_seconds": max_progress_age,
+            },
+        ),
+        check(
+            "last_loop_error_clear",
+            supervisor.get("last_loop_error") is None,
+            {"last_loop_error": supervisor.get("last_loop_error")},
+        ),
+    ]
+    checks = identity_checks + liveness_checks + readiness_checks + progress_checks
 
     watchdog_report: dict[str, Any] | None = None
     if require_watchdog:
@@ -272,20 +382,46 @@ def evaluate_runtime_health(
             )
         )
 
-    healthy = all(item["ok"] for item in checks)
+    dimensions = {
+        "identity": {
+            "ok": all(item["ok"] for item in identity_checks),
+            "checks": identity_checks,
+        },
+        "liveness": {
+            "ok": all(item["ok"] for item in liveness_checks),
+            "checks": liveness_checks,
+        },
+        "readiness": {
+            "ok": all(item["ok"] for item in readiness_checks),
+            "checks": readiness_checks,
+        },
+        "progress": {
+            "ok": all(item["ok"] for item in progress_checks),
+            "checks": progress_checks,
+        },
+    }
+    healthy = all(item["ok"] for item in dimensions.values()) and all(
+        item["ok"] for item in checks
+    )
     return {
         "healthy": healthy,
         "generated_at": now.isoformat().replace("+00:00", "Z"),
         "repo_root": str(repo_root),
         "state_file": str(state_path),
+        "dimensions": dimensions,
         "supervisor": {
             "pid": pid,
-            "alive": supervisor_alive,
+            "alive": process_alive and singleton_lock_held,
             "process_alive": process_alive,
+            "runtime_identity_matches": runtime_identity_matches,
+            "expected_cwd": str(expected_cwd) if expected_cwd else None,
             "lock_held": singleton_lock_held,
             "last_heartbeat_at": supervisor.get("last_heartbeat_at"),
             "heartbeat_age_seconds": heartbeat_age,
             "max_heartbeat_age_seconds": max_heartbeat_age,
+            "last_successful_loop_at": supervisor.get("last_successful_loop_at"),
+            "successful_loop_age_seconds": successful_loop_age,
+            "max_progress_age_seconds": max_progress_age,
             "lifecycle": supervisor.get("lifecycle"),
             "last_loop_error": supervisor.get("last_loop_error"),
             "task_state_shadow": supervisor.get("task_state_shadow"),

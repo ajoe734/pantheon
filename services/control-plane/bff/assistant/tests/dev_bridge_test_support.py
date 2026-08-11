@@ -65,6 +65,19 @@ record = {
         )
         if os.environ.get(key)
     },
+    "signing_authority_markers": {
+        key: os.environ[key]
+        for key in (
+            "BRIDGE_SIGNING_PRIVATE_KEY",
+            "BRIDGE_SIGNING_KEY",
+            "BRIDGE_SIGNING_KEY_ID",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_JSON",
+        )
+        if os.environ.get(key)
+    },
     "packet_id": payload["packet_id"],
     "packet_digest": payload["packet_digest"],
     "tasks": payload["tasks"],

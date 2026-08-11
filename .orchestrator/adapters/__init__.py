@@ -3,22 +3,14 @@ from __future__ import annotations
 from adapters.base import BaseAdapter
 from adapters.antigravity import AntigravityAdapter
 from adapters.claude_cli import ClaudeCLIAdapter
-from adapters.claude_code import ClaudeCodeAdapter
 from adapters.copilot_cloud import CopilotCloudAdapter
 from adapters.copilot_local import CopilotLocalAdapter
 from adapters.codex import CodexAdapter
-from adapters.file_inbox import FileInboxAdapter
 from adapters.gemini import GeminiAdapter
-from adapters.vscode_chat import VSCodeChatAdapter
-from adapters.vscode_command import VSCodeCommandAdapter
 
 
 ADAPTERS: dict[str, type[BaseAdapter]] = {
-    "file_inbox": FileInboxAdapter,
-    "vscode_chat": VSCodeChatAdapter,
-    "vscode_command": VSCodeCommandAdapter,
     "claude_cli": ClaudeCLIAdapter,
-    "claude_code": ClaudeCodeAdapter,
     "copilot_local": CopilotLocalAdapter,
     "copilot_cloud": CopilotCloudAdapter,
     "antigravity": AntigravityAdapter,

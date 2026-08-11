@@ -44,7 +44,7 @@ def test_dev_root_deploy_provisions_split_root_persistent_watchdog() -> None:
     assert '--command-root "$command_root"' in function
     assert "--status-root \"${PANTHEON_STATUS_ROOT_HOST}\"" in function
     assert '"${command_root}/scripts/promote-supervisor-runtime.sh"' in function
-    assert "--bootstrap-mutable-incumbent" in function
+    assert "--bootstrap-mutable-incumbent" not in function
     assert '"${command_root}/scripts/check_config_drift.py"' in function
     assert "--fix" not in function
     assert "sudo -n loginctl enable-linger" in function

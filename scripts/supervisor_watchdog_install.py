@@ -26,6 +26,13 @@ def explicit_regular_file(value: str) -> Path:
     return raw.resolve()
 
 
+def explicit_mode_600_file(value: str) -> Path:
+    path = explicit_regular_file(value)
+    if path.stat().st_mode & 0o777 != 0o600:
+        raise ValueError(f"expected mode 600 file: {path}")
+    return path
+
+
 def systemd_quote(value: Path | str) -> str:
     text = str(value)
     if not text:
@@ -42,7 +49,11 @@ def render_watchdog_arguments(config_path: Path | None = None) -> str:
     return " ".join(arguments)
 
 
-def render_systemd_service(repo_root: Path, config_path: Path | None = None) -> str:
+def render_systemd_service(
+    repo_root: Path,
+    config_path: Path | None = None,
+    authority_env_file: Path | None = None,
+) -> str:
     script = repo_root / "scripts" / "run-supervisor-watchdog.sh"
     return "\n".join(
         [
@@ -60,6 +71,15 @@ def render_systemd_service(repo_root: Path, config_path: Path | None = None) -> 
             "KillMode=process",
             f"WorkingDirectory={systemd_quote(repo_root)}",
             "Environment=PYTHONUNBUFFERED=1",
+            *(
+                [
+                    f"EnvironmentFile={systemd_quote(authority_env_file)}",
+                    "Environment=PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE="
+                    f"{systemd_quote(authority_env_file)}",
+                ]
+                if authority_env_file is not None
+                else []
+            ),
             f"ExecStart={systemd_quote(script)} {render_watchdog_arguments(config_path)}",
             "",
         ]
@@ -86,14 +106,24 @@ def render_systemd_timer() -> str:
     )
 
 
-def render_cron_line(repo_root: Path, config_path: Path | None = None) -> str:
+def render_cron_line(
+    repo_root: Path,
+    config_path: Path | None = None,
+    authority_env_file: Path | None = None,
+) -> str:
     repo = shlex.quote(str(repo_root))
     config_argument = ""
     if config_path is not None:
         config_argument = f" --config {shlex.quote(str(config_path))}"
+    authority_prefix = ""
+    if authority_env_file is not None:
+        authority_prefix = (
+            "PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE="
+            f"{shlex.quote(str(authority_env_file))} "
+        )
     return (
         f"* * * * * cd {repo} && mkdir -p .orchestrator/logs && "
-        f"bash scripts/run-supervisor-watchdog.sh --restart{config_argument} "
+        f"{authority_prefix}bash scripts/run-supervisor-watchdog.sh --restart{config_argument} "
         f">> .orchestrator/logs/supervisor-watchdog-cron.log 2>&1 {CRON_TAG}"
     )
 
@@ -131,6 +161,7 @@ def install_systemd(
     repo_root: Path,
     *,
     config_path: Path | None,
+    authority_env_file: Path,
     dry_run: bool,
     start_now: bool,
 ) -> None:
@@ -139,7 +170,7 @@ def install_systemd(
     timer_path = unit_dir / TIMER_NAME
     write_text(
         service_path,
-        render_systemd_service(repo_root, config_path),
+        render_systemd_service(repo_root, config_path, authority_env_file),
         dry_run=dry_run,
     )
     write_text(timer_path, render_systemd_timer(), dry_run=dry_run)
@@ -169,8 +200,14 @@ def current_crontab() -> list[str]:
     return result.stdout.splitlines()
 
 
-def install_cron(repo_root: Path, *, config_path: Path | None, dry_run: bool) -> None:
-    line = render_cron_line(repo_root, config_path)
+def install_cron(
+    repo_root: Path,
+    *,
+    config_path: Path | None,
+    authority_env_file: Path,
+    dry_run: bool,
+) -> None:
+    line = render_cron_line(repo_root, config_path, authority_env_file)
     existing = [raw for raw in current_crontab() if CRON_TAG not in raw]
     new_content = "\n".join([*existing, line]).rstrip() + "\n"
     if dry_run:
@@ -208,6 +245,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--authority-env-file",
+        default=None,
+        help=(
+            "Mode-600, non-symlink environment file containing only the two "
+            "public signature-verifier maps required across watchdog restarts."
+        ),
+    )
+    parser.add_argument(
         "--method",
         choices=["auto", "systemd", "cron"],
         default="auto",
@@ -230,6 +275,13 @@ def main() -> int:
     repo_root = repo_root_from(args.repo)
     try:
         config_path = explicit_regular_file(args.config) if args.config and not args.uninstall else None
+        authority_env_file = (
+            explicit_mode_600_file(args.authority_env_file)
+            if args.authority_env_file and not args.uninstall
+            else None
+        )
+        if not args.uninstall and authority_env_file is None:
+            raise ValueError("--authority-env-file is required for watchdog installation")
     except ValueError as exc:
         print(f"watchdog config is invalid: {exc}", file=sys.stderr)
         return 2
@@ -252,11 +304,17 @@ def main() -> int:
                 install_systemd(
                     repo_root,
                     config_path=config_path,
+                    authority_env_file=authority_env_file,
                     dry_run=args.dry_run,
                     start_now=args.start_now,
                 )
             else:
-                install_cron(repo_root, config_path=config_path, dry_run=args.dry_run)
+                install_cron(
+                    repo_root,
+                    config_path=config_path,
+                    authority_env_file=authority_env_file,
+                    dry_run=args.dry_run,
+                )
     except subprocess.CalledProcessError as exc:
         print(f"watchdog persistence command failed: {exc}", file=sys.stderr)
         return exc.returncode or 1

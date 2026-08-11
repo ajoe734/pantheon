@@ -13,7 +13,7 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from approval_queue import create_approval, wait_for_decision
+from approval_queue import create_approval, validated_approval_binding, wait_for_decision
 from common import load_config, utc_now, write_activity_log
 from permission_broker import evaluate_tool_request
 
@@ -72,6 +72,7 @@ def approval_context() -> dict[str, Any]:
     return {
         "worker_run_id": os.environ.get("ORCH_RUN_ID"),
         "task_id": os.environ.get("ORCH_TASK_ID"),
+        "task_generation": os.environ.get("ORCH_TASK_GENERATION"),
         "agent_id": os.environ.get("ORCH_AGENT_ID"),
     }
 
@@ -131,11 +132,10 @@ def handle_tool_call(config: dict[str, Any], args: dict[str, Any]) -> dict[str, 
         )
         return text_result({"behavior": "deny", "message": decision["reason"]})
 
-    approval = create_approval(
-        config,
-        {
+    approval_request = {
             "provider": provider_id,
             "task_id": context.get("task_id"),
+            "task_generation": context.get("task_generation"),
             "worker_run_id": context.get("worker_run_id"),
             "agent_id": context.get("agent_id"),
             "session_id": os.environ.get("ORCH_SESSION_ID"),
@@ -147,8 +147,17 @@ def handle_tool_call(config: dict[str, Any], args: dict[str, Any]) -> dict[str, 
             "expires_at": expires_at,
             "request_payload": args,
             "broker_decision": decision,
-        },
-    )
+        }
+    try:
+        validated_approval_binding(approval_request)
+    except ValueError as exc:
+        return text_result(
+            {
+                "behavior": "deny",
+                "message": f"Governed approval binding is incomplete: {exc}",
+            }
+        )
+    approval = create_approval(config, approval_request)
     resolved = wait_for_decision(config, approval["approval_id"], timeout_seconds=timeout)
     if resolved.get("decision") == "allow":
         return text_result({"behavior": "allow", "updatedInput": tool_input})

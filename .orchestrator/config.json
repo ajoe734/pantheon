@@ -15,21 +15,13 @@
   },
   "task_state_store": {
     "mode": "authoritative",
-    "event_log": ".orchestrator/task-state-events.jsonl"
-  },
-  "coordination": {
-    "enabled": false
+    "event_log": ".orchestrator/task-state-events-v2.jsonl"
   },
   "permission_broker": {
     "allowed_workspace_roots": [
       ".",
       "../execute-plans"
     ]
-  },
-  "watcher": {
-    "poll_interval_seconds": 300,
-    "replay_on_start": false,
-    "max_seen_events": 2000
   },
   "supervisor": {
     "poll_interval_seconds": 30,
@@ -86,24 +78,14 @@
       "--verbose"
     ]
   },
-  "chair_review": {
-    "enabled": true,
-    "cooldown_seconds": 1800,
-    "candidates": [
-      "Codex",
-      "Codex2"
-    ],
-    "task_id": "OPS-CHAIR-REVIEW",
-    "output_dir": ".orchestrator/chair-reviews",
-    "recent_summary_lines": 6
-  },
   "provider_guardrails": {
     "pause_on_capacity_failure": true,
     "pause_on_auth_failure": true,
     "capacity_pause_seconds": 900,
     "auth_pause_seconds": 900,
     "quota_terminal_pause_seconds": 900,
-    "quota_terminal_hint_max_seconds": 3600
+    "quota_terminal_hint_max_seconds": 3600,
+    "delivery_auth_max_age_seconds": 300
   },
   "provider_auth": {
     "enabled": true,
@@ -144,9 +126,7 @@
       "owned_ready_dispatch",
       "owned_in_progress_dispatch",
       "owned_finalize_dispatch",
-      "review_ready_dispatch",
-      "github_retry",
-      "chair_review:*"
+      "review_ready_dispatch"
     ]
   },
   "worker_worktree_cleanup": {
@@ -192,19 +172,10 @@
       "quota exhausted",
       "exhausted your capacity",
       "no capacity available for model"
-    ],
-    "fallback_mode": null
+    ]
   },
   "worker_reassignment": {
     "enabled": true,
-    "after_attempts": 2,
-    "reassign_on_terminal_failure": true,
-    "eligible_statuses": [
-      "todo",
-      "in_progress",
-      "review",
-      "review_approved"
-    ],
     "owner_fallbacks": {
       "Claude": [
         "Codex",
@@ -260,7 +231,8 @@
         "Codex",
         "Codex2"
       ]
-    }
+    },
+    "max_reassignments_per_cycle": 4
   },
   "approvals": {
     "stale_pending_seconds": 1800
@@ -292,7 +264,6 @@
       "/approve",
       "/deny",
       "/retry",
-      "/resume",
       "/recheck",
       "/status"
     ],
@@ -345,58 +316,39 @@
     "next_field": "next",
     "last_update_field": "last_update"
   },
-  "events": {
-    "enqueue_runtime_events": false,
-    "review_statuses": [
-      "review"
-    ],
-    "status_targets": {
-      "needs_reply": "owner",
-      "needs_input": "owner",
-      "handoff": "owner"
-    },
-    "waiting_status_patterns": [
-      "^waiting_on_(?P<agent>[A-Za-z0-9_-]+)$"
-    ],
-    "watch_assignee_changes": false,
-    "watch_reviewer_changes": false,
-    "watch_handoffs": false,
-    "pending_handoff_statuses": [
-      "pending"
-    ]
-  },
   "agents": {
     "claude": {
       "display_name": "Claude",
       "provider": "claude",
+      "max_parallel": 1,
       "adapter": "claude_cli",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/claude.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "claude2": {
       "display_name": "Claude2",
       "provider": "claude2",
+      "max_parallel": 1,
       "adapter": "claude_cli",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/claude2.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "antigravity": {
       "display_name": "Antigravity",
       "provider": "antigravity",
+      "max_parallel": 4,
       "adapter": "antigravity",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/antigravity.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "antigravity2": {
       "display_name": "Antigravity2",
       "provider": "antigravity2",
+      "max_parallel": 4,
       "adapter": "antigravity",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/antigravity2.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex": {
       "display_name": "Codex",
       "provider": "codex",
+      "max_parallel": 2,
       "adapter": "codex",
       "worker_slots": [
         "codex1_1",
@@ -404,12 +356,12 @@
         "codex1_3",
         "codex1_4"
       ],
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex2": {
       "display_name": "Codex2",
       "provider": "codex2",
+      "max_parallel": 2,
       "adapter": "codex",
       "worker_slots": [
         "codex2_1",
@@ -417,8 +369,7 @@
         "codex2_3",
         "codex2_4"
       ],
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex2.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex1_1": {
       "display_name": "Codex",
@@ -426,8 +377,7 @@
       "adapter": "codex",
       "dispatch_slot_for": "codex",
       "slot_id": "codex1-1",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex1_2": {
       "display_name": "Codex",
@@ -435,8 +385,7 @@
       "adapter": "codex",
       "dispatch_slot_for": "codex",
       "slot_id": "codex1-2",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex1_3": {
       "display_name": "Codex",
@@ -444,8 +393,7 @@
       "adapter": "codex",
       "dispatch_slot_for": "codex",
       "slot_id": "codex1-3",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex1_4": {
       "display_name": "Codex",
@@ -453,8 +401,7 @@
       "adapter": "codex",
       "dispatch_slot_for": "codex",
       "slot_id": "codex1-4",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex2_1": {
       "display_name": "Codex2",
@@ -462,8 +409,7 @@
       "adapter": "codex",
       "dispatch_slot_for": "codex2",
       "slot_id": "codex2-1",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex2.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex2_2": {
       "display_name": "Codex2",
@@ -471,8 +417,7 @@
       "adapter": "codex",
       "dispatch_slot_for": "codex2",
       "slot_id": "codex2-2",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex2.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex2_3": {
       "display_name": "Codex2",
@@ -480,8 +425,7 @@
       "adapter": "codex",
       "dispatch_slot_for": "codex2",
       "slot_id": "codex2-3",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex2.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex2_4": {
       "display_name": "Codex2",
@@ -489,33 +433,20 @@
       "adapter": "codex",
       "dispatch_slot_for": "codex2",
       "slot_id": "codex2-4",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex2.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "copilot": {
       "display_name": "Copilot",
       "provider": "copilot",
+      "max_parallel": 0,
       "adapter": "copilot_local",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/copilot.md"
-    },
-    "grok": {
-      "display_name": "Copilot (legacy alias)",
-      "provider": "copilot",
-      "adapter": "copilot_local",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/grok.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     }
   },
   "providers": {
     "claude": {
       "delivery_mode": "claude_cli",
       "account": "claude_account_shared_max_1",
-      "allow_inbox_fallback": false,
-      "file_inbox": {
-        "path": ".llm-inbox/claude.md",
-        "open_in_vscode": false
-      },
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -546,18 +477,11 @@
         "rule_default_mode": "acceptEdits",
         "disable_bypass_permissions": true
       },
-      "retry": {
-        "fallback_mode": null
-      }
+      "retry": {}
     },
     "claude2": {
       "delivery_mode": "claude_cli",
       "account": "claude_account_shared_max_1",
-      "allow_inbox_fallback": false,
-      "file_inbox": {
-        "path": ".llm-inbox/claude2.md",
-        "open_in_vscode": false
-      },
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -589,18 +513,11 @@
         "rule_default_mode": "acceptEdits",
         "disable_bypass_permissions": true
       },
-      "retry": {
-        "fallback_mode": null
-      }
+      "retry": {}
     },
     "antigravity": {
       "delivery_mode": "antigravity",
       "account": "antigravity",
-      "allow_inbox_fallback": false,
-      "file_inbox": {
-        "path": ".llm-inbox/antigravity.md",
-        "open_in_vscode": false
-      },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
@@ -617,8 +534,7 @@
         "dangerously_skip_permissions": true
       },
       "retry": {
-        "max_attempts": 5,
-        "fallback_mode": null
+        "max_attempts": 5
       },
       "auth_probe": {
         "probe_timeout_seconds": 120,
@@ -628,11 +544,6 @@
     "antigravity2": {
       "delivery_mode": "antigravity",
       "account": "antigravity2",
-      "allow_inbox_fallback": false,
-      "file_inbox": {
-        "path": ".llm-inbox/antigravity2.md",
-        "open_in_vscode": false
-      },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "config_home": "/home/lupin/.gemini-agy2",
@@ -650,17 +561,12 @@
         "dangerously_skip_permissions": true
       },
       "retry": {
-        "max_attempts": 5,
-        "fallback_mode": null
+        "max_attempts": 5
       }
     },
     "codex": {
       "delivery_mode": "codex",
       "account": "codex1",
-      "file_inbox": {
-        "path": ".llm-inbox/codex.md",
-        "open_in_vscode": false
-      },
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex",
@@ -679,10 +585,6 @@
     "codex2": {
       "delivery_mode": "codex",
       "account": "codex2",
-      "file_inbox": {
-        "path": ".llm-inbox/codex2.md",
-        "open_in_vscode": false
-      },
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -840,15 +742,6 @@
     "copilot": {
       "delivery_mode": "copilot_local",
       "account": "copilot",
-      "allow_inbox_fallback": false,
-      "file_inbox": {
-        "path": ".llm-inbox/copilot.md",
-        "open_in_vscode": false,
-        "agent_paths": {
-          "grok": ".llm-inbox/grok.md",
-          "copilot": ".llm-inbox/copilot.md"
-        }
-      },
       "local": {
         "cli": ".orchestrator/bin/copilot",
         "autopilot": true,
@@ -876,18 +769,11 @@
           "claude"
         ]
       },
-      "retry": {
-        "fallback_mode": null
-      }
+      "retry": {}
     },
     "claude1-1": {
       "delivery_mode": "claude_cli",
       "account": "claude_account_shared_max_1",
-      "allow_inbox_fallback": false,
-      "file_inbox": {
-        "path": ".llm-inbox/claude.md",
-        "open_in_vscode": false
-      },
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -918,18 +804,11 @@
         "rule_default_mode": "acceptEdits",
         "disable_bypass_permissions": true
       },
-      "retry": {
-        "fallback_mode": null
-      }
+      "retry": {}
     },
     "claude1-2": {
       "delivery_mode": "claude_cli",
       "account": "claude_account_shared_max_1",
-      "allow_inbox_fallback": false,
-      "file_inbox": {
-        "path": ".llm-inbox/claude.md",
-        "open_in_vscode": false
-      },
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -960,18 +839,11 @@
         "rule_default_mode": "acceptEdits",
         "disable_bypass_permissions": true
       },
-      "retry": {
-        "fallback_mode": null
-      }
+      "retry": {}
     },
     "claude1-3": {
       "delivery_mode": "claude_cli",
       "account": "claude_account_shared_max_1",
-      "allow_inbox_fallback": false,
-      "file_inbox": {
-        "path": ".llm-inbox/claude.md",
-        "open_in_vscode": false
-      },
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -1002,18 +874,11 @@
         "rule_default_mode": "acceptEdits",
         "disable_bypass_permissions": true
       },
-      "retry": {
-        "fallback_mode": null
-      }
+      "retry": {}
     },
     "claude1-4": {
       "delivery_mode": "claude_cli",
       "account": "claude_account_shared_max_1",
-      "allow_inbox_fallback": false,
-      "file_inbox": {
-        "path": ".llm-inbox/claude.md",
-        "open_in_vscode": false
-      },
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -1044,31 +909,15 @@
         "rule_default_mode": "acceptEdits",
         "disable_bypass_permissions": true
       },
-      "retry": {
-        "fallback_mode": null
-      }
+      "retry": {}
     }
-  },
-  "underutilization_dispatch": {
-    "enabled": false,
-    "threshold_ratio": 0.5,
-    "continuous_window_seconds": 0,
-    "cooldown_seconds": 0,
-    "max_new_sidecars_per_wave": 2,
-    "max_active_sidecars_per_agent": 1,
-    "excluded_agents": [
-      "Claude",
-      "Claude2"
-    ],
-    "productive_worker_statuses": [
-      "running",
-      "waiting_approval",
-      "suspended_approval",
-      "retry_backoff"
-    ]
   },
   "ready_dispatcher": {
     "enabled": true,
+    "seen_event_history_limit": 2000,
+    "pending_handoff_statuses": [
+      "pending"
+    ],
     "review_statuses": [
       "review"
     ],
@@ -1080,9 +929,6 @@
       "todo"
     ],
     "sidecar_only_agents": [],
-    "disabled_agents": [
-      "Copilot"
-    ],
     "dependency_done_statuses": [
       "done"
     ],
@@ -1096,28 +942,8 @@
       "waiting_approval",
       "suspended_approval",
       "retry_backoff",
-      "manual_pending",
       "stalled"
     ],
-    "helper_claim": {
-      "enabled": true,
-      "task_statuses": [
-        "todo"
-      ],
-      "require_owner_higher_priority_load": true,
-      "claim_idle_work": true,
-      "claim_sidecars_when_idle": true
-    },
-    "worker_self_claim": {
-      "enabled": true,
-      "claim_command": "AI_NAME=$AI_NAME python3 .orchestrator/supervisor.py --claim-agent \"$AI_NAME\" --release-task \"$TASK_ID\" --quiet",
-      "release_task_statuses": [
-        "review",
-        "review_approved",
-        "done",
-        "blocked"
-      ]
-    },
     "target_workload": {
       "Claude": 5,
       "Claude2": 5,
@@ -1127,19 +953,8 @@
       "Codex2": 6,
       "Copilot": 0
     },
-    "max_tasks_per_agent_by_agent": {
-      "Claude": 1,
-      "Claude2": 1,
-      "Antigravity": 4,
-      "Antigravity2": 4,
-      "Codex": 2,
-      "Codex2": 2,
-      "Copilot": 0
-    },
     "max_dispatches_per_tick": 10,
     "max_active_workers_per_task": 1,
-    "require_explicit_provider_accounts": true,
-    "allow_legacy_provider_account_aliases": false,
     "max_concurrent_per_account": {
       "claude_account_shared_max_1": 1,
       "antigravity": 4,

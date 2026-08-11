@@ -1,13 +1,13 @@
-"""HMAC-SHA256 signing, verification, and replay protection for dev task packets.
+"""Ed25519 signing, verification, and replay protection for dev task packets.
 
 ASST-INTEG-006 — owned by Claude2.
 
 Security guarantees:
 - Canonical payload is computed from the packet with the signature field
   stripped, keys sorted, no indentation (deterministic JSON).
-- Signing key is read from BRIDGE_SIGNING_KEY env var or the optional
-  key_store argument.  If absent in dev/test contexts the signer falls back
-  to a constant dev-only key and logs a clear warning.
+- The BFF alone reads the private signing key. Dispatch and canonical writers
+  receive only trusted public keys; same-UID workers therefore cannot mint
+  source authority by reading the supervisor environment.
 - Replay protection is file-backed: each verified packet_id is appended to
   a newline-delimited seen-ids file.  Duplicate packet_ids are rejected
   before task materialisation.
@@ -15,13 +15,21 @@ Security guarantees:
 from __future__ import annotations
 
 import fcntl
+import base64
+import binascii
 import hashlib
-import hmac
 import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Iterator, Optional
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 from .dev_bridge_models import DevTaskPacket, PacketSignature
 
@@ -29,37 +37,108 @@ from .dev_bridge_models import DevTaskPacket, PacketSignature
 # Key management
 # ---------------------------------------------------------------------------
 
-_DEV_KEY = b"pantheon-bridge-dev-key-not-for-prod"
-_KEY_ENV = "BRIDGE_SIGNING_KEY"
-_ALGORITHM = "HMAC-SHA256"
+PRIVATE_KEY_ENV = "BRIDGE_SIGNING_PRIVATE_KEY"
+PRIVATE_KEY_ID_ENV = "BRIDGE_SIGNING_KEY_ID"
+PUBLIC_KEYS_ENV = "BRIDGE_SIGNING_PUBLIC_KEYS_JSON"
+_ALGORITHM = "Ed25519"
 
 # Default replay store path relative to repo root.
 _DEFAULT_REPLAY_STORE = ".orchestrator/dev-bridge-seen-packets.txt"
 
 
-def _signing_key(key_store: Optional[Dict[str, bytes]] = None, key_id: str = "assistant-bridge-dev") -> bytes:
-    """Return the signing key for *key_id*.
-
-    Priority:
-    1. key_store argument (tests / runtime injection)
-    2. BRIDGE_SIGNING_KEY environment variable (hex-encoded)
-    3. Dev-only fallback (logs warning)
-    """
-    if key_store and key_id in key_store:
-        return key_store[key_id]
-    env_val = os.environ.get(_KEY_ENV)
-    if env_val:
+def _decode_key(value: str, *, label: str) -> bytes:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{label} is required")
+    try:
+        decoded = bytes.fromhex(text)
+    except ValueError:
         try:
-            return bytes.fromhex(env_val)
-        except ValueError:
-            return env_val.encode()
-    import warnings
-    warnings.warn(
-        f"BRIDGE_SIGNING_KEY not set — using dev-only key for key_id={key_id!r}. "
-        "Never use in production.",
-        stacklevel=3,
+            decoded = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError(f"{label} is neither hex nor base64url") from exc
+    if len(decoded) != 32:
+        raise ValueError(f"{label} must decode to exactly 32 bytes")
+    return decoded
+
+
+def _test_seed(value: bytes) -> bytes:
+    """Keep legacy test key stores deterministic without weakening production."""
+
+    return hashlib.sha256(value).digest()
+
+
+def _signing_key(
+    key_store: Optional[Dict[str, bytes]] = None,
+    key_id: str = "assistant-bridge-dev",
+) -> Ed25519PrivateKey:
+    if key_store and key_id in key_store:
+        return Ed25519PrivateKey.from_private_bytes(_test_seed(key_store[key_id]))
+    configured_id = str(os.environ.get(PRIVATE_KEY_ID_ENV) or "").strip()
+    if not configured_id or configured_id != key_id:
+        raise ValueError(f"{PRIVATE_KEY_ID_ENV} must exactly match key_id={key_id!r}")
+    return Ed25519PrivateKey.from_private_bytes(
+        _decode_key(os.environ.get(PRIVATE_KEY_ENV, ""), label=PRIVATE_KEY_ENV)
     )
-    return _DEV_KEY
+
+
+def public_key_environment(
+    key_store: Optional[Dict[str, bytes]] = None,
+) -> str:
+    """Return canonical trusted-public-key JSON for subprocess verification."""
+
+    if key_store:
+        encoded: dict[str, str] = {}
+        for key_id, value in key_store.items():
+            public = Ed25519PrivateKey.from_private_bytes(
+                _test_seed(value)
+            ).public_key().public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+            encoded[str(key_id)] = base64.urlsafe_b64encode(public).decode().rstrip("=")
+        return json.dumps(encoded, sort_keys=True, separators=(",", ":"))
+    raw = str(os.environ.get(PUBLIC_KEYS_ENV) or "").strip()
+    if not raw:
+        raise ValueError(f"{PUBLIC_KEYS_ENV} is required")
+    return raw
+
+
+def _verification_keys(
+    key_store: Optional[Dict[str, bytes]] = None,
+) -> dict[str, Ed25519PublicKey]:
+    try:
+        payload = json.loads(public_key_environment(key_store))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{PUBLIC_KEYS_ENV} is invalid JSON") from exc
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError(f"{PUBLIC_KEYS_ENV} must contain at least one key")
+    return {
+        str(key_id): Ed25519PublicKey.from_public_bytes(
+            _decode_key(str(value), label=f"bridge public key {key_id}")
+        )
+        for key_id, value in payload.items()
+    }
+
+
+def validate_signing_key_pair() -> None:
+    """Fail closed unless the active BFF private key matches its public map."""
+
+    key_id = str(os.environ.get(PRIVATE_KEY_ID_ENV) or "").strip()
+    private_key = _signing_key(None, key_id)
+    configured_public = _verification_keys().get(key_id)
+    if configured_public is None:
+        raise ValueError(f"{PUBLIC_KEYS_ENV} does not contain active key {key_id!r}")
+    derived = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    configured = configured_public.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    if derived != configured:
+        raise ValueError("bridge signing private key does not match active public key")
 
 
 # ---------------------------------------------------------------------------
@@ -90,15 +169,22 @@ def packet_digest(packet: DevTaskPacket) -> str:
 def sign_packet(
     packet: DevTaskPacket,
     *,
-    key_id: str = "assistant-bridge-dev",
+    key_id: str | None = None,
     key_store: Optional[Dict[str, bytes]] = None,
 ) -> DevTaskPacket:
-    """Return a copy of *packet* with a valid HMAC-SHA256 signature attached."""
-    key = _signing_key(key_store, key_id)
+    """Return a copy of *packet* with a valid Ed25519 signature attached."""
+    if key_store is None:
+        active_key_id = str(os.environ.get(PRIVATE_KEY_ID_ENV) or "").strip()
+        if not active_key_id:
+            raise ValueError(f"{PRIVATE_KEY_ID_ENV} is required")
+        validate_signing_key_pair()
+    else:
+        active_key_id = str(key_id or "assistant-bridge-dev")
+    key = _signing_key(key_store, active_key_id)
     payload = _canonical_payload(packet)
-    mac = hmac.new(key, payload, hashlib.sha256).hexdigest()
+    signature = base64.urlsafe_b64encode(key.sign(payload)).decode().rstrip("=")
     signed = packet.model_copy(
-        update={"signature": PacketSignature(keyId=key_id, algorithm=_ALGORITHM, value=mac)}
+        update={"signature": PacketSignature(keyId=active_key_id, algorithm=_ALGORITHM, value=signature)}
     )
     return signed
 
@@ -112,8 +198,8 @@ def verify_packet(
 
     Raises ValueError when:
     - The packet has no signature.
-    - The signature algorithm is not HMAC-SHA256.
-    - The MAC does not match (constant-time comparison used).
+    - The signature algorithm is not Ed25519.
+    - The signature does not match a trusted public key.
     """
     sig = packet.signature
     if sig is None:
@@ -121,11 +207,16 @@ def verify_packet(
     if sig.algorithm != _ALGORITHM:
         raise ValueError(f"Unsupported signature algorithm: {sig.algorithm!r}")
 
-    key = _signing_key(key_store, sig.key_id)
+    key = _verification_keys(key_store).get(sig.key_id)
+    if key is None:
+        raise ValueError(f"Untrusted packet signature key: {sig.key_id!r}")
     payload = _canonical_payload(packet)
-    expected = hmac.new(key, payload, hashlib.sha256).hexdigest()
-
-    if not hmac.compare_digest(expected, sig.value):
+    try:
+        signature = base64.urlsafe_b64decode(
+            sig.value + "=" * (-len(sig.value) % 4)
+        )
+        key.verify(signature, payload)
+    except (ValueError, binascii.Error, InvalidSignature):
         raise ValueError("Packet signature verification failed")
 
 
