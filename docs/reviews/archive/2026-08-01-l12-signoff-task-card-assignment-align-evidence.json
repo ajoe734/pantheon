@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "task_id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+  "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+  "title": "Align static L12 signoff card assignment",
+  "status": "review_pending",
+  "owner": "Antigravity",
+  "reviewer": "Human/Ops",
+  "summary": "Repaired static L12-SIGNOFF-001 task card assignment header so owner and reviewer mirror docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json.",
+  "scope": [
+    "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SIGNOFF-001.md",
+    "docs/reviews/archive/2026-08-01-l12-signoff-task-card-assignment-align-evidence.json"
+  ],
+  "verification": {
+    "test_human_task_cards_mirror_assignment_header": "PASSED",
+    "git_diff_check": "PASSED"
+  },
+  "created_at": "2026-08-11T18:03:40Z"
+}
