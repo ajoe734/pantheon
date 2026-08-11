@@ -4122,6 +4122,8 @@ class _FakePromotionBackend:
         self.events: list[str] = []
         self.candidate_observe_count = 0
         self.rollback_observe_count = 0
+        self.termination_attempts = 0
+        self.utcnow_calls = 0
         self.incumbent_generation = ProcessGeneration(100, 1000, "S")
         self.candidate_generation = ProcessGeneration(200, 2000, "S")
         self.rollback_generation = ProcessGeneration(300, 3000, "S")
@@ -4208,11 +4210,15 @@ class _FakePromotionBackend:
     def prepare(self, candidate_root: Path) -> PromotionPlan:
         assert candidate_root == self.candidate_identity.candidate_root
         self.events.append("prepare")
+        if self.fault == "prepare_failure":
+            raise ValueError("injected failure in created state")
         return self.plan
 
     def revalidate(self, plan: PromotionPlan) -> RuntimeObservation:
         assert plan is self.plan
         self.events.append("revalidate")
+        if self.fault == "admission_revalidate_failure":
+            raise ValueError("injected failure in prepared state")
         if self.fault == "runtime_document_churn":
             return replace(
                 self.baseline,
@@ -4242,6 +4248,8 @@ class _FakePromotionBackend:
             assert contract is self.candidate_contract
             assert generation == self.candidate_generation
             self.candidate_observe_count += 1
+            if self.fault == "candidate_postcheck_failure":
+                raise ValueError("injected failure in candidate_verifying state")
             if self.fault in {
                 "wrong_candidate_cwd",
                 "wrong_candidate_commit",
@@ -4286,8 +4294,12 @@ class _FakePromotionBackend:
                     second=marker,
                 )
             if self.fault in {
+                "bad_runtime_termination_failure",
+                "rollback_boundary_failure",
                 "rollback_config_install_failure",
+                "rollback_intent_failure",
                 "rollback_launch_failure",
+                "rollback_postcheck_failure",
                 "rollback_config_drift",
                 "rollback_projection_drift",
                 "rollback_worker_drift",
@@ -4308,6 +4320,8 @@ class _FakePromotionBackend:
         assert contract is self.rollback_contract
         assert generation == self.rollback_generation
         self.rollback_observe_count += 1
+        if self.fault == "rollback_postcheck_failure":
+            raise ValueError("injected failure in rollback_verifying state")
         rollback_marker_sequences = {
             "rollback_stale_loop": (0,),
             "rollback_equal_boundary_loop": (1,),
@@ -4352,6 +4366,10 @@ class _FakePromotionBackend:
     ) -> None:
         assert identity in {self.candidate_identity, self.incumbent_identity}
         self.events.append(f"intent:{target_sha[0]}")
+        if identity is self.candidate_identity and self.fault == "candidate_intent_failure":
+            raise ValueError("injected failure in admission_locked state")
+        if identity is self.incumbent_identity and self.fault == "rollback_intent_failure":
+            raise ValueError("injected failure in rollback_locked state")
         self.intents.append((old_pid, target_sha))
 
     def install_config(
@@ -4412,7 +4430,19 @@ class _FakePromotionBackend:
 
     def terminate(self, generation: ProcessGeneration, *, timeout: float) -> None:
         assert timeout > 0
+        self.termination_attempts += 1
         self.events.append(f"terminate:{generation.pid}")
+        if (
+            self.fault == "incumbent_termination_failure"
+            and generation == self.incumbent_generation
+            and self.termination_attempts == 1
+        ):
+            raise ValueError("injected failure in intent_recorded state")
+        if (
+            self.fault == "bad_runtime_termination_failure"
+            and generation == self.candidate_generation
+        ):
+            raise ValueError("injected failure in rollback_locked state")
         self.terminated.append(generation)
         self.alive[generation.pid] = False
 
@@ -4423,6 +4453,11 @@ class _FakePromotionBackend:
         return not self.alive.get(pid, False)
 
     def utcnow(self) -> datetime:
+        self.utcnow_calls += 1
+        if self.fault == "candidate_boundary_failure" and self.utcnow_calls == 1:
+            raise ValueError("injected failure in candidate_launched state")
+        if self.fault == "rollback_boundary_failure" and self.utcnow_calls == 2:
+            raise ValueError("injected failure in rollback_launched state")
         return self.wall_clock
 
     def monotonic(self) -> float:
@@ -4440,18 +4475,59 @@ def _run_fake_transaction(
 ) -> tuple[dict[str, Any], _FakePromotionBackend, Path]:
     backend = _FakePromotionBackend(tmp_path, fault=fault)
     evidence_path = tmp_path / "evidence" / "transaction.json"
-    transaction = PromotionTransaction(
-        evidence_path=evidence_path,
-        backend=backend,
-        postcheck_timeout=0.04,
-        poll_interval=0.005,
-        lock_timeout=1.0,
-        termination_timeout=1.0,
-    )
+    with patch(
+        "promote_supervisor_runtime._default_promotion_evidence_path",
+        return_value=evidence_path,
+    ):
+        transaction = PromotionTransaction(
+            evidence_path=evidence_path,
+            backend=backend,
+            postcheck_timeout=0.04,
+            poll_interval=0.005,
+            lock_timeout=1.0,
+            termination_timeout=1.0,
+        )
     with patch("promote_supervisor_runtime.os.kill") as kill:
         result = transaction.run(backend.candidate_identity.candidate_root)
     kill.assert_not_called()
     return result, backend, evidence_path
+
+
+@pytest.mark.parametrize(
+    ("fault", "injected_state", "expected_outcome"),
+    [
+        ("prepare_failure", PromotionState.CREATED, "aborted"),
+        ("admission_revalidate_failure", PromotionState.PREPARED, "aborted"),
+        ("candidate_intent_failure", PromotionState.ADMISSION_LOCKED, "aborted"),
+        ("incumbent_termination_failure", PromotionState.INTENT_RECORDED, "rolled_back"),
+        ("candidate_config_install_failure", PromotionState.INCUMBENT_TERMINATED, "rolled_back"),
+        ("candidate_launch_failure", PromotionState.CANDIDATE_CONFIG_INSTALLED, "rolled_back"),
+        ("candidate_boundary_failure", PromotionState.CANDIDATE_LAUNCHED, "rolled_back"),
+        ("candidate_postcheck_failure", PromotionState.CANDIDATE_VERIFYING, "rolled_back"),
+        ("bad_runtime_termination_failure", PromotionState.ROLLBACK_LOCKED, "rollback_failed"),
+        ("rollback_config_install_failure", PromotionState.BAD_RUNTIME_TERMINATED, "rollback_failed"),
+        ("rollback_launch_failure", PromotionState.ROLLBACK_CONFIG_INSTALLED, "rollback_failed"),
+        ("rollback_boundary_failure", PromotionState.ROLLBACK_LAUNCHED, "rollback_failed"),
+        ("rollback_postcheck_failure", PromotionState.ROLLBACK_VERIFYING, "rollback_failed"),
+    ],
+)
+def test_transaction_failure_injection_covers_every_nonterminal_state(
+    tmp_path: Path,
+    fault: str,
+    injected_state: PromotionState,
+    expected_outcome: str,
+) -> None:
+    result, _backend, evidence_path = _run_fake_transaction(
+        tmp_path,
+        fault=fault,
+    )
+
+    reached_states = {item["state"] for item in result["history"]}
+    if injected_state != PromotionState.CREATED:
+        assert injected_state.value in reached_states
+    assert result["outcome"] == expected_outcome
+    assert result["exit_code"] != 0
+    assert json.loads(evidence_path.read_text(encoding="utf-8")) == result
 
 
 def test_transaction_promotes_only_after_three_distinct_candidate_loops(
