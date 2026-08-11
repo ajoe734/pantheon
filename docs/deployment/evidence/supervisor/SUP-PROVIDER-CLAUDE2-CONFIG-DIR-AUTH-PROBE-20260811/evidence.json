@@ -1,0 +1,110 @@
+{
+  "schema_version": "supervisor_claude_config_dir_auth_probe.v1",
+  "task": {
+    "id": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+    "title": "Bind Claude2 config directory for live auth probe",
+    "phase": "Supervisor Provider Auth / Claude2 Config Isolation",
+    "owner": "Codex",
+    "reviewer": "Antigravity2",
+    "status": "review_pending",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811/evidence.json",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+    "base_commit": "e2cdc4d4d00ff43d3e57bd569a37a405ae6cda77",
+    "anchor_commit": "31bad1dbe1a13eb5aecb999d05a227f5618e329e"
+  },
+  "scope": {
+    "owned_layer": "Claude2 source runtime environment binding, provider auth-path regression coverage, and task-scoped review evidence.",
+    "not_changing": "Live supervisor config or state, credentials, auth pauses, account or quota grouping, scheduler and reviewer policy, services, or provider capacity claims.",
+    "changed_paths": [
+      ".orchestrator/config.json",
+      ".orchestrator/test_provider_permissions.py",
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811/evidence.json"
+    ]
+  },
+  "diagnosis": {
+    "source_before": "claude2.runtime set HOME=/home/lupin/.claude2 without CLAUDE_CONFIG_DIR.",
+    "fallback_resolution": "Without CLAUDE_CONFIG_DIR, claude_credentials_path resolves $HOME/.claude/.credentials.json, producing /home/lupin/.claude2/.claude/.credentials.json for Claude2.",
+    "authenticated_location_from_task_dispatch": "/home/lupin/.claude2/.credentials.json",
+    "repair": "Bind claude2.runtime.env.CLAUDE_CONFIG_DIR=/home/lupin/.claude2 so the existing probe resolves the isolated flat credentials path.",
+    "credential_handling": "No live credential file was opened, copied, edited, emitted, or rotated. Regression tests use temporary directories and a synthetic non-secret token marker."
+  },
+  "acceptance": {
+    "false_negative_reproduced": {
+      "status": "proven",
+      "test": ".orchestrator/test_provider_permissions.py::ProviderPermissionsTest::test_claude_home_without_config_dir_misses_flat_credentials"
+    },
+    "source_binding_and_account_isolation": {
+      "status": "proven",
+      "test": ".orchestrator/test_provider_permissions.py::ProviderPermissionsTest::test_source_config_keeps_claude_profiles_isolated",
+      "claude_config_dir": "/home/lupin/.claude-autoworker",
+      "claude2_config_dir": "/home/lupin/.claude2"
+    },
+    "configured_probe_ready_and_path_correct": {
+      "status": "proven",
+      "test": ".orchestrator/test_provider_permissions.py::ProviderPermissionsTest::test_configured_claude_probes_use_their_isolated_credentials",
+      "proof": "Both provider probes receive their own CLAUDE_CONFIG_DIR; the Claude2 probe resolves the flat isolated credentials file and reports ready when synthetic isolated auth material plus loggedIn=true are present."
+    },
+    "source_only_boundary": {
+      "status": "proven_by_declared_scope",
+      "proof": "The task diff is limited to source config, provider-permission tests, and this evidence manifest."
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned and dependency imports verified"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_provider_permissions.py -k 'claude_home_without_config_dir or source_config_keeps_claude_profiles_isolated or configured_claude_probes_use_their_isolated_credentials'",
+      "result": "3 passed, 100 deselected"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_provider_permissions.py",
+      "result": "99 passed, 4 known pre-existing synthetic-fixture failures, 7 subtests passed"
+    },
+    {
+      "command": "Detached baseline worktree at e2cdc4d4d00ff43d3e57bd569a37a405ae6cda77: run the four failing provider_capabilities tests",
+      "result": "The same four KeyError failures reproduce before this task because the fixtures omit paths.provider_capabilities."
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_supervisor.py -k 'AgentDispatchLoadTests or FreshAuthProbeLaneHoldTests or ProviderPauseRecoveryProbeTests or ProviderStaleCacheReadmissionProbeTests'",
+      "result": "21 passed, 611 deselected, 5 subtests passed"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m py_compile test_provider_permissions.py; cd ..; jq empty .orchestrator/config.json docs/deployment/evidence/supervisor/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811/evidence.json; git diff --check",
+      "result": "passed"
+    }
+  ],
+  "known_pre_existing_failures": {
+    "cause": "Synthetic provider-capability configs omit the provider_capabilities path now required by provider_capabilities().",
+    "tests": [
+      "ProviderPermissionsTest::test_provider_capabilities_include_custom_antigravity_provider",
+      "ProviderPermissionsTest::test_provider_capabilities_include_custom_claude_cli_provider",
+      "ProviderPermissionsTest::test_provider_capabilities_include_custom_gemini_provider",
+      "ProviderPermissionsTest::test_provider_capabilities_marks_codex_revoked_token_auth_down"
+    ],
+    "task_disposition": "Left unchanged because fixture repair is unrelated to the Claude2 config-directory binding and the failures reproduce at the task base commit."
+  },
+  "review": {
+    "decision": "pending_independent_review",
+    "reviewer": "Antigravity2",
+    "exact_head": "The governed review must bind the final PR head with REVIEW_HEAD_SHA; a commit cannot contain its own SHA.",
+    "required_checks": [
+      "Confirm the source config keeps Claude and Claude2 directories distinct.",
+      "Confirm the tests exercise the actual provider runtime-env and auth-path functions without live credentials.",
+      "Confirm the declared source-only scope and pre-existing failure baseline."
+    ]
+  },
+  "delivery": {
+    "source_merge_order": [
+      "Publish the task branch and open a protected PR to dev.",
+      "Obtain Antigravity2 independent exact-head approval with this manifest bound as REVIEW_FILE.",
+      "Merge only after required checks pass."
+    ],
+    "post_merge_operator_action": "The supervisor must perform a fresh live Claude2 auth probe and may clear the stale pause only from that authoritative result.",
+    "live_rollout": "Not performed or authorized by this source task.",
+    "rollback": "Revert the task PR merge commit to restore the prior source config; do not mutate credentials or canonical runtime state as rollback."
+  }
+}
