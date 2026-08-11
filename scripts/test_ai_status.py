@@ -3607,13 +3607,17 @@ class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
         self.assertEqual(result["event_id"], event["event_id"])
 
     def test_rejects_wrong_digest_and_wrong_prefix(self) -> None:
+        base_event = audited_reassignment_event()
+        digest = ai_status._supervisor_reassignment_event_id(base_event).removeprefix(
+            "supervisor-reassign-"
+        )
         cases = {
             "wrong digest": "supervisor-task-reassigned-" + "0" * 64,
-            "wrong prefix": "supervisor-task-reassign-" + "1" * 64,
+            "wrong prefix": "supervisor-task-reassign-" + digest,
         }
         for label, event_id in cases.items():
             with self.subTest(case=label):
-                event = audited_reassignment_event()
+                event = dict(base_event)
                 event["event_id"] = event_id
                 self.assertEqual(self._audited_events(event), [])
 
