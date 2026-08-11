@@ -1,0 +1,98 @@
+{
+  "schema_version": "supervisor_authority_v2_task_store_evidence.v1",
+  "task": {
+    "id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+    "title": "Establish the authoritative supervisor v2 specification and delta task store",
+    "phase": "Supervisor Authority V2 / Task Store",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "review_pending",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-TASK-STORE-20260811/evidence.json",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-AUTHORITY-V2-TASK-STORE-20260811",
+    "candidate_source_commit": "e78d87fe4f7b2c2c64f8ca51755e896e7aeca372"
+  },
+  "scope": {
+    "owned_layer": "Authoritative task-state V2 persistence: compact current head, append-only state deltas, V1 archive migration and offline integrity verification, task-store architecture specification, and runtime caller telemetry migration.",
+    "not_changing": "Supervisor scheduling policy, task lifecycle policy, fleet routing, provider policy, live configuration, canonical live state, service processes, or deployment.",
+    "changed_paths": [
+      ".orchestrator/rewrite/task_state_store.py",
+      ".orchestrator/rewrite/test_task_state_store.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/02-architecture/supervisor-authority-v2.md",
+      "scripts/ai_status.py",
+      "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "scripts/migrate_task_state_store_v2.py",
+      "scripts/test_ai_status.py",
+      "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+      "scripts/test_migrate_task_state_store_v2.py",
+      "scripts/verify_task_state_store.py",
+      "docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-TASK-STORE-20260811/evidence.json"
+    ]
+  },
+  "architecture": {
+    "specification": "docs/02-architecture/supervisor-authority-v2.md",
+    "write_order": "validate head and tail -> append/fsync delta -> atomically replace/fsync head",
+    "recovery": "replay only the V2 delta tail after head.delta_offset; reject incomplete or corrupt tails",
+    "archive": "V1 bytes are moved once to a read-only sibling archive with byte length, final sequence, journal SHA-256 and projected-state SHA-256 bound into V2 genesis/head identity",
+    "hot_path": "No V1 archive read, V1 replay, mmap, prefix hash, checkpoint sidecar, or forced full replay is available to normal load or mutation paths.",
+    "offline_only": "verify_full_chain() and scripts/verify_task_state_store.py validate every V2 delta and frozen V1 archive."
+  },
+  "deletion_and_caller_report": {
+    "gross_source_delta_against_origin_dev_before_manifest": {
+      "lines_added": 1272,
+      "lines_deleted": 2105,
+      "command": "git diff --numstat origin/dev...e78d87fe4f7b2c2c64f8ca51755e896e7aeca372"
+    },
+    "removed_hot_path": [
+      "V1 full-board state on every event",
+      "full-journal mmap, hash, replay, and checkpoint cache",
+      "forced full replay environment switch",
+      "full-journal append readback and automatic V1 fallback"
+    ],
+    "remaining_production_callers": [
+      "common.load_status/common.write_status",
+      "scripts/ai_status.py",
+      "supervisor task-state reconciliation",
+      "dispatcher authoritative snapshot admission"
+    ],
+    "caller_boundary": "All remaining production callers use load_snapshot(), snapshot_transaction(), or append_state_commit(); load_events() and project_latest_state() are offline audit compatibility readers only."
+  },
+  "acceptance_evidence": {
+    "delta_not_full_state": "A 1,200-task board status change serializes one tasks[index].status set delta and no persisted state field.",
+    "constant_hot_read_cost": "Synthetic multi-megabyte V1 archive migration test performs repeated load_snapshot calls with archive parsing patched to fail; every hot read succeeds.",
+    "failure_boundaries": [
+      "stale expected sequence/head CAS is rejected",
+      "nonterminal task loss is rejected before append",
+      "incomplete/corrupt delta tails are rejected",
+      "crash after fsynced delta and before head replacement recovers exactly the tail",
+      "tampered frozen archive fails offline verification",
+      "nonempty V1 journal with no V2 head fails migration-required instead of falling back"
+    ]
+  },
+  "verification": [
+    {
+      "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_STATUS_ROOT /home/lupin/pantheon/.venv/bin/pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_task_state_runtime_env.py scripts/test_migrate_task_state_store_v2.py scripts/test_verify_task_state_store.py scripts/test_ai_status.py::ArchiveWorkflowTests::test_real_show_is_bounded_and_does_not_mutate_pending_outbox scripts/test_ai_status.py::ArchiveWorkflowTests::test_real_show_returns_immediately_when_writer_holds_task_lock scripts/test_dispatch_twelve_loop_gap_2026_07_26.py --deselect scripts/test_dispatch_twelve_loop_gap_2026_07_26.py::test_human_task_cards_mirror_assignment_header scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py .orchestrator/test_supervisor.py::TaskStateShadowCatchupTests",
+      "result": "119 passed, 1 deselected in 20.20s"
+    },
+    {
+      "command": "python3 -m py_compile .orchestrator/rewrite/task_state_store.py scripts/verify_task_state_store.py scripts/migrate_task_state_store_v2.py scripts/ai_status.py scripts/dispatch_twelve_loop_gap_2026_07_26.py .orchestrator/test_supervisor.py && git diff --check",
+      "result": "passed"
+    }
+  ],
+  "known_non_task_failure": {
+    "test": "scripts/test_dispatch_twelve_loop_gap_2026_07_26.py::test_human_task_cards_mirror_assignment_header",
+    "reason": "The unmodified origin/dev task card for L12-SIGNOFF-001 names owner Codex while the unmodified origin/dev catalog names owner Claude. This task does not own either legacy catalog/card surface.",
+    "verification": "git show origin/dev:docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SIGNOFF-001.md; git show origin/dev:docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json"
+  },
+  "rollout": {
+    "source_delivery": "Merge the reviewed task PR into dev. A separately governed runtime promotion performs the migration dry-run, migration, offline verification, and V2 canary.",
+    "rollback": "Stop writers, preserve V2 head/deltas/manifest/archive, verify them offline, and use an explicit separately named V1 recovery journal only if an authorized older-binary rollback is required. No automatic V1 fallback exists."
+  },
+  "review": {
+    "decision": "pending_independent_review",
+    "required_reviewer": "Codex",
+    "protocol": "Review this committed manifest, all changed paths, and the exact PR head. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
+  }
+}
