@@ -1,0 +1,163 @@
+{
+  "schema_version": "supervisor_canonical_packet_atomic_materialization.v1",
+  "task": {
+    "id": "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811",
+    "title": "Make signed packet materialization one canonical transaction",
+    "phase": "Canonical Task Materialization / Atomic Packet Commit",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "ready_for_review",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811/evidence.json",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811"
+  },
+  "scope": {
+    "owned_layer": "The signed assistant dev-bridge packet is verified once by dev_bridge_dispatcher.py, encoded into one bounded exact-schema payload, committed by one dev-bridge-materialize-batch authoritative transaction, and verified after the command by one dev-bridge-materialize-readback authority read. The dispatcher no longer invokes assign once per task.",
+    "not_changing": "The admission record, replay mark, receipt, current-work/dashboard views, task archives, and activity audit remain post-commit audit projections. The existing supervisor admission execution gate is intentionally retained for the dependent scheduler task. No database, queue, service, scheduler, recovery daemon, live runtime, or deployment was added or changed.",
+    "changed_paths": [
+      "scripts/ai_status.py",
+      "scripts/dispatch_assistant_dev_task_packet.py",
+      "scripts/test_ai_status.py",
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/tests/dev_bridge_test_support.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "docs/deployment/evidence/supervisor/SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811/evidence.json"
+    ]
+  },
+  "implementation": {
+    "canonical_write": {
+      "command": "dev-bridge-materialize-batch",
+      "schema": "bounded exact object; maximum 64 task rows and 4 MiB; packet id and digest must match every row",
+      "lock_and_transaction": "canonical_task_state_lock(exclusive) -> authoritative_task_state_transaction -> one in-memory run_dev_bridge_materialize_batch -> at most one sync_all/save_state",
+      "all_or_none": "Every row is validated and applied to the same in-memory snapshot before save. Any invalid row raises before save. A mixture of already-present and missing rows is rejected as a historical partial prefix and cannot commit a suffix.",
+      "event_count_contract": {
+        "new_valid_packet": 1,
+        "any_invalid_row": 0,
+        "immediate_exact_retry_without_recover_or_other_write": 0
+      }
+    },
+    "authoritative_readback": {
+      "command": "dev-bridge-materialize-readback",
+      "authority": "authoritative task-state journal under the canonical shared task lock",
+      "binding": "packet id, packet digest, ordered task ids, every task-spec hash, the complete frozen dev_bridge provenance envelope, and immutable top-level declared-scope fields",
+      "projection_policy": "Does not require ai-status.json parity, activity outbox recovery, archive output, admission output, or receipt output. Pending audit projections are reported but do not mutate or reject a matching canonical batch."
+    },
+    "provenance_and_routing": {
+      "immutable": "The original signed owner, reviewer, actor, source conversation, source turns, documents, declared scope, packet digest, and task-spec hash remain frozen in each task's dev_bridge envelope.",
+      "mutable": "Later governed top-level owner/reviewer routing changes are allowed and survive exact packet replay.",
+      "direct_assign_guard": "A direct assign command cannot create dev_bridge metadata. Only the in-process materialization guard around a verified batch may call command_assign with bridge provenance."
+    },
+    "audit_projection_recovery": "The materializer does not recover audit outboxes inside its event-count boundary. It preserves valid pending activity events alongside new events and leaves them for a later governed write or explicit recover. Admission or receipt persistence failure leaves the canonical batch intact; an exact retry adds zero task-state events and can finish the audit projection."
+  },
+  "acceptance": {
+    "dispatcher_uses_one_atomic_batch": {
+      "status": "proven",
+      "tests": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py::test_cli_materializes_raw_signed_packet_through_ai_status",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_authoritative_bridge_dispatch_survives_next_projection_cycle"
+      ]
+    },
+    "successful_batch_adds_exactly_one_event": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_batch_commits_every_task_in_exactly_one_journal_event",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_authoritative_bridge_dispatch_survives_next_projection_cycle"
+      ]
+    },
+    "invalid_second_row_adds_zero_events": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_second_row_failure_commits_nothing_not_even_the_first_row",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_full_supervisor_cycle_never_queues_partially_materialized_packet"
+      ]
+    },
+    "immediate_exact_retry_adds_zero_events": {
+      "status": "proven",
+      "note": "The test intentionally performs no recover, write, or projection operation between the first success and retry; the first activity outbox remains pending.",
+      "test": "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_exact_duplicate_retry_is_idempotent"
+    },
+    "partial_prefix_is_never_repeated_or_completed": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_partial_preexisting_packet_refuses_missing_suffix_with_zero_events",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_historical_partial_prefix_is_not_completed_by_a_batch_retry"
+      ]
+    },
+    "timeout_or_nonzero_requires_authoritative_readback": {
+      "status": "proven",
+      "tests": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_nonzero_governed_batch_requires_and_accepts_exact_readback",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_nonzero_governed_batch_rejects_invalid_authoritative_readback",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_timeout_after_atomic_commit_is_accepted_only_after_exact_readback",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_assign_timeout_before_task_is_retryable_and_unadmitted"
+      ]
+    },
+    "crash_boundaries": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_crash_before_commit_writes_zero_rows",
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_projection_crash_after_commit_keeps_one_authoritative_event"
+      ]
+    },
+    "audit_projection_failure_is_recoverable": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_authoritative_readback_ignores_pending_audit_projection",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_authoritative_admission_projection_retry_adds_no_task_state_event",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_receipt_persistence_failure_leaves_processing_for_safe_retry"
+      ]
+    },
+    "digest_scope_and_direct_forgery_fail_closed": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_digest_mismatch_between_batch_and_row_fails_closed",
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_direct_assign_cannot_forge_bridge_provenance",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_replacement_packet_id_for_materialized_task_fails_before_assign"
+      ]
+    },
+    "governed_reassignment_preserves_original_provenance": {
+      "status": "proven",
+      "tests": [
+        "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_owner_reassignment_after_materialization_then_replay_row_is_a_no_op",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge.py::TestDispatcher::test_replay_after_live_reassignment_is_not_a_provenance_mismatch"
+      ]
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "passed; checkout-scoped .venv-pantheon provisioned and imports verified from a foreign cwd"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
+        "result": "224 passed, 39 subtests passed in 37.56s at final pre-commit worktree"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/rewrite/test_task_state_store.py services/control-plane/bff/assistant/tests/test_dev_bridge.py services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py",
+        "result": "161 passed in 33.30s at final pre-commit worktree"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py scripts/dispatch_assistant_dev_task_packet.py services/control-plane/bff/assistant/dev_bridge_dispatcher.py services/control-plane/bff/assistant/tests/dev_bridge_test_support.py services/control-plane/bff/assistant/tests/test_dev_bridge.py services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py",
+        "result": "passed at final pre-commit worktree"
+      },
+      {
+        "command": "git diff --check && jq empty docs/deployment/evidence/supervisor/SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811/evidence.json",
+        "result": "passed at final pre-commit worktree"
+      }
+    ]
+  },
+  "independent_review": {
+    "reviewer": "Antigravity",
+    "status": "pending",
+    "required_binding": "Fresh exact-head review with REVIEW_FILE set to this manifest before merge."
+  },
+  "delivery": {
+    "rollback": "Normal source revert only. Do not remove or rewrite canonical task-state journal history.",
+    "remaining_dependent_work": "A separate scheduler task may remove the retained supervisor admission-artifact execution gate after this canonical transaction is merged. This task does not change that gate or any live runtime."
+  }
+}

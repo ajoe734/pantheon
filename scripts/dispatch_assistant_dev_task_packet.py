@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Verify and materialize a signed assistant DevTaskPacket through "
-            "scripts/ai_status.py assign."
+            "one atomic scripts/ai_status.py dev-bridge materialization batch."
         )
     )
     parser.add_argument(
