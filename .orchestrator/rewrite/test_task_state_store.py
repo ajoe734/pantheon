@@ -96,6 +96,37 @@ def test_v2_transition_records_are_deltas_not_full_boards(tmp_path: Path) -> Non
     assert store.load_snapshot(path)["state"] == second
 
 
+def test_v2_transition_row_count_changes_use_compact_list_operations(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    initial = {
+        "tasks": [
+            {"id": f"TASK-{number:04d}", "status": "todo", "next": "large-board"}
+            for number in range(1200)
+        ]
+    }
+    materialized = json.loads(json.dumps(initial))
+    new_task = {"id": "TASK-1200", "status": "todo", "next": "materialized"}
+    materialized["tasks"].append(new_task)
+    terminal = json.loads(json.dumps(materialized))
+    terminal["tasks"][-1]["status"] = "done"
+    archived = json.loads(json.dumps(terminal))
+    archived["tasks"].pop()
+
+    store.append_state_commit(path, initial, source="test")
+    store.append_state_commit(path, materialized, source="test")
+    store.append_state_commit(path, terminal, source="test")
+    store.append_state_commit(path, archived, source="test")
+
+    raw_events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert raw_events[1]["delta"] == [
+        {"op": "insert", "path": ["tasks", 1200], "value": new_task}
+    ]
+    assert raw_events[3]["delta"] == [{"op": "remove", "path": ["tasks", 1200]}]
+    assert len(store.canonical_json_bytes(raw_events[1])) < len(store.canonical_json_bytes(materialized)) // 20
+    assert len(store.canonical_json_bytes(raw_events[3])) < len(store.canonical_json_bytes(terminal)) // 20
+    assert store.load_snapshot(path)["state"] == archived
+
+
 def test_hot_read_cost_is_constant_against_a_synthetic_large_legacy_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "events.jsonl"
     expected = write_large_legacy(path)
@@ -131,6 +162,11 @@ def test_crash_after_fsynced_delta_recovers_only_the_tail(tmp_path: Path, monkey
     assert recovered["state"] == second
     assert recovered["tail_event_count"] == 1
     assert recovered["recovered_tail"] is True
+    full_tail = store.verify_full_chain(path)
+    assert full_tail["event_count"] == 2
+    assert full_tail["head_sequence"] == 1
+    assert full_tail["tail_event_count"] == 1
+    assert full_tail["state_sha256"] == store.sha256_json(second)
 
     store.append_state_commit(path, third, source="test")
     settled = store.load_snapshot(path)

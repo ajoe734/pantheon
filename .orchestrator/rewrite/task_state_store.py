@@ -228,12 +228,25 @@ def _validate_delta(delta: Any) -> list[dict[str, Any]]:
                 raise TaskStateStoreError("task-state delete delta schema mismatch")
             if not operation.get("path"):
                 raise TaskStateStoreError("task-state delta cannot delete the state root")
+        elif kind == "insert":
+            if set(operation) != {"op", "path", "value"}:
+                raise TaskStateStoreError("task-state insert delta schema mismatch")
+            if not operation.get("path"):
+                raise TaskStateStoreError("task-state delta cannot insert at the state root")
+        elif kind == "remove":
+            if set(operation) != {"op", "path"}:
+                raise TaskStateStoreError("task-state remove delta schema mismatch")
+            if not operation.get("path"):
+                raise TaskStateStoreError("task-state delta cannot remove the state root")
         else:
-            raise TaskStateStoreError("task-state delta operation must be set or delete")
+            raise TaskStateStoreError("task-state delta operation must be set, delete, insert, or remove")
         path = _validate_path(operation.get("path"))
-        identity = canonical_json_bytes(path)
+        # A remove followed by an insert at the same list position is a
+        # deterministic replacement after list reindexing.  Reject only exact
+        # duplicate operations, rather than making that compact form invalid.
+        identity = canonical_json_bytes({"op": kind, "path": path})
         if identity in seen:
-            raise TaskStateStoreError("task-state delta repeats a path")
+            raise TaskStateStoreError("task-state delta repeats an operation path")
         seen.add(identity)
         normalized.append(copy.deepcopy(operation))
     return normalized
@@ -276,12 +289,24 @@ def apply_delta(previous_state: dict[str, Any], delta: Any) -> dict[str, Any]:
                 parent[leaf] = copy.deepcopy(operation["value"])
             else:
                 raise TaskStateStoreError(f"task-state set delta has incompatible target: {path!r}")
-        elif isinstance(parent, dict) and isinstance(leaf, str) and leaf in parent:
-            del parent[leaf]
+        elif operation["op"] == "delete":
+            if isinstance(parent, dict) and isinstance(leaf, str) and leaf in parent:
+                del parent[leaf]
+            elif isinstance(parent, list) and isinstance(leaf, int) and leaf < len(parent):
+                del parent[leaf]
+            else:
+                raise TaskStateStoreError(f"task-state delete delta has missing target: {path!r}")
+        elif operation["op"] == "insert":
+            if isinstance(parent, list) and isinstance(leaf, int) and leaf <= len(parent):
+                parent.insert(leaf, copy.deepcopy(operation["value"]))
+            else:
+                raise TaskStateStoreError(f"task-state insert delta has incompatible target: {path!r}")
         elif isinstance(parent, list) and isinstance(leaf, int) and leaf < len(parent):
+            # ``remove`` deliberately has list-only semantics.  Keep ``delete``
+            # for compatibility with existing object-key and list-index deltas.
             del parent[leaf]
         else:
-            raise TaskStateStoreError(f"task-state delete delta has missing target: {path!r}")
+            raise TaskStateStoreError(f"task-state remove delta has incompatible target: {path!r}")
     if not isinstance(result, dict):
         raise TaskStateStoreError("task-state delta did not produce an object")
     return result
@@ -304,7 +329,37 @@ def _state_delta(previous: Any, current: Any, path: list[str | int] | None = Non
         return operations
     if isinstance(previous, list):
         if len(previous) != len(current):
-            return [{"op": "set", "path": path, "value": copy.deepcopy(current)}]
+            # List length changes are normally task materialization or archive
+            # removal.  Retain an unchanged prefix/suffix and mutate only the
+            # affected span so a 1,200-row board does not serialize again just
+            # because one task row was added or archived.
+            prefix = 0
+            common = min(len(previous), len(current))
+            while prefix < common and previous[prefix] == current[prefix]:
+                prefix += 1
+            suffix = 0
+            while (
+                suffix < len(previous) - prefix
+                and suffix < len(current) - prefix
+                and previous[len(previous) - suffix - 1] == current[len(current) - suffix - 1]
+            ):
+                suffix += 1
+            operations: list[dict[str, Any]] = []
+            # Remove from the right so each index remains valid while the
+            # predecessor span contracts.
+            for index in range(len(previous) - suffix - 1, prefix - 1, -1):
+                operations.append({"op": "remove", "path": [*path, index]})
+            # Insert from the left so each following index addresses the
+            # materialized list after the preceding insertion.
+            for offset, value in enumerate(current[prefix : len(current) - suffix]):
+                operations.append(
+                    {
+                        "op": "insert",
+                        "path": [*path, prefix + offset],
+                        "value": copy.deepcopy(value),
+                    }
+                )
+            return operations
         operations = []
         for index, (before, after) in enumerate(zip(previous, current)):
             operations.extend(_state_delta(before, after, [*path, index]))
@@ -813,7 +868,22 @@ def _load_all_v2_events_unlocked(event_path: Path) -> tuple[list[tuple[dict[str,
     assert head is not None
     payload, size = _read_transition_tail(event_path, 0)
     sequence, last_sha, state, events = _replay_transition_bytes(payload, sequence=0, previous_event_sha256=None, state={}, archive_identity=head["archive_identity"])
-    if sequence != head["sequence"] or last_sha != head["last_event_sha256"] or state != head["state"] or size != head["delta_offset"]:
+    if head["sequence"] > sequence:
+        raise TaskStateStoreError("task-state full-chain verification disagrees with current head")
+    if head["sequence"]:
+        physical_event, physical_state = events[head["sequence"] - 1]
+        physical_last_sha = physical_event["event_sha256"]
+    else:
+        physical_state = {}
+        physical_last_sha = None
+    physical_offset = sum(
+        len(raw_line) for raw_line in payload.splitlines(keepends=True)[: head["sequence"]]
+    )
+    if (
+        physical_last_sha != head["last_event_sha256"]
+        or physical_state != head["state"]
+        or physical_offset != head["delta_offset"]
+    ):
         raise TaskStateStoreError("task-state full-chain verification disagrees with current head")
     return events, head
 
@@ -934,6 +1004,30 @@ def _write_archive_manifest(event_path: Path, manifest: dict[str, Any]) -> None:
     _atomic_write_bytes(_archive_manifest_path(event_path), canonical_json_bytes(manifest) + b"\n")
 
 
+def _validate_archive_manifest_against_bytes(
+    manifest: dict[str, Any],
+    *,
+    state: dict[str, Any],
+    final_sequence: int,
+    byte_size: int,
+    journal_sha256: str,
+) -> None:
+    """Fail closed when a resumed migration cannot bind its frozen archive."""
+
+    expected = {
+        "byte_size": byte_size,
+        "final_sequence": final_sequence,
+        "journal_sha256": journal_sha256,
+        "projected_state_sha256": sha256_json(state),
+    }
+    mismatches = [field for field, value in expected.items() if manifest.get(field) != value]
+    if mismatches:
+        raise TaskStateStoreError(
+            "task-state archive manifest does not match frozen archive: "
+            + ", ".join(mismatches)
+        )
+
+
 def _verify_archive(event_path: Path, identity: dict[str, Any] | None) -> dict[str, Any] | None:
     if identity is None:
         return None
@@ -941,8 +1035,13 @@ def _verify_archive(event_path: Path, identity: dict[str, Any] | None) -> dict[s
     if _archive_identity(manifest) != identity:
         raise TaskStateStoreError("task-state archive manifest does not match V2 genesis binding")
     state, sequence, byte_size, journal_sha256 = _read_legacy_journal(_archive_path(event_path))
-    if (sequence != manifest["final_sequence"] or byte_size != manifest["byte_size"] or journal_sha256 != manifest["journal_sha256"] or sha256_json(state) != manifest["projected_state_sha256"]):
-        raise TaskStateStoreError("task-state archive identity verification failed")
+    _validate_archive_manifest_against_bytes(
+        manifest,
+        state=state,
+        final_sequence=sequence,
+        byte_size=byte_size,
+        journal_sha256=journal_sha256,
+    )
     return manifest
 
 
@@ -953,10 +1052,14 @@ def verify_full_chain(path: str | Path) -> dict[str, Any]:
     with _store_lock(event_path, shared=True, observational=True):
         events, head = _load_all_v2_events_unlocked(event_path)
         manifest = _verify_archive(event_path, head["archive_identity"])
+    recovered_state = events[-1][1] if events else {}
+    tail_event_count = len(events) - int(head["sequence"])
     return {
         "ok": True,
         "event_count": len(events),
-        "state_sha256": head["state_sha256"],
+        "state_sha256": sha256_json(recovered_state),
+        "head_sequence": int(head["sequence"]),
+        "tail_event_count": tail_event_count,
         "archive_verified": manifest is not None,
         "archive_final_sequence": manifest["final_sequence"] if manifest else None,
     }
@@ -985,16 +1088,31 @@ def migrate_legacy_journal(path: str | Path, *, dry_run: bool = False, source: s
         manifest_path = _archive_manifest_path(event_path)
         if archive.exists():
             state, final_sequence, byte_size, journal_sha256 = _read_legacy_journal(archive)
-            manifest = _read_archive_manifest(event_path) if manifest_path.exists() else _make_archive_manifest(event_path, state=state, final_sequence=final_sequence, byte_size=byte_size, journal_sha256=journal_sha256)
+            if manifest_path.exists():
+                manifest = _read_archive_manifest(event_path)
+                _validate_archive_manifest_against_bytes(
+                    manifest,
+                    state=state,
+                    final_sequence=final_sequence,
+                    byte_size=byte_size,
+                    journal_sha256=journal_sha256,
+                )
+            else:
+                manifest = _make_archive_manifest(event_path, state=state, final_sequence=final_sequence, byte_size=byte_size, journal_sha256=journal_sha256)
         else:
+            if manifest_path.exists():
+                raise TaskStateStoreError("task-state archive manifest exists without a frozen archive")
             state, final_sequence, byte_size, journal_sha256 = _read_legacy_journal(event_path)
             manifest = _make_archive_manifest(event_path, state=state, final_sequence=final_sequence, byte_size=byte_size, journal_sha256=journal_sha256)
         if dry_run:
             return {"status": "planned", "event_log": str(event_path), "archive": str(archive), "archive_final_sequence": final_sequence, "archive_byte_size": byte_size, "projected_state_sha256": sha256_json(state)}
         if not archive.exists():
             os.replace(event_path, archive)
-            os.chmod(archive, stat.S_IRUSR)
-            _fsync_directory(event_path.parent)
+        # A crash can happen after the rename but before chmod.  Every resume
+        # reasserts the immutable archive mode before it writes a manifest,
+        # genesis, or replacement head.
+        os.chmod(archive, stat.S_IRUSR)
+        _fsync_directory(event_path.parent)
         if not manifest_path.exists():
             _write_archive_manifest(event_path, manifest)
         identity = _archive_identity(manifest)

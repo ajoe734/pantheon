@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import stat
 import sys
 from pathlib import Path
 
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR = ROOT / ".orchestrator"
@@ -69,3 +71,78 @@ def test_cli_migrates_in_place_and_is_idempotent(tmp_path: Path, capsys) -> None
 
     assert migration.main(["--event-log", str(path), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "already_v2"
+
+
+def test_cli_resume_after_archive_rename_restores_readonly_permissions(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    write_legacy(path)
+    archive = path.with_name(f"{path.name}.v1.archive.jsonl")
+    real_chmod = store.os.chmod
+
+    def crash_before_chmod(candidate: str | Path, mode: int) -> None:
+        if Path(candidate) == archive and mode == stat.S_IRUSR:
+            raise OSError("simulated crash after archive rename")
+        real_chmod(candidate, mode)
+
+    monkeypatch.setattr(store.os, "chmod", crash_before_chmod)
+    assert migration.main(["--event-log", str(path), "--json"]) == 3
+    assert "simulated crash" in json.loads(capsys.readouterr().out)["error"]
+    assert archive.exists()
+    assert stat.S_IMODE(archive.stat().st_mode) != stat.S_IRUSR
+
+    monkeypatch.setattr(store.os, "chmod", real_chmod)
+    assert migration.main(["--event-log", str(path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "migrated"
+    assert stat.S_IMODE(archive.stat().st_mode) == stat.S_IRUSR
+
+
+@pytest.mark.parametrize(
+    "field,replacement",
+    [
+        ("byte_size", lambda value: int(value) + 1),
+        ("final_sequence", lambda value: int(value) + 1),
+        ("journal_sha256", lambda value: "0" * 64 if value != "0" * 64 else "f" * 64),
+        (
+            "projected_state_sha256",
+            lambda value: "0" * 64 if value != "0" * 64 else "f" * 64,
+        ),
+    ],
+)
+def test_cli_rejects_resumed_archive_manifest_identity_mismatch(
+    tmp_path: Path,
+    capsys,
+    field: str,
+    replacement,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    expected = write_legacy(path)
+    archive = path.with_name(f"{path.name}.v1.archive.jsonl")
+    path.replace(archive)
+    archive.chmod(stat.S_IRUSR)
+    state, final_sequence, byte_size, journal_sha256 = store._read_legacy_journal(archive)
+    assert state == expected
+    manifest = store._make_archive_manifest(
+        path,
+        state=state,
+        final_sequence=final_sequence,
+        byte_size=byte_size,
+        journal_sha256=journal_sha256,
+    )
+    manifest[field] = replacement(manifest[field])
+    manifest["manifest_sha256"] = store.sha256_json(
+        {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    )
+    path.with_name(f"{path.name}.archive.json").write_bytes(
+        store.canonical_json_bytes(manifest) + b"\n"
+    )
+
+    assert migration.main(["--event-log", str(path), "--json"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert field in payload["error"]
+    assert "manifest does not match frozen archive" in payload["error"]
+    assert not path.exists()
+    assert not path.with_name(f"{path.name}.head.json").exists()

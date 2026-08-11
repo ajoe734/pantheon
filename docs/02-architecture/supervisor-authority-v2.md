@@ -47,6 +47,12 @@ JSON-like delta. It does not persist a full board. A genesis transition may be
 large because it establishes the initial board; subsequent ordinary field
 changes are only their changed paths.
 
+List row-count changes use explicit indexed `insert` and `remove` operations.
+Materializing one task therefore records one compact insert instead of a new
+`tasks` array; archiving a terminal task records the corresponding remove.
+For a changed contiguous span, removals run right-to-left and insertions run
+left-to-right, so replay is deterministic even as list indexes shift.
+
 The mutation lifecycle is fixed:
 
 1. Hold the exclusive V2 lock and load the current head plus any tail after its
