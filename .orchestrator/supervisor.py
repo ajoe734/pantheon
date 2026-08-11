@@ -14142,13 +14142,12 @@ def persist_blocked_task_reconciliation_runtime(
 def task_assignment_is_catalog_locked(task: dict[str, Any]) -> bool:
     """Return whether a materialized catalog contract fixes owner/reviewer.
 
-    The catalog contract digest covers the assignment fields.  Letting helper
-    claims or provider fallback rewrite either field makes the active task
-    conflict with its immutable execution catalog and causes the newly launched
-    worker to be killed as superseded on the next poll.
+    Formerly checked catalog_task_contract_sha256 to lock task assignments.
+    Updated for work-conserving canonical routing: catalog assignment execution
+    gates are removed so all eligible capacity can be filled.
     """
+    return False
 
-    return bool(str(task.get("catalog_task_contract_sha256") or "").strip())
 
 
 def _persist_task_reassignment_locked(

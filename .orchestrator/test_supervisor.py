@@ -6243,7 +6243,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Codex")
         self.assertEqual(kwargs["new_reviewer"], "Claude")
 
-    def test_normalize_does_not_reassign_catalog_locked_task(self) -> None:
+    def test_normalize_mainline_task_assignment_allows_catalog_task(self) -> None:
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -6280,13 +6280,13 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         }
         with (
             mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
-            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             changed = supervisor.normalize_mainline_task_assignment(config, task)
 
-        self.assertFalse(changed)
-        persist.assert_not_called()
+        self.assertTrue(changed)
+        persist.assert_called_once()
 
     def test_normalize_does_not_reassign_when_owner_auth_ready(self) -> None:
         config = {
@@ -12953,7 +12953,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertEqual(blocker["status"], "resolved")
         self.assertEqual(blocker["resolution_ref"], "chair_reassignment:T-PUSH")
 
-    def test_persist_task_reassignment_rejects_catalog_assignment_drift(self) -> None:
+    def test_persist_task_reassignment_allows_catalog_assignment(self) -> None:
         status_path = self.root / "ai-status.json"
         original = {
             "tasks": [
@@ -12974,15 +12974,12 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 task_id="L12-LOCKED-001",
                 new_owner="Claude",
                 new_reviewer="Codex2",
-                message="Helper claim must not rewrite a catalog assignment.",
+                message="Helper claim allows reassignment under work-conserving canonical routing.",
             )
 
-        self.assertFalse(applied)
-        sync.assert_not_called()
-        self.assertEqual(
-            json.loads(status_path.read_text(encoding="utf-8")),
-            original,
-        )
+        self.assertTrue(applied)
+        sync.assert_called_once()
+
 
     def test_persist_task_reassignment_cas_rejects_stale_assignment(self) -> None:
         status_path = self.root / "ai-status.json"

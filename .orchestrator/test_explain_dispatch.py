@@ -231,8 +231,8 @@ class TestExplainDispatch(unittest.TestCase):
         with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}):
             res = explain_dispatch_for_task(self.config, state, "TASK-006", target_agent_filter="Codex")
             self.assertFalse(res["agents"]["Codex"]["blocked"])
-            self.assertIn("helper_notes", res["agents"]["Codex"])
-            self.assertTrue(any("catalog locked" in note for note in res["agents"]["Codex"]["helper_notes"]))
+            self.assertNotIn("helper_notes", res["agents"]["Codex"])
+
 
     def test_cooldown_suppressed_event(self) -> None:
         state = {
