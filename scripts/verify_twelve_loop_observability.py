@@ -391,52 +391,114 @@ def execute_real_observability_proof_drill(
 
     # --- Phase 4: Downstream Stop & Infrastructure Health Incident Recovery in BFF Monitor ---
     t5 = t4 + datetime.timedelta(seconds=10)
-    monitor = downstream_health_monitor.DownstreamHealthMonitor(
-        telemetry_url="",
-        incidents_url="",
-        tenant_id=tenant_id,
-        probe_interval_seconds=9999,
-        failure_threshold=3,
-        state_path=str(tmp_path / "bff_health.sqlite3"),
-    )
+    
+    # In-memory mock endpoints for telemetry and incident delivery
+    telemetry_delivered_events = []
+    incident_delivered_events = []
 
-    infra_degraded_probe = downstream_health_monitor.DownstreamProbeResult(
-        target_name="telemetry_ingest",
-        ok=False,
-        status_code=503,
-        latency_ms=150.0,
-        checked_at=t5.isoformat(),
-        failure_reason="ServiceUnavailable",
-        consecutive_failures=3,
-    )
-    monitor._store.record_probe(infra_degraded_probe)
-    degraded_state = monitor.get_state()
+    def mock_telemetry_post(url, body, timeout):
+        telemetry_delivered_events.append(body)
+        return True, 200
 
-    t6 = t5 + datetime.timedelta(seconds=20)
-    infra_recovered_probe = downstream_health_monitor.DownstreamProbeResult(
-        target_name="telemetry_ingest",
-        ok=True,
-        status_code=200,
-        latency_ms=12.0,
-        checked_at=t6.isoformat(),
-        failure_reason=None,
-        consecutive_failures=0,
-    )
-    monitor._store.record_probe(infra_recovered_probe)
-    recovered_state = monitor.get_state()
+    def mock_incidents_post(url, body, timeout):
+        incident_delivered_events.append(body)
+        return True, 200
 
-    # --- Phase 5: Concurrency & Duplicate Replay Test ---
-    dup_eval_data = create_drift_evaluation(
-        {
-            "evaluation_id": f"eval-obs-{t1.strftime('%H%M%S')}",  # Same ID
-            "binding_id": f"binding-{runtime_id}",
-            "runtime_id": runtime_id,
-            "baseline_metrics": {"heartbeat_interval": 10.0},
-            "telemetry_events": telemetry_events,
-            "evaluated_at": t1.isoformat(),
-        },
-    )
-    duplicate_rejected = dup_eval_data.get("evaluation_id") == drift_eval_data.get("evaluation_id")
+    original_post_json = downstream_health_monitor._post_json
+
+    def custom_post_json(url, body, timeout):
+        if "telemetry" in url:
+            return mock_telemetry_post(url, body, timeout)
+        elif "incidents" in url:
+            return mock_incidents_post(url, body, timeout)
+        return original_post_json(url, body, timeout)
+
+    downstream_health_monitor._post_json = custom_post_json
+
+    os.environ["PANTHEON_BFF_HEALTH_TELEMETRY_JWT"] = "test-jwt-token"
+    os.environ["PANTHEON_BFF_HEALTH_INCIDENT_TOKEN"] = "test-incident-token"
+
+    try:
+        monitor = downstream_health_monitor.DownstreamHealthMonitor(
+            telemetry_url="http://telemetry.test",
+            incidents_url="http://incidents.test",
+            tenant_id=tenant_id,
+            probe_interval_seconds=60,
+            failure_threshold=3,
+            state_path=str(tmp_path / "bff_health.sqlite3"),
+            telemetry_service_jwt="test-jwt-token",
+            incident_service_token="test-incident-token",
+        )
+
+        import asyncio
+
+        # Simulate 3 consecutive degraded probes to trigger incident creation and outbox queuing
+        for idx in range(3):
+            t_probe = t5 + datetime.timedelta(seconds=idx * 2)
+            probe = downstream_health_monitor.DownstreamProbeResult(
+                target_name="telemetry_ingest",
+                ok=False,
+                status_code=503,
+                latency_ms=150.0,
+                checked_at=t_probe.isoformat(),
+                failure_reason="ServiceUnavailable",
+                consecutive_failures=idx + 1,
+            )
+            asyncio.run(monitor._handle_probe_result(probe))
+        # Outbox delivery assertions for 3 consecutive degraded probes
+        outbox_items = monitor._store.list_deliveries()
+        delivered_items = [d for d in outbox_items if d.get("status") == "delivered"]
+        assert len(delivered_items) >= 2, f"Expected at least 2 delivered outbox items, got {len(delivered_items)}"
+        assert len(telemetry_delivered_events) >= 1
+        assert len(incident_delivered_events) >= 1
+
+        degraded_state = monitor.get_state()
+        infra_incident_id = monitor._open_incident_ids.get("telemetry_ingest")
+
+        # Simulate recovery probe
+        t6 = t5 + datetime.timedelta(seconds=20)
+        infra_recovered_probe = downstream_health_monitor.DownstreamProbeResult(
+            target_name="telemetry_ingest",
+            ok=True,
+            status_code=200,
+            latency_ms=12.0,
+            checked_at=t6.isoformat(),
+            failure_reason=None,
+            consecutive_failures=0,
+        )
+        asyncio.run(monitor._handle_probe_result(infra_recovered_probe))
+
+        recovery_outbox_items = monitor._store.list_deliveries()
+        recovery_delivered = [d for d in recovery_outbox_items if d.get("channel") == "incident_resolve" and d.get("status") == "delivered"]
+        assert len(recovery_delivered) >= 1, "Expected recovery incident outbox delivery"
+
+        recovered_state = monitor.get_state()
+    finally:
+        downstream_health_monitor._post_json = original_post_json
+    # 1. Duplicate telemetry consume idempotency via real service consumer
+    consume_payload = {
+        "tenant_id": tenant_id,
+        "worker_id": "test-worker-obs",
+        "events": telemetry_events,
+    }
+    tok1 = drift_main._TENANT_CONTEXT.set(tenant_id)
+    try:
+        res1 = drift_main.consume_telemetry_events(drift_main.TelemetryEventConsumeBody(**consume_payload))
+        res2 = drift_main.consume_telemetry_events(drift_main.TelemetryEventConsumeBody(**consume_payload))
+    finally:
+        drift_main._TENANT_CONTEXT.reset(tok1)
+
+    duplicate_rejected = len(res2.get("duplicate_event_ids", [])) == len(telemetry_events)
+
+    # 2. Restart recovery test: create new store instance pointing to same tmp_path / "drift" data dir
+    restarted_drift_main = _load_drift_main(tmp_path / "drift")
+    tok2 = restarted_drift_main._TENANT_CONTEXT.set(tenant_id)
+    try:
+        res3 = restarted_drift_main.consume_telemetry_events(restarted_drift_main.TelemetryEventConsumeBody(**consume_payload))
+    finally:
+        restarted_drift_main._TENANT_CONTEXT.reset(tok2)
+
+    restart_recovered = len(res3.get("duplicate_event_ids", [])) == len(telemetry_events)
 
     # Build authentic verification evidence record
     return {
@@ -516,14 +578,17 @@ def execute_real_observability_proof_drill(
             "environment": env,
             "status": "degraded",
             "timestamp": t5.isoformat(),
+            "delivered_payload": telemetry_delivered_events[0] if telemetry_delivered_events else None,
         },
         "infra_incident": {
             "component": "telemetry_ingest",
             "tenant_id": tenant_id,
             "environment": env,
+            "incident_id": infra_incident_id,
             "status": "resolved",
             "created_at": t5.isoformat(),
             "resolved_at": t6.isoformat(),
+            "delivered_incident": incident_delivered_events[0] if incident_delivered_events else None,
         },
         "infra_recovery": {
             "component": "telemetry_ingest",
@@ -534,7 +599,7 @@ def execute_real_observability_proof_drill(
         "concurrency_replay_proof": {
             "duplicate_event_rejection": duplicate_rejected,
             "replay_idempotent": True,
-            "restart_recovery_verified": True,
+            "restart_recovery_verified": restart_recovered,
         },
         "identity_reconciliation": {
             "unattributed_count": 0,
