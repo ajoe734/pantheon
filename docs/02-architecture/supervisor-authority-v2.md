@@ -77,7 +77,7 @@ not truncated or guessed.
 | The head has a self-digest, exact sequence, state digest, and transition offset. | Strict schema/digest validation and CAS. | Fail closed: stale head CAS or integrity error. |
 | Every transition applies to the exact predecessor. | Base-state, predecessor hash, sequence, delta/result digests. | Fail closed; no projection write. |
 | Live tasks cannot silently disappear. | Identity-aware nonterminal census and audited drain marker. | Reject before append; existing bytes remain unchanged. |
-| The V1 archive remains attributable. | Genesis/head bind archive identity; offline verifier checks exact bytes and V1 final state. | Offline integrity failure; never scheduler hot-read failure. |
+| The V1 archive remains attributable. | V2 genesis binds both archive identity and its projected-state digest; migration resume and the offline verifier require sequence 1 to materialize that exact digest, then verify exact archive bytes and V1 final state. | Offline integrity failure; never scheduler hot-read failure. |
 | A normal read has no V1 dependency. | Reads head plus only post-head delta bytes. | Missing V2 head is migration-required, never V1 fallback. |
 | A tail cannot conceal a torn write. | JSONL newline boundary and strict transition replay. | Fail closed as corrupted tail. |
 
@@ -99,7 +99,8 @@ Normal `load_snapshot()` and `append_state_commit()` have these hard limits:
 
 `verify_full_chain()` and `scripts/verify_task_state_store.py` are offline
 operations. They may parse every V2 delta and validate the frozen V1 bytes,
-their hash, final sequence, and projected-state digest. They must not be called
+their hash, final sequence, and projected-state digest, including that the V2
+genesis transition materializes the archive's projected-state digest. They must not be called
 from scheduling, dispatch admission, a canonical state mutation, or a status
 command's normal read path.
 

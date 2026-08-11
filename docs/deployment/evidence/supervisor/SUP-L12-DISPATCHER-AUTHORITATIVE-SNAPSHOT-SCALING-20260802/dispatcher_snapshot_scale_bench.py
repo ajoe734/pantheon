@@ -352,16 +352,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     cli_output = cli.get("output") or {}
     cli_snapshot = ((cli_output.get("task_state_store") or {}).get("snapshot") or {})
+    head_tail_consistent = (
+        input_identity["head_sequence"] <= snapshot_evidence["head_sequence"]
+        and snapshot_evidence["head_sequence"]
+        == input_identity["head_sequence"] + snapshot_evidence["tail_event_count"]
+        and input_identity["head_delta_offset"] <= input_identity["clone_bytes"]
+        and input_identity["journal_bytes"] == snapshot_evidence["byte_size"]
+        and snapshot_evidence["recovered_tail"]
+        is bool(snapshot_evidence["tail_event_count"])
+        and (
+            snapshot_evidence["tail_event_count"] > 0
+            or input_identity["head_state_sha256"] == snapshot_evidence["state_sha256"]
+        )
+    )
     input_ok = (
         input_identity["journal_bytes"] >= args.minimum_bytes
         and snapshot_evidence["event_count"] >= args.minimum_events
         and input_identity["journal_bytes"] == input_identity["clone_bytes"]
         and input_identity["head_sha256"] == input_identity["clone_head_sha256"]
-        and input_identity["head_sequence"] == snapshot_evidence["head_sequence"]
-        and input_identity["head_delta_offset"] == snapshot_evidence["byte_size"]
-        and input_identity["head_state_sha256"] == snapshot_evidence["state_sha256"]
-        and snapshot_evidence["tail_event_count"] == 0
-        and snapshot_evidence["recovered_tail"] is False
+        and head_tail_consistent
     )
     cli_reached_verdict = (
         cli.get("completed") is True and cli.get("returncode") in {0, 2}
@@ -390,6 +399,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "implementation_paths_clean_at_candidate": True,
         },
         "input": input_identity,
+        "v2_head_tail": {
+            "consistent": head_tail_consistent,
+            "head_sequence": input_identity["head_sequence"],
+            "head_delta_offset": input_identity["head_delta_offset"],
+            "recovered_sequence": snapshot_evidence["head_sequence"],
+            "tail_event_count": snapshot_evidence["tail_event_count"],
+            "recovered_tail": snapshot_evidence["recovered_tail"],
+        },
         "baseline": {
             "observed_at": "2026-08-02T09:13:00Z",
             "journal_bytes": 2_174_900_966,
