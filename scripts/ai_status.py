@@ -2607,6 +2607,8 @@ def recover_status_activity_outbox(
 def commit_state_with_activity_outbox(
     state: dict[str, Any],
     events: list[dict[str, Any]],
+    *,
+    defer_activity_recovery: bool = False,
 ) -> None:
     if events:
         state[STATUS_ACTIVITY_OUTBOX_KEY] = {
@@ -2619,7 +2621,14 @@ def commit_state_with_activity_outbox(
     if state.get(STATUS_ARCHIVE_OUTBOX_KEY) not in (None, {}, []):
         _status_archive_fault("pending_status")
     recover_status_archive_outbox(state)
-    if events:
+    # `defer_activity_recovery` leaves a non-empty activity outbox as durable,
+    # self-describing recovery state instead of flushing it inline: the flush
+    # is a second task-state event, and a caller that promised its own
+    # canonical mutation is exactly one commit (e.g. the dev-bridge batch
+    # materializer) must not fold that into its own atomicity accounting. The
+    # next governed write command's leading recovery step -- or an explicit
+    # `recover` -- picks it up later as ordinary, non-gating projection work.
+    if events and not defer_activity_recovery:
         recover_status_activity_outbox(state, known_unappended=True)
 
 
@@ -5422,6 +5431,7 @@ def sync_all(
     state: dict[str, Any],
     *,
     refresh_views: bool = True,
+    defer_activity_recovery: bool = False,
 ) -> None:
     assert_task_archive_root_binding()
     sync_canonical_document_metadata(state)
@@ -5435,7 +5445,9 @@ def sync_all(
     state["updated_at"] = iso_now()
     buffered = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
     events = list(buffered) if isinstance(buffered, list) else []
-    commit_state_with_activity_outbox(state, events)
+    commit_state_with_activity_outbox(
+        state, events, defer_activity_recovery=defer_activity_recovery
+    )
     if refresh_views:
         refresh_derived_status_views(state)
 
@@ -8452,6 +8464,7 @@ def main(argv: list[str]) -> int:
         # the process dying before that save -- leaves zero rows committed.
         batch = load_dev_bridge_materialize_batch(args[0])
         committed_state: dict[str, Any] | None = None
+        commit_happened = False
         with canonical_task_state_lock(shared=False):
             validate_active_status_command_lease(
                 DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND, [batch["packet_id"]]
@@ -8464,14 +8477,29 @@ def main(argv: list[str]) -> int:
                     results = run_dev_bridge_materialize_batch(
                         state, batch, commands=commands
                     )
-                    sync_all(state, refresh_views=False)
-                committed_state = deepcopy(state)
+                    # An exact retry -- every row already matches its bound
+                    # provenance and command_assign made no mutation -- adds
+                    # zero journal events: skip the commit outright instead of
+                    # writing a byte-identical-except-`updated_at` state. A
+                    # commit that does have changed rows is still exactly one
+                    # event: the activity-log outbox flush is deferred so it
+                    # never becomes a second canonical task-state commit for
+                    # this batch (see commit_state_with_activity_outbox).
+                    if any(item["changed"] for item in results):
+                        sync_all(
+                            state,
+                            refresh_views=False,
+                            defer_activity_recovery=True,
+                        )
+                        commit_happened = True
+                if commit_happened:
+                    committed_state = deepcopy(state)
         if committed_state is not None:
             refresh_derived_status_views_if_current(committed_state)
         print(
             json.dumps(
                 {
-                    "status": "committed",
+                    "status": "committed" if commit_happened else "replayed",
                     "packetId": batch["packet_id"],
                     "packetDigest": batch["packet_digest"],
                     "taskCount": len(results),

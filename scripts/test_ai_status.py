@@ -1155,16 +1155,16 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         events = load_events(self.journal)
-        # One save_state call durably commits the tasks; a second event then
-        # clears the activity-outbox marker that same save set (existing
-        # protocol for every governed command, not unique to batching). What
-        # matters for atomicity is that both tasks are already present
-        # together in the FIRST new event -- never one row, then the other.
-        self.assertEqual(len(events), 3)
-        first_new_state = events[1]["state"]
+        # Exactly one new event relative to the bootstrap baseline: the
+        # activity-log outbox flush is deferred so it can never become a
+        # second canonical task-state commit for this batch. Both tasks are
+        # already present together in that one event -- never one row, then
+        # the other.
+        self.assertEqual(len(events), 2)
+        committed_state = events[1]["state"]
         batch_tasks = [
             task
-            for task in first_new_state["tasks"]
+            for task in committed_state["tasks"]
             if task["id"] in {"BATCH-ATOMIC-ONE", "BATCH-ATOMIC-TWO"}
         ]
         self.assertEqual(
@@ -1207,15 +1207,25 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
 
         self.assertEqual(self._run_main(payload), 0)
+        # Settle the deferred activity-log outbox from the first commit (its
+        # own separate, expected event) before measuring the retry's delta,
+        # so the retry assertion below isolates the retry's own effect.
+        with (
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(sys, "stdout", io.StringIO()),
+        ):
+            self.assertEqual(ai_status.main(["ai_status.py", "recover"]), 0)
+        events_after_first = len(load_events(self.journal))
         first_state = ai_status.load_state()
         first_task = ai_status.get_task(first_state, "BATCH-RETRY-ONE")
         self.assertIsNotNone(first_task)
 
-        # A retried exact packet must not error, duplicate the row, or drift
-        # its bound provenance -- even though the store still appends a fresh
-        # event (every governed command bumps `updated_at`, matching how a
-        # harmless repeated `note` already behaves in this store).
+        # An exact retry -- every row already matches its bound provenance --
+        # adds zero journal events: it must not error, duplicate the row,
+        # drift its bound provenance, or grow the journal at all.
         self.assertEqual(self._run_main(payload), 0)
+        self.assertEqual(len(load_events(self.journal)), events_after_first)
         second_state = ai_status.load_state()
         second_task = ai_status.get_task(second_state, "BATCH-RETRY-ONE")
         self.assertEqual(

@@ -31,12 +31,14 @@
     "remediation": [
       "Added DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND (`dev-bridge-materialize-batch`) plus load_dev_bridge_materialize_batch (bounded, exact-schema, 4 MiB / 64-row limits, cross-validates every row's task_metadata.dev_bridge.packet_id/packet_digest against the batch header) and run_dev_bridge_materialize_batch, which applies each row through the existing command_assign per-row-environment pattern (same TASK_METADATA_JSON contract dev_bridge_dispatcher.py already produces) against one shared in-memory state dict.",
       "Wired the new command into main() using the same lock order and transaction shape as the existing supervisor-dispatch-batch command: canonical_task_state_lock -> authoritative_task_state_transaction -> one buffer_activity_events() window -> exactly one sync_all()/save_state() call after every row has been applied. A row that raises (owner==reviewer, wave-guard rejection, artifact-scope conflict, forged/mismatched bridge provenance, ...) propagates before that single save, so nothing commits.",
-      "Relaxed _validate_materialized_task_candidate to compare only the immutable declared-scope fields (id, title, phase, depends_on, artifacts, acceptance, summary) against the packet's signed task_spec; owner/reviewer are validated exclusively through the frozen dev_bridge provenance envelope comparison, which still fails closed on any forged/mismatched original assignment."
+      "Relaxed _validate_materialized_task_candidate to compare only the immutable declared-scope fields (id, title, phase, depends_on, artifacts, acceptance, summary) against the packet's signed task_spec; owner/reviewer are validated exclusively through the frozen dev_bridge provenance envelope comparison, which still fails closed on any forged/mismatched original assignment.",
+      "Applied a live Human/Ops acceptance clarification received mid-task: 'one authoritative event-store commit' means exactly one new task-state journal event for a successful batch, zero for a failed row, and zero for an exact duplicate retry -- a same-batch activity-log outbox flush does not count. Added commit_state_with_activity_outbox(..., defer_activity_recovery=True) / sync_all(..., defer_activity_recovery=True) so the batch command's own commit never performs that second flush-and-clear save, and made an all-rows-already-matching retry skip sync_all entirely (no save_state call at all, not even a deduped one) instead of relying on state_sha256 equality, which `updated_at` always defeats."
     ]
   },
   "acceptance": {
     "atomic_all_or_none_batch_commit": {
       "status": "proven",
+      "note": "Strict count per the Human/Ops clarification recorded on the canonical task row at 2026-08-11T12:48:21Z: a successful batch adds exactly one new journal event; a failed row adds zero; an exact retry adds zero. The deferred activity-log outbox flush is left as durable, self-describing recovery state for the next governed write (or an explicit `recover`) to pick up as its own, separately accounted event -- never folded into this batch's atomicity guarantee.",
       "test": "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_batch_commits_every_task_in_exactly_one_journal_event"
     },
     "second_row_failure_commits_nothing": {
@@ -45,6 +47,7 @@
     },
     "exact_duplicate_retry_is_idempotent": {
       "status": "proven",
+      "note": "Adds zero new journal events (not merely non-erroring) once the prior commit's deferred activity outbox has settled.",
       "test": "scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_exact_duplicate_retry_is_idempotent"
     },
     "digest_scope_mismatch_fails_closed": {
@@ -73,6 +76,10 @@
     "projection_and_receipt_failure_recoverable": {
       "status": "not_started",
       "note": "Unchanged in this increment; admission-record/receipt persistence still happens after readback succeeds, downstream of the (still per-task) dispatch loop."
+    },
+    "deferred_activity_outbox_read_after_write_caveat": {
+      "status": "known_gap",
+      "note": "Leaving the activity-log outbox pending after a successful batch means an immediate read-only `show` on the governed root fails closed with 'canonical status recovery is pending' until some later write recovers it. The still-unwired dispatcher (see batch_call_wired_into_dispatcher_dispatch_loop) will need to account for this -- e.g. by calling `recover` as its own accounted post-commit step -- before its readback path can rely on `show` immediately after a batch commit. Not resolved in this increment."
     }
   },
   "verification": {
@@ -82,12 +89,13 @@
     ],
     "results": [
       "scripts/test_ai_status.py: 219 passed, 39 subtests passed",
-      "services/control-plane/bff/assistant/tests/{test_dev_bridge,test_dev_bridge_reliability,test_dev_bridge_dispatch_cli}.py + .orchestrator/rewrite/test_task_state_store.py: 379 passed, 39 subtests passed"
+      "services/control-plane/bff/assistant/tests/{test_dev_bridge,test_dev_bridge_reliability,test_dev_bridge_dispatch_cli}.py + .orchestrator/rewrite/test_task_state_store.py: 160 passed"
     ]
   },
   "remaining_work": [
     "Rewire dev_bridge_dispatcher.py's per-task dispatch loop to call `dev-bridge-materialize-batch` once per packet instead of `assign` once per task, updating tests/dev_bridge_test_support.py's fixture and the three dependent dispatcher test files.",
     "Add focused tests for: crash before the canonical commit, crash after the canonical commit but before receipt/admission persistence, timeout followed by authoritative readback at the batch (not per-task) level, and direct-assign bridge-provenance forgery attempts against the new batch command.",
-    "Confirm the admission artifact / receipt projection remains a pure audit projection once the dispatch loop is rewired, and that projection/receipt failure after a committed batch stays recoverable and non-gating."
+    "Confirm the admission artifact / receipt projection remains a pure audit projection once the dispatch loop is rewired, and that projection/receipt failure after a committed batch stays recoverable and non-gating.",
+    "Give the dispatcher's post-commit readback a way to tolerate or trigger recovery of a deferred activity outbox once it is wired to call the batch command (see the deferred_activity_outbox_read_after_write_caveat acceptance entry)."
   ]
 }
