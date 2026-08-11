@@ -1,0 +1,58 @@
+{
+  "schema_version": "pantheon.l12.minimum-functional.evidence.v1",
+  "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+  "program_id": "pantheon-twelve-loop-minimum-functional-closure-2026-08-08",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "verified_at": "2026-08-11T18:03:00Z",
+  "authoritative_snapshot_digest": "3ea702b7f56cdbb4fb8a7345fc7c4ad1d293a118",
+  "packet_receipt_digests": {
+    "pkt_a": "5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9",
+    "pkt_b": "2c36f24f0e2e3648d68d92d0e140e8346544f2fdaf8c928e4ebd680dfb530c77"
+  },
+  "legacy_28_dag_verification": {
+    "legacy_task_count": 28,
+    "late_materialized_reused_id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+    "reconciliation_note": "L12-VERIFY-LEARN-REAL-VERIFIER-001 was reused as a superseded legacy ID in the minimum-functional successor program (L12-MIN-E2E-20260808) and is not an unmaterialized absent legacy ID.",
+    "reconciliation_mapping_file": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+    "result": "verified_reconciled"
+  },
+  "successor_program_verification": {
+    "total_successor_tasks": 17,
+    "waves": ["M0", "M1", "M2", "M3", "M4", "M5"],
+    "execution_tasks_file": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+    "index_doc": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+    "active_successor_tasks": [
+      "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+      "L12-MIN-SRC-20260808",
+      "L12-MIN-DIST-20260808",
+      "L12-MIN-ALPHA-20260808",
+      "L12-MIN-TEACH-20260808",
+      "L12-MIN-AGORA-20260808",
+      "L12-MIN-IMIT-20260808",
+      "L12-MIN-CONS-20260808",
+      "L12-MIN-DEP-20260808",
+      "L12-MIN-CAP-20260808",
+      "L12-MIN-TELREC-20260808",
+      "L12-MIN-EVO-20260808",
+      "L12-MIN-BFF-20260808",
+      "L12-MIN-INTEGRATE-20260808",
+      "L12-MIN-E2E-20260808",
+      "L12-MIN-HOSTED-20260808",
+      "L12-MIN-CLOSE-20260808"
+    ],
+    "dependency_resolution": "all 17 successor tasks resolve dependencies cleanly to canonical tasks",
+    "artifact_overlap_check": "passed; no two runnable successor tasks have unordered overlapping declared artifacts",
+    "result": "verified_admitted"
+  },
+  "supersession_rationale": {
+    "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731": "Superseded because the old 7/31 28-task DAG materialization is retired. The 8/08 minimum-functional successor packet provides clean, non-colliding task definitions (e.g. L12-MIN-TEACH-20260808 instead of L12-CONTROLLER-TEACH-20260731) and SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808 handles legacy DAG supersession without needing previous-current dispatcher overlap rules."
+  },
+  "rules_and_boundaries": {
+    "orchestrator_config_edited": false,
+    "product_code_edited": false,
+    "canonical_state_hand_edited": false,
+    "direct_push_used": false
+  },
+  "review_summary": "Reconciliation evidence generated. Late materialization of L12-VERIFY-LEARN-REAL-VERIFIER-001 reconciled as superseded by L12-MIN-E2E-20260808. Successor DAG dependencies and artifact scopes verified."
+}
