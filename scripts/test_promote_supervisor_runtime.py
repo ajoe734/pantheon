@@ -24,8 +24,6 @@ from promote_supervisor_runtime import (
     ExpectedSupervisorProcessContract,
     FilesystemIdentity,
     GovernedSupervisorLaunchContract,
-    LegacyTaskBriefDrift,
-    MutableIncumbentSnapshot,
     PromotionPlan,
     PromotionLock,
     PromotionState,
@@ -117,6 +115,14 @@ def create_realistic_healthy_fixture(repo: Path) -> tuple[dict[str, Any], dict[s
             "last_loop_error": None,
             "lifecycle": "running",
             "pid": 12345,
+            "last_cycle_metrics": {
+                "cycle_elapsed_seconds": 10.0,
+                "queue_to_start": {
+                    "count": 1,
+                    "average_seconds": 2.0,
+                    "max_seconds": 2.0,
+                },
+            },
             "task_state_shadow": {
                 "mode": "authoritative",
                 "ok": True,
@@ -172,6 +178,12 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     worker_worktree_root.mkdir(parents=True, exist_ok=True)
     runtime_root.mkdir(parents=True, exist_ok=True)
     event_log.write_text("", encoding="utf-8")
+    event_head = event_log.with_name(f"{event_log.name}.head.json")
+    event_queue = status_root / ".orchestrator" / "event-queue.jsonl"
+    event_queue.write_text(
+        json.dumps({"event_id": "evt1", "task_id": "T1"}) + "\n",
+        encoding="utf-8",
+    )
     executable = Path(sys.executable).resolve()
     argv = (
         str(executable),
@@ -202,7 +214,15 @@ def _verified_identity_dependency(repo: Path) -> Mock:
             "status_file": str(status_root / "ai-status.json"),
             "state_file": str(status_root / ".orchestrator" / "state.json"),
             "provider_capabilities": str(status_root / ".orchestrator" / "provider_capabilities.json"),
+            "event_queue": str(event_queue),
         },
+        "supervisor": {
+            "poll_interval_seconds": 30,
+            "stall_after_seconds": 900,
+            "cycle_budget_seconds": 900,
+            "dispatch_latency_budget_seconds": 900,
+        },
+        "providers": {"codex": {"enabled": True}},
         "task_state_store": {
             "mode": "authoritative",
             "event_log": str(event_log),
@@ -211,6 +231,21 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     }
     config_bytes = (json.dumps(live_config, sort_keys=True) + "\n").encode("utf-8")
     live_config_path.write_bytes(config_bytes)
+    write_json(
+        event_head,
+        {
+            "sequence": 1,
+            "state": {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "in_progress",
+                        "owner": "Codex",
+                    }
+                ]
+            },
+        },
+    )
     root_stat = repo.stat()
     config_stat = live_config_path.stat()
     identity = Mock(spec=CandidateRuntimeIdentity)
@@ -241,8 +276,6 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     identity.config_bytes = config_bytes
     identity.config_byte_length = len(config_bytes)
     identity.config_sha256 = promotion.hashlib.sha256(config_bytes).hexdigest()
-    identity.legacy_task_brief_drift = ()
-    identity.legacy_incumbent_bytecode_residue = ()
     return identity
 
 
@@ -271,6 +304,7 @@ def _verified_process_identity_dependency(repo: Path) -> SupervisorProcessIdenti
     argv = (
         str(executable),
         "-u",
+        "-B",
         str(repo / ".orchestrator" / "supervisor.py"),
         "--config",
         str(live_config_path),
@@ -300,11 +334,7 @@ def _verified_process_identity_dependency(repo: Path) -> SupervisorProcessIdenti
     )
 
 
-@patch("promote_supervisor_runtime.lock_held", return_value=True)
-@patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
-@patch("supervisor_runtime_health.lock_held", return_value=True)
-@patch("supervisor_runtime_health.pid_matches_supervisor", return_value=True)
-def test_promotion_snapshot_eligible_when_healthy(mock_matches, mock_sup_lock, mock_alive, mock_lock, tmp_path: Path) -> None:
+def test_promotion_snapshot_eligible_when_healthy(tmp_path: Path) -> None:
     repo = tmp_path
     now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
     create_realistic_healthy_fixture(repo)
@@ -328,7 +358,6 @@ def test_promotion_snapshot_eligible_when_healthy(mock_matches, mock_sup_lock, m
     process_discovery.assert_called_once_with(
         identity,
         candidate_revalidator=identity.verify_immutable_snapshot,
-        allow_legacy_admission_lock_id_churn=True,
     )
     assert snapshot["incumbent_supervisor_process_identity"]["pid"] == 12345
     assert snapshot["governed_supervisor_launch_contract"]["cwd"] == str(repo)
@@ -340,15 +369,7 @@ def test_promotion_snapshot_eligible_when_healthy(mock_matches, mock_sup_lock, m
     ]
 
 
-@patch("promote_supervisor_runtime.lock_held", return_value=True)
-@patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
-@patch("supervisor_runtime_health.lock_held", return_value=True)
-@patch("supervisor_runtime_health.pid_matches_supervisor", return_value=True)
 def test_promotion_snapshot_fails_closed_when_identity_capture_is_missing(
-    mock_matches,
-    mock_sup_lock,
-    mock_alive,
-    mock_lock,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path
@@ -371,15 +392,7 @@ def test_promotion_snapshot_fails_closed_when_identity_capture_is_missing(
     assert identity_invariant["details"]["error"] == "identity unavailable"
 
 
-@patch("promote_supervisor_runtime.lock_held", return_value=True)
-@patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
-@patch("supervisor_runtime_health.lock_held", return_value=True)
-@patch("supervisor_runtime_health.pid_matches_supervisor", return_value=True)
 def test_promotion_snapshot_requires_exact_process_identity(
-    mock_matches,
-    mock_sup_lock,
-    mock_alive,
-    mock_lock,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path
@@ -407,15 +420,7 @@ def test_promotion_snapshot_requires_exact_process_identity(
     assert process_invariant["details"]["error"] == "zero exact incumbents"
 
 
-@patch("promote_supervisor_runtime.lock_held", return_value=True)
-@patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
-@patch("supervisor_runtime_health.lock_held", return_value=True)
-@patch("supervisor_runtime_health.pid_matches_supervisor", return_value=True)
 def test_promotion_snapshot_rejects_final_config_identity_drift(
-    mock_matches: Any,
-    mock_sup_lock: Any,
-    mock_alive: Any,
-    mock_lock: Any,
     tmp_path: Path,
 ) -> None:
     repo = tmp_path
@@ -496,25 +501,16 @@ def test_main_preserves_lexical_candidate_alias_for_identity_rejection(
     capture.assert_called_once_with(alias, config_path_arg=None)
 
 
-def test_mutable_bootstrap_flag_requires_explicit_promote() -> None:
-    with patch.object(
-        sys,
-        "argv",
-        ["promote_supervisor_runtime.py", "--bootstrap-mutable-incumbent"],
-    ):
-        with pytest.raises(SystemExit, match="requires --promote"):
-            promotion.main()
 
 
-@patch("promote_supervisor_runtime.lock_held", return_value=True)
-@patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
-def test_evaluate_promotion_invariants_healthy(mock_alive, mock_lock, tmp_path: Path) -> None:
+def test_evaluate_promotion_invariants_healthy(tmp_path: Path) -> None:
     repo = tmp_path
     config, state, ai_status, provider_capabilities = create_realistic_healthy_fixture(repo)
     health_report = {
         "healthy": True,
         "supervisor": state["supervisor"],
         "checks": [{"name": "supervisor_process_alive", "ok": True}],
+        "dimensions": {"liveness": {"healthy": True, "checks": []}},
     }
 
     invariants = evaluate_promotion_invariants(
@@ -538,13 +534,12 @@ def test_evaluate_promotion_invariants_detects_pid_unbound_or_unlocked() -> None
     ai_status = {"tasks": []}
     state = {}
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=False):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     pid_inv = next(i for i in invariants if i["name"] == "supervisor_pid_bound_and_locked")
     assert pid_inv["ok"] is False
@@ -567,13 +562,12 @@ def test_evaluate_promotion_invariants_detects_invalid_task_state_shadow() -> No
     ai_status = {"tasks": []}
     state = {}
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     shadow_inv = next(i for i in invariants if i["name"] == "task_state_shadow_valid")
     assert shadow_inv["ok"] is False
@@ -588,13 +582,12 @@ def test_evaluate_promotion_invariants_detects_missing_task_state_shadow() -> No
     ai_status = {"tasks": []}
     state = {}
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     shadow_inv = next(i for i in invariants if i["name"] == "task_state_shadow_valid")
     assert shadow_inv["ok"] is False
@@ -614,15 +607,14 @@ def test_evaluate_promotion_invariants_detects_fresh_loop_sequence_failures() ->
         }
     }
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-            now=datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc),
-            config={"supervisor": {"stall_after_seconds": 900}},
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+        now=datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc),
+        config={"supervisor": {"stall_after_seconds": 900}},
+    )
 
     loop_inv = next(i for i in invariants if i["name"] == "fresh_loop_sequence")
     assert loop_inv["ok"] is False
@@ -643,13 +635,12 @@ def test_evaluate_promotion_invariants_detects_worker_lease_missing() -> None:
         "worker_worktrees": {"leases": {}},  # Empty leases!
     }
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -672,13 +663,12 @@ def test_evaluate_promotion_invariants_detects_duplicate_active_workers() -> Non
         },
     }
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -704,15 +694,14 @@ def test_evaluate_promotion_invariants_detects_unready_provider_capabilities() -
         }
     }
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state=state,
-            provider_capabilities=provider_capabilities,
-            lock_path=Path("/tmp/fake.lock"),
-            config=config,
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        provider_capabilities=provider_capabilities,
+        lock_path=Path("/tmp/fake.lock"),
+        config=config,
+    )
 
     provider_inv = next(i for i in invariants if i["name"] == "provider_readiness_baseline")
     assert provider_inv["ok"] is False
@@ -735,13 +724,12 @@ def test_evaluate_promotion_invariants_detects_missing_shadow_hashes() -> None:
             },
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state={},
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state={},
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     shadow_inv = next(i for i in invariants if i["name"] == "task_state_shadow_valid")
     assert shadow_inv["ok"] is False
@@ -766,13 +754,12 @@ def test_evaluate_promotion_invariants_detects_orphan_active_lease_and_queue() -
             }
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -800,15 +787,14 @@ def test_evaluate_promotion_invariants_accepts_inactive_unavailable_provider() -
         }
     }
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state={"workers": {"w1": {"status": "running", "provider": "claude", "current_task_id": "T1"}}, "worker_worktrees": {"leases": {"l1": {"task_id": "T1"}}}},
-            provider_capabilities=provider_capabilities,
-            lock_path=Path("/tmp/fake.lock"),
-            config=config,
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state={"workers": {"w1": {"status": "running", "provider": "claude", "current_task_id": "T1"}}, "worker_worktrees": {"leases": {"l1": {"task_id": "T1"}}}},
+        provider_capabilities=provider_capabilities,
+        lock_path=Path("/tmp/fake.lock"),
+        config=config,
+    )
 
     provider_inv = next(i for i in invariants if i["name"] == "provider_readiness_baseline")
     assert provider_inv["ok"] is True
@@ -824,13 +810,12 @@ def test_evaluate_promotion_invariants_detects_orphaned_task() -> None:
         "tasks": [{"id": "T1", "status": "in_progress", "owner": ""}]
     }
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state={},
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state={},
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     orphan_inv = next(i for i in invariants if i["name"] == "no_orphaned_in_progress_tasks")
     assert orphan_inv["ok"] is False
@@ -849,13 +834,12 @@ def test_evaluate_promotion_invariants_detects_active_queue_event_without_worker
         },
         "worker_worktrees": {"leases": {}},
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -880,13 +864,12 @@ def test_evaluate_promotion_invariants_accepts_event_omitting_worker_with_valid_
             }
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is True
@@ -912,13 +895,12 @@ def test_evaluate_promotion_invariants_detects_multiple_reverse_linked_workers_f
             }
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -947,13 +929,12 @@ def test_evaluate_promotion_invariants_accepts_initial_attempt_and_retry_lineage
             }
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is True
@@ -975,13 +956,12 @@ def test_evaluate_promotion_invariants_rejects_missing_lease_owner() -> None:
             "leases": {"l1": {"task_id": "T1", "queue_event_id": "evt1", "run_id": "run1"}}
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -1004,13 +984,12 @@ def test_evaluate_promotion_invariants_rejects_nonexistent_history() -> None:
             "leases": {"l1": {"task_id": "T1", "queue_event_id": "evt1", "run_id": "run_retry"}}
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -1035,13 +1014,12 @@ def test_evaluate_promotion_invariants_rejects_cross_task_and_cross_event_lineag
             "leases": {"l1": {"task_id": "T1", "queue_event_id": "evt1", "run_id": "run_retry"}}
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -1065,13 +1043,12 @@ def test_evaluate_promotion_invariants_rejects_cycle_in_retry_lineage() -> None:
             "leases": {"l1": {"task_id": "T1", "queue_event_id": "evt1", "run_id": "run1"}}
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -1096,13 +1073,12 @@ def test_evaluate_promotion_invariants_rejects_target_cross_task_and_cross_event
             "leases": {"l1": {"task_id": "T1", "queue_event_id": "evt1", "run_id": "run_retry"}}
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -1127,13 +1103,12 @@ def test_evaluate_promotion_invariants_rejects_duplicate_canonical_run_id() -> N
             "leases": {"l1": {"task_id": "T1", "queue_event_id": "evt1", "run_id": "run_active"}}
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -1168,13 +1143,12 @@ def test_evaluate_promotion_invariants_accepts_retry_backoff_worker() -> None:
             "leases": {"l1": {"task_id": "T1", "queue_event_id": "evt1", "run_id": "run_retry"}}
         },
     }
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status={"tasks": []},
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status={"tasks": []},
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is True
@@ -1272,8 +1246,25 @@ def _make_candidate_fixture(
             parents=True,
             exist_ok=True,
         )
+        state_path = status_root / ".orchestrator" / "state.json"
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        state_payload["supervisor"]["pid"] = 7171
+        write_json(state_path, state_payload)
+        (status_root / ".orchestrator" / "supervisor.pid").write_text(
+            "7171\n",
+            encoding="utf-8",
+        )
         event_log = live_config.parent / "task-state-events.jsonl"
         event_log.write_text("", encoding="utf-8")
+        write_json(
+            event_log.with_name(f"{event_log.name}.head.json"),
+            {"sequence": 1, "state": {"tasks": {"T1": {"status": "in_progress"}}}},
+        )
+        event_queue = status_root / ".orchestrator" / "event-queue.jsonl"
+        event_queue.write_text(
+            json.dumps({"event_id": "evt1", "task_id": "T1"}) + "\n",
+            encoding="utf-8",
+        )
         worker_worktree_root = tmp_path / "worker-worktrees"
         worker_worktree_root.mkdir()
         executable = Path(sys.executable).resolve()
@@ -1282,6 +1273,7 @@ def _make_candidate_fixture(
                 "supervisor_command": [
                     str(executable),
                     "-u",
+                    "-B",
                     str(candidate / ".orchestrator" / "supervisor.py"),
                     "--config",
                     str(live_config),
@@ -1291,6 +1283,20 @@ def _make_candidate_fixture(
             "paths": {
                 "status_file": str(status_root / "ai-status.json"),
                 "state_file": str(status_root / ".orchestrator" / "state.json"),
+                "provider_capabilities": str(
+                    status_root / ".orchestrator" / "provider_capabilities.json"
+                ),
+                "event_queue": str(event_queue),
+            },
+            "supervisor": {
+                "poll_interval_seconds": 30,
+                "stall_after_seconds": 900,
+                "cycle_budget_seconds": 900,
+                "dispatch_latency_budget_seconds": 900,
+            },
+            "providers": {
+                "claude": {"enabled": True},
+                "gemini": {"enabled": True},
             },
             "task_state_store": {
                 "mode": "authoritative",
@@ -1408,18 +1414,6 @@ def test_discover_only_accepts_valid_persistent_command_runtime(
             "promote_supervisor_runtime.ProcfsRuntimeProcessReader",
             return_value=reader,
         ), patch(
-            "promote_supervisor_runtime.lock_held",
-            return_value=True,
-        ), patch(
-            "promote_supervisor_runtime.pid_is_alive",
-            return_value=True,
-        ), patch(
-            "supervisor_runtime_health.lock_held",
-            return_value=True,
-        ), patch(
-            "supervisor_runtime_health.pid_matches_supervisor",
-            return_value=True,
-        ), patch(
             "promote_supervisor_runtime.datetime"
         ) as datetime_mock:
             datetime_mock.now.return_value = now
@@ -1442,7 +1436,10 @@ def test_discover_only_accepts_valid_persistent_command_runtime(
             exit_code = promotion.main()
 
     payload = json.loads(capsys.readouterr().out)
-    assert exit_code == 0
+    failed_invariants = [
+        invariant for invariant in payload["invariants"] if not invariant["ok"]
+    ]
+    assert exit_code == 0, failed_invariants
     assert payload["preflight_mode"] == "discover_only"
     assert payload["eligible_for_promotion"] is True
     assert payload["candidate_runtime_identity"]["candidate_root"] == str(candidate)
@@ -2889,7 +2886,7 @@ def test_config_variant_keeps_existing_no_bytecode_flag_idempotent(
         for index, argument in enumerate(command)
         if Path(argument).name == "supervisor.py"
     )
-    command.insert(entrypoint_index, "-B")
+    assert command[:entrypoint_index].count("-B") == 1
     config_bytes = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
     identity = replace(
         identity,
@@ -3219,8 +3216,6 @@ def _discover_injected(
     reader: InjectedRuntimeProcessReader,
     *,
     git_identity: tuple[str, str] | None = None,
-    allow_legacy_environment_contract: bool = False,
-    allow_legacy_admission_lock_id_churn: bool = False,
 ) -> SupervisorProcessIdentity:
     return discover_incumbent_supervisor_process(
         identity,
@@ -3229,10 +3224,6 @@ def _discover_injected(
             lambda _cwd: git_identity
             if git_identity is not None
             else (identity.head_commit, identity.tracked_tree_identity)
-        ),
-        allow_legacy_environment_contract=allow_legacy_environment_contract,
-        allow_legacy_admission_lock_id_churn=(
-            allow_legacy_admission_lock_id_churn
         ),
     )
 
@@ -3256,397 +3247,26 @@ def _replace_identity_live_config(
     )
 
 
-def _mutable_binding_stub(
-    identity: CandidateRuntimeIdentity,
-) -> tuple[Any, ...]:
-    remote = validate_remote_url("https://github.com/ajoe734/pantheon.git")
-    return (
-        identity.head_commit,
-        identity.tracked_tree_identity,
-        promotion.TrustedDevIdentity(
-            commit=identity.accepted_dev_commit,
-            candidate_commit_tree=identity.tracked_tree_identity,
-        ),
-        "https://github.com/ajoe734/pantheon.git",
-        remote,
-        (),
-        (),
-    )
 
 
-def test_mutable_incumbent_snapshot_binds_exact_process_and_sources(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    generation = reader.generations[1717]
-    cwd = reader.cwd[1717]
-    binding = _mutable_binding_stub(identity)
-
-    with patch(
-        "promote_supervisor_runtime._mutable_root_binding",
-        return_value=binding,
-    ):
-        snapshot = promotion.capture_mutable_incumbent_snapshot(
-            identity,
-            reader=reader,
-            seed_generation=generation,
-            seed_argv=argv,
-            seed_cwd=cwd,
-        )
-
-    assert snapshot.process.generation == generation
-    assert snapshot.process.argv == argv
-    assert snapshot.root == cwd.path
-    assert snapshot.head_commit == identity.head_commit
-    assert snapshot.tracked_tree_identity == identity.tracked_tree_identity
-    assert snapshot.repository_slug == "ajoe734/pantheon"
 
 
-def test_mutable_incumbent_snapshot_tolerates_scheduler_state_churn(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    seed_generation = reader.generations[1717]
-    reader.generations[1717] = replace(seed_generation, state="R")
-    binding = _mutable_binding_stub(identity)
-
-    with patch(
-        "promote_supervisor_runtime._mutable_root_binding",
-        return_value=binding,
-    ):
-        snapshot = promotion.capture_mutable_incumbent_snapshot(
-            identity,
-            reader=reader,
-            seed_generation=seed_generation,
-            seed_argv=argv,
-            seed_cwd=reader.cwd[1717],
-        )
-
-    assert snapshot.process.generation.pid == seed_generation.pid
-    assert (
-        snapshot.process.generation.starttime_ticks
-        == seed_generation.starttime_ticks
-    )
-    assert snapshot.process.generation.state == "R"
 
 
-def test_runtime_observation_uses_bound_mutable_cwd_git_identity(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    status_root = identity.config_path.parent.parent / "status-root"
-    provider_path = status_root / ".orchestrator" / "provider-capabilities.json"
-    provider_path.write_text('{"providers": {}}\n', encoding="utf-8")
-    identity = _replace_identity_live_config(
-        identity,
-        lambda payload: payload["paths"].__setitem__(
-            "provider_capabilities", str(provider_path)
-        ),
-    )
-    mutable_root = tmp_path / "dev-root"
-    mutable_root.mkdir()
-    mutable_stat = mutable_root.stat()
-    reader.cwd[1717] = ProcessCwdIdentity(
-        path=mutable_root,
-        device=mutable_stat.st_dev,
-        inode=mutable_stat.st_ino,
-    )
-    mutable_head = "c" * 40
-    mutable_tree = "d" * 40
-    expected = ExpectedSupervisorProcessContract(
-        executable=Path(argv[0]),
-        argv=argv,
-        entrypoint=Path(argv[3]),
-        config_path=identity.config_path,
-        cwd=mutable_root,
-        cwd_device=mutable_stat.st_dev,
-        cwd_inode=mutable_stat.st_ino,
-        cwd_commit=mutable_head,
-        cwd_tree=mutable_tree,
-        command_root=str(identity.candidate_root),
-        runtime_sha=identity.head_commit,
-        status_root=str(status_root),
-        admission_lock_path=status_root / ".orchestrator" / "supervisor.lock",
-    )
-
-    with patch.object(CandidateRuntimeIdentity, "verify_immutable_snapshot"), patch.object(
-        CandidateRuntimeIdentity,
-        "verify_against_live_config",
-    ):
-        observation = promotion.capture_runtime_observation(
-            identity,
-            expected_argv=argv,
-            expected_process_contract=expected,
-            expected_generation=reader.generations[1717],
-            reader=reader,
-            require_current_dev_identity=False,
-            cwd_git_identity_reader=lambda _cwd: (mutable_head, mutable_tree),
-        )
-
-    assert observation.process.cwd.path == mutable_root
-    assert observation.process.cwd_commit == mutable_head
-    assert observation.process.cwd_tree == mutable_tree
 
 
-def test_mutable_incumbent_snapshot_rejects_ambiguous_processes(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    second = ProcessGeneration(pid=1818, starttime_ticks=525252, state="S")
-    reader.pids = (1717, 1818)
-    reader.generations[1818] = second
-    reader.argv[1818] = argv
-    reader.executable[1818] = reader.executable[1717]
-    reader.cwd[1818] = reader.cwd[1717]
-    reader.environment[1818] = dict(reader.environment[1717])
-
-    with patch(
-        "promote_supervisor_runtime._mutable_root_binding",
-        return_value=_mutable_binding_stub(identity),
-    ):
-        with pytest.raises(ValueError, match="found 2"):
-            promotion.capture_mutable_incumbent_snapshot(
-                identity,
-                reader=reader,
-                seed_generation=reader.generations[1717],
-                seed_argv=argv,
-                seed_cwd=reader.cwd[1717],
-            )
 
 
-def test_mutable_incumbent_snapshot_rejects_pid_reuse(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    generation = reader.generations[1717]
-    reader.generation_sequences[1717] = [
-        generation,
-        replace(generation, starttime_ticks=generation.starttime_ticks + 1),
-    ]
-
-    with patch(
-        "promote_supervisor_runtime._mutable_root_binding",
-        return_value=_mutable_binding_stub(identity),
-    ):
-        with pytest.raises(ValueError, match="enumeration was incomplete"):
-            promotion.capture_mutable_incumbent_snapshot(
-                identity,
-                reader=reader,
-                seed_generation=generation,
-                seed_argv=argv,
-                seed_cwd=reader.cwd[1717],
-            )
 
 
-def test_mutable_incumbent_root_rejects_tracked_source_drift(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
-    source_stat = source.stat()
-    (source / "README.md").write_text("tracked drift\n", encoding="utf-8")
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        with pytest.raises(ValueError, match="Tracked git tree is dirty"):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=source,
-                    device=source_stat.st_dev,
-                    inode=source_stat.st_ino,
-                )
-            )
 
 
-def test_mutable_incumbent_bootstrap_accepts_ignored_runtime_residue(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    (source / ".gitignore").write_text(
-        ".claude/settings.local.json\n"
-        "__pycache__/\n"
-        ".pytest_cache/\n"
-        ".venv-pantheon/\n"
-        ".orchestrator/evidence/\n"
-        ".orchestrator/state.json\n"
-        "docs-site/orchestrator-state.json\n"
-        "archive/logs/\n",
-        encoding="utf-8",
-    )
-    _git(source, "add", ".gitignore")
-    _git(source, "commit", "-m", "ignore mutable runtime residue")
-    _git(source, "push", str(remote), "HEAD:dev")
-    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
-
-    (source / ".claude").mkdir()
-    (source / ".claude" / "settings.local.json").write_text("{}\n")
-    (source / ".orchestrator" / "evidence").mkdir(parents=True)
-    (source / ".orchestrator" / "evidence" / "run.json").write_text("{}\n")
-    (source / ".orchestrator" / "state.json").write_text("{}\n")
-    (source / "scripts" / "__pycache__").mkdir(parents=True)
-    (source / "scripts" / "__pycache__" / "status.pyc").write_bytes(b"pyc")
-    (source / ".pytest_cache" / "v").mkdir(parents=True)
-    (source / ".venv-pantheon" / "bin").mkdir(parents=True)
-    (source / "archive" / "logs").mkdir(parents=True)
-    (source / "docs-site").mkdir(exist_ok=True)
-    (source / "docs-site" / "orchestrator-state.json").write_text("{}\n")
-    source_stat = source.stat()
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        promotion._mutable_root_binding(
-            ProcessCwdIdentity(
-                path=source,
-                device=source_stat.st_dev,
-                inode=source_stat.st_ino,
-            )
-        )
 
 
-def test_mutable_incumbent_bootstrap_rejects_ignored_source_file(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    ignored_source = source / "scripts" / "untracked_source.py"
-    (source / ".gitignore").write_text(
-        "scripts/untracked_source.py\n",
-        encoding="utf-8",
-    )
-    _git(source, "add", ".gitignore")
-    _git(source, "commit", "-m", "ignore prohibited source")
-    _git(source, "push", str(remote), "HEAD:dev")
-    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
-    ignored_source.write_text("print('must not be accepted')\n", encoding="utf-8")
-    source_stat = source.stat()
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="Forbidden ignored file found in mutable root",
-        ):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=source,
-                    device=source_stat.st_dev,
-                    inode=source_stat.st_ino,
-                )
-            )
 
 
-def test_mutable_incumbent_rejects_ignored_task_brief_source_directory(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    (source / ".gitignore").write_text(
-        ".orchestrator/task-briefs/\n",
-        encoding="utf-8",
-    )
-    _git(source, "add", ".gitignore")
-    _git(source, "commit", "-m", "ignore task brief runtime directory")
-    _git(source, "push", str(remote), "HEAD:dev")
-    _git(
-        source,
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/ajoe734/pantheon.git",
-    )
-    source_payload = (
-        source
-        / ".orchestrator"
-        / "task-briefs"
-        / "replacement.py"
-    )
-    source_payload.parent.mkdir(parents=True, exist_ok=True)
-    source_payload.write_text("raise SystemExit\n", encoding="utf-8")
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        with pytest.raises(ValueError, match="Forbidden ignored directory"):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=source,
-                    device=source.stat().st_dev,
-                    inode=source.stat().st_ino,
-                )
-            )
 
 
-def test_mutable_incumbent_root_rejects_regenerated_tracked_task_brief_in_linked_worktree(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    tracked_brief = (
-        source
-        / ".orchestrator"
-        / "task-briefs"
-        / "sup_dispatch_refactor_proposal_doc_commit_20260806.md"
-    )
-    tracked_brief.parent.mkdir(parents=True, exist_ok=True)
-    tracked_brief.write_text("committed task brief\n", encoding="utf-8")
-    _git(source, "add", str(tracked_brief.relative_to(source)))
-    _git(source, "commit", "-m", "track orchestrator task brief")
-    _git(source, "push", str(remote), "dev:dev")
-    commit = _git(source, "rev-parse", "HEAD")
-    _git(
-        source,
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/ajoe734/pantheon.git",
-    )
-    mutable_root = tmp_path / "dev-root"
-    _git(source, "worktree", "add", "--detach", str(mutable_root), commit)
-    regenerated_brief = mutable_root / tracked_brief.relative_to(source)
-    regenerated_brief.write_text(
-        "orchestrator-regenerated task brief\n",
-        encoding="utf-8",
-    )
-    assert _git(
-        mutable_root,
-        "status",
-        "--porcelain",
-        "--untracked-files=no",
-    ) == "M .orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md"
-    assert _git(mutable_root, "diff", "--cached", "--name-only") == ""
-    root_stat = mutable_root.stat()
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        with pytest.raises(ValueError, match="Tracked git tree is dirty"):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                )
-            )
 
 
 LIVE_FLEET_BRIEF_1364_BYTES: bytes = (
@@ -3715,763 +3335,43 @@ LIVE_FLEET_BRIEF_2132_BYTES: bytes = (
 )
 
 
-def _legacy_mutable_task_brief_drift_fixture(
-    tmp_path: Path,
-) -> tuple[Path, Path, Path, Any]:
-    """Create one accepted mutable root with an old generated brief overwrite."""
-    _candidate, _parent, remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    status_file = source / "ai-status.json"
-    status_file.write_text(
-        json.dumps({
-            "tasks": [
-                {
-                    "id": "SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-                    "title": "Commit the missing supervisor dispatch refactor proposal doc",
-                    "owner": "Antigravity",
-                    "reviewer": "Codex2",
-                }
-            ]
-        }),
-        encoding="utf-8",
-    )
-    common_py = source / ".orchestrator" / "common.py"
-    tracked_brief = (
-        source
-        / ".orchestrator"
-        / "task-briefs"
-        / "sup_dispatch_refactor_proposal_doc_commit_20260806.md"
-    )
-    tracked_brief.parent.mkdir(parents=True, exist_ok=True)
-    common_py.write_text(
-        "from pathlib import Path\n"
-        "TASK_BRIEFS_DIR = None\n"
-        "def write_task_brief(config, task_id):\n"
-        "    path = TASK_BRIEFS_DIR / f'{task_id.lower().replace(\"-\", \"_\")}.md'\n"
-        "    path.write_text('orchestrator-regenerated task brief\\n', encoding='utf-8')\n"
-        "    return path\n",
-        encoding="utf-8",
-    )
-    tracked_brief.write_text("committed task brief in git tree\n", encoding="utf-8")
-    _git(source, "add", str(status_file.relative_to(source)))
-    _git(source, "add", str(common_py.relative_to(source)))
-    _git(source, "add", str(tracked_brief.relative_to(source)))
-    _git(source, "commit", "-m", "track orchestrator task brief")
-    _git(source, "push", str(remote), "dev:dev")
-    commit = _git(source, "rev-parse", "HEAD")
-    _git(
-        source,
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/ajoe734/pantheon.git",
-    )
-    mutable_root = tmp_path / "dev-root"
-    _git(source, "worktree", "add", "--detach", str(mutable_root), commit)
-    regenerated_brief = mutable_root / tracked_brief.relative_to(source)
-    regenerated_brief.write_bytes(LIVE_FLEET_BRIEF_1364_BYTES)
-    return remote, mutable_root, regenerated_brief, mutable_root.stat()
-
-
-def test_mutable_incumbent_bootstrap_binds_only_tracked_task_brief_drift(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, _regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._verify_legacy_task_brief_binding_provenance",
-            return_value=None,
-        ),
-    ):
-        binding = promotion._mutable_root_binding(
-            ProcessCwdIdentity(
-                path=mutable_root,
-                device=root_stat.st_dev,
-                inode=root_stat.st_ino,
-            ),
-            allow_legacy_task_brief_drift=True,
-            canonical_config_bytes=b"{}",
-        )
-        assert [item.relative_path for item in binding[-1]] == [
-            ".orchestrator/task-briefs/"
-            "sup_dispatch_refactor_proposal_doc_commit_20260806.md",
-        ]
-
-
-def test_mutable_incumbent_bootstrap_rejects_staged_task_brief_drift(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    _git(mutable_root, "add", str(regenerated_brief.relative_to(mutable_root)))
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        with pytest.raises(ValueError, match="index differs from HEAD"):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
-
-
-def test_mutable_incumbent_bootstrap_rejects_noncanonical_task_brief_bytes(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, _regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            return_value=(0, "0" * 64),
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="not canonical generated bytes|does not match candidate-tracked exact provenance",
-        ):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
-
-
-def test_mutable_incumbent_bootstrap_accepts_provenance_validated_legacy_task_brief_drift(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    regenerated_brief.write_bytes(LIVE_FLEET_BRIEF_1364_BYTES)
-
-    _git(mutable_root, "checkout", "ai-status.json")
-
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch for legacy brief"),
-        ),
-        patch(
-            "promote_supervisor_runtime._verify_legacy_task_brief_binding_provenance",
-            return_value=None,
-        ),
-    ):
-        binding = promotion._mutable_root_binding(
-            ProcessCwdIdentity(
-                path=mutable_root,
-                device=root_stat.st_dev,
-                inode=root_stat.st_ino,
-            ),
-            allow_legacy_task_brief_drift=True,
-            canonical_config_bytes=b"{}",
-        )
-        assert [item.relative_path for item in binding[-1]] == [
-            ".orchestrator/task-briefs/"
-            "sup_dispatch_refactor_proposal_doc_commit_20260806.md",
-        ]
-
-
-def test_mutable_incumbent_bootstrap_rejects_task_brief_with_unknown_task_id(
-    tmp_path: Path,
-) -> None:
-    remote = tmp_path / "remote.git"
-    _git(tmp_path, "init", "--bare", str(remote))
-    source = tmp_path / "source"
-    _git(tmp_path, "init", str(source))
-    _git(source, "config", "user.name", "Test")
-    _git(source, "config", "user.email", "test@example.com")
-    fake_brief = (
-        source
-        / ".orchestrator"
-        / "task-briefs"
-        / "sup_unknown_fake_task_999999.md"
-    )
-    fake_brief.parent.mkdir(parents=True, exist_ok=True)
-    fake_content = (
-        "# Task Brief: SUP-UNKNOWN-FAKE-TASK-999999\n\n"
-        "This file is generated by the orchestrator for task-scoped execution context.\n\n"
-        "## Task\n"
-        "- Title: Fake\n"
-        "- Status: todo\n"
-        "- Owner: Antigravity\n"
-        "- Reviewer: Codex2\n\n"
-        "## Summary\n"
-        "Fake\n\n"
-        "## Relevant Canonical Files\n"
-        "- ai-status.json\n"
-    )
-    fake_brief.write_text(fake_content, encoding="utf-8")
-    _git(source, "add", str(fake_brief.relative_to(source)))
-    _git(source, "commit", "-m", "track fake task brief")
-    _git(source, "push", str(remote), "HEAD:dev")
-    commit = _git(source, "rev-parse", "HEAD")
-    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
-    mutable_root = tmp_path / "dev-root"
-    _git(source, "worktree", "add", "--detach", str(mutable_root), commit)
-    mutable_fake_brief = mutable_root / fake_brief.relative_to(source)
-    mutable_fake_brief.write_text(fake_content + "modified\n", encoding="utf-8")
-    root_stat = mutable_root.stat()
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch for fake brief"),
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="no authoritative historical event in candidate history|does not match candidate-tracked exact provenance|not canonical",
-        ):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
-
-
-
-def test_mutable_incumbent_bootstrap_rejects_same_path_byte_drift_on_revalidation(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-
-    def canonical_digest(
-        root: Path,
-        *,
-        expected_head: str = "",
-        config_bytes: bytes,
-        task_id: str,
-    ) -> tuple[int, str]:
-        relative_path = (
-            ".orchestrator/task-briefs/"
-            f"{task_id.lower().replace('-', '_')}.md"
-        )
-        content = (root / relative_path).read_bytes()
-        return len(content), hashlib.sha256(content).hexdigest()
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=canonical_digest,
-        ),
-    ):
-        binding = promotion._mutable_root_binding(
-            ProcessCwdIdentity(
-                path=mutable_root,
-                device=root_stat.st_dev,
-                inode=root_stat.st_ino,
-            ),
-            allow_legacy_task_brief_drift=True,
-            canonical_config_bytes=b"{}",
-        )
-        regenerated_brief.write_text(
-            "different canonical task brief bytes\n",
-            encoding="utf-8",
-        )
-        with pytest.raises(
-            ValueError,
-            match="legacy task-brief drift changed during validation",
-        ):
-            promotion._verify_mutable_tracked_cleanliness(
-                mutable_root,
-                expected_head=binding[0],
-                expected_tree=binding[1],
-                allow_legacy_task_brief_drift=True,
-                expected_legacy_task_brief_drift=binding[-1],
-                config_bytes=b"{}",
-            )
-
-
-def test_mutable_incumbent_bootstrap_rejects_symlinked_task_brief_drift(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    external_brief = tmp_path / "external-task-brief.md"
-    external_brief.write_text("external task brief\n", encoding="utf-8")
-    regenerated_brief.unlink()
-    regenerated_brief.symlink_to(external_brief)
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        with pytest.raises(ValueError):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
-
-
-def test_render_canonical_task_brief_digest_ignores_untracked_root_shadow_stdlib(
-    tmp_path: Path,
-) -> None:
-    _remote, mutable_root, _regenerated_brief, _root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    expected_head = _git(mutable_root, "rev-parse", "HEAD")
-    sentinel = tmp_path / "sentinel_stdlib.txt"
-    (mutable_root / "hashlib.py").write_text(
-        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\nraise RuntimeError('SHADOW CODE EXECUTED: hashlib')\n",
-        encoding="utf-8",
-    )
-    (mutable_root / "json.py").write_text(
-        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\nraise RuntimeError('SHADOW CODE EXECUTED: json')\n",
-        encoding="utf-8",
-    )
-    byte_length, sha256 = promotion._render_canonical_task_brief_digest(
-        mutable_root,
-        expected_head=expected_head,
-        config_bytes=b"{}",
-        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-    )
-    assert byte_length > 0
-    assert len(sha256) == 64
-    assert not sentinel.exists()
-
-
-def test_render_canonical_task_brief_digest_rejects_untracked_imported_module(
-    tmp_path: Path,
-) -> None:
-    _remote, mutable_root, _regenerated_brief, _root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    common_py = mutable_root / ".orchestrator" / "common.py"
-    common_py.write_text(
-        common_py.read_text(encoding="utf-8") + "\nimport shadow_helper\n",
-        encoding="utf-8",
-    )
-    _git(mutable_root, "add", ".orchestrator/common.py")
-    _git(mutable_root, "commit", "-m", "import shadow helper")
-    expected_head = _git(mutable_root, "rev-parse", "HEAD")
-
-    sentinel = tmp_path / "sentinel_shadow.txt"
-    (mutable_root / ".orchestrator" / "shadow_helper.py").write_text(
-        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(
-        ValueError,
-        match="Canonical mutable task-brief rendering failed",
-    ):
-        promotion._render_canonical_task_brief_digest(
-            mutable_root,
-            expected_head=expected_head,
-            config_bytes=b"{}",
-            task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-        )
-    assert not sentinel.exists()
-
-
-def test_render_canonical_task_brief_digest_proves_untracked_and_mutable_worktree_edits_never_execute(
-    tmp_path: Path,
-) -> None:
-    _remote, mutable_root, _regenerated_brief, _root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    expected_head = _git(mutable_root, "rev-parse", "HEAD")
-    sentinel = tmp_path / "sentinel_uncommitted.txt"
-    common_py = mutable_root / ".orchestrator" / "common.py"
-    common_py.write_text(
-        common_py.read_text(encoding="utf-8") + "\nimport shadow_helper\n",
-        encoding="utf-8",
-    )
-    (mutable_root / ".orchestrator" / "shadow_helper.py").write_text(
-        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\n",
-        encoding="utf-8",
-    )
-    byte_length, sha256 = promotion._render_canonical_task_brief_digest(
-        mutable_root,
-        expected_head=expected_head,
-        config_bytes=b"{}",
-        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-    )
-    assert byte_length > 0
-    assert len(sha256) == 64
-    assert not sentinel.exists()
-
-
-def test_render_canonical_task_brief_digest_post_capture_source_drift_race(
-    tmp_path: Path,
-) -> None:
-    _remote, mutable_root, _regenerated_brief, _root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    head_a = _git(mutable_root, "rev-parse", "HEAD")
-
-    # Mutate common.py in a new commit B on mutable_root
-    common_py = mutable_root / ".orchestrator" / "common.py"
-    sentinel = tmp_path / "sentinel_race.txt"
-    common_py.write_text(
-        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('PWNED')\nraise RuntimeError('COMMIT_B_EXECUTED')\n",
-        encoding="utf-8",
-    )
-    _git(mutable_root, "add", ".orchestrator/common.py")
-    _git(mutable_root, "commit", "-m", "commit B with mutated common.py")
-    head_b = _git(mutable_root, "rev-parse", "HEAD")
-    assert head_b != head_a
-
-    # While HEAD is at commit B, rendering with expected_head=head_a extracts head_a's tree and NOT commit B
-    byte_length, sha256 = promotion._render_canonical_task_brief_digest(
-        mutable_root,
-        expected_head=head_a,
-        config_bytes=b"{}",
-        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-    )
-    assert byte_length > 0
-    assert len(sha256) == 64
-    assert not sentinel.exists()
-
-    # Perform A -> B -> A ref switch by checking out head_a
-    _git(mutable_root, "checkout", head_a)
-    byte_length_a, sha256_a = promotion._render_canonical_task_brief_digest(
-        mutable_root,
-        expected_head=head_a,
-        config_bytes=b"{}",
-        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-    )
-    assert (byte_length_a, sha256_a) == (byte_length, sha256)
-    assert not sentinel.exists()
-
-
-def test_mutable_incumbent_bootstrap_rejects_non_task_brief_tracked_drift(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
-    source_stat = source.stat()
-    (source / "README.md").write_text("tracked drift\n", encoding="utf-8")
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        with pytest.raises(ValueError, match="permits only modified tracked task briefs"):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=source,
-                    device=source_stat.st_dev,
-                    inode=source_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
-
-
-def test_mutable_incumbent_root_rejects_unaccepted_git_head(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    _git(source, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
-    (source / "README.md").write_text("unaccepted\n", encoding="utf-8")
-    _git(source, "add", "README.md")
-    _git(source, "commit", "-m", "unaccepted incumbent")
-    source_stat = source.stat()
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        with pytest.raises(ValueError, match="git cat-file"):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=source,
-                    device=source_stat.st_dev,
-                    inode=source_stat.st_ino,
-                )
-            )
-
-
-def test_mutable_incumbent_root_accepts_bound_worktree_gitfile(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, commit, tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    _git(
-        source,
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/ajoe734/pantheon.git",
-    )
-    mutable_root = tmp_path / "dev-root"
-    _git(source, "worktree", "add", "--detach", str(mutable_root), commit)
-    generated = mutable_root / ".orchestrator" / "task-briefs" / "generated.md"
-    generated.parent.mkdir(parents=True, exist_ok=True)
-    generated.write_text("runtime-only task brief\n", encoding="utf-8")
-    root_stat = mutable_root.stat()
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        binding = promotion._mutable_root_binding(
-            ProcessCwdIdentity(
-                path=mutable_root,
-                device=root_stat.st_dev,
-                inode=root_stat.st_ino,
-            )
-        )
-
-    assert (mutable_root / ".git").is_file()
-    assert binding[0] == commit
-    assert binding[1] == tree
-    assert binding[3] == "https://github.com/ajoe734/pantheon.git"
-    assert binding[4].slug == "ajoe734/pantheon"
-    assert len(binding[5]) == len(promotion.GOVERNED_LAUNCH_SOURCES)
-
-
-def test_mutable_incumbent_root_rejects_symlinked_git_control(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, _remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    external_git = tmp_path / "external-git"
-    (source / ".git").rename(external_git)
-    (source / ".git").symlink_to(external_git, target_is_directory=True)
-    root_stat = source.stat()
-
-    with pytest.raises(ValueError, match="Git control cannot be a symlink"):
-        promotion._mutable_root_binding(
-            ProcessCwdIdentity(
-                path=source,
-                device=root_stat.st_dev,
-                inode=root_stat.st_ino,
-            )
-        )
-
-
-def test_materialize_rollback_runtime_binds_incumbent_commit_and_tree(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, commit, tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    rollback_parent = tmp_path / "fresh-command-runtimes"
-    rollback_parent.mkdir()
-    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
-    process = _transaction_process_identity(
-        tmp_path / "source",
-        ProcessGeneration(77, 88, "S"),
-        commit=commit,
-        tree=tree,
-    )
-    snapshot = MutableIncumbentSnapshot(
-        root=tmp_path / "source",
-        root_device=1,
-        root_inode=2,
-        head_commit=commit,
-        tracked_tree_identity=tree,
-        accepted_dev_commit=commit,
-        remote_url="https://github.com/ajoe734/pantheon.git",
-        repository_slug="ajoe734/pantheon",
-        process=process,
-        source_identities=(),
-    )
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        rollback_parent,
-    ), patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ), patch(
-        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
-        live_config,
-    ):
-        identity = promotion.materialize_immutable_rollback_runtime(snapshot)
-
-    assert identity.candidate_root == rollback_parent / commit
-    assert identity.head_commit == commit
-    assert identity.tracked_tree_identity == tree
-    assert identity.repository_slug == "ajoe734/pantheon"
-
-
-def test_materialized_rollback_uses_head_not_mutable_task_brief_bytes(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, _commit, _tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    source = tmp_path / "source"
-    task_brief = (
-        source
-        / ".orchestrator"
-        / "task-briefs"
-        / "legacy_rollback_identity.md"
-    )
-    canonical_bytes = b"committed rollback task brief\n"
-    contaminated_bytes = b"mutable regenerated task brief\n"
-    task_brief.parent.mkdir(parents=True, exist_ok=True)
-    task_brief.write_bytes(canonical_bytes)
-    _git(source, "add", str(task_brief.relative_to(source)))
-    _git(source, "commit", "-m", "track rollback task brief")
-    _git(source, "push", str(remote), "HEAD:dev")
-    commit = _git(source, "rev-parse", "HEAD")
-    tree = _git(source, "rev-parse", "HEAD^{tree}")
-    task_brief.write_bytes(contaminated_bytes)
-    dirty_stat = task_brief.stat()
-
-    rollback_parent = tmp_path / "fresh-command-runtimes"
-    rollback_parent.mkdir()
-    live_config = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
-    snapshot = MutableIncumbentSnapshot(
-        root=source,
-        root_device=source.stat().st_dev,
-        root_inode=source.stat().st_ino,
-        head_commit=commit,
-        tracked_tree_identity=tree,
-        accepted_dev_commit=commit,
-        remote_url="https://github.com/ajoe734/pantheon.git",
-        repository_slug="ajoe734/pantheon",
-        process=_transaction_process_identity(
-            source,
-            ProcessGeneration(77, 88, "S"),
-            commit=commit,
-            tree=tree,
-        ),
-        source_identities=(),
-        legacy_task_brief_drift=(
-            LegacyTaskBriefDrift(
-                relative_path=str(task_brief.relative_to(source)),
-                device=dirty_stat.st_dev,
-                inode=dirty_stat.st_ino,
-                mode=dirty_stat.st_mode,
-                byte_length=len(contaminated_bytes),
-                sha256=hashlib.sha256(contaminated_bytes).hexdigest(),
-                canonical_byte_length=len(canonical_bytes),
-                canonical_sha256=hashlib.sha256(canonical_bytes).hexdigest(),
-            ),
-        ),
-    )
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        rollback_parent,
-    ), patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ), patch(
-        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
-        live_config,
-    ):
-        identity = promotion.materialize_immutable_rollback_runtime(snapshot)
-
-    rollback_brief = identity.candidate_root / task_brief.relative_to(source)
-    assert task_brief.read_bytes() == contaminated_bytes
-    assert rollback_brief.read_bytes() == canonical_bytes
-    assert _git(identity.candidate_root, "status", "--porcelain") == ""
-
-
-def test_materialize_rollback_runtime_directory_fsync_failure_fails_closed(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, commit, tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    rollback_parent = tmp_path / "fresh-command-runtimes"
-    rollback_parent.mkdir()
-    process = _transaction_process_identity(
-        tmp_path / "source",
-        ProcessGeneration(77, 88, "S"),
-        commit=commit,
-        tree=tree,
-    )
-    snapshot = MutableIncumbentSnapshot(
-        root=tmp_path / "source",
-        root_device=1,
-        root_inode=2,
-        head_commit=commit,
-        tracked_tree_identity=tree,
-        accepted_dev_commit=commit,
-        remote_url="https://github.com/ajoe734/pantheon.git",
-        repository_slug="ajoe734/pantheon",
-        process=process,
-        source_identities=(),
-    )
-    real_fsync = os.fsync
-
-    def fail_directory(descriptor: int) -> None:
-        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
-            raise OSError("rollback parent fsync failed")
-        real_fsync(descriptor)
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        rollback_parent,
-    ), patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ), patch(
-        "promote_supervisor_runtime.os.fsync",
-        side_effect=fail_directory,
-    ):
-        with pytest.raises(OSError, match="rollback parent fsync failed"):
-            promotion.materialize_immutable_rollback_runtime(snapshot)
-
-    assert (rollback_parent / commit).is_dir()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 class InjectedLaunchFilesystem(promotion.OSLaunchFilesystem):
@@ -4837,88 +3737,10 @@ def test_process_identity_binds_exact_generation_argv_cwd_git_env_and_lock(
     assert "SECRET" not in encoded_summary
 
 
-def test_process_identity_allows_one_governed_legacy_incumbent_migration(
-    tmp_path: Path,
-) -> None:
-    candidate, reader, argv = _injected_process_fixture(tmp_path)
-    legacy_argv = tuple(argument for argument in argv if argument != "-B")
-    candidate = _replace_identity_live_config(
-        candidate,
-        lambda payload: payload["watchdog"].__setitem__(
-            "supervisor_command",
-            list(legacy_argv),
-        ),
-    )
-    reader.argv[1717] = legacy_argv
-    reader.environment[1717].pop("PYTHONDONTWRITEBYTECODE")
-
-    identity = _discover_injected(candidate, reader)
-
-    assert identity.argv == legacy_argv
-    assert dict(identity.environment_contract) == {
-        "PANTHEON_COMMAND_ROOT": str(candidate.candidate_root),
-        "PANTHEON_COMMAND_RUNTIME_SHA": candidate.head_commit,
-        "PANTHEON_STATUS_ROOT": str(tmp_path / "status-root"),
-    }
 
 
-def test_process_identity_allows_bootstrap_legacy_environment_contract(
-    tmp_path: Path,
-) -> None:
-    candidate, reader, argv = _injected_process_fixture(tmp_path)
-    legacy_argv = tuple(argument for argument in argv if argument != "-B")
-    candidate = _replace_identity_live_config(
-        candidate,
-        lambda payload: payload["watchdog"].__setitem__(
-            "supervisor_command",
-            list(legacy_argv),
-        ),
-    )
-    reader.argv[1717] = legacy_argv
-    reader.environment[1717].pop("PANTHEON_COMMAND_ROOT")
-    reader.environment[1717].pop("PANTHEON_COMMAND_RUNTIME_SHA")
-
-    with pytest.raises(ValueError, match="environment allowlist mismatch"):
-        _discover_injected(candidate, reader)
-
-    identity = _discover_injected(
-        candidate,
-        reader,
-        allow_legacy_environment_contract=True,
-    )
-
-    assert dict(identity.environment_contract) == {
-        "PANTHEON_STATUS_ROOT": str(tmp_path / "status-root"),
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
 
 
-def test_process_identity_rejects_wrong_bootstrap_legacy_status_root(
-    tmp_path: Path,
-) -> None:
-    candidate, reader, argv = _injected_process_fixture(tmp_path)
-    legacy_argv = tuple(argument for argument in argv if argument != "-B")
-    candidate = _replace_identity_live_config(
-        candidate,
-        lambda payload: payload["watchdog"].__setitem__(
-            "supervisor_command",
-            list(legacy_argv),
-        ),
-    )
-    reader.argv[1717] = legacy_argv
-    reader.environment[1717].pop("PANTHEON_COMMAND_ROOT")
-    reader.environment[1717].pop("PANTHEON_COMMAND_RUNTIME_SHA")
-    reader.environment[1717]["PANTHEON_STATUS_ROOT"] = "/wrong-status-root"
-
-    with pytest.raises(
-        ValueError,
-        match="environment PANTHEON_STATUS_ROOT mismatch",
-    ):
-        _discover_injected(
-            candidate,
-            reader,
-            allow_legacy_environment_contract=True,
-        )
 
 
 def test_process_identity_revalidates_candidate_inside_lock_bracket(
@@ -5130,83 +3952,8 @@ def test_process_identity_rejects_admission_lock_generation_drift(
         _discover_injected(candidate, reader)
 
 
-def test_mutable_bootstrap_accepts_only_dynamic_flock_id_churn(
-    tmp_path: Path,
-) -> None:
-    candidate, reader, _argv = _injected_process_fixture(tmp_path)
-    original = reader.locks[0]
-    reader.locks[1] = replace(original, kernel_lock_id="72")
-
-    identity = _discover_injected(
-        candidate,
-        reader,
-        allow_legacy_admission_lock_id_churn=True,
-    )
-
-    assert (
-        identity.admission_lock.kernel_lock_id
-        == promotion.MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID
-    )
 
 
-def test_admission_lock_id_churn_opt_in_rejects_non_flock_pair(
-    tmp_path: Path,
-) -> None:
-    candidate, reader, _argv = _injected_process_fixture(tmp_path)
-    original = reader.locks[0]
-    reader.locks = [
-        replace(original, kernel_lock_kind="POSIX"),
-        replace(
-            original,
-            kernel_lock_id="72",
-            kernel_lock_kind="POSIX",
-        ),
-    ]
-
-    with pytest.raises(ValueError, match="admission lock generation mismatch"):
-        _discover_injected(
-            candidate,
-            reader,
-            allow_legacy_admission_lock_id_churn=True,
-        )
-
-
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"path": Path("/different/supervisor.lock")},
-        {"device": 130},
-        {"inode": 131},
-        {"byte_length": 6},
-        {"sha256": "d" * 64},
-        {"mtime_ns": 34},
-        {"ctime_ns": 35},
-        {"kernel_lock_class": "MANDATORY"},
-        {"kernel_lock_mode": "READ"},
-        {"kernel_lock_start": "1"},
-        {"kernel_lock_end": "100"},
-        {"owner_pid": 1818},
-        {"owner_starttime_ticks": 313131},
-    ],
-)
-def test_flock_id_churn_opt_in_rejects_every_other_identity_drift(
-    tmp_path: Path,
-    changes: dict[str, Any],
-) -> None:
-    candidate, reader, _argv = _injected_process_fixture(tmp_path)
-    original = reader.locks[0]
-    reader.locks[1] = replace(
-        original,
-        kernel_lock_id="72",
-        **changes,
-    )
-
-    with pytest.raises(ValueError, match="admission lock generation mismatch"):
-        _discover_injected(
-            candidate,
-            reader,
-            allow_legacy_admission_lock_id_churn=True,
-        )
 
 
 def test_process_identity_rejects_admission_lock_owner_generation_mismatch(
@@ -5380,10 +4127,16 @@ class _FakePromotionBackend:
         self.rollback_generation = ProcessGeneration(300, 3000, "S")
         self.alive = {100: True, 200: False, 300: False}
 
-        incumbent_root = tmp_path / ("a" * 40)
+        active_incumbent_root = tmp_path / "command-runtimes" / ("a" * 40)
+        rollback_root = tmp_path / "rollback-command-runtimes" / ("a" * 40)
         candidate_root = tmp_path / ("b" * 40)
         self.incumbent_identity = _transaction_identity(
-            incumbent_root,
+            rollback_root,
+            "a" * 40,
+            "1" * 40,
+        )
+        self.active_incumbent_identity = _transaction_identity(
+            active_incumbent_root,
             "a" * 40,
             "1" * 40,
         )
@@ -5393,7 +4146,7 @@ class _FakePromotionBackend:
             "2" * 40,
         )
         self.incumbent_process = _transaction_process_identity(
-            incumbent_root,
+            active_incumbent_root,
             self.incumbent_generation,
             commit="a" * 40,
             tree="1" * 40,
@@ -5405,7 +4158,7 @@ class _FakePromotionBackend:
             tree="2" * 40,
         )
         self.rollback_process = _transaction_process_identity(
-            incumbent_root,
+            rollback_root,
             self.rollback_generation,
             commit="a" * 40,
             tree="1" * 40,
@@ -5420,35 +4173,11 @@ class _FakePromotionBackend:
             sha256="c" * 64,
         )
         self.rollback_config = SupervisorConfigVariant(
-            command_root=incumbent_root,
+            command_root=rollback_root,
             supervisor_argv=self.rollback_process.argv,
             content=b"rollback-config",
             byte_length=len(b"rollback-config"),
             sha256="c" * 64,
-        )
-        self.mutable_incumbent = MutableIncumbentSnapshot(
-            root=incumbent_root.parent / "dev-root",
-            root_device=31,
-            root_inode=32,
-            head_commit="a" * 40,
-            tracked_tree_identity="1" * 40,
-            accepted_dev_commit="b" * 40,
-            remote_url="https://github.com/ajoe734/pantheon.git",
-            repository_slug="ajoe734/pantheon",
-            process=self.incumbent_process,
-            source_identities=(),
-            legacy_task_brief_drift=(
-                LegacyTaskBriefDrift(
-                    relative_path=".orchestrator/task-briefs/legacy_bootstrap.md",
-                    device=71,
-                    inode=72,
-                    mode=0o100644,
-                    byte_length=73,
-                    sha256="d" * 64,
-                    canonical_byte_length=73,
-                    canonical_sha256="d" * 64,
-                ),
-            ),
         )
         self.baseline = _transaction_observation(
             self.incumbent_process,
@@ -5461,7 +4190,7 @@ class _FakePromotionBackend:
             incumbent_identity=self.incumbent_identity,
             rollback_config=self.rollback_config,
             incumbent_process=self.incumbent_process,
-            mutable_incumbent=self.mutable_incumbent,
+            active_incumbent_identity=self.active_incumbent_identity,
             rollback_launch=self.rollback_contract,
             baseline=self.baseline,
             promotion_lock_path=(
@@ -5476,14 +4205,8 @@ class _FakePromotionBackend:
         assert candidate_root == self.candidate_identity.candidate_root
         return self.plan.promotion_lock_path
 
-    def prepare(
-        self,
-        candidate_root: Path,
-        *,
-        bootstrap_mutable_incumbent: bool,
-    ) -> PromotionPlan:
+    def prepare(self, candidate_root: Path) -> PromotionPlan:
         assert candidate_root == self.candidate_identity.candidate_root
-        assert bootstrap_mutable_incumbent is True
         self.events.append("prepare")
         return self.plan
 
@@ -5720,7 +4443,6 @@ def _run_fake_transaction(
     transaction = PromotionTransaction(
         evidence_path=evidence_path,
         backend=backend,
-        bootstrap_mutable_incumbent=True,
         postcheck_timeout=0.04,
         poll_interval=0.005,
         lock_timeout=1.0,
@@ -5743,53 +4465,16 @@ def test_transaction_promotes_only_after_three_distinct_candidate_loops(
     assert len(result["candidate_observations"]) == 3
     assert backend.intents == [(100, "b" * 40)]
     assert backend.terminated == [backend.incumbent_generation]
-    assert result["mutable_incumbent"]["legacy_task_brief_drift"] == [
-        {
-            "path": ".orchestrator/task-briefs/legacy_bootstrap.md",
-            "device": 71,
-            "inode": 72,
-            "mode": 0o100644,
-            "byte_length": 73,
-            "sha256": "d" * 64,
-            "canonical_byte_length": 73,
-            "canonical_sha256": "d" * 64,
-        },
-    ]
+    assert result["schema_version"] == 2
+    assert result["incumbent"]["root"] == str(
+        backend.active_incumbent_identity.candidate_root
+    )
+    assert result["incumbent"]["rollback_root"] == str(
+        backend.incumbent_identity.candidate_root
+    )
     assert json.loads(evidence_path.read_text(encoding="utf-8")) == result
 
 
-def test_normal_promote_fails_closed_without_explicit_mutable_bootstrap(
-    tmp_path: Path,
-) -> None:
-    backend = _FakePromotionBackend(tmp_path)
-
-    def reject_mutable(
-        candidate_root: Path,
-        *,
-        bootstrap_mutable_incumbent: bool,
-    ) -> PromotionPlan:
-        assert candidate_root == backend.candidate_identity.candidate_root
-        assert bootstrap_mutable_incumbent is False
-        raise ValueError("mutable incumbent is not an immutable command runtime")
-
-    backend.prepare = reject_mutable  # type: ignore[method-assign]
-    transaction = PromotionTransaction(
-        evidence_path=tmp_path / "evidence.json",
-        backend=backend,
-        postcheck_timeout=0.04,
-        poll_interval=0.005,
-        lock_timeout=1.0,
-        termination_timeout=1.0,
-    )
-
-    result = transaction.run(backend.candidate_identity.candidate_root)
-
-    assert result["outcome"] == "aborted"
-    assert result["bootstrap_mutable_incumbent"] is False
-    assert "not an immutable command runtime" in result["original_failure"]
-    assert backend.intents == []
-    assert backend.terminated == []
-    assert backend.launches == []
 
 
 def test_transaction_serializes_prepare_config_and_launch_under_lock_order(
@@ -5821,16 +4506,9 @@ def test_transaction_serializes_prepare_config_and_launch_under_lock_order(
             finally:
                 held["admission"] = False
 
-    def guarded_prepare(
-        candidate_root: Path,
-        *,
-        bootstrap_mutable_incumbent: bool,
-    ) -> PromotionPlan:
+    def guarded_prepare(candidate_root: Path) -> PromotionPlan:
         assert held == {"promotion": True, "admission": False}
-        return original_prepare(
-            candidate_root,
-            bootstrap_mutable_incumbent=bootstrap_mutable_incumbent,
-        )
+        return original_prepare(candidate_root)
 
     def guarded_revalidate(plan: PromotionPlan) -> RuntimeObservation:
         assert held == {"promotion": True, "admission": True}
@@ -5851,7 +4529,6 @@ def test_transaction_serializes_prepare_config_and_launch_under_lock_order(
     transaction = PromotionTransaction(
         evidence_path=tmp_path / "evidence.json",
         backend=backend,
-        bootstrap_mutable_incumbent=True,
         promotion_lock_factory=lambda _path, _timeout: TrackingPromotionLock(),
         lock_factory=lambda _path, _timeout: TrackingAdmissionLock(),
         postcheck_timeout=0.04,
@@ -5887,7 +4564,6 @@ def test_transaction_default_evidence_stays_outside_executable_roots(
     )
     transaction = PromotionTransaction(
         backend=backend,
-        bootstrap_mutable_incumbent=True,
         postcheck_timeout=0.04,
         poll_interval=0.005,
         lock_timeout=1.0,
@@ -5934,7 +4610,6 @@ def test_transaction_rejects_evidence_inside_executable_root_before_signal(
     transaction = PromotionTransaction(
         evidence_path=requested_path,
         backend=backend,
-        bootstrap_mutable_incumbent=True,
         postcheck_timeout=0.04,
         poll_interval=0.005,
         lock_timeout=1.0,
@@ -6341,1464 +5016,66 @@ def test_os_backend_termination_never_signals_reused_pid(tmp_path: Path) -> None
     kill.assert_not_called()
 
 
-def test_mutable_incumbent_bootstrap_rejects_mutated_byte_legacy_task_brief(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    valid_legacy_brief_content = (
-        "# Task Brief: SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806\n\n"
-        "This file is generated by the orchestrator for task-scoped execution context.\n"
-        "Treat `ai-status.json` as the durable execution source of truth only when you need to verify or update state.\n\n"
-        "## Task\n"
-        "- Title: Commit the missing supervisor dispatch refactor proposal doc\n"
-        "- Status: review\n"
-        "- Owner: Antigravity\n"
-        "- Reviewer: Codex2\n"
-        "- Phase: Supervisor Dispatch Reliability\n"
-        "- Last update: 2026-08-09T08:23:22Z\n"
-        "- Next: Supervisor recorded worker failure streak 1/2.\n\n"
-        "## Summary\n"
-        "Historical brief content.\n\n"
-        "## Relevant Canonical Files\n"
-        "- AI_COLLABORATION_GUIDE.md\n"
-        "- ai-status.json\n"
-    )
-    mutated_content = valid_legacy_brief_content.replace(
-        "Historical brief content.", "Mutated brief content."
-    )
-    regenerated_brief.write_text(mutated_content, encoding="utf-8")
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch"),
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="not canonical generated bytes",
-        ):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
 
 
-def test_mutable_incumbent_bootstrap_rejects_disk_only_fake_task_id(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    # Modify regenerated_brief to use a fake task ID that exists only in disk text, not in expected_head
-    fake_content = (
-        "# Task Brief: SUP-FAKE-DISK-ONLY-9999\n\n"
-        "This file is generated by the orchestrator for task-scoped execution context.\n\n"
-        "## Task\n"
-        "- Title: Fake\n"
-        "- Status: todo\n"
-        "- Owner: Antigravity\n"
-        "- Reviewer: Codex2\n\n"
-        "## Summary\n"
-        "Fake\n"
-    )
-    regenerated_brief.write_text(fake_content, encoding="utf-8")
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch"),
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="not canonical generated bytes",
-        ):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
 
 
-def test_mutable_incumbent_bootstrap_rejects_untracked_source_task_brief(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, _regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    untracked_source = (
-        mutable_root
-        / "scripts"
-        / "untracked_source.py"
-    )
-    untracked_source.parent.mkdir(parents=True, exist_ok=True)
-    untracked_source.write_text("untracked source code\n", encoding="utf-8")
-
-    with patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="Forbidden untracked file found in mutable root",
-        ):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
 
 
-def test_mutable_incumbent_bootstrap_accepts_live_byte_legacy_task_brief_drifts(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    live_brief_1364_content = (
-        "# Task Brief: SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806\n\n"
-        "This file is generated by the orchestrator for task-scoped execution context.\n"
-        "Treat `ai-status.json` as the durable execution source of truth only when you need to verify or update state.\n"
-        "Do not read `current-work.md` by default for implementation context.\n\n"
-        "## Task\n"
-        "- Title: Commit the missing supervisor dispatch refactor proposal doc\n"
-        "- Status: review\n"
-        "- Owner: Antigravity\n"
-        "- Reviewer: Codex2\n"
-        "- Phase: Supervisor Dispatch Reliability\n"
-        "- Last update: 2026-08-09T08:23:22Z\n"
-        "- Next: Supervisor recorded worker failure streak 1/2 for SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806.\n\n"
-        "## Summary\n"
-        "-\n\n"
-        "## Dependencies\n"
-        "- none\n\n"
-        "## Artifacts\n"
-        "- docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md\n\n"
-        "## Recent Task Activity\n"
-        "- Omitted from automatic dispatch context. The canonical task row above is the bounded handoff context; query validated activity history only for targeted forensic work.\n\n"
-        "## Relevant Canonical Files\n"
-        "- AI_COLLABORATION_GUIDE.md\n"
-        "- ai-status.json\n"
-        "- docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md\n\n"
-        "## Working Rules\n"
-        "- Use scripts/ai-status.sh or python3 scripts/ai_status.py for status changes.\n"
-        "- Keep execution updates short and structured.\n"
-        "- If you need raw provider/debug details, ask for the relevant runtime log or evidence ref instead of scanning global summaries.\n"
-    )
-    assert len(live_brief_1364_content.encode("utf-8")) == 1364
-    assert (
-        hashlib.sha256(live_brief_1364_content.encode("utf-8")).hexdigest()
-        == "21a8c81a28417a8dbbe1641e436deb35d38dced9b8a2944d6ff25ce36165c737"
-    )
-    regenerated_brief.write_text(live_brief_1364_content, encoding="utf-8")
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch for live legacy brief"),
-        ),
-        patch(
-            "promote_supervisor_runtime._verify_legacy_task_brief_binding_provenance",
-            return_value=None,
-        ),
-    ):
-        binding = promotion._mutable_root_binding(
-            ProcessCwdIdentity(
-                path=mutable_root,
-                device=root_stat.st_dev,
-                inode=root_stat.st_ino,
-            ),
-            allow_legacy_task_brief_drift=True,
-            canonical_config_bytes=b"{}",
-        )
-        assert [item.relative_path for item in binding[-1]] == [
-            ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md",
-        ]
 
 
-def test_mutable_incumbent_bootstrap_accepts_second_live_byte_legacy_task_brief_drift(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, _regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    second_brief = (
-        mutable_root
-        / ".orchestrator"
-        / "task-briefs"
-        / "sup_l12_fleet_bootstrap_root_coherence_gate_20260801.md"
-    )
-    second_brief.parent.mkdir(parents=True, exist_ok=True)
-    second_brief.write_text("initial brief\n", encoding="utf-8")
-    promotion._run_mutable_git(mutable_root, "add", str(second_brief.relative_to(mutable_root)))
-
-    # Remove default regenerated brief to isolate second brief
-    _regenerated_brief.unlink()
-    promotion._run_mutable_git(mutable_root, "checkout", "--", ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md")
-
-    status_file = mutable_root / "ai-status.json"
-    status_file.write_text(
-        json.dumps({
-            "tasks": [
-                {
-                    "id": "SUP-L12-FLEET-BOOTSTRAP-ROOT-COHERENCE-GATE-20260801",
-                    "title": "Fleet bootstrap root coherence gate",
-                    "owner": "Antigravity",
-                    "reviewer": "Codex2",
-                }
-            ]
-        }),
-        encoding="utf-8",
-    )
-    promotion._run_mutable_git(mutable_root, "commit", "-am", "track second brief and status")
-    promotion._run_mutable_git(mutable_root, "push", str(remote), "HEAD:dev")
-
-    second_brief.parent.mkdir(parents=True, exist_ok=True)
-    second_brief.write_bytes(LIVE_FLEET_BRIEF_2132_BYTES)
-    assert len(LIVE_FLEET_BRIEF_2132_BYTES) == 2132
-    assert (
-        hashlib.sha256(LIVE_FLEET_BRIEF_2132_BYTES).hexdigest()
-        == "40bb9032a826cf94ec2e0e596266dfaf0d90c48c7dc84fb7b179021fdb66dae6"
-    )
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch for second live brief"),
-        ),
-        patch(
-            "promote_supervisor_runtime._verify_legacy_task_brief_binding_provenance",
-            return_value=None,
-        ),
-    ):
-        binding = promotion._mutable_root_binding(
-            ProcessCwdIdentity(
-                path=mutable_root,
-                device=root_stat.st_dev,
-                inode=root_stat.st_ino,
-            ),
-            allow_legacy_task_brief_drift=True,
-            canonical_config_bytes=b"{}",
-        )
-        assert [item.relative_path for item in binding[-1]] == [
-            ".orchestrator/task-briefs/sup_l12_fleet_bootstrap_root_coherence_gate_20260801.md",
-        ]
 
 
-def test_verify_legacy_task_brief_binding_provenance_success() -> None:
-    real_root = Path(".")
-    binding = promotion.CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS[0]
-
-    # The registered legacy runtime remains admissible until the prevention
-    # boundary, even though this checkout is newer than that boundary.
-    promotion._verify_legacy_task_brief_binding_provenance(
-        real_root,
-        binding=binding,
-        expected_head=binding.legacy_command_runtime_sha,
-    )
 
 
-def test_verify_legacy_task_brief_binding_rejects_head_after_prevention_boundary() -> None:
-    real_root = Path(".")
-    binding = promotion.CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS[0]
-    expected_head = promotion._run_mutable_git(real_root, "rev-parse", "HEAD").stdout.strip()
-
-    with pytest.raises(
-        ValueError,
-        match="expected_head is not before the prevention boundary SHA",
-    ):
-        promotion._verify_legacy_task_brief_binding_provenance(
-            real_root,
-            binding=binding,
-            expected_head=expected_head,
-        )
 
 
-def test_mutable_incumbent_bootstrap_rejects_missing_authoritative_historical_event(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, _root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    fs = promotion.OSLaunchFilesystem()
-    file_identity = fs.capture_regular_file(
-        regenerated_brief, role="test", require_executable=False
-    )
-    expected_head = promotion._run_mutable_git(mutable_root, "rev-parse", "HEAD").stdout.strip()
-    rel_path = ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md"
-
-    with (
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch"),
-        ),
-        patch(
-            "promote_supervisor_runtime._is_historical_task_id_known",
-            return_value=False,
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="no authoritative historical event in candidate history",
-        ):
-            promotion._verify_legacy_task_brief_provenance(
-                mutable_root,
-                relative_path=rel_path,
-                task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-                file_identity=file_identity,
-                expected_head=expected_head,
-                config_bytes=b"{}",
-            )
 
 
-def test_mutable_incumbent_bootstrap_rejects_untracked_source_task_brief_path(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, _regenerated_brief, _root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    untracked_brief = (
-        mutable_root
-        / ".orchestrator"
-        / "task-briefs"
-        / "sup_untracked_task_brief_9999.md"
-    )
-    untracked_brief.write_text(
-        "# Task Brief: SUP-UNTRACKED-TASK-BRIEF-9999\n\nUntracked task brief.\n",
-        encoding="utf-8",
-    )
-    fs = promotion.OSLaunchFilesystem()
-    file_identity = fs.capture_regular_file(
-        untracked_brief, role="test", require_executable=False
-    )
-    expected_head = promotion._run_mutable_git(mutable_root, "rev-parse", "HEAD").stdout.strip()
-    rel_path = ".orchestrator/task-briefs/sup_untracked_task_brief_9999.md"
-
-    with (
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch"),
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="has no authoritative historical event in candidate history|is not a tracked path in candidate tree",
-        ):
-            promotion._verify_legacy_task_brief_provenance(
-                mutable_root,
-                relative_path=rel_path,
-                task_id="SUP-UNTRACKED-TASK-BRIEF-9999",
-                file_identity=file_identity,
-                expected_head=expected_head,
-                config_bytes=b"{}",
-            )
 
 
-def test_mutable_incumbent_bootstrap_rejects_prevention_boundary_violation(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    unbound_brief_content = (
-        "# Task Brief: SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806\n\n"
-        "Unbound post-prevention-boundary drift content that does not match provenance bindings.\n"
-    )
-    regenerated_brief.write_text(unbound_brief_content, encoding="utf-8")
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch for unbound brief"),
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="does not match candidate-tracked exact provenance|not canonical generated bytes",
-        ):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
 
 
-def test_mutable_incumbent_bootstrap_rejects_wrong_authoritative_event(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, _root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    fs = promotion.OSLaunchFilesystem()
-    file_identity = fs.capture_regular_file(
-        regenerated_brief, role="test", require_executable=False
-    )
-    expected_head = promotion._run_mutable_git(mutable_root, "rev-parse", "HEAD").stdout.strip()
-    rel_path = ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md"
-
-    bad_binding = promotion.CandidateTrackedLegacyTaskBriefProvenanceBinding(
-        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-        relative_path=rel_path,
-        byte_length=file_identity.byte_length,
-        sha256=file_identity.sha256,
-        authoritative_event_id="wrong-event-id-99999",
-        legacy_command_runtime_sha="5877b64425c8d6aede147d6cbbc6fbb9e228c259",
-        prevention_boundary_sha="f5570754e6b9534893fc65744e82abe7f0ff0a74",
-    )
-
-    with (
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch"),
-        ),
-        patch(
-            "promote_supervisor_runtime._find_candidate_tracked_legacy_task_brief_provenance_binding",
-            return_value=bad_binding,
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="does not match registered production binding|authoritative event ID is invalid or unreviewed",
-        ):
-            promotion._verify_legacy_task_brief_provenance(
-                mutable_root,
-                relative_path=rel_path,
-                task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-                file_identity=file_identity,
-                expected_head=expected_head,
-                config_bytes=b"{}",
-            )
 
 
-def test_mutable_incumbent_bootstrap_rejects_event_swap(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, _root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    fs = promotion.OSLaunchFilesystem()
-    file_identity = fs.capture_regular_file(
-        regenerated_brief, role="test", require_executable=False
-    )
-    expected_head = promotion._run_mutable_git(mutable_root, "rev-parse", "HEAD").stdout.strip()
-    rel_path = ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md"
-
-    # Swap event_id to the event ID of the other task
-    swapped_event_binding = promotion.CandidateTrackedLegacyTaskBriefProvenanceBinding(
-        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-        relative_path=rel_path,
-        byte_length=file_identity.byte_length,
-        sha256=file_identity.sha256,
-        authoritative_event_id="ai-status-event-739b819ac053e3cdd0a58d6b12311705d553cc44cb372f3298302b2a5b337aea",
-        legacy_command_runtime_sha="5877b64425c8d6aede147d6cbbc6fbb9e228c259",
-        prevention_boundary_sha="f5570754e6b9534893fc65744e82abe7f0ff0a74",
-    )
-
-    with (
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch"),
-        ),
-        patch(
-            "promote_supervisor_runtime._find_candidate_tracked_legacy_task_brief_provenance_binding",
-            return_value=swapped_event_binding,
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="does not match registered production binding",
-        ):
-            promotion._verify_legacy_task_brief_provenance(
-                mutable_root,
-                relative_path=rel_path,
-                task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-                file_identity=file_identity,
-                expected_head=expected_head,
-                config_bytes=b"{}",
-            )
 
 
-def test_mutable_incumbent_bootstrap_rejects_another_valid_ancestor_source_or_boundary_sha(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, _root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    fs = promotion.OSLaunchFilesystem()
-    file_identity = fs.capture_regular_file(
-        regenerated_brief, role="test", require_executable=False
-    )
-    expected_head = promotion._run_mutable_git(mutable_root, "rev-parse", "HEAD").stdout.strip()
-    parent_commit = promotion._run_mutable_git(mutable_root, "rev-parse", "HEAD~1").stdout.strip()
-    rel_path = ".orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md"
-
-    # Replace legacy_command_runtime_sha with parent_commit (a valid ancestor, but not the exact bound SHA)
-    swapped_sha_binding = promotion.CandidateTrackedLegacyTaskBriefProvenanceBinding(
-        task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-        relative_path=rel_path,
-        byte_length=file_identity.byte_length,
-        sha256=file_identity.sha256,
-        authoritative_event_id="supervisor-task-failure-streak-a9d6b8a54889ffae650c47e67d004eff0dd93f691a92791345e2bcd38cbdccf6",
-        legacy_command_runtime_sha=parent_commit,
-        prevention_boundary_sha="f5570754e6b9534893fc65744e82abe7f0ff0a74",
-    )
-
-    with (
-        patch(
-            "promote_supervisor_runtime._render_canonical_task_brief_digest",
-            side_effect=ValueError("Simulated renderer mismatch"),
-        ),
-        patch(
-            "promote_supervisor_runtime._find_candidate_tracked_legacy_task_brief_provenance_binding",
-            return_value=swapped_sha_binding,
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="does not match registered production binding",
-        ):
-            promotion._verify_legacy_task_brief_provenance(
-                mutable_root,
-                relative_path=rel_path,
-                task_id="SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-                file_identity=file_identity,
-                expected_head=expected_head,
-                config_bytes=b"{}",
-            )
 
 
-def test_mutable_incumbent_bootstrap_rejects_missing_commit_object(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, _root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    non_existent_head = "f" * 40
-    binding = promotion.CANDIDATE_TRACKED_LEGACY_TASK_BRIEF_PROVENANCE_BINDINGS[0]
-
-    with pytest.raises(
-        ValueError,
-        match="commit object is missing or invalid",
-    ):
-        promotion._verify_legacy_task_brief_binding_provenance(
-            mutable_root,
-            binding=binding,
-            expected_head=non_existent_head,
-        )
 
 
 def test_generated_logs_use_dedicated_directory_allowlist() -> None:
     assert promotion.PurePosixPath(".orchestrator/logs") in promotion.ALLOWED_GENERATED_UNTRACKED_DIRECTORIES
 
 
-def test_capture_promotion_snapshot_passes_allow_legacy_admission_lock_id_churn(
-    tmp_path: Path,
-) -> None:
-    repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
-    create_realistic_healthy_fixture(repo)
-    identity = _verified_identity_dependency(repo)
-    process_identity = _verified_process_identity_dependency(repo)
 
-    with patch(
-        "promote_supervisor_runtime.build_candidate_runtime_identity",
-        return_value=identity,
-    ), patch(
-        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
-        return_value=process_identity,
-    ) as mock_discover:
-        capture_promotion_snapshot(repo, now=now)
-        mock_discover.assert_called_once_with(
-            identity,
-            candidate_revalidator=identity.verify_immutable_snapshot,
-            allow_legacy_admission_lock_id_churn=True,
-        )
 
-    assert promotion._is_allowed_generated_untracked_directory(
-        ".orchestrator/logs/"
-    )
-    assert not promotion._is_allowed_mutable_incumbent_ignored_runtime_path(
-        ".orchestrator/task-briefs/some_brief.md"
-    )
 
 
-def test_materialize_immutable_rollback_runtime_reuses_matching_preexisting_rollback_destination_without_side_effects(
-    tmp_path: Path,
-) -> None:
-    prefix = tmp_path / "command-runtimes"
-    prefix.mkdir(parents=True, exist_ok=True)
-    rollback_prefix = tmp_path / "rollback-command-runtimes"
-    rollback_prefix.mkdir(parents=True, exist_ok=True)
-    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
 
-    direct_dest = prefix / head_commit
-    direct_dest.mkdir(parents=True, exist_ok=True)
 
-    rollback_dest = rollback_prefix / head_commit
-    rollback_dest.mkdir(parents=True, exist_ok=True)
 
-    snapshot = Mock(spec=MutableIncumbentSnapshot)
-    snapshot.root = tmp_path / "dev-root"
-    snapshot.head_commit = head_commit
-    snapshot.tracked_tree_identity = "b" * 40
-    snapshot.accepted_dev_commit = "c" * 40
-    snapshot.repository_slug = "ajoe734/pantheon"
 
-    existing_identity = Mock(spec=CandidateRuntimeIdentity)
-    existing_identity.candidate_root = rollback_dest
-    existing_identity.candidate_root_device = rollback_dest.stat().st_dev
-    existing_identity.candidate_root_inode = rollback_dest.stat().st_ino
-    existing_identity.head_commit = head_commit
-    existing_identity.tracked_tree_identity = "b" * 40
-    existing_identity.accepted_dev_commit = "c" * 40
-    existing_identity.repository_slug = "ajoe734/pantheon"
 
-    candidate_identity = Mock(spec=CandidateRuntimeIdentity)
-    candidate_identity.candidate_root = direct_dest
-    candidate_identity.candidate_root_device = direct_dest.stat().st_dev
-    candidate_identity.candidate_root_inode = direct_dest.stat().st_ino
 
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        prefix,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_prefix,
-    ), patch(
-        "promote_supervisor_runtime._run_git",
-    ) as mock_git, patch(
-        "promote_supervisor_runtime.build_candidate_runtime_identity",
-        return_value=existing_identity,
-    ) as mock_identity:
-        result = promotion.materialize_immutable_rollback_runtime(
-            snapshot,
-            candidate_identity=candidate_identity,
-        )
 
-    mock_git.assert_not_called()
-    mock_identity.assert_called_once_with(rollback_dest)
-    existing_identity.verify_immutable_snapshot.assert_called_once_with()
-    assert result is existing_identity
 
 
-def test_materialize_immutable_rollback_runtime_rejects_mismatched_preexisting_rollback_destination_without_side_effects(
-    tmp_path: Path,
-) -> None:
-    prefix = tmp_path / "command-runtimes"
-    prefix.mkdir(parents=True, exist_ok=True)
-    rollback_prefix = tmp_path / "rollback-command-runtimes"
-    rollback_prefix.mkdir(parents=True, exist_ok=True)
-    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
 
-    direct_dest = prefix / head_commit
-    direct_dest.mkdir(parents=True, exist_ok=True)
-    rollback_dest = rollback_prefix / head_commit
-    rollback_dest.mkdir(parents=True, exist_ok=True)
 
-    snapshot = Mock(spec=MutableIncumbentSnapshot)
-    snapshot.root = tmp_path / "dev-root"
-    snapshot.head_commit = head_commit
-    snapshot.tracked_tree_identity = "b" * 40
-    snapshot.accepted_dev_commit = "c" * 40
-    snapshot.repository_slug = "ajoe734/pantheon"
 
-    existing_identity = Mock(spec=CandidateRuntimeIdentity)
-    existing_identity.candidate_root = rollback_dest
-    existing_identity.candidate_root_device = rollback_dest.stat().st_dev
-    existing_identity.candidate_root_inode = rollback_dest.stat().st_ino
-    existing_identity.head_commit = head_commit
-    existing_identity.tracked_tree_identity = "d" * 40
-    existing_identity.accepted_dev_commit = "c" * 40
-    existing_identity.repository_slug = "ajoe734/pantheon"
 
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        prefix,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_prefix,
-    ), patch(
-        "promote_supervisor_runtime._run_git",
-    ) as mock_git, patch(
-        "promote_supervisor_runtime.build_candidate_runtime_identity",
-        return_value=existing_identity,
-    ):
-        with pytest.raises(
-            ValueError,
-            match="Existing rollback runtime identity differs from incumbent",
-        ):
-            promotion.materialize_immutable_rollback_runtime(snapshot)
 
-    mock_git.assert_not_called()
-    existing_identity.verify_immutable_snapshot.assert_called_once_with()
 
 
-def test_materialize_immutable_rollback_runtime_rejects_symlink_destination_without_side_effects(
-    tmp_path: Path,
-) -> None:
-    prefix = tmp_path / "command-runtimes"
-    prefix.mkdir(parents=True, exist_ok=True)
-    rollback_prefix = tmp_path / "rollback-command-runtimes"
-    rollback_prefix.mkdir(parents=True, exist_ok=True)
-    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
 
-    direct_dest = prefix / head_commit
-    direct_dest.mkdir(parents=True, exist_ok=True)
 
-    target_dir = tmp_path / "target-dir"
-    target_dir.mkdir(parents=True, exist_ok=True)
 
-    rollback_dest = rollback_prefix / head_commit
-    rollback_dest.symlink_to(target_dir)
 
-    snapshot = Mock(spec=MutableIncumbentSnapshot)
-    snapshot.root = tmp_path / "dev-root"
-    snapshot.head_commit = head_commit
-    snapshot.tracked_tree_identity = "b" * 40
-    snapshot.accepted_dev_commit = "c" * 40
-    snapshot.repository_slug = "ajoe734/pantheon"
 
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        prefix,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_prefix,
-    ), patch(
-        "promote_supervisor_runtime._run_git",
-    ) as mock_git:
-        with pytest.raises(
-            ValueError,
-            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
-        ):
-            promotion.materialize_immutable_rollback_runtime(snapshot)
 
-    mock_git.assert_not_called()
 
 
-def test_materialize_immutable_rollback_runtime_uses_collision_safe_rollback_parent_when_direct_destination_occupied(
-    tmp_path: Path,
-) -> None:
-    prefix = tmp_path / "command-runtimes"
-    prefix.mkdir(parents=True, exist_ok=True)
-    rollback_prefix = tmp_path / "rollback-command-runtimes"
-    rollback_prefix.mkdir(parents=True, exist_ok=True)
-    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
-    direct_dest = prefix / head_commit
-    direct_dest.mkdir(parents=True, exist_ok=True)
-
-    other_dir = tmp_path / "dev-root"
-    other_dir.mkdir(parents=True, exist_ok=True)
-    other_stat = other_dir.stat()
-
-    snapshot = Mock(spec=MutableIncumbentSnapshot)
-    snapshot.root = other_dir
-    snapshot.root_device = other_stat.st_dev
-    snapshot.root_inode = other_stat.st_ino
-    snapshot.head_commit = head_commit
-    snapshot.tracked_tree_identity = "b" * 40
-    snapshot.accepted_dev_commit = "c" * 40
-    snapshot.repository_slug = "ajoe734/pantheon"
-
-    rollback_dest = rollback_prefix / head_commit
-    rollback_identity = Mock(spec=CandidateRuntimeIdentity)
-    rollback_identity.candidate_root = rollback_dest
-    rollback_identity.candidate_root_device = 999
-    rollback_identity.candidate_root_inode = 888
-    rollback_identity.head_commit = head_commit
-    rollback_identity.tracked_tree_identity = "b" * 40
-    rollback_identity.accepted_dev_commit = "c" * 40
-    rollback_identity.repository_slug = "ajoe734/pantheon"
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        prefix,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_prefix,
-    ), patch(
-        "promote_supervisor_runtime._run_git",
-    ), patch(
-        "promote_supervisor_runtime._git_output",
-        return_value="b" * 40,
-    ), patch(
-        "promote_supervisor_runtime.build_candidate_runtime_identity",
-        return_value=rollback_identity,
-    ):
-        res = promotion.materialize_immutable_rollback_runtime(snapshot)
-
-    assert res is rollback_identity
-    assert res.candidate_root != direct_dest
-    assert res.candidate_root == rollback_dest
-
-
-def test_materialize_immutable_rollback_runtime_proves_candidate_and_rollback_separation_for_same_sha(
-    tmp_path: Path,
-) -> None:
-    prefix = tmp_path / "command-runtimes"
-    prefix.mkdir(parents=True, exist_ok=True)
-    rollback_prefix = tmp_path / "rollback-command-runtimes"
-    rollback_prefix.mkdir(parents=True, exist_ok=True)
-    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
-
-    candidate_dest = prefix / head_commit
-    candidate_dest.mkdir(parents=True, exist_ok=True)
-
-    other_dir = tmp_path / "dev-root"
-    other_dir.mkdir(parents=True, exist_ok=True)
-    other_stat = other_dir.stat()
-
-    snapshot = Mock(spec=MutableIncumbentSnapshot)
-    snapshot.root = other_dir
-    snapshot.root_device = other_stat.st_dev
-    snapshot.root_inode = other_stat.st_ino
-    snapshot.head_commit = head_commit
-    snapshot.tracked_tree_identity = "b" * 40
-    snapshot.accepted_dev_commit = "c" * 40
-    snapshot.repository_slug = "ajoe734/pantheon"
-
-    candidate_identity = Mock(spec=CandidateRuntimeIdentity)
-    candidate_identity.candidate_root = candidate_dest
-    candidate_identity.candidate_root_device = candidate_dest.stat().st_dev
-    candidate_identity.candidate_root_inode = candidate_dest.stat().st_ino
-    candidate_identity.head_commit = head_commit
-
-    rollback_dest = rollback_prefix / head_commit
-    rollback_identity = Mock(spec=CandidateRuntimeIdentity)
-    rollback_identity.candidate_root = rollback_dest
-    rollback_identity.candidate_root_device = 999
-    rollback_identity.candidate_root_inode = 888
-    rollback_identity.head_commit = head_commit
-    rollback_identity.tracked_tree_identity = "b" * 40
-    rollback_identity.accepted_dev_commit = "c" * 40
-    rollback_identity.repository_slug = "ajoe734/pantheon"
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        prefix,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_prefix,
-    ), patch(
-        "promote_supervisor_runtime._run_git",
-    ), patch(
-        "promote_supervisor_runtime._git_output",
-        return_value="b" * 40,
-    ), patch(
-        "promote_supervisor_runtime.build_candidate_runtime_identity",
-        return_value=rollback_identity,
-    ):
-        res = promotion.materialize_immutable_rollback_runtime(
-            snapshot,
-            candidate_identity=candidate_identity,
-        )
-
-    assert res is rollback_identity
-    assert res.candidate_root != candidate_identity.candidate_root
-    assert (res.candidate_root_device, res.candidate_root_inode) != (
-        candidate_identity.candidate_root_device,
-        candidate_identity.candidate_root_inode,
-    )
-
-
-def test_materialize_immutable_rollback_runtime_rejects_injected_post_check_collision_without_overwrite_or_side_effects(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, commit, tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    prefix = tmp_path / "command-runtimes"
-    rollback_prefix = tmp_path / "rollback-command-runtimes"
-    rollback_prefix.mkdir(parents=True, exist_ok=True)
-
-    direct_dest = prefix / commit
-    direct_dest.mkdir(parents=True, exist_ok=True)
-
-    rollback_dest = rollback_prefix / commit
-
-    process = _transaction_process_identity(
-        tmp_path / "source",
-        ProcessGeneration(77, 88, "S"),
-        commit=commit,
-        tree=tree,
-    )
-    snapshot = MutableIncumbentSnapshot(
-        root=tmp_path / "source",
-        root_device=1,
-        root_inode=2,
-        head_commit=commit,
-        tracked_tree_identity=tree,
-        accepted_dev_commit=commit,
-        remote_url="https://github.com/ajoe734/pantheon.git",
-        repository_slug="ajoe734/pantheon",
-        process=process,
-        source_identities=(),
-    )
-
-    real_assert = promotion._assert_path_component_identities
-
-    def inject_collision(*args: Any, **kwargs: Any) -> None:
-        rollback_dest.mkdir(parents=True, exist_ok=True)
-        return real_assert(*args, **kwargs)
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        prefix,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_prefix,
-    ), patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ), patch(
-        "promote_supervisor_runtime._assert_path_component_identities",
-        side_effect=inject_collision,
-    ):
-        with pytest.raises(
-            ValueError,
-            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
-        ):
-            promotion.materialize_immutable_rollback_runtime(snapshot)
-
-    assert rollback_dest.exists()
-    assert len(list(rollback_dest.iterdir())) == 0
-    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
-    assert len(leftovers) == 0
-
-
-def test_materialize_immutable_rollback_runtime_end_to_end_occupied_direct_destination_proves_real_separation_and_binding(
-    tmp_path: Path,
-) -> None:
-    _candidate_dir, runtime_parent, remote, commit, tree, _config_bytes = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    prefix = runtime_parent
-    rollback_prefix = tmp_path / "rollback-command-runtimes"
-    rollback_prefix.mkdir(parents=True, exist_ok=True)
-    live_config_file = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
-
-    direct_dest = prefix / commit
-    direct_dest.mkdir(parents=True, exist_ok=True)
-    promotion._run_git(direct_dest, "init", "--quiet")
-    promotion._run_git(
-        direct_dest,
-        "remote",
-        "set-url",
-        "origin",
-        remote.as_uri(),
-    )
-    promotion._run_git(
-        direct_dest,
-        "fetch",
-        "--quiet",
-        "--no-tags",
-        "origin",
-        "+refs/heads/dev:refs/remotes/origin/dev",
-    )
-    promotion._run_git(
-        direct_dest,
-        "remote",
-        "set-url",
-        "origin",
-        promotion.TRUSTED_CANONICAL_ORIGIN_URL,
-    )
-    promotion._run_git(direct_dest, "checkout", "--quiet", "--detach", commit)
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        prefix,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_prefix,
-    ), patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ), patch(
-        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
-        live_config_file,
-    ):
-        candidate_identity = promotion.build_candidate_runtime_identity(direct_dest)
-        process = _transaction_process_identity(
-            tmp_path / "source",
-            ProcessGeneration(77, 88, "S"),
-            commit=commit,
-            tree=tree,
-        )
-        snapshot = MutableIncumbentSnapshot(
-            root=tmp_path / "source",
-            root_device=1,
-            root_inode=2,
-            head_commit=commit,
-            tracked_tree_identity=tree,
-            accepted_dev_commit=commit,
-            remote_url="https://github.com/ajoe734/pantheon.git",
-            repository_slug="ajoe734/pantheon",
-            process=process,
-            source_identities=(),
-        )
-        rollback_identity = promotion.materialize_immutable_rollback_runtime(
-            snapshot,
-            candidate_identity=candidate_identity,
-        )
-        reused_rollback_identity = promotion.materialize_immutable_rollback_runtime(
-            snapshot,
-            candidate_identity=candidate_identity,
-        )
-
-    rollback_dest = rollback_prefix / commit
-
-    assert isinstance(rollback_identity, promotion.CandidateRuntimeIdentity)
-    assert rollback_identity.candidate_root == rollback_dest
-    assert rollback_identity.candidate_root != candidate_identity.candidate_root
-    assert reused_rollback_identity.candidate_root == rollback_dest
-    assert (
-        reused_rollback_identity.candidate_root_device,
-        reused_rollback_identity.candidate_root_inode,
-    ) == (
-        rollback_identity.candidate_root_device,
-        rollback_identity.candidate_root_inode,
-    )
-
-    rollback_stat = rollback_dest.stat()
-    assert rollback_identity.candidate_root_device == rollback_stat.st_dev
-    assert rollback_identity.candidate_root_inode == rollback_stat.st_ino
-    assert (
-        rollback_identity.candidate_root_device,
-        rollback_identity.candidate_root_inode,
-    ) != (
-        candidate_identity.candidate_root_device,
-        candidate_identity.candidate_root_inode,
-    )
-
-    rollback_config = promotion.derive_supervisor_config_variant(
-        candidate_identity,
-        command_root=rollback_identity.candidate_root,
-    )
-    rollback_launch = promotion.build_governed_supervisor_launch_contract(
-        rollback_identity,
-        supervisor_argv=rollback_config.supervisor_argv,
-    )
-
-    assert rollback_config.command_root == rollback_identity.candidate_root
-    assert rollback_launch.cwd == rollback_identity.candidate_root
-    assert rollback_launch.cwd_device == rollback_identity.candidate_root_device
-    assert rollback_launch.cwd_inode == rollback_identity.candidate_root_inode
-    assert rollback_launch.status_command_root == rollback_identity.candidate_root
-
-
-def test_materialize_immutable_rollback_runtime_rejects_unsupported_renameat2_and_collision_without_os_rename_or_side_effects(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, commit, tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    prefix = tmp_path / "command-runtimes"
-    rollback_prefix = tmp_path / "rollback-command-runtimes"
-    rollback_prefix.mkdir(parents=True, exist_ok=True)
-
-    direct_dest = prefix / commit
-    direct_dest.mkdir(parents=True, exist_ok=True)
-
-    rollback_dest = rollback_prefix / commit
-    rollback_dest.mkdir(parents=True, exist_ok=True)
-    (rollback_dest / "preexisting.txt").write_text("attacker content", encoding="utf-8")
-
-    process = _transaction_process_identity(
-        tmp_path / "source",
-        ProcessGeneration(77, 88, "S"),
-        commit=commit,
-        tree=tree,
-    )
-    snapshot = MutableIncumbentSnapshot(
-        root=tmp_path / "source",
-        root_device=1,
-        root_inode=2,
-        head_commit=commit,
-        tracked_tree_identity=tree,
-        accepted_dev_commit=commit,
-        remote_url="https://github.com/ajoe734/pantheon.git",
-        repository_slug="ajoe734/pantheon",
-        process=process,
-        source_identities=(),
-    )
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        prefix,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_prefix,
-    ), patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ), patch(
-        "ctypes.CDLL",
-        side_effect=AttributeError("no renameat2 available"),
-    ), patch(
-        "os.rename",
-        side_effect=AssertionError("os.rename must never be called"),
-    ) as mock_rename:
-        with pytest.raises(
-            ValueError,
-            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
-        ):
-            promotion.materialize_immutable_rollback_runtime(snapshot)
-
-    mock_rename.assert_not_called()
-    assert rollback_dest.exists()
-    assert (rollback_dest / "preexisting.txt").read_text(encoding="utf-8") == "attacker content"
-    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
-    assert len(leftovers) == 0
-
-
-def test_materialize_immutable_rollback_runtime_handles_syscall_level_eexist_after_precheck_without_os_rename_or_side_effects(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, commit, tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    prefix = tmp_path / "command-runtimes"
-    rollback_prefix = tmp_path / "rollback-command-runtimes"
-    rollback_prefix.mkdir(parents=True, exist_ok=True)
-
-    direct_dest = prefix / commit
-    direct_dest.mkdir(parents=True, exist_ok=True)
-
-    rollback_dest = rollback_prefix / commit
-
-    process = _transaction_process_identity(
-        tmp_path / "source",
-        ProcessGeneration(77, 88, "S"),
-        commit=commit,
-        tree=tree,
-    )
-    snapshot = MutableIncumbentSnapshot(
-        root=tmp_path / "source",
-        root_device=1,
-        root_inode=2,
-        head_commit=commit,
-        tracked_tree_identity=tree,
-        accepted_dev_commit=commit,
-        remote_url="https://github.com/ajoe734/pantheon.git",
-        repository_slug="ajoe734/pantheon",
-        process=process,
-        source_identities=(),
-    )
-
-    def mock_renameat2(*args: Any, **kwargs: Any) -> int:
-        rollback_dest.mkdir(parents=True, exist_ok=True)
-        (rollback_dest / "post_precheck_collision.txt").write_text(
-            "syscall collision", encoding="utf-8"
-        )
-        return -1
-
-    mock_libc = Mock()
-    mock_libc.renameat2 = mock_renameat2
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        prefix,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_prefix,
-    ), patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ), patch(
-        "ctypes.CDLL",
-        return_value=mock_libc,
-    ), patch(
-        "ctypes.get_errno",
-        return_value=errno.EEXIST,
-    ), patch(
-        "os.rename",
-        side_effect=AssertionError("os.rename must never be called"),
-    ) as mock_rename:
-        with pytest.raises(
-            ValueError,
-            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
-        ):
-            promotion.materialize_immutable_rollback_runtime(snapshot)
-
-    mock_rename.assert_not_called()
-    assert rollback_dest.exists()
-    assert (rollback_dest / "post_precheck_collision.txt").read_text(
-        encoding="utf-8"
-    ) == "syscall collision"
-    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
-    assert len(leftovers) == 0
-
-
-def test_materialize_immutable_rollback_runtime_rejects_unsupported_renameat2_when_destination_free_fails_closed_without_os_rename(
-    tmp_path: Path,
-) -> None:
-    _candidate, _parent, remote, commit, tree, _config = (
-        _make_candidate_fixture(tmp_path, full_preflight=True)
-    )
-    prefix = tmp_path / "command-runtimes"
-    rollback_prefix = tmp_path / "rollback-command-runtimes"
-    rollback_prefix.mkdir(parents=True, exist_ok=True)
-
-    direct_dest = prefix / commit
-    direct_dest.mkdir(parents=True, exist_ok=True)
-
-    rollback_dest = rollback_prefix / commit
-
-    process = _transaction_process_identity(
-        tmp_path / "source",
-        ProcessGeneration(77, 88, "S"),
-        commit=commit,
-        tree=tree,
-    )
-    snapshot = MutableIncumbentSnapshot(
-        root=tmp_path / "source",
-        root_device=1,
-        root_inode=2,
-        head_commit=commit,
-        tracked_tree_identity=tree,
-        accepted_dev_commit=commit,
-        remote_url="https://github.com/ajoe734/pantheon.git",
-        repository_slug="ajoe734/pantheon",
-        process=process,
-        source_identities=(),
-    )
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        prefix,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_prefix,
-    ), patch(
-        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-        remote.as_uri(),
-    ), patch(
-        "ctypes.CDLL",
-        side_effect=AttributeError("no renameat2 available"),
-    ), patch(
-        "os.rename",
-        side_effect=AssertionError("os.rename must never be called"),
-    ) as mock_rename:
-        with pytest.raises(
-            OSError,
-            match="Atomic no-replace rename is unavailable",
-        ):
-            promotion.materialize_immutable_rollback_runtime(snapshot)
-
-    mock_rename.assert_not_called()
-    assert not rollback_dest.exists()
-    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
-    assert len(leftovers) == 0
-
-
-def test_immutable_incumbent_legacy_task_brief_provenance_binding_registered() -> None:
-    binding = promotion._find_candidate_tracked_legacy_task_brief_provenance_binding(
-        task_id="SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
-        relative_path=".orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md",
-        byte_length=2577,
-        sha256="435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289",
-    )
-    assert binding is not None
-    assert binding.task_id == "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808"
-    assert binding.byte_length == 2577
-    assert binding.sha256 == "435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289"
-    assert binding.legacy_command_runtime_sha == "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
-    assert binding.prevention_boundary_sha == "f5570754e6b9534893fc65744e82abe7f0ff0a74"
-
-
-def test_immutable_candidate_cleanliness_rejects_task_brief_drift(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.path = real_root
-
-    def mock_run_git(h: Any, *args: str) -> Mock:
-        cmd = args[0]
-        if cmd == "ls-files":
-            return Mock(stdout="")
-        elif cmd == "status":
-            return Mock(stdout=" M .orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md\0")
-        elif cmd in ("diff-index", "diff-files"):
-            return Mock(stdout="")
-        return Mock(stdout="")
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        tmp_path,
-    ), patch(
-        "promote_supervisor_runtime._candidate_handle",
-        return_value=(handle, False),
-    ), patch(
-        "promote_supervisor_runtime._read_head_tree",
-        return_value=("a" * 40, "b" * 40),
-    ), patch(
-        "promote_supervisor_runtime._capture_bound_gitlinks",
-        return_value=(),
-    ), patch(
-        "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
-    ), patch(
-        "promote_supervisor_runtime._assert_candidate_handle_path",
-    ), patch(
-        "promote_supervisor_runtime._run_git",
-        side_effect=mock_run_git,
-    ):
-        with pytest.raises(ValueError, match="Tracked git tree is dirty"):
-            promotion.verify_working_tree_cleanliness(
-                real_root,
-                allow_legacy_task_brief_drift=False,
-            )
-
-
-def test_immutable_incumbent_cleanliness_rejects_non_task_brief_dirty_file(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.path = real_root
-
-    def mock_run_git(h: Any, *args: str) -> Mock:
-        cmd = args[0]
-        if cmd == "ls-files":
-            return Mock(stdout="")
-        elif cmd == "status":
-            return Mock(stdout=" M services/telemetry/metrics.py\0")
-        elif cmd in ("diff-index", "diff-files"):
-            return Mock(stdout="")
-        return Mock(stdout="")
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        tmp_path,
-    ), patch(
-        "promote_supervisor_runtime._candidate_handle",
-        return_value=(handle, False),
-    ), patch(
-        "promote_supervisor_runtime._read_head_tree",
-        return_value=("a" * 40, "b" * 40),
-    ), patch(
-        "promote_supervisor_runtime._capture_bound_gitlinks",
-        return_value=(),
-    ), patch(
-        "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
-    ), patch(
-        "promote_supervisor_runtime._assert_candidate_handle_path",
-    ), patch(
-        "promote_supervisor_runtime._run_git",
-        side_effect=mock_run_git,
-    ):
-        with pytest.raises(ValueError, match="Tracked git tree is dirty \\( M\\): services/telemetry/metrics.py"):
-            promotion.verify_working_tree_cleanliness(
-                real_root,
-                allow_legacy_task_brief_drift=True,
-            )
-
-
-def test_immutable_incumbent_revalidate_detects_task_brief_drift_change(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.path = real_root
-    drift = promotion.LegacyTaskBriefDrift(
-        relative_path=".orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md",
-        device=1,
-        inode=2,
-        mode=33188,
-        byte_length=2577,
-        sha256="435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289",
-        canonical_byte_length=2577,
-        canonical_sha256="435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289",
-    )
-
-    def mock_run_git(h: Any, *args: str) -> Mock:
-        cmd = args[0]
-        if cmd == "ls-files":
-            return Mock(stdout="")
-        elif cmd == "status":
-            return Mock(stdout=" M .orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md\0")
-        elif cmd == "diff-index":
-            return Mock(stdout="")
-        elif cmd == "diff-files":
-            raise ValueError("Candidate tracked worktree differs from index")
-        return Mock(stdout="")
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        tmp_path,
-    ), patch(
-        "promote_supervisor_runtime._candidate_handle",
-        return_value=(handle, False),
-    ), patch(
-        "promote_supervisor_runtime._read_head_tree",
-        return_value=("a" * 40, "b" * 40),
-    ), patch(
-        "promote_supervisor_runtime._capture_bound_gitlinks",
-        return_value=(),
-    ), patch(
-        "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
-    ), patch(
-        "promote_supervisor_runtime._assert_candidate_handle_path",
-    ), patch(
-        "promote_supervisor_runtime._capture_legacy_mutable_task_brief_drift",
-        return_value=(),
-    ), patch(
-        "promote_supervisor_runtime._run_git",
-        side_effect=mock_run_git,
-    ):
-        with pytest.raises(
-            ValueError,
-            match="Incumbent legacy task-brief drift changed during validation",
-        ):
-            promotion.verify_working_tree_cleanliness(
-                real_root,
-                allow_legacy_task_brief_drift=True,
-                expected_legacy_task_brief_drift=(drift,),
-                config_bytes=b"{}",
-            )
 
 
 def test_os_launch_filesystem_capture_regular_file_rejects_hard_link(
@@ -7818,207 +5095,14 @@ def test_os_launch_filesystem_capture_regular_file_rejects_hard_link(
         )
 
 
-def test_immutable_incumbent_bootstrap_rejects_hard_linked_legacy_task_brief(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    extra_link = tmp_path / "extra_link.md"
-    os.link(regenerated_brief, extra_link)
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="must not be hard-linked",
-        ):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
 
 
-def test_immutable_incumbent_bootstrap_rejects_symlinked_legacy_task_brief(
-    tmp_path: Path,
-) -> None:
-    remote, mutable_root, regenerated_brief, root_stat = (
-        _legacy_mutable_task_brief_drift_fixture(tmp_path)
-    )
-    target_file = tmp_path / "target_file.md"
-    target_file.write_text(regenerated_brief.read_text(encoding="utf-8"), encoding="utf-8")
-    regenerated_brief.unlink()
-    regenerated_brief.symlink_to(target_file)
-
-    with (
-        patch(
-            "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
-            remote.as_uri(),
-        ),
-    ):
-        with pytest.raises(
-            ValueError,
-            match="is a symlink|permits only modified tracked task briefs, found 'T'",
-        ):
-            promotion._mutable_root_binding(
-                ProcessCwdIdentity(
-                    path=mutable_root,
-                    device=root_stat.st_dev,
-                    inode=root_stat.st_ino,
-                ),
-                allow_legacy_task_brief_drift=True,
-                canonical_config_bytes=b"{}",
-            )
 
 
-def test_capture_legacy_mutable_task_brief_drift_admits_zero_residue(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-
-    with patch(
-        "promote_supervisor_runtime._run_mutable_git",
-        return_value=Mock(stdout=""),
-    ):
-        result = promotion._capture_legacy_mutable_task_brief_drift(
-            real_root,
-            expected_head="a" * 40,
-            config_bytes=b"{}",
-            filesystem=promotion.OSLaunchFilesystem(),
-        )
-        assert result == ()
 
 
-def test_prepare_clean_sha_named_immutable_incumbent_succeeds(
-    tmp_path: Path,
-) -> None:
-    candidate_root = tmp_path / ("a" * 40)
-    candidate_root.mkdir(parents=True, exist_ok=True)
-    incumbent_root = tmp_path / ("b" * 40)
-    incumbent_root.mkdir(parents=True, exist_ok=True)
-
-    create_realistic_healthy_fixture(candidate_root)
-    create_realistic_healthy_fixture(incumbent_root)
-
-    candidate_identity = _verified_identity_dependency(candidate_root)
-    incumbent_identity = _verified_identity_dependency(incumbent_root)
-    incumbent_identity.config_path = candidate_identity.config_path
-    incumbent_identity.config_bytes = candidate_identity.config_bytes
-    incumbent_identity.config_sha256 = candidate_identity.config_sha256
-    incumbent_process = _verified_process_identity_dependency(incumbent_root)
-
-    backend = promotion.OSPromotionBackend(reader=Mock())
-
-    def _mock_build_identity(
-        path: Path,
-        config_path: Path | None = None,
-        *,
-        allow_legacy_task_brief_drift: bool = False,
-        **kwargs: Any,
-    ) -> promotion.CandidateRuntimeIdentity:
-        if path == candidate_root:
-            return candidate_identity
-        if path == incumbent_root:
-            if not allow_legacy_task_brief_drift:
-                raise ValueError("Pre-fix prepare path failed: allow_legacy_task_brief_drift is False")
-            return incumbent_identity
-        raise ValueError(f"Unexpected candidate root: {path}")
-
-    with patch(
-        "promote_supervisor_runtime.build_candidate_runtime_identity",
-        side_effect=_mock_build_identity,
-    ) as mock_build_identity, patch(
-        "promote_supervisor_runtime._discover_supervisor_seed",
-        return_value=(
-            incumbent_process.generation,
-            incumbent_process.argv,
-            incumbent_process.cwd,
-        ),
-    ), patch(
-        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
-        return_value=incumbent_process,
-    ), patch(
-        "promote_supervisor_runtime.capture_runtime_observation",
-        return_value=Mock(invariant_failures=()),
-    ):
-        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
-        assert plan.incumbent_identity.candidate_root == incumbent_root
-        assert plan.incumbent_identity.legacy_task_brief_drift == ()
-        assert mock_build_identity.call_count == 2
-        assert mock_build_identity.call_args_list[1].kwargs.get("allow_legacy_task_brief_drift") is True
 
 
-def test_incumbent_bytecode_residue_admitted_when_capturing_incumbent(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
-    pycache_dir = orch_dir / "__pycache__"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
-    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
-    magic = importlib.util.MAGIC_NUMBER
-    pyc_content = magic + b"\x00" * 12 + b"header_data_payload_and_compiled_code_here"
-    pyc_file.write_bytes(pyc_content)
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            cmd = args[0]
-            if cmd == "ls-files":
-                return Mock(stdout="")
-            elif cmd == "status":
-                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
-            elif cmd in ("diff-index", "diff-files"):
-                return Mock(stdout="")
-            return Mock(stdout="")
-
-        with patch(
-            "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-            tmp_path,
-        ), patch(
-            "promote_supervisor_runtime._candidate_handle",
-            return_value=(handle, False),
-        ), patch(
-            "promote_supervisor_runtime._read_head_tree",
-            return_value=("a" * 40, "b" * 40),
-        ), patch(
-            "promote_supervisor_runtime._capture_bound_gitlinks",
-            return_value=(),
-        ), patch(
-            "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
-        ), patch(
-            "promote_supervisor_runtime._assert_candidate_handle_path",
-        ), patch(
-            "promote_supervisor_runtime._run_git",
-            side_effect=mock_run_git,
-        ):
-            residues = promotion._capture_legacy_incumbent_bytecode_residue(handle)
-            assert len(residues) == 2
-            assert residues[0].relative_path == ".orchestrator/__pycache__"
-            assert isinstance(residues[0], promotion.LegacyIncumbentBytecodeDirectoryResidue)
-            assert residues[1].relative_path == f".orchestrator/__pycache__/supervisor.{tag}.pyc"
-            assert residues[1].source_relative_path == ".orchestrator/supervisor.py"
-            assert residues[1].cpython_tag == tag
-            assert residues[1].byte_length == len(pyc_content)
-            assert residues[1].sha256 == hashlib.sha256(pyc_content).hexdigest()
-    finally:
-        os.close(handle.descriptor)
 
 
 def test_candidate_cleanliness_rejects_bytecode_residue(
@@ -8065,854 +5149,48 @@ def test_candidate_cleanliness_rejects_bytecode_residue(
         side_effect=mock_run_git,
     ):
         with pytest.raises(ValueError, match="Forbidden ignored .* found in candidate root"):
-            promotion.verify_working_tree_cleanliness(
-                real_root,
-                allow_legacy_incumbent_bytecode_residue=False,
-            )
-
-
-def test_incumbent_bytecode_residue_rejects_pyo_files(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator" / "__pycache__"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
-    pyo_file = orch_dir / f"supervisor.{tag}.pyo"
-    pyo_file.write_bytes(b"pyo_content")
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            cmd = args[0]
-            if cmd == "status":
-                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyo\0!! .orchestrator/__pycache__/\0")
-            return Mock(stdout="")
-
-        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
-            with pytest.raises(ValueError, match="rejects .pyo files|Forbidden file"):
-                promotion._capture_legacy_incumbent_bytecode_residue(handle)
-    finally:
-        os.close(handle.descriptor)
-
-
-def test_incumbent_bytecode_residue_rejects_sourceless_pyc(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator" / "__pycache__"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
-    pyc_file = orch_dir / f"orphan_module.{tag}.pyc"
-    pyc_file.write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12 + b"code")
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            if args[0] == "status":
-                return Mock(stdout=f"!! .orchestrator/__pycache__/orphan_module.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
-            return Mock(stdout="")
-
-        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
-            with pytest.raises(ValueError, match="Source-less incumbent bytecode file rejected"):
-                promotion._capture_legacy_incumbent_bytecode_residue(handle)
-    finally:
-        os.close(handle.descriptor)
-
-
-def test_prepare_incumbent_with_bytecode_residue_materializes_clean_rollback_runtime(
-    tmp_path: Path,
-) -> None:
-    candidate_root = tmp_path / ("a" * 40)
-    candidate_root.mkdir(parents=True, exist_ok=True)
-    incumbent_root = tmp_path / ("b" * 40)
-    incumbent_root.mkdir(parents=True, exist_ok=True)
-    rollback_dest = tmp_path / "command-runtimes" / ("b" * 40)
-    rollback_dest.mkdir(parents=True, exist_ok=True)
-
-    create_realistic_healthy_fixture(candidate_root)
-    create_realistic_healthy_fixture(incumbent_root)
-    create_realistic_healthy_fixture(rollback_dest)
-
-    candidate_identity = _verified_identity_dependency(candidate_root)
-    incumbent_identity = _verified_identity_dependency(incumbent_root)
-    incumbent_identity.config_path = candidate_identity.config_path
-    incumbent_identity.config_bytes = candidate_identity.config_bytes
-    incumbent_identity.config_sha256 = candidate_identity.config_sha256
-    incumbent_identity.legacy_incumbent_bytecode_residue = (
-        promotion.LegacyIncumbentBytecodeResidue(
-            relative_path=".orchestrator/__pycache__/supervisor.cpython-312.pyc",
-            device=1,
-            inode=2,
-            mode=33188,
-            nlink=1,
-            byte_length=100,
-            sha256="abc",
-            cpython_tag="cpython-312",
-            source_relative_path=".orchestrator/supervisor.py",
-        ),
-    )
-
-    clean_rollback_identity = _verified_identity_dependency(rollback_dest)
-    clean_rollback_identity.config_path = candidate_identity.config_path
-    clean_rollback_identity.config_bytes = candidate_identity.config_bytes
-    clean_rollback_identity.config_sha256 = candidate_identity.config_sha256
-
-    incumbent_process = _verified_process_identity_dependency(incumbent_root)
-    backend = promotion.OSPromotionBackend(reader=Mock())
-
-    def _mock_build_identity(path: Path, *args: Any, **kwargs: Any) -> promotion.CandidateRuntimeIdentity:
-        if path == candidate_root:
-            return candidate_identity
-        if path == incumbent_root:
-            return incumbent_identity
-        if path == rollback_dest:
-            return clean_rollback_identity
-        raise ValueError(f"Unexpected path: {path}")
-
-    with patch(
-        "promote_supervisor_runtime.build_candidate_runtime_identity",
-        side_effect=_mock_build_identity,
-    ), patch(
-        "promote_supervisor_runtime._discover_supervisor_seed",
-        return_value=(
-            incumbent_process.generation,
-            incumbent_process.argv,
-            incumbent_process.cwd,
-        ),
-    ), patch(
-        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
-        return_value=incumbent_process,
-    ), patch(
-        "promote_supervisor_runtime.materialize_immutable_rollback_runtime",
-        return_value=clean_rollback_identity,
-    ) as mock_mat, patch(
-        "promote_supervisor_runtime.capture_runtime_observation",
-        return_value=Mock(invariant_failures=()),
-    ):
-        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
-        assert mock_mat.called
-        assert plan.incumbent_identity == clean_rollback_identity
-        assert plan.incumbent_identity.candidate_root == rollback_dest
-        assert len(plan.incumbent_identity.legacy_incumbent_bytecode_residue) == 0
-
-
-def test_immutable_incumbent_promotion_prepare_and_revalidate_passes_flock_id_churn_opt_in(
-    tmp_path: Path,
-) -> None:
-    runtimes_dir = tmp_path / "command-runtimes"
-    candidate_root = runtimes_dir / ("a" * 40)
-    candidate_root.mkdir(parents=True, exist_ok=True)
-    incumbent_root = runtimes_dir / ("b" * 40)
-    incumbent_root.mkdir(parents=True, exist_ok=True)
-
-    create_realistic_healthy_fixture(candidate_root)
-    create_realistic_healthy_fixture(incumbent_root)
-
-    candidate_identity = _verified_identity_dependency(candidate_root)
-    incumbent_identity = _verified_identity_dependency(incumbent_root)
-    incumbent_identity.config_path = candidate_identity.config_path
-    incumbent_identity.config_bytes = candidate_identity.config_bytes
-    incumbent_identity.config_sha256 = candidate_identity.config_sha256
-    incumbent_process = replace(
-        _verified_process_identity_dependency(incumbent_root),
-        argv=tuple(json.loads(incumbent_identity.config_bytes)["watchdog"]["supervisor_command"]),
-    )
-
-    backend = promotion.OSPromotionBackend(reader=Mock())
-
-    def _mock_build_identity(
-        path: Path,
-        config_path: Path | None = None,
-        *,
-        allow_legacy_task_brief_drift: bool = False,
-        **kwargs: Any,
-    ) -> promotion.CandidateRuntimeIdentity:
-        if path == candidate_root:
-            return candidate_identity
-        if path == incumbent_root:
-            return incumbent_identity
-        raise ValueError(f"Unexpected path: {path}")
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        runtimes_dir,
-    ), patch(
-        "promote_supervisor_runtime.build_candidate_runtime_identity",
-        side_effect=_mock_build_identity,
-    ), patch(
-        "promote_supervisor_runtime._discover_supervisor_seed",
-        return_value=(
-            incumbent_process.generation,
-            incumbent_process.argv,
-            incumbent_process.cwd,
-        ),
-    ), patch(
-        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
-        return_value=incumbent_process,
-    ) as mock_discover, patch(
-        "promote_supervisor_runtime.capture_runtime_observation",
-        return_value=Mock(invariant_failures=()),
-    ) as mock_capture:
-        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
-        assert plan.incumbent_process.generation == incumbent_process.generation
-
-        # Verify discover_incumbent_supervisor_process was called with allow_legacy_admission_lock_id_churn=True
-        assert mock_discover.call_args.kwargs.get("allow_legacy_admission_lock_id_churn") is True
-
-        # Verify capture_runtime_observation was called with allow_legacy_admission_lock_id_churn=True
-        assert mock_capture.call_args.kwargs.get("allow_legacy_admission_lock_id_churn") is True
-
-        # Test revalidate under immutable incumbent
-        mock_capture.reset_mock()
-        observation = backend.revalidate(plan)
-        assert observation is not None
-        assert mock_capture.call_args.kwargs.get("allow_legacy_admission_lock_id_churn") is True
-
-
-def test_immutable_incumbent_discover_process_accepts_verified_flock_id_churn(
-    tmp_path: Path,
-) -> None:
-    candidate, reader, _argv = _injected_process_fixture(tmp_path)
-    original = reader.locks[0]
-    reader.locks[1] = replace(original, kernel_lock_id="72")
-
-    identity = _discover_injected(
-        candidate,
-        reader,
-        allow_legacy_admission_lock_id_churn=True,
-    )
-
-    assert (
-        identity.admission_lock.kernel_lock_id
-        == promotion.MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID
-    )
-
-
-def test_immutable_incumbent_discover_process_rejects_flock_id_churn_without_opt_in(
-    tmp_path: Path,
-) -> None:
-    candidate, reader, _argv = _injected_process_fixture(tmp_path)
-    original = reader.locks[0]
-    reader.locks[1] = replace(original, kernel_lock_id="72")
-
-    with pytest.raises(ValueError, match="admission lock generation mismatch"):
-        _discover_injected(
-            candidate,
-            reader,
-            allow_legacy_admission_lock_id_churn=False,
-        )
-
-
-def test_incumbent_bytecode_residue_rejects_symlink_directory(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
-    pycache_dir = orch_dir / "__pycache__"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-    symlink_target = tmp_path / "target_dir"
-    symlink_target.mkdir(parents=True, exist_ok=True)
-    os.symlink(symlink_target, pycache_dir / "__pycache__")
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            if args[0] == "status":
-                return Mock(stdout="!! .orchestrator/__pycache__/\0")
-            return Mock(stdout="")
-
-        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
-            with pytest.raises(ValueError, match="rejects symlinks|Forbidden file or directory"):
-                promotion._capture_legacy_incumbent_bytecode_residue(handle)
-    finally:
-        os.close(handle.descriptor)
-
-
-def test_incumbent_bytecode_residue_rejects_symlink_file(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
-    pycache_dir = orch_dir / "__pycache__"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
-    symlink_target = tmp_path / "outside.pyc"
-    symlink_target.write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12 + b"data")
-    os.symlink(symlink_target, pycache_dir / f"supervisor.{tag}.pyc")
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            if args[0] == "status":
-                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
-            return Mock(stdout="")
-
-        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
-            with pytest.raises(ValueError, match="rejects symlinks|is a symlink"):
-                promotion._capture_legacy_incumbent_bytecode_residue(handle)
-    finally:
-        os.close(handle.descriptor)
-
-
-def test_incumbent_bytecode_residue_rejects_nested_directory(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
-    pycache_dir = orch_dir / "__pycache__"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-    nested_dir = pycache_dir / "nested"
-    nested_dir.mkdir(parents=True, exist_ok=True)
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            if args[0] == "status":
-                return Mock(stdout="!! .orchestrator/__pycache__/\0")
-            return Mock(stdout="")
-
-        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
-            with pytest.raises(ValueError, match="Forbidden sub-directory in incumbent bytecode residue"):
-                promotion._capture_legacy_incumbent_bytecode_residue(handle)
-    finally:
-        os.close(handle.descriptor)
-
-
-def test_incumbent_bytecode_residue_rejects_empty_directory(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
-    pycache_dir = orch_dir / "__pycache__"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            if args[0] == "status":
-                return Mock(stdout="!! .orchestrator/__pycache__/\0")
-            return Mock(stdout="")
-
-        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
-            with pytest.raises(ValueError, match="Incumbent bytecode residue directory is empty"):
-                promotion._capture_legacy_incumbent_bytecode_residue(handle)
-    finally:
-        os.close(handle.descriptor)
-
-
-def test_incumbent_bytecode_residue_rejects_hardlink(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
-    pycache_dir = orch_dir / "__pycache__"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
-    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
-    pyc_file.write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12 + b"data")
-    hardlink_file = pycache_dir / f"hardlink.{tag}.pyc"
-    os.link(pyc_file, hardlink_file)
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            if args[0] == "status":
-                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
-            return Mock(stdout="")
-
-        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
-            with pytest.raises(ValueError, match="hard linked"):
-                promotion._capture_legacy_incumbent_bytecode_residue(handle)
-    finally:
-        os.close(handle.descriptor)
-
-
-def test_incumbent_bytecode_residue_rejects_foreign_magic(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
-    pycache_dir = orch_dir / "__pycache__"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
-    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
-    pyc_file.write_bytes(b"BAD_MAGIC_HEADER_TEST_BYTES")
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            if args[0] == "status":
-                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
-            return Mock(stdout="")
-
-        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
-            with pytest.raises(ValueError, match="magic number mismatch"):
-                promotion._capture_legacy_incumbent_bytecode_residue(handle)
-    finally:
-        os.close(handle.descriptor)
-
-
-def test_incumbent_bytecode_residue_rejects_post_capture_mutation(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
-    pycache_dir = orch_dir / "__pycache__"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
-    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
-    magic = importlib.util.MAGIC_NUMBER
-    pyc_content = magic + b"\x00" * 12 + b"original_compiled_code"
-    pyc_file.write_bytes(pyc_content)
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            if args[0] == "status":
-                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
-            return Mock(stdout="")
-
-        with patch("promote_supervisor_runtime._read_head_tree", return_value=("a" * 40, "b" * 40)), \
-             patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
-            residues = promotion._capture_legacy_incumbent_bytecode_residue(handle)
-            assert len(residues) == 2
-
-            # Mutate pyc file after capture
-            pyc_file.write_bytes(magic + b"\x00" * 12 + b"MUTATED_compiled_code")
-
-            with pytest.raises(ValueError, match="Incumbent legacy bytecode residue changed during validation"):
-                promotion.verify_working_tree_cleanliness(
-                    handle,
-                    expected_head="a" * 40,
-                    expected_tree="b" * 40,
-                    allow_legacy_incumbent_bytecode_residue=True,
-                    expected_legacy_incumbent_bytecode_residue=residues,
-                )
-    finally:
-        os.close(handle.descriptor)
-
-
-def test_incumbent_bytecode_residue_rejects_post_capture_directory_replacement(
-    tmp_path: Path,
-) -> None:
-    real_root = tmp_path / ("a" * 40)
-    real_root.mkdir(parents=True, exist_ok=True)
-    orch_dir = real_root / ".orchestrator"
-    orch_dir.mkdir(parents=True, exist_ok=True)
-    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
-    pycache_dir = orch_dir / "__pycache__"
-    pycache_dir.mkdir(parents=True, exist_ok=True)
-    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
-    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
-    magic = importlib.util.MAGIC_NUMBER
-    pyc_content = magic + b"\x00" * 12 + b"original_compiled_code"
-    pyc_file.write_bytes(pyc_content)
-
-    handle = Mock(spec=promotion.CandidateRootHandle)
-    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
-    handle.path = real_root
-    try:
-        def mock_run_git(h: Any, *args: str) -> Mock:
-            if args[0] == "status":
-                return Mock(
-                    stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0"
-                )
-            return Mock(stdout="")
-
-        with patch(
-            "promote_supervisor_runtime._read_head_tree",
-            return_value=("a" * 40, "b" * 40),
-        ), patch(
-            "promote_supervisor_runtime._capture_bound_gitlinks",
-            return_value=(),
-        ), patch(
-            "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
-        ), patch(
-            "promote_supervisor_runtime._assert_candidate_handle_path",
-        ), patch(
-            "promote_supervisor_runtime._run_git",
-            side_effect=mock_run_git,
-        ):
-            residues = promotion._capture_legacy_incumbent_bytecode_residue(handle)
-            assert len(residues) == 2
-
-            # Replace admitted directory while preserving exact pyc file (same inode/digest/path)
-            backup_dir = tmp_path / "backup"
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            temp_pyc = backup_dir / pyc_file.name
-            shutil.move(str(pyc_file), str(temp_pyc))
-            pycache_dir.rmdir()
-            # Create a dummy dir to consume the freed inode so recreated pycache_dir gets a new inode
-            (orch_dir / "dummy_claim_inode").mkdir(parents=True, exist_ok=True)
-            pycache_dir.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(temp_pyc), str(pyc_file))
-
-            with pytest.raises(
-                ValueError,
-                match="Incumbent legacy bytecode residue changed during validation",
-            ):
-                promotion.verify_working_tree_cleanliness(
-                    handle,
-                    expected_head="a" * 40,
-                    expected_tree="b" * 40,
-                    allow_legacy_incumbent_bytecode_residue=True,
-                    expected_legacy_incumbent_bytecode_residue=residues,
-                )
-    finally:
-        os.close(handle.descriptor)
-
-
-def test_mutable_incumbent_snapshot_accepts_split_entrypoint_root(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    entrypoint_root = (
-        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
-    )
-    (entrypoint_root / ".orchestrator").mkdir(parents=True)
-    (entrypoint_root / "scripts").mkdir(parents=True)
-
-    source_specs = [
-        (".orchestrator/supervisor.py", False),
-        (".orchestrator/supervisor_watchdog.py", True),
-        ("scripts/run-supervisor-watchdog.sh", True),
-        ("scripts/sync-dev-root.sh", True),
-        ("scripts/ai-status.sh", True),
-        ("scripts/ai_status.py", False),
-        ("scripts/provision_live_supervisor_config.py", False),
-    ]
-    for rel_path, is_exec in source_specs:
-        src = identity.candidate_root / rel_path
-        dst = entrypoint_root / rel_path
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(src.read_bytes())
-        if is_exec:
-            dst.chmod(0o755)
-
-    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
-    split_argv = (
-        argv[0],
-        argv[1],
-        argv[2],
-        str(split_entrypoint),
-        *argv[4:],
-    )
-    reader.argv[1717] = split_argv
-    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
-    identity = _replace_identity_live_config(
-        identity,
-        lambda payload: payload["watchdog"].__setitem__(
-            "supervisor_command", list(split_argv)
-        ),
-    )
-
-    binding_cwd = _mutable_binding_stub(identity)
-    binding_ep = _mutable_binding_stub(identity)
-
-    def mock_binding(cwd, **kwargs):
-        if cwd.path == entrypoint_root:
-            return binding_ep
-        return binding_cwd
-
-    with patch(
-        "promote_supervisor_runtime._mutable_root_binding",
-        side_effect=mock_binding,
-    ):
-        snapshot = promotion.capture_mutable_incumbent_snapshot(
-            identity,
-            reader=reader,
-            seed_generation=reader.generations[1717],
-            seed_argv=split_argv,
-            seed_cwd=reader.cwd[1717],
-        )
-
-    assert snapshot.is_split_entrypoint is True
-    assert snapshot.entrypoint_root == entrypoint_root
-    assert snapshot.root == reader.cwd[1717].path
-    assert snapshot.process.argv == split_argv
-
-
-def test_mutable_incumbent_snapshot_rejects_split_entrypoint_wrong_command_root(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    entrypoint_root = (
-        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
-    )
-    (entrypoint_root / ".orchestrator").mkdir(parents=True)
-    (entrypoint_root / "scripts").mkdir(parents=True)
-
-    source_specs = [
-        (".orchestrator/supervisor.py", False),
-        (".orchestrator/supervisor_watchdog.py", True),
-        ("scripts/run-supervisor-watchdog.sh", True),
-        ("scripts/sync-dev-root.sh", True),
-        ("scripts/ai-status.sh", True),
-        ("scripts/ai_status.py", False),
-        ("scripts/provision_live_supervisor_config.py", False),
-    ]
-    for rel_path, is_exec in source_specs:
-        src = identity.candidate_root / rel_path
-        dst = entrypoint_root / rel_path
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(src.read_bytes())
-        if is_exec:
-            dst.chmod(0o755)
-
-    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
-    split_argv = (
-        argv[0],
-        argv[1],
-        argv[2],
-        str(split_entrypoint),
-        *argv[4:],
-    )
-    reader.argv[1717] = split_argv
-    # Wrong command root in process environment (leaving it at cwd candidate instead of entrypoint_root)
-    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(identity.candidate_root)
-    identity = _replace_identity_live_config(
-        identity,
-        lambda payload: payload["watchdog"].__setitem__(
-            "supervisor_command", list(split_argv)
-        ),
-    )
-
-    binding_cwd = _mutable_binding_stub(identity)
-    binding_ep = _mutable_binding_stub(identity)
-
-    def mock_binding(cwd, **kwargs):
-        if cwd.path == entrypoint_root:
-            return binding_ep
-        return binding_cwd
-
-    with patch(
-        "promote_supervisor_runtime._mutable_root_binding",
-        side_effect=mock_binding,
-    ):
-        with pytest.raises(ValueError, match="PANTHEON_COMMAND_ROOT"):
-            promotion.capture_mutable_incumbent_snapshot(
-                identity,
-                reader=reader,
-                seed_generation=reader.generations[1717],
-                seed_argv=split_argv,
-                seed_cwd=reader.cwd[1717],
-            )
-
-
-def test_mutable_incumbent_snapshot_rejects_split_entrypoint_commit_mismatch(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    entrypoint_root = (
-        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
-    )
-    (entrypoint_root / ".orchestrator").mkdir(parents=True)
-    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
-    split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
-    split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
-    reader.argv[1717] = split_argv
-    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
-    identity = _replace_identity_live_config(
-        identity,
-        lambda payload: payload["watchdog"].__setitem__(
-            "supervisor_command", list(split_argv)
-        ),
-    )
-
-    binding_cwd = _mutable_binding_stub(identity)
-    binding_ep_list = list(binding_cwd)
-    binding_ep_list[0] = "b" * 40
-    binding_ep = tuple(binding_ep_list)
-
-    def mock_binding(cwd, **kwargs):
-        if cwd.path == entrypoint_root:
-            return binding_ep
-        return binding_cwd
-
-    with patch(
-        "promote_supervisor_runtime._mutable_root_binding",
-        side_effect=mock_binding,
-    ):
-        with pytest.raises(ValueError, match="HEAD commit differs from cwd"):
-            promotion.capture_mutable_incumbent_snapshot(
-                identity,
-                reader=reader,
-                seed_generation=reader.generations[1717],
-                seed_argv=split_argv,
-                seed_cwd=reader.cwd[1717],
-            )
-
-
-def test_mutable_incumbent_snapshot_rejects_split_entrypoint_tree_mismatch(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    entrypoint_root = (
-        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
-    )
-    (entrypoint_root / ".orchestrator").mkdir(parents=True)
-    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
-    split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
-    split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
-    reader.argv[1717] = split_argv
-    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
-    identity = _replace_identity_live_config(
-        identity,
-        lambda payload: payload["watchdog"].__setitem__(
-            "supervisor_command", list(split_argv)
-        ),
-    )
-
-    binding_cwd = _mutable_binding_stub(identity)
-    binding_ep_list = list(binding_cwd)
-    binding_ep_list[1] = "c" * 40
-    binding_ep = tuple(binding_ep_list)
-
-    def mock_binding(cwd, **kwargs):
-        if cwd.path == entrypoint_root:
-            return binding_ep
-        return binding_cwd
-
-    with patch(
-        "promote_supervisor_runtime._mutable_root_binding",
-        side_effect=mock_binding,
-    ):
-        with pytest.raises(ValueError, match="tracked tree differs from cwd"):
-            promotion.capture_mutable_incumbent_snapshot(
-                identity,
-                reader=reader,
-                seed_generation=reader.generations[1717],
-                seed_argv=split_argv,
-                seed_cwd=reader.cwd[1717],
-            )
-
-
-def test_mutable_incumbent_snapshot_rejects_split_entrypoint_governed_source_drift(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    entrypoint_root = (
-        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
-    )
-    (entrypoint_root / ".orchestrator").mkdir(parents=True)
-    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
-    split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
-    split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
-    reader.argv[1717] = split_argv
-    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
-    identity = _replace_identity_live_config(
-        identity,
-        lambda payload: payload["watchdog"].__setitem__(
-            "supervisor_command", list(split_argv)
-        ),
-    )
-
-    dummy_source = promotion.LaunchFileIdentity(
-        role="supervisor",
-        path=tmp_path / "supervisor.py",
-        device=1,
-        inode=1,
-        mode=33188,
-        byte_length=10,
-        sha256="a" * 64,
-    )
-    binding_cwd = _mutable_binding_stub(identity)
-    binding_cwd_list = list(binding_cwd)
-    binding_cwd_list[5] = (dummy_source,)
-    binding_cwd = tuple(binding_cwd_list)
-
-    binding_ep_list = list(binding_cwd)
-    sources_ep = [replace(dummy_source, sha256="b" * 64)]
-    binding_ep_list[5] = tuple(sources_ep)
-    binding_ep = tuple(binding_ep_list)
-
-    def mock_binding(cwd, **kwargs):
-        if cwd.path == entrypoint_root:
-            return binding_ep
-        return binding_cwd
-
-    with patch(
-        "promote_supervisor_runtime._mutable_root_binding",
-        side_effect=mock_binding,
-    ):
-        with pytest.raises(ValueError, match="governed source byte drift"):
-            promotion.capture_mutable_incumbent_snapshot(
-                identity,
-                reader=reader,
-                seed_generation=reader.generations[1717],
-                seed_argv=split_argv,
-                seed_cwd=reader.cwd[1717],
-            )
-
-
-
-def test_mutable_incumbent_snapshot_rejects_relative_split_entrypoint(
-    tmp_path: Path,
-) -> None:
-    identity, reader, argv = _injected_process_fixture(tmp_path)
-    rel_argv = (argv[0], argv[1], argv[2], ".orchestrator/supervisor.py", *argv[4:])
-    reader.argv[1717] = rel_argv
-    identity = _replace_identity_live_config(
-        identity,
-        lambda payload: payload["watchdog"].__setitem__(
-            "supervisor_command", list(rel_argv)
-        ),
-    )
-    binding = _mutable_binding_stub(identity)
-    with patch(
-        "promote_supervisor_runtime._mutable_root_binding",
-        return_value=binding,
-    ):
-        with pytest.raises(ValueError, match="entrypoint path must be absolute"):
-            promotion.capture_mutable_incumbent_snapshot(
-                identity,
-                reader=reader,
-                seed_generation=reader.generations[1717],
-                seed_argv=rel_argv,
-                seed_cwd=reader.cwd[1717],
-            )
+            promotion.verify_working_tree_cleanliness(real_root)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def test_worker_lease_parity_ignores_unstarted_queued_or_pending_events() -> None:
@@ -8931,13 +5209,12 @@ def test_worker_lease_parity_ignores_unstarted_queued_or_pending_events() -> Non
         "worker_worktrees": {"leases": {}},
     }
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is True
@@ -8959,13 +5236,12 @@ def test_worker_lease_parity_rejects_started_event_missing_lease_owner() -> None
         "worker_worktrees": {"leases": {}},
     }
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is False
@@ -9003,13 +5279,12 @@ def test_worker_lease_parity_coherent_started_event_passes() -> None:
         },
     }
 
-    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
-        invariants = evaluate_promotion_invariants(
-            health_report=health_report,
-            ai_status=ai_status,
-            state=state,
-            lock_path=Path("/tmp/fake.lock"),
-        )
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        lock_path=Path("/tmp/fake.lock"),
+    )
 
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is True
@@ -9240,135 +5515,8 @@ def test_task_state_event_log_handles_empty_and_large_journals(tmp_path: Path) -
     assert contract2.task_state_event_log_identity.captured_at_size == 200000
 
 
-def test_task_state_event_log_immutable_sources_remain_fail_closed(tmp_path: Path) -> None:
-    """Immutable launch sources (supervisor.py, interpreter, config) must still reject mutations during capture."""
-    fs = promotion.OSLaunchFilesystem()
-    test_file = tmp_path / "supervisor.py"
-    test_file.write_bytes(b"print('hello')\n")
-
-    original_fdopen = os.fdopen
-
-    def fdopen_with_mutation(fd: int, *args: Any, **kwargs: Any) -> Any:
-        handle = original_fdopen(fd, *args, **kwargs)
-        with test_file.open("a") as f:
-            f.write("# concurrent_mutation\n")
-        return handle
-
-    with patch("os.fdopen", side_effect=fdopen_with_mutation):
-        with pytest.raises(ValueError, match="Governed launch supervisor changed during capture"):
-            fs.capture_regular_file(test_file, role="supervisor", require_executable=False)
 
 
-def test_active_immutable_incumbent_config_entrypoint_bound_separately_from_rollback_root(
-    tmp_path: Path,
-) -> None:
-    """Active immutable incumbent live config and process bind active command runtime, while rollback root is distinct."""
-    command_runtimes_dir = tmp_path / "command-runtimes"
-    rollback_runtimes_dir = tmp_path / "rollback-command-runtimes"
-    candidate_root = command_runtimes_dir / ("a" * 40)
-    active_incumbent_root = command_runtimes_dir / ("b" * 40)
-    rollback_root = rollback_runtimes_dir / ("b" * 40)
-
-    candidate_root.mkdir(parents=True, exist_ok=True)
-    active_incumbent_root.mkdir(parents=True, exist_ok=True)
-    rollback_root.mkdir(parents=True, exist_ok=True)
-
-    create_realistic_healthy_fixture(candidate_root)
-    create_realistic_healthy_fixture(active_incumbent_root)
-    create_realistic_healthy_fixture(rollback_root)
-
-    candidate_identity = _verified_identity_dependency(candidate_root)
-    active_incumbent_identity = _verified_identity_dependency(active_incumbent_root)
-    active_incumbent_identity.legacy_incumbent_bytecode_residue = ("some_file.pyc",)
-    rollback_identity = _verified_identity_dependency(rollback_root)
-
-    active_incumbent_identity.config_path = candidate_identity.config_path
-    rollback_identity.config_path = candidate_identity.config_path
-
-    executable = str(Path(sys.executable).resolve())
-    active_cmd = [
-        executable,
-        str(active_incumbent_root / ".orchestrator" / "supervisor.py"),
-        "--config",
-        str(candidate_identity.config_path),
-    ]
-
-    config_dict = json.loads(candidate_identity.config_bytes)
-    config_dict["watchdog"]["supervisor_command"] = active_cmd
-    live_config_bytes = (json.dumps(config_dict, sort_keys=True) + "\n").encode("utf-8")
-    candidate_identity.config_path.write_bytes(live_config_bytes)
-
-    candidate_identity.config_bytes = live_config_bytes
-    candidate_identity.config_sha256 = promotion.hashlib.sha256(live_config_bytes).hexdigest()
-    active_incumbent_identity.config_bytes = live_config_bytes
-    active_incumbent_identity.config_sha256 = candidate_identity.config_sha256
-    rollback_identity.config_bytes = live_config_bytes
-    rollback_identity.config_sha256 = candidate_identity.config_sha256
-
-    active_process = replace(
-        _verified_process_identity_dependency(active_incumbent_root),
-        argv=tuple(active_cmd),
-        executable=Path(executable),
-    )
-
-    backend = promotion.OSPromotionBackend(reader=Mock())
-
-    def _mock_build_identity(
-        path: Path,
-        config_path: Path | None = None,
-        *,
-        allow_legacy_task_brief_drift: bool = False,
-        allow_legacy_incumbent_bytecode_residue: bool = False,
-        **kwargs: Any,
-    ) -> promotion.CandidateRuntimeIdentity:
-        if path == candidate_root:
-            return candidate_identity
-        if path == active_incumbent_root:
-            return active_incumbent_identity
-        if path == rollback_root:
-            return rollback_identity
-        raise ValueError(f"Unexpected path: {path}")
-
-    with patch(
-        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
-        command_runtimes_dir,
-    ), patch(
-        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
-        rollback_runtimes_dir,
-    ), patch(
-        "promote_supervisor_runtime.build_candidate_runtime_identity",
-        side_effect=_mock_build_identity,
-    ), patch(
-        "promote_supervisor_runtime._discover_supervisor_seed",
-        return_value=(
-            active_process.generation,
-            active_process.argv,
-            active_process.cwd,
-        ),
-    ), patch(
-        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
-        return_value=active_process,
-    ), patch(
-        "promote_supervisor_runtime.materialize_immutable_rollback_runtime",
-        return_value=rollback_identity,
-    ), patch(
-        "promote_supervisor_runtime.capture_runtime_observation",
-        return_value=Mock(invariant_failures=()),
-    ) as mock_capture:
-        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
-        assert plan.active_incumbent_identity == active_incumbent_identity
-        assert plan.incumbent_identity == rollback_identity
-        assert plan.candidate_config.command_root == candidate_root
-        assert plan.rollback_config.command_root == rollback_root
-
-        # Live config on disk must NOT be mutated during prepare
-        assert candidate_identity.config_path.read_bytes() == live_config_bytes
-
-        # Revalidate pre-CAS must succeed using active_incumbent_identity
-        mock_capture.reset_mock()
-        observation = backend.revalidate(plan)
-        assert observation is not None
-        assert mock_capture.call_args[0][0] == active_incumbent_identity
 
 
 def test_revalidate_rejects_pre_cas_live_config_naming_rollback_root(
@@ -9415,7 +5563,6 @@ def test_revalidate_rejects_pre_cas_live_config_naming_rollback_root(
         incumbent_identity=rollback_identity,
         rollback_config=promotion.derive_supervisor_config_variant(rollback_identity, command_root=rollback_root),
         incumbent_process=active_process,
-        mutable_incumbent=None,
         rollback_launch=promotion.build_governed_supervisor_launch_contract(rollback_identity),
         baseline=Mock(invariant_failures=()),
         promotion_lock_path=tmp_path / "promo.lock",
@@ -9476,7 +5623,6 @@ def test_revalidate_rejects_pre_cas_live_config_naming_candidate_root(
         incumbent_identity=rollback_identity,
         rollback_config=promotion.derive_supervisor_config_variant(rollback_identity, command_root=rollback_root),
         incumbent_process=active_process,
-        mutable_incumbent=None,
         rollback_launch=promotion.build_governed_supervisor_launch_contract(rollback_identity),
         baseline=Mock(invariant_failures=()),
         promotion_lock_path=tmp_path / "promo.lock",
@@ -9530,9 +5676,6 @@ def test_prepare_rejects_config_capture_race_between_candidate_active_and_rollba
         identity.config_bytes = candidate_identity.config_bytes
         identity.config_byte_length = candidate_identity.config_byte_length
         identity.config_sha256 = candidate_identity.config_sha256
-    active_incumbent_identity.legacy_incumbent_bytecode_residue = (
-        "requires-clean-rollback",
-    )
     identity = (
         active_incumbent_identity
         if drifted_identity == "active"
@@ -9583,7 +5726,7 @@ def test_prepare_rejects_config_capture_race_between_candidate_active_and_rollba
             ValueError,
             match=expected_message,
         ):
-            backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+            backend.prepare(candidate_root)
 
     materialize.assert_called_once_with(
         active_incumbent_identity,
