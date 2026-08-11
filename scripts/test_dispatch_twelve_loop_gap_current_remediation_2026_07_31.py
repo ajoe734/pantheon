@@ -504,7 +504,7 @@ def test_current_dry_run_cli_is_read_only_with_a_v2_head(tmp_path: Path) -> None
     lock.chmod(0o640)
     expected_snapshot = load_snapshot(
         authority["event_log"],
-        refresh_checkpoint=False,
+        observational=True,
     )
     before_files = {
         "projection": file_identity(tmp_path / "ai-status.json"),
@@ -710,8 +710,8 @@ def test_authority_uses_one_validated_snapshot_generation(
     }
     calls: list[tuple[Path, bool]] = []
 
-    def one_snapshot(path: Path, *, refresh_checkpoint: bool = True) -> dict:
-        calls.append((path, refresh_checkpoint))
+    def one_snapshot(path: Path, *, observational: bool = False) -> dict:
+        calls.append((path, observational))
         return snapshot
 
     monkeypatch.setattr(module, "load_snapshot", one_snapshot)
@@ -720,20 +720,20 @@ def test_authority_uses_one_validated_snapshot_generation(
     loaded = module.load_authoritative_task_snapshot(authority)
 
     assert loaded is snapshot
-    assert calls == [(authority["event_log"], True)]
+    assert calls == [(authority["event_log"], False)]
     assert module.load_authoritative_task_state(authority) == state
     assert calls == [
-        (authority["event_log"], True),
-        (authority["event_log"], True),
+        (authority["event_log"], False),
+        (authority["event_log"], False),
     ]
     assert (
         module.load_authoritative_task_snapshot(
             authority,
-            refresh_checkpoint=False,
+            observational=True,
         )
         is snapshot
     )
-    assert calls[-1] == (authority["event_log"], False)
+    assert calls[-1] == (authority["event_log"], True)
     assert module.authoritative_snapshot_evidence(loaded) == {
         "event_count": 8632,
         "byte_size": 2_174_900_966,

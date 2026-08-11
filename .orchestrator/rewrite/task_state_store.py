@@ -789,17 +789,15 @@ def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def load_snapshot(path: str | Path, *, refresh_checkpoint: bool = True) -> dict[str, Any]:
+def load_snapshot(path: str | Path, *, observational: bool = False) -> dict[str, Any]:
     """Read the current V2 head plus only the bounded tail after it.
 
-    V2 has no replay checkpoint, mmap, prefix hash, or V1 fallback.  The
-    retained ``refresh_checkpoint=False`` spelling selects a strict
-    observational read: it cannot create a parent or lock sidecar.  Default
-    reads may provision an empty fresh store for shadow/bootstrap flow, but a
-    nonempty no-head log still fails rather than being treated as V1.
+    V2 has no replay checkpoint, mmap, prefix hash, or V1 fallback.
+    Observational reads cannot create a parent or lock sidecar; default reads
+    may provision an empty fresh store for shadow/bootstrap flow. A nonempty
+    no-head log always fails rather than being treated as V1.
     """
 
-    observational = not refresh_checkpoint
     event_path = (
         _require_existing_parent(Path(path))
         if observational
