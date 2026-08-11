@@ -1,18 +1,18 @@
 {
   "task_id": "L12-VERIFY-OBS-001",
-  "verified_at": "2026-08-11T13:29:25.933400+00:00",
+  "verified_at": "2026-08-11T13:47:53.002805+00:00",
   "status": "passed",
   "summary": "Real service drill verified: Runtime anomaly -> telemetry -> drift -> incident -> postmortem -> EvolutionDecision -> approved action, downstream stop & recovery, and retry/replay verified.",
   "proof_details": {
-    "verification_id": "obs-run-real-20260811132725",
-    "verified_at": "2026-08-11T13:29:25.932991+00:00",
+    "verification_id": "obs-run-real-20260811134552",
+    "verified_at": "2026-08-11T13:47:53.002251+00:00",
     "runtime_id": "rt-l12-obs-001",
     "tenant_id": "tenant-real-obs",
     "environment": "paper",
     "telemetry_events": [
       {
-        "event_id": "evt-hb-132727",
-        "timestamp": "2026-08-11T13:27:27.525126+00:00",
+        "event_id": "evt-hb-134554",
+        "timestamp": "2026-08-11T13:45:54.576747+00:00",
         "runtime_id": "rt-l12-obs-001",
         "tenant_id": "tenant-real-obs",
         "environment": "paper",
@@ -22,8 +22,8 @@
         }
       },
       {
-        "event_id": "evt-rej-132727",
-        "timestamp": "2026-08-11T13:27:27.525126+00:00",
+        "event_id": "evt-rej-134554",
+        "timestamp": "2026-08-11T13:45:54.576747+00:00",
         "runtime_id": "rt-l12-obs-001",
         "tenant_id": "tenant-real-obs",
         "environment": "paper",
@@ -33,8 +33,8 @@
         }
       },
       {
-        "event_id": "evt-dd-132727",
-        "timestamp": "2026-08-11T13:27:27.525126+00:00",
+        "event_id": "evt-dd-134554",
+        "timestamp": "2026-08-11T13:45:54.576747+00:00",
         "runtime_id": "rt-l12-obs-001",
         "tenant_id": "tenant-real-obs",
         "environment": "paper",
@@ -45,11 +45,11 @@
       }
     ],
     "drift_report": {
-      "drift_id": "eval-obs-132727",
+      "drift_id": "eval-obs-134554",
       "runtime_id": "rt-l12-obs-001",
       "tenant_id": "tenant-real-obs",
       "environment": "paper",
-      "detected_at": "2026-08-11T13:27:27.525126+00:00",
+      "detected_at": "2026-08-11T13:45:54.576747+00:00",
       "status": "critical",
       "observed_metrics": {
         "heartbeat_interval": 45.0,
@@ -64,7 +64,7 @@
       }
     },
     "incident": {
-      "incident_id": "inc-obs-132732",
+      "incident_id": "inc-obs-134559",
       "title": "Correlated heartbeat loss and drawdown breach on rt-l12-obs-001",
       "runtime_id": "rt-l12-obs-001",
       "tenant_id": "tenant-real-obs",
@@ -72,47 +72,47 @@
       "status": "resolved",
       "severity": "critical",
       "correlated_events": [
-        "evt-hb-132727",
-        "evt-rej-132727",
-        "evt-dd-132727"
+        "evt-hb-134554",
+        "evt-rej-134554",
+        "evt-dd-134554"
       ],
-      "created_at": "2026-08-11T13:27:32.525126+00:00",
-      "resolved_at": "2026-08-11T13:29:25Z"
+      "created_at": "2026-08-11T13:45:59.576747+00:00",
+      "resolved_at": "2026-08-11T13:47:52Z"
     },
     "postmortem": {
-      "postmortem_id": "pm-obs-132732",
-      "incident_id": "inc-obs-132732",
+      "postmortem_id": "pm-obs-134559",
+      "incident_id": "inc-obs-134559",
       "runtime_id": "rt-l12-obs-001",
       "root_cause": "Network latency caused heartbeat timeout and margin rejection.",
-      "created_at": "2026-08-11T13:27:35.525126+00:00",
+      "created_at": "2026-08-11T13:46:02.576747+00:00",
       "status": "approved"
     },
     "evolution_decision": {
-      "decision_id": "evo-obs-132742",
-      "postmortem_id": "pm-obs-132732",
-      "incident_id": "inc-obs-132732",
+      "decision_id": "evo-obs-134609",
+      "postmortem_id": "pm-obs-134559",
+      "incident_id": "inc-obs-134559",
       "runtime_id": "rt-l12-obs-001",
       "proposed_action": "retrain",
       "approval_status": "executed",
       "governed_by": "operator-approver",
-      "approved_at": "2026-08-11T13:27:42.525126+00:00"
+      "approved_at": "2026-08-11T13:46:09.576747+00:00"
     },
     "action_receipt": {
-      "action_id": "act-evo-obs-132742",
-      "decision_id": "evo-obs-132742",
+      "action_id": "act-evo-obs-134609",
+      "decision_id": "evo-obs-134609",
       "runtime_id": "rt-l12-obs-001",
       "command": "retrain",
       "attempts": 2,
       "retry_history": [
         {
           "attempt": 1,
-          "timestamp": "2026-08-11T13:27:42.525126+00:00",
+          "timestamp": "2026-08-11T13:46:09.576747+00:00",
           "status": "pending_poll",
           "error": null
         },
         {
           "attempt": 2,
-          "timestamp": "2026-08-11T13:27:57.525126+00:00",
+          "timestamp": "2026-08-11T13:46:24.576747+00:00",
           "status": "success",
           "error": null
         }
@@ -131,8 +131,8 @@
           "errors": [],
           "items": [
             {
-              "outbox_id": "evo-dispatch-a55b277e-9d01-5d81-831e-0e268e3090c4",
-              "decision_id": "evo-obs-132742",
+              "outbox_id": "evo-dispatch-a1a4260d-30db-5600-803d-ab763935d747",
+              "decision_id": "evo-obs-134609",
               "tenant_id": "tenant-real-obs",
               "execution_plane": "research",
               "action_type": "retrain",
@@ -156,8 +156,8 @@
           "errors": [],
           "items": [
             {
-              "outbox_id": "evo-dispatch-a55b277e-9d01-5d81-831e-0e268e3090c4",
-              "decision_id": "evo-obs-132742",
+              "outbox_id": "evo-dispatch-a1a4260d-30db-5600-803d-ab763935d747",
+              "decision_id": "evo-obs-134609",
               "tenant_id": "tenant-real-obs",
               "execution_plane": "research",
               "action_type": "retrain",
@@ -169,7 +169,7 @@
               "execution_result": {
                 "status": "succeeded",
                 "plane": "research",
-                "executed_at": "2026-08-11T13:29:25Z",
+                "executed_at": "2026-08-11T13:47:52Z",
                 "execution_ref_id": "rrun-20260811-001",
                 "outcome_summary": "research_orchestrator_run rrun-20260811-001 reported terminal status='completed'"
               }
@@ -184,7 +184,7 @@
         "execution_ref_id": "rrun-20260811-001",
         "execution_status": "completed",
         "rebound": true,
-        "applied_at": "2026-08-11T13:27:57.525126+00:00"
+        "applied_at": "2026-08-11T13:46:24.576747+00:00"
       }
     },
     "infra_telemetry_event": {
@@ -192,15 +192,15 @@
       "tenant_id": "tenant-real-obs",
       "environment": "paper",
       "status": "degraded",
-      "timestamp": "2026-08-11T13:28:07.525126+00:00",
+      "timestamp": "2026-08-11T13:46:34.576747+00:00",
       "delivered_payload": {
         "component": {
           "component_kind": "http_service",
           "endpoint": "http://unconfigured.invalid/__health__",
           "service_name": "telemetry_ingest"
         },
-        "created_at": "2026-08-11T13:28:07.525126+00:00",
-        "event_id": "infra-health-57c404fedf49b1517a2c4529dd47ef5e",
+        "created_at": "2026-08-11T13:46:34.576747+00:00",
+        "event_id": "infra-health-c134503e9fc38358eb2fc611aafb9c16",
         "event_type": "infrastructure_health",
         "health_status": "degraded",
         "metadata": {
@@ -213,7 +213,7 @@
           "error_rate": 1.0,
           "failure_count": 1,
           "latency_ms": 150.0,
-          "observed_at": "2026-08-11T13:28:07.525126+00:00",
+          "observed_at": "2026-08-11T13:46:34.576747+00:00",
           "probe_kind": "interval_probe",
           "sample_count": 1,
           "status_code": 503,
@@ -229,10 +229,10 @@
       "component": "telemetry_ingest",
       "tenant_id": "tenant-real-obs",
       "environment": "paper",
-      "incident_id": "infra-bff-23c42d40a354c7446c2b5399",
+      "incident_id": "infra-bff-9991833719e32d2943e7cf42",
       "status": "resolved",
-      "created_at": "2026-08-11T13:28:07.525126+00:00",
-      "resolved_at": "2026-08-11T13:28:27.525126+00:00",
+      "created_at": "2026-08-11T13:46:34.576747+00:00",
+      "resolved_at": "2026-08-11T13:46:54.576747+00:00",
       "delivered_incident": {
         "component": {
           "component_kind": "http_service",
@@ -240,14 +240,14 @@
           "service_name": "telemetry_ingest"
         },
         "evidence_summary": "interval_probe observed 1/1 failures (rate=1.000); consecutive_failures=3; detail=ServiceUnavailable",
-        "incident_id": "infra-bff-23c42d40a354c7446c2b5399",
+        "incident_id": "infra-bff-9991833719e32d2943e7cf42",
         "producer": "control-plane-bff",
         "schema_version": "pantheon.infrastructure-incident/1",
         "severity": "high",
-        "source_event_id": "infra-health-b05342752f2be52d671febf2aab5d782",
+        "source_event_id": "infra-health-7c7a9e8421733077e10d43b8d756b679",
         "status": "open",
         "telemetry_event_ids": [
-          "infra-health-b05342752f2be52d671febf2aab5d782"
+          "infra-health-7c7a9e8421733077e10d43b8d756b679"
         ],
         "tenant_id": "tenant-real-obs",
         "title": "BFF downstream degradation: telemetry_ingest"
@@ -257,7 +257,7 @@
       "component": "telemetry_ingest",
       "recovery_status": "healthy",
       "overall_ok": true,
-      "resolved_at": "2026-08-11T13:28:27.525126+00:00"
+      "resolved_at": "2026-08-11T13:46:54.576747+00:00"
     },
     "concurrency_replay_proof": {
       "duplicate_event_rejection": true,
