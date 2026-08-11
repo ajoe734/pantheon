@@ -3522,6 +3522,153 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn("waiting_for", archive_task)
 
 
+class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
+    def _audited_events(
+        self,
+        *events: dict[str, str],
+        task_id: str = "REG-002",
+    ) -> list[tuple[Any, dict[str, Any]]]:
+        self._test_log_file.write_text(
+            "".join(json.dumps(event) + "\n" for event in events),
+            encoding="utf-8",
+        )
+        return ai_status._audited_reassignment_events(
+            task_id,
+            source="test reassignment audit",
+            unavailable_message="test reassignment audit unavailable",
+        )
+
+    @staticmethod
+    def _with_prefix(event: dict[str, str], prefix: str) -> dict[str, str]:
+        event = dict(event)
+        digest = ai_status._supervisor_reassignment_event_id(event).removeprefix(
+            "supervisor-reassign-"
+        )
+        event["event_id"] = f"{prefix}{digest}"
+        return event
+
+    def test_accepts_both_canonical_event_id_prefixes(self) -> None:
+        for prefix in ("supervisor-reassign-", "supervisor-task-reassigned-"):
+            with self.subTest(prefix=prefix):
+                event = self._with_prefix(audited_reassignment_event(), prefix)
+                audited = self._audited_events(event)
+
+                self.assertEqual(len(audited), 1)
+                self.assertEqual(audited[0][1]["event_id"], event["event_id"])
+
+    def test_accepts_existing_closeout_blocker_event(self) -> None:
+        event = {
+            "agent": "Orchestrator",
+            "event_id": (
+                "supervisor-task-reassigned-"
+                "dac420278948aad12f1f32f6804d6af63f2adace105fbaf8ed2212a26f510778"
+            ),
+            "message": (
+                "Auto-reassigned review from Claude to Antigravity after repeated "
+                "Claude terminal: {\"is_error\":true,\"duration_api_ms\":0,"
+                "\"num_turns\":1,\"stop_reason\":\"stop_sequence\","
+                "\"session_id\":\"c467821a-0723-4d23-a700-488d42a6d679\","
+                "\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"c"
+            ),
+            "new_owner": "Codex",
+            "new_reviewer": "Antigravity",
+            "old_owner": "Codex",
+            "old_reviewer": "Claude",
+            "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+            "ts": "2026-08-09T05:20:22Z",
+            "type": "task_reassigned",
+        }
+        self.assertEqual(
+            ai_status._supervisor_reassignment_event_id(event),
+            (
+                "supervisor-reassign-"
+                "dac420278948aad12f1f32f6804d6af63f2adace105fbaf8ed2212a26f510778"
+            ),
+        )
+        self._audited_events(event, task_id=event["task_id"])
+
+        result = ai_status._verified_done_reviewer_reassignment(
+            {
+                "id": event["task_id"],
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+            },
+            commit_reviewer="Claude",
+            current_reviewer="Antigravity",
+            commit_timestamp="2026-08-09T05:00:00+00:00",
+        )
+
+        self.assertEqual(result["event_id"], event["event_id"])
+
+    def test_rejects_wrong_digest_and_wrong_prefix(self) -> None:
+        cases = {
+            "wrong digest": "supervisor-task-reassigned-" + "0" * 64,
+            "wrong prefix": "supervisor-task-reassign-" + "1" * 64,
+        }
+        for label, event_id in cases.items():
+            with self.subTest(case=label):
+                event = audited_reassignment_event()
+                event["event_id"] = event_id
+                self.assertEqual(self._audited_events(event), [])
+
+    def test_rejects_forged_actor(self) -> None:
+        event = self._with_prefix(
+            audited_reassignment_event(), "supervisor-task-reassigned-"
+        )
+        event["agent"] = "Codex"
+
+        self.assertEqual(self._audited_events(event), [])
+
+    def test_rejects_missing_required_fields(self) -> None:
+        for field in ("event_id", "old_owner", "new_owner", "ts"):
+            with self.subTest(field=field):
+                event = audited_reassignment_event()
+                event.pop(field)
+                if field != "event_id":
+                    event = self._with_prefix(event, "supervisor-task-reassigned-")
+                self.assertEqual(self._audited_events(event), [])
+
+    def test_rejects_cross_task_event(self) -> None:
+        event = self._with_prefix(
+            audited_reassignment_event(task_id="OTHER-001"),
+            "supervisor-task-reassigned-",
+        )
+
+        self.assertEqual(self._audited_events(event, task_id="REG-002"), [])
+
+    def test_rejects_ambiguous_chain_with_compatible_prefixes(self) -> None:
+        timestamp = "2026-08-09T05:20:22Z"
+        first = audited_reassignment_event(
+            old_owner="Codex2",
+            new_owner="Codex",
+            timestamp=timestamp,
+            message="first same-time hop",
+        )
+        second = self._with_prefix(
+            audited_reassignment_event(
+                old_owner="Codex",
+                new_owner="Antigravity",
+                timestamp=timestamp,
+                message="second same-time hop",
+            ),
+            "supervisor-task-reassigned-",
+        )
+        self._audited_events(first, second)
+
+        with self.assertRaisesRegex(SystemExit, "ordering is ambiguous"):
+            ai_status._verified_owner_reassignment(
+                {"id": "REG-002", "owner": "Antigravity", "reviewer": "Claude"},
+                evidence_owner="Codex2",
+                current_owner="Antigravity",
+            )
+
+
 class DeliveryMetadataValidationTests(unittest.TestCase):
     @staticmethod
     def _owner_reassignment_event(
