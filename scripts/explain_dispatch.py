@@ -263,10 +263,6 @@ def explain_dispatch_for_task(
         results["global_block_reason"] = f"Task {task_id} is already pending delivery"
         return results
 
-    if not check_assistant_dev_bridge_admitted(config, task):
-        results["global_block_reason"] = f"Task {task_id} signed dev-bridge packet is not admitted"
-        return results
-
     for agent_id in agent_ids:
         target_agent = display_name_for(config, agent_id)
         agent_trace: dict[str, Any] = {

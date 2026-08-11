@@ -14142,13 +14142,12 @@ def persist_blocked_task_reconciliation_runtime(
 def task_assignment_is_catalog_locked(task: dict[str, Any]) -> bool:
     """Return whether a materialized catalog contract fixes owner/reviewer.
 
-    The catalog contract digest covers the assignment fields.  Letting helper
-    claims or provider fallback rewrite either field makes the active task
-    conflict with its immutable execution catalog and causes the newly launched
-    worker to be killed as superseded on the next poll.
+    Formerly checked catalog_task_contract_sha256 to lock task assignments.
+    Updated for work-conserving canonical routing: catalog assignment execution
+    gates are removed so all eligible capacity can be filled.
     """
+    return False
 
-    return bool(str(task.get("catalog_task_contract_sha256") or "").strip())
 
 
 def _persist_task_reassignment_locked(
@@ -18031,8 +18030,6 @@ def agent_has_dispatchable_primary_work(
     for task in status.get("tasks", []) or []:
         if task_is_sidecar(task):
             continue
-        if not assistant_dev_bridge_task_is_admitted(config, task):
-            continue
         if not agent_can_take_task(config, agent_name, task):
             continue
         task_status = str(task.get("status") or "").lower()
@@ -18653,9 +18650,6 @@ def task_execution_dispatch_candidate(
     second, status-only copy previously let preemption kill a live worker for a
     task that the dispatcher could not actually queue.
     """
-
-    if not assistant_dev_bridge_task_is_admitted(config, task):
-        return None
 
     dispatch_settings = settings or ready_dispatch_settings(config)
     review_statuses = normalized_status_set(
@@ -19335,15 +19329,6 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
 
     expected_key = current_dispatch_event_key(config, event, task_map)
     task_id = str(event.get("task_id") or "unknown task")
-    current_task = task_map.get(task_id)
-    if current_task is not None and not assistant_dev_bridge_task_is_admitted(
-        config,
-        current_task,
-    ):
-        return (
-            f"Skipped queued wake event for {task_id}: signed dev-bridge packet "
-            "has no exact durable admission."
-        )
     if expected_key is None:
         return f"Skipped stale queued wake event for {task_id}: task is no longer eligible for {reason}."
 
@@ -19516,8 +19501,6 @@ def dispatch_ready_tasks(
         task_id = str(task.get(task_id_field) or "")
         if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
             continue
-        if not assistant_dev_bridge_task_is_admitted(config, task):
-            continue
         normalized = normalize_mainline_task_assignment(config, task, state=state) or normalized
 
     if normalized:
@@ -19616,8 +19599,6 @@ def dispatch_ready_tasks(
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
-                continue
-            if not assistant_dev_bridge_task_is_admitted(config, task):
                 continue
             if task_id in active_task_ids or task_id in pending_task_ids:
                 continue
@@ -20735,15 +20716,6 @@ def run_once(
                     "workspace_source_root": str(repo_root),
                 },
             )
-    github_bus_changed = bool(
-        _safe_phase(
-            "sync_github_bus",
-            sync_github_bus,
-            config,
-            github_runtime_snapshot,
-            quiet=quiet,
-        )
-    )
     # This owns a separate, minute-level cadence. It can call GitHub but runs
     # before runtime admission; dispatch's locked hot path therefore never
     # waits on a PR check-rollup query.
@@ -20803,10 +20775,20 @@ def run_once(
                 ownerless_pr_snapshots=ownerless_pr_snapshots,
                 task_state_shadow_snapshot=task_state_shadow_snapshot,
                 assistant_dev_bridge_snapshot=assistant_dev_bridge_snapshot,
-                prelock_changed=github_bus_changed or blocked_reconciliation_changed,
+                prelock_changed=blocked_reconciliation_changed,
             )
         )
         changed = changed or pre_poll_changed
+        github_bus_changed = bool(
+            _safe_phase(
+                "sync_github_bus",
+                sync_github_bus,
+                config,
+                github_runtime_snapshot,
+                quiet=quiet,
+            )
+        )
+        changed = github_bus_changed or changed
         process_changed = bool(
             _safe_phase(
                 "process_queue_reserved",
