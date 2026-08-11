@@ -4,11 +4,33 @@
   "program_id": "pantheon-twelve-loop-minimum-functional-closure-2026-08-08",
   "owner": "Antigravity",
   "reviewer": "Codex",
-  "verified_at": "2026-08-11T18:03:00Z",
-  "authoritative_snapshot_digest": "3ea702b7f56cdbb4fb8a7345fc7c4ad1d293a118",
+  "verified_at": "2026-08-11T18:21:00Z",
+  "authoritative_snapshot_digest": "3ea702b7fe2bdd7ef644c7f779972c6a9103be82",
+  "authoritative_snapshot_algorithm": "git-object-sha1",
+  "authoritative_snapshot_source": "PR base / origin-dev tip at admission time",
   "packet_receipt_digests": {
-    "pkt_a": "5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9",
-    "pkt_b": "2c36f24f0e2e3648d68d92d0e140e8346544f2fdaf8c928e4ebd680dfb530c77"
+    "pkt_a": {
+      "packet_digest": "5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9",
+      "receipt_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-minimum-functional-a-20260808-f56e2bc91--5cdd77b6a6d30f29.json",
+      "receipt_sha256": "4c5276f8a615e0129bc1e7845f1b90d790d984180470bb23bc7a1a459203cd84"
+    },
+    "pkt_b": {
+      "packet_digest": "2c36f24f0e2e3648d68d92d0e140e8346544f2fdaf8c928e4ebd680dfb530c77",
+      "receipt_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-minimum-functional-b-20260808-f56e2bc91--2c36f24f0e2e3648.json",
+      "receipt_sha256": "9b128f7311d9f485e94b2a8d46210f99d81423851ab529681329c07ef27fbc16"
+    }
+  },
+  "mapping_files_integrity": {
+    "execution_tasks": {
+      "file_path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+      "sha256": "7ea5b2c471705063bc1c29dfaa70c59aa1e50f8af957dbe9b2fcd44a81535496",
+      "line_count": 572
+    },
+    "legacy_reconciliation": {
+      "file_path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+      "sha256": "6e0271d30d906b79af7e1c3f58c1789d36991ae621a4177860261c26226caf58",
+      "line_count": 204
+    }
   },
   "legacy_28_dag_verification": {
     "legacy_task_count": 28,
@@ -23,23 +45,25 @@
     "execution_tasks_file": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
     "index_doc": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
     "active_successor_tasks": [
-      "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
-      "L12-MIN-SRC-20260808",
-      "L12-MIN-DIST-20260808",
-      "L12-MIN-ALPHA-20260808",
-      "L12-MIN-TEACH-20260808",
-      "L12-MIN-AGORA-20260808",
-      "L12-MIN-IMIT-20260808",
-      "L12-MIN-CONS-20260808",
-      "L12-MIN-DEP-20260808",
-      "L12-MIN-CAP-20260808",
-      "L12-MIN-TELREC-20260808",
-      "L12-MIN-EVO-20260808",
-      "L12-MIN-BFF-20260808",
-      "L12-MIN-INTEGRATE-20260808",
-      "L12-MIN-E2E-20260808",
-      "L12-MIN-HOSTED-20260808",
-      "L12-MIN-CLOSE-20260808"
+      {"id": "L12-MIN-SRC-20260808", "status": "in_progress"},
+      {"id": "L12-MIN-DIST-20260808", "status": "todo"},
+      {"id": "L12-MIN-ALPHA-20260808", "status": "todo"},
+      {"id": "L12-MIN-AGORA-20260808", "status": "todo"},
+      {"id": "L12-MIN-IMIT-20260808", "status": "todo"},
+      {"id": "L12-MIN-TELREC-20260808", "status": "todo"},
+      {"id": "L12-MIN-EVO-20260808", "status": "todo"},
+      {"id": "L12-MIN-BFF-20260808", "status": "todo"},
+      {"id": "L12-MIN-INTEGRATE-20260808", "status": "todo"},
+      {"id": "L12-MIN-E2E-20260808", "status": "todo"},
+      {"id": "L12-MIN-HOSTED-20260808", "status": "todo"},
+      {"id": "L12-MIN-CLOSE-20260808", "status": "todo"}
+    ],
+    "archived_successor_tasks": [
+      {"id": "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808", "terminal_status": "done", "disposition": "completed"},
+      {"id": "L12-MIN-TEACH-20260808", "terminal_status": "done", "disposition": "completed"},
+      {"id": "L12-MIN-CONS-20260808", "terminal_status": "done", "disposition": "completed"},
+      {"id": "L12-MIN-DEP-20260808", "terminal_status": "done", "disposition": "completed"},
+      {"id": "L12-MIN-CAP-20260808", "terminal_status": "done", "disposition": "completed"}
     ],
     "dependency_resolution": "all 17 successor tasks resolve dependencies cleanly to canonical tasks",
     "artifact_overlap_check": "passed; no two runnable successor tasks have unordered overlapping declared artifacts",
