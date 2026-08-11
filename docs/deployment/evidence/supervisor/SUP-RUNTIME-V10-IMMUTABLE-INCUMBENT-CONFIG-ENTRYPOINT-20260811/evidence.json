@@ -1,0 +1,38 @@
+{
+  "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+  "title": "Bind active incumbent config entrypoint separately from rollback root",
+  "owner": "Codex2",
+  "reviewer": "Antigravity",
+  "status": "in_progress",
+  "head_binding_policy": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py. This evidence manifest does not claim a commit can contain its own SHA.",
+  "changed_paths": [
+    "scripts/promote_supervisor_runtime.py",
+    "scripts/test_promote_supervisor_runtime.py",
+    "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811/evidence.json"
+  ],
+  "verification_commands": [
+    "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python | tail -n 1)\" && \"$PANTHEON_PY\" -m pytest -q scripts/test_promote_supervisor_runtime.py -k \"active_immutable_incumbent_config_entrypoint_bound_separately_from_rollback_root or revalidate_rejects_pre_cas_live_config or prepare_rejects_config_capture_race_between_candidate_active_and_rollback\"",
+    "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python | tail -n 1)\" && \"$PANTHEON_PY\" -m pytest -q scripts/test_sync_dev_root.py",
+    "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python | tail -n 1)\" && \"$PANTHEON_PY\" -m pytest -q scripts/test_supervisor_watchdog_install.py",
+    "git diff --check"
+  ],
+  "verification_results": {
+    "focused_promotion_tests": "5 passed in 1.60s",
+    "sync_dev_root_suite": "7 passed in 10.67s",
+    "affected_supervisor_watchdog_tests": "5 passed in 0.53s",
+    "git_diff_check": "passed with 0 exit code"
+  },
+  "non_blocking_observation": "The optional broader scripts/test_supervisor_runtime_health.py run has a pre-existing assertion failure in test_health_fails_on_stale_heartbeat (only supervisor_heartbeat_fresh fails, while the test also expects supervisor_process_alive). It is outside this task's promotion/rollback source scope and was not changed.",
+  "required_check_identities": [
+    "Commit trailers",
+    "Runtime mirror guard",
+    "Smoke acceptance",
+    "Pantheon canonical review gate"
+  ],
+  "dependency_and_merge_order": {
+    "depends_on_task": "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811",
+    "target_branch": "dev"
+  },
+  "no_live_rollout_boundary": "Source-only remediation for active incumbent config entrypoint binding without executing live rollout, process restart, or modifying live state/config.",
+  "normal_revert_plan": "Revert the commit on dev if active incumbent runtime identity verification or pre-CAS live config entrypoint binding regresses."
+}
