@@ -1,9 +1,43 @@
 # SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802
 
-Status: **NO-GO preflight; task blocked**
+Status: **NO-GO preflight; task blocked (revalidated 2026-08-10)**
 
-Owner: Codex2
-Reviewer: Human/Ops
+Current owner: Codex
+Current canonical reviewer: Codex2
+
+Original 2026-08-02 evidence owner/reviewer: Codex2 / Human/Ops
+
+## 2026-08-10 redispatch result
+
+The separately governed V10 rollout worker owned the only authorized
+promotion transaction while this V9 worker remained an observer. Candidate
+`6607b6a706b59670009965375e0a5dd6b5824fcf` was a clean standalone runtime at
+tree `5eb3d3a18ba01bb2e2f53e442842aa7c86fec23c`, with zero Git-status entries
+and zero `__pycache__`, `.pyc`, or `.pyo` paths.
+
+The transaction failed closed at `2026-08-10T14:09:14.245497Z` before
+baseline capture, config mutation, process signalling, candidate launch, or
+rollback. The immutable incumbent `5877b64425c8d6aede147d6cbbc6fbb9e228c259`
+contains three historical `__pycache__` directories and 36 bytecode files.
+The durable external transaction is
+`supervisor-runtime-promotion-20260810T140901039717Z-636096.json` with SHA-256
+`bbd2b6f09587225682b5ac90070a49f14f72eb230cde154c6ae9f2943fe377ec`.
+
+Post-abort readback kept PID `2272245`, start ticks `16301949`, incumbent
+runtime SHA `5877b64425c8d6aede147d6cbbc6fbb9e228c259`, and live-config SHA-256
+`8168c57646339d510499dafa7f02f5f7a7aa7f24c2d05e23c68e698f6dc6662e`
+unchanged. V9 did not issue a second promotion call, did not clean the
+incumbent, and did not probe, reassign, or dispatch a provider.
+
+The V10 owner anchored a source-only follow-up packet for a provenance-bound,
+capture-only incumbent bytecode boundary backed by a clean rollback checkout.
+Until that source task is admitted, exact-head reviewed, merged, archived, and
+followed by a successful separately governed rollout, V9 cannot truthfully run
+the required ten candidate cycles or live quota-routing canary.
+
+The final review gate also remains unresolved: the immutable acceptance text
+requires exact-head Human/Ops review, while the current canonical reviewer is
+Codex2. No reviewer-policy change is claimed by this evidence.
 
 ## Result
 
@@ -101,3 +135,51 @@ live cache quarantine, live quota projection, live Codex-to-Codex2 fallback,
 candidate resume-generation refresh, and candidate rollback were not run and
 are not claimed. Human/Ops should review this exact evidence head as a NO-GO
 record and keep the task blocked rather than approve successful completion.
+
+## Redispatch update — 2026-08-10 (owner reassigned to Claude)
+
+Owner reassigned from Codex to Claude by Chair; canonical reviewer remains
+Codex2. Revalidated rather than re-asserted the standing blocker.
+
+Both prior source-only blockers are now resolved: `...PYCACHE-RESIDUE-20260810`
+and `...LEGACY-RESIDUE-20260810` are merged and canonically archived (PR
+#4718, PR #4716), and `dev` tip `0c34a0da0` contains both.
+
+The remaining chain is still open:
+
+- `SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810` is `review`,
+  PR #4724 (`d69c3e66e5...`), `OPEN`/`MERGEABLE`, unreviewed.
+- `SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808` is `in_progress`
+  (owner Codex, reviewer Claude) and holds the only active promotion lease.
+
+V9 ran only a read-only `--discover-only` preflight against the plain
+dev-root checkout (not a candidate clone) to confirm no accidental candidate
+binding; it failed `candidate_runtime_identity_immutable` as expected. No
+signal, launch, config edit, cache probe, or dispatch was performed.
+
+V9 remains blocked pending: split-entrypoint PR #4724 merge, V10 rollout
+verify completion, and Chair/Human/Ops reconciliation of the
+Codex2-vs-Human/Ops final review-gate discrepancy.
+
+## Redispatch update — 2026-08-11 (owned_ready_dispatch)
+
+Revalidated rather than re-asserted the standing blocker.
+
+`SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810` is now `done`
+and canonically archived; its head `d69c3e66e5...` is confirmed an ancestor
+of `origin/dev` tip `8b7624999`. That prior gating PR is resolved.
+
+However, `SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808` remains
+`in_progress` (owner Codex, reviewer Claude) and, as of its last update
+(2026-08-11T01:51:12Z), is actively starting a separately dispatched
+transactional rollout retry through `sync-dev-root` right now. It still
+holds the only active promotion lease/authority.
+
+V9 ran only a read-only `promote_supervisor_runtime.py --discover-only
+--json` against this task worktree checkout (not any candidate, incumbent,
+or dev-root clone) to confirm no accidental candidate/incumbent binding; no
+mutation was performed.
+
+V9 remains blocked pending: `SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808`
+completing or releasing its active promotion lease, and Chair/Human/Ops
+reconciliation of the Codex2-vs-Human/Ops final review-gate discrepancy.

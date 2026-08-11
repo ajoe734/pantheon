@@ -2,8 +2,10 @@
   "schema_version": 1,
   "task": {
     "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
-    "owner": "Codex2",
-    "reviewer": "Human/Ops",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "original_no_go_owner": "Codex2",
+    "original_no_go_reviewer": "Human/Ops",
     "phase": "Supervisor governed live promotion / integrated V9 canary",
     "status": "blocked",
     "review_file": "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802/evidence.json"
@@ -300,9 +302,85 @@
     "config_changed": false,
     "incumbent_pid_unchanged": true
   },
+  "redispatch_2026_08_10": {
+    "decision": "no_go_active_rollout_lease_and_incumbent_bytecode",
+    "captured_at": "2026-08-10T14:16:06Z",
+    "duplicate_promotion_attempted": false,
+    "candidate": {
+      "commit": "6607b6a706b59670009965375e0a5dd6b5824fcf",
+      "tree": "5eb3d3a18ba01bb2e2f53e442842aa7c86fec23c",
+      "git_status_entry_count": 0,
+      "bytecode_path_count": 0
+    },
+    "transaction": {
+      "recorded_at": "2026-08-10T14:09:14.245497Z",
+      "state": "aborted",
+      "outcome": "aborted",
+      "exit_code": 1,
+      "external_path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T140901039717Z-636096.json",
+      "sha256": "bbd2b6f09587225682b5ac90070a49f14f72eb230cde154c6ae9f2943fe377ec",
+      "baseline": null,
+      "config_transaction": null,
+      "candidate_pid": null,
+      "rollback_pid": null
+    },
+    "incumbent_after_abort": {
+      "pid": 2272245,
+      "starttime_ticks": 16301949,
+      "alive": true,
+      "commit": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+      "pycache_directory_count": 3,
+      "bytecode_file_count": 36,
+      "live_config_sha256": "8168c57646339d510499dafa7f02f5f7a7aa7f24c2d05e23c68e698f6dc6662e"
+    },
+    "coordination": {
+      "promotion_owner_task": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "source_follow_up": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "source_follow_up_state_at_capture": "anchored_packet_pending_governed_admission",
+      "v9_live_canary_state": "not_run"
+    },
+    "reviewer_gate": {
+      "canonical_reviewer": "Codex2",
+      "acceptance_required_reviewer": "Human/Ops",
+      "reconciled": false,
+      "policy_changed_by_v9": false
+    }
+  },
   "review": {
     "decision": "not_requested_yet",
-    "reviewer": "Human/Ops",
-    "required": "Review this exact NO-GO evidence head and keep the task blocked; do not approve completion as a successful live canary."
+    "reviewer": "Codex2",
+    "required": "Review this exact NO-GO/blocked evidence head; do not approve completion as a successful live canary. Canonical acceptance still requires exact-head Human/Ops review before completion (unreconciled reviewer-policy gap, tracked separately)."
+  },
+  "redispatch_2026_08_10_t2": {
+    "decision": "no_go_dependency_chain_still_open",
+    "captured_at": "2026-08-10T16:46:37Z",
+    "duplicate_promotion_attempted": false,
+    "revalidation": {
+      "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810": "merged and canonically archived (PR #4718, dev merge commit 69ad33f3d)",
+      "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810": "merged and canonically archived (PR #4716)",
+      "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810": "still open for independent exact-head review: PR #4724, head d69c3e66e543c8d290c792d07c65d843ea0cda95, state OPEN, mergeable, no reviewDecision recorded yet",
+      "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808": "canonical status in_progress, owner Codex, reviewer Claude; holds the active promotion lease and remains the only task authorized to run --promote"
+    },
+    "own_preflight_probe": {
+      "note": "Ran promote_supervisor_runtime.py --discover-only --json against the dev-root checkout only (not any candidate command-runtime clone) to avoid duplicating V10's active candidate-rooted preflight while it holds the lease.",
+      "result": "eligible_for_promotion=false; candidate_runtime_identity_immutable failed because --repo resolved to /home/lupin/pantheon, which is not a child of /home/lupin/pantheon-ci-deploy/command-runtimes -- expected and non-actionable, confirms no accidental candidate binding occurred",
+      "mutations_performed": "none; read-only discover-only mode never signals or launches a process"
+    },
+    "conclusion": "V9 remains correctly blocked: it must not attempt its own promotion/canary transaction while SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808 holds the active lease and while the split-entrypoint fix it depends on is still an open, unreviewed PR. No config edit, process signal, sync, candidate cleanup, cache probe, quota fallback dispatch, or rollback operation was performed."
+  },
+  "redispatch_2026_08_11": {
+    "decision": "no_go_active_sibling_lease",
+    "captured_at": "2026-08-11T01:55:39Z",
+    "duplicate_promotion_attempted": false,
+    "revalidation": {
+      "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810": "now done and canonically archived; head d69c3e66e543c8d290c792d07c65d843ea0cda95 confirmed an ancestor of origin/dev tip 8b7624999",
+      "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808": "canonical status in_progress, owner Codex, reviewer Claude, last_update 2026-08-11T01:51:12Z, next note: 'PR #4737 source repair is merged into dev; starting the separately dispatched transactional rollout retry through sync-dev-root only.' -- it is actively mid-transaction and still the only task holding promotion authority"
+    },
+    "own_preflight_probe": {
+      "note": "Ran promote_supervisor_runtime.py --discover-only --json against this task worktree checkout only (not any candidate command-runtime clone or the dev-root/incumbent runtime), to avoid any interference with V10's in-flight transactional rollout retry.",
+      "result": "eligible_for_promotion=false; candidate_runtime_identity is null and health_report is unhealthy because this worktree has no .orchestrator/state.json or provider_capabilities.json -- expected for a task worktree, confirms no accidental candidate/incumbent binding",
+      "mutations_performed": "none; read-only discover-only mode never signals or launches a process"
+    },
+    "conclusion": "The prior source-only blocker (split-entrypoint PR) is now fully resolved and merged into dev. However V9 still must not run its own promotion/canary transaction: SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808 is actively executing a governed rollout retry right now and holds the only active promotion lease. V9 stays blocked until that sibling task completes or releases the lease, consistent with the standing rule that a live-canary task defers to an active sibling promotion lease."
   }
 }
