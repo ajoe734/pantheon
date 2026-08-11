@@ -18,8 +18,16 @@ or unblock task
   a time.
 - Only active `ai-status.json` tasks with `status=review_approved` are eligible.
 - The PR head must be `task/<TASK-ID>` and the base must be `dev`.
-- Draft PRs, truly missing PRs, failing checks, missing checks, dirty merge
+- Draft PRs, truly missing PRs, required failing checks, missing checks, dirty merge
   states, and rebase conflicts are not merged.
+- Status check classification uses a data-driven required-versus-diagnostic
+  classifier: a check is ignored only when it is positively identified as
+  non-required (`isRequired: false` in GraphQL context nodes). Missing, ambiguous
+  (`isRequired` omitted/None), required (`isRequired: true`), stale-head,
+  review-binding, trailer, or actual CI failures continue to block fail-closed.
+- `mergeStateStatus: UNSTABLE` (GitHub's status when required checks pass but
+  optional diagnostic checks fail) is recognized as an eligible merge state when
+  all required status checks pass.
 - Merge authority is delegated to `scripts/git/task_review_merge_gate.py`.
   For a task whose canonical contract requires independent review the
   integrator merges only the exact reviewer-approved head, never enables

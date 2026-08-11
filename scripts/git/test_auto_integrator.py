@@ -734,5 +734,175 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertIn("No open or merged PR found", result.detail)
 
 
+class CheckClassifierTests(unittest.TestCase):
+    def test_non_required_diagnostic_failure_ignored_in_summary(self) -> None:
+        summary = auto_integrator.summarize_status_rollup(
+            [
+                {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
+                {"name": "Audit signed canonical review (not required issuer) (4741)", "conclusion": "FAILURE", "status": "COMPLETED", "isRequired": False},
+            ]
+        )
+        self.assertEqual(summary.state, "green")
+        self.assertEqual(summary.failing, ())
+        self.assertEqual(summary.ignored_diagnostic, ("Audit signed canonical review (not required issuer) (4741)",))
+
+    def test_ambiguous_requiredness_treated_as_required_in_summary(self) -> None:
+        summary = auto_integrator.summarize_status_rollup(
+            [
+                {"name": "Ambiguous check", "conclusion": "FAILURE", "status": "COMPLETED"},
+            ]
+        )
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(summary.failing, ("Ambiguous check",))
+
+    def test_pr_4741_shaped_diagnostic_failure_allows_merge(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+            title="add evidence",
+            owner="Antigravity2",
+            reviewer="Codex2",
+            branch="task/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+        )
+        pr = green_pr()
+        pr.update(
+            {
+                "number": 4741,
+                "headRefName": "task/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+                "mergeStateStatus": "UNSTABLE",
+                "statusCheckRollup": [
+                    {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
+                    {"name": "Smoke acceptance", "state": "SUCCESS", "isRequired": True},
+                    {
+                        "name": "Audit signed canonical review (not required issuer) (4741)",
+                        "conclusion": "FAILURE",
+                        "status": "COMPLETED",
+                        "isRequired": False,
+                    },
+                ],
+            }
+        )
+        runner = FakeRunner(pr=pr)
+        gate = approved_gate(task_id="SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811", pr_number=4741)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=False,
+            gate=gate,
+        )
+        self.assertEqual(result.action, "would_merge")
+
+    def test_required_check_failure_blocks_integration(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Smoke acceptance", "conclusion": "FAILURE", "status": "COMPLETED", "isRequired": True}
+        ]
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+
+    def test_ambiguous_requiredness_failure_blocks_integration(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Ambiguous check", "conclusion": "FAILURE", "status": "COMPLETED"}
+        ]
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("Ambiguous check", result.detail)
+
+    def test_failing_trailer_check_blocks_integration(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Commit trailers", "conclusion": "FAILURE", "status": "COMPLETED", "isRequired": True}
+        ]
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("Commit trailers", result.detail)
+
+    def test_canonical_review_gate_failure_blocks_integration(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Pantheon canonical review gate", "state": "FAILURE", "isRequired": True}
+        ]
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+
+    def test_exact_head_drift_blocks_integration(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["headRefOid"] = "f" * 40
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertTrue("approval_head_mismatch" in result.detail or "head_changed_after_approval" in result.detail)
+
+
 if __name__ == "__main__":
     unittest.main()
