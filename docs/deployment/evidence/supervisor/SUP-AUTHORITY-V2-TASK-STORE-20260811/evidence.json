@@ -11,8 +11,8 @@
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-AUTHORITY-V2-TASK-STORE-20260811",
-    "candidate_source_commit": "7376fd7ee89453df53d347d3aff61e09c032e1fd",
-    "review_baseline_commit": "602685bb81b8d8814cd2580a391742f5e54b15b3"
+    "candidate_source_commit": "a1ffde13394e20c0d206e30246adfda11ab974d1",
+    "review_baseline_commit": "115db4f2bfceb354f3d1400dce23d169c7663a79"
   },
   "scope": {
     "owned_layer": "Authoritative task-state V2 persistence: compact current head, append-only state deltas, V1 archive migration and offline integrity verification, task-store architecture specification, and runtime caller migration to explicit observational reads.",
@@ -25,6 +25,7 @@
       "scripts/ai_status.py",
       "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
       "docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802/dispatcher_snapshot_scale_bench.py",
+      "scripts/test_dispatcher_snapshot_scale_bench.py",
       "scripts/migrate_task_state_store_v2.py",
       "scripts/test_ai_status.py",
       "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
@@ -38,15 +39,15 @@
     "specification": "docs/02-architecture/supervisor-authority-v2.md",
     "write_order": "validate head and tail -> append/fsync delta -> atomically replace/fsync head",
     "recovery": "replay only the V2 delta tail after head.delta_offset; reject incomplete or corrupt tails",
-    "archive": "V1 bytes are moved once to a read-only sibling archive with byte length, final sequence, journal SHA-256 and projected-state SHA-256 bound into V2 genesis/head identity",
+    "archive": "V1 bytes are moved once to a read-only sibling archive with byte length, final sequence, journal SHA-256 and projected-state SHA-256 bound into V2 genesis/head identity. Interrupted-migration resume and offline full-chain verification require the sequence-1 V2 transition to materialize the exact frozen projected-state digest.",
     "hot_path": "No V1 archive read, V1 replay, mmap, prefix hash, checkpoint sidecar, or forced full replay is available to normal load or mutation paths.",
     "offline_only": "verify_full_chain() and scripts/verify_task_state_store.py validate every V2 delta and frozen V1 archive."
   },
   "deletion_and_caller_report": {
     "gross_source_delta_against_origin_dev_before_manifest": {
-      "lines_added": 1671,
-      "lines_deleted": 2118,
-      "command": "git diff --numstat origin/dev...7376fd7ee89453df53d347d3aff61e09c032e1fd -- . ':!docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-TASK-STORE-20260811/evidence.json'"
+      "lines_added": 1830,
+      "lines_deleted": 2130,
+      "command": "git diff --numstat origin/dev...a1ffde13394e20c0d206e30246adfda11ab974d1 -- . ':!docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-TASK-STORE-20260811/evidence.json'"
     },
     "removed_hot_path": [
       "V1 full-board state on every event",
@@ -64,7 +65,7 @@
   },
   "acceptance_evidence": {
     "delta_not_full_state": "A 1,200-task board status change serializes one tasks[index].status set delta, while materializing or archiving one row serializes one indexed insert or remove; no transition persists a state field.",
-    "constant_hot_read_cost": "Synthetic multi-megabyte V1 archive migration test performs repeated load_snapshot calls with archive parsing patched to fail; every hot read succeeds.",
+    "constant_hot_read_cost": "Synthetic multi-megabyte V1 archive migration test performs repeated load_snapshot calls with archive parsing patched to fail; every hot read succeeds. The dispatcher scale benchmark clones only the V2 event log, compact head, and lock, then proves V2 head/tail consistency without a checkpoint sidecar.",
     "streamed_archive_migration_memory": "A streaming fixture of 260 full-board revisions across 1,100 tasks is at least 16 MiB. The legacy reader regression forbids _read_regular_bytes, records only 64 KiB os.read calls, and requires traced allocation below 8 MiB, below one quarter of journal bytes, and below 16 times the largest record plus 4 MiB. The reader incrementally computes exact journal bytes and SHA-256 while retaining only the unfinished record and newest projected state. Production preflight budget is 64 MiB plus 16R + 4S, where R is the largest record and S is the largest decoded state footprint; it is independent of journal length J.",
     "failure_boundaries": [
       "stale expected sequence/head CAS is rejected",
@@ -74,16 +75,18 @@
       "tampered frozen archive fails offline verification",
       "resume after an archive rename reasserts read-only archive permissions before continuing",
       "a resumed archive plus manifest must match byte length, final sequence, journal SHA and projected-state SHA before genesis can be written",
+      "an internally rehashed V2 sequence-1 transition that materializes a state other than the frozen archive projection is rejected by both interrupted-migration resume and offline full-chain verification",
+      "the dispatcher scale benchmark accepts a synthetic V2 store with a compact head and no checkpoint sidecar",
       "nonempty V1 journal with no V2 head fails migration-required instead of falling back"
     ]
   },
   "verification": [
     {
-      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_STATUS_ROOT \"$PANTHEON_PY\" -m pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_task_state_runtime_env.py scripts/test_migrate_task_state_store_v2.py scripts/test_verify_task_state_store.py",
-      "result": "34 passed in 20.36s"
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_task_state_runtime_env.py scripts/test_migrate_task_state_store_v2.py scripts/test_verify_task_state_store.py scripts/test_dispatcher_snapshot_scale_bench.py",
+      "result": "37 passed in 12.87s"
     },
     {
-      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m py_compile .orchestrator/rewrite/task_state_store.py scripts/verify_task_state_store.py scripts/migrate_task_state_store_v2.py scripts/ai_status.py scripts/dispatch_twelve_loop_gap_2026_07_26.py .orchestrator/test_supervisor.py docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802/dispatcher_snapshot_scale_bench.py && git diff --check",
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m py_compile .orchestrator/rewrite/task_state_store.py .orchestrator/rewrite/test_task_state_store.py scripts/migrate_task_state_store_v2.py scripts/verify_task_state_store.py scripts/test_migrate_task_state_store_v2.py scripts/test_verify_task_state_store.py docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802/dispatcher_snapshot_scale_bench.py scripts/test_dispatcher_snapshot_scale_bench.py && git diff --check",
       "result": "passed"
     }
   ],
@@ -97,8 +100,8 @@
     "rollback": "Stop writers, preserve V2 head/deltas/manifest/archive, verify them offline, and use an explicit separately named V1 recovery journal only if an authorized older-binary rollback is required. No automatic V1 fallback exists."
   },
   "review": {
-    "decision": "pending_independent_review",
+    "decision": "pending_fresh_exact_head_review",
     "required_reviewer": "Codex",
-    "protocol": "Review this committed manifest, all changed paths, and the exact PR head. Confirm candidate source commit 7376fd7ee89453df53d347d3aff61e09c032e1fd replaces legacy full-payload/splitlines validation with O_NOFOLLOW 64 KiB streaming reads, incremental byte/SHA accounting, complete-record and V1 chain/state validation, and that dry-run, initial migration, resume, and offline verification all invoke the same bounded reader. Inspect the 16 MiB+ streaming regression and the documented 64 MiB + 16R + 4S migration budget. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
+    "protocol": "Review this committed manifest, all changed paths, and the exact task-branch head that contains this manifest. Confirm candidate source commit a1ffde13394e20c0d206e30246adfda11ab974d1 replaces legacy full-payload/splitlines validation with O_NOFOLLOW 64 KiB streaming reads, incremental byte/SHA accounting, complete-record and V1 chain/state validation, and that dry-run, initial migration, resume, and offline verification all invoke the same bounded reader. Confirm an internally rehashed sequence-1 V2 delta cannot diverge from archive_identity.projected_state_sha256 during resume or offline full-chain verification, while normal reads remain archive-free. Confirm the scale benchmark clones V2 log/head/lock evidence only and its synthetic V2 test has no checkpoint sidecar. Inspect the 16 MiB+ streaming regression and the documented 64 MiB + 16R + 4S migration budget. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
   }
 }
