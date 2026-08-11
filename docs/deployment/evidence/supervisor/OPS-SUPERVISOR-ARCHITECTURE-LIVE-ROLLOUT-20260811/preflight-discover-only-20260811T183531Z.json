@@ -1,0 +1,305 @@
+{
+  "ai_status_summary": {
+    "agents_count": 10,
+    "sprint": "2026-06-09-mpos-full-loop-gap-closure",
+    "tasks_count": 68,
+    "updated_at": "2026-08-11T18:33:48Z"
+  },
+  "candidate_runtime_identity": null,
+  "config_path": "/home/lupin/pantheon/.orchestrator/config.json",
+  "eligible_for_promotion": false,
+  "file_errors": [],
+  "governed_supervisor_launch_contract": null,
+  "health_report": {
+    "checks": [
+      {
+        "lock_held": true,
+        "name": "supervisor_process_alive",
+        "ok": true,
+        "pid": 3811421,
+        "pid_matches": false
+      },
+      {
+        "last_heartbeat_at": "2026-08-11T18:35:03Z",
+        "name": "supervisor_heartbeat_present",
+        "ok": true
+      },
+      {
+        "age_seconds": 28.490065,
+        "max_age_seconds": 900.0,
+        "name": "supervisor_heartbeat_fresh",
+        "ok": true
+      },
+      {
+        "last_loop_error": null,
+        "lifecycle": "running",
+        "name": "supervisor_not_degraded",
+        "ok": true
+      }
+    ],
+    "generated_at": "2026-08-11T18:35:31.490065Z",
+    "healthy": true,
+    "repo_root": "/home/lupin/pantheon",
+    "state_file": "/home/lupin/pantheon/.orchestrator/state.json",
+    "supervisor": {
+      "alive": true,
+      "heartbeat_age_seconds": 28.490065,
+      "last_heartbeat_at": "2026-08-11T18:35:03Z",
+      "last_loop_error": null,
+      "lifecycle": "running",
+      "lock_held": true,
+      "max_heartbeat_age_seconds": 900.0,
+      "pid": 3811421,
+      "process_alive": false,
+      "task_state_shadow": {
+        "caught_up": true,
+        "event_count": 16840,
+        "event_log": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl",
+        "expected_state_sha256": "218b7347bfdd6e50a4eda0513722845d8a81f3b4d1ad59d5ff15e18421095148",
+        "last_checked_at": "2026-08-11T18:34:38Z",
+        "last_error": null,
+        "last_event_id": "task-state-19e8c206eaae5495cc462e3f4285bc21704563bb36a35b3ebfed6e072cae50a2",
+        "last_success_at": "2026-08-11T18:34:38Z",
+        "mode": "authoritative",
+        "nonterminal_task_count": 67,
+        "ok": true,
+        "projected_state_sha256": "218b7347bfdd6e50a4eda0513722845d8a81f3b4d1ad59d5ff15e18421095148",
+        "repaired": false
+      }
+    },
+    "watchdog": null
+  },
+  "identity_revalidation_stages": [],
+  "incumbent_supervisor_process_identity": null,
+  "invariants": [
+    {
+      "details": {
+        "error": "Candidate root /home/lupin/pantheon is not a direct child of /home/lupin/pantheon-ci-deploy/command-runtimes or /home/lupin/pantheon-ci-deploy/rollback-command-runtimes",
+        "identity": null
+      },
+      "name": "candidate_runtime_identity_immutable",
+      "ok": false
+    },
+    {
+      "details": {
+        "error": "Candidate runtime identity is unavailable",
+        "identity": null
+      },
+      "name": "incumbent_supervisor_process_identity_immutable",
+      "ok": false
+    },
+    {
+      "details": {
+        "contract": null,
+        "error": "Candidate/process identity is unavailable"
+      },
+      "name": "governed_supervisor_launch_contract_immutable",
+      "ok": false
+    },
+    {
+      "details": {
+        "file_errors": []
+      },
+      "name": "config_and_state_files_readable",
+      "ok": true
+    },
+    {
+      "details": {
+        "failed_checks": [],
+        "healthy": true
+      },
+      "name": "runtime_health_clean",
+      "ok": true
+    },
+    {
+      "details": {
+        "lifecycle": "running",
+        "valid_lifecycles": [
+          "running",
+          "idle",
+          "active"
+        ]
+      },
+      "name": "supervisor_lifecycle_valid",
+      "ok": true
+    },
+    {
+      "details": {
+        "lock_held": true,
+        "lock_path": "/home/lupin/pantheon/.orchestrator/supervisor.lock",
+        "pid": 3811421,
+        "pid_alive": true
+      },
+      "name": "supervisor_pid_bound_and_locked",
+      "ok": true
+    },
+    {
+      "details": {
+        "has_tasks": true,
+        "is_dict": true
+      },
+      "name": "ai_status_schema_valid",
+      "ok": true
+    },
+    {
+      "details": {
+        "reasons": [],
+        "task_state_shadow": {
+          "caught_up": true,
+          "event_count": 16840,
+          "event_log": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl",
+          "expected_state_sha256": "218b7347bfdd6e50a4eda0513722845d8a81f3b4d1ad59d5ff15e18421095148",
+          "last_checked_at": "2026-08-11T18:34:38Z",
+          "last_error": null,
+          "last_event_id": "task-state-19e8c206eaae5495cc462e3f4285bc21704563bb36a35b3ebfed6e072cae50a2",
+          "last_success_at": "2026-08-11T18:34:38Z",
+          "mode": "authoritative",
+          "nonterminal_task_count": 67,
+          "ok": true,
+          "projected_state_sha256": "218b7347bfdd6e50a4eda0513722845d8a81f3b4d1ad59d5ff15e18421095148",
+          "repaired": false
+        }
+      },
+      "name": "task_state_shadow_valid",
+      "ok": true
+    },
+    {
+      "details": {
+        "last_successful_loop_at": "2026-08-11T18:34:00+00:00",
+        "max_stall": 300.0,
+        "reasons": []
+      },
+      "name": "fresh_loop_sequence",
+      "ok": true
+    },
+    {
+      "details": {
+        "duplicate_active_workers": [],
+        "leases_count": 31,
+        "queue_events_count": 3,
+        "reasons": [],
+        "workers_count": 16
+      },
+      "name": "worker_lease_parity_and_no_duplicates",
+      "ok": true
+    },
+    {
+      "details": {
+        "active_providers_required": [
+          "claude1-1",
+          "codex1-2",
+          "codex2-1"
+        ],
+        "baseline_capabilities": {
+          "antigravity": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "antigravity2": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "claude": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "claude2": {
+            "auth_ready": false,
+            "enabled": true,
+            "local_worker_ready": false,
+            "required": false
+          },
+          "codex": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "codex1-1": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "codex1-2": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": true
+          },
+          "codex1-3": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "codex1-4": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "codex2": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "codex2-1": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": true
+          },
+          "codex2-2": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "codex2-3": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "codex2-4": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          },
+          "copilot": {
+            "auth_ready": true,
+            "enabled": true,
+            "local_worker_ready": true,
+            "required": false
+          }
+        },
+        "reasons": []
+      },
+      "name": "provider_readiness_baseline",
+      "ok": true
+    },
+    {
+      "details": {
+        "orphaned_tasks": []
+      },
+      "name": "no_orphaned_in_progress_tasks",
+      "ok": true
+    }
+  ],
+  "preflight_mode": "discover_only",
+  "repo_root": "/home/lupin/pantheon",
+  "supervisor_state_summary": {
+    "last_heartbeat_at": "2026-08-11T18:35:03Z",
+    "lifecycle": "running"
+  },
+  "timestamp": "2026-08-11T18:35:31.490065Z"
+}

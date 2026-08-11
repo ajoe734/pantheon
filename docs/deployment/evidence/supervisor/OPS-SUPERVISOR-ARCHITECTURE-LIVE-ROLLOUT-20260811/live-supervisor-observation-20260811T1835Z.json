@@ -1,0 +1,50 @@
+{
+  "observed_at": "2026-08-11T18:35:00Z",
+  "observer": "Claude",
+  "task_id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+  "live_process": {
+    "pid": 3811421,
+    "started_at": "2026-08-11T17:58:58Z",
+    "cmdline": "/usr/bin/python3.12 -u -B /home/lupin/pantheon-ci-deploy/command-runtimes/9e023f7eeadce48fbc161de431fe2edbf4e1b805/.orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
+    "environ_pantheon_vars": {
+      "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+      "PANTHEON_COMMAND_ROOT": "/home/lupin/pantheon-ci-deploy/command-runtimes/9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+      "PANTHEON_STATUS_ROOT": "/home/lupin/pantheon",
+      "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+      "PANTHEON_COMMAND_RUNTIME_SHA": "9e023f7eeadce48fbc161de431fe2edbf4e1b805"
+    }
+  },
+  "origin_dev_head_at_observation": "9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+  "dependency_merge_commits": {
+    "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811": "341088a4e (finish batch) / 422c50961 (merge PR #4754)",
+    "SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811": "9e023f7ee (merge PR #4755)"
+  },
+  "note_command_root_already_at_target": "The live supervisor's bound PANTHEON_COMMAND_ROOT/PANTHEON_COMMAND_RUNTIME_SHA already equals 9e023f7ee, which is the current origin/dev tip and contains both required dependency merges. It is not yet established through this task's own governed scripts/promote_supervisor_runtime.py --promote transaction whether this command root became live through this task's own promotion action or an earlier/unrelated deploy cycle -- no supervisor-runtime-promotion evidence file in /home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/ for 2026-08-11 records a successful non-test transaction; the files present at 18:18-18:34Z are pytest fixture artifacts (requested_evidence_path points at /tmp/pytest-of-lupin/... and the abort reason is 'mutable incumbent is not an immutable command runtime', consistent with a unit test run, not a live cutover).",
+  "supervisor_state_summary": {
+    "lifecycle": "running",
+    "last_heartbeat_at": "2026-08-11T18:35:03Z",
+    "last_successful_loop_at": "2026-08-11T18:34:00Z",
+    "last_loop_error": null,
+    "task_state_shadow": {
+      "mode": "authoritative",
+      "ok": true,
+      "caught_up": true,
+      "event_count": 16840,
+      "nonterminal_task_count": 67,
+      "projected_state_sha256": "218b7347bfdd6e50a4eda0513722845d8a81f3b4d1ad59d5ff15e18421095148",
+      "expected_state_sha256": "218b7347bfdd6e50a4eda0513722845d8a81f3b4d1ad59d5ff15e18421095148"
+    }
+  },
+  "discover_only_preflight_ok_summary": {
+    "against_repo_home_lupin_pantheon": {
+      "eligible_for_promotion": false,
+      "reason": "candidate_runtime_identity_immutable fails because /home/lupin/pantheon is not itself a command-runtimes child; this run establishes health baseline only, not a promotable candidate."
+    },
+    "health_report_checks_passing": [
+      "supervisor_process_alive",
+      "supervisor_heartbeat_present",
+      "supervisor_heartbeat_fresh",
+      "supervisor_not_degraded"
+    ]
+  }
+}
