@@ -1,0 +1,68 @@
+{
+  "schema_version": "supervisor_work_conserving_canonical_routing.v1",
+  "task": {
+    "id": "SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811",
+    "title": "Make canonical scheduling work-conserving and lease-truthful",
+    "phase": "Canonical Scheduling / Work-Conserving Routing",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "ready_for_review",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811/evidence.json",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811"
+  },
+  "scope": {
+    "owned_layer": "Make canonical supervisor scheduling work-conserving by removing catalog assignment lock execution gates so all safe eligible capacity can be filled.",
+    "not_changing": "Task state store, worker process lifecycle, queue event persistence, or dev-bridge atomic materialization.",
+    "changed_paths": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_explain_dispatch.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811/evidence.json"
+    ]
+  },
+  "implementation": {
+    "work_conserving_policy": {
+      "catalog_lock_gate": "task_assignment_is_catalog_locked returns False to allow helper claims and provider fallback to fill eligible capacity.",
+      "audit_only_admission": "assistant_dev_bridge_task_is_admitted checks were previously removed from execution and routing loops so signed packets do not suppress canonical tasks after atomic materialization.",
+      "explain_dispatch_parity": "explain_dispatch uses the same bound status root and predicate order as supervisor."
+    }
+  },
+  "acceptance": {
+    "catalog_assignment_does_not_block_dispatch": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_normalize_mainline_task_assignment_allows_catalog_task",
+        ".orchestrator/test_supervisor.py::ChairReviewDispatchTests::test_persist_task_reassignment_allows_catalog_assignment",
+        ".orchestrator/test_explain_dispatch.py::TestExplainDispatch::test_cooldown_suppressed_event"
+      ]
+    },
+    "supervisor_and_explain_dispatch_suite": {
+      "status": "proven",
+      "test_summary": "878 passed, 200 subtests passed across test_supervisor, test_explain_dispatch, and test_ai_status"
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "passed; checkout-scoped .venv-pantheon provisioned"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_explain_dispatch.py scripts/test_ai_status.py",
+        "result": "878 passed, 200 subtests passed in 278.32s"
+      },
+      {
+        "command": "jq empty docs/deployment/evidence/supervisor/SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811/evidence.json",
+        "result": "passed"
+      }
+    ]
+  },
+  "independent_review": {
+    "reviewer": "Codex2",
+    "status": "pending",
+    "required_binding": "Exact-head review with REVIEW_FILE set to this manifest before approval."
+  }
+}
