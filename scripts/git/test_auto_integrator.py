@@ -27,6 +27,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         ephemeral_merge_returncode: int = 0,
         commits: Mapping[str, Mapping[str, Any]] | None = None,
         carry_forward_publish_fails: bool = False,
+        requiredness_nodes: Sequence[Mapping[str, Any]] | None = None,
+        requiredness_query_fails: bool = False,
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -51,6 +53,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.landed_merged_at = landed_merged_at
         self.commits = {str(sha): dict(payload) for sha, payload in (commits or {}).items()}
         self.carry_forward_publish_fails = carry_forward_publish_fails
+        self.requiredness_nodes = [dict(node) for node in (requiredness_nodes or [])]
+        self.requiredness_query_fails = requiredness_query_fails
         self.api_payloads: list[dict[str, Any]] = []
         self.tag_refs: set[str] = set()
         self._next_tag_sha = 200
@@ -89,6 +93,21 @@ class FakeRunner(auto_integrator.CommandRunner):
                 if pr is not None and str(pr.get("number")) == number:
                     return completed(command, stdout=auto_integrator.json.dumps(dict(pr)))
             return completed(command, stdout="{}")
+        if command[:3] == ["gh", "api", "graphql"]:
+            if self.requiredness_query_fails:
+                raise auto_integrator.CommandFailure(command, 1, "GraphQL unavailable")
+            payload = {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "statusCheckRollup": {
+                                "contexts": {"nodes": self.requiredness_nodes}
+                            }
+                        }
+                    }
+                }
+            }
+            return completed(command, stdout=auto_integrator.json.dumps(payload))
         commit_prefix = "repos/ajoe734/pantheon/commits/"
         if command[:2] == ["gh", "api"] and len(command) == 3 and command[2].startswith(commit_prefix):
             head_sha = command[2][len(commit_prefix) :].partition("?")[0]
@@ -732,6 +751,317 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertEqual(result.action, "blocked")
         self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-MISSING-PR")
         self.assertIn("No open or merged PR found", result.detail)
+
+
+class CheckClassifierTests(unittest.TestCase):
+    def test_non_required_diagnostic_failure_ignored_in_summary(self) -> None:
+        summary = auto_integrator.summarize_status_rollup(
+            [
+                {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
+                {
+                    "name": "Audit signed canonical review (not required issuer) (4741)",
+                    "conclusion": "FAILURE",
+                    "status": "COMPLETED",
+                    "workflowName": "Canonical Review Attestation Audit",
+                    "isRequired": False,
+                },
+            ]
+        )
+        self.assertEqual(summary.state, "green")
+        self.assertEqual(summary.failing, ())
+        self.assertEqual(summary.ignored_diagnostic, ("Audit signed canonical review (not required issuer) (4741)",))
+
+    def test_non_required_actual_ci_failure_still_blocks(self) -> None:
+        summary = auto_integrator.summarize_status_rollup(
+            [
+                {
+                    "name": "Python packaging provision",
+                    "conclusion": "FAILURE",
+                    "status": "COMPLETED",
+                    "workflowName": "Branch CI Gate",
+                    "isRequired": False,
+                }
+            ]
+        )
+
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(summary.failing, ("Python packaging provision",))
+
+    def test_non_required_failure_without_diagnostic_provenance_blocks(self) -> None:
+        summary = auto_integrator.summarize_status_rollup(
+            [
+                {
+                    "name": "Unattributed optional check",
+                    "conclusion": "FAILURE",
+                    "status": "COMPLETED",
+                    "isRequired": False,
+                }
+            ]
+        )
+
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(summary.failing, ("Unattributed optional check",))
+
+    def test_ambiguous_requiredness_treated_as_required_in_summary(self) -> None:
+        summary = auto_integrator.summarize_status_rollup(
+            [
+                {"name": "Ambiguous check", "conclusion": "FAILURE", "status": "COMPLETED"},
+            ]
+        )
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(summary.failing, ("Ambiguous check",))
+
+    def test_graphql_enrichment_classifies_live_rollup_shape(self) -> None:
+        pr = green_pr(number=4741)
+        pr["url"] = "https://github.com/ajoe734/pantheon/pull/4741"
+        pr["statusCheckRollup"] = [
+            {
+                "__typename": "CheckRun",
+                "name": "Smoke acceptance",
+                "conclusion": "SUCCESS",
+                "status": "COMPLETED",
+            },
+            {
+                "__typename": "CheckRun",
+                "name": "Audit signed canonical review (not required issuer) (4741)",
+                "conclusion": "FAILURE",
+                "status": "COMPLETED",
+                "workflowName": "Canonical Review Attestation Audit",
+            },
+        ]
+        runner = FakeRunner(
+            requiredness_nodes=[
+                {"__typename": "CheckRun", "name": "Smoke acceptance", "isRequired": True},
+                {
+                    "__typename": "CheckRun",
+                    "name": "Audit signed canonical review (not required issuer) (4741)",
+                    "isRequired": False,
+                },
+            ]
+        )
+
+        enriched = auto_integrator.enrich_pr_status_rollup(pr, runner)
+        self.assertIsNotNone(enriched)
+        rollup = enriched["statusCheckRollup"]
+        self.assertEqual([item["isRequired"] for item in rollup], [True, False])
+        summary = auto_integrator.summarize_status_rollup(rollup)
+        self.assertEqual(summary.state, "green")
+        self.assertEqual(
+            summary.ignored_diagnostic,
+            ("Audit signed canonical review (not required issuer) (4741)",),
+        )
+        self.assertTrue(any(command[:3] == ["gh", "api", "graphql"] for command in runner.commands))
+
+    def test_graphql_failure_leaves_failing_check_ambiguous_and_blocking(self) -> None:
+        pr = green_pr(number=4741)
+        pr["url"] = "https://github.com/ajoe734/pantheon/pull/4741"
+        pr["statusCheckRollup"] = [
+            {
+                "__typename": "CheckRun",
+                "name": "Audit signed canonical review (not required issuer) (4741)",
+                "conclusion": "FAILURE",
+                "status": "COMPLETED",
+            }
+        ]
+        runner = FakeRunner(requiredness_query_fails=True)
+
+        enriched = auto_integrator.enrich_pr_status_rollup(pr, runner)
+        self.assertIsNotNone(enriched)
+        summary = auto_integrator.summarize_status_rollup(enriched["statusCheckRollup"])
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(
+            summary.failing,
+            ("Audit signed canonical review (not required issuer) (4741)",),
+        )
+
+    def test_unmatched_graphql_check_remains_ambiguous_and_blocking(self) -> None:
+        pr = green_pr(number=4741)
+        pr["url"] = "https://github.com/ajoe734/pantheon/pull/4741"
+        pr["statusCheckRollup"] = [
+            {
+                "__typename": "CheckRun",
+                "name": "Unmatched failure",
+                "conclusion": "FAILURE",
+                "status": "COMPLETED",
+            }
+        ]
+        runner = FakeRunner(
+            requiredness_nodes=[
+                {"__typename": "CheckRun", "name": "Different check", "isRequired": False}
+            ]
+        )
+
+        enriched = auto_integrator.enrich_pr_status_rollup(pr, runner)
+        self.assertIsNotNone(enriched)
+        summary = auto_integrator.summarize_status_rollup(enriched["statusCheckRollup"])
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(summary.failing, ("Unmatched failure",))
+
+    def test_duplicate_graphql_identity_is_required_if_any_match_is_required(self) -> None:
+        runner = FakeRunner(
+            requiredness_nodes=[
+                {"__typename": "CheckRun", "name": "Smoke acceptance", "isRequired": False},
+                {"__typename": "CheckRun", "name": "Smoke acceptance", "isRequired": True},
+            ]
+        )
+
+        requiredness = auto_integrator.fetch_is_required_map(
+            runner,
+            "https://github.com/ajoe734/pantheon/pull/4741",
+            4741,
+        )
+
+        self.assertIs(requiredness[("CheckRun", "Smoke acceptance")], True)
+
+    def test_pr_4741_shaped_diagnostic_failure_allows_merge(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+            title="add evidence",
+            owner="Antigravity2",
+            reviewer="Codex2",
+            branch="task/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+        )
+        pr = green_pr()
+        pr.update(
+            {
+                "number": 4741,
+                "headRefName": "task/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+                "mergeStateStatus": "UNSTABLE",
+                "statusCheckRollup": [
+                    {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
+                    {"name": "Smoke acceptance", "state": "SUCCESS", "isRequired": True},
+                    {
+                        "name": "Audit signed canonical review (not required issuer) (4741)",
+                        "conclusion": "FAILURE",
+                        "status": "COMPLETED",
+                        "workflowName": "Canonical Review Attestation Audit",
+                        "isRequired": False,
+                    },
+                ],
+            }
+        )
+        runner = FakeRunner(pr=pr)
+        gate = approved_gate(task_id="SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811", pr_number=4741)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=False,
+            gate=gate,
+        )
+        self.assertEqual(result.action, "would_merge")
+        self.assertIn("Ignored explicitly non-required diagnostics", result.detail)
+
+    def test_required_check_failure_blocks_integration(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Smoke acceptance", "conclusion": "FAILURE", "status": "COMPLETED", "isRequired": True}
+        ]
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+
+    def test_ambiguous_requiredness_failure_blocks_integration(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Ambiguous check", "conclusion": "FAILURE", "status": "COMPLETED"}
+        ]
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("Ambiguous check", result.detail)
+
+    def test_failing_trailer_check_blocks_integration(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Commit trailers", "conclusion": "FAILURE", "status": "COMPLETED", "isRequired": True}
+        ]
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("Commit trailers", result.detail)
+
+    def test_canonical_review_gate_failure_blocks_integration(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["statusCheckRollup"] = [
+            {"name": "Pantheon canonical review gate", "state": "FAILURE", "isRequired": True}
+        ]
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+
+    def test_exact_head_drift_blocks_integration(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr()
+        pr["headRefOid"] = "f" * 40
+        runner = FakeRunner(pr=pr)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertTrue("approval_head_mismatch" in result.detail or "head_changed_after_approval" in result.detail)
 
 
 if __name__ == "__main__":
