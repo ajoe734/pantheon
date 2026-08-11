@@ -17,6 +17,7 @@ if str(THIS_DIR) not in sys.path:
 
 from common import (
     agent_config_for,
+    bound_commit_subject,
     config_path,
     display_name_for,
     execution_context_files,
@@ -365,7 +366,7 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "base_branch": base_branch,
         "branch_name": branch_name,
         "branch_start_command": f"./scripts/git/task_start.sh \"{task_id}\"" if task_id else "./scripts/git/task_start.sh <TASK-ID>",
-        "anchor_commit_subject": f"{task_id}: anchor <scope>" if task_id else "<TASK-ID>: anchor <scope>",
+        "anchor_commit_subject": bound_commit_subject(task_id, "anchor <scope>") if task_id else "<TASK-ID>: anchor <scope>",
         "reason": reason,
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",
         "dispatch_guardrails": dispatch_guardrails.rstrip(),
