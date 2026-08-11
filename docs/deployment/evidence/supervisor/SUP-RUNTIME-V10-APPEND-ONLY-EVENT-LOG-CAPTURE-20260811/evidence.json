@@ -1,0 +1,50 @@
+{
+  "task_id": "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811",
+  "task_title": "Capture the live task-state journal coherently for promotion",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "status": "review",
+  "timestamp": "2026-08-11T02:08:45Z",
+  "summary": "Implemented bounded descriptor-based journal capture and revalidation for task_state_store.event_log that permits only proven append growth during capture while retaining every path, inode, prefix, permission, transaction, and runtime safety gate.",
+  "source_files": [
+    "scripts/promote_supervisor_runtime.py",
+    "scripts/test_promote_supervisor_runtime.py"
+  ],
+  "acceptance_criteria_verification": [
+    {
+      "criterion": "Reproduce transaction f031441af607e8bd9631e4b08b34315a417209f9223c515ff8fb40aeb452ee9e",
+      "status": "PASSED",
+      "evidence": "Added test_task_state_event_log_reproduction_transaction_f031441_concurrent_append proving live append growth during journal capture succeeds without changing identity baseline or throwing changed during capture."
+    },
+    {
+      "criterion": "Diagnose precise contract needed for task_state_store.event_log",
+      "status": "PASSED",
+      "evidence": "task_state_store.event_log is explicitly handled via capture_append_only_journal while keeping path, parent directory, mode, single-link, device/inode identity, writable checks, and outside-command-runtime boundary fail closed."
+    },
+    {
+      "criterion": "Implement bounded descriptor-based journal capture and revalidation",
+      "status": "PASSED",
+      "evidence": "Implemented OSLaunchFilesystem.capture_append_only_journal using descriptor-bound stat comparisons and chunked _hash_descriptor_range to verify initial prefix hashes and permit only proven appends."
+    },
+    {
+      "criterion": "Do not weaken OSLaunchFilesystem.capture_regular_file for immutable launch sources",
+      "status": "PASSED",
+      "evidence": "OSLaunchFilesystem.capture_regular_file remains unchanged for supervisor.py, ai-status.sh, ai_status.py, interpreter, live config, and is verified by test_task_state_event_log_immutable_sources_remain_fail_closed."
+    },
+    {
+      "criterion": "Add focused adversarial tests",
+      "status": "PASSED",
+      "evidence": "Added 12 focused adversarial tests covering concurrent appends, multi-append growth, empty and large journals, prefix overwrite, same-size rewrite, truncation, truncate-and-regrow, inode swap, symlinks, hardlinks, mode drift, and immutable source fail-closed behavior."
+    },
+    {
+      "criterion": "Run complete promotion suite and commit task-scoped evidence manifest",
+      "status": "PASSED",
+      "evidence": "All 351 tests in scripts/test_promote_supervisor_runtime.py passed clean."
+    },
+    {
+      "criterion": "Keep task source-only",
+      "status": "PASSED",
+      "evidence": "No live config, runtime state, or running processes were mutated."
+    }
+  ]
+}

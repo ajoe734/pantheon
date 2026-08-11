@@ -3871,20 +3871,8 @@ def test_mutable_incumbent_bootstrap_accepts_provenance_validated_legacy_task_br
     )
     regenerated_brief.write_bytes(LIVE_FLEET_BRIEF_1364_BYTES)
 
-    status_file = mutable_root / "ai-status.json"
-    status_file.write_text(
-        json.dumps({
-            "tasks": [
-                {
-                    "id": "SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-                    "title": "Commit the missing supervisor dispatch refactor proposal doc",
-                    "owner": "Antigravity",
-                    "reviewer": "Codex2",
-                }
-            ]
-        }),
-        encoding="utf-8",
-    )
+    _git(mutable_root, "checkout", "ai-status.json")
+
 
     with (
         patch(
@@ -8943,4 +8931,250 @@ def test_worker_lease_parity_coherent_started_event_passes() -> None:
     worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
     assert worker_inv["ok"] is True
     assert len(worker_inv["details"]["reasons"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811 Adversarial Tests
+# ---------------------------------------------------------------------------
+
+def test_task_state_event_log_concurrent_append_during_capture(tmp_path: Path) -> None:
+    """Prove concurrent append growth during journal capture succeeds without changing identity baseline."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+
+    # Build initial contract
+    contract = build_governed_supervisor_launch_contract(candidate)
+    assert contract.task_state_event_log_identity is not None
+    initial_identity = contract.task_state_event_log_identity
+    initial_size = initial_identity.captured_size
+
+    # Concurrently append bytes to the live journal
+    with event_log.open("a") as f:
+        f.write('{"event": "concurrent_append_test", "ts": "2026-08-11T02:00:00Z"}\n')
+
+    # Re-capture / build contract with baseline identity
+    contract_after = build_governed_supervisor_launch_contract(
+        candidate,
+        baseline_task_state_event_log_identity=initial_identity,
+    )
+    assert contract_after.task_state_event_log_identity is not None
+    assert contract_after.task_state_event_log_identity == initial_identity
+    assert contract_after.task_state_event_log_identity.captured_size == initial_size
+    assert contract_after.task_state_event_log_identity.captured_at_size > initial_size
+    assert contract_after == contract
+
+
+def test_task_state_event_log_reproduction_transaction_f031441_concurrent_append(tmp_path: Path) -> None:
+    """Reproduce transaction f031441af607e8bd9631e4b08b34315a417209f9223c515ff8fb40aeb452ee9e:
+
+    The 8.23 GB append-only event log receives concurrent appends during promotion preflight/revalidation.
+    With descriptor-bound append-only journal capture, promotion does NOT fail with 'changed during capture'.
+    """
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+
+    # Simulate active concurrent appends by monkey-patching _hash_descriptor_range to write appends mid-capture
+    original_hash = promotion._hash_descriptor_range
+    appended = False
+
+    def hashing_with_concurrent_append(descriptor: int, *, length: int) -> str:
+        nonlocal appended
+        res = original_hash(descriptor, length=length)
+        if not appended:
+            appended = True
+            with event_log.open("a") as f:
+                f.write('{"event": "live_append_during_hash"}\n')
+        return res
+
+    with patch.object(promotion, "_hash_descriptor_range", side_effect=hashing_with_concurrent_append):
+        contract = build_governed_supervisor_launch_contract(candidate)
+
+    assert contract.task_state_event_log_identity is not None
+    assert contract.task_state_event_log_identity.captured_at_size > contract.task_state_event_log_identity.captured_size
+
+
+def test_task_state_event_log_rejects_prefix_overwrite(tmp_path: Path) -> None:
+    """Overwriting bytes in the journal prefix must abort promotion preflight."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_log.write_bytes(b"initial_prefix_data_12345\n")
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    # Overwrite prefix byte at offset 2
+    with event_log.open("r+b") as f:
+        f.seek(2)
+        f.write(b"X")
+
+    with pytest.raises(ValueError, match="prefix changed"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_rejects_same_size_rewrite(tmp_path: Path) -> None:
+    """Rewriting journal content without changing file size must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_log.write_bytes(b"abcdefghijklmnopqrstuvwxyz\n")
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    # Replace bytes with same length
+    with event_log.open("r+b") as f:
+        f.seek(5)
+        f.write(b"12345")
+
+    with pytest.raises(ValueError, match="prefix changed"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_rejects_truncation(tmp_path: Path) -> None:
+    """Truncating journal size below baseline must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_log.write_bytes(b"line1\nline2\nline3\nline4\n")
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    # Truncate file
+    with event_log.open("r+b") as f:
+        f.truncate(5)
+
+    with pytest.raises(ValueError, match="truncated below baseline size"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_rejects_truncate_and_regrow(tmp_path: Path) -> None:
+    """Truncating and regrowing journal content must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_log.write_bytes(b"original_journal_content_block_1\n")
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    # Truncate and rewrite new content to same or larger size
+    event_log.write_bytes(b"completely_new_journal_content_2\n")
+
+    with pytest.raises(ValueError, match="prefix changed"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_rejects_inode_swap(tmp_path: Path) -> None:
+    """Replacing the journal file with a new file (different inode) must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    # Create replacement file first so OS assigns a distinct inode, then atomic replace
+    replacement = tmp_path / "replacement.jsonl"
+    replacement.write_bytes(b"new_file_different_inode\n")
+    os.replace(replacement, event_log)
+
+    with pytest.raises(ValueError, match="inode changed"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_rejects_symlink(tmp_path: Path) -> None:
+    """Replacing the journal file with a symlink must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    target = tmp_path / "symlink-target.jsonl"
+    target.write_bytes(b"target\n")
+
+    event_log.unlink()
+    event_log.symlink_to(target)
+
+    with pytest.raises(ValueError, match="symlink|non-directory component"):
+        build_governed_supervisor_launch_contract(candidate)
+
+
+def test_task_state_event_log_rejects_hard_link(tmp_path: Path) -> None:
+    """Hard-linked journal file must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    link = tmp_path / "hard-link.jsonl"
+    link.hardlink_to(event_log)
+
+    with pytest.raises(ValueError, match="must not be hard-linked"):
+        build_governed_supervisor_launch_contract(candidate)
+
+
+def test_task_state_event_log_rejects_mode_drift(tmp_path: Path) -> None:
+    """Mode permission drift on journal file must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    event_log.chmod(0o777)
+
+    with pytest.raises(ValueError, match="mode changed"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_handles_empty_and_large_journals(tmp_path: Path) -> None:
+    """Empty journals (0 bytes) and large journals behave cleanly under append capture."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_log.write_bytes(b"")
+
+    # Empty journal
+    contract1 = build_governed_supervisor_launch_contract(candidate)
+    assert contract1.task_state_event_log_identity is not None
+    assert contract1.task_state_event_log_identity.captured_size == 0
+
+    # Append to empty journal
+    event_log.write_bytes(b"x" * 200000)  # 200 KB
+    contract2 = build_governed_supervisor_launch_contract(
+        candidate,
+        baseline_task_state_event_log_identity=contract1.task_state_event_log_identity,
+    )
+    assert contract2.task_state_event_log_identity == contract1.task_state_event_log_identity
+    assert contract2.task_state_event_log_identity.captured_at_size == 200000
+
+
+def test_task_state_event_log_immutable_sources_remain_fail_closed(tmp_path: Path) -> None:
+    """Immutable launch sources (supervisor.py, interpreter, config) must still reject mutations during capture."""
+    fs = promotion.OSLaunchFilesystem()
+    test_file = tmp_path / "supervisor.py"
+    test_file.write_bytes(b"print('hello')\n")
+
+    original_fdopen = os.fdopen
+
+    def fdopen_with_mutation(fd: int, *args: Any, **kwargs: Any) -> Any:
+        handle = original_fdopen(fd, *args, **kwargs)
+        with test_file.open("a") as f:
+            f.write("# concurrent_mutation\n")
+        return handle
+
+    with patch("os.fdopen", side_effect=fdopen_with_mutation):
+        with pytest.raises(ValueError, match="Governed launch supervisor changed during capture"):
+            fs.capture_regular_file(test_file, role="supervisor", require_executable=False)
+
+
+
 
