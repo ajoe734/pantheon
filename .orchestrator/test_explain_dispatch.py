@@ -231,8 +231,8 @@ class TestExplainDispatch(unittest.TestCase):
         with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}):
             res = explain_dispatch_for_task(self.config, state, "TASK-006", target_agent_filter="Codex")
             self.assertFalse(res["agents"]["Codex"]["blocked"])
-            self.assertIn("helper_notes", res["agents"]["Codex"])
-            self.assertTrue(any("catalog locked" in note for note in res["agents"]["Codex"]["helper_notes"]))
+            self.assertNotIn("helper_notes", res["agents"]["Codex"])
+
 
     def test_cooldown_suppressed_event(self) -> None:
         state = {
@@ -369,6 +369,8 @@ class TestExplainDispatch(unittest.TestCase):
         state = {"seen_event_keys": {}}
         task = {"id": "TASK-HYST-1", "status": "todo", "owner": "Codex", "reviewer": "Claude2"}
         with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}), \
+             unittest.mock.patch("explain_dispatch.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
              unittest.mock.patch("explain_dispatch.load_provider_report", return_value=report):
             res = explain_dispatch_for_task(self.config, state, "TASK-HYST-1", target_agent_filter="Codex")
             self.assertFalse(res["agents"]["Codex"]["blocked"])
@@ -397,6 +399,8 @@ class TestExplainDispatch(unittest.TestCase):
         state = {"seen_event_keys": {}}
         task = {"id": "TASK-HYST-2", "status": "todo", "owner": "Codex", "reviewer": "Claude2"}
         with unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}), \
+             unittest.mock.patch("explain_dispatch.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
              unittest.mock.patch("explain_dispatch.load_provider_report", return_value=report):
             res = explain_dispatch_for_task(config, state, "TASK-HYST-2", target_agent_filter="Codex")
             self.assertTrue(res["agents"]["Codex"]["blocked"])
@@ -450,6 +454,32 @@ class TestExplainDispatch(unittest.TestCase):
         )
         self.assertFalse(changed)
         self.assertNotIn("newadapter", state["paused_providers"])
+
+
+    def test_dev_bridge_unadmitted_task_remains_dispatchable(self) -> None:
+        state = {"seen_event_keys": {}}
+        task = {
+            "id": "TASK-UNADMITTED-001",
+            "title": "Unadmitted Dev Bridge Task",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+            "depends_on": [],
+            "dev_bridge": {
+                "packet_id": "pkt-unadmitted-123",
+                "packet_digest": "invalid_digest",
+                "task_spec_hash": "invalid_hash",
+            },
+        }
+        config = copy.deepcopy(self.config)
+        # Even when assistant_dev_bridge_task_is_admitted returns False, dispatch and explain_dispatch remain work-conserving & explainable.
+        with unittest.mock.patch("explain_dispatch.assistant_dev_bridge_task_is_admitted", return_value=False), \
+             unittest.mock.patch("explain_dispatch.load_status_data", return_value={"tasks": [task]}):
+            res = explain_dispatch_for_task(config, state, "TASK-UNADMITTED-001", target_agent_filter="Codex")
+            self.assertNotIn("global_block_reason", res)
+            self.assertIn("Codex", res["agents"])
+            self.assertFalse(res["agents"]["Codex"]["blocked"])
+            self.assertEqual(res["agents"]["Codex"]["candidate_reason"], "owned_ready_dispatch")
 
 
 if __name__ == "__main__":
