@@ -570,6 +570,9 @@
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
         "home": "/home/lupin/.claude2",
+        "env": {
+          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude2"
+        },
         "model": "sonnet",
         "effort": "medium"
       },

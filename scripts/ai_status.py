@@ -6475,8 +6475,7 @@ def _audited_reassignment_events(
             or event.get("agent") != "Orchestrator"
             or not event.get("old_owner")
             or not event.get("new_owner")
-            or str(event.get("event_id") or "")
-            != _supervisor_reassignment_event_id(event)
+            or not _supervisor_reassignment_event_id_matches(event)
         ):
             continue
         event_timestamp = _parse_utc_timestamp(event.get("ts"))
@@ -6622,6 +6621,17 @@ def _supervisor_reassignment_event_id(event: Mapping[str, Any]) -> str:
         f"{event.get('message') or ''}"
     )
     return "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _supervisor_reassignment_event_id_matches(event: Mapping[str, Any]) -> bool:
+    """Accept only the two canonical prefixes bound to the exact payload digest."""
+
+    expected = _supervisor_reassignment_event_id(event)
+    digest = expected.removeprefix("supervisor-reassign-")
+    return str(event.get("event_id") or "") in {
+        expected,
+        f"supervisor-task-reassigned-{digest}",
+    }
 
 
 def _verified_done_owner_reassignment(

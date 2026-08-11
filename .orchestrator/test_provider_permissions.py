@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+import common
 import permission_broker
 import provider_permissions
 from provider_permissions import ROOT, _verified_claude_hooks
@@ -625,6 +626,108 @@ EOF
         self.assertTrue(report["providers"]["claude2"]["auth_ready"])
         self.assertTrue(report["providers"]["claude2"]["supports_auto_approve"])
         self.assertEqual(report["providers"]["claude2"]["paths"]["home"], os.path.expanduser("~/.claude2"))
+
+    def test_claude_home_without_config_dir_misses_flat_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claude2_home = Path(tmpdir) / "claude2"
+            claude2_home.mkdir()
+            flat_credentials = claude2_home / ".credentials.json"
+            flat_credentials.write_text('{"claudeAiOauth":{"accessToken":"test-token"}}', encoding="utf-8")
+
+            resolved = provider_permissions.claude_credentials_path({"HOME": str(claude2_home)})
+
+            self.assertEqual(resolved, claude2_home / ".claude" / ".credentials.json")
+            self.assertTrue(flat_credentials.exists())
+            self.assertFalse(resolved.exists())
+
+    def test_source_config_keeps_claude_profiles_isolated(self) -> None:
+        config = json.loads((Path(ROOT) / ".orchestrator" / "config.json").read_text(encoding="utf-8"))
+
+        claude_runtime = config["providers"]["claude"]["runtime"]
+        claude2_runtime = config["providers"]["claude2"]["runtime"]
+
+        self.assertEqual(claude_runtime["env"]["CLAUDE_CONFIG_DIR"], "/home/lupin/.claude-autoworker")
+        self.assertEqual(claude2_runtime["home"], "/home/lupin/.claude2")
+        self.assertEqual(claude2_runtime["env"]["CLAUDE_CONFIG_DIR"], "/home/lupin/.claude2")
+        self.assertNotEqual(
+            claude_runtime["env"]["CLAUDE_CONFIG_DIR"],
+            claude2_runtime["env"]["CLAUDE_CONFIG_DIR"],
+        )
+
+    def test_configured_claude_probes_use_their_isolated_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            claude_config_dir = root / "claude-autoworker"
+            claude2_config_dir = root / "claude2"
+            claude_config_dir.mkdir()
+            claude2_config_dir.mkdir()
+            credential_payload = '{"claudeAiOauth":{"accessToken":"test-token"}}'
+            (claude_config_dir / ".credentials.json").write_text(credential_payload, encoding="utf-8")
+            (claude2_config_dir / ".credentials.json").write_text(credential_payload, encoding="utf-8")
+            config = {
+                "providers": {
+                    "claude": {
+                        "delivery_mode": "claude_cli",
+                        "runtime": {
+                            "cli": "claude",
+                            "env": {"CLAUDE_CONFIG_DIR": str(claude_config_dir)},
+                        },
+                    },
+                    "claude2": {
+                        "delivery_mode": "claude_cli",
+                        "runtime": {
+                            "cli": "claude",
+                            "home": str(claude2_config_dir),
+                            "env": {"CLAUDE_CONFIG_DIR": str(claude2_config_dir)},
+                        },
+                    },
+                }
+            }
+            logged_in = subprocess.CompletedProcess(
+                ["claude", "auth", "status"],
+                0,
+                '{"loggedIn":true}',
+                "",
+            )
+            probe_envs: list[dict[str, str]] = []
+
+            def fake_auth_status(
+                _command: list[str],
+                **kwargs: object,
+            ) -> subprocess.CompletedProcess[str]:
+                probe_envs.append(dict(kwargs["env"]))  # type: ignore[arg-type]
+                return logged_in
+
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.object(provider_permissions, "command_exists", return_value="/usr/bin/claude"),
+                mock.patch.object(provider_permissions, "run_command", side_effect=fake_auth_status),
+                mock.patch.object(common, "run_command", side_effect=fake_auth_status),
+            ):
+                claude2_probe = provider_permissions.probe_provider_auth(config, "claude2", force=True)
+                claude_probe = provider_permissions.probe_provider_auth(config, "claude", force=True)
+
+        self.assertTrue(claude2_probe["ready"])
+        self.assertEqual(
+            claude2_probe["metadata"]["credentials"],
+            str(claude2_config_dir / ".credentials.json"),
+        )
+        self.assertEqual(claude2_probe["metadata"]["claude_config_dir"], str(claude2_config_dir))
+        self.assertTrue(claude_probe["ready"])
+        self.assertEqual(
+            claude_probe["metadata"]["credentials"],
+            str(claude_config_dir / ".credentials.json"),
+        )
+        self.assertEqual(claude_probe["metadata"]["claude_config_dir"], str(claude_config_dir))
+        self.assertEqual(
+            [env["CLAUDE_CONFIG_DIR"] for env in probe_envs],
+            [
+                str(claude2_config_dir),
+                str(claude2_config_dir),
+                str(claude_config_dir),
+                str(claude_config_dir),
+            ],
+        )
 
     def test_provider_capabilities_include_custom_gemini_provider(self) -> None:
         config = {
