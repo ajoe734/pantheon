@@ -725,6 +725,32 @@ def _replay_transition_bytes(payload: bytes, *, sequence: int, previous_event_sh
     return sequence, previous_event_sha256, state, events
 
 
+def _validate_archive_genesis_binding(
+    events: list[tuple[dict[str, Any], dict[str, Any]]],
+    archive_identity: dict[str, Any] | None,
+) -> None:
+    """Ensure the V2 genesis projection is the state frozen in the V1 archive.
+
+    This validation is deliberately reserved for interrupted-migration resume
+    and offline full-chain verification.  A normal head/tail read must not
+    inspect the frozen archive or turn its integrity checks into hot-path work.
+    """
+
+    if archive_identity is None:
+        return
+    if not events or events[0][0].get("sequence") != 1:
+        raise TaskStateStoreError("task-state V2 archive binding lacks a genesis transition")
+    genesis, projected_state = events[0]
+    expected_state_sha256 = archive_identity["projected_state_sha256"]
+    if (
+        genesis["state_sha256"] != expected_state_sha256
+        or sha256_json(projected_state) != expected_state_sha256
+    ):
+        raise TaskStateStoreError(
+            "task-state V2 genesis state does not match archive projected-state binding"
+        )
+
+
 def _virtual_empty_head() -> dict[str, Any]:
     return _make_head(sequence=0, state={}, last_event_sha256=None, delta_offset=0, archive_identity=None, updated_at="1970-01-01T00:00:00Z")
 
@@ -867,6 +893,7 @@ def _load_all_v2_events_unlocked(event_path: Path) -> tuple[list[tuple[dict[str,
     assert head is not None
     payload, size = _read_transition_tail(event_path, 0)
     sequence, last_sha, state, events = _replay_transition_bytes(payload, sequence=0, previous_event_sha256=None, state={}, archive_identity=head["archive_identity"])
+    _validate_archive_genesis_binding(events, head["archive_identity"])
     if head["sequence"] > sequence:
         raise TaskStateStoreError("task-state full-chain verification disagrees with current head")
     if head["sequence"]:
@@ -1172,7 +1199,8 @@ def migrate_legacy_journal(path: str | Path, *, dry_run: bool = False, source: s
         identity = _archive_identity(manifest)
         payload, size = _read_transition_tail(event_path, 0)
         if payload:
-            sequence, last_sha, recovered_state, _events = _replay_transition_bytes(payload, sequence=0, previous_event_sha256=None, state={}, archive_identity=identity)
+            sequence, last_sha, recovered_state, events = _replay_transition_bytes(payload, sequence=0, previous_event_sha256=None, state={}, archive_identity=identity)
+            _validate_archive_genesis_binding(events, identity)
             head = _make_head(sequence=sequence, state=recovered_state, last_event_sha256=last_sha, delta_offset=size, archive_identity=identity)
             _write_head_cas(event_path, head, expected_head_sha256=None)
             return {"status": "recovered_interrupted_migration", "event_log": str(event_path), "archive": str(archive), "sequence": sequence}

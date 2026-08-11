@@ -56,6 +56,18 @@ def write_legacy(path: Path) -> tuple[dict, bytes]:
     return second, payload
 
 
+def rewrite_v2_genesis(path: Path, state: dict) -> dict:
+    """Rewrite one V2 genesis into a valid but archive-unbound transition."""
+
+    event = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    event["delta"] = store._state_delta({}, state)
+    event["state_sha256"] = store.sha256_json(state)
+    event["event_sha256"] = store.sha256_json(store._event_digest_payload(event))
+    event["event_id"] = f"task-state-{event['event_sha256']}"
+    path.write_bytes(store.canonical_json_bytes(event) + b"\n")
+    return event
+
+
 def write_large_legacy(path: Path, *, revisions: int = 90, task_count: int = 600) -> dict:
     """Build a multi-megabyte V1 fixture without invoking a V1 runtime API."""
 
@@ -286,6 +298,59 @@ def test_migration_freezes_exact_legacy_identity_and_binds_genesis(tmp_path: Pat
     assert snapshot["state"] == expected
     assert genesis["archive_identity"] == snapshot["archive_identity"]
     assert store.verify_full_chain(path)["archive_verified"] is True
+
+
+def test_resume_rejects_self_consistent_genesis_that_is_not_the_archive_projection(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    write_legacy(path)
+    store.migrate_legacy_journal(path)
+    replacement = board(("LEGACY-001", "done"))
+    genesis = rewrite_v2_genesis(path, replacement)
+    head_path = path.with_name(f"{path.name}.head.json")
+    head_path.unlink()
+
+    assert genesis["state_sha256"] == store.sha256_json(replacement)
+    assert genesis["state_sha256"] != genesis["archive_identity"]["projected_state_sha256"]
+    with pytest.raises(
+        store.TaskStateStoreError,
+        match="genesis state does not match archive projected-state binding",
+    ):
+        store.migrate_legacy_journal(path)
+    assert not head_path.exists()
+
+
+def test_offline_verification_rejects_self_consistent_genesis_that_is_not_archive_projection(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    write_legacy(path)
+    store.migrate_legacy_journal(path)
+    replacement = board(("LEGACY-001", "done"))
+    genesis = rewrite_v2_genesis(path, replacement)
+    previous_head = store._read_head(path)
+    assert previous_head is not None
+    replacement_head = store._make_head(
+        sequence=1,
+        state=replacement,
+        last_event_sha256=genesis["event_sha256"],
+        delta_offset=path.stat().st_size,
+        archive_identity=genesis["archive_identity"],
+        updated_at=genesis["committed_at"],
+    )
+    store._write_head_cas(
+        path,
+        replacement_head,
+        expected_head_sha256=previous_head["head_sha256"],
+    )
+
+    assert genesis["state_sha256"] != genesis["archive_identity"]["projected_state_sha256"]
+    with pytest.raises(
+        store.TaskStateStoreError,
+        match="genesis state does not match archive projected-state binding",
+    ):
+        store.verify_full_chain(path)
 
 
 def test_full_verification_detects_a_tampered_archive(tmp_path: Path) -> None:
