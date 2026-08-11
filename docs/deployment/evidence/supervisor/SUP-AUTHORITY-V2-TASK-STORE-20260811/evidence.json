@@ -11,7 +11,8 @@
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-AUTHORITY-V2-TASK-STORE-20260811",
-    "candidate_source_commit": "e78d87fe4f7b2c2c64f8ca51755e896e7aeca372"
+    "candidate_source_commit": "e78d87fe4f7b2c2c64f8ca51755e896e7aeca372",
+    "post_source_hygiene_commit": "42ad3713132be833f2a751ac6b3a50a14f0872df"
   },
   "scope": {
     "owned_layer": "Authoritative task-state V2 persistence: compact current head, append-only state deltas, V1 archive migration and offline integrity verification, task-store architecture specification, and runtime caller telemetry migration.",
@@ -93,6 +94,6 @@
   "review": {
     "decision": "pending_independent_review",
     "required_reviewer": "Codex",
-    "protocol": "Review this committed manifest, all changed paths, and the exact PR head. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
+    "protocol": "Review this committed manifest, all changed paths, and the exact PR head. The post-source hygiene commit removes two Markdown trailing spaces only and is still part of the required exact-head review. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
   }
 }
