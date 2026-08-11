@@ -7443,6 +7443,17 @@ class OSPromotionBackend:
             active_incumbent_identity = captured_incumbent_identity
             baseline_identity = captured_incumbent_identity
 
+        # Candidate, active incumbent, and rollback captures all bind the same
+        # external live config.  The active runtime is intentionally a
+        # different root from the rollback materialization, but that does not
+        # relax the config-CAS baseline: a config replacement during either
+        # capture must still fail before we render any launch variant.
+        if active_incumbent_identity.config_bytes != candidate_identity.config_bytes:
+            raise ValueError(
+                "Candidate and active incumbent captured different config bytes"
+            )
+        if incumbent_identity.config_bytes != candidate_identity.config_bytes:
+            raise ValueError("Candidate and rollback captured different config bytes")
         if active_incumbent_identity.candidate_root == candidate_identity.candidate_root:
             raise ValueError("Candidate runtime equals the active incumbent runtime")
         if incumbent_identity.candidate_root == candidate_identity.candidate_root:

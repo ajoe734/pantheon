@@ -9409,3 +9409,101 @@ def test_revalidate_rejects_pre_cas_live_config_naming_candidate_root(
         with pytest.raises(ValueError, match="supervisor entrypoint"):
             backend.revalidate(plan)
 
+
+@pytest.mark.parametrize(
+    ("drifted_identity", "expected_message"),
+    (
+        (
+            "active",
+            "Candidate and active incumbent captured different config bytes",
+        ),
+        (
+            "rollback",
+            "Candidate and rollback captured different config bytes",
+        ),
+    ),
+)
+def test_prepare_rejects_config_capture_race_between_candidate_active_and_rollback(
+    tmp_path: Path,
+    drifted_identity: str,
+    expected_message: str,
+) -> None:
+    """Any live-config byte race aborts before variants or runtime observation."""
+    command_runtimes_dir = tmp_path / "command-runtimes"
+    rollback_runtimes_dir = tmp_path / "rollback-command-runtimes"
+    candidate_root = command_runtimes_dir / ("a" * 40)
+    active_incumbent_root = command_runtimes_dir / ("b" * 40)
+    rollback_root = rollback_runtimes_dir / ("b" * 40)
+    for root in (candidate_root, active_incumbent_root, rollback_root):
+        root.mkdir(parents=True, exist_ok=True)
+        create_realistic_healthy_fixture(root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    active_incumbent_identity = _verified_identity_dependency(active_incumbent_root)
+    rollback_identity = _verified_identity_dependency(rollback_root)
+    active_incumbent_identity.config_path = candidate_identity.config_path
+    rollback_identity.config_path = candidate_identity.config_path
+    for identity in (active_incumbent_identity, rollback_identity):
+        identity.config_bytes = candidate_identity.config_bytes
+        identity.config_byte_length = candidate_identity.config_byte_length
+        identity.config_sha256 = candidate_identity.config_sha256
+    active_incumbent_identity.legacy_incumbent_bytecode_residue = (
+        "requires-clean-rollback",
+    )
+    identity = (
+        active_incumbent_identity
+        if drifted_identity == "active"
+        else rollback_identity
+    )
+    identity.config_bytes = f"{drifted_identity}-config-after-race".encode("utf-8")
+    identity.config_byte_length = len(identity.config_bytes)
+    identity.config_sha256 = promotion.hashlib.sha256(identity.config_bytes).hexdigest()
+
+    active_process = _verified_process_identity_dependency(active_incumbent_root)
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    def _mock_build_identity(path: Path, *args: Any, **kwargs: Any) -> promotion.CandidateRuntimeIdentity:
+        if path == candidate_root:
+            return candidate_identity
+        if path == active_incumbent_root:
+            return active_incumbent_identity
+        if path == rollback_root:
+            return rollback_identity
+        raise ValueError(f"Unexpected path: {path}")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        command_runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        side_effect=_mock_build_identity,
+    ), patch(
+        "promote_supervisor_runtime._discover_supervisor_seed",
+        return_value=(
+            active_process.generation,
+            active_process.argv,
+            active_process.cwd,
+        ),
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=active_process,
+    ), patch(
+        "promote_supervisor_runtime.materialize_immutable_rollback_runtime",
+        return_value=rollback_identity,
+    ) as materialize, patch(
+        "promote_supervisor_runtime.capture_runtime_observation"
+    ) as capture:
+        with pytest.raises(
+            ValueError,
+            match=expected_message,
+        ):
+            backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+
+    materialize.assert_called_once_with(
+        active_incumbent_identity,
+        candidate_identity=candidate_identity,
+    )
+    capture.assert_not_called()

@@ -1,7 +1,7 @@
 {
   "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
   "title": "Bind active incumbent config entrypoint separately from rollback root",
-  "owner": "Antigravity2",
+  "owner": "Codex2",
   "reviewer": "Antigravity",
   "status": "in_progress",
   "head_binding_policy": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py. This evidence manifest does not claim a commit can contain its own SHA.",
@@ -16,8 +16,8 @@
     "git diff --check"
   ],
   "verification_results": {
-    "focused_tests": "3 passed in 1.40s",
-    "promotion_and_sync_suites": "361 passed in 15.65s",
+    "focused_tests": "5 passed in 1.60s",
+    "promotion_and_sync_suites": "pending final task validation after config-capture race guard",
     "git_diff_check": "passed with 0 exit code"
   },
   "required_check_identities": [
