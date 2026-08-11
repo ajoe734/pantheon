@@ -1,0 +1,116 @@
+{
+  "schema_version": "supervisor_audit_event_id_compatibility_review.v1",
+  "task": {
+    "id": "SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+    "title": "Accept canonical supervisor task-reassigned event-id prefixes without weakening audit verification",
+    "phase": "Status Governance / Audit Event Compatibility",
+    "owner": "Codex",
+    "reviewer": "Antigravity2",
+    "status": "in_progress",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811"
+  },
+  "scope": {
+    "owned_layer": "The ai_status predicate that verifies deterministic supervisor task_reassigned event IDs, plus focused regression tests.",
+    "not_changing": "Supervisor scheduling or event production, audit payload/digest construction, actor/task/role/timestamp/chain/order/archive checks, reconciliation policy, canonical task or audit data, provider state, runtime rollout, or service lifecycle.",
+    "implementation_files": [
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ],
+    "review_manifest": "docs/deployment/evidence/supervisor/SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811/evidence.json"
+  },
+  "implementation": {
+    "base_commit": "e2cdc4d4d00ff43d3e57bd569a37a405ae6cda77",
+    "predicate_anchor": "560240584371d7523b8788613938b67790630504",
+    "validated_implementation_anchor": "f2e92eb6a99d7f81b8003235443e96a658f7d062",
+    "source_blob": "d310ee0ebfa52f041f8da283ba170d6c157c28c4",
+    "test_blob": "360214939d58c6350f2d2c75d19dd9a57c3bcd27",
+    "implementation_diff_sha256": "11f6f2f557e0583cf210eb505bc8ea020c14259c7f5d5cc83155829c9efe68eb",
+    "behavior": "Keep supervisor-reassign-<sha256(payload)> valid and additionally accept supervisor-task-reassigned-<the-same-sha256(payload)>. Every other prefix or digest remains invalid.",
+    "digest_payload_order": [
+      "task_id",
+      "ts",
+      "old_owner",
+      "new_owner",
+      "old_reviewer",
+      "new_reviewer",
+      "message"
+    ]
+  },
+  "reproduction": {
+    "status": "passed",
+    "blocked_task": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+    "authentic_event_id": "supervisor-task-reassigned-dac420278948aad12f1f32f6804d6af63f2adace105fbaf8ed2212a26f510778",
+    "event_timestamp": "2026-08-09T05:20:22Z",
+    "owner_transition": "Codex -> Codex",
+    "reviewer_transition": "Claude -> Antigravity",
+    "pre_fix_result": "The verifier derived supervisor-reassign-dac420278948aad12f1f32f6804d6af63f2adace105fbaf8ed2212a26f510778 and discarded the authentic event solely because its canonical producer prefix was supervisor-task-reassigned-.",
+    "post_fix_result": "The exact archived event fixture passes _verified_done_reviewer_reassignment while preserving its original event ID and exact payload digest."
+  },
+  "security_regressions": {
+    "positive": [
+      "supervisor-reassign- with the exact payload digest",
+      "supervisor-task-reassigned- with the exact same payload digest",
+      "the authentic dac420 closeout-blocker event"
+    ],
+    "negative": [
+      "wrong digest under an accepted prefix",
+      "correct digest under an unlisted prefix",
+      "forged non-Orchestrator actor",
+      "missing event_id, old_owner, new_owner, or parseable timestamp",
+      "valid event belonging to a different task",
+      "two valid reassignment hops with ambiguous identical timestamps"
+    ],
+    "unchanged_fail_closed_checks": [
+      "strict audit-source parsing and archive lineage",
+      "task identity",
+      "Orchestrator actor",
+      "owner and reviewer transition fields in the digest",
+      "UTC timestamp parsing",
+      "role-chain continuity",
+      "ambiguous ordering rejection",
+      "commit-to-reassignment ordering"
+    ]
+  },
+  "verification": {
+    "status": "passed",
+    "validated_at": "2026-08-11",
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_ai_status.py::SupervisorReassignmentEventIdCompatibilityTests",
+        "result": "7 passed, 8 subtests passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_ai_status.py",
+        "result": "214 passed, 39 subtests passed in 37.85s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m py_compile scripts/ai_status.py scripts/test_ai_status.py",
+        "result": "passed"
+      },
+      {
+        "command": "git diff --check origin/dev...f2e92eb6a99d7f81b8003235443e96a658f7d062",
+        "result": "passed"
+      }
+    ]
+  },
+  "runtime_provenance": {
+    "governed_command_runtime_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+    "status_root": "/home/lupin/pantheon",
+    "source_only_delivery": true,
+    "live_runtime_mutated": false,
+    "supervisor_restarted_or_signaled": false,
+    "canonical_state_edited_directly": false,
+    "audit_data_edited": false,
+    "rollout_or_closeout_retry_performed": false
+  },
+  "review": {
+    "decision": "pending_independent_review",
+    "required_reviewer": "Antigravity2",
+    "manifest_committed_before_review": true,
+    "exact_head_requirement": "Review and approve the exact current PR head containing this manifest. The validated implementation anchor is f2e92eb6a99d7f81b8003235443e96a658f7d062; any later non-evidence source change requires the complete verification to be rerun.",
+    "approval_protocol": "Bind REVIEW_FILE to this manifest when approving through the governed PANTHEON_COMMAND_ROOT with AI_NAME=Antigravity2.",
+    "owner_closeout": "After exact-head approval, green repository checks, and protected merge into dev, Codex must re-read the canonical row and run governed done; done is not part of this source-only implementation phase."
+  }
+}

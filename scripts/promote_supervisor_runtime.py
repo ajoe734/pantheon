@@ -368,6 +368,19 @@ class LaunchFileIdentity:
 
 
 @dataclass(frozen=True)
+class LaunchJournalFileIdentity:
+    role: str
+    path: Path
+    device: int
+    inode: int
+    mode: int
+    captured_size: int
+    prefix_sha256: str
+    captured_at_size: int = field(compare=False)
+
+
+
+@dataclass(frozen=True)
 class GovernedSupervisorLaunchContract:
     interpreter: LaunchFileIdentity
     argv: tuple[str, ...]
@@ -388,6 +401,8 @@ class GovernedSupervisorLaunchContract:
     intentional_restart_path: Path
     stdout_log_path: Path
     stderr_log_path: Path
+    task_state_event_log_identity: LaunchJournalFileIdentity | None = None
+
 
 
 @dataclass(frozen=True)
@@ -483,6 +498,14 @@ class LaunchFilesystem(Protocol):
         require_executable: bool,
     ) -> LaunchFileIdentity: ...
 
+    def capture_append_only_journal(
+        self,
+        path: Path,
+        *,
+        role: str,
+        baseline_identity: LaunchJournalFileIdentity | None = None,
+    ) -> LaunchJournalFileIdentity: ...
+
     def capture_directory(self, path: Path, *, label: str) -> FilesystemIdentity: ...
 
     def directory_is_writable(self, path: Path) -> bool: ...
@@ -490,6 +513,7 @@ class LaunchFilesystem(Protocol):
     def path_exists(self, path: Path) -> bool: ...
 
     def file_is_writable(self, path: Path) -> bool: ...
+
 
 
 class RuntimeProcessReader(Protocol):
@@ -2580,6 +2604,23 @@ def atomic_install_live_config(
         os.close(directory_fd)
 
 
+def _hash_descriptor_range(descriptor: int, *, length: int) -> str:
+    hasher = hashlib.sha256()
+    if length == 0:
+        return hasher.hexdigest()
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    bytes_remaining = length
+    chunk_size = 65536
+    while bytes_remaining > 0:
+        to_read = min(bytes_remaining, chunk_size)
+        chunk = os.read(descriptor, to_read)
+        if not chunk or len(chunk) == 0:
+            raise ValueError("Unexpected end of file while reading descriptor range")
+        hasher.update(chunk)
+        bytes_remaining -= len(chunk)
+    return hasher.hexdigest()
+
+
 class OSLaunchFilesystem:
     """Descriptor-bound, read-only filesystem checks for launch preflight."""
 
@@ -2647,6 +2688,102 @@ class OSLaunchFilesystem:
             mode=before.st_mode,
             byte_length=len(content),
             sha256=hashlib.sha256(content).hexdigest(),
+        )
+
+    def capture_append_only_journal(
+        self,
+        path: Path,
+        *,
+        role: str,
+        baseline_identity: LaunchJournalFileIdentity | None = None,
+    ) -> LaunchJournalFileIdentity:
+        parent_components = _capture_directory_component_identities(
+            path.parent,
+            label=f"Governed launch {role}",
+        )
+        descriptor = _open_path_descriptor(
+            path,
+            label=f"Governed launch {role}",
+            require_directory=False,
+        )
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError(f"Governed launch {role} is not a regular file: {path}")
+            if before.st_nlink != 1:
+                raise ValueError(f"Governed launch {role} must not be hard-linked: {path}")
+
+            if baseline_identity is not None:
+                if before.st_dev != baseline_identity.device:
+                    raise ValueError(f"Governed launch {role} device changed: {path}")
+                if before.st_ino != baseline_identity.inode:
+                    raise ValueError(f"Governed launch {role} inode changed: {path}")
+                if before.st_mode != baseline_identity.mode:
+                    raise ValueError(f"Governed launch {role} mode changed: {path}")
+                if before.st_size < baseline_identity.captured_size:
+                    raise ValueError(
+                        f"Governed launch {role} was truncated below baseline size: {path}"
+                    )
+                prefix_len = baseline_identity.captured_size
+                expected_prefix_sha256 = baseline_identity.prefix_sha256
+            else:
+                prefix_len = before.st_size
+                expected_prefix_sha256 = None
+
+            try:
+                prefix_sha256 = _hash_descriptor_range(descriptor, length=prefix_len)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Governed launch {role} was truncated during capture: {path}"
+                ) from exc
+
+            if expected_prefix_sha256 is not None and prefix_sha256 != expected_prefix_sha256:
+                raise ValueError(
+                    f"Governed launch {role} prefix changed from baseline: {path}"
+                )
+
+            after = os.fstat(descriptor)
+            if after.st_dev != before.st_dev:
+                raise ValueError(f"Governed launch {role} device changed during capture: {path}")
+            if after.st_ino != before.st_ino:
+                raise ValueError(f"Governed launch {role} inode changed during capture: {path}")
+            if after.st_mode != before.st_mode:
+                raise ValueError(f"Governed launch {role} mode changed during capture: {path}")
+            if after.st_nlink != 1:
+                raise ValueError(f"Governed launch {role} must not be hard-linked: {path}")
+            if after.st_size < before.st_size:
+                raise ValueError(f"Governed launch {role} was truncated during capture: {path}")
+
+            try:
+                reverified_prefix_sha256 = _hash_descriptor_range(descriptor, length=prefix_len)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Governed launch {role} was truncated during capture: {path}"
+                ) from exc
+
+            if reverified_prefix_sha256 != prefix_sha256:
+                raise ValueError(
+                    f"Governed launch {role} prefix changed during capture: {path}"
+                )
+        finally:
+            os.close(descriptor)
+
+        file_identity = _identity_from_stat(before)
+        _assert_path_component_identities(
+            parent_components
+            + (PathComponentIdentity(path=path, identity=file_identity),),
+            label=f"Governed launch {role}",
+        )
+
+        return LaunchJournalFileIdentity(
+            role=role,
+            path=path,
+            device=before.st_dev,
+            inode=before.st_ino,
+            mode=before.st_mode,
+            captured_size=prefix_len,
+            prefix_sha256=prefix_sha256,
+            captured_at_size=after.st_size,
         )
 
     def capture_directory(self, path: Path, *, label: str) -> FilesystemIdentity:
@@ -2815,6 +2952,7 @@ def build_governed_supervisor_launch_contract(
     launch_cwd: Path | None = None,
     stdout_log_path: Path | None = None,
     stderr_log_path: Path | None = None,
+    baseline_task_state_event_log_identity: LaunchJournalFileIdentity | None = None,
 ) -> GovernedSupervisorLaunchContract:
     """Assemble and validate the exact next-launch contract without mutation."""
     fs = filesystem or OSLaunchFilesystem()
@@ -2868,10 +3006,10 @@ def build_governed_supervisor_launch_contract(
         task_state_store.get("event_log"),
         label="task_state_store.event_log",
     )
-    fs.capture_regular_file(
+    task_state_event_log_identity = fs.capture_append_only_journal(
         task_state_event_log,
         role="task_state_event_log",
-        require_executable=False,
+        baseline_identity=baseline_task_state_event_log_identity,
     )
     fs.capture_directory(
         task_state_event_log.parent,
@@ -2914,7 +3052,7 @@ def build_governed_supervisor_launch_contract(
         identity,
         status_root=status_root,
     )
-    final_environment = (
+    scrubbed_environment = (
         dict(launch_environment)
         if launch_environment is not None
         else build_scrubbed_launch_environment(
@@ -2924,7 +3062,7 @@ def build_governed_supervisor_launch_contract(
         )
     )
     _validate_governed_launch_environment(
-        final_environment,
+        scrubbed_environment,
         expected=expected_environment,
     )
 
@@ -2976,13 +3114,13 @@ def build_governed_supervisor_launch_contract(
         cwd_device=cwd_identity.device,
         cwd_inode=cwd_identity.inode,
         required_environment=tuple(
-            (name, expected_environment[name])
-            for name in GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT
+            (name, str(expected_environment[name]))
+            for name in sorted(expected_environment)
         ),
         scrubbed_environment_names_sha256=_environment_names_sha256(
-            final_environment
+            scrubbed_environment
         ),
-        scrubbed_environment_variable_count=len(final_environment),
+        scrubbed_environment_variable_count=len(scrubbed_environment),
         source_identities=source_identities,
         status_command_root=identity.candidate_root,
         status_command_runtime_sha=identity.head_commit,
@@ -2990,6 +3128,7 @@ def build_governed_supervisor_launch_contract(
         status_command_base_ref="origin/dev",
         status_root=status_root,
         task_state_event_log=task_state_event_log,
+        task_state_event_log_identity=task_state_event_log_identity,
         worker_worktree_root=worker_worktree_root,
         intentional_restart_path=intentional_restart,
         stdout_log_path=stdout_path,
@@ -3913,7 +4052,17 @@ def _governed_launch_contract_summary(
         },
         "status_root": str(contract.status_root),
         "task_state_event_log": str(contract.task_state_event_log),
+        "task_state_event_log_identity": {
+            "path": str(contract.task_state_event_log_identity.path),
+            "device": contract.task_state_event_log_identity.device,
+            "inode": contract.task_state_event_log_identity.inode,
+            "mode": contract.task_state_event_log_identity.mode,
+            "captured_size": contract.task_state_event_log_identity.captured_size,
+            "prefix_sha256": contract.task_state_event_log_identity.prefix_sha256,
+            "captured_at_size": contract.task_state_event_log_identity.captured_at_size,
+        } if contract.task_state_event_log_identity is not None else None,
         "worker_worktree_root": str(contract.worker_worktree_root),
+
         "intentional_restart_path": str(contract.intentional_restart_path),
         "stdout_log_path": str(contract.stdout_log_path),
         "stderr_log_path": str(contract.stderr_log_path),
@@ -4702,6 +4851,11 @@ def evaluate_promotion_invariants(
         q_task = evt_info.get("task_id")
         q_run_id = evt_info.get("run_id")
         q_lease_owner = evt_info.get("lease_owner")
+        q_status = evt_info.get("status") or evt_info.get("state")
+
+        # Skip unstarted queued/pending events that do not have a lease owner assigned
+        if q_status in ("queued", "pending") and not (isinstance(q_lease_owner, str) and q_lease_owner.strip()):
+            continue
 
         # Active started event requires nonempty lease_owner
         if not q_lease_owner or not isinstance(q_lease_owner, str) or not q_lease_owner.strip():
@@ -7348,6 +7502,7 @@ class OSPromotionBackend:
             build_governed_supervisor_launch_contract(
                 plan.candidate_identity,
                 supervisor_argv=plan.candidate_config.supervisor_argv,
+                baseline_task_state_event_log_identity=plan.candidate_launch.task_state_event_log_identity,
             )
             != plan.candidate_launch
         ):
@@ -7356,10 +7511,12 @@ class OSPromotionBackend:
             build_governed_supervisor_launch_contract(
                 plan.incumbent_identity,
                 supervisor_argv=plan.rollback_config.supervisor_argv,
+                baseline_task_state_event_log_identity=plan.rollback_launch.task_state_event_log_identity,
             )
             != plan.rollback_launch
         ):
             raise ValueError("Rollback governed launch contract drift detected")
+
         if plan.mutable_incumbent is None:
             return capture_runtime_observation(
                 plan.incumbent_identity,
@@ -7470,7 +7627,9 @@ class OSPromotionBackend:
         current_contract = build_governed_supervisor_launch_contract(
             identity,
             supervisor_argv=contract.argv,
+            baseline_task_state_event_log_identity=contract.task_state_event_log_identity,
         )
+
         if current_contract != contract:
             raise ValueError("Governed launch contract drift detected before launch")
         environment = build_scrubbed_launch_environment(
