@@ -69,6 +69,7 @@ FAILURE_VALUES = {
     "ACTION_REQUIRED",
     "STARTUP_FAILURE",
 }
+IGNORABLE_DIAGNOSTIC_WORKFLOWS = frozenset({"Canonical Review Attestation Audit"})
 ALLOWED_PRE_REBASE_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "BEHIND", "UNSTABLE", "UNKNOWN"}
 ALLOWED_DIRECT_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "UNSTABLE", "UNKNOWN"}
 PR_DETAIL_FIELDS = (
@@ -484,6 +485,21 @@ def is_check_required(item: Mapping[str, Any]) -> bool | None:
     return None
 
 
+def is_ignorable_diagnostic(item: Mapping[str, Any]) -> bool:
+    """Return true only for an explicitly optional, known diagnostic issuer.
+
+    GitHub's ``isRequired`` describes branch-protection requirements, not
+    whether a check is merely diagnostic. Some substantive Branch CI jobs are
+    intentionally optional, so requiredness alone must never downgrade their
+    failures. The workflow provenance is therefore a second mandatory input.
+    """
+
+    if is_check_required(item) is not False:
+        return False
+    workflow_name = str(item.get("workflowName") or "").strip()
+    return workflow_name in IGNORABLE_DIAGNOSTIC_WORKFLOWS
+
+
 def summarize_status_rollup(rollup: Any) -> CheckSummary:
     if not isinstance(rollup, list) or not rollup:
         return CheckSummary("empty")
@@ -494,8 +510,7 @@ def summarize_status_rollup(rollup: Any) -> CheckSummary:
         if not isinstance(item, Mapping):
             pending.append("malformed-check")
             continue
-        req = is_check_required(item)
-        is_non_required = req is False
+        is_non_required_diagnostic = is_ignorable_diagnostic(item)
         values = [
             normalize_state(item.get("conclusion")),
             normalize_state(item.get("state")),
@@ -503,13 +518,13 @@ def summarize_status_rollup(rollup: Any) -> CheckSummary:
         ]
         values = [value for value in values if value]
         if any(value in FAILURE_VALUES for value in values):
-            if is_non_required:
+            if is_non_required_diagnostic:
                 ignored_diagnostic.append(check_name(item))
             else:
                 failing.append(check_name(item))
             continue
         if any(value in PENDING_VALUES for value in values):
-            if is_non_required:
+            if is_non_required_diagnostic:
                 ignored_diagnostic.append(check_name(item))
             else:
                 pending.append(check_name(item))
@@ -519,7 +534,7 @@ def summarize_status_rollup(rollup: Any) -> CheckSummary:
         # GitHub CheckRun often reports status=COMPLETED with a SUCCESS
         # conclusion. If conclusion is absent, treat COMPLETED as pending-ish
         # rather than silently green.
-        if is_non_required:
+        if is_non_required_diagnostic:
             ignored_diagnostic.append(check_name(item))
         else:
             pending.append(check_name(item))

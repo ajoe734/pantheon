@@ -758,12 +758,49 @@ class CheckClassifierTests(unittest.TestCase):
         summary = auto_integrator.summarize_status_rollup(
             [
                 {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
-                {"name": "Audit signed canonical review (not required issuer) (4741)", "conclusion": "FAILURE", "status": "COMPLETED", "isRequired": False},
+                {
+                    "name": "Audit signed canonical review (not required issuer) (4741)",
+                    "conclusion": "FAILURE",
+                    "status": "COMPLETED",
+                    "workflowName": "Canonical Review Attestation Audit",
+                    "isRequired": False,
+                },
             ]
         )
         self.assertEqual(summary.state, "green")
         self.assertEqual(summary.failing, ())
         self.assertEqual(summary.ignored_diagnostic, ("Audit signed canonical review (not required issuer) (4741)",))
+
+    def test_non_required_actual_ci_failure_still_blocks(self) -> None:
+        summary = auto_integrator.summarize_status_rollup(
+            [
+                {
+                    "name": "Python packaging provision",
+                    "conclusion": "FAILURE",
+                    "status": "COMPLETED",
+                    "workflowName": "Branch CI Gate",
+                    "isRequired": False,
+                }
+            ]
+        )
+
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(summary.failing, ("Python packaging provision",))
+
+    def test_non_required_failure_without_diagnostic_provenance_blocks(self) -> None:
+        summary = auto_integrator.summarize_status_rollup(
+            [
+                {
+                    "name": "Unattributed optional check",
+                    "conclusion": "FAILURE",
+                    "status": "COMPLETED",
+                    "isRequired": False,
+                }
+            ]
+        )
+
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(summary.failing, ("Unattributed optional check",))
 
     def test_ambiguous_requiredness_treated_as_required_in_summary(self) -> None:
         summary = auto_integrator.summarize_status_rollup(
@@ -789,6 +826,7 @@ class CheckClassifierTests(unittest.TestCase):
                 "name": "Audit signed canonical review (not required issuer) (4741)",
                 "conclusion": "FAILURE",
                 "status": "COMPLETED",
+                "workflowName": "Canonical Review Attestation Audit",
             },
         ]
         runner = FakeRunner(
@@ -896,6 +934,7 @@ class CheckClassifierTests(unittest.TestCase):
                         "name": "Audit signed canonical review (not required issuer) (4741)",
                         "conclusion": "FAILURE",
                         "status": "COMPLETED",
+                        "workflowName": "Canonical Review Attestation Audit",
                         "isRequired": False,
                     },
                 ],
