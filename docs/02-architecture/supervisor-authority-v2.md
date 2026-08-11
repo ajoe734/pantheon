@@ -1,7 +1,7 @@
 # Supervisor Authority V2: Task-State Store
 
-Status: authoritative for Supervisor V2 task-state persistence  
-Effective: 2026-08-11  
+Status: authoritative for Supervisor V2 task-state persistence
+Effective: 2026-08-11
 Owner: Supervisor control plane
 
 This specification replaces the task-state persistence proposal in
