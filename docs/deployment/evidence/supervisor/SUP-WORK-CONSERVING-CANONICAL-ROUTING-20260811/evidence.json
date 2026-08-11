@@ -28,13 +28,13 @@
     "2. agent_auto_dispatch_block_reason (pause / provider health)",
     "3. quota_group_concurrency_limit (account group capacity)",
     "4. agent_dispatch_capacity (per-agent slot limit)",
-    "5. task_execution_dispatch_candidate (role/status eligibility: finalize -> review -> owned -> unowned helper claim)",
+    "5. task_execution_dispatch_candidate (role/status eligibility: review -> review_approved/finalize -> in_progress -> todo)",
     "6. agent_can_take_task (capability/sidecar restrictions)",
     "7. failure_loop_task_agents & chair_reassignment_triage_needed_for_task gates",
     "8. task_assignment_is_catalog_locked (returns False for work-conserving routing)",
     "9. dependencies_satisfied (dependency & lineage completion check)",
     "10. pending_event_keys & dispatch_event_is_in_unchanged_cooldown (pending event and cooldown gates)",
-    "Note: dev bridge admission check (assistant_dev_bridge_task_is_admitted) is audit-only during dev-bridge ingress/materialization and is omitted from live execution and routing dispatch gates."
+    "Note: dev bridge admission check (assistant_dev_bridge_task_is_admitted) is audit-only during dev-bridge ingress/materialization and is omitted from live execution and routing dispatch gates; helper claims occur after primary-candidate processing for unassigned or helper-eligible tasks."
   ],
   "synthetic_fleet_utilization": {
     "before_catalog_lock": {
