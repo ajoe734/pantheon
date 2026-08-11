@@ -621,20 +621,19 @@ def resolve_task_state_authority(
 def load_authoritative_task_snapshot(
     authority: dict[str, Any],
     *,
-    refresh_checkpoint: bool = True,
+    observational: bool = False,
 ) -> dict[str, Any]:
     """Return one validated authoritative journal generation.
 
-    ``load_snapshot`` verifies the complete journal prefix digest while reusing
-    the checkpoint's already-validated head and parsing only an appended tail.
-    Keeping the snapshot intact also binds the projected state, event identity,
-    and scale telemetry to the same shared-lock window.
+    ``load_snapshot`` reads the compact V2 head and only any post-head crash
+    tail. Keeping the snapshot intact also binds the projected state, event
+    identity, and scale telemetry to the same shared-lock window.
     """
 
     try:
         snapshot = load_snapshot(
             Path(authority["event_log"]),
-            refresh_checkpoint=refresh_checkpoint,
+            observational=observational,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         raise DispatchError(
@@ -661,8 +660,9 @@ def authoritative_snapshot_evidence(snapshot: dict[str, Any]) -> dict[str, Any]:
         "last_event_id": snapshot["last_event_id"],
         "last_event_sha256": snapshot["last_event_sha256"],
         "state_sha256": snapshot["state_sha256"],
-        "checkpoint_used": snapshot["resumed_from_checkpoint"] is True,
-        "revalidated_tail_events": int(snapshot["revalidated_events"]),
+        "head_sequence": int(snapshot["head_sequence"]),
+        "tail_event_count": int(snapshot["tail_event_count"]),
+        "recovered_tail": bool(snapshot["recovered_tail"]),
     }
 
 
@@ -3084,7 +3084,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     task_state_snapshot = load_authoritative_task_snapshot(
         authority,
-        refresh_checkpoint=not args.dry_run,
+        observational=args.dry_run,
     )
     state = task_state_snapshot["state"]
     command_root = Path(args.command_root).resolve()
