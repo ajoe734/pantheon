@@ -6962,7 +6962,7 @@ def test_capture_promotion_snapshot_passes_allow_legacy_admission_lock_id_churn(
     )
 
 
-def test_materialize_immutable_rollback_runtime_rejects_preexisting_rollback_destination_without_side_effects(
+def test_materialize_immutable_rollback_runtime_reuses_matching_preexisting_rollback_destination_without_side_effects(
     tmp_path: Path,
 ) -> None:
     prefix = tmp_path / "command-runtimes"
@@ -6984,6 +6984,20 @@ def test_materialize_immutable_rollback_runtime_rejects_preexisting_rollback_des
     snapshot.accepted_dev_commit = "c" * 40
     snapshot.repository_slug = "ajoe734/pantheon"
 
+    existing_identity = Mock(spec=CandidateRuntimeIdentity)
+    existing_identity.candidate_root = rollback_dest
+    existing_identity.candidate_root_device = rollback_dest.stat().st_dev
+    existing_identity.candidate_root_inode = rollback_dest.stat().st_ino
+    existing_identity.head_commit = head_commit
+    existing_identity.tracked_tree_identity = "b" * 40
+    existing_identity.accepted_dev_commit = "c" * 40
+    existing_identity.repository_slug = "ajoe734/pantheon"
+
+    candidate_identity = Mock(spec=CandidateRuntimeIdentity)
+    candidate_identity.candidate_root = direct_dest
+    candidate_identity.candidate_root_device = direct_dest.stat().st_dev
+    candidate_identity.candidate_root_inode = direct_dest.stat().st_ino
+
     with patch(
         "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
         prefix,
@@ -6992,14 +7006,71 @@ def test_materialize_immutable_rollback_runtime_rejects_preexisting_rollback_des
         rollback_prefix,
     ), patch(
         "promote_supervisor_runtime._run_git",
-    ) as mock_git:
+    ) as mock_git, patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        return_value=existing_identity,
+    ) as mock_identity:
+        result = promotion.materialize_immutable_rollback_runtime(
+            snapshot,
+            candidate_identity=candidate_identity,
+        )
+
+    mock_git.assert_not_called()
+    mock_identity.assert_called_once_with(rollback_dest)
+    existing_identity.verify_immutable_snapshot.assert_called_once_with()
+    assert result is existing_identity
+
+
+def test_materialize_immutable_rollback_runtime_rejects_mismatched_preexisting_rollback_destination_without_side_effects(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "command-runtimes"
+    prefix.mkdir(parents=True, exist_ok=True)
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
+
+    direct_dest = prefix / head_commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+    rollback_dest = rollback_prefix / head_commit
+    rollback_dest.mkdir(parents=True, exist_ok=True)
+
+    snapshot = Mock(spec=MutableIncumbentSnapshot)
+    snapshot.root = tmp_path / "dev-root"
+    snapshot.head_commit = head_commit
+    snapshot.tracked_tree_identity = "b" * 40
+    snapshot.accepted_dev_commit = "c" * 40
+    snapshot.repository_slug = "ajoe734/pantheon"
+
+    existing_identity = Mock(spec=CandidateRuntimeIdentity)
+    existing_identity.candidate_root = rollback_dest
+    existing_identity.candidate_root_device = rollback_dest.stat().st_dev
+    existing_identity.candidate_root_inode = rollback_dest.stat().st_ino
+    existing_identity.head_commit = head_commit
+    existing_identity.tracked_tree_identity = "d" * 40
+    existing_identity.accepted_dev_commit = "c" * 40
+    existing_identity.repository_slug = "ajoe734/pantheon"
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+    ) as mock_git, patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        return_value=existing_identity,
+    ):
         with pytest.raises(
             ValueError,
-            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
+            match="Existing rollback runtime identity differs from incumbent",
         ):
             promotion.materialize_immutable_rollback_runtime(snapshot)
 
     mock_git.assert_not_called()
+    existing_identity.verify_immutable_snapshot.assert_called_once_with()
 
 
 def test_materialize_immutable_rollback_runtime_rejects_symlink_destination_without_side_effects(
@@ -7309,12 +7380,24 @@ def test_materialize_immutable_rollback_runtime_end_to_end_occupied_direct_desti
             snapshot,
             candidate_identity=candidate_identity,
         )
+        reused_rollback_identity = promotion.materialize_immutable_rollback_runtime(
+            snapshot,
+            candidate_identity=candidate_identity,
+        )
 
     rollback_dest = rollback_prefix / commit
 
     assert isinstance(rollback_identity, promotion.CandidateRuntimeIdentity)
     assert rollback_identity.candidate_root == rollback_dest
     assert rollback_identity.candidate_root != candidate_identity.candidate_root
+    assert reused_rollback_identity.candidate_root == rollback_dest
+    assert (
+        reused_rollback_identity.candidate_root_device,
+        reused_rollback_identity.candidate_root_inode,
+    ) == (
+        rollback_identity.candidate_root_device,
+        rollback_identity.candidate_root_inode,
+    )
 
     rollback_stat = rollback_dest.stat()
     assert rollback_identity.candidate_root_device == rollback_stat.st_dev
