@@ -890,3 +890,78 @@ def test_drain_cli_recovers_and_rearms_only_the_requested_failed_packet(
     assert rearmed_body["rearmAttempt"] == 1
     assert not failed.exists()
     assert (failed.parent.parent / "pending" / failed.name).is_file()
+
+
+def test_drain_retry_fairness_admits_fresh_packet_within_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BRIDGE_SIGNING_KEY", TEST_KEY.hex())
+    repo_root = _write_fake_repo(tmp_path)
+    inbox = repo_root / ".orchestrator" / "assistant-dev-packets"
+
+    # Queue 3 retryable packets into inbox
+    retryable_packets = [
+        sign_packet(_make_packet(f"pkt_retryable_{i}"), key_store={"assistant-bridge-dev": TEST_KEY})
+        for i in range(3)
+    ]
+    for pkt in retryable_packets:
+        queue_task_packet(pkt, repo_root=str(repo_root))
+
+    # Dispatch retries to move pending -> processing and create retry state
+    fake_retryable_result = BridgeDispatchResult(
+        packetId="temp",
+        dispatchedAt="2026-08-11T00:00:00Z",
+        taskRecords=[],
+        auditRefs={},
+        admissionStatus="not_attempted",
+        retryable=True,
+        errors=["retryable error"],
+    )
+
+    with patch.object(dev_bridge_inbox, "dispatch_task_packet", return_value=fake_retryable_result):
+        drained_retries = drain_task_packet_inbox(repo_root=str(repo_root), limit=3)
+    assert drained_retries["errorCount"] == 3
+
+    # Backdate next_attempt_epoch on retries so they are immediately due for retry
+    retries_dir = inbox / "retries"
+    for r_file in retries_dir.glob("*.json"):
+        data = json.loads(r_file.read_text(encoding="utf-8"))
+        data["next_attempt_epoch"] = 0.0
+        r_file.write_text(json.dumps(data), encoding="utf-8")
+
+    # Queue a fresh packet into pending
+    fresh_packet = sign_packet(_make_packet("pkt_fresh_001"), key_store={"assistant-bridge-dev": TEST_KEY})
+    queue_task_packet(fresh_packet, repo_root=str(repo_root))
+
+    # Drain with limit=1. With max_items=1 and due retryables present,
+    # bounded retry fairness (bound = max(0, 1-1) = 0) reserves 0 slots for retryables
+    # before fresh items, ensuring the fresh packet is admitted instead of being starved.
+    dispatched_ids: list[str] = []
+
+    def mock_dispatch(req: dev_bridge_inbox.BridgeDispatchRequest, **kwargs: object) -> BridgeDispatchResult:
+        dispatched_ids.append(req.packet.packet_id)
+        return BridgeDispatchResult(
+            packetId=req.packet.packet_id,
+            dispatchedAt="2026-08-11T00:00:00Z",
+            taskRecords=[
+                TaskDispatchRecord(
+                    taskId=task.id,
+                    owner=task.owner,
+                    reviewer=task.reviewer,
+                    status="assigned",
+                )
+                for task in req.packet.tasks
+            ],
+            auditRefs={
+                "packetId": req.packet.packet_id,
+                "packetDigest": packet_digest(req.packet),
+            },
+            admissionStatus="admitted",
+        )
+
+    with patch.object(dev_bridge_inbox, "dispatch_task_packet", side_effect=mock_dispatch):
+        res = drain_task_packet_inbox(repo_root=str(repo_root), limit=1)
+
+    assert res["processedCount"] == 1
+    assert dispatched_ids == ["pkt_fresh_001"]

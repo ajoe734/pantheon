@@ -69,8 +69,9 @@ FAILURE_VALUES = {
     "ACTION_REQUIRED",
     "STARTUP_FAILURE",
 }
-ALLOWED_PRE_REBASE_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "BEHIND", "UNKNOWN"}
-ALLOWED_DIRECT_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "UNKNOWN"}
+IGNORABLE_DIAGNOSTIC_WORKFLOWS = frozenset({"Canonical Review Attestation Audit"})
+ALLOWED_PRE_REBASE_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "BEHIND", "UNSTABLE", "UNKNOWN"}
+ALLOWED_DIRECT_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "UNSTABLE", "UNKNOWN"}
 PR_DETAIL_FIELDS = (
     "number,title,url,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,"
     "reviewDecision,statusCheckRollup,state,mergeCommit,mergedAt,commits,"
@@ -105,6 +106,7 @@ class CheckSummary:
     total: int = 0
     failing: tuple[str, ...] = ()
     pending: tuple[str, ...] = ()
+    ignored_diagnostic: tuple[str, ...] = ()
 
 
 @dataclass
@@ -467,15 +469,48 @@ def check_name(item: Mapping[str, Any]) -> str:
     return "unnamed-check"
 
 
+def is_check_required(item: Mapping[str, Any]) -> bool | None:
+    """Classify data-driven requiredness of a check item.
+
+    Returns:
+      True if positively identified as required;
+      False if positively identified as non-required (diagnostic);
+      None if requiredness is missing or ambiguous (fails closed as required).
+    """
+    for key in ("isRequired", "is_required"):
+        if key in item:
+            value = item.get(key)
+            if isinstance(value, bool):
+                return value
+    return None
+
+
+def is_ignorable_diagnostic(item: Mapping[str, Any]) -> bool:
+    """Return true only for an explicitly optional, known diagnostic issuer.
+
+    GitHub's ``isRequired`` describes branch-protection requirements, not
+    whether a check is merely diagnostic. Some substantive Branch CI jobs are
+    intentionally optional, so requiredness alone must never downgrade their
+    failures. The workflow provenance is therefore a second mandatory input.
+    """
+
+    if is_check_required(item) is not False:
+        return False
+    workflow_name = str(item.get("workflowName") or "").strip()
+    return workflow_name in IGNORABLE_DIAGNOSTIC_WORKFLOWS
+
+
 def summarize_status_rollup(rollup: Any) -> CheckSummary:
     if not isinstance(rollup, list) or not rollup:
         return CheckSummary("empty")
     failing: list[str] = []
     pending: list[str] = []
+    ignored_diagnostic: list[str] = []
     for item in rollup:
         if not isinstance(item, Mapping):
             pending.append("malformed-check")
             continue
+        is_non_required_diagnostic = is_ignorable_diagnostic(item)
         values = [
             normalize_state(item.get("conclusion")),
             normalize_state(item.get("state")),
@@ -483,22 +518,42 @@ def summarize_status_rollup(rollup: Any) -> CheckSummary:
         ]
         values = [value for value in values if value]
         if any(value in FAILURE_VALUES for value in values):
-            failing.append(check_name(item))
+            if is_non_required_diagnostic:
+                ignored_diagnostic.append(check_name(item))
+            else:
+                failing.append(check_name(item))
             continue
         if any(value in PENDING_VALUES for value in values):
-            pending.append(check_name(item))
+            if is_non_required_diagnostic:
+                ignored_diagnostic.append(check_name(item))
+            else:
+                pending.append(check_name(item))
             continue
         if any(value in SUCCESS_VALUES for value in values):
             continue
         # GitHub CheckRun often reports status=COMPLETED with a SUCCESS
         # conclusion. If conclusion is absent, treat COMPLETED as pending-ish
         # rather than silently green.
-        pending.append(check_name(item))
+        if is_non_required_diagnostic:
+            ignored_diagnostic.append(check_name(item))
+        else:
+            pending.append(check_name(item))
     if failing:
-        return CheckSummary("red", len(rollup), tuple(failing), tuple(pending))
+        return CheckSummary("red", len(rollup), tuple(failing), tuple(pending), tuple(ignored_diagnostic))
     if pending:
-        return CheckSummary("pending", len(rollup), (), tuple(pending))
-    return CheckSummary("green", len(rollup))
+        return CheckSummary("pending", len(rollup), (), tuple(pending), tuple(ignored_diagnostic))
+    return CheckSummary("green", len(rollup), (), (), tuple(ignored_diagnostic))
+
+
+def ignored_diagnostic_note(checks: CheckSummary) -> str:
+    """Render auditable context for statuses excluded from merge blocking."""
+
+    if not checks.ignored_diagnostic:
+        return ""
+    return (
+        " Ignored explicitly non-required diagnostics: "
+        f"{', '.join(checks.ignored_diagnostic)}."
+    )
 
 
 def canonical_review_gate_is_green(rollup: Any) -> bool:
@@ -544,6 +599,143 @@ def gh_json(runner: CommandRunner, args: Sequence[str], *, cwd: Path = ROOT) -> 
     if not text:
         return None
     return json.loads(text)
+
+
+def fetch_is_required_map(
+    runner: CommandRunner,
+    url: str,
+    number: int,
+    *,
+    root: Path = ROOT,
+) -> dict[tuple[str, str], bool]:
+    """Fetch isRequired for PR status checks via GraphQL.
+
+    Returns a mapping of (typename, name_or_context) -> is_required boolean.
+    Fails closed (returns empty dict) if GraphQL request fails.
+    """
+    repository = github_review_bridge.repository_from_pull_request_url(url)
+    if not repository or "/" not in repository:
+        return {}
+    owner, repo = repository.split("/", 1)
+    query = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      statusCheckRollup {
+        contexts(first: 100) {
+          nodes {
+            __typename
+            ... on CheckRun {
+              name
+              isRequired(pullRequestNumber: $number)
+            }
+            ... on StatusContext {
+              context
+              isRequired(pullRequestNumber: $number)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+    try:
+        payload = gh_json(
+            runner,
+            [
+                "api",
+                "graphql",
+                "-F",
+                f"owner={owner}",
+                "-F",
+                f"repo={repo}",
+                "-F",
+                f"number={number}",
+                "-f",
+                f"query={query}",
+            ],
+            cwd=root,
+        )
+        if not isinstance(payload, Mapping):
+            return {}
+        data = payload.get("data")
+        if not isinstance(data, Mapping):
+            return {}
+        repo_obj = data.get("repository")
+        if not isinstance(repo_obj, Mapping):
+            return {}
+        pr_obj = repo_obj.get("pullRequest")
+        if not isinstance(pr_obj, Mapping):
+            return {}
+        rollup_obj = pr_obj.get("statusCheckRollup")
+        if not isinstance(rollup_obj, Mapping):
+            return {}
+        contexts_obj = rollup_obj.get("contexts")
+        if not isinstance(contexts_obj, Mapping):
+            return {}
+        nodes = contexts_obj.get("nodes")
+        if not isinstance(nodes, list):
+            return {}
+
+        result: dict[tuple[str, str], bool] = {}
+        for node in nodes:
+            if not isinstance(node, Mapping):
+                continue
+            typename = str(node.get("__typename") or "").strip()
+            name_key = str(node.get("name") or node.get("context") or "").strip()
+            is_req = node.get("isRequired")
+            if typename and name_key and isinstance(is_req, bool):
+                key = (typename, name_key)
+                result[key] = result.get(key, False) or is_req
+        return result
+    except Exception:
+        return {}
+
+
+def enrich_pr_status_rollup(
+    pr: Mapping[str, Any] | None,
+    runner: CommandRunner,
+    *,
+    root: Path = ROOT,
+) -> Mapping[str, Any] | None:
+    if not isinstance(pr, Mapping):
+        return pr
+    rollup = pr.get("statusCheckRollup")
+    if not isinstance(rollup, list) or not rollup:
+        return pr
+
+    all_present = all(
+        isinstance(item, Mapping) and ("isRequired" in item or "is_required" in item)
+        for item in rollup
+    )
+    if all_present:
+        return pr
+
+    number = pr_number(pr)
+    url = str(pr.get("url") or "")
+    if not number or not url:
+        return pr
+
+    is_req_map = fetch_is_required_map(runner, url, number, root=root)
+    if not is_req_map:
+        return pr
+
+    new_rollup: list[dict[str, Any]] = []
+    for item in rollup:
+        if not isinstance(item, Mapping):
+            new_rollup.append(item)
+            continue
+        item_dict = dict(item)
+        if "isRequired" not in item_dict and "is_required" not in item_dict:
+            typename = str(item_dict.get("__typename") or "").strip()
+            name_key = check_name(item_dict)
+            key = (typename, name_key)
+            if key in is_req_map:
+                item_dict["isRequired"] = is_req_map[key]
+        new_rollup.append(item_dict)
+
+    return {**pr, "statusCheckRollup": new_rollup}
 
 
 def fetch_pr_for_task(
@@ -593,7 +785,9 @@ def fetch_pr_for_task(
         ],
         cwd=root,
     )
-    return details if isinstance(details, Mapping) else None
+    if not isinstance(details, Mapping):
+        return None
+    return enrich_pr_status_rollup(details, runner, root=root)
 
 
 def validate_pr(candidate: TaskCandidate, pr: Mapping[str, Any], settings: Settings) -> str | None:
@@ -1298,6 +1492,7 @@ def integrate_candidate(
             )
         else:
             detail = f"Dry-run: PR #{number} is green and {rebase_status}; would merge or enable auto-merge."
+        detail += ignored_diagnostic_note(checks)
         return IntegrationResult(candidate.task_id, "would_merge", detail, number, url, dry_run=True, commands=runner.commands[:])
 
     if pushed:
@@ -1326,6 +1521,7 @@ def integrate_candidate(
     # state before treating the merge as done; do not call reconcile_done for
     # a merge that has not landed. SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804.
     post_merge_pr = gh_json(runner, ["pr", "view", str(number), "--json", PR_DETAIL_FIELDS], cwd=root)
+    post_merge_pr = enrich_pr_status_rollup(post_merge_pr, runner, root=root)
     if not isinstance(post_merge_pr, Mapping) or str(post_merge_pr.get("state") or "").upper() != "MERGED":
         # Not a failure: the merge request was accepted (directly or into the
         # queue) and simply has not landed within this process's lifetime.
@@ -1344,6 +1540,7 @@ def integrate_candidate(
         )
     else:
         detail = f"Merged PR #{number} into {settings.dev_branch} and reconciled {candidate.task_id} to done."
+    detail += ignored_diagnostic_note(checks)
     return IntegrationResult(candidate.task_id, "merged", detail, number, url, dry_run=False, commands=runner.commands[:])
 
 

@@ -1,0 +1,24 @@
+{
+  "task_id": "SUP-BRIDGE-RETRY-FAIRNESS-R3-20260811",
+  "base_commit": "8714db876",
+  "branch": "task/SUP-BRIDGE-RETRY-FAIRNESS-R3-20260811",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "acceptance_map": {
+    "clean_origin_dev_start": "Started from clean origin/dev commit 8714db876 on fresh task branch task/SUP-BRIDGE-RETRY-FAIRNESS-R3-20260811 without reusing R2 branch or commits.",
+    "starvation_regression_reproduced_and_fixed": "In dev_bridge_inbox.py _claim_processing_files, processing items are scanned and partitioned into retryables vs fresh items. When fresh items exist alongside due retryables, retryables are bounded to max(0, limit - 1), reserving a slot for fresh items for any positive limit (including limit=1) and guaranteeing fresh admission while retryables remain.",
+    "exact_head_evidence_manifest": "This evidence manifest maps acceptance criteria to targeted test suites, origin/dev base commit, and scope boundaries.",
+    "subject_length_guard": "Commit subject line formatted as 'SUP-BRIDGE-RETRY-FAIRNESS-R3-20260811: retry fairness R3' (57 chars <= 72 limit).",
+    "scope_boundary_protection": "No live inbox packets moved/deleted, no canonical state mutated directly, CI and branch protection preserved.",
+    "governed_delivery": "Pushed to clean PR for independent Codex2 review and merge gate compliance."
+  },
+  "scope_boundary": [
+    "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+    "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+    "docs/deployment/evidence/supervisor/SUP-BRIDGE-RETRY-FAIRNESS-R3-20260811/evidence.json"
+  ],
+  "validation": {
+    "test_suite": "720 passed, 161 subtests passed in test_dev_bridge_inbox.py, test_dev_bridge_inbox_cli.py, test_dev_bridge_reliability.py, .orchestrator/test_supervisor.py",
+    "git_diff_check": "clean (0 exit code, no EOF whitespace)"
+  }
+}

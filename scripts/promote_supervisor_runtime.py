@@ -2832,6 +2832,7 @@ def _validate_transaction_evidence_path(
     executable_roots = (
         plan.candidate_identity.candidate_root,
         plan.incumbent_identity.candidate_root,
+        plan.effective_active_incumbent_identity.candidate_root,
     )
     for executable_root in executable_roots:
         if _path_is_within(path, executable_root):
@@ -5081,6 +5082,16 @@ class PromotionPlan:
     baseline: RuntimeObservation
     promotion_lock_path: Path
     runtime_admission_lock_path: Path
+    active_incumbent_identity: CandidateRuntimeIdentity | None = None
+
+    @property
+    def effective_active_incumbent_identity(self) -> CandidateRuntimeIdentity:
+        return (
+            self.active_incumbent_identity
+            if self.active_incumbent_identity is not None
+            else self.incumbent_identity
+        )
+
 
 
 class PromotionState(str, Enum):
@@ -7400,6 +7411,7 @@ class OSPromotionBackend:
                 head_commit=mutable_incumbent.head_commit,
                 tracked_tree_identity=mutable_incumbent.tracked_tree_identity,
             )
+            active_incumbent_identity = candidate_identity
             baseline_identity = candidate_identity
         else:
             captured_incumbent_identity = build_candidate_runtime_identity(
@@ -7428,9 +7440,22 @@ class OSPromotionBackend:
             else:
                 incumbent_identity = captured_incumbent_identity
 
+            active_incumbent_identity = captured_incumbent_identity
             baseline_identity = captured_incumbent_identity
+
+        # Candidate, active incumbent, and rollback captures all bind the same
+        # external live config.  The active runtime is intentionally a
+        # different root from the rollback materialization, but that does not
+        # relax the config-CAS baseline: a config replacement during either
+        # capture must still fail before we render any launch variant.
+        if active_incumbent_identity.config_bytes != candidate_identity.config_bytes:
+            raise ValueError(
+                "Candidate and active incumbent captured different config bytes"
+            )
         if incumbent_identity.config_bytes != candidate_identity.config_bytes:
             raise ValueError("Candidate and rollback captured different config bytes")
+        if active_incumbent_identity.candidate_root == candidate_identity.candidate_root:
+            raise ValueError("Candidate runtime equals the active incumbent runtime")
         if incumbent_identity.candidate_root == candidate_identity.candidate_root:
             raise ValueError("Candidate runtime equals the rollback runtime")
         candidate_config = derive_supervisor_config_variant(
@@ -7493,11 +7518,21 @@ class OSPromotionBackend:
             runtime_admission_lock_path=(
                 candidate_status_root / ".orchestrator" / "runtime-admission.lock"
             ),
+            active_incumbent_identity=active_incumbent_identity,
         )
 
     def revalidate(self, plan: PromotionPlan) -> RuntimeObservation:
         plan.candidate_identity.verify_immutable_snapshot()
         plan.incumbent_identity.verify_immutable_snapshot()
+        active_identity = plan.effective_active_incumbent_identity
+        if (
+            active_identity != plan.candidate_identity
+            and active_identity != plan.incumbent_identity
+        ):
+            active_identity.verify_immutable_snapshot(
+                require_accepted_dev_identity=False
+            )
+
         if (
             build_governed_supervisor_launch_contract(
                 plan.candidate_identity,
@@ -7519,7 +7554,7 @@ class OSPromotionBackend:
 
         if plan.mutable_incumbent is None:
             return capture_runtime_observation(
-                plan.incumbent_identity,
+                active_identity,
                 expected_argv=plan.incumbent_process.argv,
                 expected_generation=plan.incumbent_process.generation,
                 reader=self.reader,
@@ -7553,7 +7588,7 @@ class OSPromotionBackend:
             tracked_tree_identity=plan.mutable_incumbent.tracked_tree_identity,
         )
         return capture_runtime_observation(
-            plan.candidate_identity,
+            active_identity,
             expected_argv=plan.incumbent_process.argv,
             expected_process_contract=expected,
             expected_generation=plan.incumbent_process.generation,
@@ -8205,10 +8240,11 @@ class PromotionTransaction:
                 {
                     "pid": plan.incumbent_process.generation.pid,
                     "starttime_ticks": plan.incumbent_process.generation.starttime_ticks,
-                    "root": str(plan.incumbent_identity.candidate_root),
-                    "commit": plan.incumbent_identity.head_commit,
-                    "tree": plan.incumbent_identity.tracked_tree_identity,
-                    "config_sha256": plan.incumbent_identity.config_sha256,
+                    "root": str(plan.effective_active_incumbent_identity.candidate_root),
+                    "commit": plan.effective_active_incumbent_identity.head_commit,
+                    "tree": plan.effective_active_incumbent_identity.tracked_tree_identity,
+                    "config_sha256": plan.effective_active_incumbent_identity.config_sha256,
+                    "rollback_root": str(plan.incumbent_identity.candidate_root),
                 }
                 if plan is not None
                 else None

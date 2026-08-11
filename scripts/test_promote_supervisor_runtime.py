@@ -9176,5 +9176,334 @@ def test_task_state_event_log_immutable_sources_remain_fail_closed(tmp_path: Pat
             fs.capture_regular_file(test_file, role="supervisor", require_executable=False)
 
 
+def test_active_immutable_incumbent_config_entrypoint_bound_separately_from_rollback_root(
+    tmp_path: Path,
+) -> None:
+    """Active immutable incumbent live config and process bind active command runtime, while rollback root is distinct."""
+    command_runtimes_dir = tmp_path / "command-runtimes"
+    rollback_runtimes_dir = tmp_path / "rollback-command-runtimes"
+    candidate_root = command_runtimes_dir / ("a" * 40)
+    active_incumbent_root = command_runtimes_dir / ("b" * 40)
+    rollback_root = rollback_runtimes_dir / ("b" * 40)
+
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    active_incumbent_root.mkdir(parents=True, exist_ok=True)
+    rollback_root.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(active_incumbent_root)
+    create_realistic_healthy_fixture(rollback_root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    active_incumbent_identity = _verified_identity_dependency(active_incumbent_root)
+    active_incumbent_identity.legacy_incumbent_bytecode_residue = ("some_file.pyc",)
+    rollback_identity = _verified_identity_dependency(rollback_root)
+
+    active_incumbent_identity.config_path = candidate_identity.config_path
+    rollback_identity.config_path = candidate_identity.config_path
+
+    executable = str(Path(sys.executable).resolve())
+    active_cmd = [
+        executable,
+        str(active_incumbent_root / ".orchestrator" / "supervisor.py"),
+        "--config",
+        str(candidate_identity.config_path),
+    ]
+
+    config_dict = json.loads(candidate_identity.config_bytes)
+    config_dict["watchdog"]["supervisor_command"] = active_cmd
+    live_config_bytes = (json.dumps(config_dict, sort_keys=True) + "\n").encode("utf-8")
+    candidate_identity.config_path.write_bytes(live_config_bytes)
+
+    candidate_identity.config_bytes = live_config_bytes
+    candidate_identity.config_sha256 = promotion.hashlib.sha256(live_config_bytes).hexdigest()
+    active_incumbent_identity.config_bytes = live_config_bytes
+    active_incumbent_identity.config_sha256 = candidate_identity.config_sha256
+    rollback_identity.config_bytes = live_config_bytes
+    rollback_identity.config_sha256 = candidate_identity.config_sha256
+
+    active_process = replace(
+        _verified_process_identity_dependency(active_incumbent_root),
+        argv=tuple(active_cmd),
+        executable=Path(executable),
+    )
+
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    def _mock_build_identity(
+        path: Path,
+        config_path: Path | None = None,
+        *,
+        allow_legacy_task_brief_drift: bool = False,
+        allow_legacy_incumbent_bytecode_residue: bool = False,
+        **kwargs: Any,
+    ) -> promotion.CandidateRuntimeIdentity:
+        if path == candidate_root:
+            return candidate_identity
+        if path == active_incumbent_root:
+            return active_incumbent_identity
+        if path == rollback_root:
+            return rollback_identity
+        raise ValueError(f"Unexpected path: {path}")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        command_runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        side_effect=_mock_build_identity,
+    ), patch(
+        "promote_supervisor_runtime._discover_supervisor_seed",
+        return_value=(
+            active_process.generation,
+            active_process.argv,
+            active_process.cwd,
+        ),
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=active_process,
+    ), patch(
+        "promote_supervisor_runtime.materialize_immutable_rollback_runtime",
+        return_value=rollback_identity,
+    ), patch(
+        "promote_supervisor_runtime.capture_runtime_observation",
+        return_value=Mock(invariant_failures=()),
+    ) as mock_capture:
+        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+        assert plan.active_incumbent_identity == active_incumbent_identity
+        assert plan.incumbent_identity == rollback_identity
+        assert plan.candidate_config.command_root == candidate_root
+        assert plan.rollback_config.command_root == rollback_root
+
+        # Live config on disk must NOT be mutated during prepare
+        assert candidate_identity.config_path.read_bytes() == live_config_bytes
+
+        # Revalidate pre-CAS must succeed using active_incumbent_identity
+        mock_capture.reset_mock()
+        observation = backend.revalidate(plan)
+        assert observation is not None
+        assert mock_capture.call_args[0][0] == active_incumbent_identity
 
 
+def test_revalidate_rejects_pre_cas_live_config_naming_rollback_root(
+    tmp_path: Path,
+) -> None:
+    """Pre-CAS live config naming rollback root instead of active incumbent root must be rejected."""
+    command_runtimes_dir = tmp_path / "command-runtimes"
+    rollback_runtimes_dir = tmp_path / "rollback-command-runtimes"
+    candidate_root = command_runtimes_dir / ("a" * 40)
+    active_incumbent_root = command_runtimes_dir / ("b" * 40)
+    rollback_root = rollback_runtimes_dir / ("b" * 40)
+
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    active_incumbent_root.mkdir(parents=True, exist_ok=True)
+    rollback_root.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(active_incumbent_root)
+    create_realistic_healthy_fixture(rollback_root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    active_incumbent_identity = _verified_identity_dependency(active_incumbent_root)
+    rollback_identity = _verified_identity_dependency(rollback_root)
+
+    executable = str(Path(sys.executable).resolve())
+
+    # Wrong live config: names rollback_root instead of active_incumbent_root
+    wrong_cmd = [
+        executable,
+        str(rollback_root / ".orchestrator" / "supervisor.py"),
+        "--config",
+        str(candidate_identity.config_path),
+    ]
+    active_process = replace(
+        _verified_process_identity_dependency(active_incumbent_root),
+        argv=tuple(wrong_cmd),
+        executable=Path(executable),
+    )
+
+    plan = promotion.PromotionPlan(
+        candidate_identity=candidate_identity,
+        candidate_config=promotion.derive_supervisor_config_variant(candidate_identity, command_root=candidate_root),
+        candidate_launch=promotion.build_governed_supervisor_launch_contract(candidate_identity),
+        incumbent_identity=rollback_identity,
+        rollback_config=promotion.derive_supervisor_config_variant(rollback_identity, command_root=rollback_root),
+        incumbent_process=active_process,
+        mutable_incumbent=None,
+        rollback_launch=promotion.build_governed_supervisor_launch_contract(rollback_identity),
+        baseline=Mock(invariant_failures=()),
+        promotion_lock_path=tmp_path / "promo.lock",
+        runtime_admission_lock_path=tmp_path / "admission.lock",
+        active_incumbent_identity=active_incumbent_identity,
+    )
+
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    with patch.object(candidate_identity, "verify_immutable_snapshot"), patch.object(
+        rollback_identity, "verify_immutable_snapshot"
+    ), patch.object(active_incumbent_identity, "verify_immutable_snapshot"):
+        with pytest.raises(ValueError, match="supervisor entrypoint"):
+            backend.revalidate(plan)
+
+
+def test_revalidate_rejects_pre_cas_live_config_naming_candidate_root(
+    tmp_path: Path,
+) -> None:
+    """Pre-CAS live config naming candidate root instead of active incumbent root must be rejected."""
+    command_runtimes_dir = tmp_path / "command-runtimes"
+    rollback_runtimes_dir = tmp_path / "rollback-command-runtimes"
+    candidate_root = command_runtimes_dir / ("a" * 40)
+    active_incumbent_root = command_runtimes_dir / ("b" * 40)
+    rollback_root = rollback_runtimes_dir / ("b" * 40)
+
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    active_incumbent_root.mkdir(parents=True, exist_ok=True)
+    rollback_root.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(active_incumbent_root)
+    create_realistic_healthy_fixture(rollback_root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    active_incumbent_identity = _verified_identity_dependency(active_incumbent_root)
+    rollback_identity = _verified_identity_dependency(rollback_root)
+
+    executable = str(Path(sys.executable).resolve())
+
+    # Wrong live config: names candidate_root prematurely before CAS
+    wrong_cmd = [
+        executable,
+        str(candidate_root / ".orchestrator" / "supervisor.py"),
+        "--config",
+        str(candidate_identity.config_path),
+    ]
+    active_process = replace(
+        _verified_process_identity_dependency(active_incumbent_root),
+        argv=tuple(wrong_cmd),
+        executable=Path(executable),
+    )
+
+    plan = promotion.PromotionPlan(
+        candidate_identity=candidate_identity,
+        candidate_config=promotion.derive_supervisor_config_variant(candidate_identity, command_root=candidate_root),
+        candidate_launch=promotion.build_governed_supervisor_launch_contract(candidate_identity),
+        incumbent_identity=rollback_identity,
+        rollback_config=promotion.derive_supervisor_config_variant(rollback_identity, command_root=rollback_root),
+        incumbent_process=active_process,
+        mutable_incumbent=None,
+        rollback_launch=promotion.build_governed_supervisor_launch_contract(rollback_identity),
+        baseline=Mock(invariant_failures=()),
+        promotion_lock_path=tmp_path / "promo.lock",
+        runtime_admission_lock_path=tmp_path / "admission.lock",
+        active_incumbent_identity=active_incumbent_identity,
+    )
+
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    with patch.object(candidate_identity, "verify_immutable_snapshot"), patch.object(
+        rollback_identity, "verify_immutable_snapshot"
+    ), patch.object(active_incumbent_identity, "verify_immutable_snapshot"):
+        with pytest.raises(ValueError, match="supervisor entrypoint"):
+            backend.revalidate(plan)
+
+
+@pytest.mark.parametrize(
+    ("drifted_identity", "expected_message"),
+    (
+        (
+            "active",
+            "Candidate and active incumbent captured different config bytes",
+        ),
+        (
+            "rollback",
+            "Candidate and rollback captured different config bytes",
+        ),
+    ),
+)
+def test_prepare_rejects_config_capture_race_between_candidate_active_and_rollback(
+    tmp_path: Path,
+    drifted_identity: str,
+    expected_message: str,
+) -> None:
+    """Any live-config byte race aborts before variants or runtime observation."""
+    command_runtimes_dir = tmp_path / "command-runtimes"
+    rollback_runtimes_dir = tmp_path / "rollback-command-runtimes"
+    candidate_root = command_runtimes_dir / ("a" * 40)
+    active_incumbent_root = command_runtimes_dir / ("b" * 40)
+    rollback_root = rollback_runtimes_dir / ("b" * 40)
+    for root in (candidate_root, active_incumbent_root, rollback_root):
+        root.mkdir(parents=True, exist_ok=True)
+        create_realistic_healthy_fixture(root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    active_incumbent_identity = _verified_identity_dependency(active_incumbent_root)
+    rollback_identity = _verified_identity_dependency(rollback_root)
+    active_incumbent_identity.config_path = candidate_identity.config_path
+    rollback_identity.config_path = candidate_identity.config_path
+    for identity in (active_incumbent_identity, rollback_identity):
+        identity.config_bytes = candidate_identity.config_bytes
+        identity.config_byte_length = candidate_identity.config_byte_length
+        identity.config_sha256 = candidate_identity.config_sha256
+    active_incumbent_identity.legacy_incumbent_bytecode_residue = (
+        "requires-clean-rollback",
+    )
+    identity = (
+        active_incumbent_identity
+        if drifted_identity == "active"
+        else rollback_identity
+    )
+    identity.config_bytes = f"{drifted_identity}-config-after-race".encode("utf-8")
+    identity.config_byte_length = len(identity.config_bytes)
+    identity.config_sha256 = promotion.hashlib.sha256(identity.config_bytes).hexdigest()
+
+    active_process = _verified_process_identity_dependency(active_incumbent_root)
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    def _mock_build_identity(path: Path, *args: Any, **kwargs: Any) -> promotion.CandidateRuntimeIdentity:
+        if path == candidate_root:
+            return candidate_identity
+        if path == active_incumbent_root:
+            return active_incumbent_identity
+        if path == rollback_root:
+            return rollback_identity
+        raise ValueError(f"Unexpected path: {path}")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        command_runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        side_effect=_mock_build_identity,
+    ), patch(
+        "promote_supervisor_runtime._discover_supervisor_seed",
+        return_value=(
+            active_process.generation,
+            active_process.argv,
+            active_process.cwd,
+        ),
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=active_process,
+    ), patch(
+        "promote_supervisor_runtime.materialize_immutable_rollback_runtime",
+        return_value=rollback_identity,
+    ) as materialize, patch(
+        "promote_supervisor_runtime.capture_runtime_observation"
+    ) as capture:
+        with pytest.raises(
+            ValueError,
+            match=expected_message,
+        ):
+            backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+
+    materialize.assert_called_once_with(
+        active_incumbent_identity,
+        candidate_identity=candidate_identity,
+    )
+    capture.assert_not_called()

@@ -1,0 +1,73 @@
+{
+  "schema_version": "supervisor_worker_subject_guard.v1",
+  "task": {
+    "id": "SUP-WORKER-SUBJECT-GUARD-20260811",
+    "title": "Bound worker commit subjects before CI",
+    "phase": "Supervisor Delivery / Worker commit subject guard",
+    "owner": "Antigravity2",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-WORKER-SUBJECT-GUARD-20260811/evidence.json",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-WORKER-SUBJECT-GUARD-20260811"
+  },
+  "scope": {
+    "owned_layer": "Shared commit subject bounding logic, worker wakeup guidance, supervisor auto-anchor fallback, worker_commit preflight check, and regression tests.",
+    "not_changing": "Commit trailers 72-character gate, branch protection, CI policy, merge classification, scheduler policy, or live runtime state.",
+    "changed_paths": [
+      ".orchestrator/common.py",
+      ".orchestrator/skills/worker-anchor-commit.md",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/test_watch_events.py",
+      ".orchestrator/watch_events.py",
+      "scripts/git/worker_commit.py",
+      "scripts/git/test_worker_commit.py",
+      "docs/deployment/evidence/supervisor/SUP-WORKER-SUBJECT-GUARD-20260811/evidence.json"
+    ]
+  },
+  "diagnosis": {
+    "failure_shapes": [
+      "Wakeup guidance rendered full long TASK-ID in anchor_commit_subject template variable without bounding length.",
+      "Supervisor _anchor_commit_task_wip fallback subject formulation was not guaranteed to be <= 72 characters for long task IDs.",
+      "worker_commit wrapper did not inspect commit subject line length before staging or committing, allowing overlong subjects to reach git."
+    ],
+    "remediation": [
+      "Added deterministic bound_commit_subject helper in common.py shared across watcher, supervisor, and git scripts.",
+      "Updated watch_events.py render_wakeup_message to bound anchor_commit_subject to <= 72 chars while preserving valid format.",
+      "Updated supervisor.py _anchor_commit_task_wip fallback to use bound_commit_subject.",
+      "Added preflight check in worker_commit.py rejecting message files with subject lines > 72 chars with code 5 before staging.",
+      "Documented 72-char limit in worker-anchor-commit.md skill.",
+      "Added comprehensive regression tests in test_watch_events.py, test_supervisor.py, and test_worker_commit.py."
+    ]
+  },
+  "acceptance": {
+    "wakeup_guidance_subject_bounded": {
+      "status": "proven",
+      "test": ".orchestrator/test_watch_events.py::WakeupMessageRoleGuardrailTests::test_render_wakeup_message_bounds_anchor_commit_subject_for_long_task_id"
+    },
+    "supervisor_auto_anchor_bounded": {
+      "status": "proven",
+      "test": ".orchestrator/test_supervisor.py::WorktreeDirtClassificationTests::test_anchor_commit_task_wip_bounds_subject_length_for_long_task_id"
+    },
+    "worker_commit_preflight_rejection": {
+      "status": "proven",
+      "test": "scripts/git/test_worker_commit.py::WorkerCommitPreflightTests::test_worker_commit_rejects_overlong_subject"
+    },
+    "short_task_id_preservation": {
+      "status": "proven",
+      "test": "scripts/git/test_worker_commit.py::WorkerCommitPreflightTests::test_worker_commit_accepts_valid_short_subject"
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "passed"
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator:scripts/git /tmp/pantheon-worker-worktrees/pantheon/sup-worker-subject-guard-20260811/.venv-pantheon/bin/python3 -m pytest -v .orchestrator/test_watch_events.py scripts/git/test_worker_commit.py .orchestrator/test_supervisor.py -k 'test_render_wakeup_message_bounds_anchor_commit_subject_for_long_task_id or test_anchor_commit_task_wip_bounds_subject_length_for_long_task_id or WorkerCommitPreflightTests'",
+      "result": "5 passed"
+    }
+  ]
+}
