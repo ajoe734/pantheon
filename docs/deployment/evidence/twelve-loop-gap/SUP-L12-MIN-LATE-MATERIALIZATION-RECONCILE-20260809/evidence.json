@@ -12,12 +12,16 @@
     "pkt_a": {
       "packet_digest": "5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9",
       "receipt_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-minimum-functional-a-20260808-f56e2bc91--5cdd77b6a6d30f29.json",
-      "receipt_sha256": "4c5276f8a615e0129bc1e7845f1b90d790d984180470bb23bc7a1a459203cd84"
+      "receipt_sha256": "abb3ddccbca22c32a9fcb5c6bfc4fe3aa7c179e596cf1a9331535e84fae64de4",
+      "authoritative_root": "PANTHEON_STATUS_ROOT",
+      "binding_note": "receipt_sha256 represents exact byte sha256 of the receipt JSON located at PANTHEON_STATUS_ROOT; packet_digest represents the internal payload packet_digest"
     },
     "pkt_b": {
       "packet_digest": "2c36f24f0e2e3648d68d92d0e140e8346544f2fdaf8c928e4ebd680dfb530c77",
       "receipt_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-minimum-functional-b-20260808-f56e2bc91--2c36f24f0e2e3648.json",
-      "receipt_sha256": "9b128f7311d9f485e94b2a8d46210f99d81423851ab529681329c07ef27fbc16"
+      "receipt_sha256": "fe22ac4c76db669b082f2064304835d7a79037b2d6cfe170907ce8eb66d7f5e3",
+      "authoritative_root": "PANTHEON_STATUS_ROOT",
+      "binding_note": "receipt_sha256 represents exact byte sha256 of the receipt JSON located at PANTHEON_STATUS_ROOT; packet_digest represents the internal payload packet_digest"
     }
   },
   "mapping_files_integrity": {
@@ -41,29 +45,94 @@
   },
   "successor_program_verification": {
     "total_successor_tasks": 17,
-    "waves": ["M0", "M1", "M2", "M3", "M4", "M5"],
+    "waves": [
+      "M0",
+      "M1",
+      "M2",
+      "M3",
+      "M4",
+      "M5"
+    ],
     "execution_tasks_file": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
     "index_doc": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
     "active_successor_tasks": [
-      {"id": "L12-MIN-SRC-20260808", "status": "in_progress"},
-      {"id": "L12-MIN-DIST-20260808", "status": "todo"},
-      {"id": "L12-MIN-ALPHA-20260808", "status": "todo"},
-      {"id": "L12-MIN-AGORA-20260808", "status": "todo"},
-      {"id": "L12-MIN-IMIT-20260808", "status": "todo"},
-      {"id": "L12-MIN-TELREC-20260808", "status": "todo"},
-      {"id": "L12-MIN-EVO-20260808", "status": "todo"},
-      {"id": "L12-MIN-BFF-20260808", "status": "todo"},
-      {"id": "L12-MIN-INTEGRATE-20260808", "status": "todo"},
-      {"id": "L12-MIN-E2E-20260808", "status": "todo"},
-      {"id": "L12-MIN-HOSTED-20260808", "status": "todo"},
-      {"id": "L12-MIN-CLOSE-20260808", "status": "todo"}
+      {
+        "id": "L12-MIN-SRC-20260808",
+        "status": "blocked",
+        "waiting_for": "Human/Ops"
+      },
+      {
+        "id": "L12-MIN-DIST-20260808",
+        "status": "todo"
+      },
+      {
+        "id": "L12-MIN-ALPHA-20260808",
+        "status": "todo"
+      },
+      {
+        "id": "L12-MIN-AGORA-20260808",
+        "status": "todo"
+      },
+      {
+        "id": "L12-MIN-IMIT-20260808",
+        "status": "todo"
+      },
+      {
+        "id": "L12-MIN-TELREC-20260808",
+        "status": "blocked",
+        "waiting_for": "Human/Ops"
+      },
+      {
+        "id": "L12-MIN-EVO-20260808",
+        "status": "todo"
+      },
+      {
+        "id": "L12-MIN-BFF-20260808",
+        "status": "todo"
+      },
+      {
+        "id": "L12-MIN-INTEGRATE-20260808",
+        "status": "todo"
+      },
+      {
+        "id": "L12-MIN-E2E-20260808",
+        "status": "todo"
+      },
+      {
+        "id": "L12-MIN-HOSTED-20260808",
+        "status": "todo"
+      },
+      {
+        "id": "L12-MIN-CLOSE-20260808",
+        "status": "todo"
+      }
     ],
     "archived_successor_tasks": [
-      {"id": "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808", "terminal_status": "done", "disposition": "completed"},
-      {"id": "L12-MIN-TEACH-20260808", "terminal_status": "done", "disposition": "completed"},
-      {"id": "L12-MIN-CONS-20260808", "terminal_status": "done", "disposition": "completed"},
-      {"id": "L12-MIN-DEP-20260808", "terminal_status": "done", "disposition": "completed"},
-      {"id": "L12-MIN-CAP-20260808", "terminal_status": "done", "disposition": "completed"}
+      {
+        "id": "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+        "terminal_status": "done",
+        "disposition": "completed"
+      },
+      {
+        "id": "L12-MIN-TEACH-20260808",
+        "terminal_status": "done",
+        "disposition": "completed"
+      },
+      {
+        "id": "L12-MIN-CONS-20260808",
+        "terminal_status": "done",
+        "disposition": "completed"
+      },
+      {
+        "id": "L12-MIN-DEP-20260808",
+        "terminal_status": "done",
+        "disposition": "completed"
+      },
+      {
+        "id": "L12-MIN-CAP-20260808",
+        "terminal_status": "done",
+        "disposition": "completed"
+      }
     ],
     "dependency_resolution": "all 17 successor tasks resolve dependencies cleanly to canonical tasks",
     "artifact_overlap_check": "passed; no two runnable successor tasks have unordered overlapping declared artifacts",
@@ -78,5 +147,10 @@
     "canonical_state_hand_edited": false,
     "direct_push_used": false
   },
-  "review_summary": "Reconciliation evidence generated. Late materialization of L12-VERIFY-LEARN-REAL-VERIFIER-001 reconciled as superseded by L12-MIN-E2E-20260808. Successor DAG dependencies and artifact scopes verified."
+  "review_summary": "Reconciliation evidence generated. Late materialization of L12-VERIFY-LEARN-REAL-VERIFIER-001 reconciled as superseded by L12-MIN-E2E-20260808. Successor DAG dependencies and artifact scopes verified.",
+  "authoritative_status_root_snapshot": {
+    "source_file": "ai-status.json",
+    "authoritative_root": "PANTHEON_STATUS_ROOT",
+    "recorded_at": "2026-08-11T18:36:30Z"
+  }
 }
