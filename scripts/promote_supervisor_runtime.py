@@ -7025,11 +7025,45 @@ def _atomic_no_replace_rename(src: Path, dst: Path) -> None:
         raise OSError(err, f"Atomic rename failed ({err}): {os.strerror(err)}")
 
 
+def _validate_reusable_rollback_runtime(
+    identity: CandidateRuntimeIdentity,
+    snapshot: MutableIncumbentSnapshot | CandidateRuntimeIdentity,
+    *,
+    candidate_identity: CandidateRuntimeIdentity | None,
+) -> CandidateRuntimeIdentity:
+    """Fail closed unless an occupied rollback root is the exact incumbent snapshot.
+
+    A promotion can be retried after it aborts before the live-config CAS.  In
+    that case the immutable rollback checkout from the first attempt is safe to
+    reuse only when its complete immutable identity still binds the incumbent
+    captured for this attempt.  This deliberately never overwrites, renames, or
+    cleans the occupied directory.
+    """
+
+    identity.verify_immutable_snapshot()
+    if (
+        identity.head_commit != snapshot.head_commit
+        or identity.tracked_tree_identity != snapshot.tracked_tree_identity
+        or identity.accepted_dev_commit != snapshot.accepted_dev_commit
+        or identity.repository_slug != snapshot.repository_slug
+    ):
+        raise ValueError("Existing rollback runtime identity differs from incumbent")
+    if candidate_identity is not None and (
+        identity.candidate_root == candidate_identity.candidate_root
+        or (
+            identity.candidate_root_device == candidate_identity.candidate_root_device
+            and identity.candidate_root_inode == candidate_identity.candidate_root_inode
+        )
+    ):
+        raise ValueError("Existing rollback runtime aliases the candidate runtime")
+    return identity
+
+
 def materialize_immutable_rollback_runtime(
     snapshot: MutableIncumbentSnapshot | CandidateRuntimeIdentity,
     candidate_identity: CandidateRuntimeIdentity | None = None,
 ) -> CandidateRuntimeIdentity:
-    """Create a fresh persistent checkout for the captured mutable commit."""
+    """Create, or safely reuse, an immutable rollback checkout for the incumbent."""
     parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
     rollback_parent = ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX
 
@@ -7069,6 +7103,18 @@ def materialize_immutable_rollback_runtime(
         destination = selected_parent / snapshot.head_commit
 
     if destination.exists() or destination.is_symlink():
+        if selected_parent == rollback_parent and not destination.is_symlink():
+            try:
+                existing_identity = build_candidate_runtime_identity(destination)
+            except Exception as exc:
+                raise ValueError(
+                    f"Fresh rollback runtime destination already exists: {destination}"
+                ) from exc
+            return _validate_reusable_rollback_runtime(
+                existing_identity,
+                snapshot,
+                candidate_identity=candidate_identity,
+            )
         raise ValueError(
             f"Fresh rollback runtime destination already exists: {destination}"
         )
