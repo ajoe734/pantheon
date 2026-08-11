@@ -1,25 +1,58 @@
 # Supervisor Evidence: SUP-AI-CHECK-FILTER-20260811
 
 ## Task
+
 - ID: `SUP-AI-CHECK-FILTER-20260811`
 - Title: Classify optional PR diagnostics without blocking merges
-- Owner: Antigravity2
-- Reviewer: Codex2
+- Owner: Codex
+- Reviewer: Antigravity2
 
 ## Reproduction
+
 - Target PR: #4741 (`task/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811`)
-- Failing Check: `Audit signed canonical review (not required issuer) (4741)` (`workflowName`: `Canonical Review Attestation Audit`)
+- Exact target head: `231125cf1b00c5dd758927d87ab1af9255aca347`
+- Failing check: `Audit signed canonical review (not required issuer) (4741)`
+- Workflow: `Canonical Review Attestation Audit`
 - GraphQL `isRequired(pullRequestNumber: 4741)`: `false`
-- `mergeStateStatus`: `UNSTABLE`
-- Initial `auto_integrator` Output:
-  `PR #4741 has failing checks: Audit signed canonical review (not required issuer) (4741).`
+- Original `mergeStateStatus`: `UNSTABLE`
+- Initial `auto_integrator` output: `PR #4741 has failing checks: Audit signed canonical review (not required issuer) (4741).`
+
+The 2026-08-11 independent GraphQL readback still returned the failed audit as
+explicitly non-required at the same target head. PR #4741 has since merged via
+the governed path; this source task did not directly merge it.
 
 ## Remediation
-1. Data-driven classifier (`is_check_required`): Reads `isRequired` / `is_required` from check status objects or fetches via GraphQL query `statusCheckRollup.contexts.nodes`.
-2. Fail-closed invariant: If `isRequired` is `None` (missing/ambiguous) or `True`, any failure or pending state continues to block fail-closed.
-3. Diagnostic check rule: Only when `isRequired` is explicitly `false` is a failing/pending diagnostic check ignored during merge qualification.
-4. `mergeStateStatus` handling: Added `UNSTABLE` to `ALLOWED_PRE_REBASE_MERGE_STATES` and `ALLOWED_DIRECT_MERGE_STATES` so GitHub's native status for optional check failures does not block protected merge when all required checks pass.
+
+1. Enrich `gh pr view` rollups from GraphQL `isRequired` values, keyed by check
+   type plus check name/context.
+2. Ignore a failed or pending context only when requiredness is exactly false
+   and `workflowName` identifies the known read-only diagnostic workflow.
+3. Keep optional actual CI failures blocking. For example,
+   `Python packaging provision` remains a failure even though GitHub currently
+   reports it as non-required, because it comes from `Branch CI Gate` rather
+   than the diagnostic audit workflow.
+4. Treat missing, malformed, unmatched, or conflicting requiredness and missing
+   or unknown workflow provenance as blocking. A duplicate identity is required
+   whenever any matching node is required.
+5. Accept `UNSTABLE` only after the enriched rollup is green under these rules;
+   review binding, exact-head, trailer, required-check, and merge-state gates
+   remain unchanged.
+6. Include ignored diagnostic names in dry-run and successful merge output so
+   the allow decision is auditable.
 
 ## Verification
-- Unit test suite: `python3 -m unittest scripts/git/test_auto_integrator.py` (24 tests passed).
-- PR #4741 dry-run output after remediation: `would_merge`.
+
+- `python3 scripts/dev/provision_python_distribution.py`: passed.
+- `.venv-pantheon/bin/python3 -m unittest scripts/git/test_auto_integrator.py`:
+  30 tests passed.
+- `.venv-pantheon/bin/python3 -m py_compile scripts/git/auto_integrator.py scripts/git/test_auto_integrator.py`:
+  passed.
+- Live PR #4744 production-shape enrichment at remote head
+  `3ffa3f494fe7d092c71fa45acb7d21be121a0f75`: summary `green`, no required
+  failure or pending check, and exactly one ignored diagnostic audit. The PR
+  remained `BLOCKED` pending independent review, and no merge was attempted.
+- `git diff --check`: passed.
+
+The final exact-head decision must be supplied by Antigravity2 through the
+governed review command with `evidence.json` bound as `REVIEW_FILE`; a committed
+manifest cannot contain its own commit SHA.
