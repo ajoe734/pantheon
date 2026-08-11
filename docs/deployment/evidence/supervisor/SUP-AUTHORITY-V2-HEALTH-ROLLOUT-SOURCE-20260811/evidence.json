@@ -1,0 +1,118 @@
+{
+  "schema_version": "supervisor_authority_v2_health_rollout_source_evidence.v1",
+  "task": {
+    "id": "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+    "title": "Make supervisor health truthful and retire rollout migration branches",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
+    "candidate_source_commit": "2e911c654b40802a73e4b0e501452684af3dd8eb",
+    "base_commit": "42cd4d58f2906832cda269311c683d463cb631cc",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Supervisor runtime health identity, liveness, readiness, and scheduling-progress truth plus immutable-incumbent transactional promotion and rollback source.",
+    "not_changing": [
+      "canonical task-store persistence or lifecycle policy",
+      "supervisor scheduling or provider dispatch policy",
+      "live supervisor configuration, processes, services, or deployment",
+      "frontend or BFF behavior"
+    ],
+    "changed_paths": [
+      "scripts/supervisor_runtime_health.py",
+      "scripts/test_supervisor_runtime_health.py",
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811/evidence.json"
+    ]
+  },
+  "health_contract": {
+    "dimensions": {
+      "identity": "Exact live-config SHA-256, command root, source commit, full supervisor argv, and PID/starttime generation must agree.",
+      "liveness": "The exact non-zombie process generation and singleton lock owner generation must both agree; neither can compensate for the other.",
+      "readiness": "Runtime state, canonical status projection, V2 task head, worker event queue, provider registry, and authoritative caught-up task shadow must be accessible and coherent.",
+      "progress": "Heartbeat freshness, successful loop sequence, cycle budget, dispatch-latency budget, runnable-backlog service, and non-degraded lifecycle are evaluated independently."
+    },
+    "shortcut_removed": "No process_alive OR lock_held fallback remains, and heartbeat freshness alone cannot make runtime progress healthy.",
+    "postcheck_consumers": "Promotion and rollback observations consume the complete health result, exact launched generation, task projection hash, worker/queue/lease parity hash, provider baseline hash, and config SHA-256. Rollback must restore projection, parity, and provider hashes to the captured incumbent baseline."
+  },
+  "promotion_contract": {
+    "retained": [
+      "promotion lock acquired before runtime-admission lock",
+      "exact-generation termination and PID-reuse protection",
+      "live-config compare-and-swap with immutable candidate bytes",
+      "three distinct post-launch successful loops for both candidate and rollback",
+      "known-good rollback with durable external transaction evidence"
+    ],
+    "immutable_roots": "Candidate, active incumbent, and materialized rollback are three distinct immutable runtime roots. The active incumbent is captured from the exact running process cwd; rollback is cloned from that bound commit/tree and revalidated before use.",
+    "removed_permanent_migration_paths": [
+      "mutable incumbent bootstrap and CLI flag",
+      "split-entrypoint compatibility",
+      "legacy task-brief drift acceptance",
+      "legacy incumbent bytecode residue acceptance",
+      "legacy environment-contract switches",
+      "admission-lock identifier churn normalization",
+      "all allow_legacy switches"
+    ]
+  },
+  "failure_injection": [
+    "wrong process generation and PID reuse",
+    "orphaned singleton lock owner",
+    "stale heartbeat",
+    "fresh heartbeat with no runnable backlog service",
+    "wrong command root",
+    "provider registry loss",
+    "candidate config-install and launch failures",
+    "wrong candidate cwd, commit, tree, projection, worker/lease parity, provider readiness, and config bytes",
+    "rollback config-install, launch, config, projection, worker/lease, and provider-baseline failures",
+    "post-launch loop marker staleness and regression"
+  ],
+  "deletion_report": {
+    "production_lines": {
+      "lines_added": 673,
+      "lines_deleted": 2412,
+      "net_lines": -1739,
+      "command": "git diff --numstat origin/dev...2e911c654b40802a73e4b0e501452684af3dd8eb -- scripts/supervisor_runtime_health.py scripts/promote_supervisor_runtime.py"
+    },
+    "tests": {
+      "lines_added": 566,
+      "lines_deleted": 4319,
+      "net_lines": -3753
+    },
+    "residue_scan": {
+      "patterns": "MutableIncumbentSnapshot|LegacyTaskBriefDrift|bootstrap_mutable_incumbent|allow_legacy|legacy_|mutable_incumbent|process_alive or lock_held|lock_held or process_alive",
+      "result": "no matches in the four task source/test files"
+    }
+  },
+  "validation": [
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv-pantheon/bin/python -m pytest -q scripts/test_supervisor_runtime_health.py scripts/test_promote_supervisor_runtime.py",
+      "result": "262 passed in 47.23s",
+      "conclusion": "pass"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 .venv-pantheon/bin/python -m py_compile scripts/supervisor_runtime_health.py scripts/promote_supervisor_runtime.py scripts/test_supervisor_runtime_health.py scripts/test_promote_supervisor_runtime.py",
+      "result": "exit 0",
+      "conclusion": "pass"
+    },
+    {
+      "command": "git diff --check origin/dev...2e911c654b40802a73e4b0e501452684af3dd8eb",
+      "result": "exit 0",
+      "conclusion": "pass"
+    }
+  ],
+  "rollout_and_rollback": {
+    "source_rollout": "Merge only after Antigravity approves the exact PR head and required checks pass. This task does not perform a live runtime promotion.",
+    "runtime_rollout": "A separately authorized governed promotion must bind an immutable candidate and active incumbent, acquire promotion then admission locks, install config by CAS, and accept only after three fresh four-dimensional-health loops.",
+    "runtime_rollback": "On any candidate failure after incumbent-stop attempt, terminate only the captured bad generation, CAS the immutable known-good rollback config, launch the materialized rollback root, require three fresh loops, and require exact incumbent projection, worker/queue/lease parity, and provider-baseline restoration.",
+    "source_rollback": "Revert the reviewed source PR; do not mutate live runtime state as part of source rollback."
+  },
+  "review": {
+    "decision": "pending_fresh_exact_head_review",
+    "required_reviewer": "Antigravity",
+    "protocol": "Review this committed manifest and all changed paths at the exact PR head. Confirm the four health dimensions remain independent, exact generation and singleton ownership are conjunctive, progress cannot be inferred from heartbeat alone, candidate/active-incumbent/rollback roots are immutable and distinct, legacy migration switches are absent, both promotion and rollback require three fresh loops, and rollback baseline parity is fail-closed. Any changed PR head requires a fresh governed review."
+  }
+}
