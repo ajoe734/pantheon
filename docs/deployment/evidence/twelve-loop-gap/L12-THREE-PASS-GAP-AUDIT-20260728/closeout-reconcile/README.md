@@ -1,7 +1,7 @@
 # L12 merged-row closeout reconciliation (V2)
 
-Task: `L12-GAP-CLOSEOUT-RECONCILE-V2-20260811`  
-Owner: `Codex2` · Reviewer: `Codex`  
+Task: `L12-GAP-CLOSEOUT-RECONCILE-V2-20260811`
+Owner: `Codex2` · Reviewer: `Codex`
 Observed: `2026-08-11` · Base: `origin/dev` at
 `aeb55e11633192109ca87501d0e4ad2d62d84e87`
 
