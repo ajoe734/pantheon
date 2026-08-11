@@ -314,7 +314,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         snapshot_started = time.monotonic()
         snapshot = dispatcher.load_authoritative_task_snapshot(
             {"mode": "authoritative", "event_log": clone},
-            refresh_checkpoint=False,
+            observational=True,
         )
         snapshot_seconds = round(time.monotonic() - snapshot_started, 3)
         snapshot_evidence = dispatcher.authoritative_snapshot_evidence(snapshot)
