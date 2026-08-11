@@ -27,6 +27,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         ephemeral_merge_returncode: int = 0,
         commits: Mapping[str, Mapping[str, Any]] | None = None,
         carry_forward_publish_fails: bool = False,
+        requiredness_nodes: Sequence[Mapping[str, Any]] | None = None,
+        requiredness_query_fails: bool = False,
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -51,6 +53,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.landed_merged_at = landed_merged_at
         self.commits = {str(sha): dict(payload) for sha, payload in (commits or {}).items()}
         self.carry_forward_publish_fails = carry_forward_publish_fails
+        self.requiredness_nodes = [dict(node) for node in (requiredness_nodes or [])]
+        self.requiredness_query_fails = requiredness_query_fails
         self.api_payloads: list[dict[str, Any]] = []
         self.tag_refs: set[str] = set()
         self._next_tag_sha = 200
@@ -89,6 +93,21 @@ class FakeRunner(auto_integrator.CommandRunner):
                 if pr is not None and str(pr.get("number")) == number:
                     return completed(command, stdout=auto_integrator.json.dumps(dict(pr)))
             return completed(command, stdout="{}")
+        if command[:3] == ["gh", "api", "graphql"]:
+            if self.requiredness_query_fails:
+                raise auto_integrator.CommandFailure(command, 1, "GraphQL unavailable")
+            payload = {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "statusCheckRollup": {
+                                "contexts": {"nodes": self.requiredness_nodes}
+                            }
+                        }
+                    }
+                }
+            }
+            return completed(command, stdout=auto_integrator.json.dumps(payload))
         commit_prefix = "repos/ajoe734/pantheon/commits/"
         if command[:2] == ["gh", "api"] and len(command) == 3 and command[2].startswith(commit_prefix):
             head_sha = command[2][len(commit_prefix) :].partition("?")[0]
@@ -755,6 +774,107 @@ class CheckClassifierTests(unittest.TestCase):
         self.assertEqual(summary.state, "red")
         self.assertEqual(summary.failing, ("Ambiguous check",))
 
+    def test_graphql_enrichment_classifies_live_rollup_shape(self) -> None:
+        pr = green_pr(number=4741)
+        pr["url"] = "https://github.com/ajoe734/pantheon/pull/4741"
+        pr["statusCheckRollup"] = [
+            {
+                "__typename": "CheckRun",
+                "name": "Smoke acceptance",
+                "conclusion": "SUCCESS",
+                "status": "COMPLETED",
+            },
+            {
+                "__typename": "CheckRun",
+                "name": "Audit signed canonical review (not required issuer) (4741)",
+                "conclusion": "FAILURE",
+                "status": "COMPLETED",
+            },
+        ]
+        runner = FakeRunner(
+            requiredness_nodes=[
+                {"__typename": "CheckRun", "name": "Smoke acceptance", "isRequired": True},
+                {
+                    "__typename": "CheckRun",
+                    "name": "Audit signed canonical review (not required issuer) (4741)",
+                    "isRequired": False,
+                },
+            ]
+        )
+
+        enriched = auto_integrator.enrich_pr_status_rollup(pr, runner)
+        self.assertIsNotNone(enriched)
+        rollup = enriched["statusCheckRollup"]
+        self.assertEqual([item["isRequired"] for item in rollup], [True, False])
+        summary = auto_integrator.summarize_status_rollup(rollup)
+        self.assertEqual(summary.state, "green")
+        self.assertEqual(
+            summary.ignored_diagnostic,
+            ("Audit signed canonical review (not required issuer) (4741)",),
+        )
+        self.assertTrue(any(command[:3] == ["gh", "api", "graphql"] for command in runner.commands))
+
+    def test_graphql_failure_leaves_failing_check_ambiguous_and_blocking(self) -> None:
+        pr = green_pr(number=4741)
+        pr["url"] = "https://github.com/ajoe734/pantheon/pull/4741"
+        pr["statusCheckRollup"] = [
+            {
+                "__typename": "CheckRun",
+                "name": "Audit signed canonical review (not required issuer) (4741)",
+                "conclusion": "FAILURE",
+                "status": "COMPLETED",
+            }
+        ]
+        runner = FakeRunner(requiredness_query_fails=True)
+
+        enriched = auto_integrator.enrich_pr_status_rollup(pr, runner)
+        self.assertIsNotNone(enriched)
+        summary = auto_integrator.summarize_status_rollup(enriched["statusCheckRollup"])
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(
+            summary.failing,
+            ("Audit signed canonical review (not required issuer) (4741)",),
+        )
+
+    def test_unmatched_graphql_check_remains_ambiguous_and_blocking(self) -> None:
+        pr = green_pr(number=4741)
+        pr["url"] = "https://github.com/ajoe734/pantheon/pull/4741"
+        pr["statusCheckRollup"] = [
+            {
+                "__typename": "CheckRun",
+                "name": "Unmatched failure",
+                "conclusion": "FAILURE",
+                "status": "COMPLETED",
+            }
+        ]
+        runner = FakeRunner(
+            requiredness_nodes=[
+                {"__typename": "CheckRun", "name": "Different check", "isRequired": False}
+            ]
+        )
+
+        enriched = auto_integrator.enrich_pr_status_rollup(pr, runner)
+        self.assertIsNotNone(enriched)
+        summary = auto_integrator.summarize_status_rollup(enriched["statusCheckRollup"])
+        self.assertEqual(summary.state, "red")
+        self.assertEqual(summary.failing, ("Unmatched failure",))
+
+    def test_duplicate_graphql_identity_is_required_if_any_match_is_required(self) -> None:
+        runner = FakeRunner(
+            requiredness_nodes=[
+                {"__typename": "CheckRun", "name": "Smoke acceptance", "isRequired": False},
+                {"__typename": "CheckRun", "name": "Smoke acceptance", "isRequired": True},
+            ]
+        )
+
+        requiredness = auto_integrator.fetch_is_required_map(
+            runner,
+            "https://github.com/ajoe734/pantheon/pull/4741",
+            4741,
+        )
+
+        self.assertIs(requiredness[("CheckRun", "Smoke acceptance")], True)
+
     def test_pr_4741_shaped_diagnostic_failure_allows_merge(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
@@ -791,6 +911,7 @@ class CheckClassifierTests(unittest.TestCase):
             gate=gate,
         )
         self.assertEqual(result.action, "would_merge")
+        self.assertIn("Ignored explicitly non-required diagnostics", result.detail)
 
     def test_required_check_failure_blocks_integration(self) -> None:
         candidate = auto_integrator.TaskCandidate(

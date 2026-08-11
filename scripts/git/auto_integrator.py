@@ -530,6 +530,17 @@ def summarize_status_rollup(rollup: Any) -> CheckSummary:
     return CheckSummary("green", len(rollup), (), (), tuple(ignored_diagnostic))
 
 
+def ignored_diagnostic_note(checks: CheckSummary) -> str:
+    """Render auditable context for statuses excluded from merge blocking."""
+
+    if not checks.ignored_diagnostic:
+        return ""
+    return (
+        " Ignored explicitly non-required diagnostics: "
+        f"{', '.join(checks.ignored_diagnostic)}."
+    )
+
+
 def canonical_review_gate_is_green(rollup: Any) -> bool:
     """Whether the workflow-owned canonical review check is green.
 
@@ -1466,6 +1477,7 @@ def integrate_candidate(
             )
         else:
             detail = f"Dry-run: PR #{number} is green and {rebase_status}; would merge or enable auto-merge."
+        detail += ignored_diagnostic_note(checks)
         return IntegrationResult(candidate.task_id, "would_merge", detail, number, url, dry_run=True, commands=runner.commands[:])
 
     if pushed:
@@ -1513,6 +1525,7 @@ def integrate_candidate(
         )
     else:
         detail = f"Merged PR #{number} into {settings.dev_branch} and reconciled {candidate.task_id} to done."
+    detail += ignored_diagnostic_note(checks)
     return IntegrationResult(candidate.task_id, "merged", detail, number, url, dry_run=False, commands=runner.commands[:])
 
 
