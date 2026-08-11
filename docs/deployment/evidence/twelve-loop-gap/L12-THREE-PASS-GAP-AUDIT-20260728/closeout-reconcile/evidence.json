@@ -1,0 +1,174 @@
+{
+  "schema_version": "1.0.0",
+  "record_type": "pantheon.task-evidence-manifest.v1",
+  "task": {
+    "id": "L12-GAP-CLOSEOUT-RECONCILE-V2-20260811",
+    "title": "Reconcile merged nonterminal L12 rows to canonical done/archive",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "owner_evidence_ready_for_independent_review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-GAP-CLOSEOUT-RECONCILE-V2-20260811",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/closeout-reconcile/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Evidence-only reconciliation of four L12 rows that the three-pass audit identified as merged but nonterminal.",
+    "not_changing": [
+      "Already merged product implementation",
+      ".orchestrator/supervisor.py, dispatch policy, and review policy",
+      "Canonical ai-status.json, task archives, and activity log",
+      "Existing task evidence and generated task briefs",
+      "Hosted deployment or runtime configuration"
+    ],
+    "composes_with": [
+      "SUP-L12-OPEN-PR-DRAIN-20260729 archived prerequisite",
+      "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "The four archived subject-task receipts",
+      "GitHub merged-PR records for #4286, #4301, #4325, and #4297"
+    ]
+  },
+  "observation": {
+    "observed_at": "2026-08-11",
+    "origin_dev": "aeb55e11633192109ca87501d0e4ad2d62d84e87",
+    "status_read": {
+      "command": "AI_NAME=Codex2 $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task>",
+      "initial_fail_closed_invariant": "status_task_lock_busy",
+      "retry_result": "all four subject tasks resolved from immutable archives as done/completed"
+    }
+  },
+  "subject_rows": [
+    {
+      "id": "L12-DIST-001",
+      "archive": {
+        "terminal_status": "done",
+        "terminal_outcome": "completed",
+        "archived_at": "2026-07-28T18:32:49Z",
+        "reconciled_from_merged_evidence": true
+      },
+      "delivery": {
+        "pull_request": 4286,
+        "head": "e91382b508b42456d75747fdf3cef92c7850d2ad",
+        "merge_commit": "cf94be38a548a31df020456904ea10ff95ffb4dd",
+        "head_and_merge_are_origin_dev_ancestors": true
+      },
+      "independent_review": {
+        "reviewer": "Codex",
+        "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json",
+        "review_gate": "Pantheon canonical review gate success retained by archived receipt"
+      }
+    },
+    {
+      "id": "L12-FLEET-WORKER-OUTCOME-001",
+      "archive": {
+        "terminal_status": "done",
+        "terminal_outcome": "completed",
+        "archived_at": "2026-07-28T18:32:53Z",
+        "reconciled_from_merged_evidence": true,
+        "orphaned_task_worktree_blocker": "resolved"
+      },
+      "delivery": {
+        "pull_request": 4301,
+        "head": "25f238f94282f2cd8541ff488b003b5e983fd864",
+        "merge_commit": "d97c25d3cc8860118dd4d0f3c9fafd38490d89c0",
+        "head_and_merge_are_origin_dev_ancestors": true
+      },
+      "independent_review": {
+        "reviewer": "Codex2",
+        "record": "Immutable archive handoff records exact-head approval and canonical review-gate success. This historical task predates the mandatory review_file field and is already terminal; no parent artifact is rewritten."
+      }
+    },
+    {
+      "id": "L12-BFF-001",
+      "archive": {
+        "terminal_status": "done",
+        "terminal_outcome": "completed",
+        "archived_at": "2026-07-28T23:34:26Z",
+        "active_without_worker_mismatch": "eliminated"
+      },
+      "delivery": {
+        "pull_request": 4325,
+        "head": "dfc5fdc86a51a65ccff67aeea2c602f7bd380800",
+        "merge_commit": "f12daadc29b86db5cdcf5160a17c9fbdc9f83ad8",
+        "head_and_merge_are_origin_dev_ancestors": true
+      },
+      "independent_review": {
+        "reviewer": "Antigravity",
+        "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json",
+        "review_gate": "Pantheon canonical review gate success retained by archived receipt"
+      }
+    },
+    {
+      "id": "L12-FLEET-STATUS-SYNC-001",
+      "archive": {
+        "terminal_status": "done",
+        "terminal_outcome": "completed",
+        "archived_at": "2026-08-05T02:07:35Z"
+      },
+      "delivery": {
+        "pull_request": 4297,
+        "recorded_review_head": "38057216e8e2a02f2acb3f375a119286af6e01b2",
+        "final_pull_request_head": "70360fb43755cf4b21c918f4a7996433acb22172",
+        "merge_commit": "5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61",
+        "merge_is_origin_dev_ancestor": true,
+        "review_head_is_final_head_ancestor": true,
+        "review_manifest_unchanged_from_review_head_to_final_head": true,
+        "final_head_tree_equals_merge_tree": true
+      },
+      "independent_review": {
+        "reviewer": "Antigravity",
+        "review_file": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+        "review_gate": "Pantheon canonical review gate success retained by archived receipt"
+      }
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "No implementation is restarted for tasks that already have merged delivery PRs.",
+      "result": "pass",
+      "evidence": "Scope is reconciliation packet only; each subject row has an immutable merged delivery receipt."
+    },
+    {
+      "id": "AC2",
+      "statement": "Each referenced task has exact merged evidence, independent review evidence, and canonical done or a truthful blocker.",
+      "result": "pass",
+      "evidence": "All four rows resolve from archive as done/completed; delivery and review fields are enumerated above."
+    },
+    {
+      "id": "AC3",
+      "statement": "L12-BFF-001 active-without-worker mismatch is eliminated by redispatch or formal closeout.",
+      "result": "pass",
+      "evidence": "Archived done receipt at 2026-07-28T23:34:26Z after PR #4325 merge."
+    },
+    {
+      "id": "AC4",
+      "statement": "L12-FLEET-WORKER-OUTCOME-001 orphaned task-worktree artifact blocker is resolved without absorbing unrelated state.",
+      "result": "pass",
+      "evidence": "Archive records the historical blocker resolved and the subject row reconciled done; this task commits only its own evidence directory."
+    }
+  ],
+  "verification": {
+    "commands": [
+      "git fetch origin dev",
+      "gh pr view 4286 --repo ajoe734/pantheon --json state,headRefOid,mergeCommit,statusCheckRollup",
+      "gh pr view 4301 --repo ajoe734/pantheon --json state,headRefOid,mergeCommit,statusCheckRollup",
+      "gh pr view 4325 --repo ajoe734/pantheon --json state,headRefOid,mergeCommit,statusCheckRollup",
+      "gh pr view 4297 --repo ajoe734/pantheon --json state,headRefOid,mergeCommit,statusCheckRollup",
+      "git merge-base --is-ancestor <recorded commits> origin/dev",
+      "git diff --quiet <PR-4297-review-head> <PR-4297-final-head> -- docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+      "git diff --quiet <PR-4297-final-head> <PR-4297-merge-commit>"
+    ],
+    "result": "pass; all four PRs report MERGED, required commits validate as described, and the canonical retry returned terminal archive receipts"
+  },
+  "review": {
+    "status": "pending",
+    "required_reviewer": "Codex",
+    "review_targets": [
+      "Independently rerun the governed show commands for the four subject rows.",
+      "Confirm each GitHub PR identity and origin/dev ancestry or the documented PR #4297 squash-tree equivalence.",
+      "Verify this packet changes no implementation, canonical state, generated task brief, or prior evidence.",
+      "Bind this exact file as REVIEW_FILE when approving the task PR."
+    ]
+  }
+}
