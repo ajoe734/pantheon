@@ -13,6 +13,7 @@ import verify_task_state_store as verifier
 ORCHESTRATOR = Path(__file__).resolve().parents[1] / ".orchestrator"
 sys.path.insert(0, str(ORCHESTRATOR))
 
+from rewrite import task_state_store as store
 from rewrite.task_state_store import TaskStateStoreError, append_state_commit
 
 
@@ -128,3 +129,36 @@ def test_verifier_text_output_surfaces_the_live_task_count(
 
     assert verifier.main(["--event-log", str(event_log), "--status-file", str(status_file)]) == 0
     assert "nonterminal_tasks=1" in capsys.readouterr().out
+
+
+def test_verifier_accepts_a_valid_durable_post_head_tail(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_file = tmp_path / "ai-status.json"
+    event_log = tmp_path / "events.jsonl"
+    first = {"tasks": [{"id": "STATE-007", "status": "todo"}]}
+    second = {"tasks": [{"id": "STATE-007", "status": "review"}]}
+    append_state_commit(event_log, first, source="test")
+    real_write_head = store._write_head_cas
+    monkeypatch.setattr(
+        store,
+        "_write_head_cas",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("simulated head replace crash")
+        ),
+    )
+    with pytest.raises(OSError, match="simulated head replace crash"):
+        append_state_commit(event_log, second, source="test")
+    monkeypatch.setattr(store, "_write_head_cas", real_write_head)
+    status_file.write_text(json.dumps(second), encoding="utf-8")
+
+    assert verifier.main(
+        ["--event-log", str(event_log), "--status-file", str(status_file), "--json"]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["full_chain"]["event_count"] == 2
+    assert payload["full_chain"]["head_sequence"] == 1
+    assert payload["full_chain"]["tail_event_count"] == 1
