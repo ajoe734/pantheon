@@ -139,6 +139,12 @@ def _store_lock(event_path: Path, *, shared: bool, observational: bool = False) 
     flags = (os.O_RDONLY if observational else os.O_RDWR | os.O_CREAT) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(lock_path, flags, 0o600)
+    except FileNotFoundError:
+        if observational:
+            raise TaskStateStoreError(
+                f"task-state lock must be an existing regular file: {lock_path}"
+            ) from None
+        raise TaskStateStoreError(f"cannot open task-state lock: {lock_path}") from None
     except OSError as exc:
         raise TaskStateStoreError(f"cannot open task-state lock: {lock_path}") from exc
     try:
@@ -731,14 +737,23 @@ def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
 def load_snapshot(path: str | Path, *, refresh_checkpoint: bool = True) -> dict[str, Any]:
     """Read the current V2 head plus only the bounded tail after it.
 
-    ``refresh_checkpoint`` remains accepted for source compatibility but has no
-    effect: V2 has no replay checkpoint, mmap, prefix hash, or V1 fallback.
+    V2 has no replay checkpoint, mmap, prefix hash, or V1 fallback.  The
+    retained ``refresh_checkpoint=False`` spelling selects a strict
+    observational read: it cannot create a parent or lock sidecar.  Default
+    reads may provision an empty fresh store for shadow/bootstrap flow, but a
+    nonempty no-head log still fails rather than being treated as V1.
     """
 
-    del refresh_checkpoint
-    event_path = _require_existing_parent(Path(path))
-    with _store_lock(event_path, shared=True, observational=True):
-        return _public_snapshot(_load_snapshot_unlocked(event_path, allow_empty=False))
+    observational = not refresh_checkpoint
+    event_path = (
+        _require_existing_parent(Path(path))
+        if observational
+        else _prepare_parent(Path(path))
+    )
+    with _store_lock(event_path, shared=True, observational=observational):
+        return _public_snapshot(
+            _load_snapshot_unlocked(event_path, allow_empty=not observational)
+        )
 
 
 def _append_state_commit_unlocked(event_path: Path, state: dict[str, Any], *, source: str, committed_at: str | None, snapshot: dict[str, Any], expected_sequence: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:

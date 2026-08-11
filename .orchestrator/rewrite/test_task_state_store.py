@@ -55,6 +55,31 @@ def write_legacy(path: Path) -> tuple[dict, bytes]:
     return second, payload
 
 
+def write_large_legacy(path: Path, *, revisions: int = 90, task_count: int = 600) -> dict:
+    """Build a multi-megabyte V1 fixture without invoking a V1 runtime API."""
+
+    lines: list[bytes] = []
+    previous: str | None = None
+    current: dict = {}
+    for revision in range(1, revisions + 1):
+        current = {
+            "revision": revision,
+            "tasks": [
+                {
+                    "id": f"LEGACY-LARGE-{number:04d}",
+                    "status": "review" if number == revision % task_count else "todo",
+                    "next": f"revision-{revision}",
+                }
+                for number in range(task_count)
+            ],
+        }
+        event = legacy_event(current, sequence=revision, previous=previous)
+        previous = event["event_sha256"]
+        lines.append(store.canonical_json_bytes(event))
+    path.write_bytes(b"\n".join(lines) + b"\n")
+    return current
+
+
 def test_v2_transition_records_are_deltas_not_full_boards(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     first = {"tasks": [{"id": f"TASK-{number:04d}", "status": "todo"} for number in range(1200)]}
@@ -71,11 +96,12 @@ def test_v2_transition_records_are_deltas_not_full_boards(tmp_path: Path) -> Non
     assert store.load_snapshot(path)["state"] == second
 
 
-def test_head_read_never_opens_or_hashes_frozen_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hot_read_cost_is_constant_against_a_synthetic_large_legacy_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "events.jsonl"
-    expected, _legacy_bytes = write_legacy(path)
+    expected = write_large_legacy(path)
     store.migrate_legacy_journal(path)
     archive = path.with_name(f"{path.name}.v1.archive.jsonl")
+    assert archive.stat().st_size > 1_000_000
     before = archive.stat().st_atime_ns
 
     def forbidden_archive_read(*_args: object, **_kwargs: object) -> object:

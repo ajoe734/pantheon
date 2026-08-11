@@ -661,8 +661,9 @@ def authoritative_snapshot_evidence(snapshot: dict[str, Any]) -> dict[str, Any]:
         "last_event_id": snapshot["last_event_id"],
         "last_event_sha256": snapshot["last_event_sha256"],
         "state_sha256": snapshot["state_sha256"],
-        "checkpoint_used": snapshot["resumed_from_checkpoint"] is True,
-        "revalidated_tail_events": int(snapshot["revalidated_events"]),
+        "head_sequence": int(snapshot["head_sequence"]),
+        "tail_event_count": int(snapshot["tail_event_count"]),
+        "recovered_tail": bool(snapshot["recovered_tail"]),
     }
 
 

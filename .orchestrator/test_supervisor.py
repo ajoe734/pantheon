@@ -9394,7 +9394,9 @@ class TaskStateShadowCatchupTests(unittest.TestCase):
         self.assertEqual(json.loads(self.status_file.read_text(encoding="utf-8")), expected)
         shadow = self.runtime_state["supervisor"]["task_state_shadow"]
         self.assertFalse(shadow["ok"])
-        self.assertIn("invalid task-state event", shadow["last_error"])
+        # A nonempty journal without a V2 head is never parsed as a V1
+        # fallback.  Migration must establish the V2 head first.
+        self.assertIn("V2 head is missing", shadow["last_error"])
 
     def test_authoritative_mode_repairs_file_from_journal_without_importing_drift(self) -> None:
         canonical = self.write_status("todo")
