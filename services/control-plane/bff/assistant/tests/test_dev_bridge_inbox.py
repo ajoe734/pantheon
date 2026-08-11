@@ -890,3 +890,80 @@ def test_drain_cli_recovers_and_rearms_only_the_requested_failed_packet(
     assert rearmed_body["rearmAttempt"] == 1
     assert not failed.exists()
     assert (failed.parent.parent / "pending" / failed.name).is_file()
+
+
+def test_claim_processing_files_interleaves_retryable_and_non_retryable_packets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BRIDGE_SIGNING_KEY", TEST_KEY.hex())
+    repo_root = _write_fake_repo(tmp_path)
+    inbox = repo_root / ".orchestrator" / "assistant-dev-packets"
+
+    # Create 3 retryable packets and 2 non-retryable (fresh) packets in inbox/processing
+    # Create retryable packets sorted BEFORE fresh packets lexically so that without interleaving,
+    # a bounded max_items claim would take only retryable packets and starve fresh packets.
+    retryable_packets = [
+        sign_packet(_make_packet(f"a_pkt_retry_{i}"), key_store={"assistant-bridge-dev": TEST_KEY})
+        for i in range(3)
+    ]
+    fresh_packets = [
+        sign_packet(_make_packet(f"z_pkt_fresh_{i}"), key_store={"assistant-bridge-dev": TEST_KEY})
+        for i in range(2)
+    ]
+
+    for p in retryable_packets + fresh_packets:
+        queue_task_packet(p, repo_root=str(repo_root), key_store={"assistant-bridge-dev": TEST_KEY})
+        pending_path = inbox / "pending" / f"{p.packet_id}.json"
+        processing_path = inbox / "processing" / f"{p.packet_id}.json"
+        processing_path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(pending_path, processing_path)
+
+    # Schedule retry metadata (ready now) for the retryable packets
+    for p in retryable_packets:
+        proc_path = inbox / "processing" / f"{p.packet_id}.json"
+        dev_bridge_inbox._schedule_processing_retry(
+            inbox,
+            proc_path,
+            "claim_token_test",
+            {"packet_id": p.packet_id, "packet_digest": packet_digest(p)},
+        )
+        # Move back claim if schedule released it
+        dev_bridge_inbox._write_json_atomic(
+            dev_bridge_inbox._claim_path(inbox, proc_path),
+            {"claim_token": "expired", "expires_at_epoch": 0, "packet_id": p.packet_id, "packet_digest": packet_digest(p)},
+        )
+        # Ensure retry metadata is scheduled ready now (next_attempt_epoch = 0)
+        retry_path = dev_bridge_inbox._retry_path(inbox, proc_path)
+        dev_bridge_inbox._write_json_atomic(
+            retry_path,
+            {
+                "schema": dev_bridge_inbox.PROCESSING_RETRY_SCHEMA,
+                "packet_id": p.packet_id,
+                "packet_digest": packet_digest(p),
+                "attempt": 1,
+                "next_attempt_epoch": 0,
+            },
+        )
+
+    # Claim items with max_items=2 (bounded drain/claim limit)
+    # Without interleaving, all 2 items claimed would be retryable ('a_pkt_retry_0', 'a_pkt_retry_1'), starving fresh packets.
+    # With interleaving, non-retryable fresh packets get prioritized so 'z_pkt_fresh_0' is claimed within max_items=2.
+    claimed_bounded = dev_bridge_inbox._claim_processing_files(inbox, max_items=2)
+    claimed_bounded_ids = [path.stem for path, _token, _fence in claimed_bounded]
+
+    assert claimed_bounded_ids == ["z_pkt_fresh_0", "a_pkt_retry_0"]
+    for _path, _token, fence in claimed_bounded:
+        dev_bridge_inbox._release_processing_fence(fence)
+
+    # Now claim remaining items with max_items=10
+    claimed_all = dev_bridge_inbox._claim_processing_files(inbox, max_items=10)
+    claimed_all_ids = [path.stem for path, _token, _fence in claimed_all]
+
+    assert claimed_all_ids == [
+        "z_pkt_fresh_1",
+        "a_pkt_retry_1",
+        "a_pkt_retry_2",
+    ]
+    for _path, _token, fence in claimed_all:
+        dev_bridge_inbox._release_processing_fence(fence)

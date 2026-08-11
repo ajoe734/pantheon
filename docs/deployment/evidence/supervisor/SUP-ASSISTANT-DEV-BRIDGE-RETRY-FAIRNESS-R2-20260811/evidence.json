@@ -1,0 +1,39 @@
+{
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-RETRY-FAIRNESS-R2-20260811",
+  "task_title": "Reissue bounded bridge retry fairness on a clean task branch",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "status": "in_progress",
+  "timestamp": "2026-08-11T03:51:00Z",
+  "summary": "Reissued retry-fairness fix on clean task branch, interleaving non-retryable and retryable processing candidates to prevent starvation, and updated regression test_claim_processing_files_interleaves_retryable_and_non_retryable_packets to place retry packets lexically first and test bounded max_items claim limit.",
+  "base_branch": "clean-origin/dev",
+  "reviewed_head_binding_policy": "exact-head",
+  "scope_boundary": "services/control-plane/bff/assistant/dev_bridge_inbox.py, services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py, docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-RETRY-FAIRNESS-R2-20260811/evidence.json",
+  "live_mutation_boundary": "no live state or process mutation",
+  "source_files": [
+    "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+    "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py"
+  ],
+  "acceptance_criteria_verification": [
+    {
+      "criterion": "Task-scoped exact-head evidence manifest under docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-RETRY-FAIRNESS-R2-20260811/",
+      "status": "PASSED",
+      "evidence": "Committed docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-RETRY-FAIRNESS-R2-20260811/evidence.json."
+    },
+    {
+      "criterion": "Reproduce bounded starvation in test_claim_processing_files_interleaves_retryable_and_non_retryable_packets",
+      "status": "PASSED",
+      "evidence": "Updated test to sort retry packets lexically before fresh packets (a_pkt_retry_* vs z_pkt_fresh_*) and claimed with max_items=2 bounded limit. Verified fresh packet ('z_pkt_fresh_0') is admitted within the bound while retry packets remain."
+    },
+    {
+      "criterion": "Preserve signatures, replay fences, canonical locks, and fail-closed admission",
+      "status": "PASSED",
+      "evidence": "All existing duplicate-materialization, claim-expiry, and concurrent-drainer fences pass."
+    },
+    {
+      "criterion": "Run full dev bridge inbox test suite and verify formatting",
+      "status": "PASSED",
+      "evidence": "25 passed in pytest services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py; git diff --check reports clean."
+    }
+  ]
+}
