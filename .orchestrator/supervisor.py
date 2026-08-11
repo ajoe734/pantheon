@@ -29,6 +29,24 @@ from types import MappingProxyType
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
+
+def _bind_running_supervisor_import(
+    module_name: str,
+    module: object | None,
+) -> None:
+    """Keep lazy provider imports on the running supervisor implementation."""
+
+    if module_name == "__main__" and module is not None:
+        sys.modules["supervisor"] = module
+
+
+# The daemon executes this file as ``__main__``, while provider_permissions
+# imports ``supervisor`` lazily during a refreshed provider report.  Bind both
+# names before importing provider_permissions so that refreshes cannot resolve a
+# second checkout with an older apply_provider_probe_to_report signature.
+_bind_running_supervisor_import(__name__, sys.modules.get(__name__))
+
+
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))

@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -231,6 +232,73 @@ def _hard_crash_reserved_worker_after_launch(
 
 
 class RuntimeConfigTests(unittest.TestCase):
+    def test_provider_report_tick_uses_running_config_compatible_supervisor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_report_path = Path(tmpdir) / "provider_capabilities.json"
+            provider_report_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2000-01-01T00:00:00Z",
+                        "providers": {"codex": {"auth_ready": True}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "supervisor": {
+                    "provider_capability_refresh_interval_seconds": 300,
+                    "provider_probe_failure_hysteresis_threshold": 1,
+                },
+                "paths": {"provider_capabilities": str(provider_report_path)},
+            }
+            legacy_supervisor = types.ModuleType("supervisor")
+
+            def legacy_projector(
+                report: dict[str, object],
+                provider_key: str,
+                probe: dict[str, object],
+            ) -> None:
+                return None
+
+            legacy_supervisor.apply_provider_probe_to_report = legacy_projector
+            running_supervisor = types.ModuleType("__main__")
+            running_supervisor.apply_provider_probe_to_report = (
+                supervisor.apply_provider_probe_to_report
+            )
+
+            def refreshed_report(_config: dict[str, object]) -> dict[str, object]:
+                from supervisor import apply_provider_probe_to_report
+
+                report = {"providers": {"codex": {"auth_ready": True}}}
+                apply_provider_probe_to_report(
+                    report,
+                    "codex",
+                    {
+                        "ready": False,
+                        "status": "probe_timeout",
+                        "checked_at": "2026-08-11T01:00:00Z",
+                        "source": "live",
+                    },
+                    config=_config,
+                )
+                return report
+
+            with (
+                mock.patch.dict(sys.modules, {"supervisor": legacy_supervisor}),
+                mock.patch.object(supervisor, "build_provider_capabilities", side_effect=refreshed_report),
+                mock.patch.object(supervisor, "write_provider_capabilities"),
+                mock.patch.object(supervisor, "provider_recovery_probe_targets", return_value=[]),
+                mock.patch.object(supervisor, "provider_stale_cache_readmission_probe_targets", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "_safe_phase", wraps=supervisor._safe_phase) as safe_phase,
+            ):
+                supervisor._bind_running_supervisor_import("__main__", running_supervisor)
+                _previous, report = supervisor.probe_provider_reports(config, quiet=True)
+
+        self.assertFalse(report["providers"]["codex"]["auth_ready"])
+        self.assertEqual(report["providers"]["codex"]["consecutive_probe_failures"], 1)
+        self.assertEqual(safe_phase.call_args_list[0].args[0], "load_provider_report_tick")
+
     def test_load_provider_report_can_skip_refresh_for_one_shot_claims(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
