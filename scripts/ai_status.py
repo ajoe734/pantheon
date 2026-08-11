@@ -136,6 +136,8 @@ SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
 DEV_BRIDGE_BATCH_SCHEMA_VERSION = 1
 DEV_BRIDGE_BATCH_MAX_TASKS = 64
 DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND = "dev-bridge-materialize-batch"
+DEV_BRIDGE_BATCH_READBACK_COMMAND = "dev-bridge-materialize-readback"
+DEV_BRIDGE_BATCH_ACTOR = "Human/Ops"
 GLOBAL_STATUS_LOCK_ORDER = (
     "runtime_admission",
     "task_state",
@@ -144,6 +146,7 @@ GLOBAL_STATUS_LOCK_ORDER = (
 _ACTIVITY_TRANSACTION_LOCAL = local()
 _TASK_STATE_TRANSACTION_LOCAL = local()
 _STATUS_COMMAND_LEASE_LOCAL = local()
+_DEV_BRIDGE_MATERIALIZATION_LOCAL = local()
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -5903,6 +5906,13 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     assignment_next = os.environ.get("TASK_NEXT", "").strip()
     metadata = task_metadata_from_env()
+    if "dev_bridge" in metadata and not bool(
+        getattr(_DEV_BRIDGE_MATERIALIZATION_LOCAL, "active", False)
+    ):
+        raise SystemExit(
+            "Bridge provenance can only be created by "
+            f"{DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND}."
+        )
     ensure_agent(owner)
     ensure_agent(reviewer)
     if owner == reviewer:
@@ -8251,6 +8261,10 @@ def load_dev_bridge_materialize_batch(path_value: str) -> dict[str, Any]:
         raise SystemExit("Dev bridge materialize batch packet_digest must be a SHA-256 hex digest")
     if not isinstance(actor, str) or not actor.strip() or len(actor) > 80:
         raise SystemExit("Dev bridge materialize batch actor is invalid")
+    if actor.strip() != DEV_BRIDGE_BATCH_ACTOR:
+        raise SystemExit(
+            "Dev bridge materialize batch actor must be the trusted bridge actor"
+        )
 
     tasks = payload.get("tasks")
     if not isinstance(tasks, list) or not tasks or len(tasks) > DEV_BRIDGE_BATCH_MAX_TASKS:
@@ -8325,6 +8339,7 @@ def dev_bridge_materialize_mutation_environment(row: Mapping[str, Any], actor: s
 
     tracked = ("AI_NAME", "TASK_METADATA_JSON", "TASK_TITLE", "TASK_NEXT")
     previous = {name: os.environ.get(name) for name in tracked}
+    previous_active = getattr(_DEV_BRIDGE_MATERIALIZATION_LOCAL, "active", None)
     try:
         for name in tracked:
             os.environ.pop(name, None)
@@ -8338,6 +8353,7 @@ def dev_bridge_materialize_mutation_environment(row: Mapping[str, Any], actor: s
         os.environ["TASK_TITLE"] = str(row["title"])
         if row.get("assignment_next"):
             os.environ["TASK_NEXT"] = str(row["assignment_next"])
+        _DEV_BRIDGE_MATERIALIZATION_LOCAL.active = True
         yield
     finally:
         for name, value in previous.items():
@@ -8345,6 +8361,13 @@ def dev_bridge_materialize_mutation_environment(row: Mapping[str, Any], actor: s
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+        if previous_active is None:
+            try:
+                delattr(_DEV_BRIDGE_MATERIALIZATION_LOCAL, "active")
+            except AttributeError:
+                pass
+        else:
+            _DEV_BRIDGE_MATERIALIZATION_LOCAL.active = previous_active
         _clear_status_command_lease_binding()
 
 
@@ -8372,6 +8395,74 @@ def run_dev_bridge_materialize_batch(
                 [task_id, row["owner"], row["reviewer"], row["title"]],
             )
         results.append({"task_id": task_id, "changed": outcome is not False})
+    changed_count = sum(bool(item["changed"]) for item in results)
+    if changed_count not in {0, len(results)}:
+        raise SystemExit(
+            "Dev bridge materialize batch found a partial pre-existing packet; "
+            "refusing to commit a missing-task suffix"
+        )
+    return results
+
+
+def read_dev_bridge_materialized_batch(
+    state: dict[str, Any],
+    batch: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Validate one whole packet directly from authoritative task state.
+
+    This deliberately ignores live top-level owner/reviewer routing. The
+    originally signed assignment and every other immutable packet field remain
+    frozen inside ``dev_bridge`` and must match the batch payload byte-for-byte.
+    """
+
+    results: list[dict[str, Any]] = []
+    immutable_fields = {
+        "id": "id",
+        "title": "title",
+        "phase": "phase",
+        "depends_on": "depends_on",
+        "artifacts": "artifacts",
+        "acceptance": "acceptance",
+        "summary": "summary_zh",
+    }
+    for row in batch["tasks"]:
+        task_id = str(row["task_id"])
+        task = get_task(state, task_id)
+        if task is None:
+            raise SystemExit(
+                f"Dev bridge materialize readback task is missing: {task_id}"
+            )
+        metadata = deepcopy(row["task_metadata"])
+        expected_bridge = _bridge_assignment_from_metadata(
+            metadata,
+            task_id=task_id,
+            owner=canonical_agent_name(str(row["owner"])),
+            reviewer=canonical_agent_name(str(row["reviewer"])),
+            title=str(row["title"]),
+        )
+        if expected_bridge is None or task.get("dev_bridge") != expected_bridge:
+            raise SystemExit(
+                f"Dev bridge materialize readback provenance mismatch: {task_id}"
+            )
+        signed_spec = expected_bridge["task_spec"]
+        for spec_field, task_field in immutable_fields.items():
+            expected = signed_spec.get(spec_field)
+            observed = task.get(task_field)
+            if spec_field in {"depends_on", "artifacts", "acceptance"}:
+                expected = list(expected or [])
+                observed = list(observed or []) if isinstance(observed, list) else observed
+            if observed != expected:
+                raise SystemExit(
+                    "Dev bridge materialize readback immutable task-spec mismatch: "
+                    f"{task_id}.{spec_field}"
+                )
+        results.append(
+            {
+                "taskId": task_id,
+                "source": "active",
+                "taskSpecHash": expected_bridge["task_spec_hash"],
+            }
+        )
     return results
 
 
@@ -8471,9 +8562,20 @@ def main(argv: list[str]) -> int:
             )
             with authoritative_task_state_transaction():
                 state = load_state()
-                recover_status_archive_outbox(state)
-                recover_status_activity_outbox(state)
-                with buffer_activity_events():
+                # Receipt, archive, activity and dashboard projections are
+                # audit-only for packet materialization. Do not recover them
+                # inside this command: recovery would add an unrelated journal
+                # event and make a successful batch larger than one commit (or
+                # make an immediate exact retry larger than zero). Preserve any
+                # valid pending activity events in the next durable outbox.
+                pending_activity = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
+                pending_events: list[dict[str, Any]] = []
+                if pending_activity not in (None, {}, []):
+                    pending_events = deepcopy(
+                        _validate_status_activity_outbox(pending_activity)["events"]
+                    )
+                with buffer_activity_events() as activity_events:
+                    activity_events.extend(pending_events)
                     results = run_dev_bridge_materialize_batch(
                         state, batch, commands=commands
                     )
@@ -8507,6 +8609,70 @@ def main(argv: list[str]) -> int:
                     "changedTaskIds": [
                         item["task_id"] for item in results if item["changed"]
                     ],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if command == DEV_BRIDGE_BATCH_READBACK_COMMAND:
+        if len(args) != 1:
+            raise SystemExit(
+                f"Usage: {DEV_BRIDGE_BATCH_READBACK_COMMAND} <absolute-payload-path>"
+            )
+        if str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower() != "authoritative":
+            raise SystemExit(
+                "Dev bridge materialize readback requires authoritative task-state mode"
+            )
+        batch = load_dev_bridge_materialize_batch(args[0])
+        try:
+            with canonical_task_state_lock(shared=True, nonblocking=True):
+                with authoritative_task_state_transaction():
+                    state = load_state()
+                    results = read_dev_bridge_materialized_batch(state, batch)
+                    transaction = getattr(
+                        _TASK_STATE_TRANSACTION_LOCAL, "transaction", None
+                    )
+                    snapshot = (
+                        transaction.load_snapshot()
+                        if transaction is not None
+                        else load_snapshot(
+                            _task_state_event_path("authoritative")
+                        )
+                    )
+        except BlockingIOError:
+            _emit_fail_closed(
+                ActivityAuditInvariantError(
+                    "canonical task-state lock is busy",
+                    invariant="status_task_lock_busy",
+                    evidence={
+                        "command": command,
+                        "lock_path": str(canonical_task_state_lock_path(STATUS_FILE)),
+                    },
+                )
+            )
+            return 75
+        pending_projections = [
+            key
+            for key in (STATUS_ARCHIVE_OUTBOX_KEY, STATUS_ACTIVITY_OUTBOX_KEY)
+            if state.get(key) not in (None, {}, [])
+        ]
+        print(
+            json.dumps(
+                {
+                    "status": "verified",
+                    "packetId": batch["packet_id"],
+                    "packetDigest": batch["packet_digest"],
+                    "taskIds": [item["taskId"] for item in results],
+                    "tasks": results,
+                    "pendingAuditProjections": pending_projections,
+                    "checkpoint": {
+                        "eventCount": snapshot.get("event_count"),
+                        "lastEventId": snapshot.get("last_event_id"),
+                        "stateSha256": snapshot.get("state_sha256"),
+                    },
                 },
                 sort_keys=True,
                 separators=(",", ":"),

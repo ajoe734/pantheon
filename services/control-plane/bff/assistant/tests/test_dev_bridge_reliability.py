@@ -47,33 +47,37 @@ from pathlib import Path
 
 root = Path(os.environ["PANTHEON_STATUS_ROOT"])
 command = sys.argv[1]
-if command == "assign":
+if command == "dev-bridge-materialize-batch":
     status_path = root / "ai-status.json"
     state = json.loads(status_path.read_text(encoding="utf-8"))
-    metadata = json.loads(os.environ["TASK_METADATA_JSON"])
-    spec = metadata["dev_bridge"]["task_spec"]
-    task = {
-        "id": spec["id"],
-        "title": spec["title"],
-        "owner": spec["owner"],
-        "reviewer": spec["reviewer"],
-        "phase": spec["phase"],
-        "depends_on": spec["depends_on"],
-        "artifacts": spec["artifacts"],
-        "acceptance": spec["acceptance"],
-        "summary_zh": spec["summary"],
-        "dev_bridge": metadata["dev_bridge"],
-    }
+    payload = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    materialized = []
+    for row in payload["tasks"]:
+        metadata = row["task_metadata"]
+        spec = metadata["dev_bridge"]["task_spec"]
+        materialized.append({
+            "id": spec["id"],
+            "title": spec["title"],
+            "owner": spec["owner"],
+            "reviewer": spec["reviewer"],
+            "phase": spec["phase"],
+            "depends_on": spec["depends_on"],
+            "artifacts": spec["artifacts"],
+            "acceptance": spec["acceptance"],
+            "summary_zh": spec["summary"],
+            "dev_bridge": metadata["dev_bridge"],
+        })
+    task_ids = {task["id"] for task in materialized}
     state["tasks"] = [
-        item for item in state.get("tasks", []) if item.get("id") != task["id"]
+        item for item in state.get("tasks", []) if item.get("id") not in task_ids
     ]
-    state["tasks"].append(task)
+    state["tasks"].extend(materialized)
     status_path.write_text(json.dumps(state), encoding="utf-8")
     with (root / "ai-activity-log.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"type": "assign", "task_id": task["id"]}) + "\\n")
+        handle.write(json.dumps({"type": "batch", "task_ids": sorted(task_ids)}) + "\\n")
     raise SystemExit(0)
-if command == "show":
-    print(f"Unknown task: {sys.argv[2]}", file=sys.stderr)
+if command == "dev-bridge-materialize-readback":
+    print("injected projection-only runtime has no authoritative readback", file=sys.stderr)
     raise SystemExit(1)
 raise SystemExit(f"unsupported command: {command}")
 """
@@ -87,47 +91,82 @@ root = Path(os.environ["PANTHEON_STATUS_ROOT"])
 status_path = root / "ai-status.json"
 state = json.loads(status_path.read_text(encoding="utf-8"))
 command = sys.argv[1]
-if command == "assign":
-    metadata = json.loads(os.environ["TASK_METADATA_JSON"])
-    spec = metadata["dev_bridge"]["task_spec"]
-    task = {
-        "id": spec["id"],
-        "title": spec["title"],
-        "owner": spec["owner"],
-        "reviewer": spec["reviewer"],
-        "phase": spec["phase"],
-        "depends_on": spec["depends_on"],
-        "artifacts": spec["artifacts"],
-        "acceptance": spec["acceptance"],
-        "summary_zh": spec["summary"],
-        "dev_bridge": metadata["dev_bridge"],
+payload = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if command == "dev-bridge-materialize-batch":
+    materialized = []
+    for row in payload["tasks"]:
+        metadata = row["task_metadata"]
+        spec = metadata["dev_bridge"]["task_spec"]
+        materialized.append({
+            "id": spec["id"],
+            "title": spec["title"],
+            "owner": spec["owner"],
+            "reviewer": spec["reviewer"],
+            "phase": spec["phase"],
+            "depends_on": spec["depends_on"],
+            "artifacts": spec["artifacts"],
+            "acceptance": spec["acceptance"],
+            "summary_zh": spec["summary"],
+            "dev_bridge": metadata["dev_bridge"],
+        })
+    task_ids = {task["id"] for task in materialized}
+    existing = {
+        item.get("id"): item
+        for item in state.get("tasks", [])
+        if item.get("id") in task_ids
     }
-    state["tasks"] = [item for item in state.get("tasks", []) if item.get("id") != task["id"]]
-    state["tasks"].append(task)
+    if existing and len(existing) != len(materialized):
+        print("partial pre-existing packet", file=sys.stderr)
+        raise SystemExit(2)
+    for task in materialized:
+        prior = existing.get(task["id"])
+        if prior is not None and prior.get("dev_bridge") != task["dev_bridge"]:
+            print(f"bridge provenance conflict: {task['id']}", file=sys.stderr)
+            raise SystemExit(2)
+    state["tasks"].extend(
+        task for task in materialized if task["id"] not in existing
+    )
     status_path.write_text(json.dumps(state), encoding="utf-8")
     with (root / "ai-activity-log.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"type": "assign", "task_id": task["id"]}) + "\\n")
+        handle.write(json.dumps({"type": "batch", "task_ids": sorted(task_ids)}) + "\\n")
     with (root / "calls.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"command": "assign", "task_id": task["id"]}) + "\\n")
+        handle.write(json.dumps({"command": command, "task_ids": sorted(task_ids)}) + "\\n")
     print("injected nonzero after canonical commit", file=sys.stderr)
     raise SystemExit(9)
-if command == "show":
-    task_id = sys.argv[2]
-    task = next((item for item in state.get("tasks", []) if item.get("id") == task_id), None)
-    if task is None:
-        print(f"Unknown task: {task_id}", file=sys.stderr)
-        raise SystemExit(1)
+if command == "dev-bridge-materialize-readback":
     mode = os.environ.get("BRIDGE_TEST_SHOW_MODE", "exact")
     if mode == "missing":
-        print(f"Unknown task: {task_id}", file=sys.stderr)
+        print(f"Dev bridge materialize readback task is missing: {payload['tasks'][0]['task_id']}", file=sys.stderr)
         raise SystemExit(1)
     if mode == "unavailable":
-        print("injected governed show unavailable", file=sys.stderr)
+        print("injected governed readback unavailable", file=sys.stderr)
         raise SystemExit(75)
     if mode == "malformed":
         print("not-json")
         raise SystemExit(0)
-    print(json.dumps({"source": "active", "task": task}))
+    task_rows = []
+    for row in payload["tasks"]:
+        task = next((item for item in state.get("tasks", []) if item.get("id") == row["task_id"]), None)
+        if task is None:
+            print(f"Dev bridge materialize readback task is missing: {row['task_id']}", file=sys.stderr)
+            raise SystemExit(1)
+        if task.get("dev_bridge") != row["task_metadata"]["dev_bridge"]:
+            print(f"Dev bridge materialize readback provenance mismatch: {row['task_id']}", file=sys.stderr)
+            raise SystemExit(2)
+        task_rows.append({
+            "taskId": row["task_id"],
+            "source": "active",
+            "taskSpecHash": row["task_metadata"]["dev_bridge"]["task_spec_hash"],
+        })
+    print(json.dumps({
+        "status": "verified",
+        "packetId": payload["packet_id"],
+        "packetDigest": payload["packet_digest"],
+        "taskIds": [row["task_id"] for row in payload["tasks"]],
+        "tasks": task_rows,
+        "pendingAuditProjections": [],
+        "checkpoint": {"eventCount": 1, "lastEventId": "bridge-test-event", "stateSha256": "a" * 64},
+    }))
     raise SystemExit(0)
 raise SystemExit(f"unsupported command: {command}")
 """
@@ -383,7 +422,11 @@ def test_verified_bridge_uses_trusted_status_actor_without_worker_lease(
     )
     assert call["ai_name"] == "Human/Ops"
     assert call["auto_worker_markers"] == {}
-    assert call["metadata"]["dev_bridge"]["actor"]["id"] == "management-ai"
+    assert len(call["tasks"]) == 1
+    assert (
+        call["tasks"][0]["task_metadata"]["dev_bridge"]["actor"]["id"]
+        == "management-ai"
+    )
 
 
 def test_untrusted_direct_status_mutation_still_requires_worker_lease(
@@ -547,10 +590,8 @@ def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
     ]
     assert readback["checkpoint"]["eventCount"] > initial_event_count
     assert readback["checkpoint"]["lastEventId"].startswith("task-state-")
-    assert (
-        readback["checkpoint"]["expectedStateSha256"]
-        == readback["checkpoint"]["projectedStateSha256"]
-    )
+    assert len(readback["checkpoint"]["stateSha256"]) == 64
+    assert readback["pendingAuditProjections"] == ["status_activity_outbox"]
     admission_path = status_root / receipt["result"]["admissionRecord"][
         "admission_record_path"
     ]
@@ -763,33 +804,21 @@ def test_full_supervisor_cycle_never_queues_partially_materialized_packet(
     unsigned_packet = unsigned_packet.model_copy(
         update={
             "tasks": [
-                task.model_copy(update={"depends_on": []})
-                for task in unsigned_packet.tasks
+                unsigned_packet.tasks[0].model_copy(update={"depends_on": []}),
+                unsigned_packet.tasks[1].model_copy(
+                    update={
+                        "depends_on": [],
+                        # The canonical batch validates every row before its
+                        # single save. This validly signed but inadmissible
+                        # second row must leave the first row uncommitted.
+                        "reviewer": unsigned_packet.tasks[1].owner,
+                    }
+                ),
             ]
         }
     )
     packet = sign_packet(unsigned_packet, key_store=KEY_STORE)
     queue_task_packet(packet, repo_root=str(status_root), key_store=KEY_STORE)
-    bff_dir = REPO_ROOT / "services" / "control-plane" / "bff"
-    if str(bff_dir) not in os.sys.path:
-        os.sys.path.insert(0, str(bff_dir))
-    runtime_dispatcher = importlib.import_module("assistant.dev_bridge_dispatcher")
-    real_dispatch = runtime_dispatcher._dispatch_task
-    attempts = 0
-
-    def timeout_second(*args, **kwargs):
-        nonlocal attempts
-        attempts += 1
-        task = args[0]
-        if attempts == 2:
-            return TaskDispatchRecord(
-                taskId=task.id,
-                owner=task.owner,
-                reviewer=task.reviewer,
-                status="retryable",
-                error="ai_status.py assign timed out after 2s",
-            )
-        return real_dispatch(*args, **kwargs)
 
     with (
         patch.object(
@@ -817,11 +846,6 @@ def test_full_supervisor_cycle_never_queues_partially_materialized_packet(
             "start_worker_for_request",
             side_effect=AssertionError("unadmitted bridge task reached worker launch"),
         ),
-        patch.object(
-            runtime_dispatcher,
-            "_dispatch_task",
-            side_effect=timeout_second,
-        ),
     ):
         changed = benchmark.supervisor_module.run_once(
             config,
@@ -832,25 +856,16 @@ def test_full_supervisor_cycle_never_queues_partially_materialized_packet(
 
     assert changed is True
     snapshot = AI_STATUS.load_snapshot(event_log)
-    prefix = next(
-        task
-        for task in snapshot["state"]["tasks"]
-        if task.get("id") == packet.tasks[0].id
-    )
-    assert prefix["dev_bridge"]["packet_id"] == packet.packet_id
+    materialized_ids = {
+        task.get("id") for task in snapshot["state"].get("tasks", [])
+    }
+    assert packet.tasks[0].id not in materialized_ids
+    assert packet.tasks[1].id not in materialized_ids
     assert dev_bridge_admission.load_admission_record(
         repo_root=str(status_root),
         packet_id=packet.packet_id,
         packet_digest=packet_digest(packet),
     ) is None
-    eligible_without_bridge = copy.deepcopy(prefix)
-    eligible_without_bridge.pop("dev_bridge")
-    assert benchmark.supervisor_module.task_execution_dispatch_candidate(
-        config,
-        eligible_without_bridge,
-        "Codex",
-        {eligible_without_bridge["id"]: eligible_without_bridge},
-    ) == (benchmark.supervisor_module.REASON_OWNED_READY, 3)
     assert benchmark.supervisor_module.load_event_queue(config) == []
     runtime_state = benchmark.supervisor_module.load_runtime_state(config)
     assert runtime_state.get("workers", {}) == {}
@@ -892,7 +907,7 @@ def test_activity_log_and_projection_only_dispatch_cannot_create_admission(
     assert any(task.get("id") == task_id for task in projected["tasks"])
     assert json.loads(
         (status_root / "ai-activity-log.jsonl").read_text(encoding="utf-8")
-    ) == {"type": "assign", "task_id": task_id}
+    ) == {"type": "batch", "task_ids": [task_id]}
     snapshot = AI_STATUS.load_snapshot(event_log)
     assert not any(
         task.get("id") == task_id for task in snapshot["state"].get("tasks", [])
@@ -900,8 +915,8 @@ def test_activity_log_and_projection_only_dispatch_cannot_create_admission(
     assert result.admission_record is None
     assert result.admission_status == "invalid_materialization"
     assert result.retryable is False
-    assert "canonical task-state readback" in result.errors[0]
-    assert "Unknown task" in result.errors[0]
+    assert "authoritative post-batch readback" in result.errors[0]
+    assert "projection-only runtime has no authoritative readback" in result.errors[0]
     assert not has_seen_packet(packet.packet_id, repo_root=str(status_root))
 
 
@@ -929,10 +944,8 @@ def test_supervisor_required_readback_rejects_missing_journal_binding(
     assert result.admission_record is None
     assert result.admission_status == "invalid_materialization"
     assert result.retryable is False
-    assert result.errors == [
-        "bridge materialization: canonical task-state runtime binding is missing; "
-        "file/activity-only bridge dispatch is not admissible"
-    ]
+    assert "canonical task-state runtime binding is missing" in result.errors[0]
+    assert "file/activity-only bridge dispatch is not admissible" in result.errors[0]
     assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
 
 
@@ -959,17 +972,17 @@ def test_nonzero_governed_assign_requires_and_accepts_exact_readback(
     )
     isolated_audit = status_root / "ai-activity-log.jsonl"
     assert json.loads(isolated_audit.read_text(encoding="utf-8")) == {
-        "type": "assign",
-        "task_id": packet.tasks[0].id,
+        "type": "batch",
+        "task_ids": [packet.tasks[0].id],
     }
 
 
 @pytest.mark.parametrize(
     ("show_mode", "expected_status", "expected_retryable", "error_fragment"),
     [
-        ("missing", "not_attempted", False, "nonzero after canonical commit"),
+        ("missing", "invalid_materialization", False, "nonzero after canonical commit"),
         ("unavailable", "task_state_mutation_retryable", True, "unavailable"),
-        ("malformed", "not_attempted", False, "invalid JSON"),
+        ("malformed", "invalid_materialization", False, "invalid JSON"),
     ],
 )
 def test_nonzero_governed_assign_rejects_missing_unavailable_or_malformed_show(
@@ -1045,43 +1058,49 @@ def test_replacement_packet_id_for_materialized_task_fails_before_assign(
     )
 
     assert rejected.admission_record is None
-    assert rejected.admission_status == "not_attempted"
-    assert "signed bridge provenance" in rejected.errors[0]
+    assert rejected.admission_status == "invalid_materialization"
+    assert "bridge provenance conflict" in rejected.errors[0]
+    assert "readback provenance mismatch" in rejected.errors[0]
     calls = [
         json.loads(line)
         for line in (status_root / "calls.jsonl").read_text(
             encoding="utf-8"
         ).splitlines()
     ]
-    assert calls == [{"command": "assign", "task_id": original.tasks[0].id}]
+    assert calls == [
+        {
+            "command": "dev-bridge-materialize-batch",
+            "task_ids": [original.tasks[0].id],
+        }
+    ]
 
 
-def test_partial_dispatch_failure_is_retryable_and_only_full_success_marks_seen(
+def test_atomic_batch_failure_is_retryable_and_only_full_success_marks_seen(
     tmp_path: Path,
 ) -> None:
     repo_root = _fake_repo(tmp_path)
     packet = _signed("pkt_partial_retry", task_count=2)
     request = BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root))
-    first_outcomes = [
+    failed_records = [
         TaskDispatchRecord(
-            taskId=packet.tasks[0].id,
+            taskId=task.id,
             owner="Codex",
             reviewer="Claude",
-            status="dispatched",
-        ),
-        TaskDispatchRecord(
-            taskId=packet.tasks[1].id,
-            owner="Codex",
-            reviewer="Claude",
-            status="error",
-            error="injected failure",
-        ),
+            status="retryable",
+        )
+        for task in packet.tasks
     ]
-    with patch.object(dev_bridge_dispatcher, "_dispatch_task", side_effect=first_outcomes):
+    with patch.object(
+        dev_bridge_dispatcher,
+        "_dispatch_task_batch",
+        return_value=(failed_records, None, "injected atomic batch failure", True),
+    ):
         first = dispatch_task_packet(request, key_store=KEY_STORE)
 
-    assert first.errors == [f"{packet.tasks[1].id}: injected failure"]
+    assert first.errors == ["packet batch: injected atomic batch failure"]
     assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
+    state = json.loads((repo_root / "ai-status.json").read_text(encoding="utf-8"))
+    assert state["tasks"] == []
 
     retry = dispatch_task_packet(request, key_store=KEY_STORE)
 
@@ -1111,9 +1130,8 @@ def test_assign_timeout_before_task_is_retryable_and_unadmitted(
     assert result.retryable is True
     assert result.admission_status == "task_state_mutation_retryable"
     assert result.task_records[0].status == "retryable"
-    assert result.errors == [
-        f"{packet.tasks[0].id}: ai_status.py assign timed out after 2s"
-    ]
+    assert "dev-bridge-materialize-batch timed out after 2s" in result.errors[0]
+    assert "authoritative post-batch readback" in result.errors[0]
     assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
     state = json.loads((repo_root / "ai-status.json").read_text(encoding="utf-8"))
     assert state["tasks"] == []
@@ -1129,114 +1147,74 @@ def test_assign_timeout_defaults_and_caps_at_ten_seconds() -> None:
     ) == 3.0
 
 
-def test_timeout_after_one_task_resumes_exact_packet_without_duplicate_rows(
+def test_timeout_after_atomic_commit_is_accepted_only_after_exact_readback(
     tmp_path: Path,
 ) -> None:
     repo_root = _fake_repo(tmp_path)
-    packet = _signed("pkt_timeout_after_one", task_count=2)
+    packet = _signed("pkt_timeout_after_atomic_commit", task_count=2)
     request = BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root))
-    real_dispatch = dev_bridge_dispatcher._dispatch_task
-    attempts = 0
+    real_run = subprocess.run
 
-    def timeout_second(*args, **kwargs):
-        nonlocal attempts
-        attempts += 1
-        task = args[0]
-        if attempts == 2:
-            return TaskDispatchRecord(
-                taskId=task.id,
-                owner=task.owner,
-                reviewer=task.reviewer,
-                status="retryable",
-                error="ai_status.py assign timed out after 2s",
-            )
-        return real_dispatch(*args, **kwargs)
+    def timeout_after_child_commit(*args, **kwargs):
+        completed = real_run(*args, **kwargs)
+        assert completed.returncode == 0
+        raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
 
     with patch.object(
-        dev_bridge_dispatcher,
-        "_dispatch_task",
-        side_effect=timeout_second,
+        dev_bridge_dispatcher.subprocess,
+        "run",
+        side_effect=timeout_after_child_commit,
     ):
-        first = dispatch_task_packet(request, key_store=KEY_STORE)
-
-    assert first.retryable is True
-    assert first.admission_record is None
-    assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
-
-    recovered = dispatch_task_packet(request, key_store=KEY_STORE)
+        recovered = dispatch_task_packet(request, key_store=KEY_STORE)
 
     assert recovered.errors == []
     assert recovered.admission_status == "admitted"
+    assert recovered.audit_refs["materializationReadback"]["taskIds"] == [
+        task.id for task in packet.tasks
+    ]
     state = json.loads((repo_root / "ai-status.json").read_text(encoding="utf-8"))
     materialized_ids = [task["id"] for task in state["tasks"]]
     assert materialized_ids.count(packet.tasks[0].id) == 1
     assert materialized_ids.count(packet.tasks[1].id) == 1
 
 
-def test_timeout_prefix_can_finish_from_archive_without_reusing_task_id(
+def test_historical_partial_prefix_is_not_completed_by_a_batch_retry(
     tmp_path: Path,
 ) -> None:
     repo_root = _fake_repo(tmp_path)
-    packet = _signed("pkt_timeout_archive_prefix", task_count=2)
+    packet = _signed("pkt_historical_partial_prefix", task_count=2)
     request = BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root))
-    real_dispatch = dev_bridge_dispatcher._dispatch_task
-    attempts = 0
-
-    def timeout_second(*args, **kwargs):
-        nonlocal attempts
-        attempts += 1
-        task = args[0]
-        if attempts == 2:
-            return TaskDispatchRecord(
-                taskId=task.id,
-                owner=task.owner,
-                reviewer=task.reviewer,
-                status="retryable",
-                error="ai_status.py assign timed out after 2s",
-            )
-        return real_dispatch(*args, **kwargs)
-
-    with patch.object(
-        dev_bridge_dispatcher,
-        "_dispatch_task",
-        side_effect=timeout_second,
-    ):
-        first = dispatch_task_packet(request, key_store=KEY_STORE)
-
-    assert first.retryable is True
     state_path = repo_root / "ai-status.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    prefix = next(item for item in state["tasks"] if item["id"] == packet.tasks[0].id)
-    state["tasks"] = [item for item in state["tasks"] if item["id"] != prefix["id"]]
+    first = packet.tasks[0]
+    metadata = _task_metadata(packet, first)
+    spec = metadata["dev_bridge"]["task_spec"]
+    state["tasks"].append(
+        {
+            "id": spec["id"],
+            "title": spec["title"],
+            "owner": spec["owner"],
+            "reviewer": spec["reviewer"],
+            "phase": spec["phase"],
+            "depends_on": spec["depends_on"],
+            "artifacts": spec["artifacts"],
+            "acceptance": spec["acceptance"],
+            "summary_zh": spec["summary"],
+            "dev_bridge": metadata["dev_bridge"],
+        }
+    )
     state_path.write_text(json.dumps(state), encoding="utf-8")
-    archive_path = repo_root / "ai-task-archive" / "tasks" / f"{prefix['id']}.json"
-    archive_path.parent.mkdir(parents=True)
-    archive_path.write_text(
-        json.dumps({"task": {**prefix, "status": "done"}}),
-        encoding="utf-8",
-    )
-    calls_before_retry = len(
-        (repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
-    )
 
-    recovered = dispatch_task_packet(request, key_store=KEY_STORE)
+    rejected = dispatch_task_packet(request, key_store=KEY_STORE)
 
-    assert recovered.errors == []
-    assert recovered.admission_status == "admitted"
-    calls = [
-        json.loads(line)
-        for line in (repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
-    retry_assigns = [
-        call
-        for call in calls[calls_before_retry:]
-        if call.get("argv", [None])[0] == "assign"
-    ]
-    assert [call["argv"][1] for call in retry_assigns] == [packet.tasks[1].id]
-    assert json.loads(archive_path.read_text(encoding="utf-8"))["task"] == {
-        **prefix,
-        "status": "done",
-    }
+    assert rejected.admission_record is None
+    assert rejected.admission_status == "invalid_materialization"
+    assert "partial pre-existing packet" in rejected.errors[0]
+    reread = json.loads(state_path.read_text(encoding="utf-8"))
+    ids = [item["id"] for item in reread["tasks"]]
+    assert ids.count(packet.tasks[0].id) == 1
+    assert packet.tasks[1].id not in ids
+    assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
 
 
 def test_live_dispatch_fence_survives_expired_json_claim(
@@ -1247,7 +1225,7 @@ def test_live_dispatch_fence_survives_expired_json_claim(
     request = BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root))
     entered = threading.Event()
     release = threading.Event()
-    real_dispatch = dev_bridge_dispatcher._dispatch_task
+    real_dispatch = dev_bridge_dispatcher._dispatch_task_batch
     dispatch_calls = 0
     call_lock = threading.Lock()
 
@@ -1262,7 +1240,7 @@ def test_live_dispatch_fence_survives_expired_json_claim(
     with (
         patch.object(
             dev_bridge_dispatcher,
-            "_dispatch_task",
+            "_dispatch_task_batch",
             side_effect=delayed_dispatch,
         ),
         ThreadPoolExecutor(max_workers=2) as executor,
@@ -1321,7 +1299,7 @@ def test_stale_dispatch_claim_recovers_after_crashed_claimant(
     with (
         patch.object(
             dev_bridge_dispatcher,
-            "_dispatch_task",
+            "_dispatch_task_batch",
             side_effect=SystemExit("injected claimant crash"),
         ),
         pytest.raises(SystemExit, match="claimant crash"),
@@ -1531,9 +1509,8 @@ def test_success_exit_without_materialized_task_cannot_create_admission(
     assert result.admission_record is None
     assert result.admission_status == "invalid_materialization"
     assert result.retryable is False
-    assert result.errors == [
-        f"bridge materialization: materialized task {packet.tasks[0].id!r} is missing"
-    ]
+    assert "authoritative post-batch readback invalid" in result.errors[0]
+    assert f"materialized task {packet.tasks[0].id!r} is missing" in result.errors[0]
     assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
 
 
@@ -1744,8 +1721,8 @@ def test_ai_status_bridge_assignment_preserves_exact_spec_and_is_idempotent(
     packet = _signed("pkt_ai_status_exact")
     task = packet.tasks[0]
     metadata = _task_metadata(packet, task)
-    monkeypatch.setenv("TASK_METADATA_JSON", json.dumps(metadata))
     monkeypatch.setenv("AI_NAME", "Codex")
+    row = dev_bridge_dispatcher._materialization_batch_payload(packet)["tasks"][0]
     state = AI_STATUS.default_state()
     state["tasks"] = []
     state["handoffs"] = []
@@ -1756,15 +1733,21 @@ def test_ai_status_bridge_assignment_preserves_exact_spec_and_is_idempotent(
         patch.object(AI_STATUS, "archived_task_snapshot", return_value=None),
         patch.object(AI_STATUS, "append_log") as append_log,
     ):
-        first = AI_STATUS.command_assign(
-            state,
-            [task.id, task.owner, task.reviewer, task.title],
-        )
+        with AI_STATUS.dev_bridge_materialize_mutation_environment(
+            row, AI_STATUS.DEV_BRIDGE_BATCH_ACTOR
+        ):
+            first = AI_STATUS.command_assign(
+                state,
+                [task.id, task.owner, task.reviewer, task.title],
+            )
         snapshot = copy.deepcopy(state)
-        second = AI_STATUS.command_assign(
-            state,
-            [task.id, task.owner, task.reviewer, task.title],
-        )
+        with AI_STATUS.dev_bridge_materialize_mutation_environment(
+            row, AI_STATUS.DEV_BRIDGE_BATCH_ACTOR
+        ):
+            second = AI_STATUS.command_assign(
+                state,
+                [task.id, task.owner, task.reviewer, task.title],
+            )
 
     assert first is None
     assert second is False
@@ -1787,7 +1770,7 @@ def test_ai_status_bridge_assignment_conflicts_fail_closed(
     packet = _signed("pkt_ai_status_conflict")
     task = packet.tasks[0]
     metadata = _task_metadata(packet, task)
-    monkeypatch.setenv("TASK_METADATA_JSON", json.dumps(metadata))
+    row = dev_bridge_dispatcher._materialization_batch_payload(packet)["tasks"][0]
     state = AI_STATUS.default_state()
     state["tasks"] = []
     state["wave_state"] = {"status": "open"}
@@ -1796,17 +1779,36 @@ def test_ai_status_bridge_assignment_conflicts_fail_closed(
         patch.object(AI_STATUS, "archived_task_snapshot", return_value=None),
         patch.object(AI_STATUS, "append_log"),
     ):
-        AI_STATUS.command_assign(state, [task.id, task.owner, task.reviewer, task.title])
+        with AI_STATUS.dev_bridge_materialize_mutation_environment(
+            row, AI_STATUS.DEV_BRIDGE_BATCH_ACTOR
+        ):
+            AI_STATUS.command_assign(
+                state, [task.id, task.owner, task.reviewer, task.title]
+            )
         conflicting = copy.deepcopy(metadata)
         conflicting["dev_bridge"]["packet_id"] = "pkt_other_packet"
-        monkeypatch.setenv("TASK_METADATA_JSON", json.dumps(conflicting))
-        with pytest.raises(SystemExit, match="Bridge assignment conflict"):
-            AI_STATUS.command_assign(state, [task.id, task.owner, task.reviewer, task.title])
+        conflicting_row = {**row, "task_metadata": conflicting}
+        with (
+            AI_STATUS.dev_bridge_materialize_mutation_environment(
+                conflicting_row, AI_STATUS.DEV_BRIDGE_BATCH_ACTOR
+            ),
+            pytest.raises(SystemExit, match="Bridge assignment conflict"),
+        ):
+            AI_STATUS.command_assign(
+                state, [task.id, task.owner, task.reviewer, task.title]
+            )
         provenance_conflict = copy.deepcopy(metadata)
         provenance_conflict["dev_bridge"]["conversation_id"] = "different-conversation"
-        monkeypatch.setenv("TASK_METADATA_JSON", json.dumps(provenance_conflict))
-        with pytest.raises(SystemExit, match="Bridge assignment conflict"):
-            AI_STATUS.command_assign(state, [task.id, task.owner, task.reviewer, task.title])
+        provenance_row = {**row, "task_metadata": provenance_conflict}
+        with (
+            AI_STATUS.dev_bridge_materialize_mutation_environment(
+                provenance_row, AI_STATUS.DEV_BRIDGE_BATCH_ACTOR
+            ),
+            pytest.raises(SystemExit, match="Bridge assignment conflict"),
+        ):
+            AI_STATUS.command_assign(
+                state, [task.id, task.owner, task.reviewer, task.title]
+            )
 
 
 def test_ai_status_bridge_assignment_rejects_existing_unprovenanced_task(
@@ -1814,8 +1816,7 @@ def test_ai_status_bridge_assignment_rejects_existing_unprovenanced_task(
 ) -> None:
     packet = _signed("pkt_ai_status_unprovenanced")
     task = packet.tasks[0]
-    metadata = _task_metadata(packet, task)
-    monkeypatch.setenv("TASK_METADATA_JSON", json.dumps(metadata))
+    row = dev_bridge_dispatcher._materialization_batch_payload(packet)["tasks"][0]
     state = AI_STATUS.default_state()
     state["tasks"] = [
         {
@@ -1828,8 +1829,15 @@ def test_ai_status_bridge_assignment_rejects_existing_unprovenanced_task(
     ]
     state["wave_state"] = {"status": "open"}
 
-    with pytest.raises(SystemExit, match="without bridge provenance"):
-        AI_STATUS.command_assign(state, [task.id, task.owner, task.reviewer, task.title])
+    with (
+        AI_STATUS.dev_bridge_materialize_mutation_environment(
+            row, AI_STATUS.DEV_BRIDGE_BATCH_ACTOR
+        ),
+        pytest.raises(SystemExit, match="without bridge provenance"),
+    ):
+        AI_STATUS.command_assign(
+            state, [task.id, task.owner, task.reviewer, task.title]
+        )
 
 
 def test_processing_item_is_recovered_after_restart(tmp_path: Path) -> None:

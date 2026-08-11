@@ -1142,6 +1142,25 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
                 ["ai_status.py", ai_status.DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND, str(payload_path)]
             )
 
+    def _run_readback(self, payload_path: Path) -> dict[str, Any]:
+        output = io.StringIO()
+        with (
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(sys, "stdout", output),
+        ):
+            self.assertEqual(
+                ai_status.main(
+                    [
+                        "ai_status.py",
+                        ai_status.DEV_BRIDGE_BATCH_READBACK_COMMAND,
+                        str(payload_path),
+                    ]
+                ),
+                0,
+            )
+        return json.loads(output.getvalue())
+
     def test_batch_commits_every_task_in_exactly_one_journal_event(self) -> None:
         packet_id = "pkt-batch-ok-20260811T000000Z"
         digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
@@ -1207,19 +1226,17 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
 
         self.assertEqual(self._run_main(payload), 0)
-        # Settle the deferred activity-log outbox from the first commit (its
-        # own separate, expected event) before measuring the retry's delta,
-        # so the retry assertion below isolates the retry's own effect.
-        with (
-            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
-            mock.patch.object(ai_status, "validate_status_root_binding"),
-            mock.patch.object(sys, "stdout", io.StringIO()),
-        ):
-            self.assertEqual(ai_status.main(["ai_status.py", "recover"]), 0)
+        # No recover, projection write, or other canonical mutation is allowed
+        # between the first success and this retry. The first batch's activity
+        # outbox is deliberately still pending and must not be flushed by the
+        # exact replay.
         events_after_first = len(load_events(self.journal))
         first_state = ai_status.load_state()
         first_task = ai_status.get_task(first_state, "BATCH-RETRY-ONE")
         self.assertIsNotNone(first_task)
+        self.assertIsNotNone(
+            first_state.get(ai_status.STATUS_ACTIVITY_OUTBOX_KEY)
+        )
 
         # An exact retry -- every row already matches its bound provenance --
         # adds zero journal events: it must not error, duplicate the row,
@@ -1235,6 +1252,92 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertEqual(second_task["owner"], first_task["owner"])
         self.assertEqual(second_task["reviewer"], first_task["reviewer"])
         self.assertEqual(second_task["dev_bridge"], first_task["dev_bridge"])
+
+    def test_authoritative_readback_ignores_pending_audit_projection(self) -> None:
+        packet_id = "pkt-batch-readback-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [self._task_row("BATCH-READBACK-ONE", packet_id=packet_id, packet_digest=digest)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+        self.assertEqual(self._run_main(payload), 0)
+        event_count = len(load_events(self.journal))
+
+        readback = self._run_readback(payload)
+
+        self.assertEqual(readback["status"], "verified")
+        self.assertEqual(readback["packetId"], packet_id)
+        self.assertEqual(readback["taskIds"], ["BATCH-READBACK-ONE"])
+        self.assertEqual(
+            readback["pendingAuditProjections"],
+            [ai_status.STATUS_ACTIVITY_OUTBOX_KEY],
+        )
+        self.assertEqual(len(load_events(self.journal)), event_count)
+
+    def test_partial_preexisting_packet_refuses_missing_suffix_with_zero_events(self) -> None:
+        packet_id = "pkt-batch-prefix-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        first = self._task_row("BATCH-PREFIX-ONE", packet_id=packet_id, packet_digest=digest)
+        first_payload = self._payload_path([first], packet_id=packet_id, packet_digest=digest)
+        self.assertEqual(self._run_main(first_payload), 0)
+        before = len(load_events(self.journal))
+
+        second = self._task_row("BATCH-PREFIX-TWO", packet_id=packet_id, packet_digest=digest)
+        full_payload = self._payload_path(
+            [first, second], packet_id=packet_id, packet_digest=digest
+        )
+        with self.assertRaisesRegex(SystemExit, "partial pre-existing packet"):
+            self._run_main(full_payload)
+
+        self.assertEqual(len(load_events(self.journal)), before)
+        state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(state, "BATCH-PREFIX-TWO"))
+
+    def test_direct_assign_cannot_forge_bridge_provenance(self) -> None:
+        packet_id = "pkt-direct-forgery-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        row = self._task_row(
+            "BATCH-DIRECT-FORGERY", packet_id=packet_id, packet_digest=digest
+        )
+        before = len(load_events(self.journal))
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"TASK_METADATA_JSON": json.dumps(row["task_metadata"])},
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            self.assertRaisesRegex(SystemExit, "can only be created by"),
+        ):
+            ai_status.main(
+                [
+                    "ai_status.py",
+                    "assign",
+                    row["task_id"],
+                    row["owner"],
+                    row["reviewer"],
+                    row["title"],
+                ]
+            )
+
+        self.assertEqual(len(load_events(self.journal)), before)
+
+    def test_crash_before_commit_writes_zero_rows(self) -> None:
+        packet_id = "pkt-batch-precommit-crash-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [self._task_row("BATCH-PRECOMMIT-ONE", packet_id=packet_id, packet_digest=digest)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        with (
+            mock.patch.object(ai_status, "sync_all", side_effect=OSError("injected precommit crash")),
+            self.assertRaisesRegex(OSError, "injected precommit crash"),
+        ):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+        self.assertIsNone(
+            ai_status.get_task(ai_status.load_state(), "BATCH-PRECOMMIT-ONE")
+        )
 
     def test_digest_mismatch_between_batch_and_row_fails_closed(self) -> None:
         packet_id = "pkt-batch-mismatch-20260811T000000Z"

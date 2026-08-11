@@ -5,11 +5,11 @@ ASST-INTEG-006 — owned by Claude2.
 Flow:
 1. Verify packet signature (HMAC-SHA256 via dev_bridge_signer).
 2. Reject duplicate packets via replay protection.
-3. For each BridgeTask in the packet, call the installed governed
-   scripts/ai_status.py runtime with the central status root and authoritative
-   task-state journal binding. The verified repo-local bridge uses the trusted
-   Human/Ops mutation identity while preserving the packet actor in the
-   structured TASK_METADATA_JSON provenance envelope.
+3. Submit every BridgeTask in one bounded ``dev-bridge-materialize-batch``
+   command to the installed governed scripts/ai_status.py runtime. The command
+   commits all rows in one authoritative task-state event or none of them. The
+   verified repo-local bridge uses the trusted Human/Ops mutation identity while
+   preserving the packet actor in each structured provenance envelope.
 4. Mark packet as seen so replays are rejected in subsequent calls.
 5. Return BridgeDispatchResult with per-task records and audit refs.
 
@@ -29,6 +29,7 @@ import sys
 import stat
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
@@ -85,6 +86,9 @@ DEFAULT_ASSIGN_TIMEOUT_SECONDS = 10.0
 MAX_ASSIGN_TIMEOUT_SECONDS = 10.0
 DEFAULT_DISPATCH_CLAIM_TTL_SECONDS = 300.0
 DISPATCH_CLAIM_SCHEMA = "pantheon.assistant-dev-bridge-dispatch-claim.v1"
+DEV_BRIDGE_BATCH_SCHEMA_VERSION = 1
+DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND = "dev-bridge-materialize-batch"
+DEV_BRIDGE_BATCH_READBACK_COMMAND = "dev-bridge-materialize-readback"
 
 
 class MaterializedTaskMissingError(ValueError):
@@ -738,6 +742,58 @@ def _task_metadata(packet: DevTaskPacket, task: BridgeTask) -> Dict[str, object]
     }
 
 
+def _materialization_batch_payload(packet: DevTaskPacket) -> Dict[str, object]:
+    digest = packet_digest(packet)
+    return {
+        "schema_version": DEV_BRIDGE_BATCH_SCHEMA_VERSION,
+        "packet_id": packet.packet_id,
+        "packet_digest": digest,
+        "actor": BRIDGE_STATUS_ACTOR,
+        "tasks": [
+            {
+                "task_id": task.id,
+                "owner": task.owner,
+                "reviewer": task.reviewer,
+                "title": task.title,
+                "assignment_next": None,
+                "task_metadata": _task_metadata(packet, task),
+            }
+            for task in packet.tasks
+        ],
+    }
+
+
+@contextmanager
+def _materialization_batch_payload_file(packet: DevTaskPacket):
+    """Persist one verified packet payload for the governed child process."""
+
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            prefix="pantheon-dev-bridge-batch-",
+            suffix=".json",
+            delete=False,
+        ) as handle:
+            json.dump(
+                _materialization_batch_payload(packet),
+                handle,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+        os.chmod(temporary, 0o600)
+        yield temporary
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def _audit_refs(packet: DevTaskPacket, dispatched_at: str) -> Dict[str, object]:
     return {
         "packetId": packet.packet_id,
@@ -967,7 +1023,6 @@ def _canonical_task_state_readback(
     *,
     repo_root: str,
     environment: Mapping[str, str],
-    tasks: Optional[List[BridgeTask]] = None,
 ) -> Dict[str, object]:
     task_state_env = _runtime_task_state_env(
         repo_root,
@@ -1000,71 +1055,48 @@ def _canonical_task_state_readback(
         command_environment.pop(name, None)
     command_environment["AI_NAME"] = BRIDGE_STATUS_ACTOR
 
-    selected_tasks = list(tasks) if tasks is not None else list(packet.tasks)
-    task_readbacks: List[Dict[str, object]] = []
-    for task in selected_tasks:
-        payload = _run_governed_task_show(
-            ai_status=ai_status,
-            task_id=task.id,
+    with _materialization_batch_payload_file(packet) as payload_path:
+        payload = _run_readback_command(
+            [
+                sys.executable,
+                ai_status,
+                DEV_BRIDGE_BATCH_READBACK_COMMAND,
+                str(payload_path),
+            ],
             environment=command_environment,
             repo_root=repo_root,
+            label="canonical packet materialization readback",
         )
-        source = str(payload.get("source") or "").strip()
-        if source == "active":
-            candidate = payload.get("task")
-        elif source == "archive":
-            snapshot = payload.get("snapshot")
-            candidate = snapshot.get("task") if isinstance(snapshot, dict) else None
-        else:
-            candidate = None
-        if not isinstance(candidate, dict):
-            raise ValueError(
-                f"canonical task-state readback for {task.id} has no task row"
-            )
-        _validate_materialized_task_candidate(packet, task, candidate)
-        task_readbacks.append(
-            {
-                "taskId": task.id,
-                "source": source,
-                "taskSpecHash": _task_spec_hash(task),
-            }
-        )
-
-    verify_script = Path(ai_status).with_name("verify_task_state_store.py")
-    if not verify_script.is_file():
-        raise ValueError(
-            "governed command runtime is missing scripts/verify_task_state_store.py"
-        )
-    projection = _run_readback_command(
-        [
-            sys.executable,
-            str(verify_script),
-            "--event-log",
-            task_state_env[TASK_STATE_EVENT_LOG_ENV],
-            "--status-file",
-            str(Path(repo_root) / "ai-status.json"),
-            "--json",
-        ],
-        environment=command_environment,
-        repo_root=repo_root,
-        label="canonical task-state journal/projection readback",
-    )
-    if projection.get("ok") is not True:
-        raise ValueError(
-            "canonical task-state journal/projection readback is not at parity"
-        )
+    expected_task_ids = [task.id for task in packet.tasks]
+    expected_hashes = {
+        task.id: _task_spec_hash(task)
+        for task in packet.tasks
+    }
+    if (
+        payload.get("status") != "verified"
+        or payload.get("packetId") != packet.packet_id
+        or payload.get("packetDigest") != packet_digest(packet)
+        or payload.get("taskIds") != expected_task_ids
+    ):
+        raise ValueError("canonical packet materialization readback binding mismatch")
+    task_readbacks = payload.get("tasks")
+    if not isinstance(task_readbacks, list) or len(task_readbacks) != len(packet.tasks):
+        raise ValueError("canonical packet materialization readback task count mismatch")
+    observed_hashes = {
+        str(item.get("taskId") or ""): str(item.get("taskSpecHash") or "")
+        for item in task_readbacks
+        if isinstance(item, dict)
+    }
+    if observed_hashes != expected_hashes:
+        raise ValueError("canonical packet materialization readback task hash mismatch")
     return {
         "status": "verified",
         "storeMode": task_state_env[TASK_STATE_MODE_ENV],
         "eventLog": task_state_env[TASK_STATE_EVENT_LOG_ENV],
-        "taskIds": [task.id for task in selected_tasks],
+        "taskIds": expected_task_ids,
         "tasks": task_readbacks,
-        "checkpoint": {
-            "eventCount": projection.get("event_count"),
-            "lastEventId": projection.get("last_event_id"),
-            "expectedStateSha256": projection.get("expected_state_sha256"),
-            "projectedStateSha256": projection.get("projected_state_sha256"),
-        },
+        "checkpoint": payload.get("checkpoint"),
+        "pendingAuditProjections": payload.get("pendingAuditProjections", []),
     }
 
 
@@ -1076,7 +1108,15 @@ def _validate_materialized_tasks(
 ) -> Dict[str, object]:
     """Bind a successful dispatch/admission to canonical task-state readback."""
 
-    command_environment = _merged_environment(environment)
+    command_environment = (
+        _merged_environment()
+        if environment is None
+        else {
+            str(name): str(value)
+            for name, value in environment.items()
+            if value is not None
+        }
+    )
     task_state_env = _runtime_task_state_env(
         repo_root,
         environment=command_environment,
@@ -1086,9 +1126,10 @@ def _validate_materialized_tasks(
         environment=command_environment,
     )
     if task_state_env or governed:
-        # Governed mode has exactly one read authority.  Repository-local
-        # projection and archive files are derived outputs and must never be a
-        # fallback when the authoritative `show` path is unavailable.
+        # Governed mode has exactly one read authority. Repository-local status,
+        # archive, admission and receipt files are derived audit outputs and
+        # must never be a fallback when the authoritative batch read is
+        # unavailable.
         return _canonical_task_state_readback(
             packet,
             repo_root=repo_root,
@@ -1112,31 +1153,30 @@ def _validate_materialized_tasks(
 
 
 # ---------------------------------------------------------------------------
-# Per-task dispatch
+# Atomic packet dispatch
 # ---------------------------------------------------------------------------
 
-def _dispatch_task(
-    task: BridgeTask,
-    *,
+def _dispatch_task_batch(
     packet: DevTaskPacket,
+    *,
     repo_root: str,
     dry_run: bool,
     environment: Optional[Mapping[str, str]] = None,
-) -> TaskDispatchRecord:
-    """Call the governed status runtime for a single verified bridge task.
+) -> tuple[List[TaskDispatchRecord], Dict[str, object] | None, str | None, bool]:
+    """Commit and authoritative-read-back one verified packet as a unit."""
 
-    Returns a TaskDispatchRecord indicating success or failure.
-    Does NOT raise — errors are captured in the record.
-    """
-    record = TaskDispatchRecord(
-        taskId=task.id,
-        owner=task.owner,
-        reviewer=task.reviewer,
-        status="dry_run" if dry_run else "dispatched",
-    )
+    records = [
+        TaskDispatchRecord(
+            taskId=task.id,
+            owner=task.owner,
+            reviewer=task.reviewer,
+            status="dry_run" if dry_run else "dispatched",
+        )
+        for task in packet.tasks
+    ]
 
     if dry_run:
-        return record
+        return records, None, None, False
 
     try:
         ai_status, status_env, governed = _status_command_context(
@@ -1144,13 +1184,18 @@ def _dispatch_task(
             environment=environment,
         )
     except RuntimeError as exc:
-        record.status = "error"
-        record.error = str(exc)
-        return record
+        for record in records:
+            record.status = "error"
+        return records, None, str(exc), False
     if not Path(ai_status).exists():
-        record.status = "error"
-        record.error = f"scripts/ai_status.py not found at {ai_status!r}"
-        return record
+        for record in records:
+            record.status = "error"
+        return (
+            records,
+            None,
+            f"scripts/ai_status.py not found at {ai_status!r}",
+            False,
+        )
 
     env = _merged_environment(environment)
     if not governed:
@@ -1164,6 +1209,15 @@ def _dispatch_task(
             *LEGACY_COMMAND_ENV_NAMES,
         ):
             env.pop(name, None)
+        if not _environment_targets_status_root(
+            repo_root,
+            environment=environment,
+        ):
+            # Do not let an ambient supervisor requirement from an unrelated
+            # central root turn an intentionally local compatibility fixture
+            # into a falsely governed dispatch. An explicit requirement bound
+            # to this repo_root remains fail-closed below.
+            env.pop(REQUIRE_TASK_STATE_READBACK_ENV, None)
     env.update(status_env)
     # Signature verification and constraint checks happen before this private
     # helper is reached. Run the canonical mutation as the repo-local bridge
@@ -1174,126 +1228,74 @@ def _dispatch_task(
     for name in AUTO_WORKER_ENV_NAMES:
         env.pop(name, None)
     env["AI_NAME"] = BRIDGE_STATUS_ACTOR
-    env["TASK_METADATA_JSON"] = json.dumps(
-        _task_metadata(packet, task),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-
-    # A previous exact attempt may have materialised this row before the
-    # parent observed a timeout/nonzero exit.  In governed mode, only the
-    # authoritative `show` command and journal parity check may establish that
-    # idempotent prefix; repository-local task files are never consulted.
-    if governed:
-        try:
-            _canonical_task_state_readback(
-                packet,
-                repo_root=repo_root,
-                environment=env,
-                tasks=[task],
-            )
-        except MaterializedTaskMissingError:
-            pass
-        except OSError as exc:
-            record.status = "retryable"
-            record.error = f"existing bridge task readback unavailable: {exc}"
-            return record
-        except ValueError as exc:
-            record.status = "error"
-            record.error = str(exc)
-            return record
-        else:
-            return record
-    else:
-        try:
-            existing_candidates = _materialized_task_candidates(
-                repo_root=repo_root,
-                task_id=task.id,
-            )
-            for candidate in existing_candidates:
-                _validate_materialized_task_candidate(packet, task, candidate)
-        except OSError as exc:
-            record.status = "retryable"
-            record.error = f"existing bridge task readback unavailable: {exc}"
-            return record
-        except ValueError as exc:
-            record.status = "error"
-            record.error = str(exc)
-            return record
-        if existing_candidates:
-            return record
-
-    cmd = [
-        sys.executable,
-        ai_status,
-        "assign",
-        task.id,
-        task.owner,
-        task.reviewer,
-        task.title,
-    ]
-
     timeout_seconds = _assign_timeout_seconds(env)
     failure_status: str | None = None
     failure_error: str | None = None
-    try:
-        result = subprocess.run(
-            cmd,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            cwd=repo_root,
-        )
-        if result.returncode != 0:
-            failure_status = "retryable" if result.returncode == 75 else "error"
-            failure_error = (
-                result.stderr or result.stdout or "non-zero exit"
-            ).strip()[:2000]
-    except subprocess.TimeoutExpired:
-        failure_status = "retryable"
-        failure_error = f"ai_status.py assign timed out after {timeout_seconds:g}s"
-    except OSError as exc:
-        failure_status = "error"
-        failure_error = str(exc)
-
-    if failure_error is None:
-        return record
-
-    if governed:
-        # A nonzero exit or timeout is not proof that the authoritative writer
-        # failed before commit.  Read the exact row back immediately and accept
-        # only complete signed spec/provenance plus journal parity.  Missing,
-        # unavailable, malformed, or mismatched readback never reaches
-        # admission and never falls back to local projections.
+    with _materialization_batch_payload_file(packet) as payload_path:
+        cmd = [
+            sys.executable,
+            ai_status,
+            DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND,
+            str(payload_path),
+        ]
         try:
-            _canonical_task_state_readback(
+            result = subprocess.run(
+                cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                cwd=repo_root,
+            )
+            if result.returncode != 0:
+                failure_status = "retryable" if result.returncode == 75 else "error"
+                failure_error = (
+                    result.stderr or result.stdout or "non-zero exit"
+                ).strip()[:2000]
+        except subprocess.TimeoutExpired:
+            failure_status = "retryable"
+            failure_error = (
+                "ai_status.py dev-bridge-materialize-batch timed out after "
+                f"{timeout_seconds:g}s"
+            )
+        except OSError as exc:
+            failure_status = "retryable"
+            failure_error = str(exc)
+
+        # Zero exit is not enough, and timeout/nonzero is not proof the writer
+        # failed before commit. In every case, read the exact packet and all
+        # task-spec hashes back from the authoritative journal before admission
+        # or any later retry. Repository projections are never consulted in
+        # governed mode.
+        try:
+            readback = _validate_materialized_tasks(
                 packet,
                 repo_root=repo_root,
                 environment=env,
-                tasks=[task],
             )
-        except MaterializedTaskMissingError:
-            record.status = failure_status or "error"
-            record.error = failure_error
         except OSError as exc:
-            record.status = "retryable"
-            record.error = (
-                f"{failure_error}; authoritative post-assign readback unavailable: {exc}"
+            for record in records:
+                record.status = "retryable"
+            prefix = f"{failure_error}; " if failure_error else ""
+            return (
+                records,
+                None,
+                f"{prefix}authoritative post-batch readback unavailable: {exc}",
+                True,
             )
         except ValueError as exc:
-            record.status = "error"
-            record.error = (
-                f"{failure_error}; authoritative post-assign readback invalid: {exc}"
+            status = failure_status or "error"
+            for record in records:
+                record.status = status
+            prefix = f"{failure_error}; " if failure_error else ""
+            return (
+                records,
+                None,
+                f"{prefix}authoritative post-batch readback invalid: {exc}",
+                status == "retryable",
             )
-        else:
-            return record
-    else:
-        record.status = failure_status or "error"
-        record.error = failure_error
 
-    return record
+    return records, readback, None, False
 
 
 # ---------------------------------------------------------------------------
@@ -1510,67 +1512,36 @@ def _dispatch_task_packet_under_fence(
             ],
         )
 
-    task_records: List[TaskDispatchRecord] = []
     errors: List[str] = []
-    retryable = False
-    dispatch_timings: Dict[str, float] = {}
-    for task in packet.tasks:
-        task_started = time.monotonic()
-        record = _dispatch_task(
-            task,
-            packet=packet,
-            repo_root=repo_root,
-            dry_run=dry_run,
-            environment=environment,
-        )
-        dispatch_timings[task.id] = round(
-            (time.monotonic() - task_started) * 1000,
-            3,
-        )
-        task_records.append(record)
-        if record.error and record.status in {"error", "retryable"}:
-            errors.append(f"{task.id}: {record.error}")
-        retryable = retryable or record.status == "retryable"
-    audit_refs["taskDispatchTimingsMs"] = dispatch_timings
-    phase_timings["taskDispatch"] = round(sum(dispatch_timings.values()), 3)
+    dispatch_started = time.monotonic()
+    task_records, readback, dispatch_error, retryable = _dispatch_task_batch(
+        packet,
+        repo_root=repo_root,
+        dry_run=dry_run,
+        environment=environment,
+    )
+    phase_timings["taskDispatch"] = round(
+        (time.monotonic() - dispatch_started) * 1000,
+        3,
+    )
+    if dispatch_error:
+        errors.append(f"packet batch: {dispatch_error}")
+    if readback is not None:
+        audit_refs["materializationReadback"] = readback
 
     admission_record = None
     admission_status = "dry_run" if dry_run else "not_attempted"
     if errors:
-        if retryable:
-            admission_status = "task_state_mutation_retryable"
+        admission_status = (
+            "task_state_mutation_retryable"
+            if retryable
+            else "invalid_materialization"
+        )
         _release_dispatch_claim(
             repo_root=repo_root,
             packet_id=packet.packet_id,
             claim_token=claim_token,
         )
-    elif not dry_run:
-        readback_started = time.monotonic()
-        try:
-            readback = _validate_materialized_tasks(
-                packet,
-                repo_root=repo_root,
-                environment=environment,
-            )
-        except OSError as exc:
-            errors.append(f"bridge materialization: {exc}")
-            admission_status = "materialization_read_retryable"
-            retryable = True
-        except ValueError as exc:
-            errors.append(f"bridge materialization: {exc}")
-            admission_status = "invalid_materialization"
-        else:
-            audit_refs["materializationReadback"] = readback
-        phase_timings["materializationReadback"] = round(
-            (time.monotonic() - readback_started) * 1000,
-            3,
-        )
-        if errors:
-            _release_dispatch_claim(
-                repo_root=repo_root,
-                packet_id=packet.packet_id,
-                claim_token=claim_token,
-            )
 
     became_replay: Mapping[str, object] | None = None
     if not dry_run and not errors:
