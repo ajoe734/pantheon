@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import sys
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -58,25 +59,24 @@ def write_legacy(path: Path) -> tuple[dict, bytes]:
 def write_large_legacy(path: Path, *, revisions: int = 90, task_count: int = 600) -> dict:
     """Build a multi-megabyte V1 fixture without invoking a V1 runtime API."""
 
-    lines: list[bytes] = []
     previous: str | None = None
     current: dict = {}
-    for revision in range(1, revisions + 1):
-        current = {
-            "revision": revision,
-            "tasks": [
-                {
-                    "id": f"LEGACY-LARGE-{number:04d}",
-                    "status": "review" if number == revision % task_count else "todo",
-                    "next": f"revision-{revision}",
-                }
-                for number in range(task_count)
-            ],
-        }
-        event = legacy_event(current, sequence=revision, previous=previous)
-        previous = event["event_sha256"]
-        lines.append(store.canonical_json_bytes(event))
-    path.write_bytes(b"\n".join(lines) + b"\n")
+    with path.open("wb") as stream:
+        for revision in range(1, revisions + 1):
+            current = {
+                "revision": revision,
+                "tasks": [
+                    {
+                        "id": f"LEGACY-LARGE-{number:04d}",
+                        "status": "review" if number == revision % task_count else "todo",
+                        "next": f"revision-{revision}",
+                    }
+                    for number in range(task_count)
+                ],
+            }
+            event = legacy_event(current, sequence=revision, previous=previous)
+            previous = event["event_sha256"]
+            stream.write(store.canonical_json_bytes(event) + b"\n")
     return current
 
 
@@ -143,6 +143,53 @@ def test_hot_read_cost_is_constant_against_a_synthetic_large_legacy_archive(tmp_
 
     assert [item["state"] for item in snapshots] == [expected, expected, expected]
     assert archive.stat().st_atime_ns == before
+
+
+def test_legacy_archive_reader_streams_a_realistic_journal_without_full_aggregation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Migration memory is bounded by one V1 record/state, never archive size."""
+
+    path = tmp_path / "events.jsonl"
+    expected = write_large_legacy(path, revisions=260, task_count=1100)
+    journal_bytes = path.stat().st_size
+    with path.open("rb") as stream:
+        max_record_bytes = max(len(line) for line in stream)
+    assert journal_bytes >= 16 * 1024 * 1024
+
+    def full_payload_reader_is_forbidden(*_args: object, **_kwargs: object) -> bytes:
+        raise AssertionError("legacy archive reader aggregated the complete journal")
+
+    read_sizes: list[int] = []
+    real_read = store.os.read
+
+    def traced_read(descriptor: int, size: int) -> bytes:
+        read_sizes.append(size)
+        return real_read(descriptor, size)
+
+    monkeypatch.setattr(store, "_read_regular_bytes", full_payload_reader_is_forbidden)
+    monkeypatch.setattr(store.os, "read", traced_read)
+    tracemalloc.start()
+    try:
+        state, sequence, byte_size, journal_sha256 = store._read_legacy_journal(path)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert state == expected
+    assert sequence == 260
+    assert byte_size == journal_bytes
+    assert journal_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert read_sizes
+    assert max(read_sizes) == store.LEGACY_ARCHIVE_READ_CHUNK_BYTES
+    assert len(read_sizes) > journal_bytes // store.LEGACY_ARCHIVE_READ_CHUNK_BYTES
+    # The 16+ MiB fixture stays below this 8 MiB reader budget and far below a
+    # journal-sized allocation.  ``max_record_bytes`` makes the bound explicit
+    # for the generated V1 full-board record rather than journal length.
+    assert peak < 8 * 1024 * 1024
+    assert peak < journal_bytes // 4
+    assert peak < 16 * max_record_bytes + 4 * 1024 * 1024
 
 
 def test_crash_after_fsynced_delta_recovers_only_the_tail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

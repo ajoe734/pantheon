@@ -103,6 +103,21 @@ their hash, final sequence, and projected-state digest. They must not be called
 from scheduling, dispatch admission, a canonical state mutation, or a status
 command's normal read path.
 
+Legacy archive validation is streaming even though it is an offline operation.
+It opens the regular archive with `O_NOFOLLOW`, reads fixed 64 KiB chunks, and
+updates its byte count and SHA-256 with each chunk. It retains only an
+unfinished JSONL record and the newest decoded V1 board; it never reads the
+whole archive or calls `splitlines()` over archive-sized bytes. Let `R` be the
+largest V1 JSONL record and `S` the largest decoded board footprint. The reader
+has an `O(R + S)` allocation shape, independent of total journal bytes `J`.
+For production migration preflight reserve 64 MiB plus `16R + 4S` for the
+Python reader/decoder, in addition to normal process and operator overhead;
+do not size the migration budget as a multiple of `J`. The regression fixture
+is at least 16 MiB, forbids the whole-file reader, verifies chunked reads, and
+requires less than 8 MiB of traced migration-reader allocation (and less than
+one quarter of its journal size). This is the bounded path used for dry-run,
+initial migration, resume, and offline archive verification.
+
 The focused test suite builds a synthetic multi-megabyte legacy journal,
 migrates it, then proves repeated hot reads succeed while archive parsing is
 forbidden. It also covers head-CAS conflict, V2 delta corruption, torn tail,

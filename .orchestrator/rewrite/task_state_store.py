@@ -32,6 +32,7 @@ HEAD_VERSION = 2
 HEAD_TYPE = "task_state_current_head"
 ARCHIVE_VERSION = 1
 ARCHIVE_TYPE = "task_state_v1_archive"
+LEGACY_ARCHIVE_READ_CHUNK_BYTES = 64 * 1024
 
 # Kept as the public safety vocabulary used by the governed status writer.
 TERMINAL_TASK_STATUSES = frozenset({"done", "supersede", "superseded", "cancelled", "canceled"})
@@ -928,7 +929,7 @@ def verify_projection(path: str | Path, expected_state: dict[str, Any]) -> dict[
     return verify_snapshot(load_snapshot(path), expected_state)
 
 
-def _validate_v1_event(event: Any, *, expected_sequence: int, previous_sha256: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
+def _validate_v1_event(event: Any, *, expected_sequence: int, previous_sha256: str | None) -> tuple[str, dict[str, Any]]:
     required = {"version", "type", "event_id", "event_sha256", "sequence", "committed_at", "source", "previous_event_sha256", "state_sha256", "state"}
     if not isinstance(event, dict) or set(event) != required:
         raise TaskStateStoreError("legacy task-state archive event schema mismatch")
@@ -942,27 +943,82 @@ def _validate_v1_event(event: Any, *, expected_sequence: int, previous_sha256: s
     digest = sha256_json(_event_digest_payload(event))
     if event.get("event_sha256") != digest or event.get("event_id") != f"task-state-{digest}":
         raise TaskStateStoreError("legacy task-state archive event digest mismatch")
-    return copy.deepcopy(event), copy.deepcopy(state)
+    # The archive reader retains only the final projected state.  Returning a
+    # digest rather than a copied full event keeps validation bounded by one
+    # record plus that projection rather than by the complete V1 journal.
+    return str(event["event_sha256"]), state
 
 
 def _read_legacy_journal(path: Path) -> tuple[dict[str, Any], int, int, str]:
-    payload = _read_regular_bytes(path, label="legacy archive")
-    if payload and not payload.endswith(b"\n"):
-        raise TaskStateStoreError("legacy task-state archive has incomplete record")
+    """Validate a V1 JSONL archive without aggregating its complete payload.
+
+    This deliberately does not call ``_read_regular_bytes``: migration can
+    process multi-gigabyte archives, so retaining either the whole payload or
+    a ``splitlines`` copy would make the archive size, rather than the largest
+    record and current projected state, the migration memory bound.
+    """
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        raise TaskStateStoreError(f"task-state legacy archive is missing: {path}") from None
+    except OSError as exc:
+        raise TaskStateStoreError(f"cannot open task-state legacy archive: {path}") from exc
+
     state: dict[str, Any] = {}
     previous: str | None = None
     sequence = 0
-    for raw_line in payload.splitlines():
+    byte_size = 0
+    journal_digest = hashlib.sha256()
+    pending = bytearray()
+
+    def consume_record(raw_line: bytearray | bytes) -> None:
+        nonlocal previous, sequence, state
         if not raw_line.strip():
             raise TaskStateStoreError("legacy task-state archive has blank record")
+        # Drop the superseded V1 full-board projection before decoding the next
+        # record.  The V1 chain validates through hashes, not a prior state
+        # diff, so it is not needed while parsing the next event.
+        state = {}
         try:
-            event = json.loads(raw_line.decode("utf-8"))
+            event = json.loads(raw_line)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise TaskStateStoreError("legacy task-state archive has invalid JSON") from exc
-        checked, state = _validate_v1_event(event, expected_sequence=sequence + 1, previous_sha256=previous)
+        previous, state = _validate_v1_event(
+            event,
+            expected_sequence=sequence + 1,
+            previous_sha256=previous,
+        )
         sequence += 1
-        previous = checked["event_sha256"]
-    return state, sequence, len(payload), hashlib.sha256(payload).hexdigest()
+
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise TaskStateStoreError(f"task-state legacy archive must be a regular file: {path}")
+        while True:
+            try:
+                chunk = os.read(descriptor, LEGACY_ARCHIVE_READ_CHUNK_BYTES)
+            except OSError as exc:
+                raise TaskStateStoreError(f"cannot read task-state legacy archive: {path}") from exc
+            if not chunk:
+                break
+            byte_size += len(chunk)
+            journal_digest.update(chunk)
+            records = chunk.split(b"\n")
+            if len(records) == 1:
+                pending.extend(records[0])
+                continue
+            pending.extend(records[0])
+            consume_record(pending)
+            pending.clear()
+            for raw_line in records[1:-1]:
+                consume_record(raw_line)
+            pending.extend(records[-1])
+        if pending:
+            raise TaskStateStoreError("legacy task-state archive has incomplete record")
+    finally:
+        os.close(descriptor)
+    return state, sequence, byte_size, journal_digest.hexdigest()
 
 
 def _make_archive_manifest(event_path: Path, *, state: dict[str, Any], final_sequence: int, byte_size: int, journal_sha256: str) -> dict[str, Any]:
