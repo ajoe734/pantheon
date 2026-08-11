@@ -5,7 +5,7 @@
     "title": "Fix governed promotion ENOTDIR failure on candidate .git directory check",
     "owner": "Codex",
     "reviewer": "Claude2",
-    "status": "pending_independent_review",
+    "status": "reviewed_and_merged",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
@@ -115,25 +115,47 @@
     "fail_closed": "Any mutable root/gitfile/Git-directory/common-directory identity drift, symlink, hard-linked gitfile, malformed gitfile, untrusted remote, external config include, unaccepted tree, staged change, tracked worktree change, or immutable candidate gitfile remains a hard failure."
   },
   "delivery": {
-    "task_pull_request": null,
-    "reviewed_head_sha": null,
-    "merge_commit": null,
-    "protected_merge_complete": false,
+    "task_pull_request": 4642,
+    "reviewed_head_sha": "ebf8afe08bf5353db9f158acc496c03b5c4766a8",
+    "merge_commit": "fee6f738a58b82ccc269ed8481ddc5a1a7a68b85",
+    "protected_merge_complete": true,
+    "required_checks_passed": [
+      "Commit trailers",
+      "Pantheon canonical review gate",
+      "Check coordination truth drift",
+      "Mirror Pantheon handoffs and dispatch to front repo",
+      "Forward to orchestrator",
+      "Runtime mirror guard",
+      "Python packaging provision",
+      "Smoke acceptance"
+    ],
     "governed_runtime_promotion_complete": false,
     "governed_closeout_complete": false
   },
   "review": {
-    "reviewer": "Claude2",
-    "status": "pending_independent_exact_head_review",
-    "decision": null,
-    "reviewed_head_sha": null,
-    "reviewed_at": null,
+    "reviewer": "Codex2",
+    "status": "approved",
+    "decision": "approve",
+    "reviewed_head_sha": "ebf8afe08bf5353db9f158acc496c03b5c4766a8",
+    "reviewed_at": "2026-08-08T15:43:36Z",
     "notes": [
       "Confirm the immutable CandidateRootHandle still rejects both symlink and regular gitfile .git controls.",
       "Review that the new gitfile path is reachable only from bootstrap mutable-incumbent capture.",
       "Review no-follow component binding and the before/after revalidation of mutable root, Git directory, common directory, HEAD/tree, index, tracked tree, and governed sources.",
       "Review that untracked mutable runtime debris is ignored only on the mutable source and is never accepted in an immutable candidate.",
       "Bind this committed manifest with REVIEW_FILE when approving the exact PR head."
+    ],
+    "review_proof_ref": "refs/tags/pantheon-review/approve/ebf8afe08bf5353db9f158acc496c03b5c4766a8",
+    "review_message": "Independent exact-head review approved for PR #4642 at ebf8afe08bf5353db9f158acc496c03b5c4766a8: immutable candidate gitfile/symlink rejection remains isolated; mutable linked-worktree gitfile binding is no-follow, identity-revalidated, remote/HEAD/tree/index/tracked-clean checked; closed-stdio regression passes. Local 241 promotion+sync tests passed in 50.02s, focused four security/regression tests passed, Python compile and diff checks passed; both Branch CI runs 31264720516 and 31264722444 are green."
+  },
+  "correction": {
+    "corrected_by_task": "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+    "corrected_at": "2026-08-11T00:00:00Z",
+    "reason": "This manifest was committed as part of PR #4642 at the pre-review placeholder state (task.status=pending_independent_review, review.decision=null, delivery all null) because the commit had to exist before independent review could bind it. The independent Codex2 exact-head review (refs/tags/pantheon-review/approve/ebf8afe08bf5353db9f158acc496c03b5c4766a8) then approved that exact head and PR #4642 merged to dev as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, but no follow-up commit ever updated this manifest to record that outcome. Later PR #4705 explicitly left this reviewer-bound manifest unchanged while recording a separate downstream closeout addendum in README.md. This correction backfills task.status, review, and delivery from the canonical GitHub PR #4642 record and the review-bridge approve tag; it does not alter validation/acceptance content, scope, or the already-merged source code.",
+    "verified_against": [
+      "https://github.com/ajoe734/pantheon/pull/4642 (state=MERGED, baseRefName=dev, headRefOid=ebf8afe08bf5353db9f158acc496c03b5c4766a8, mergeCommit.oid=fee6f738a58b82ccc269ed8481ddc5a1a7a68b85)",
+      "refs/tags/pantheon-review/approve/ebf8afe08bf5353db9f158acc496c03b5c4766a8 (actor=Codex2, decision=approve, pr=4642)",
+      "git merge-base --is-ancestor fee6f738a58b82ccc269ed8481ddc5a1a7a68b85 origin/dev"
     ]
   }
 }
