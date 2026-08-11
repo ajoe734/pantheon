@@ -59,6 +59,11 @@ intermediate state and any of these are true:
    Verified: not run; anchor commit only
    ```
 
+   Note: Ensure the subject line (`<TASK-ID>: anchor <scope>`) does NOT exceed
+   72 characters. If the task ID or scope path is long, compact or abbreviate the
+   subject line scope so the total subject line is ≤ 72 characters. The full task ID
+   must always remain in the required `Task-ID: <TASK-ID>` trailer in the commit body.
+
 4. Commit through the worker-safe wrapper with explicit scope:
 
    ```bash

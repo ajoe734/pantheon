@@ -29,6 +29,24 @@ from types import MappingProxyType
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
+
+def _bind_running_supervisor_import(
+    module_name: str,
+    module: object | None,
+) -> None:
+    """Keep lazy provider imports on the running supervisor implementation."""
+
+    if module_name == "__main__" and module is not None:
+        sys.modules["supervisor"] = module
+
+
+# The daemon executes this file as ``__main__``, while provider_permissions
+# imports ``supervisor`` lazily during a refreshed provider report.  Bind both
+# names before importing provider_permissions so that refreshes cannot resolve a
+# second checkout with an older apply_provider_probe_to_report signature.
+_bind_running_supervisor_import(__name__, sys.modules.get(__name__))
+
+
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
@@ -40,6 +58,7 @@ from adapters.base import DeliveryRequest
 from common import (
     activity_audit_lock_file,
     agent_config_for,
+    bound_commit_subject,
     command_exists,
     canonical_task_state_lock_file,
     config_path,
@@ -2385,9 +2404,7 @@ def _anchor_commit_task_wip(worktree_path: Path, task_id: str | None, branch: st
     if add.returncode != 0:
         return False, "git_add_failed"
     tid = str(task_id or "").strip() or "TASK"
-    subject = f"{tid}: anchor recovered worktree WIP"
-    if len(subject) > 72:
-        subject = f"{tid}: anchor WIP"
+    subject = bound_commit_subject(tid, "anchor recovered worktree WIP")
     message = (
         f"{subject}\n\n"
         "Auto-anchor by the supervisor worktree-lease guard. A prior worker run\n"
