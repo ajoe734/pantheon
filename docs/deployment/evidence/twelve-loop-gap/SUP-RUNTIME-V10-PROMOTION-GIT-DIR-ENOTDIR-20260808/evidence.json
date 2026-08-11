@@ -4,7 +4,7 @@
     "id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
     "title": "Fix governed promotion ENOTDIR failure on candidate .git directory check",
     "owner": "Codex",
-    "reviewer": "Claude2",
+    "reviewer": "Codex2",
     "status": "reviewed_and_merged",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
