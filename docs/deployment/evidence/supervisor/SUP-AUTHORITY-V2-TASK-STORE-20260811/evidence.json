@@ -11,8 +11,8 @@
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-AUTHORITY-V2-TASK-STORE-20260811",
-    "candidate_source_commit": "e78d87fe4f7b2c2c64f8ca51755e896e7aeca372",
-    "post_source_hygiene_commit": "42ad3713132be833f2a751ac6b3a50a14f0872df"
+    "candidate_source_commit": "1381d04aed804b82a9658b4cf3ea2f00bbf15749",
+    "review_baseline_commit": "4f79db4ce17635a2f02b3a26b7bcb78bb19d6610"
   },
   "scope": {
     "owned_layer": "Authoritative task-state V2 persistence: compact current head, append-only state deltas, V1 archive migration and offline integrity verification, task-store architecture specification, and runtime caller telemetry migration.",
@@ -28,6 +28,7 @@
       "scripts/test_ai_status.py",
       "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
       "scripts/test_migrate_task_state_store_v2.py",
+      "scripts/test_verify_task_state_store.py",
       "scripts/verify_task_state_store.py",
       "docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-TASK-STORE-20260811/evidence.json"
     ]
@@ -42,9 +43,9 @@
   },
   "deletion_and_caller_report": {
     "gross_source_delta_against_origin_dev_before_manifest": {
-      "lines_added": 1272,
-      "lines_deleted": 2105,
-      "command": "git diff --numstat origin/dev...e78d87fe4f7b2c2c64f8ca51755e896e7aeca372"
+      "lines_added": 1643,
+      "lines_deleted": 2106,
+      "command": "git diff --numstat origin/dev...1381d04aed804b82a9658b4cf3ea2f00bbf15749"
     },
     "removed_hot_path": [
       "V1 full-board state on every event",
@@ -61,21 +62,23 @@
     "caller_boundary": "All remaining production callers use load_snapshot(), snapshot_transaction(), or append_state_commit(); load_events() and project_latest_state() are offline audit compatibility readers only."
   },
   "acceptance_evidence": {
-    "delta_not_full_state": "A 1,200-task board status change serializes one tasks[index].status set delta and no persisted state field.",
+    "delta_not_full_state": "A 1,200-task board status change serializes one tasks[index].status set delta, while materializing or archiving one row serializes one indexed insert or remove; no transition persists a state field.",
     "constant_hot_read_cost": "Synthetic multi-megabyte V1 archive migration test performs repeated load_snapshot calls with archive parsing patched to fail; every hot read succeeds.",
     "failure_boundaries": [
       "stale expected sequence/head CAS is rejected",
       "nonterminal task loss is rejected before append",
       "incomplete/corrupt delta tails are rejected",
-      "crash after fsynced delta and before head replacement recovers exactly the tail",
+      "crash after fsynced delta and before head replacement recovers exactly the tail, and offline full-chain verification validates that durable tail",
       "tampered frozen archive fails offline verification",
+      "resume after an archive rename reasserts read-only archive permissions before continuing",
+      "a resumed archive plus manifest must match byte length, final sequence, journal SHA and projected-state SHA before genesis can be written",
       "nonempty V1 journal with no V2 head fails migration-required instead of falling back"
     ]
   },
   "verification": [
     {
       "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_STATUS_ROOT /home/lupin/pantheon/.venv/bin/pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_task_state_runtime_env.py scripts/test_migrate_task_state_store_v2.py scripts/test_verify_task_state_store.py scripts/test_ai_status.py::ArchiveWorkflowTests::test_real_show_is_bounded_and_does_not_mutate_pending_outbox scripts/test_ai_status.py::ArchiveWorkflowTests::test_real_show_returns_immediately_when_writer_holds_task_lock scripts/test_dispatch_twelve_loop_gap_2026_07_26.py --deselect scripts/test_dispatch_twelve_loop_gap_2026_07_26.py::test_human_task_cards_mirror_assignment_header scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py .orchestrator/test_supervisor.py::TaskStateShadowCatchupTests",
-      "result": "119 passed, 1 deselected in 20.20s"
+      "result": "126 passed, 1 deselected in 21.85s"
     },
     {
       "command": "python3 -m py_compile .orchestrator/rewrite/task_state_store.py scripts/verify_task_state_store.py scripts/migrate_task_state_store_v2.py scripts/ai_status.py scripts/dispatch_twelve_loop_gap_2026_07_26.py .orchestrator/test_supervisor.py && git diff --check",
@@ -94,6 +97,6 @@
   "review": {
     "decision": "pending_independent_review",
     "required_reviewer": "Codex",
-    "protocol": "Review this committed manifest, all changed paths, and the exact PR head. The post-source hygiene commit removes two Markdown trailing spaces only and is still part of the required exact-head review. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
+    "protocol": "Review this committed manifest, all changed paths, and the exact PR head, including candidate source commit 1381d04aed804b82a9658b4cf3ea2f00bbf15749 and its compact row-count, archive-resume, manifest-identity, and post-head-tail regressions. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
   }
 }
