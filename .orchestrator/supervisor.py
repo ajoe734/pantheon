@@ -40,6 +40,7 @@ from adapters.base import DeliveryRequest
 from common import (
     activity_audit_lock_file,
     agent_config_for,
+    bound_commit_subject,
     command_exists,
     canonical_task_state_lock_file,
     config_path,
@@ -2385,9 +2386,7 @@ def _anchor_commit_task_wip(worktree_path: Path, task_id: str | None, branch: st
     if add.returncode != 0:
         return False, "git_add_failed"
     tid = str(task_id or "").strip() or "TASK"
-    subject = f"{tid}: anchor recovered worktree WIP"
-    if len(subject) > 72:
-        subject = f"{tid}: anchor WIP"
+    subject = bound_commit_subject(tid, "anchor recovered worktree WIP")
     message = (
         f"{subject}\n\n"
         "Auto-anchor by the supervisor worktree-lease guard. A prior worker run\n"

@@ -16676,6 +16676,30 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
             self.assertIn("Task-ID: OPS-ANCHOR-001", body)
             self.assertIn("Reviewer: local", body)
 
+    def test_anchor_commit_task_wip_bounds_subject_length_for_long_task_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._init_git_repo(tmpdir)
+            (repo / "svc.py").write_text("base\n", encoding="utf-8")
+            self._commit_all(repo, "initial")
+            long_task_id = "SUP-WORKER-SUBJECT-GUARD-20260811-EXTREMELY-LONG-TASK-ID-THAT-EXCEEDS-LIMITS"
+            branch_name = f"task/{long_task_id}"
+            subprocess.run(["git", "checkout", "-q", "-b", branch_name], cwd=repo, check=True)
+            (repo / "svc.py").write_text("worker WIP\n", encoding="utf-8")
+
+            ok, detail = supervisor._anchor_commit_task_wip(repo, long_task_id, branch_name)
+
+            self.assertTrue(ok, detail)
+            body = subprocess.run(
+                ["git", "log", "-1", "--format=%B"], cwd=repo, capture_output=True, text=True, check=True
+            ).stdout
+            subject = body.splitlines()[0]
+            self.assertLessEqual(len(subject), 72)
+            import re
+            self.assertTrue(re.match(r"^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S", subject))
+            self.assertIn("LLM-Agent: supervisor", body)
+            self.assertIn(f"Task-ID: {long_task_id}", body)
+            self.assertIn("Reviewer: local", body)
+
     def test_anchor_commit_task_wip_refuses_when_branch_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = self._init_git_repo(tmpdir)
