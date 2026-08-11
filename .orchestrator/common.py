@@ -1041,6 +1041,63 @@ def render_template(path: Path, variables: dict[str, Any]) -> str:
     return text
 
 
+def bound_commit_subject(task_id: str | None, description: str | None, max_len: int = 72) -> str:
+    r"""Format a commit subject to guarantee max_len (default 72 chars) and match SUBJECT_PATTERN.
+
+    Format: '<PREFIX>: <description>'
+    Matches pattern: ^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S
+    Full Task-ID remains in required trailers.
+    """
+    raw_prefix = str(task_id or "").strip()
+    clean_prefix = re.sub(r"[^A-Za-z0-9-]+", "-", raw_prefix).strip("-").upper()
+    if not clean_prefix:
+        clean_prefix = "TASK"
+
+    raw_desc = str(description or "").strip()
+    raw_desc = re.sub(r"\s+", " ", raw_desc)
+    if not raw_desc:
+        raw_desc = "commit"
+
+    candidate = f"{clean_prefix}: {raw_desc}"
+    if len(candidate) <= max_len:
+        return candidate
+
+    if "anchor recovered worktree WIP" in raw_desc:
+        short_desc = raw_desc.replace("anchor recovered worktree WIP", "anchor WIP")
+        candidate = f"{clean_prefix}: {short_desc}"
+        if len(candidate) <= max_len:
+            return candidate
+
+    prefix_cost = len(clean_prefix) + 2
+    avail_desc = max_len - prefix_cost
+    if avail_desc >= 10:
+        if avail_desc > 3 and len(raw_desc) > avail_desc:
+            trunc_desc = raw_desc[: avail_desc - 3].rstrip() + "..."
+        else:
+            trunc_desc = raw_desc[:avail_desc].rstrip()
+        candidate = f"{clean_prefix}: {trunc_desc}"
+        if len(candidate) <= max_len:
+            return candidate
+
+    max_prefix_len = min(35, max(10, max_len - 15))
+    compact_prefix = re.sub(r"-+$", "", clean_prefix[:max_prefix_len])
+    if not compact_prefix:
+        compact_prefix = "TASK"
+
+    prefix_cost = len(compact_prefix) + 2
+    avail_desc = max_len - prefix_cost
+    if len(raw_desc) > avail_desc and avail_desc > 3:
+        trunc_desc = raw_desc[: avail_desc - 3].rstrip() + "..."
+    else:
+        trunc_desc = raw_desc[:avail_desc].rstrip()
+
+    candidate = f"{compact_prefix}: {trunc_desc}"
+    if len(candidate) > max_len:
+        candidate = candidate[:max_len].rstrip()
+    return candidate
+
+
+
 ACTIVITY_LOG_ROTATE_BYTES_DEFAULT = 50 * 1024 * 1024  # 50 MiB
 ACTIVITY_LOG_ARCHIVE_SUBDIR = Path("archive") / "logs"
 ACTIVITY_LOG_LEGACY_ARCHIVE_SUBDIR = (

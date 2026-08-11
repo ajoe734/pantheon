@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import errno
 import fcntl
 import hashlib
+import importlib.util
 import os
 import shutil
 import stat
@@ -240,6 +242,7 @@ def _verified_identity_dependency(repo: Path) -> Mock:
     identity.config_byte_length = len(config_bytes)
     identity.config_sha256 = promotion.hashlib.sha256(config_bytes).hexdigest()
     identity.legacy_task_brief_drift = ()
+    identity.legacy_incumbent_bytecode_residue = ()
     return identity
 
 
@@ -3868,20 +3871,8 @@ def test_mutable_incumbent_bootstrap_accepts_provenance_validated_legacy_task_br
     )
     regenerated_brief.write_bytes(LIVE_FLEET_BRIEF_1364_BYTES)
 
-    status_file = mutable_root / "ai-status.json"
-    status_file.write_text(
-        json.dumps({
-            "tasks": [
-                {
-                    "id": "SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-                    "title": "Commit the missing supervisor dispatch refactor proposal doc",
-                    "owner": "Antigravity",
-                    "reviewer": "Codex2",
-                }
-            ]
-        }),
-        encoding="utf-8",
-    )
+    _git(mutable_root, "checkout", "ai-status.json")
+
 
     with (
         patch(
@@ -6525,21 +6516,6 @@ def test_mutable_incumbent_bootstrap_accepts_live_byte_legacy_task_brief_drifts(
     )
     regenerated_brief.write_text(live_brief_1364_content, encoding="utf-8")
 
-    status_file = mutable_root / "ai-status.json"
-    status_file.write_text(
-        json.dumps({
-            "tasks": [
-                {
-                    "id": "SUP-DISPATCH-REFACTOR-PROPOSAL-DOC-COMMIT-20260806",
-                    "title": "Commit the missing supervisor dispatch refactor proposal doc",
-                    "owner": "Antigravity",
-                    "reviewer": "Codex2",
-                }
-            ]
-        }),
-        encoding="utf-8",
-    )
-
     with (
         patch(
             "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
@@ -6986,100 +6962,172 @@ def test_capture_promotion_snapshot_passes_allow_legacy_admission_lock_id_churn(
     )
 
 
-def test_materialize_immutable_rollback_runtime_reuses_exact_matching_destination(
+def test_materialize_immutable_rollback_runtime_reuses_matching_preexisting_rollback_destination_without_side_effects(
     tmp_path: Path,
 ) -> None:
     prefix = tmp_path / "command-runtimes"
     prefix.mkdir(parents=True, exist_ok=True)
-    head_commit = "a" * 40
-    destination = prefix / head_commit
-    destination.mkdir(parents=True, exist_ok=True)
-    dest_stat = destination.stat()
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
+
+    direct_dest = prefix / head_commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+
+    rollback_dest = rollback_prefix / head_commit
+    rollback_dest.mkdir(parents=True, exist_ok=True)
 
     snapshot = Mock(spec=MutableIncumbentSnapshot)
-    snapshot.root = destination
-    snapshot.root_device = dest_stat.st_dev
-    snapshot.root_inode = dest_stat.st_ino
+    snapshot.root = tmp_path / "dev-root"
     snapshot.head_commit = head_commit
     snapshot.tracked_tree_identity = "b" * 40
     snapshot.accepted_dev_commit = "c" * 40
     snapshot.repository_slug = "ajoe734/pantheon"
 
-    identity = Mock(spec=CandidateRuntimeIdentity)
-    identity.candidate_root = destination
-    identity.candidate_root_device = dest_stat.st_dev
-    identity.candidate_root_inode = dest_stat.st_ino
-    identity.head_commit = head_commit
-    identity.tracked_tree_identity = "b" * 40
-    identity.accepted_dev_commit = "c" * 40
-    identity.repository_slug = "ajoe734/pantheon"
+    existing_identity = Mock(spec=CandidateRuntimeIdentity)
+    existing_identity.candidate_root = rollback_dest
+    existing_identity.candidate_root_device = rollback_dest.stat().st_dev
+    existing_identity.candidate_root_inode = rollback_dest.stat().st_ino
+    existing_identity.head_commit = head_commit
+    existing_identity.tracked_tree_identity = "b" * 40
+    existing_identity.accepted_dev_commit = "c" * 40
+    existing_identity.repository_slug = "ajoe734/pantheon"
+
+    candidate_identity = Mock(spec=CandidateRuntimeIdentity)
+    candidate_identity.candidate_root = direct_dest
+    candidate_identity.candidate_root_device = direct_dest.stat().st_dev
+    candidate_identity.candidate_root_inode = direct_dest.stat().st_ino
 
     with patch(
         "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
         prefix,
     ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+    ) as mock_git, patch(
         "promote_supervisor_runtime.build_candidate_runtime_identity",
-        return_value=identity,
-    ) as mock_builder:
-        res = promotion.materialize_immutable_rollback_runtime(snapshot)
+        return_value=existing_identity,
+    ) as mock_identity:
+        result = promotion.materialize_immutable_rollback_runtime(
+            snapshot,
+            candidate_identity=candidate_identity,
+        )
 
-    assert res is identity
-    mock_builder.assert_called_once_with(destination)
-    identity.verify_immutable_snapshot.assert_called_once_with()
+    mock_git.assert_not_called()
+    mock_identity.assert_called_once_with(rollback_dest)
+    existing_identity.verify_immutable_snapshot.assert_called_once_with()
+    assert result is existing_identity
 
 
-def test_materialize_immutable_rollback_runtime_reuses_existing_same_root_destination(
+def test_materialize_immutable_rollback_runtime_rejects_mismatched_preexisting_rollback_destination_without_side_effects(
     tmp_path: Path,
 ) -> None:
     prefix = tmp_path / "command-runtimes"
     prefix.mkdir(parents=True, exist_ok=True)
-    head_commit = "a" * 40
-    destination = prefix / head_commit
-    destination.mkdir(parents=True, exist_ok=True)
-    dest_stat = destination.stat()
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
+
+    direct_dest = prefix / head_commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+    rollback_dest = rollback_prefix / head_commit
+    rollback_dest.mkdir(parents=True, exist_ok=True)
 
     snapshot = Mock(spec=MutableIncumbentSnapshot)
-    snapshot.root = destination
-    snapshot.root_device = dest_stat.st_dev
-    snapshot.root_inode = dest_stat.st_ino
+    snapshot.root = tmp_path / "dev-root"
     snapshot.head_commit = head_commit
     snapshot.tracked_tree_identity = "b" * 40
     snapshot.accepted_dev_commit = "c" * 40
     snapshot.repository_slug = "ajoe734/pantheon"
 
-    identity = Mock(spec=CandidateRuntimeIdentity)
-    identity.candidate_root = destination
-    identity.candidate_root_device = dest_stat.st_dev
-    identity.candidate_root_inode = dest_stat.st_ino
-    identity.head_commit = head_commit
-    identity.tracked_tree_identity = "b" * 40
-    identity.accepted_dev_commit = "c" * 40
-    identity.repository_slug = "ajoe734/pantheon"
+    existing_identity = Mock(spec=CandidateRuntimeIdentity)
+    existing_identity.candidate_root = rollback_dest
+    existing_identity.candidate_root_device = rollback_dest.stat().st_dev
+    existing_identity.candidate_root_inode = rollback_dest.stat().st_ino
+    existing_identity.head_commit = head_commit
+    existing_identity.tracked_tree_identity = "d" * 40
+    existing_identity.accepted_dev_commit = "c" * 40
+    existing_identity.repository_slug = "ajoe734/pantheon"
 
     with patch(
         "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
         prefix,
     ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+    ) as mock_git, patch(
         "promote_supervisor_runtime.build_candidate_runtime_identity",
-        return_value=identity,
-    ) as mock_builder:
-        res = promotion.materialize_immutable_rollback_runtime(snapshot)
+        return_value=existing_identity,
+    ):
+        with pytest.raises(
+            ValueError,
+            match="Existing rollback runtime identity differs from incumbent",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
 
-    assert res is identity
-    mock_builder.assert_called_once_with(destination)
-    identity.verify_immutable_snapshot.assert_called_once_with()
+    mock_git.assert_not_called()
+    existing_identity.verify_immutable_snapshot.assert_called_once_with()
 
 
-def test_materialize_immutable_rollback_runtime_rejects_same_sha_different_root(
+def test_materialize_immutable_rollback_runtime_rejects_symlink_destination_without_side_effects(
     tmp_path: Path,
 ) -> None:
     prefix = tmp_path / "command-runtimes"
     prefix.mkdir(parents=True, exist_ok=True)
-    head_commit = "a" * 40
-    destination = prefix / head_commit
-    destination.mkdir(parents=True, exist_ok=True)
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
 
-    other_dir = tmp_path / "other-root"
+    direct_dest = prefix / head_commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+
+    target_dir = tmp_path / "target-dir"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    rollback_dest = rollback_prefix / head_commit
+    rollback_dest.symlink_to(target_dir)
+
+    snapshot = Mock(spec=MutableIncumbentSnapshot)
+    snapshot.root = tmp_path / "dev-root"
+    snapshot.head_commit = head_commit
+    snapshot.tracked_tree_identity = "b" * 40
+    snapshot.accepted_dev_commit = "c" * 40
+    snapshot.repository_slug = "ajoe734/pantheon"
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+    ) as mock_git:
+        with pytest.raises(
+            ValueError,
+            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    mock_git.assert_not_called()
+
+
+def test_materialize_immutable_rollback_runtime_uses_collision_safe_rollback_parent_when_direct_destination_occupied(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "command-runtimes"
+    prefix.mkdir(parents=True, exist_ok=True)
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
+    direct_dest = prefix / head_commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+
+    other_dir = tmp_path / "dev-root"
     other_dir.mkdir(parents=True, exist_ok=True)
     other_stat = other_dir.stat()
 
@@ -7092,70 +7140,495 @@ def test_materialize_immutable_rollback_runtime_rejects_same_sha_different_root(
     snapshot.accepted_dev_commit = "c" * 40
     snapshot.repository_slug = "ajoe734/pantheon"
 
-    identity = Mock(spec=CandidateRuntimeIdentity)
-    identity.candidate_root = destination
-    identity.candidate_root_device = other_stat.st_dev
-    identity.candidate_root_inode = other_stat.st_ino
-    identity.head_commit = head_commit
-    identity.tracked_tree_identity = "b" * 40
-    identity.accepted_dev_commit = "c" * 40
-    identity.repository_slug = "ajoe734/pantheon"
+    rollback_dest = rollback_prefix / head_commit
+    rollback_identity = Mock(spec=CandidateRuntimeIdentity)
+    rollback_identity.candidate_root = rollback_dest
+    rollback_identity.candidate_root_device = 999
+    rollback_identity.candidate_root_inode = 888
+    rollback_identity.head_commit = head_commit
+    rollback_identity.tracked_tree_identity = "b" * 40
+    rollback_identity.accepted_dev_commit = "c" * 40
+    rollback_identity.repository_slug = "ajoe734/pantheon"
 
     with patch(
         "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
         prefix,
     ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+    ), patch(
+        "promote_supervisor_runtime._git_output",
+        return_value="b" * 40,
+    ), patch(
         "promote_supervisor_runtime.build_candidate_runtime_identity",
-        return_value=identity,
+        return_value=rollback_identity,
     ):
-        with pytest.raises(
-            ValueError,
-            match="Fresh rollback runtime destination already exists",
-        ):
-            promotion.materialize_immutable_rollback_runtime(snapshot)
+        res = promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    assert res is rollback_identity
+    assert res.candidate_root != direct_dest
+    assert res.candidate_root == rollback_dest
 
 
-def test_materialize_immutable_rollback_runtime_rejects_existing_destination_when_verification_fails(
+def test_materialize_immutable_rollback_runtime_proves_candidate_and_rollback_separation_for_same_sha(
     tmp_path: Path,
 ) -> None:
     prefix = tmp_path / "command-runtimes"
     prefix.mkdir(parents=True, exist_ok=True)
-    head_commit = "a" * 40
-    destination = prefix / head_commit
-    destination.mkdir(parents=True, exist_ok=True)
-    dest_stat = destination.stat()
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+    head_commit = "0305c861f54c4082060120afdfbc012622e5ac0a"
+
+    candidate_dest = prefix / head_commit
+    candidate_dest.mkdir(parents=True, exist_ok=True)
+
+    other_dir = tmp_path / "dev-root"
+    other_dir.mkdir(parents=True, exist_ok=True)
+    other_stat = other_dir.stat()
 
     snapshot = Mock(spec=MutableIncumbentSnapshot)
-    snapshot.root = destination
-    snapshot.root_device = dest_stat.st_dev
-    snapshot.root_inode = dest_stat.st_ino
+    snapshot.root = other_dir
+    snapshot.root_device = other_stat.st_dev
+    snapshot.root_inode = other_stat.st_ino
     snapshot.head_commit = head_commit
     snapshot.tracked_tree_identity = "b" * 40
     snapshot.accepted_dev_commit = "c" * 40
     snapshot.repository_slug = "ajoe734/pantheon"
 
-    identity = Mock(spec=CandidateRuntimeIdentity)
-    identity.candidate_root = destination
-    identity.candidate_root_device = dest_stat.st_dev
-    identity.candidate_root_inode = dest_stat.st_ino
-    identity.head_commit = head_commit
-    identity.tracked_tree_identity = "b" * 40
-    identity.accepted_dev_commit = "c" * 40
-    identity.repository_slug = "ajoe734/pantheon"
-    identity.verify_immutable_snapshot.side_effect = ValueError("dirty worktree in existing rollback destination")
+    candidate_identity = Mock(spec=CandidateRuntimeIdentity)
+    candidate_identity.candidate_root = candidate_dest
+    candidate_identity.candidate_root_device = candidate_dest.stat().st_dev
+    candidate_identity.candidate_root_inode = candidate_dest.stat().st_ino
+    candidate_identity.head_commit = head_commit
+
+    rollback_dest = rollback_prefix / head_commit
+    rollback_identity = Mock(spec=CandidateRuntimeIdentity)
+    rollback_identity.candidate_root = rollback_dest
+    rollback_identity.candidate_root_device = 999
+    rollback_identity.candidate_root_inode = 888
+    rollback_identity.head_commit = head_commit
+    rollback_identity.tracked_tree_identity = "b" * 40
+    rollback_identity.accepted_dev_commit = "c" * 40
+    rollback_identity.repository_slug = "ajoe734/pantheon"
 
     with patch(
         "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
         prefix,
     ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+    ), patch(
+        "promote_supervisor_runtime._git_output",
+        return_value="b" * 40,
+    ), patch(
         "promote_supervisor_runtime.build_candidate_runtime_identity",
-        return_value=identity,
+        return_value=rollback_identity,
+    ):
+        res = promotion.materialize_immutable_rollback_runtime(
+            snapshot,
+            candidate_identity=candidate_identity,
+        )
+
+    assert res is rollback_identity
+    assert res.candidate_root != candidate_identity.candidate_root
+    assert (res.candidate_root_device, res.candidate_root_inode) != (
+        candidate_identity.candidate_root_device,
+        candidate_identity.candidate_root_inode,
+    )
+
+
+def test_materialize_immutable_rollback_runtime_rejects_injected_post_check_collision_without_overwrite_or_side_effects(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, commit, tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    prefix = tmp_path / "command-runtimes"
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+
+    direct_dest = prefix / commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+
+    rollback_dest = rollback_prefix / commit
+
+    process = _transaction_process_identity(
+        tmp_path / "source",
+        ProcessGeneration(77, 88, "S"),
+        commit=commit,
+        tree=tree,
+    )
+    snapshot = MutableIncumbentSnapshot(
+        root=tmp_path / "source",
+        root_device=1,
+        root_inode=2,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        repository_slug="ajoe734/pantheon",
+        process=process,
+        source_identities=(),
+    )
+
+    real_assert = promotion._assert_path_component_identities
+
+    def inject_collision(*args: Any, **kwargs: Any) -> None:
+        rollback_dest.mkdir(parents=True, exist_ok=True)
+        return real_assert(*args, **kwargs)
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "promote_supervisor_runtime._assert_path_component_identities",
+        side_effect=inject_collision,
     ):
         with pytest.raises(
             ValueError,
-            match="Fresh rollback runtime destination already exists",
+            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
         ):
             promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    assert rollback_dest.exists()
+    assert len(list(rollback_dest.iterdir())) == 0
+    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
+    assert len(leftovers) == 0
+
+
+def test_materialize_immutable_rollback_runtime_end_to_end_occupied_direct_destination_proves_real_separation_and_binding(
+    tmp_path: Path,
+) -> None:
+    _candidate_dir, runtime_parent, remote, commit, tree, _config_bytes = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    prefix = runtime_parent
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+    live_config_file = tmp_path / "runtime" / "live-supervisor-mainroot-config.json"
+
+    direct_dest = prefix / commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+    promotion._run_git(direct_dest, "init", "--quiet")
+    promotion._run_git(
+        direct_dest,
+        "remote",
+        "set-url",
+        "origin",
+        remote.as_uri(),
+    )
+    promotion._run_git(
+        direct_dest,
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "origin",
+        "+refs/heads/dev:refs/remotes/origin/dev",
+    )
+    promotion._run_git(
+        direct_dest,
+        "remote",
+        "set-url",
+        "origin",
+        promotion.TRUSTED_CANONICAL_ORIGIN_URL,
+    )
+    promotion._run_git(direct_dest, "checkout", "--quiet", "--detach", commit)
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "promote_supervisor_runtime.LIVE_SUPERVISOR_CONFIG_PATH",
+        live_config_file,
+    ):
+        candidate_identity = promotion.build_candidate_runtime_identity(direct_dest)
+        process = _transaction_process_identity(
+            tmp_path / "source",
+            ProcessGeneration(77, 88, "S"),
+            commit=commit,
+            tree=tree,
+        )
+        snapshot = MutableIncumbentSnapshot(
+            root=tmp_path / "source",
+            root_device=1,
+            root_inode=2,
+            head_commit=commit,
+            tracked_tree_identity=tree,
+            accepted_dev_commit=commit,
+            remote_url="https://github.com/ajoe734/pantheon.git",
+            repository_slug="ajoe734/pantheon",
+            process=process,
+            source_identities=(),
+        )
+        rollback_identity = promotion.materialize_immutable_rollback_runtime(
+            snapshot,
+            candidate_identity=candidate_identity,
+        )
+        reused_rollback_identity = promotion.materialize_immutable_rollback_runtime(
+            snapshot,
+            candidate_identity=candidate_identity,
+        )
+
+    rollback_dest = rollback_prefix / commit
+
+    assert isinstance(rollback_identity, promotion.CandidateRuntimeIdentity)
+    assert rollback_identity.candidate_root == rollback_dest
+    assert rollback_identity.candidate_root != candidate_identity.candidate_root
+    assert reused_rollback_identity.candidate_root == rollback_dest
+    assert (
+        reused_rollback_identity.candidate_root_device,
+        reused_rollback_identity.candidate_root_inode,
+    ) == (
+        rollback_identity.candidate_root_device,
+        rollback_identity.candidate_root_inode,
+    )
+
+    rollback_stat = rollback_dest.stat()
+    assert rollback_identity.candidate_root_device == rollback_stat.st_dev
+    assert rollback_identity.candidate_root_inode == rollback_stat.st_ino
+    assert (
+        rollback_identity.candidate_root_device,
+        rollback_identity.candidate_root_inode,
+    ) != (
+        candidate_identity.candidate_root_device,
+        candidate_identity.candidate_root_inode,
+    )
+
+    rollback_config = promotion.derive_supervisor_config_variant(
+        candidate_identity,
+        command_root=rollback_identity.candidate_root,
+    )
+    rollback_launch = promotion.build_governed_supervisor_launch_contract(
+        rollback_identity,
+        supervisor_argv=rollback_config.supervisor_argv,
+    )
+
+    assert rollback_config.command_root == rollback_identity.candidate_root
+    assert rollback_launch.cwd == rollback_identity.candidate_root
+    assert rollback_launch.cwd_device == rollback_identity.candidate_root_device
+    assert rollback_launch.cwd_inode == rollback_identity.candidate_root_inode
+    assert rollback_launch.status_command_root == rollback_identity.candidate_root
+
+
+def test_materialize_immutable_rollback_runtime_rejects_unsupported_renameat2_and_collision_without_os_rename_or_side_effects(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, commit, tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    prefix = tmp_path / "command-runtimes"
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+
+    direct_dest = prefix / commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+
+    rollback_dest = rollback_prefix / commit
+    rollback_dest.mkdir(parents=True, exist_ok=True)
+    (rollback_dest / "preexisting.txt").write_text("attacker content", encoding="utf-8")
+
+    process = _transaction_process_identity(
+        tmp_path / "source",
+        ProcessGeneration(77, 88, "S"),
+        commit=commit,
+        tree=tree,
+    )
+    snapshot = MutableIncumbentSnapshot(
+        root=tmp_path / "source",
+        root_device=1,
+        root_inode=2,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        repository_slug="ajoe734/pantheon",
+        process=process,
+        source_identities=(),
+    )
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "ctypes.CDLL",
+        side_effect=AttributeError("no renameat2 available"),
+    ), patch(
+        "os.rename",
+        side_effect=AssertionError("os.rename must never be called"),
+    ) as mock_rename:
+        with pytest.raises(
+            ValueError,
+            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    mock_rename.assert_not_called()
+    assert rollback_dest.exists()
+    assert (rollback_dest / "preexisting.txt").read_text(encoding="utf-8") == "attacker content"
+    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
+    assert len(leftovers) == 0
+
+
+def test_materialize_immutable_rollback_runtime_handles_syscall_level_eexist_after_precheck_without_os_rename_or_side_effects(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, commit, tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    prefix = tmp_path / "command-runtimes"
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+
+    direct_dest = prefix / commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+
+    rollback_dest = rollback_prefix / commit
+
+    process = _transaction_process_identity(
+        tmp_path / "source",
+        ProcessGeneration(77, 88, "S"),
+        commit=commit,
+        tree=tree,
+    )
+    snapshot = MutableIncumbentSnapshot(
+        root=tmp_path / "source",
+        root_device=1,
+        root_inode=2,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        repository_slug="ajoe734/pantheon",
+        process=process,
+        source_identities=(),
+    )
+
+    def mock_renameat2(*args: Any, **kwargs: Any) -> int:
+        rollback_dest.mkdir(parents=True, exist_ok=True)
+        (rollback_dest / "post_precheck_collision.txt").write_text(
+            "syscall collision", encoding="utf-8"
+        )
+        return -1
+
+    mock_libc = Mock()
+    mock_libc.renameat2 = mock_renameat2
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "ctypes.CDLL",
+        return_value=mock_libc,
+    ), patch(
+        "ctypes.get_errno",
+        return_value=errno.EEXIST,
+    ), patch(
+        "os.rename",
+        side_effect=AssertionError("os.rename must never be called"),
+    ) as mock_rename:
+        with pytest.raises(
+            ValueError,
+            match=f"Fresh rollback runtime destination already exists: {rollback_dest}",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    mock_rename.assert_not_called()
+    assert rollback_dest.exists()
+    assert (rollback_dest / "post_precheck_collision.txt").read_text(
+        encoding="utf-8"
+    ) == "syscall collision"
+    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
+    assert len(leftovers) == 0
+
+
+def test_materialize_immutable_rollback_runtime_rejects_unsupported_renameat2_when_destination_free_fails_closed_without_os_rename(
+    tmp_path: Path,
+) -> None:
+    _candidate, _parent, remote, commit, tree, _config = (
+        _make_candidate_fixture(tmp_path, full_preflight=True)
+    )
+    prefix = tmp_path / "command-runtimes"
+    rollback_prefix = tmp_path / "rollback-command-runtimes"
+    rollback_prefix.mkdir(parents=True, exist_ok=True)
+
+    direct_dest = prefix / commit
+    direct_dest.mkdir(parents=True, exist_ok=True)
+
+    rollback_dest = rollback_prefix / commit
+
+    process = _transaction_process_identity(
+        tmp_path / "source",
+        ProcessGeneration(77, 88, "S"),
+        commit=commit,
+        tree=tree,
+    )
+    snapshot = MutableIncumbentSnapshot(
+        root=tmp_path / "source",
+        root_device=1,
+        root_inode=2,
+        head_commit=commit,
+        tracked_tree_identity=tree,
+        accepted_dev_commit=commit,
+        remote_url="https://github.com/ajoe734/pantheon.git",
+        repository_slug="ajoe734/pantheon",
+        process=process,
+        source_identities=(),
+    )
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        prefix,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_prefix,
+    ), patch(
+        "promote_supervisor_runtime.TRUSTED_ORIGIN_DEV_URL",
+        remote.as_uri(),
+    ), patch(
+        "ctypes.CDLL",
+        side_effect=AttributeError("no renameat2 available"),
+    ), patch(
+        "os.rename",
+        side_effect=AssertionError("os.rename must never be called"),
+    ) as mock_rename:
+        with pytest.raises(
+            OSError,
+            match="Atomic no-replace rename is unavailable",
+        ):
+            promotion.materialize_immutable_rollback_runtime(snapshot)
+
+    mock_rename.assert_not_called()
+    assert not rollback_dest.exists()
+    leftovers = [p for p in rollback_prefix.iterdir() if p != rollback_dest]
+    assert len(leftovers) == 0
 
 
 def test_immutable_incumbent_legacy_task_brief_provenance_binding_registered() -> None:
@@ -7451,6 +7924,7 @@ def test_prepare_clean_sha_named_immutable_incumbent_succeeds(
         config_path: Path | None = None,
         *,
         allow_legacy_task_brief_drift: bool = False,
+        **kwargs: Any,
     ) -> promotion.CandidateRuntimeIdentity:
         if path == candidate_root:
             return candidate_identity
@@ -7482,3 +7956,1637 @@ def test_prepare_clean_sha_named_immutable_incumbent_succeeds(
         assert plan.incumbent_identity.legacy_task_brief_drift == ()
         assert mock_build_identity.call_count == 2
         assert mock_build_identity.call_args_list[1].kwargs.get("allow_legacy_task_brief_drift") is True
+
+
+def test_incumbent_bytecode_residue_admitted_when_capturing_incumbent(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
+    magic = importlib.util.MAGIC_NUMBER
+    pyc_content = magic + b"\x00" * 12 + b"header_data_payload_and_compiled_code_here"
+    pyc_file.write_bytes(pyc_content)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            cmd = args[0]
+            if cmd == "ls-files":
+                return Mock(stdout="")
+            elif cmd == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            elif cmd in ("diff-index", "diff-files"):
+                return Mock(stdout="")
+            return Mock(stdout="")
+
+        with patch(
+            "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+            tmp_path,
+        ), patch(
+            "promote_supervisor_runtime._candidate_handle",
+            return_value=(handle, False),
+        ), patch(
+            "promote_supervisor_runtime._read_head_tree",
+            return_value=("a" * 40, "b" * 40),
+        ), patch(
+            "promote_supervisor_runtime._capture_bound_gitlinks",
+            return_value=(),
+        ), patch(
+            "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
+        ), patch(
+            "promote_supervisor_runtime._assert_candidate_handle_path",
+        ), patch(
+            "promote_supervisor_runtime._run_git",
+            side_effect=mock_run_git,
+        ):
+            residues = promotion._capture_legacy_incumbent_bytecode_residue(handle)
+            assert len(residues) == 2
+            assert residues[0].relative_path == ".orchestrator/__pycache__"
+            assert isinstance(residues[0], promotion.LegacyIncumbentBytecodeDirectoryResidue)
+            assert residues[1].relative_path == f".orchestrator/__pycache__/supervisor.{tag}.pyc"
+            assert residues[1].source_relative_path == ".orchestrator/supervisor.py"
+            assert residues[1].cpython_tag == tag
+            assert residues[1].byte_length == len(pyc_content)
+            assert residues[1].sha256 == hashlib.sha256(pyc_content).hexdigest()
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_candidate_cleanliness_rejects_bytecode_residue(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator" / "__pycache__"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    (orch_dir / f"supervisor.{tag}.pyc").write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.path = real_root
+
+    def mock_run_git(h: Any, *args: str) -> Mock:
+        cmd = args[0]
+        if cmd == "ls-files":
+            return Mock(stdout="")
+        elif cmd == "status":
+            return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+        elif cmd in ("diff-index", "diff-files"):
+            return Mock(stdout="")
+        return Mock(stdout="")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        tmp_path,
+    ), patch(
+        "promote_supervisor_runtime._candidate_handle",
+        return_value=(handle, False),
+    ), patch(
+        "promote_supervisor_runtime._read_head_tree",
+        return_value=("a" * 40, "b" * 40),
+    ), patch(
+        "promote_supervisor_runtime._capture_bound_gitlinks",
+        return_value=(),
+    ), patch(
+        "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
+    ), patch(
+        "promote_supervisor_runtime._assert_candidate_handle_path",
+    ), patch(
+        "promote_supervisor_runtime._run_git",
+        side_effect=mock_run_git,
+    ):
+        with pytest.raises(ValueError, match="Forbidden ignored .* found in candidate root"):
+            promotion.verify_working_tree_cleanliness(
+                real_root,
+                allow_legacy_incumbent_bytecode_residue=False,
+            )
+
+
+def test_incumbent_bytecode_residue_rejects_pyo_files(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator" / "__pycache__"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyo_file = orch_dir / f"supervisor.{tag}.pyo"
+    pyo_file.write_bytes(b"pyo_content")
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            cmd = args[0]
+            if cmd == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyo\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="rejects .pyo files|Forbidden file"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_sourceless_pyc(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator" / "__pycache__"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = orch_dir / f"orphan_module.{tag}.pyc"
+    pyc_file.write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12 + b"code")
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/orphan_module.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="Source-less incumbent bytecode file rejected"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_prepare_incumbent_with_bytecode_residue_materializes_clean_rollback_runtime(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / ("a" * 40)
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    incumbent_root = tmp_path / ("b" * 40)
+    incumbent_root.mkdir(parents=True, exist_ok=True)
+    rollback_dest = tmp_path / "command-runtimes" / ("b" * 40)
+    rollback_dest.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(incumbent_root)
+    create_realistic_healthy_fixture(rollback_dest)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    incumbent_identity = _verified_identity_dependency(incumbent_root)
+    incumbent_identity.config_path = candidate_identity.config_path
+    incumbent_identity.config_bytes = candidate_identity.config_bytes
+    incumbent_identity.config_sha256 = candidate_identity.config_sha256
+    incumbent_identity.legacy_incumbent_bytecode_residue = (
+        promotion.LegacyIncumbentBytecodeResidue(
+            relative_path=".orchestrator/__pycache__/supervisor.cpython-312.pyc",
+            device=1,
+            inode=2,
+            mode=33188,
+            nlink=1,
+            byte_length=100,
+            sha256="abc",
+            cpython_tag="cpython-312",
+            source_relative_path=".orchestrator/supervisor.py",
+        ),
+    )
+
+    clean_rollback_identity = _verified_identity_dependency(rollback_dest)
+    clean_rollback_identity.config_path = candidate_identity.config_path
+    clean_rollback_identity.config_bytes = candidate_identity.config_bytes
+    clean_rollback_identity.config_sha256 = candidate_identity.config_sha256
+
+    incumbent_process = _verified_process_identity_dependency(incumbent_root)
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    def _mock_build_identity(path: Path, *args: Any, **kwargs: Any) -> promotion.CandidateRuntimeIdentity:
+        if path == candidate_root:
+            return candidate_identity
+        if path == incumbent_root:
+            return incumbent_identity
+        if path == rollback_dest:
+            return clean_rollback_identity
+        raise ValueError(f"Unexpected path: {path}")
+
+    with patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        side_effect=_mock_build_identity,
+    ), patch(
+        "promote_supervisor_runtime._discover_supervisor_seed",
+        return_value=(
+            incumbent_process.generation,
+            incumbent_process.argv,
+            incumbent_process.cwd,
+        ),
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=incumbent_process,
+    ), patch(
+        "promote_supervisor_runtime.materialize_immutable_rollback_runtime",
+        return_value=clean_rollback_identity,
+    ) as mock_mat, patch(
+        "promote_supervisor_runtime.capture_runtime_observation",
+        return_value=Mock(invariant_failures=()),
+    ):
+        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+        assert mock_mat.called
+        assert plan.incumbent_identity == clean_rollback_identity
+        assert plan.incumbent_identity.candidate_root == rollback_dest
+        assert len(plan.incumbent_identity.legacy_incumbent_bytecode_residue) == 0
+
+
+def test_immutable_incumbent_promotion_prepare_and_revalidate_passes_flock_id_churn_opt_in(
+    tmp_path: Path,
+) -> None:
+    runtimes_dir = tmp_path / "command-runtimes"
+    candidate_root = runtimes_dir / ("a" * 40)
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    incumbent_root = runtimes_dir / ("b" * 40)
+    incumbent_root.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(incumbent_root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    incumbent_identity = _verified_identity_dependency(incumbent_root)
+    incumbent_identity.config_path = candidate_identity.config_path
+    incumbent_identity.config_bytes = candidate_identity.config_bytes
+    incumbent_identity.config_sha256 = candidate_identity.config_sha256
+    incumbent_process = replace(
+        _verified_process_identity_dependency(incumbent_root),
+        argv=tuple(json.loads(incumbent_identity.config_bytes)["watchdog"]["supervisor_command"]),
+    )
+
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    def _mock_build_identity(
+        path: Path,
+        config_path: Path | None = None,
+        *,
+        allow_legacy_task_brief_drift: bool = False,
+        **kwargs: Any,
+    ) -> promotion.CandidateRuntimeIdentity:
+        if path == candidate_root:
+            return candidate_identity
+        if path == incumbent_root:
+            return incumbent_identity
+        raise ValueError(f"Unexpected path: {path}")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        side_effect=_mock_build_identity,
+    ), patch(
+        "promote_supervisor_runtime._discover_supervisor_seed",
+        return_value=(
+            incumbent_process.generation,
+            incumbent_process.argv,
+            incumbent_process.cwd,
+        ),
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=incumbent_process,
+    ) as mock_discover, patch(
+        "promote_supervisor_runtime.capture_runtime_observation",
+        return_value=Mock(invariant_failures=()),
+    ) as mock_capture:
+        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+        assert plan.incumbent_process.generation == incumbent_process.generation
+
+        # Verify discover_incumbent_supervisor_process was called with allow_legacy_admission_lock_id_churn=True
+        assert mock_discover.call_args.kwargs.get("allow_legacy_admission_lock_id_churn") is True
+
+        # Verify capture_runtime_observation was called with allow_legacy_admission_lock_id_churn=True
+        assert mock_capture.call_args.kwargs.get("allow_legacy_admission_lock_id_churn") is True
+
+        # Test revalidate under immutable incumbent
+        mock_capture.reset_mock()
+        observation = backend.revalidate(plan)
+        assert observation is not None
+        assert mock_capture.call_args.kwargs.get("allow_legacy_admission_lock_id_churn") is True
+
+
+def test_immutable_incumbent_discover_process_accepts_verified_flock_id_churn(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(original, kernel_lock_id="72")
+
+    identity = _discover_injected(
+        candidate,
+        reader,
+        allow_legacy_admission_lock_id_churn=True,
+    )
+
+    assert (
+        identity.admission_lock.kernel_lock_id
+        == promotion.MUTABLE_BOOTSTRAP_DYNAMIC_FLOCK_ID
+    )
+
+
+def test_immutable_incumbent_discover_process_rejects_flock_id_churn_without_opt_in(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(original, kernel_lock_id="72")
+
+    with pytest.raises(ValueError, match="admission lock generation mismatch"):
+        _discover_injected(
+            candidate,
+            reader,
+            allow_legacy_admission_lock_id_churn=False,
+        )
+
+
+def test_incumbent_bytecode_residue_rejects_symlink_directory(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    symlink_target = tmp_path / "target_dir"
+    symlink_target.mkdir(parents=True, exist_ok=True)
+    os.symlink(symlink_target, pycache_dir / "__pycache__")
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout="!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="rejects symlinks|Forbidden file or directory"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_symlink_file(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    symlink_target = tmp_path / "outside.pyc"
+    symlink_target.write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12 + b"data")
+    os.symlink(symlink_target, pycache_dir / f"supervisor.{tag}.pyc")
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="rejects symlinks|is a symlink"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_nested_directory(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    nested_dir = pycache_dir / "nested"
+    nested_dir.mkdir(parents=True, exist_ok=True)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout="!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="Forbidden sub-directory in incumbent bytecode residue"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_empty_directory(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout="!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="Incumbent bytecode residue directory is empty"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_hardlink(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
+    pyc_file.write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 12 + b"data")
+    hardlink_file = pycache_dir / f"hardlink.{tag}.pyc"
+    os.link(pyc_file, hardlink_file)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="hard linked"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_foreign_magic(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
+    pyc_file.write_bytes(b"BAD_MAGIC_HEADER_TEST_BYTES")
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            with pytest.raises(ValueError, match="magic number mismatch"):
+                promotion._capture_legacy_incumbent_bytecode_residue(handle)
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_post_capture_mutation(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
+    magic = importlib.util.MAGIC_NUMBER
+    pyc_content = magic + b"\x00" * 12 + b"original_compiled_code"
+    pyc_file.write_bytes(pyc_content)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0")
+            return Mock(stdout="")
+
+        with patch("promote_supervisor_runtime._read_head_tree", return_value=("a" * 40, "b" * 40)), \
+             patch("promote_supervisor_runtime._run_git", side_effect=mock_run_git):
+            residues = promotion._capture_legacy_incumbent_bytecode_residue(handle)
+            assert len(residues) == 2
+
+            # Mutate pyc file after capture
+            pyc_file.write_bytes(magic + b"\x00" * 12 + b"MUTATED_compiled_code")
+
+            with pytest.raises(ValueError, match="Incumbent legacy bytecode residue changed during validation"):
+                promotion.verify_working_tree_cleanliness(
+                    handle,
+                    expected_head="a" * 40,
+                    expected_tree="b" * 40,
+                    allow_legacy_incumbent_bytecode_residue=True,
+                    expected_legacy_incumbent_bytecode_residue=residues,
+                )
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_incumbent_bytecode_residue_rejects_post_capture_directory_replacement(
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / ("a" * 40)
+    real_root.mkdir(parents=True, exist_ok=True)
+    orch_dir = real_root / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "supervisor.py").write_text("print('supervisor')\n")
+    pycache_dir = orch_dir / "__pycache__"
+    pycache_dir.mkdir(parents=True, exist_ok=True)
+    tag = getattr(sys.implementation, "cache_tag", "cpython-312")
+    pyc_file = pycache_dir / f"supervisor.{tag}.pyc"
+    magic = importlib.util.MAGIC_NUMBER
+    pyc_content = magic + b"\x00" * 12 + b"original_compiled_code"
+    pyc_file.write_bytes(pyc_content)
+
+    handle = Mock(spec=promotion.CandidateRootHandle)
+    handle.descriptor = os.open(real_root, os.O_RDONLY | os.O_CLOEXEC)
+    handle.path = real_root
+    try:
+        def mock_run_git(h: Any, *args: str) -> Mock:
+            if args[0] == "status":
+                return Mock(
+                    stdout=f"!! .orchestrator/__pycache__/supervisor.{tag}.pyc\0!! .orchestrator/__pycache__/\0"
+                )
+            return Mock(stdout="")
+
+        with patch(
+            "promote_supervisor_runtime._read_head_tree",
+            return_value=("a" * 40, "b" * 40),
+        ), patch(
+            "promote_supervisor_runtime._capture_bound_gitlinks",
+            return_value=(),
+        ), patch(
+            "promote_supervisor_runtime._assert_tracked_gitlink_worktrees",
+        ), patch(
+            "promote_supervisor_runtime._assert_candidate_handle_path",
+        ), patch(
+            "promote_supervisor_runtime._run_git",
+            side_effect=mock_run_git,
+        ):
+            residues = promotion._capture_legacy_incumbent_bytecode_residue(handle)
+            assert len(residues) == 2
+
+            # Replace admitted directory while preserving exact pyc file (same inode/digest/path)
+            backup_dir = tmp_path / "backup"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            temp_pyc = backup_dir / pyc_file.name
+            shutil.move(str(pyc_file), str(temp_pyc))
+            pycache_dir.rmdir()
+            # Create a dummy dir to consume the freed inode so recreated pycache_dir gets a new inode
+            (orch_dir / "dummy_claim_inode").mkdir(parents=True, exist_ok=True)
+            pycache_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(temp_pyc), str(pyc_file))
+
+            with pytest.raises(
+                ValueError,
+                match="Incumbent legacy bytecode residue changed during validation",
+            ):
+                promotion.verify_working_tree_cleanliness(
+                    handle,
+                    expected_head="a" * 40,
+                    expected_tree="b" * 40,
+                    allow_legacy_incumbent_bytecode_residue=True,
+                    expected_legacy_incumbent_bytecode_residue=residues,
+                )
+    finally:
+        os.close(handle.descriptor)
+
+
+def test_mutable_incumbent_snapshot_accepts_split_entrypoint_root(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    entrypoint_root = (
+        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    )
+    (entrypoint_root / ".orchestrator").mkdir(parents=True)
+    (entrypoint_root / "scripts").mkdir(parents=True)
+
+    source_specs = [
+        (".orchestrator/supervisor.py", False),
+        (".orchestrator/supervisor_watchdog.py", True),
+        ("scripts/run-supervisor-watchdog.sh", True),
+        ("scripts/sync-dev-root.sh", True),
+        ("scripts/ai-status.sh", True),
+        ("scripts/ai_status.py", False),
+        ("scripts/provision_live_supervisor_config.py", False),
+    ]
+    for rel_path, is_exec in source_specs:
+        src = identity.candidate_root / rel_path
+        dst = entrypoint_root / rel_path
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+        if is_exec:
+            dst.chmod(0o755)
+
+    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
+    split_argv = (
+        argv[0],
+        argv[1],
+        argv[2],
+        str(split_entrypoint),
+        *argv[4:],
+    )
+    reader.argv[1717] = split_argv
+    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(split_argv)
+        ),
+    )
+
+    binding_cwd = _mutable_binding_stub(identity)
+    binding_ep = _mutable_binding_stub(identity)
+
+    def mock_binding(cwd, **kwargs):
+        if cwd.path == entrypoint_root:
+            return binding_ep
+        return binding_cwd
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        side_effect=mock_binding,
+    ):
+        snapshot = promotion.capture_mutable_incumbent_snapshot(
+            identity,
+            reader=reader,
+            seed_generation=reader.generations[1717],
+            seed_argv=split_argv,
+            seed_cwd=reader.cwd[1717],
+        )
+
+    assert snapshot.is_split_entrypoint is True
+    assert snapshot.entrypoint_root == entrypoint_root
+    assert snapshot.root == reader.cwd[1717].path
+    assert snapshot.process.argv == split_argv
+
+
+def test_mutable_incumbent_snapshot_rejects_split_entrypoint_wrong_command_root(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    entrypoint_root = (
+        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    )
+    (entrypoint_root / ".orchestrator").mkdir(parents=True)
+    (entrypoint_root / "scripts").mkdir(parents=True)
+
+    source_specs = [
+        (".orchestrator/supervisor.py", False),
+        (".orchestrator/supervisor_watchdog.py", True),
+        ("scripts/run-supervisor-watchdog.sh", True),
+        ("scripts/sync-dev-root.sh", True),
+        ("scripts/ai-status.sh", True),
+        ("scripts/ai_status.py", False),
+        ("scripts/provision_live_supervisor_config.py", False),
+    ]
+    for rel_path, is_exec in source_specs:
+        src = identity.candidate_root / rel_path
+        dst = entrypoint_root / rel_path
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+        if is_exec:
+            dst.chmod(0o755)
+
+    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
+    split_argv = (
+        argv[0],
+        argv[1],
+        argv[2],
+        str(split_entrypoint),
+        *argv[4:],
+    )
+    reader.argv[1717] = split_argv
+    # Wrong command root in process environment (leaving it at cwd candidate instead of entrypoint_root)
+    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(identity.candidate_root)
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(split_argv)
+        ),
+    )
+
+    binding_cwd = _mutable_binding_stub(identity)
+    binding_ep = _mutable_binding_stub(identity)
+
+    def mock_binding(cwd, **kwargs):
+        if cwd.path == entrypoint_root:
+            return binding_ep
+        return binding_cwd
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        side_effect=mock_binding,
+    ):
+        with pytest.raises(ValueError, match="PANTHEON_COMMAND_ROOT"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=split_argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
+def test_mutable_incumbent_snapshot_rejects_split_entrypoint_commit_mismatch(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    entrypoint_root = (
+        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    )
+    (entrypoint_root / ".orchestrator").mkdir(parents=True)
+    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
+    split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
+    split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
+    reader.argv[1717] = split_argv
+    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(split_argv)
+        ),
+    )
+
+    binding_cwd = _mutable_binding_stub(identity)
+    binding_ep_list = list(binding_cwd)
+    binding_ep_list[0] = "b" * 40
+    binding_ep = tuple(binding_ep_list)
+
+    def mock_binding(cwd, **kwargs):
+        if cwd.path == entrypoint_root:
+            return binding_ep
+        return binding_cwd
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        side_effect=mock_binding,
+    ):
+        with pytest.raises(ValueError, match="HEAD commit differs from cwd"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=split_argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
+def test_mutable_incumbent_snapshot_rejects_split_entrypoint_tree_mismatch(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    entrypoint_root = (
+        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    )
+    (entrypoint_root / ".orchestrator").mkdir(parents=True)
+    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
+    split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
+    split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
+    reader.argv[1717] = split_argv
+    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(split_argv)
+        ),
+    )
+
+    binding_cwd = _mutable_binding_stub(identity)
+    binding_ep_list = list(binding_cwd)
+    binding_ep_list[1] = "c" * 40
+    binding_ep = tuple(binding_ep_list)
+
+    def mock_binding(cwd, **kwargs):
+        if cwd.path == entrypoint_root:
+            return binding_ep
+        return binding_cwd
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        side_effect=mock_binding,
+    ):
+        with pytest.raises(ValueError, match="tracked tree differs from cwd"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=split_argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
+def test_mutable_incumbent_snapshot_rejects_split_entrypoint_governed_source_drift(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    entrypoint_root = (
+        tmp_path / "command-runtimes" / "5877b64425c8d6aede147d6cbbc6fbb9e228c259"
+    )
+    (entrypoint_root / ".orchestrator").mkdir(parents=True)
+    split_entrypoint = entrypoint_root / ".orchestrator" / "supervisor.py"
+    split_entrypoint.write_text("# entrypoint\n", encoding="utf-8")
+    split_argv = (argv[0], argv[1], argv[2], str(split_entrypoint), *argv[4:])
+    reader.argv[1717] = split_argv
+    reader.environment[1717]["PANTHEON_COMMAND_ROOT"] = str(entrypoint_root)
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(split_argv)
+        ),
+    )
+
+    dummy_source = promotion.LaunchFileIdentity(
+        role="supervisor",
+        path=tmp_path / "supervisor.py",
+        device=1,
+        inode=1,
+        mode=33188,
+        byte_length=10,
+        sha256="a" * 64,
+    )
+    binding_cwd = _mutable_binding_stub(identity)
+    binding_cwd_list = list(binding_cwd)
+    binding_cwd_list[5] = (dummy_source,)
+    binding_cwd = tuple(binding_cwd_list)
+
+    binding_ep_list = list(binding_cwd)
+    sources_ep = [replace(dummy_source, sha256="b" * 64)]
+    binding_ep_list[5] = tuple(sources_ep)
+    binding_ep = tuple(binding_ep_list)
+
+    def mock_binding(cwd, **kwargs):
+        if cwd.path == entrypoint_root:
+            return binding_ep
+        return binding_cwd
+
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        side_effect=mock_binding,
+    ):
+        with pytest.raises(ValueError, match="governed source byte drift"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=split_argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
+
+def test_mutable_incumbent_snapshot_rejects_relative_split_entrypoint(
+    tmp_path: Path,
+) -> None:
+    identity, reader, argv = _injected_process_fixture(tmp_path)
+    rel_argv = (argv[0], argv[1], argv[2], ".orchestrator/supervisor.py", *argv[4:])
+    reader.argv[1717] = rel_argv
+    identity = _replace_identity_live_config(
+        identity,
+        lambda payload: payload["watchdog"].__setitem__(
+            "supervisor_command", list(rel_argv)
+        ),
+    )
+    binding = _mutable_binding_stub(identity)
+    with patch(
+        "promote_supervisor_runtime._mutable_root_binding",
+        return_value=binding,
+    ):
+        with pytest.raises(ValueError, match="entrypoint path must be absolute"):
+            promotion.capture_mutable_incumbent_snapshot(
+                identity,
+                reader=reader,
+                seed_generation=reader.generations[1717],
+                seed_argv=rel_argv,
+                seed_cwd=reader.cwd[1717],
+            )
+
+
+def test_worker_lease_parity_ignores_unstarted_queued_or_pending_events() -> None:
+    """Queued and pending events do not have lease_owner yet and should not trigger missing_lease_owner."""
+    health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 100}}
+    ai_status = {"tasks": []}
+    state = {
+        "supervisor": {"lifecycle": "running"},
+        "workers": {},
+        "queue": {
+            "events": {
+                "evt-queued-1": {"status": "queued", "task_id": "T1"},
+                "evt-pending-2": {"status": "pending", "task_id": "T2"},
+            }
+        },
+        "worker_worktrees": {"leases": {}},
+    }
+
+    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
+        invariants = evaluate_promotion_invariants(
+            health_report=health_report,
+            ai_status=ai_status,
+            state=state,
+            lock_path=Path("/tmp/fake.lock"),
+        )
+
+    worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
+    assert worker_inv["ok"] is True
+    assert len(worker_inv["details"]["reasons"]) == 0
+
+
+def test_worker_lease_parity_rejects_started_event_missing_lease_owner() -> None:
+    """A started queue event without a lease_owner must fail-closed with missing_lease_owner."""
+    health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 100}}
+    ai_status = {"tasks": []}
+    state = {
+        "supervisor": {"lifecycle": "running"},
+        "workers": {},
+        "queue": {
+            "events": {
+                "evt-started-1": {"status": "started", "task_id": "T1"},
+            }
+        },
+        "worker_worktrees": {"leases": {}},
+    }
+
+    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
+        invariants = evaluate_promotion_invariants(
+            health_report=health_report,
+            ai_status=ai_status,
+            state=state,
+            lock_path=Path("/tmp/fake.lock"),
+        )
+
+    worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
+    assert worker_inv["ok"] is False
+    assert "missing_lease_owner:evt-started-1" in worker_inv["details"]["reasons"]
+
+
+def test_worker_lease_parity_coherent_started_event_passes() -> None:
+    """A fully coherent started queue event with worker and lease passes invariant checks."""
+    health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 100}}
+    ai_status = {"tasks": []}
+    state = {
+        "supervisor": {"lifecycle": "running"},
+        "workers": {
+            "w1": {
+                "status": "running",
+                "current_task_id": "T1",
+                "run_id": "w1-run",
+                "queue_event_id": "evt-1",
+            }
+        },
+        "queue": {
+            "events": {
+                "evt-1": {
+                    "status": "started",
+                    "task_id": "T1",
+                    "run_id": "w1-run",
+                    "lease_owner": "w1-run",
+                }
+            }
+        },
+        "worker_worktrees": {
+            "leases": {
+                "l1": {"task_id": "T1", "run_id": "w1-run", "queue_event_id": "evt-1"}
+            }
+        },
+    }
+
+    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch("promote_supervisor_runtime.lock_held", return_value=True):
+        invariants = evaluate_promotion_invariants(
+            health_report=health_report,
+            ai_status=ai_status,
+            state=state,
+            lock_path=Path("/tmp/fake.lock"),
+        )
+
+    worker_inv = next(i for i in invariants if i["name"] == "worker_lease_parity_and_no_duplicates")
+    assert worker_inv["ok"] is True
+    assert len(worker_inv["details"]["reasons"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811 Adversarial Tests
+# ---------------------------------------------------------------------------
+
+def test_task_state_event_log_concurrent_append_during_capture(tmp_path: Path) -> None:
+    """Prove concurrent append growth during journal capture succeeds without changing identity baseline."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+
+    # Build initial contract
+    contract = build_governed_supervisor_launch_contract(candidate)
+    assert contract.task_state_event_log_identity is not None
+    initial_identity = contract.task_state_event_log_identity
+    initial_size = initial_identity.captured_size
+
+    # Concurrently append bytes to the live journal
+    with event_log.open("a") as f:
+        f.write('{"event": "concurrent_append_test", "ts": "2026-08-11T02:00:00Z"}\n')
+
+    # Re-capture / build contract with baseline identity
+    contract_after = build_governed_supervisor_launch_contract(
+        candidate,
+        baseline_task_state_event_log_identity=initial_identity,
+    )
+    assert contract_after.task_state_event_log_identity is not None
+    assert contract_after.task_state_event_log_identity == initial_identity
+    assert contract_after.task_state_event_log_identity.captured_size == initial_size
+    assert contract_after.task_state_event_log_identity.captured_at_size > initial_size
+    assert contract_after == contract
+
+
+def test_task_state_event_log_reproduction_transaction_f031441_concurrent_append(tmp_path: Path) -> None:
+    """Reproduce transaction f031441af607e8bd9631e4b08b34315a417209f9223c515ff8fb40aeb452ee9e:
+
+    The 8.23 GB append-only event log receives concurrent appends during promotion preflight/revalidation.
+    With descriptor-bound append-only journal capture, promotion does NOT fail with 'changed during capture'.
+    """
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+
+    # Simulate active concurrent appends by monkey-patching _hash_descriptor_range to write appends mid-capture
+    original_hash = promotion._hash_descriptor_range
+    appended = False
+
+    def hashing_with_concurrent_append(descriptor: int, *, length: int) -> str:
+        nonlocal appended
+        res = original_hash(descriptor, length=length)
+        if not appended:
+            appended = True
+            with event_log.open("a") as f:
+                f.write('{"event": "live_append_during_hash"}\n')
+        return res
+
+    with patch.object(promotion, "_hash_descriptor_range", side_effect=hashing_with_concurrent_append):
+        contract = build_governed_supervisor_launch_contract(candidate)
+
+    assert contract.task_state_event_log_identity is not None
+    assert contract.task_state_event_log_identity.captured_at_size > contract.task_state_event_log_identity.captured_size
+
+
+def test_task_state_event_log_rejects_prefix_overwrite(tmp_path: Path) -> None:
+    """Overwriting bytes in the journal prefix must abort promotion preflight."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_log.write_bytes(b"initial_prefix_data_12345\n")
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    # Overwrite prefix byte at offset 2
+    with event_log.open("r+b") as f:
+        f.seek(2)
+        f.write(b"X")
+
+    with pytest.raises(ValueError, match="prefix changed"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_rejects_same_size_rewrite(tmp_path: Path) -> None:
+    """Rewriting journal content without changing file size must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_log.write_bytes(b"abcdefghijklmnopqrstuvwxyz\n")
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    # Replace bytes with same length
+    with event_log.open("r+b") as f:
+        f.seek(5)
+        f.write(b"12345")
+
+    with pytest.raises(ValueError, match="prefix changed"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_rejects_truncation(tmp_path: Path) -> None:
+    """Truncating journal size below baseline must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_log.write_bytes(b"line1\nline2\nline3\nline4\n")
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    # Truncate file
+    with event_log.open("r+b") as f:
+        f.truncate(5)
+
+    with pytest.raises(ValueError, match="truncated below baseline size"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_rejects_truncate_and_regrow(tmp_path: Path) -> None:
+    """Truncating and regrowing journal content must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_log.write_bytes(b"original_journal_content_block_1\n")
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    # Truncate and rewrite new content to same or larger size
+    event_log.write_bytes(b"completely_new_journal_content_2\n")
+
+    with pytest.raises(ValueError, match="prefix changed"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_rejects_inode_swap(tmp_path: Path) -> None:
+    """Replacing the journal file with a new file (different inode) must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    # Create replacement file first so OS assigns a distinct inode, then atomic replace
+    replacement = tmp_path / "replacement.jsonl"
+    replacement.write_bytes(b"new_file_different_inode\n")
+    os.replace(replacement, event_log)
+
+    with pytest.raises(ValueError, match="inode changed"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_rejects_symlink(tmp_path: Path) -> None:
+    """Replacing the journal file with a symlink must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    target = tmp_path / "symlink-target.jsonl"
+    target.write_bytes(b"target\n")
+
+    event_log.unlink()
+    event_log.symlink_to(target)
+
+    with pytest.raises(ValueError, match="symlink|non-directory component"):
+        build_governed_supervisor_launch_contract(candidate)
+
+
+def test_task_state_event_log_rejects_hard_link(tmp_path: Path) -> None:
+    """Hard-linked journal file must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    link = tmp_path / "hard-link.jsonl"
+    link.hardlink_to(event_log)
+
+    with pytest.raises(ValueError, match="must not be hard-linked"):
+        build_governed_supervisor_launch_contract(candidate)
+
+
+def test_task_state_event_log_rejects_mode_drift(tmp_path: Path) -> None:
+    """Mode permission drift on journal file must abort promotion."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+
+    contract = build_governed_supervisor_launch_contract(candidate)
+    baseline = contract.task_state_event_log_identity
+
+    event_log.chmod(0o777)
+
+    with pytest.raises(ValueError, match="mode changed"):
+        build_governed_supervisor_launch_contract(
+            candidate,
+            baseline_task_state_event_log_identity=baseline,
+        )
+
+
+def test_task_state_event_log_handles_empty_and_large_journals(tmp_path: Path) -> None:
+    """Empty journals (0 bytes) and large journals behave cleanly under append capture."""
+    candidate, _reader, _argv = _injected_process_fixture(tmp_path)
+    event_log = Path(json.loads(candidate.config_bytes)["task_state_store"]["event_log"])
+    event_log.write_bytes(b"")
+
+    # Empty journal
+    contract1 = build_governed_supervisor_launch_contract(candidate)
+    assert contract1.task_state_event_log_identity is not None
+    assert contract1.task_state_event_log_identity.captured_size == 0
+
+    # Append to empty journal
+    event_log.write_bytes(b"x" * 200000)  # 200 KB
+    contract2 = build_governed_supervisor_launch_contract(
+        candidate,
+        baseline_task_state_event_log_identity=contract1.task_state_event_log_identity,
+    )
+    assert contract2.task_state_event_log_identity == contract1.task_state_event_log_identity
+    assert contract2.task_state_event_log_identity.captured_at_size == 200000
+
+
+def test_task_state_event_log_immutable_sources_remain_fail_closed(tmp_path: Path) -> None:
+    """Immutable launch sources (supervisor.py, interpreter, config) must still reject mutations during capture."""
+    fs = promotion.OSLaunchFilesystem()
+    test_file = tmp_path / "supervisor.py"
+    test_file.write_bytes(b"print('hello')\n")
+
+    original_fdopen = os.fdopen
+
+    def fdopen_with_mutation(fd: int, *args: Any, **kwargs: Any) -> Any:
+        handle = original_fdopen(fd, *args, **kwargs)
+        with test_file.open("a") as f:
+            f.write("# concurrent_mutation\n")
+        return handle
+
+    with patch("os.fdopen", side_effect=fdopen_with_mutation):
+        with pytest.raises(ValueError, match="Governed launch supervisor changed during capture"):
+            fs.capture_regular_file(test_file, role="supervisor", require_executable=False)
+
+
+def test_active_immutable_incumbent_config_entrypoint_bound_separately_from_rollback_root(
+    tmp_path: Path,
+) -> None:
+    """Active immutable incumbent live config and process bind active command runtime, while rollback root is distinct."""
+    command_runtimes_dir = tmp_path / "command-runtimes"
+    rollback_runtimes_dir = tmp_path / "rollback-command-runtimes"
+    candidate_root = command_runtimes_dir / ("a" * 40)
+    active_incumbent_root = command_runtimes_dir / ("b" * 40)
+    rollback_root = rollback_runtimes_dir / ("b" * 40)
+
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    active_incumbent_root.mkdir(parents=True, exist_ok=True)
+    rollback_root.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(active_incumbent_root)
+    create_realistic_healthy_fixture(rollback_root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    active_incumbent_identity = _verified_identity_dependency(active_incumbent_root)
+    active_incumbent_identity.legacy_incumbent_bytecode_residue = ("some_file.pyc",)
+    rollback_identity = _verified_identity_dependency(rollback_root)
+
+    active_incumbent_identity.config_path = candidate_identity.config_path
+    rollback_identity.config_path = candidate_identity.config_path
+
+    executable = str(Path(sys.executable).resolve())
+    active_cmd = [
+        executable,
+        str(active_incumbent_root / ".orchestrator" / "supervisor.py"),
+        "--config",
+        str(candidate_identity.config_path),
+    ]
+
+    config_dict = json.loads(candidate_identity.config_bytes)
+    config_dict["watchdog"]["supervisor_command"] = active_cmd
+    live_config_bytes = (json.dumps(config_dict, sort_keys=True) + "\n").encode("utf-8")
+    candidate_identity.config_path.write_bytes(live_config_bytes)
+
+    candidate_identity.config_bytes = live_config_bytes
+    candidate_identity.config_sha256 = promotion.hashlib.sha256(live_config_bytes).hexdigest()
+    active_incumbent_identity.config_bytes = live_config_bytes
+    active_incumbent_identity.config_sha256 = candidate_identity.config_sha256
+    rollback_identity.config_bytes = live_config_bytes
+    rollback_identity.config_sha256 = candidate_identity.config_sha256
+
+    active_process = replace(
+        _verified_process_identity_dependency(active_incumbent_root),
+        argv=tuple(active_cmd),
+        executable=Path(executable),
+    )
+
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    def _mock_build_identity(
+        path: Path,
+        config_path: Path | None = None,
+        *,
+        allow_legacy_task_brief_drift: bool = False,
+        allow_legacy_incumbent_bytecode_residue: bool = False,
+        **kwargs: Any,
+    ) -> promotion.CandidateRuntimeIdentity:
+        if path == candidate_root:
+            return candidate_identity
+        if path == active_incumbent_root:
+            return active_incumbent_identity
+        if path == rollback_root:
+            return rollback_identity
+        raise ValueError(f"Unexpected path: {path}")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        command_runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        side_effect=_mock_build_identity,
+    ), patch(
+        "promote_supervisor_runtime._discover_supervisor_seed",
+        return_value=(
+            active_process.generation,
+            active_process.argv,
+            active_process.cwd,
+        ),
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=active_process,
+    ), patch(
+        "promote_supervisor_runtime.materialize_immutable_rollback_runtime",
+        return_value=rollback_identity,
+    ), patch(
+        "promote_supervisor_runtime.capture_runtime_observation",
+        return_value=Mock(invariant_failures=()),
+    ) as mock_capture:
+        plan = backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+        assert plan.active_incumbent_identity == active_incumbent_identity
+        assert plan.incumbent_identity == rollback_identity
+        assert plan.candidate_config.command_root == candidate_root
+        assert plan.rollback_config.command_root == rollback_root
+
+        # Live config on disk must NOT be mutated during prepare
+        assert candidate_identity.config_path.read_bytes() == live_config_bytes
+
+        # Revalidate pre-CAS must succeed using active_incumbent_identity
+        mock_capture.reset_mock()
+        observation = backend.revalidate(plan)
+        assert observation is not None
+        assert mock_capture.call_args[0][0] == active_incumbent_identity
+
+
+def test_revalidate_rejects_pre_cas_live_config_naming_rollback_root(
+    tmp_path: Path,
+) -> None:
+    """Pre-CAS live config naming rollback root instead of active incumbent root must be rejected."""
+    command_runtimes_dir = tmp_path / "command-runtimes"
+    rollback_runtimes_dir = tmp_path / "rollback-command-runtimes"
+    candidate_root = command_runtimes_dir / ("a" * 40)
+    active_incumbent_root = command_runtimes_dir / ("b" * 40)
+    rollback_root = rollback_runtimes_dir / ("b" * 40)
+
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    active_incumbent_root.mkdir(parents=True, exist_ok=True)
+    rollback_root.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(active_incumbent_root)
+    create_realistic_healthy_fixture(rollback_root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    active_incumbent_identity = _verified_identity_dependency(active_incumbent_root)
+    rollback_identity = _verified_identity_dependency(rollback_root)
+
+    executable = str(Path(sys.executable).resolve())
+
+    # Wrong live config: names rollback_root instead of active_incumbent_root
+    wrong_cmd = [
+        executable,
+        str(rollback_root / ".orchestrator" / "supervisor.py"),
+        "--config",
+        str(candidate_identity.config_path),
+    ]
+    active_process = replace(
+        _verified_process_identity_dependency(active_incumbent_root),
+        argv=tuple(wrong_cmd),
+        executable=Path(executable),
+    )
+
+    plan = promotion.PromotionPlan(
+        candidate_identity=candidate_identity,
+        candidate_config=promotion.derive_supervisor_config_variant(candidate_identity, command_root=candidate_root),
+        candidate_launch=promotion.build_governed_supervisor_launch_contract(candidate_identity),
+        incumbent_identity=rollback_identity,
+        rollback_config=promotion.derive_supervisor_config_variant(rollback_identity, command_root=rollback_root),
+        incumbent_process=active_process,
+        mutable_incumbent=None,
+        rollback_launch=promotion.build_governed_supervisor_launch_contract(rollback_identity),
+        baseline=Mock(invariant_failures=()),
+        promotion_lock_path=tmp_path / "promo.lock",
+        runtime_admission_lock_path=tmp_path / "admission.lock",
+        active_incumbent_identity=active_incumbent_identity,
+    )
+
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    with patch.object(candidate_identity, "verify_immutable_snapshot"), patch.object(
+        rollback_identity, "verify_immutable_snapshot"
+    ), patch.object(active_incumbent_identity, "verify_immutable_snapshot"):
+        with pytest.raises(ValueError, match="supervisor entrypoint"):
+            backend.revalidate(plan)
+
+
+def test_revalidate_rejects_pre_cas_live_config_naming_candidate_root(
+    tmp_path: Path,
+) -> None:
+    """Pre-CAS live config naming candidate root instead of active incumbent root must be rejected."""
+    command_runtimes_dir = tmp_path / "command-runtimes"
+    rollback_runtimes_dir = tmp_path / "rollback-command-runtimes"
+    candidate_root = command_runtimes_dir / ("a" * 40)
+    active_incumbent_root = command_runtimes_dir / ("b" * 40)
+    rollback_root = rollback_runtimes_dir / ("b" * 40)
+
+    candidate_root.mkdir(parents=True, exist_ok=True)
+    active_incumbent_root.mkdir(parents=True, exist_ok=True)
+    rollback_root.mkdir(parents=True, exist_ok=True)
+
+    create_realistic_healthy_fixture(candidate_root)
+    create_realistic_healthy_fixture(active_incumbent_root)
+    create_realistic_healthy_fixture(rollback_root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    active_incumbent_identity = _verified_identity_dependency(active_incumbent_root)
+    rollback_identity = _verified_identity_dependency(rollback_root)
+
+    executable = str(Path(sys.executable).resolve())
+
+    # Wrong live config: names candidate_root prematurely before CAS
+    wrong_cmd = [
+        executable,
+        str(candidate_root / ".orchestrator" / "supervisor.py"),
+        "--config",
+        str(candidate_identity.config_path),
+    ]
+    active_process = replace(
+        _verified_process_identity_dependency(active_incumbent_root),
+        argv=tuple(wrong_cmd),
+        executable=Path(executable),
+    )
+
+    plan = promotion.PromotionPlan(
+        candidate_identity=candidate_identity,
+        candidate_config=promotion.derive_supervisor_config_variant(candidate_identity, command_root=candidate_root),
+        candidate_launch=promotion.build_governed_supervisor_launch_contract(candidate_identity),
+        incumbent_identity=rollback_identity,
+        rollback_config=promotion.derive_supervisor_config_variant(rollback_identity, command_root=rollback_root),
+        incumbent_process=active_process,
+        mutable_incumbent=None,
+        rollback_launch=promotion.build_governed_supervisor_launch_contract(rollback_identity),
+        baseline=Mock(invariant_failures=()),
+        promotion_lock_path=tmp_path / "promo.lock",
+        runtime_admission_lock_path=tmp_path / "admission.lock",
+        active_incumbent_identity=active_incumbent_identity,
+    )
+
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    with patch.object(candidate_identity, "verify_immutable_snapshot"), patch.object(
+        rollback_identity, "verify_immutable_snapshot"
+    ), patch.object(active_incumbent_identity, "verify_immutable_snapshot"):
+        with pytest.raises(ValueError, match="supervisor entrypoint"):
+            backend.revalidate(plan)
+
+
+@pytest.mark.parametrize(
+    ("drifted_identity", "expected_message"),
+    (
+        (
+            "active",
+            "Candidate and active incumbent captured different config bytes",
+        ),
+        (
+            "rollback",
+            "Candidate and rollback captured different config bytes",
+        ),
+    ),
+)
+def test_prepare_rejects_config_capture_race_between_candidate_active_and_rollback(
+    tmp_path: Path,
+    drifted_identity: str,
+    expected_message: str,
+) -> None:
+    """Any live-config byte race aborts before variants or runtime observation."""
+    command_runtimes_dir = tmp_path / "command-runtimes"
+    rollback_runtimes_dir = tmp_path / "rollback-command-runtimes"
+    candidate_root = command_runtimes_dir / ("a" * 40)
+    active_incumbent_root = command_runtimes_dir / ("b" * 40)
+    rollback_root = rollback_runtimes_dir / ("b" * 40)
+    for root in (candidate_root, active_incumbent_root, rollback_root):
+        root.mkdir(parents=True, exist_ok=True)
+        create_realistic_healthy_fixture(root)
+
+    candidate_identity = _verified_identity_dependency(candidate_root)
+    active_incumbent_identity = _verified_identity_dependency(active_incumbent_root)
+    rollback_identity = _verified_identity_dependency(rollback_root)
+    active_incumbent_identity.config_path = candidate_identity.config_path
+    rollback_identity.config_path = candidate_identity.config_path
+    for identity in (active_incumbent_identity, rollback_identity):
+        identity.config_bytes = candidate_identity.config_bytes
+        identity.config_byte_length = candidate_identity.config_byte_length
+        identity.config_sha256 = candidate_identity.config_sha256
+    active_incumbent_identity.legacy_incumbent_bytecode_residue = (
+        "requires-clean-rollback",
+    )
+    identity = (
+        active_incumbent_identity
+        if drifted_identity == "active"
+        else rollback_identity
+    )
+    identity.config_bytes = f"{drifted_identity}-config-after-race".encode("utf-8")
+    identity.config_byte_length = len(identity.config_bytes)
+    identity.config_sha256 = promotion.hashlib.sha256(identity.config_bytes).hexdigest()
+
+    active_process = _verified_process_identity_dependency(active_incumbent_root)
+    backend = promotion.OSPromotionBackend(reader=Mock())
+
+    def _mock_build_identity(path: Path, *args: Any, **kwargs: Any) -> promotion.CandidateRuntimeIdentity:
+        if path == candidate_root:
+            return candidate_identity
+        if path == active_incumbent_root:
+            return active_incumbent_identity
+        if path == rollback_root:
+            return rollback_identity
+        raise ValueError(f"Unexpected path: {path}")
+
+    with patch(
+        "promote_supervisor_runtime.ALLOWED_COMMAND_RUNTIMES_PREFIX",
+        command_runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        rollback_runtimes_dir,
+    ), patch(
+        "promote_supervisor_runtime.build_candidate_runtime_identity",
+        side_effect=_mock_build_identity,
+    ), patch(
+        "promote_supervisor_runtime._discover_supervisor_seed",
+        return_value=(
+            active_process.generation,
+            active_process.argv,
+            active_process.cwd,
+        ),
+    ), patch(
+        "promote_supervisor_runtime.discover_incumbent_supervisor_process",
+        return_value=active_process,
+    ), patch(
+        "promote_supervisor_runtime.materialize_immutable_rollback_runtime",
+        return_value=rollback_identity,
+    ) as materialize, patch(
+        "promote_supervisor_runtime.capture_runtime_observation"
+    ) as capture:
+        with pytest.raises(
+            ValueError,
+            match=expected_message,
+        ):
+            backend.prepare(candidate_root, bootstrap_mutable_incumbent=False)
+
+    materialize.assert_called_once_with(
+        active_incumbent_identity,
+        candidate_identity=candidate_identity,
+    )
+    capture.assert_not_called()

@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ctypes
+import errno
 import fcntl
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -47,6 +50,9 @@ SUPERVISOR_RUNTIME_LOG_PATH_PATTERN = re.compile(
 )
 ALLOWED_COMMAND_RUNTIMES_PREFIX = Path(
     "/home/lupin/pantheon-ci-deploy/command-runtimes"
+)
+ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX = Path(
+    "/home/lupin/pantheon-ci-deploy/rollback-command-runtimes"
 )
 LIVE_SUPERVISOR_CONFIG_PATH = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
@@ -362,6 +368,19 @@ class LaunchFileIdentity:
 
 
 @dataclass(frozen=True)
+class LaunchJournalFileIdentity:
+    role: str
+    path: Path
+    device: int
+    inode: int
+    mode: int
+    captured_size: int
+    prefix_sha256: str
+    captured_at_size: int = field(compare=False)
+
+
+
+@dataclass(frozen=True)
 class GovernedSupervisorLaunchContract:
     interpreter: LaunchFileIdentity
     argv: tuple[str, ...]
@@ -382,6 +401,8 @@ class GovernedSupervisorLaunchContract:
     intentional_restart_path: Path
     stdout_log_path: Path
     stderr_log_path: Path
+    task_state_event_log_identity: LaunchJournalFileIdentity | None = None
+
 
 
 @dataclass(frozen=True)
@@ -409,7 +430,22 @@ class MutableIncumbentSnapshot:
     repository_slug: str
     process: SupervisorProcessIdentity
     source_identities: tuple[LaunchFileIdentity, ...]
+    entrypoint_root: Path | None = None
+    entrypoint_root_device: int | None = None
+    entrypoint_root_inode: int | None = None
+    entrypoint_source_identities: tuple[LaunchFileIdentity, ...] = ()
     legacy_task_brief_drift: tuple["LegacyTaskBriefDrift", ...] = ()
+
+    @property
+    def is_split_entrypoint(self) -> bool:
+        return (
+            self.entrypoint_root is not None
+            and self.entrypoint_root != self.root
+        )
+
+    @property
+    def effective_entrypoint_root(self) -> Path:
+        return self.entrypoint_root if self.entrypoint_root is not None else self.root
 
 
 @dataclass(frozen=True, order=True)
@@ -426,6 +462,33 @@ class LegacyTaskBriefDrift:
     canonical_sha256: str
 
 
+@dataclass(frozen=True, order=True)
+class LegacyIncumbentBytecodeDirectoryResidue:
+    """One descriptor-bound legacy incumbent __pycache__ directory residue."""
+
+    relative_path: str
+    device: int
+    inode: int
+    mode: int
+
+
+@dataclass(frozen=True, order=True)
+class LegacyIncumbentBytecodeResidue:
+    """One provenance-bound legacy incumbent bytecode residue path."""
+
+    relative_path: str
+    device: int
+    inode: int
+    mode: int
+    nlink: int
+    byte_length: int
+    sha256: str
+    cpython_tag: str
+    source_relative_path: str
+
+
+
+
 class LaunchFilesystem(Protocol):
     def capture_regular_file(
         self,
@@ -435,6 +498,14 @@ class LaunchFilesystem(Protocol):
         require_executable: bool,
     ) -> LaunchFileIdentity: ...
 
+    def capture_append_only_journal(
+        self,
+        path: Path,
+        *,
+        role: str,
+        baseline_identity: LaunchJournalFileIdentity | None = None,
+    ) -> LaunchJournalFileIdentity: ...
+
     def capture_directory(self, path: Path, *, label: str) -> FilesystemIdentity: ...
 
     def directory_is_writable(self, path: Path) -> bool: ...
@@ -442,6 +513,7 @@ class LaunchFilesystem(Protocol):
     def path_exists(self, path: Path) -> bool: ...
 
     def file_is_writable(self, path: Path) -> bool: ...
+
 
 
 class RuntimeProcessReader(Protocol):
@@ -493,6 +565,10 @@ class CandidateRuntimeIdentity:
     config_byte_length: int
     config_sha256: str
     legacy_task_brief_drift: tuple[LegacyTaskBriefDrift, ...] = ()
+    legacy_incumbent_bytecode_residue: tuple[
+        LegacyIncumbentBytecodeResidue | LegacyIncumbentBytecodeDirectoryResidue, ...
+    ] = ()
+
 
     def verify_against_live_config(self, live_config_path: Path) -> None:
         """Re-read and compare the exact live-config path and byte identity."""
@@ -610,6 +686,10 @@ class CandidateRuntimeIdentity:
                 expected_tree=self.tracked_tree_identity,
                 allow_legacy_task_brief_drift=(len(self.legacy_task_brief_drift) > 0),
                 expected_legacy_task_brief_drift=self.legacy_task_brief_drift,
+                allow_legacy_incumbent_bytecode_residue=(
+                    len(self.legacy_incumbent_bytecode_residue) > 0
+                ),
+                expected_legacy_incumbent_bytecode_residue=self.legacy_incumbent_bytecode_residue,
                 config_bytes=self.config_bytes,
             )
             _assert_candidate_handle_path(root_handle)
@@ -1420,10 +1500,15 @@ def _open_candidate_root_handle(
 ) -> CandidateRootHandle:
     path = candidate_path if isinstance(candidate_path, Path) else Path(candidate_path)
     trusted_parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
+    trusted_rollback_parent = ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX
 
-    if require_immutable_location and path.parent != trusted_parent:
+    if (
+        require_immutable_location
+        and path.parent != trusted_parent
+        and path.parent != trusted_rollback_parent
+    ):
         raise ValueError(
-            f"Candidate root {path} is not a direct child of {trusted_parent}"
+            f"Candidate root {path} is not a direct child of {trusted_parent} or {trusted_rollback_parent}"
         )
     if require_immutable_location and not HEX_40_PATTERN.fullmatch(path.name):
         raise ValueError(
@@ -2112,6 +2197,14 @@ def verify_working_tree_cleanliness(
     expected_tree: str | None = None,
     allow_legacy_task_brief_drift: bool = False,
     expected_legacy_task_brief_drift: tuple[LegacyTaskBriefDrift, ...] | None = None,
+    allow_legacy_incumbent_bytecode_residue: bool = False,
+    expected_legacy_incumbent_bytecode_residue: (
+        tuple[
+            LegacyIncumbentBytecodeResidue | LegacyIncumbentBytecodeDirectoryResidue,
+            ...,
+        ]
+        | None
+    ) = None,
     config_bytes: bytes | None = None,
     filesystem: LaunchFilesystem | None = None,
 ) -> str:
@@ -2170,6 +2263,9 @@ def verify_working_tree_cleanliness(
                 continue
             if relative_path.endswith("/"):
                 kind = "ignored" if status_code == "!!" else "untracked"
+                if status_code == "!!" and allow_legacy_incumbent_bytecode_residue:
+                    if _is_allowed_incumbent_bytecode_residue_path(relative_path):
+                        continue
                 if not _is_allowed_generated_untracked_directory(relative_path):
                     raise ValueError(
                         f"Forbidden {kind} directory found in candidate root: "
@@ -2180,6 +2276,9 @@ def verify_working_tree_cleanliness(
                     relative_path,
                 )
                 continue
+            if status_code == "!!" and allow_legacy_incumbent_bytecode_residue:
+                if _is_allowed_incumbent_bytecode_residue_path(relative_path):
+                    continue
             if not _is_allowed_generated_untracked_path(relative_path):
                 kind = "ignored" if status_code == "!!" else "untracked"
                 raise ValueError(
@@ -2222,6 +2321,25 @@ def verify_working_tree_cleanliness(
             and legacy_task_brief_drift != expected_legacy_task_brief_drift
         ):
             raise ValueError("Incumbent legacy task-brief drift changed during validation")
+
+        if allow_legacy_incumbent_bytecode_residue:
+            legacy_incumbent_bytecode_residue = (
+                _capture_legacy_incumbent_bytecode_residue(
+                    handle,
+                    filesystem=filesystem or OSLaunchFilesystem(),
+                )
+            )
+        else:
+            legacy_incumbent_bytecode_residue = ()
+
+        if (
+            expected_legacy_incumbent_bytecode_residue is not None
+            and legacy_incumbent_bytecode_residue
+            != expected_legacy_incumbent_bytecode_residue
+        ):
+            raise ValueError(
+                "Incumbent legacy bytecode residue changed during validation"
+            )
 
         _assert_tracked_gitlink_worktrees(handle, gitlinks_before)
         head, tree = _read_head_tree(handle)
@@ -2486,6 +2604,23 @@ def atomic_install_live_config(
         os.close(directory_fd)
 
 
+def _hash_descriptor_range(descriptor: int, *, length: int) -> str:
+    hasher = hashlib.sha256()
+    if length == 0:
+        return hasher.hexdigest()
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    bytes_remaining = length
+    chunk_size = 65536
+    while bytes_remaining > 0:
+        to_read = min(bytes_remaining, chunk_size)
+        chunk = os.read(descriptor, to_read)
+        if not chunk or len(chunk) == 0:
+            raise ValueError("Unexpected end of file while reading descriptor range")
+        hasher.update(chunk)
+        bytes_remaining -= len(chunk)
+    return hasher.hexdigest()
+
+
 class OSLaunchFilesystem:
     """Descriptor-bound, read-only filesystem checks for launch preflight."""
 
@@ -2555,6 +2690,102 @@ class OSLaunchFilesystem:
             sha256=hashlib.sha256(content).hexdigest(),
         )
 
+    def capture_append_only_journal(
+        self,
+        path: Path,
+        *,
+        role: str,
+        baseline_identity: LaunchJournalFileIdentity | None = None,
+    ) -> LaunchJournalFileIdentity:
+        parent_components = _capture_directory_component_identities(
+            path.parent,
+            label=f"Governed launch {role}",
+        )
+        descriptor = _open_path_descriptor(
+            path,
+            label=f"Governed launch {role}",
+            require_directory=False,
+        )
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError(f"Governed launch {role} is not a regular file: {path}")
+            if before.st_nlink != 1:
+                raise ValueError(f"Governed launch {role} must not be hard-linked: {path}")
+
+            if baseline_identity is not None:
+                if before.st_dev != baseline_identity.device:
+                    raise ValueError(f"Governed launch {role} device changed: {path}")
+                if before.st_ino != baseline_identity.inode:
+                    raise ValueError(f"Governed launch {role} inode changed: {path}")
+                if before.st_mode != baseline_identity.mode:
+                    raise ValueError(f"Governed launch {role} mode changed: {path}")
+                if before.st_size < baseline_identity.captured_size:
+                    raise ValueError(
+                        f"Governed launch {role} was truncated below baseline size: {path}"
+                    )
+                prefix_len = baseline_identity.captured_size
+                expected_prefix_sha256 = baseline_identity.prefix_sha256
+            else:
+                prefix_len = before.st_size
+                expected_prefix_sha256 = None
+
+            try:
+                prefix_sha256 = _hash_descriptor_range(descriptor, length=prefix_len)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Governed launch {role} was truncated during capture: {path}"
+                ) from exc
+
+            if expected_prefix_sha256 is not None and prefix_sha256 != expected_prefix_sha256:
+                raise ValueError(
+                    f"Governed launch {role} prefix changed from baseline: {path}"
+                )
+
+            after = os.fstat(descriptor)
+            if after.st_dev != before.st_dev:
+                raise ValueError(f"Governed launch {role} device changed during capture: {path}")
+            if after.st_ino != before.st_ino:
+                raise ValueError(f"Governed launch {role} inode changed during capture: {path}")
+            if after.st_mode != before.st_mode:
+                raise ValueError(f"Governed launch {role} mode changed during capture: {path}")
+            if after.st_nlink != 1:
+                raise ValueError(f"Governed launch {role} must not be hard-linked: {path}")
+            if after.st_size < before.st_size:
+                raise ValueError(f"Governed launch {role} was truncated during capture: {path}")
+
+            try:
+                reverified_prefix_sha256 = _hash_descriptor_range(descriptor, length=prefix_len)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Governed launch {role} was truncated during capture: {path}"
+                ) from exc
+
+            if reverified_prefix_sha256 != prefix_sha256:
+                raise ValueError(
+                    f"Governed launch {role} prefix changed during capture: {path}"
+                )
+        finally:
+            os.close(descriptor)
+
+        file_identity = _identity_from_stat(before)
+        _assert_path_component_identities(
+            parent_components
+            + (PathComponentIdentity(path=path, identity=file_identity),),
+            label=f"Governed launch {role}",
+        )
+
+        return LaunchJournalFileIdentity(
+            role=role,
+            path=path,
+            device=before.st_dev,
+            inode=before.st_ino,
+            mode=before.st_mode,
+            captured_size=prefix_len,
+            prefix_sha256=prefix_sha256,
+            captured_at_size=after.st_size,
+        )
+
     def capture_directory(self, path: Path, *, label: str) -> FilesystemIdentity:
         components = _capture_directory_component_identities(path, label=label)
         identity = components[-1].identity
@@ -2601,6 +2832,7 @@ def _validate_transaction_evidence_path(
     executable_roots = (
         plan.candidate_identity.candidate_root,
         plan.incumbent_identity.candidate_root,
+        plan.effective_active_incumbent_identity.candidate_root,
     )
     for executable_root in executable_roots:
         if _path_is_within(path, executable_root):
@@ -2721,6 +2953,7 @@ def build_governed_supervisor_launch_contract(
     launch_cwd: Path | None = None,
     stdout_log_path: Path | None = None,
     stderr_log_path: Path | None = None,
+    baseline_task_state_event_log_identity: LaunchJournalFileIdentity | None = None,
 ) -> GovernedSupervisorLaunchContract:
     """Assemble and validate the exact next-launch contract without mutation."""
     fs = filesystem or OSLaunchFilesystem()
@@ -2774,10 +3007,10 @@ def build_governed_supervisor_launch_contract(
         task_state_store.get("event_log"),
         label="task_state_store.event_log",
     )
-    fs.capture_regular_file(
+    task_state_event_log_identity = fs.capture_append_only_journal(
         task_state_event_log,
         role="task_state_event_log",
-        require_executable=False,
+        baseline_identity=baseline_task_state_event_log_identity,
     )
     fs.capture_directory(
         task_state_event_log.parent,
@@ -2820,7 +3053,7 @@ def build_governed_supervisor_launch_contract(
         identity,
         status_root=status_root,
     )
-    final_environment = (
+    scrubbed_environment = (
         dict(launch_environment)
         if launch_environment is not None
         else build_scrubbed_launch_environment(
@@ -2830,7 +3063,7 @@ def build_governed_supervisor_launch_contract(
         )
     )
     _validate_governed_launch_environment(
-        final_environment,
+        scrubbed_environment,
         expected=expected_environment,
     )
 
@@ -2882,13 +3115,13 @@ def build_governed_supervisor_launch_contract(
         cwd_device=cwd_identity.device,
         cwd_inode=cwd_identity.inode,
         required_environment=tuple(
-            (name, expected_environment[name])
-            for name in GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT
+            (name, str(expected_environment[name]))
+            for name in sorted(expected_environment)
         ),
         scrubbed_environment_names_sha256=_environment_names_sha256(
-            final_environment
+            scrubbed_environment
         ),
-        scrubbed_environment_variable_count=len(final_environment),
+        scrubbed_environment_variable_count=len(scrubbed_environment),
         source_identities=source_identities,
         status_command_root=identity.candidate_root,
         status_command_runtime_sha=identity.head_commit,
@@ -2896,6 +3129,7 @@ def build_governed_supervisor_launch_contract(
         status_command_base_ref="origin/dev",
         status_root=status_root,
         task_state_event_log=task_state_event_log,
+        task_state_event_log_identity=task_state_event_log_identity,
         worker_worktree_root=worker_worktree_root,
         intentional_restart_path=intentional_restart,
         stdout_log_path=stdout_path,
@@ -3436,13 +3670,14 @@ def discover_incumbent_supervisor_process(
     reader: RuntimeProcessReader | None = None,
     cwd_git_identity_reader: Callable[
         [ProcessCwdIdentity], tuple[str, str]
-    ] = _read_process_cwd_git_identity,
+    ] | None = None,
     candidate_revalidator: Callable[[], None] | None = None,
     allow_legacy_environment_contract: bool = False,
     allow_legacy_admission_lock_id_churn: bool = False,
 ) -> SupervisorProcessIdentity:
     """Discover and bind exactly one incumbent to the immutable candidate."""
     runtime_reader = reader or ProcfsRuntimeProcessReader()
+    git_reader = cwd_git_identity_reader or _read_process_cwd_git_identity
     expected = expected_contract or _expected_supervisor_process_contract(
         identity,
         supervisor_argv=expected_argv,
@@ -3593,7 +3828,7 @@ def discover_incumbent_supervisor_process(
         runtime_reader,
         generation,
         label="cwd Git identity",
-        operation=lambda: cwd_git_identity_reader(cwd),
+        operation=lambda: git_reader(cwd),
     )
     _guarded_process_compare(
         runtime_reader,
@@ -3818,7 +4053,17 @@ def _governed_launch_contract_summary(
         },
         "status_root": str(contract.status_root),
         "task_state_event_log": str(contract.task_state_event_log),
+        "task_state_event_log_identity": {
+            "path": str(contract.task_state_event_log_identity.path),
+            "device": contract.task_state_event_log_identity.device,
+            "inode": contract.task_state_event_log_identity.inode,
+            "mode": contract.task_state_event_log_identity.mode,
+            "captured_size": contract.task_state_event_log_identity.captured_size,
+            "prefix_sha256": contract.task_state_event_log_identity.prefix_sha256,
+            "captured_at_size": contract.task_state_event_log_identity.captured_at_size,
+        } if contract.task_state_event_log_identity is not None else None,
         "worker_worktree_root": str(contract.worker_worktree_root),
+
         "intentional_restart_path": str(contract.intentional_restart_path),
         "stdout_log_path": str(contract.stdout_log_path),
         "stderr_log_path": str(contract.stderr_log_path),
@@ -3830,6 +4075,7 @@ def build_candidate_runtime_identity(
     config_path: Path | None = None,
     *,
     allow_legacy_task_brief_drift: bool = False,
+    allow_legacy_incumbent_bytecode_residue: bool = False,
 ) -> CandidateRuntimeIdentity:
     """Capture one candidate or incumbent root, Git tree, and live-config snapshot."""
     root_handle = _open_candidate_root_handle(candidate_path)
@@ -3857,6 +4103,7 @@ def build_candidate_runtime_identity(
             expected_head=head,
             expected_tree=tracked_tree,
             allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+            allow_legacy_incumbent_bytecode_residue=allow_legacy_incumbent_bytecode_residue,
             config_bytes=config_bytes,
         )
 
@@ -3870,6 +4117,16 @@ def build_candidate_runtime_identity(
         else:
             legacy_task_brief_drift = ()
 
+        if allow_legacy_incumbent_bytecode_residue:
+            legacy_incumbent_bytecode_residue = (
+                _capture_legacy_incumbent_bytecode_residue(
+                    root_handle,
+                    filesystem=OSLaunchFilesystem(),
+                )
+            )
+        else:
+            legacy_incumbent_bytecode_residue = ()
+
         # Repeat descriptor-bound root/tree/status checks after reading the
         # external config so a deleted/replaced root or concurrent mutation
         # cannot yield a mixed identity object.
@@ -3880,6 +4137,8 @@ def build_candidate_runtime_identity(
             expected_tree=tracked_tree,
             allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
             expected_legacy_task_brief_drift=legacy_task_brief_drift,
+            allow_legacy_incumbent_bytecode_residue=allow_legacy_incumbent_bytecode_residue,
+            expected_legacy_incumbent_bytecode_residue=legacy_incumbent_bytecode_residue,
             config_bytes=config_bytes,
         )
         # A freshly materialized checkout can refresh and atomically replace
@@ -3923,7 +4182,7 @@ def build_candidate_runtime_identity(
                 remote_url=remote_url,
                 canonical_remote=f"github.com/{remote.slug}",
                 repository_slug=remote.slug,
-                config_path=selected_config_path,
+                config_path=LIVE_SUPERVISOR_CONFIG_PATH,
                 config_device=config_identity.device,
                 config_inode=config_identity.inode,
                 config_path_components=config_path_components,
@@ -3931,6 +4190,7 @@ def build_candidate_runtime_identity(
                 config_byte_length=len(config_bytes),
                 config_sha256=hashlib.sha256(config_bytes).hexdigest(),
                 legacy_task_brief_drift=legacy_task_brief_drift,
+                legacy_incumbent_bytecode_residue=legacy_incumbent_bytecode_residue,
             )
         finally:
             _close_candidate_root_handle(final_handle)
@@ -3969,6 +4229,36 @@ def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str,
     else:
         drift_summary = []
 
+    bytecode_residues = getattr(identity, "legacy_incumbent_bytecode_residue", ())
+    if isinstance(bytecode_residues, (list, tuple)):
+        bytecode_summary = []
+        for item in bytecode_residues:
+            if hasattr(item, "sha256"):
+                bytecode_summary.append(
+                    {
+                        "relative_path": item.relative_path,
+                        "device": item.device,
+                        "inode": item.inode,
+                        "mode": item.mode,
+                        "nlink": item.nlink,
+                        "byte_length": item.byte_length,
+                        "sha256": item.sha256,
+                        "cpython_tag": item.cpython_tag,
+                        "source_relative_path": item.source_relative_path,
+                    }
+                )
+            elif hasattr(item, "relative_path"):
+                bytecode_summary.append(
+                    {
+                        "relative_path": item.relative_path,
+                        "device": item.device,
+                        "inode": item.inode,
+                        "mode": item.mode,
+                    }
+                )
+    else:
+        bytecode_summary = []
+
     return {
         "candidate_root": str(identity.candidate_root),
         "candidate_root_device": identity.candidate_root_device,
@@ -4005,6 +4295,7 @@ def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str,
         "config_byte_length": identity.config_byte_length,
         "config_sha256": identity.config_sha256,
         "legacy_task_brief_drift": drift_summary,
+        "legacy_incumbent_bytecode_residue": bytecode_summary,
     }
 
 
@@ -4561,6 +4852,11 @@ def evaluate_promotion_invariants(
         q_task = evt_info.get("task_id")
         q_run_id = evt_info.get("run_id")
         q_lease_owner = evt_info.get("lease_owner")
+        q_status = evt_info.get("status") or evt_info.get("state")
+
+        # Skip unstarted queued/pending events that do not have a lease owner assigned
+        if q_status in ("queued", "pending") and not (isinstance(q_lease_owner, str) and q_lease_owner.strip()):
+            continue
 
         # Active started event requires nonempty lease_owner
         if not q_lease_owner or not isinstance(q_lease_owner, str) or not q_lease_owner.strip():
@@ -4786,6 +5082,16 @@ class PromotionPlan:
     baseline: RuntimeObservation
     promotion_lock_path: Path
     runtime_admission_lock_path: Path
+    active_incumbent_identity: CandidateRuntimeIdentity | None = None
+
+    @property
+    def effective_active_incumbent_identity(self) -> CandidateRuntimeIdentity:
+        return (
+            self.active_incumbent_identity
+            if self.active_incumbent_identity is not None
+            else self.incumbent_identity
+        )
+
 
 
 class PromotionState(str, Enum):
@@ -5853,6 +6159,290 @@ def _capture_legacy_mutable_task_brief_drift(
     return tuple(drifts)
 
 
+def _is_allowed_incumbent_bytecode_residue_path(relative_path: str) -> bool:
+    candidate = PurePosixPath(relative_path.rstrip("/"))
+    if candidate.is_absolute() or not candidate.parts:
+        return False
+    if any(part in {"", ".", ".."} for part in candidate.parts):
+        return False
+    if candidate.parts.count("__pycache__") != 1:
+        return False
+    if relative_path.endswith("/"):
+        return candidate.parts[-1] == "__pycache__"
+    if candidate.parts[-2] != "__pycache__":
+        return False
+    if candidate.suffix == ".pyc":
+        return "pyo" not in candidate.suffixes and not relative_path.endswith(".pyo")
+    return False
+
+
+def _validate_and_capture_incumbent_bytecode_file(
+    handle: CandidateRootHandle,
+    relative_path: str,
+    filesystem: LaunchFilesystem | None = None,
+) -> LegacyIncumbentBytecodeResidue:
+    path = PurePosixPath(relative_path)
+    if (
+        path.is_absolute()
+        or not path.parts
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise ValueError(f"Invalid incumbent bytecode path: {relative_path!r}")
+
+    if path.suffix != ".pyc":
+        raise ValueError(
+            f"Incumbent bytecode residue permits only .pyc files, found: {relative_path}"
+        )
+    if "pyo" in path.suffixes or relative_path.endswith(".pyo"):
+        raise ValueError(
+            f"Incumbent bytecode residue rejects .pyo files: {relative_path}"
+        )
+
+    parts = list(path.parts)
+    if parts.count("__pycache__") != 1 or parts[-2] != "__pycache__":
+        raise ValueError(
+            f"Incumbent bytecode file not directly inside __pycache__ directory: {relative_path}"
+        )
+
+    stem = path.stem
+    if "." not in stem:
+        raise ValueError(
+            f"Incumbent bytecode filename missing CPython tag: {relative_path}"
+        )
+    source_stem, cpython_tag = stem.rsplit(".", 1)
+
+    current_cache_tag = getattr(sys.implementation, "cache_tag", "")
+    if current_cache_tag and cpython_tag != current_cache_tag:
+        raise ValueError(
+            f"Incumbent bytecode tag mismatch ({cpython_tag} != {current_cache_tag}): {relative_path}"
+        )
+
+    pycache_idx = len(parts) - 2
+    source_parts = parts[:pycache_idx] + [f"{source_stem}.py"]
+    source_relative_path = "/".join(source_parts)
+
+    source_descriptors = [os.dup(handle.descriptor)]
+    try:
+        for component in source_parts[:-1]:
+            source_descriptors.append(
+                _open_relative_descriptor(
+                    source_descriptors[-1],
+                    component,
+                    label=f"Source component {component!r}",
+                    require_directory=True,
+                )
+            )
+        leaf_src_fd = _open_relative_descriptor(
+            source_descriptors[-1],
+            source_parts[-1],
+            label=f"Source file {source_relative_path!r}",
+            require_directory=False,
+        )
+        source_descriptors.append(leaf_src_fd)
+        src_st = os.fstat(leaf_src_fd)
+        if not stat.S_ISREG(src_st.st_mode):
+            raise ValueError(
+                f"Source file is not a regular file: {source_relative_path}"
+            )
+    except (FileNotFoundError, ValueError) as exc:
+        raise ValueError(
+            f"Source-less incumbent bytecode file rejected: {relative_path} "
+            f"(missing or invalid source {source_relative_path}): {exc}"
+        ) from exc
+    finally:
+        for fd in reversed(source_descriptors):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    descriptors = [os.dup(handle.descriptor)]
+    try:
+        for component in path.parts[:-1]:
+            descriptors.append(
+                _open_relative_descriptor(
+                    descriptors[-1],
+                    component,
+                    label=f"Incumbent bytecode component {component!r}",
+                    require_directory=True,
+                )
+            )
+        leaf_fd = _open_relative_descriptor(
+            descriptors[-1],
+            path.parts[-1],
+            label=f"Incumbent bytecode file {relative_path!r}",
+            require_directory=False,
+        )
+        descriptors.append(leaf_fd)
+        st = os.fstat(leaf_fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(
+                f"Incumbent bytecode file is not a regular file: {relative_path}"
+            )
+        if st.st_nlink != 1:
+            raise ValueError(
+                f"Incumbent bytecode file is hard linked (nlink={st.st_nlink}): {relative_path}"
+            )
+
+        content = os.read(leaf_fd, st.st_size if st.st_size > 0 else 65536)
+        if len(content) < 16:
+            raise ValueError(
+                f"Incumbent bytecode file header truncated (<16 bytes): {relative_path}"
+            )
+
+        expected_magic = importlib.util.MAGIC_NUMBER
+        if content[:4] != expected_magic:
+            raise ValueError(
+                f"Incumbent bytecode magic number mismatch ({content[:4]!r} != {expected_magic!r}): {relative_path}"
+            )
+
+        digest = hashlib.sha256(content).hexdigest()
+        return LegacyIncumbentBytecodeResidue(
+            relative_path=relative_path,
+            device=st.st_dev,
+            inode=st.st_ino,
+            mode=st.st_mode,
+            nlink=st.st_nlink,
+            byte_length=len(content),
+            sha256=digest,
+            cpython_tag=cpython_tag,
+            source_relative_path=source_relative_path,
+        )
+    finally:
+        for fd in reversed(descriptors):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def _capture_legacy_incumbent_bytecode_residue(
+    handle: CandidateRootHandle,
+    filesystem: LaunchFilesystem | None = None,
+) -> tuple[
+    LegacyIncumbentBytecodeResidue | LegacyIncumbentBytecodeDirectoryResidue, ...
+]:
+    fs = filesystem or OSLaunchFilesystem()
+    status_output = _run_git(
+        handle,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--ignored=matching",
+        "--ignore-submodules=all",
+    ).stdout
+
+    pycache_dirs: set[str] = set()
+    pyc_files: set[str] = set()
+
+    for record in status_output.split("\0"):
+        if not record or len(record) < 4:
+            continue
+        status_code = record[:2]
+        relative_path = record[3:]
+        if status_code != "!!":
+            continue
+        rel_posix = PurePosixPath(relative_path.rstrip("/"))
+        if "pycache" in relative_path or "__pycache__" in rel_posix.parts:
+            if not _is_allowed_incumbent_bytecode_residue_path(relative_path):
+                raise ValueError(
+                    f"Forbidden file or directory found in incumbent bytecode residue: {relative_path}"
+                )
+            if relative_path.endswith("/"):
+                pycache_dirs.add(relative_path.rstrip("/"))
+            else:
+                pyc_files.add(relative_path)
+
+    dir_residues: list[LegacyIncumbentBytecodeDirectoryResidue] = []
+    for dir_rel in sorted(pycache_dirs):
+        dir_path = PurePosixPath(dir_rel)
+        dir_descriptors = [os.dup(handle.descriptor)]
+        try:
+            for component in dir_path.parts:
+                next_fd = _open_relative_descriptor(
+                    dir_descriptors[-1],
+                    component,
+                    label=f"Incumbent bytecode directory component {component!r}",
+                    require_directory=True,
+                )
+                dir_descriptors.append(next_fd)
+            pycache_fd = dir_descriptors[-1]
+            dir_st = os.fstat(pycache_fd)
+            if not stat.S_ISDIR(dir_st.st_mode):
+                raise ValueError(
+                    f"Incumbent bytecode residue directory is not a directory: {dir_rel}"
+                )
+            dir_residues.append(
+                LegacyIncumbentBytecodeDirectoryResidue(
+                    relative_path=dir_rel,
+                    device=dir_st.st_dev,
+                    inode=dir_st.st_ino,
+                    mode=dir_st.st_mode,
+                )
+            )
+            entries = os.listdir(pycache_fd)
+            if not entries:
+                raise ValueError(
+                    f"Incumbent bytecode residue directory is empty: {dir_rel}"
+                )
+            for entry_name in sorted(entries):
+                try:
+                    entry_stat = os.stat(
+                        entry_name, dir_fd=pycache_fd, follow_symlinks=False
+                    )
+                except OSError as exc:
+                    raise ValueError(
+                        f"Failed to stat incumbent bytecode entry {dir_rel}/{entry_name}: {exc}"
+                    ) from exc
+
+                if stat.S_ISLNK(entry_stat.st_mode):
+                    raise ValueError(
+                        f"Incumbent bytecode residue rejects symlinks: {dir_rel}/{entry_name}"
+                    )
+                if stat.S_ISDIR(entry_stat.st_mode):
+                    raise ValueError(
+                        f"Forbidden sub-directory in incumbent bytecode residue: {dir_rel}/{entry_name}"
+                    )
+                if not stat.S_ISREG(entry_stat.st_mode):
+                    raise ValueError(
+                        f"Incumbent bytecode residue entry is not a regular file: {dir_rel}/{entry_name}"
+                    )
+                if entry_stat.st_nlink != 1:
+                    raise ValueError(
+                        f"Incumbent bytecode file is hard linked (nlink={entry_stat.st_nlink}): {dir_rel}/{entry_name}"
+                    )
+                if not entry_name.endswith(".pyc") or entry_name.endswith(".pyo"):
+                    raise ValueError(
+                        f"Forbidden non-pyc file in incumbent bytecode residue: {dir_rel}/{entry_name}"
+                    )
+                pyc_files.add(f"{dir_rel}/{entry_name}")
+        finally:
+            for fd in reversed(dir_descriptors):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    if pycache_dirs and not pyc_files:
+        raise ValueError(
+            "Incumbent bytecode residue directory yielded no valid bytecode files"
+        )
+
+    residues: list[
+        LegacyIncumbentBytecodeResidue | LegacyIncumbentBytecodeDirectoryResidue
+    ] = []
+    residues.extend(dir_residues)
+    for relative_path in sorted(pyc_files):
+        item = _validate_and_capture_incumbent_bytecode_file(
+            handle,
+            relative_path,
+            filesystem=fs,
+        )
+        residues.append(item)
+    return tuple(residues)
+
+
 def _verify_mutable_tracked_cleanliness(
     root: Path,
     *,
@@ -6104,7 +6694,52 @@ def _mutable_process_contract(
         raise ValueError(
             "Mutable incumbent argv is not the exact captured watchdog command"
         )
-    expected_entrypoint = cwd.path / SUPERVISOR_ENTRYPOINT_RELATIVE
+    entrypoint_args = tuple(
+        argument
+        for argument in argv[1:]
+        if PurePosixPath(argument).name == "supervisor.py"
+    )
+    if len(entrypoint_args) != 1:
+        raise ValueError(
+            "Mutable incumbent argv must contain exactly one supervisor.py entrypoint"
+        )
+    entrypoint_path = Path(entrypoint_args[0])
+    if not entrypoint_path.is_absolute():
+        raise ValueError("Mutable incumbent entrypoint path must be absolute")
+    if (
+        entrypoint_path.name != "supervisor.py"
+        or entrypoint_path.parent.name != ".orchestrator"
+    ):
+        raise ValueError(
+            "Mutable incumbent entrypoint path must end in .orchestrator/supervisor.py"
+        )
+    try:
+        resolved_entrypoint = entrypoint_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(
+            "Mutable incumbent entrypoint path cannot be resolved"
+        ) from exc
+    if resolved_entrypoint != entrypoint_path:
+        raise ValueError(
+            "Mutable incumbent entrypoint path contains symlinks or path traversal"
+        )
+    entrypoint_root = entrypoint_path.parent.parent
+    if entrypoint_path != entrypoint_root / SUPERVISOR_ENTRYPOINT_RELATIVE:
+        raise ValueError(
+            "Mutable incumbent entrypoint path is not canonical relative to its root"
+        )
+    try:
+        resolved_entrypoint_root = entrypoint_root.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(
+            "Mutable incumbent entrypoint root cannot be resolved"
+        ) from exc
+    if resolved_entrypoint_root != entrypoint_root:
+        raise ValueError(
+            "Mutable incumbent entrypoint root contains symlinks or path traversal"
+        )
+
+    expected_entrypoint = entrypoint_path
     if argv.count(str(expected_entrypoint)) != 1:
         raise ValueError(
             "Mutable incumbent argv does not bind its exact cwd entrypoint"
@@ -6147,7 +6782,7 @@ def _mutable_process_contract(
         cwd_inode=cwd.inode,
         cwd_commit=head_commit,
         cwd_tree=tracked_tree_identity,
-        command_root=str(cwd.path),
+        command_root=str(entrypoint_root),
         runtime_sha=head_commit,
         status_root=str(status_root),
         admission_lock_path=status_root / ".orchestrator" / "supervisor.lock",
@@ -6164,9 +6799,53 @@ def capture_mutable_incumbent_snapshot(
     allow_legacy_task_brief_drift: bool = False,
     allow_legacy_environment_contract: bool = False,
     allow_legacy_admission_lock_id_churn: bool = False,
+    filesystem: LaunchFilesystem | None = None,
 ) -> MutableIncumbentSnapshot:
+    entrypoint_args = tuple(
+        argument
+        for argument in seed_argv[1:]
+        if PurePosixPath(argument).name == "supervisor.py"
+    )
+    if len(entrypoint_args) != 1:
+        raise ValueError(
+            "Mutable incumbent seed_argv must contain exactly one supervisor.py entrypoint"
+        )
+    entrypoint_path = Path(entrypoint_args[0])
+    if not entrypoint_path.is_absolute():
+        raise ValueError("Mutable incumbent entrypoint path must be absolute")
+    if (
+        entrypoint_path.name != "supervisor.py"
+        or entrypoint_path.parent.name != ".orchestrator"
+    ):
+        raise ValueError(
+            "Mutable incumbent entrypoint path must end in .orchestrator/supervisor.py"
+        )
+    try:
+        resolved_entrypoint = entrypoint_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Mutable incumbent entrypoint path cannot be resolved") from exc
+    if resolved_entrypoint != entrypoint_path:
+        raise ValueError(
+            "Mutable incumbent entrypoint path contains symlinks or path traversal"
+        )
+    entrypoint_root = entrypoint_path.parent.parent
+    if entrypoint_path != entrypoint_root / SUPERVISOR_ENTRYPOINT_RELATIVE:
+        raise ValueError(
+            "Mutable incumbent entrypoint path is not canonical relative to its root"
+        )
+    try:
+        resolved_entrypoint_root = entrypoint_root.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Mutable incumbent entrypoint root cannot be resolved") from exc
+    if resolved_entrypoint_root != entrypoint_root:
+        raise ValueError(
+            "Mutable incumbent entrypoint root contains symlinks or path traversal"
+        )
+
+    fs = filesystem or OSLaunchFilesystem()
     binding = _mutable_root_binding(
         seed_cwd,
+        filesystem=fs,
         allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
         canonical_config_bytes=config_identity.config_bytes,
     )
@@ -6179,6 +6858,75 @@ def capture_mutable_incumbent_snapshot(
         sources,
         legacy_task_brief_drift,
     ) = binding
+
+    if entrypoint_root != seed_cwd.path:
+        entrypoint_root_stat = entrypoint_root.stat()
+        entrypoint_root_device = entrypoint_root_stat.st_dev
+        entrypoint_root_inode = entrypoint_root_stat.st_ino
+        _capture_directory_component_identities(
+            entrypoint_root,
+            label="Mutable incumbent entrypoint root",
+        )
+        entrypoint_cwd_identity = ProcessCwdIdentity(
+            path=entrypoint_root,
+            device=entrypoint_root_device,
+            inode=entrypoint_root_inode,
+        )
+        binding_ep = _mutable_root_binding(
+            entrypoint_cwd_identity,
+            filesystem=fs,
+            allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+            canonical_config_bytes=config_identity.config_bytes,
+        )
+        (
+            head_ep,
+            tree_ep,
+            accepted_ep,
+            remote_url_ep,
+            remote_ep,
+            sources_ep,
+            legacy_task_brief_drift_ep,
+        ) = binding_ep
+
+        if remote_url_ep != remote_url:
+            raise ValueError(
+                "Mutable incumbent split entrypoint root remote URL differs from cwd"
+            )
+        if remote_ep.slug != remote.slug:
+            raise ValueError(
+                "Mutable incumbent split entrypoint root repository slug differs from cwd"
+            )
+        if head_ep != head:
+            raise ValueError(
+                f"Mutable incumbent split entrypoint root HEAD commit differs from cwd: {head_ep} != {head}"
+            )
+        if tree_ep != tree:
+            raise ValueError(
+                f"Mutable incumbent split entrypoint root tracked tree differs from cwd: {tree_ep} != {tree}"
+            )
+        if accepted_ep.commit != accepted.commit:
+            raise ValueError(
+                "Mutable incumbent split entrypoint root accepted dev commit differs from cwd"
+            )
+        if len(sources_ep) != len(sources):
+            raise ValueError(
+                "Mutable incumbent split entrypoint root governed launch sources count mismatch"
+            )
+        for src_ep, src_cwd in zip(sources_ep, sources):
+            if (src_ep.role, src_ep.sha256, src_ep.byte_length) != (
+                src_cwd.role,
+                src_cwd.sha256,
+                src_cwd.byte_length,
+            ):
+                raise ValueError(
+                    f"Mutable incumbent split entrypoint root governed source byte drift for {src_ep.role}"
+                )
+    else:
+        entrypoint_root_device = seed_cwd.device
+        entrypoint_root_inode = seed_cwd.inode
+        sources_ep = sources
+        binding_ep = binding
+
     expected = _mutable_process_contract(
         config_identity,
         cwd=seed_cwd,
@@ -6190,11 +6938,23 @@ def capture_mutable_incumbent_snapshot(
     def revalidate_root() -> None:
         current = _mutable_root_binding(
             seed_cwd,
+            filesystem=fs,
             allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
             canonical_config_bytes=config_identity.config_bytes,
         )
         if current != binding:
             raise ValueError("Mutable incumbent root/source binding drifted")
+        if entrypoint_root != seed_cwd.path:
+            current_ep = _mutable_root_binding(
+                entrypoint_cwd_identity,
+                filesystem=fs,
+                allow_legacy_task_brief_drift=allow_legacy_task_brief_drift,
+                canonical_config_bytes=config_identity.config_bytes,
+            )
+            if current_ep != binding_ep:
+                raise ValueError(
+                    "Mutable incumbent split entrypoint root binding drifted"
+                )
 
     process = discover_incumbent_supervisor_process(
         config_identity,
@@ -6204,9 +6964,7 @@ def capture_mutable_incumbent_snapshot(
         cwd_git_identity_reader=lambda _cwd: (head, tree),
         candidate_revalidator=revalidate_root,
         allow_legacy_environment_contract=allow_legacy_environment_contract,
-        allow_legacy_admission_lock_id_churn=(
-            allow_legacy_admission_lock_id_churn
-        ),
+        allow_legacy_admission_lock_id_churn=allow_legacy_admission_lock_id_churn,
     )
     if process.generation != seed_generation:
         raise ValueError("Mutable incumbent generation changed during capture")
@@ -6221,43 +6979,148 @@ def capture_mutable_incumbent_snapshot(
         repository_slug=remote.slug,
         process=process,
         source_identities=sources,
+        entrypoint_root=entrypoint_root,
+        entrypoint_root_device=entrypoint_root_device,
+        entrypoint_root_inode=entrypoint_root_inode,
+        entrypoint_source_identities=sources_ep,
         legacy_task_brief_drift=legacy_task_brief_drift,
     )
 
 
-def materialize_immutable_rollback_runtime(
-    snapshot: MutableIncumbentSnapshot,
+
+def _atomic_no_replace_rename(src: Path, dst: Path) -> None:
+    """Atomically move src to dst without overwriting or replacing an existing dst."""
+    if dst.exists() or dst.is_symlink():
+        raise ValueError(f"Fresh rollback runtime destination already exists: {dst}")
+
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is None:
+            raise OSError(
+                errno.ENOSYS,
+                "Atomic no-replace rename is unavailable (renameat2 missing)",
+            )
+        AT_FDCWD = -100
+        RENAME_NOREPLACE = 1
+        res = renameat2(
+            ctypes.c_int(AT_FDCWD),
+            os.fsencode(src),
+            ctypes.c_int(AT_FDCWD),
+            os.fsencode(dst),
+            ctypes.c_uint(RENAME_NOREPLACE),
+        )
+    except (AttributeError, TypeError) as exc:
+        raise OSError(
+            errno.ENOSYS,
+            f"Atomic no-replace rename is unavailable: {exc}",
+        ) from exc
+
+    if res != 0:
+        err = ctypes.get_errno()
+        if err == errno.EEXIST:
+            raise ValueError(
+                f"Fresh rollback runtime destination already exists: {dst}"
+            )
+        raise OSError(err, f"Atomic rename failed ({err}): {os.strerror(err)}")
+
+
+def _validate_reusable_rollback_runtime(
+    identity: CandidateRuntimeIdentity,
+    snapshot: MutableIncumbentSnapshot | CandidateRuntimeIdentity,
+    *,
+    candidate_identity: CandidateRuntimeIdentity | None,
 ) -> CandidateRuntimeIdentity:
-    """Create a fresh persistent checkout for the captured mutable commit."""
+    """Fail closed unless an occupied rollback root is the exact incumbent snapshot.
+
+    A promotion can be retried after it aborts before the live-config CAS.  In
+    that case the immutable rollback checkout from the first attempt is safe to
+    reuse only when its complete immutable identity still binds the incumbent
+    captured for this attempt.  This deliberately never overwrites, renames, or
+    cleans the occupied directory.
+    """
+
+    identity.verify_immutable_snapshot()
+    if (
+        identity.head_commit != snapshot.head_commit
+        or identity.tracked_tree_identity != snapshot.tracked_tree_identity
+        or identity.accepted_dev_commit != snapshot.accepted_dev_commit
+        or identity.repository_slug != snapshot.repository_slug
+    ):
+        raise ValueError("Existing rollback runtime identity differs from incumbent")
+    if candidate_identity is not None and (
+        identity.candidate_root == candidate_identity.candidate_root
+        or (
+            identity.candidate_root_device == candidate_identity.candidate_root_device
+            and identity.candidate_root_inode == candidate_identity.candidate_root_inode
+        )
+    ):
+        raise ValueError("Existing rollback runtime aliases the candidate runtime")
+    return identity
+
+
+def materialize_immutable_rollback_runtime(
+    snapshot: MutableIncumbentSnapshot | CandidateRuntimeIdentity,
+    candidate_identity: CandidateRuntimeIdentity | None = None,
+) -> CandidateRuntimeIdentity:
+    """Create, or safely reuse, an immutable rollback checkout for the incumbent."""
     parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
+    rollback_parent = ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX
+
     _validate_absolute_identity_path(parent, label="Command runtime parent")
     parent_components = _capture_directory_component_identities(
         parent,
         label="Command runtime parent",
     )
-    destination = parent / snapshot.head_commit
+
+    candidate_root = (
+        candidate_identity.candidate_root
+        if candidate_identity is not None
+        else None
+    )
+
+    direct_destination = parent / snapshot.head_commit
+
+    selected_parent = parent
+    selected_components = parent_components
+    destination = direct_destination
+
+    if (
+        direct_destination.exists()
+        or direct_destination.is_symlink()
+        or (candidate_root is not None and direct_destination == candidate_root)
+    ):
+        selected_parent = rollback_parent
+        _validate_absolute_identity_path(
+            selected_parent, label="Rollback command runtime parent"
+        )
+        if not selected_parent.exists():
+            selected_parent.mkdir(parents=True, exist_ok=True)
+        selected_components = _capture_directory_component_identities(
+            selected_parent,
+            label="Rollback command runtime parent",
+        )
+        destination = selected_parent / snapshot.head_commit
+
     if destination.exists() or destination.is_symlink():
-        if destination.is_dir() and not destination.is_symlink():
+        if selected_parent == rollback_parent and not destination.is_symlink():
             try:
-                identity = build_candidate_runtime_identity(destination)
-                if (
-                    identity.candidate_root == snapshot.root
-                    and (identity.candidate_root_device, identity.candidate_root_inode)
-                    == (snapshot.root_device, snapshot.root_inode)
-                    and identity.head_commit == snapshot.head_commit
-                    and identity.tracked_tree_identity == snapshot.tracked_tree_identity
-                    and identity.accepted_dev_commit == snapshot.accepted_dev_commit
-                    and identity.repository_slug == snapshot.repository_slug
-                ):
-                    identity.verify_immutable_snapshot()
-                    return identity
-            except Exception:
-                pass
+                existing_identity = build_candidate_runtime_identity(destination)
+            except Exception as exc:
+                raise ValueError(
+                    f"Fresh rollback runtime destination already exists: {destination}"
+                ) from exc
+            return _validate_reusable_rollback_runtime(
+                existing_identity,
+                snapshot,
+                candidate_identity=candidate_identity,
+            )
         raise ValueError(
             f"Fresh rollback runtime destination already exists: {destination}"
         )
+
     temporary_root = Path(
-        tempfile.mkdtemp(prefix=".rollback-runtime-", dir=parent)
+        tempfile.mkdtemp(prefix=".rollback-runtime-", dir=selected_parent)
     )
     installed = False
     try:
@@ -6296,14 +7159,22 @@ def materialize_immutable_rollback_runtime(
         ):
             raise ValueError("Materialized rollback tree differs from incumbent")
         _assert_path_component_identities(
-            parent_components,
-            label="Command runtime parent",
+            selected_components,
+            label=(
+                "Rollback command runtime parent"
+                if selected_parent == rollback_parent
+                else "Command runtime parent"
+            ),
         )
-        os.rename(temporary_root, destination)
+        _atomic_no_replace_rename(temporary_root, destination)
         installed = True
         directory_fd = _open_path_descriptor(
-            parent,
-            label="Command runtime parent",
+            selected_parent,
+            label=(
+                "Rollback command runtime parent"
+                if selected_parent == rollback_parent
+                else "Command runtime parent"
+            ),
             require_directory=True,
         )
         try:
@@ -6575,7 +7446,8 @@ class OSPromotionBackend:
                     "Candidate and mutable incumbent captured different accepted dev tips"
                 )
             incumbent_identity = materialize_immutable_rollback_runtime(
-                mutable_incumbent
+                mutable_incumbent,
+                candidate_identity=candidate_identity,
             )
             incumbent_process = mutable_incumbent.process
             mutable_expected = _mutable_process_contract(
@@ -6585,23 +7457,51 @@ class OSPromotionBackend:
                 head_commit=mutable_incumbent.head_commit,
                 tracked_tree_identity=mutable_incumbent.tracked_tree_identity,
             )
+            active_incumbent_identity = candidate_identity
             baseline_identity = candidate_identity
         else:
-            incumbent_identity = build_candidate_runtime_identity(
+            captured_incumbent_identity = build_candidate_runtime_identity(
                 seed_cwd.path,
                 allow_legacy_task_brief_drift=True,
+                allow_legacy_incumbent_bytecode_residue=True,
             )
             incumbent_process = discover_incumbent_supervisor_process(
-                incumbent_identity,
+                captured_incumbent_identity,
                 expected_argv=seed_argv,
                 reader=self.reader,
-                candidate_revalidator=incumbent_identity.verify_immutable_snapshot,
+                candidate_revalidator=captured_incumbent_identity.verify_immutable_snapshot,
+                allow_legacy_admission_lock_id_churn=True,
             )
             if incumbent_process.generation != seed_generation:
                 raise ValueError("Incumbent changed during promotion preparation")
-            baseline_identity = incumbent_identity
+
+            if (
+                len(captured_incumbent_identity.legacy_incumbent_bytecode_residue) > 0
+                or len(captured_incumbent_identity.legacy_task_brief_drift) > 0
+            ):
+                incumbent_identity = materialize_immutable_rollback_runtime(
+                    captured_incumbent_identity,
+                    candidate_identity=candidate_identity,
+                )
+            else:
+                incumbent_identity = captured_incumbent_identity
+
+            active_incumbent_identity = captured_incumbent_identity
+            baseline_identity = captured_incumbent_identity
+
+        # Candidate, active incumbent, and rollback captures all bind the same
+        # external live config.  The active runtime is intentionally a
+        # different root from the rollback materialization, but that does not
+        # relax the config-CAS baseline: a config replacement during either
+        # capture must still fail before we render any launch variant.
+        if active_incumbent_identity.config_bytes != candidate_identity.config_bytes:
+            raise ValueError(
+                "Candidate and active incumbent captured different config bytes"
+            )
         if incumbent_identity.config_bytes != candidate_identity.config_bytes:
             raise ValueError("Candidate and rollback captured different config bytes")
+        if active_incumbent_identity.candidate_root == candidate_identity.candidate_root:
+            raise ValueError("Candidate runtime equals the active incumbent runtime")
         if incumbent_identity.candidate_root == candidate_identity.candidate_root:
             raise ValueError("Candidate runtime equals the rollback runtime")
         candidate_config = derive_supervisor_config_variant(
@@ -6627,7 +7527,7 @@ class OSPromotionBackend:
             expected_generation=incumbent_process.generation,
             reader=self.reader,
             allow_legacy_environment_contract=bootstrap_mutable_incumbent,
-            allow_legacy_admission_lock_id_churn=bootstrap_mutable_incumbent,
+            allow_legacy_admission_lock_id_churn=True,
             cwd_git_identity_reader=(
                 lambda _cwd: (
                     mutable_incumbent.head_commit,
@@ -6664,15 +7564,26 @@ class OSPromotionBackend:
             runtime_admission_lock_path=(
                 candidate_status_root / ".orchestrator" / "runtime-admission.lock"
             ),
+            active_incumbent_identity=active_incumbent_identity,
         )
 
     def revalidate(self, plan: PromotionPlan) -> RuntimeObservation:
         plan.candidate_identity.verify_immutable_snapshot()
         plan.incumbent_identity.verify_immutable_snapshot()
+        active_identity = plan.effective_active_incumbent_identity
+        if (
+            active_identity != plan.candidate_identity
+            and active_identity != plan.incumbent_identity
+        ):
+            active_identity.verify_immutable_snapshot(
+                require_accepted_dev_identity=False
+            )
+
         if (
             build_governed_supervisor_launch_contract(
                 plan.candidate_identity,
                 supervisor_argv=plan.candidate_config.supervisor_argv,
+                baseline_task_state_event_log_identity=plan.candidate_launch.task_state_event_log_identity,
             )
             != plan.candidate_launch
         ):
@@ -6681,16 +7592,19 @@ class OSPromotionBackend:
             build_governed_supervisor_launch_contract(
                 plan.incumbent_identity,
                 supervisor_argv=plan.rollback_config.supervisor_argv,
+                baseline_task_state_event_log_identity=plan.rollback_launch.task_state_event_log_identity,
             )
             != plan.rollback_launch
         ):
             raise ValueError("Rollback governed launch contract drift detected")
+
         if plan.mutable_incumbent is None:
             return capture_runtime_observation(
-                plan.incumbent_identity,
+                active_identity,
                 expected_argv=plan.incumbent_process.argv,
                 expected_generation=plan.incumbent_process.generation,
                 reader=self.reader,
+                allow_legacy_admission_lock_id_churn=True,
             )
         current_seed = _discover_supervisor_seed(self.reader)
         expected_seed = (
@@ -6720,7 +7634,7 @@ class OSPromotionBackend:
             tracked_tree_identity=plan.mutable_incumbent.tracked_tree_identity,
         )
         return capture_runtime_observation(
-            plan.candidate_identity,
+            active_identity,
             expected_argv=plan.incumbent_process.argv,
             expected_process_contract=expected,
             expected_generation=plan.incumbent_process.generation,
@@ -6747,6 +7661,7 @@ class OSPromotionBackend:
             expected_generation=generation,
             reader=self.reader,
             require_current_dev_identity=require_current_dev_identity,
+            allow_legacy_admission_lock_id_churn=True,
         )
 
     def record_intent(
@@ -6793,7 +7708,9 @@ class OSPromotionBackend:
         current_contract = build_governed_supervisor_launch_contract(
             identity,
             supervisor_argv=contract.argv,
+            baseline_task_state_event_log_identity=contract.task_state_event_log_identity,
         )
+
         if current_contract != contract:
             raise ValueError("Governed launch contract drift detected before launch")
         environment = build_scrubbed_launch_environment(
@@ -7369,10 +8286,11 @@ class PromotionTransaction:
                 {
                     "pid": plan.incumbent_process.generation.pid,
                     "starttime_ticks": plan.incumbent_process.generation.starttime_ticks,
-                    "root": str(plan.incumbent_identity.candidate_root),
-                    "commit": plan.incumbent_identity.head_commit,
-                    "tree": plan.incumbent_identity.tracked_tree_identity,
-                    "config_sha256": plan.incumbent_identity.config_sha256,
+                    "root": str(plan.effective_active_incumbent_identity.candidate_root),
+                    "commit": plan.effective_active_incumbent_identity.head_commit,
+                    "tree": plan.effective_active_incumbent_identity.tracked_tree_identity,
+                    "config_sha256": plan.effective_active_incumbent_identity.config_sha256,
+                    "rollback_root": str(plan.incumbent_identity.candidate_root),
                 }
                 if plan is not None
                 else None
@@ -7386,6 +8304,21 @@ class PromotionTransaction:
                     "root": str(plan.mutable_incumbent.root),
                     "root_device": plan.mutable_incumbent.root_device,
                     "root_inode": plan.mutable_incumbent.root_inode,
+                    "entrypoint_root": str(
+                        plan.mutable_incumbent.entrypoint_root
+                        or plan.mutable_incumbent.root
+                    ),
+                    "entrypoint_root_device": (
+                        plan.mutable_incumbent.entrypoint_root_device
+                        if plan.mutable_incumbent.entrypoint_root_device is not None
+                        else plan.mutable_incumbent.root_device
+                    ),
+                    "entrypoint_root_inode": (
+                        plan.mutable_incumbent.entrypoint_root_inode
+                        if plan.mutable_incumbent.entrypoint_root_inode is not None
+                        else plan.mutable_incumbent.root_inode
+                    ),
+                    "is_split_entrypoint": plan.mutable_incumbent.is_split_entrypoint,
                     "commit": plan.mutable_incumbent.head_commit,
                     "tree": plan.mutable_incumbent.tracked_tree_identity,
                     "accepted_dev_commit": (

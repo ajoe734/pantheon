@@ -173,8 +173,38 @@ class WakeupMessageRoleGuardrailTests(unittest.TestCase):
 
         self.assertIn("角色是已通過審查後的 task owner", message)
         self.assertIn("不得重新指派 owner/reviewer", message)
+        self.assertIn("不得為記錄 `review_approved` 或 closeout 而修改或提交它", message)
+        self.assertIn("governed `ai-status.sh approve`", message)
         self.assertIn("才執行 `done`", message)
         self.assertNotIn("角色是 reviewer，不是 task owner", message)
+
+    def test_render_wakeup_message_bounds_anchor_commit_subject_for_long_task_id(self) -> None:
+        long_event = dict(self.event)
+        long_task_id = "SUP-WORKER-SUBJECT-GUARD-20260811-EXTREMELY-LONG-TASK-ID-THAT-EXCEEDS-LIMITS"
+        long_event["task_id"] = long_task_id
+        long_event["task"] = dict(self.event["task"], id=long_task_id)
+
+        message = watch_events.render_wakeup_message(self.config, long_event, "Antigravity")
+
+        import re
+        match = re.search(r"Anchor commit subject 建議：`(.*?)`；", message)
+        self.assertIsNotNone(match)
+        subject = match.group(1)
+        self.assertLessEqual(len(subject), 72)
+        self.assertTrue(re.match(r"^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S", subject))
+
+    def test_bound_commit_subject_utility_preserves_short_and_bounds_long(self) -> None:
+        short_sub = watch_events.bound_commit_subject("PPL-ALLOC-007", "Binding visibility and route prune")
+        self.assertEqual(short_sub, "PPL-ALLOC-007: Binding visibility and route prune")
+        self.assertLessEqual(len(short_sub), 72)
+
+        long_sub = watch_events.bound_commit_subject(
+            "SUP-WORKER-SUBJECT-GUARD-20260811-EXTREMELY-LONG-TASK-ID-THAT-EXCEEDS-LIMITS",
+            "anchor services/control-plane/bff/adapters/management.py",
+        )
+        self.assertLessEqual(len(long_sub), 72)
+        import re
+        self.assertTrue(re.match(r"^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S", long_sub))
 
 
 class WatcherQueueTransactionTests(unittest.TestCase):

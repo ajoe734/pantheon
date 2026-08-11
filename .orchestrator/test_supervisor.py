@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -231,6 +232,75 @@ def _hard_crash_reserved_worker_after_launch(
 
 
 class RuntimeConfigTests(unittest.TestCase):
+    def test_provider_report_tick_uses_running_config_compatible_supervisor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            provider_report_path = Path(tmpdir) / "provider_capabilities.json"
+            provider_report_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2000-01-01T00:00:00Z",
+                        "providers": {"codex": {"auth_ready": True}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "supervisor": {
+                    "provider_capability_refresh_interval_seconds": 300,
+                    "provider_probe_failure_hysteresis_threshold": 1,
+                },
+                "paths": {"provider_capabilities": str(provider_report_path)},
+            }
+            legacy_supervisor = types.ModuleType("supervisor")
+
+            def legacy_projector(
+                report: dict[str, object],
+                provider_key: str,
+                probe: dict[str, object],
+            ) -> None:
+                return None
+
+            legacy_supervisor.apply_provider_probe_to_report = legacy_projector
+            running_supervisor = types.ModuleType("__main__")
+            running_supervisor.apply_provider_probe_to_report = (
+                supervisor.apply_provider_probe_to_report
+            )
+
+            def refreshed_report(_config: dict[str, object]) -> dict[str, object]:
+                from supervisor import apply_provider_probe_to_report
+
+                report = {"providers": {"codex": {"auth_ready": True}}}
+                apply_provider_probe_to_report(
+                    report,
+                    "codex",
+                    {
+                        "ready": False,
+                        "status": "probe_timeout",
+                        "checked_at": "2026-08-11T01:00:00Z",
+                        "source": "live",
+                    },
+                    config=_config,
+                )
+                return report
+
+            with (
+                mock.patch.dict(sys.modules, {"supervisor": legacy_supervisor}),
+                mock.patch.object(supervisor, "build_provider_capabilities", side_effect=refreshed_report),
+                mock.patch.object(supervisor, "write_provider_capabilities"),
+                mock.patch.object(supervisor, "provider_recovery_probe_targets", return_value=[]),
+                mock.patch.object(supervisor, "provider_stale_cache_readmission_probe_targets", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "_safe_phase", wraps=supervisor._safe_phase) as safe_phase,
+            ):
+                with self.assertRaisesRegex(TypeError, "unexpected keyword argument 'config'"):
+                    refreshed_report(config)
+                supervisor._bind_running_supervisor_import("__main__", running_supervisor)
+                _previous, report = supervisor.probe_provider_reports(config, quiet=True)
+
+        self.assertFalse(report["providers"]["codex"]["auth_ready"])
+        self.assertEqual(report["providers"]["codex"]["consecutive_probe_failures"], 1)
+        self.assertEqual(safe_phase.call_args_list[0].args[0], "load_provider_report_tick")
+
     def test_load_provider_report_can_skip_refresh_for_one_shot_claims(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -2312,6 +2382,77 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertIn("PANTHEON_COMMAND_ROOT", brief)
         self.assertIn("$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh", brief)
         self.assertNotIn("./scripts/ai-status.sh", brief)
+
+    def test_finalize_dispatch_preserves_existing_task_brief_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            brief_path = workspace / ".orchestrator/task-briefs/task_001.md"
+            brief_path.parent.mkdir(parents=True)
+            reviewed_bytes = "# Task Brief: TASK-001\n\n- Status: review\n"
+            brief_path.write_text(reviewed_bytes, encoding="utf-8")
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="owner finalize",
+                task_id="TASK-001",
+                reason="owned_finalize_dispatch",
+                context_files=[".orchestrator/task-briefs/task_001.md"],
+                target_files=[],
+                metadata={},
+            )
+
+            materialized = supervisor.materialize_worker_context_files(
+                {"paths": {"status_file": str(root / "ai-status.json")}},
+                request,
+                workspace,
+            )
+
+            self.assertEqual(materialized, [".orchestrator/task-briefs/task_001.md"])
+            self.assertEqual(brief_path.read_text(encoding="utf-8"), reviewed_bytes)
+
+    def test_finalize_dispatch_generates_a_nontranscribing_task_brief(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            task = {
+                "id": "TASK-001",
+                "title": "Close safely",
+                "status": "review_approved",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "next": "This approval must remain exact-head bound",
+            }
+            (root / "ai-status.json").write_text(
+                json.dumps({"tasks": [task]}),
+                encoding="utf-8",
+            )
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="owner finalize",
+                task_id="TASK-001",
+                reason="owned_finalize_dispatch",
+                context_files=[".orchestrator/task-briefs/task_001.md"],
+                target_files=[],
+                metadata={},
+            )
+
+            supervisor.materialize_worker_context_files(
+                {"paths": {"status_file": str(root / "ai-status.json")}},
+                request,
+                workspace,
+            )
+            rendered = (workspace / ".orchestrator/task-briefs/task_001.md").read_text(
+                encoding="utf-8"
+            )
+
+        self.assertIn("query the governed `ai-status.sh show` command", rendered)
+        self.assertIn("do not commit this generated brief as an approval record", rendered)
+        self.assertNotIn("- Status: review_approved", rendered)
+        self.assertNotIn("This approval must remain exact-head bound", rendered)
 
     def test_prepare_worker_workspace_allocates_chair_review_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -16605,6 +16746,30 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
             self.assertIn("Task-ID: OPS-ANCHOR-001", body)
             self.assertIn("Reviewer: local", body)
 
+    def test_anchor_commit_task_wip_bounds_subject_length_for_long_task_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._init_git_repo(tmpdir)
+            (repo / "svc.py").write_text("base\n", encoding="utf-8")
+            self._commit_all(repo, "initial")
+            long_task_id = "SUP-WORKER-SUBJECT-GUARD-20260811-EXTREMELY-LONG-TASK-ID-THAT-EXCEEDS-LIMITS"
+            branch_name = f"task/{long_task_id}"
+            subprocess.run(["git", "checkout", "-q", "-b", branch_name], cwd=repo, check=True)
+            (repo / "svc.py").write_text("worker WIP\n", encoding="utf-8")
+
+            ok, detail = supervisor._anchor_commit_task_wip(repo, long_task_id, branch_name)
+
+            self.assertTrue(ok, detail)
+            body = subprocess.run(
+                ["git", "log", "-1", "--format=%B"], cwd=repo, capture_output=True, text=True, check=True
+            ).stdout
+            subject = body.splitlines()[0]
+            self.assertLessEqual(len(subject), 72)
+            import re
+            self.assertTrue(re.match(r"^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S", subject))
+            self.assertIn("LLM-Agent: supervisor", body)
+            self.assertIn(f"Task-ID: {long_task_id}", body)
+            self.assertIn("Reviewer: local", body)
+
     def test_anchor_commit_task_wip_refuses_when_branch_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = self._init_git_repo(tmpdir)
@@ -26544,6 +26709,95 @@ class LongFinalizeLeaseAndL12PriorityTests(unittest.TestCase):
             "revoked probe-less credential must not inherit a hysteresis hold",
         )
         self.assertIs(copilot.get("local_cli_worker_supported"), False)
+
+    def test_persist_runtime_phase_launch_receipt_binds_worker_and_queue_lease_owner(self) -> None:
+        config = copy.deepcopy(
+            json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_file = tmp_path / "state.json"
+            event_queue = tmp_path / "event_queue.json"
+            approval_queue = tmp_path / "approval_queue.json"
+            status_file = tmp_path / "ai-status.json"
+            activity_log = tmp_path / "ai-activity-log.jsonl"
+            config.setdefault("paths", {})["state_file"] = str(state_file)
+            config["paths"]["event_queue"] = str(event_queue)
+            config["paths"]["approval_queue"] = str(approval_queue)
+            config["paths"]["status_file"] = str(status_file)
+            config["paths"]["activity_log"] = str(activity_log)
+            event_queue.write_text("", encoding="utf-8")
+            approval_queue.write_text('{"pending":[]}', encoding="utf-8")
+            status_file.write_text('{"tasks":[]}', encoding="utf-8")
+            activity_log.write_text("", encoding="utf-8")
+            initial_state = supervisor.load_runtime_state(config)
+            initial_state["supervisor"] = {
+                "runtime_phase_reservations": {
+                    "phase1": {
+                        "token": "tok1",
+                        "launch_intent": {
+                            "task_id": "T1",
+                            "queue_event_id": "evt-1",
+                        },
+                    }
+                }
+            }
+            initial_state["queue"] = {"events": {"evt-1": {"status": "queued", "task_id": "T1"}}}
+            supervisor.save_runtime_state(config, initial_state)
+            on_disk = supervisor.load_runtime_state(config)
+            digest = supervisor._runtime_state_cas_digest(on_disk)
+
+            token = supervisor._RUNTIME_PHASE_CONTEXT.set({
+                "phase_name": "phase1",
+                "reservation_token": "tok1",
+                "expected_digest": digest,
+            })
+            try:
+                worker_data = {
+                    "run_id": "run-100",
+                    "queue_event_id": "evt-1",
+                    "task_id": "T1",
+                    "status": "running",
+                    "provider": "claude",
+                }
+                scratch = copy.deepcopy(initial_state)
+                supervisor._persist_runtime_phase_launch_receipt(config, scratch, worker_data)
+
+                saved_state = json.loads(state_file.read_text(encoding="utf-8"))
+                receipt_rec = saved_state.get("supervisor", {}).get("runtime_phase_reservations", {}).get("phase1", {}).get("launch_receipt", {})
+                self.assertEqual(receipt_rec.get("worker", {}).get("run_id"), "run-100")
+            finally:
+                supervisor._RUNTIME_PHASE_CONTEXT.reset(token)
+
+    def test_process_queue_repairs_missing_lease_owner_on_active_worker(self) -> None:
+        config = copy.deepcopy(
+            json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        )
+        state = {
+            "workers": {
+                "w1": {
+                    "status": "running",
+                    "run_id": "run-w1",
+                    "queue_event_id": "evt-w1",
+                    "task_id": "T100",
+                }
+            },
+            "queue": {
+                "events": {
+                    "evt-w1": {
+                        "status": "started",
+                        "run_id": "run-w1",
+                        "task_id": "T100",
+                    }
+                }
+            },
+        }
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[{"event_id": "evt-w1", "task_id": "T100"}]), \
+             mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
+            supervisor.process_queue(config, state, provider_report={})
+
+        evt = state["queue"]["events"]["evt-w1"]
+        self.assertEqual(evt.get("lease_owner"), "run-w1")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,24 @@ from types import MappingProxyType
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
+
+def _bind_running_supervisor_import(
+    module_name: str,
+    module: object | None,
+) -> None:
+    """Keep lazy provider imports on the running supervisor implementation."""
+
+    if module_name == "__main__" and module is not None:
+        sys.modules["supervisor"] = module
+
+
+# The daemon executes this file as ``__main__``, while provider_permissions
+# imports ``supervisor`` lazily during a refreshed provider report.  Bind both
+# names before importing provider_permissions so that refreshes cannot resolve a
+# second checkout with an older apply_provider_probe_to_report signature.
+_bind_running_supervisor_import(__name__, sys.modules.get(__name__))
+
+
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
@@ -40,6 +58,7 @@ from adapters.base import DeliveryRequest
 from common import (
     activity_audit_lock_file,
     agent_config_for,
+    bound_commit_subject,
     command_exists,
     canonical_task_state_lock_file,
     config_path,
@@ -2385,9 +2404,7 @@ def _anchor_commit_task_wip(worktree_path: Path, task_id: str | None, branch: st
     if add.returncode != 0:
         return False, "git_add_failed"
     tid = str(task_id or "").strip() or "TASK"
-    subject = f"{tid}: anchor recovered worktree WIP"
-    if len(subject) > 72:
-        subject = f"{tid}: anchor WIP"
+    subject = bound_commit_subject(tid, "anchor recovered worktree WIP")
     message = (
         f"{subject}\n\n"
         "Auto-anchor by the supervisor worktree-lease guard. A prior worker run\n"
@@ -2549,7 +2566,12 @@ def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -
     return ordered
 
 
-def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) -> str:
+def _generated_worker_task_brief(
+    config: dict[str, Any],
+    task_id: str | None,
+    *,
+    finalization_context: bool = False,
+) -> str:
     task = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
     if not task:
         return "\n".join(
@@ -2564,6 +2586,25 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
                 "",
             ]
         )
+    task_lines = [
+        f"- Title: {task.get('title') or '-'}",
+        f"- Owner: {task.get('owner') or '-'}",
+        f"- Reviewer: {task.get('reviewer') or '-'}",
+    ]
+    if finalization_context:
+        task_lines.extend(
+            [
+                "- Status: query the governed `ai-status.sh show` command; do not transcribe it into this file.",
+                "- Next: close out only the already-reviewed delivery; do not commit this generated brief as an approval record.",
+            ]
+        )
+    else:
+        task_lines.extend(
+            [
+                f"- Status: {task.get('status') or '-'}",
+                f"- Next: {task.get('next') or '-'}",
+            ]
+        )
     return "\n".join(
         [
             f"# Task Brief: {task.get('id') or task_id}",
@@ -2571,11 +2612,7 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
             "Generated in the worker workspace because the supervisor root did not have a task brief file.",
             "",
             "## Task",
-            f"- Title: {task.get('title') or '-'}",
-            f"- Status: {task.get('status') or '-'}",
-            f"- Owner: {task.get('owner') or '-'}",
-            f"- Reviewer: {task.get('reviewer') or '-'}",
-            f"- Next: {task.get('next') or '-'}",
+            *task_lines,
             "",
             "## Summary",
             str(task.get("summary_zh") or "-"),
@@ -2606,6 +2643,30 @@ def materialize_worker_context_files(
             continue
         destination = workspace_path / rel_value
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if request.reason == "owned_finalize_dispatch":
+            if destination.exists():
+                # The branch already has the task-scoped context it was reviewed
+                # against. Rewriting it from the live `review_approved` row would
+                # manufacture a generated diff after approval, inviting an owner
+                # to commit a redundant closeout record that moves the exact head.
+                # Canonical status remains available through the governed `show`
+                # command; preserve the reviewed branch bytes here.
+                materialized.append(rel_value)
+                continue
+            # A fresh finalize worktree still needs the task context, but must
+            # not receive a branch-local transcription of the just-recorded
+            # approval. Render a stable closeout brief that directs the owner
+            # to governed state instead of copying status/next into git.
+            destination.write_text(
+                _generated_worker_task_brief(
+                    config,
+                    request.task_id,
+                    finalization_context=True,
+                ),
+                encoding="utf-8",
+            )
+            materialized.append(rel_value)
+            continue
         copied = False
         for candidate in _task_brief_context_candidates(request.task_id, rel_value):
             source = status_root / candidate
@@ -3212,6 +3273,16 @@ def start_worker_for_request(
         "last_error": None,
     }
     state.setdefault("workers", {})[worker_run_id] = worker_record
+    if queue_event_id:
+        q_record = queue_status(state, queue_event_id)
+        w_status = str(worker_record.get("status") or "running")
+        desired_status = "manual_pending" if w_status in {"manual_pending", "waiting_approval"} else "started"
+        q_record["status"] = desired_status
+        q_record["run_id"] = worker_run_id
+        q_record["lease_owner"] = worker_run_id
+        q_record["lease_acquired_at"] = worker_record.get("lease_acquired_at") or utc_now()
+        q_record["lease_expires_at"] = worker_record.get("lease_expires_at") or queue_lease_expiry(config)
+        q_record["processed_at"] = q_record.get("processed_at") or utc_now()
     record_worker_runtime_measurement(
         config,
         state,
@@ -3306,7 +3377,9 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         if event_key and record.get("event_key") != event_key:
             record["event_key"] = event_key
             changed = True
-        if record.get("status") in {"started", "manual_pending", "completed", "failed"}:
+        if record.get("status") in {"completed", "failed"}:
+            continue
+        if record.get("status") in {"started", "manual_pending"} and record.get("lease_owner") and record.get("run_id"):
             continue
         retry_was_held = (
             record.get("status") == RETRY_QUARANTINED_STATUS
@@ -3364,14 +3437,19 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         )
         if active_worker:
             desired_status = "manual_pending" if active_worker.get("status") in {"manual_pending", "waiting_approval"} else "started"
-            if record.get("status") != desired_status or record.get("run_id") != active_worker.get("run_id"):
+            active_run_id = active_worker.get("run_id") or event_id
+            if (
+                record.get("status") != desired_status
+                or record.get("run_id") != active_run_id
+                or record.get("lease_owner") != active_run_id
+            ):
                 observed_started_at = (
                     _parse_iso_utc(str(active_worker.get("lease_acquired_at") or ""))
                     or datetime.now(timezone.utc)
                 )
                 record["status"] = desired_status
-                record["run_id"] = active_worker.get("run_id") or event_id
-                record["lease_owner"] = active_worker.get("run_id") or event_id
+                record["run_id"] = active_run_id
+                record["lease_owner"] = active_run_id
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
@@ -15196,7 +15274,11 @@ def poll_worker_approval_stage(
                 },
             )
             if worker.get("queue_event_id"):
-                queue_status(state, worker["queue_event_id"])["status"] = "manual_pending"
+                q_rec = queue_status(state, worker["queue_event_id"])
+                q_rec["status"] = "manual_pending"
+                if worker.get("run_id"):
+                    q_rec["run_id"] = worker.get("run_id")
+                    q_rec["lease_owner"] = worker.get("run_id")
             changed = True
         return {"changed": changed, "stop": True}
 

@@ -1028,6 +1028,385 @@ class SupervisorDispatchBatchTests(unittest.TestCase):
         )
 
 
+class DevBridgeMaterializeBatchTests(unittest.TestCase):
+    """Covers SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811.
+
+    The dispatcher used to call ``assign`` once per packet task, so a second
+    (or later) row failing left the earlier rows already committed -- exactly
+    the partial materialization incident recorded in
+    ``.orchestrator/assistant-dev-packets/receipts/pkt-two-blocker-dev-closeout-20260809T060036Z.json``.
+    ``dev-bridge-materialize-batch`` applies every row to one in-memory
+    snapshot and reaches the journal through exactly one commit.
+    """
+
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+        self.addCleanup(_teardown_test_isolation, self)
+        self.journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        self.env_patch = mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: str(self.journal),
+                "AI_NAME": "Human/Ops",
+                "ORCH_RUN_ID": "",
+                "ORCH_TASK_ID": "",
+                "ORCH_AGENT_ID": "",
+                "ORCH_PROVIDER": "",
+                "ORCH_SESSION_ID": "",
+            },
+            clear=False,
+        )
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
+        ai_status.append_state_commit(
+            self.journal,
+            ai_status.default_state(),
+            source="test-bootstrap",
+        )
+
+    def _task_spec(self, task_id: str, *, owner: str = "Codex", reviewer: str = "Antigravity") -> dict[str, Any]:
+        return {
+            "id": task_id,
+            "title": f"Title for {task_id}",
+            "owner": owner,
+            "reviewer": reviewer,
+            "phase": "Canonical Task Materialization",
+            "depends_on": [],
+            "artifacts": ["docs/deployment/evidence/" + task_id + "/"],
+            "acceptance": ["Do the thing"],
+            "summary": f"Summary for {task_id}",
+        }
+
+    def _task_row(
+        self,
+        task_id: str,
+        *,
+        packet_id: str = "pkt-test-20260811T000000Z",
+        packet_digest: str | None = None,
+        owner: str = "Codex",
+        reviewer: str = "Antigravity",
+    ) -> dict[str, Any]:
+        spec = self._task_spec(task_id, owner=owner, reviewer=reviewer)
+        spec_hash = hashlib.sha256(
+            json.dumps(spec, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        ).hexdigest()
+        digest = packet_digest or hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        return {
+            "task_id": task_id,
+            "owner": owner,
+            "reviewer": reviewer,
+            "title": spec["title"],
+            "assignment_next": None,
+            "task_metadata": {
+                "dev_bridge": {
+                    "packet_id": packet_id,
+                    "packet_digest": digest,
+                    "task_spec_hash": spec_hash,
+                    "task_spec": spec,
+                    "conversation_id": "conversation-20260811",
+                    "source_turn_ids": ["turn-1"],
+                    "documents": [{"kind": "GOVERNANCE", "path": "AGENTS.md"}],
+                    "audit_conversation_href": None,
+                    "emitted_at": "2026-08-11T12:06:12Z",
+                    "intent": "governed_supervisor_architecture_cutover",
+                    "mode": "supervisor_architecture_governed_delivery",
+                    "actor": {"id": "Human/Ops", "roles": ["operator"], "capabilities": ["integration"]},
+                }
+            },
+        }
+
+    def _payload_path(self, rows: list[dict[str, Any]], *, packet_id: str, packet_digest: str) -> Path:
+        payload = self._test_root / "batch.json"
+        payload.write_text(
+            json.dumps(
+                {
+                    "schema_version": ai_status.DEV_BRIDGE_BATCH_SCHEMA_VERSION,
+                    "packet_id": packet_id,
+                    "packet_digest": packet_digest,
+                    "actor": "Human/Ops",
+                    "tasks": rows,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return payload
+
+    def _run_main(self, payload_path: Path) -> int:
+        with (
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(sys, "stdout", io.StringIO()),
+        ):
+            return ai_status.main(
+                ["ai_status.py", ai_status.DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND, str(payload_path)]
+            )
+
+    def _run_readback(self, payload_path: Path) -> dict[str, Any]:
+        output = io.StringIO()
+        with (
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(sys, "stdout", output),
+        ):
+            self.assertEqual(
+                ai_status.main(
+                    [
+                        "ai_status.py",
+                        ai_status.DEV_BRIDGE_BATCH_READBACK_COMMAND,
+                        str(payload_path),
+                    ]
+                ),
+                0,
+            )
+        return json.loads(output.getvalue())
+
+    def test_batch_commits_every_task_in_exactly_one_journal_event(self) -> None:
+        packet_id = "pkt-batch-ok-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [
+            self._task_row("BATCH-ATOMIC-ONE", packet_id=packet_id, packet_digest=digest),
+            self._task_row("BATCH-ATOMIC-TWO", packet_id=packet_id, packet_digest=digest),
+        ]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        result = self._run_main(payload)
+
+        self.assertEqual(result, 0)
+        events = load_events(self.journal)
+        # Exactly one new event relative to the bootstrap baseline: the
+        # activity-log outbox flush is deferred so it can never become a
+        # second canonical task-state commit for this batch. Both tasks are
+        # already present together in that one event -- never one row, then
+        # the other.
+        self.assertEqual(len(events), 2)
+        committed_state = events[1]["state"]
+        batch_tasks = [
+            task
+            for task in committed_state["tasks"]
+            if task["id"] in {"BATCH-ATOMIC-ONE", "BATCH-ATOMIC-TWO"}
+        ]
+        self.assertEqual(
+            sorted(task["id"] for task in batch_tasks),
+            ["BATCH-ATOMIC-ONE", "BATCH-ATOMIC-TWO"],
+        )
+        for task in batch_tasks:
+            self.assertEqual(task["dev_bridge"]["packet_id"], packet_id)
+            self.assertEqual(task["dev_bridge"]["packet_digest"], digest)
+
+    def test_second_row_failure_commits_nothing_not_even_the_first_row(self) -> None:
+        packet_id = "pkt-batch-partial-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [
+            self._task_row("BATCH-PARTIAL-ONE", packet_id=packet_id, packet_digest=digest),
+            # owner == reviewer is rejected by command_assign.
+            self._task_row(
+                "BATCH-PARTIAL-TWO",
+                packet_id=packet_id,
+                packet_digest=digest,
+                owner="Codex",
+                reviewer="Codex",
+            ),
+        ]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        with self.assertRaisesRegex(SystemExit, "Reviewer cannot equal owner"):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+        state = json.loads(self._test_status_file.read_text(encoding="utf-8"))
+        task_ids = {task["id"] for task in state.get("tasks", [])}
+        self.assertNotIn("BATCH-PARTIAL-ONE", task_ids)
+        self.assertNotIn("BATCH-PARTIAL-TWO", task_ids)
+
+    def test_exact_duplicate_retry_is_idempotent(self) -> None:
+        packet_id = "pkt-batch-retry-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [self._task_row("BATCH-RETRY-ONE", packet_id=packet_id, packet_digest=digest)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        self.assertEqual(self._run_main(payload), 0)
+        # No recover, projection write, or other canonical mutation is allowed
+        # between the first success and this retry. The first batch's activity
+        # outbox is deliberately still pending and must not be flushed by the
+        # exact replay.
+        events_after_first = len(load_events(self.journal))
+        first_state = ai_status.load_state()
+        first_task = ai_status.get_task(first_state, "BATCH-RETRY-ONE")
+        self.assertIsNotNone(first_task)
+        self.assertIsNotNone(
+            first_state.get(ai_status.STATUS_ACTIVITY_OUTBOX_KEY)
+        )
+
+        # An exact retry -- every row already matches its bound provenance --
+        # adds zero journal events: it must not error, duplicate the row,
+        # drift its bound provenance, or grow the journal at all.
+        self.assertEqual(self._run_main(payload), 0)
+        self.assertEqual(len(load_events(self.journal)), events_after_first)
+        second_state = ai_status.load_state()
+        second_task = ai_status.get_task(second_state, "BATCH-RETRY-ONE")
+        self.assertEqual(
+            len([t for t in second_state["tasks"] if t["id"] == "BATCH-RETRY-ONE"]),
+            1,
+        )
+        self.assertEqual(second_task["owner"], first_task["owner"])
+        self.assertEqual(second_task["reviewer"], first_task["reviewer"])
+        self.assertEqual(second_task["dev_bridge"], first_task["dev_bridge"])
+
+    def test_authoritative_readback_ignores_pending_audit_projection(self) -> None:
+        packet_id = "pkt-batch-readback-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [self._task_row("BATCH-READBACK-ONE", packet_id=packet_id, packet_digest=digest)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+        self.assertEqual(self._run_main(payload), 0)
+        event_count = len(load_events(self.journal))
+
+        readback = self._run_readback(payload)
+
+        self.assertEqual(readback["status"], "verified")
+        self.assertEqual(readback["packetId"], packet_id)
+        self.assertEqual(readback["taskIds"], ["BATCH-READBACK-ONE"])
+        self.assertEqual(
+            readback["pendingAuditProjections"],
+            [ai_status.STATUS_ACTIVITY_OUTBOX_KEY],
+        )
+        self.assertEqual(len(load_events(self.journal)), event_count)
+
+    def test_partial_preexisting_packet_refuses_missing_suffix_with_zero_events(self) -> None:
+        packet_id = "pkt-batch-prefix-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        first = self._task_row("BATCH-PREFIX-ONE", packet_id=packet_id, packet_digest=digest)
+        first_payload = self._payload_path([first], packet_id=packet_id, packet_digest=digest)
+        self.assertEqual(self._run_main(first_payload), 0)
+        before = len(load_events(self.journal))
+
+        second = self._task_row("BATCH-PREFIX-TWO", packet_id=packet_id, packet_digest=digest)
+        full_payload = self._payload_path(
+            [first, second], packet_id=packet_id, packet_digest=digest
+        )
+        with self.assertRaisesRegex(SystemExit, "partial pre-existing packet"):
+            self._run_main(full_payload)
+
+        self.assertEqual(len(load_events(self.journal)), before)
+        state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(state, "BATCH-PREFIX-TWO"))
+
+    def test_direct_assign_cannot_forge_bridge_provenance(self) -> None:
+        packet_id = "pkt-direct-forgery-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        row = self._task_row(
+            "BATCH-DIRECT-FORGERY", packet_id=packet_id, packet_digest=digest
+        )
+        before = len(load_events(self.journal))
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"TASK_METADATA_JSON": json.dumps(row["task_metadata"])},
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            self.assertRaisesRegex(SystemExit, "can only be created by"),
+        ):
+            ai_status.main(
+                [
+                    "ai_status.py",
+                    "assign",
+                    row["task_id"],
+                    row["owner"],
+                    row["reviewer"],
+                    row["title"],
+                ]
+            )
+
+        self.assertEqual(len(load_events(self.journal)), before)
+
+    def test_crash_before_commit_writes_zero_rows(self) -> None:
+        packet_id = "pkt-batch-precommit-crash-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [self._task_row("BATCH-PRECOMMIT-ONE", packet_id=packet_id, packet_digest=digest)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        with (
+            mock.patch.object(ai_status, "sync_all", side_effect=OSError("injected precommit crash")),
+            self.assertRaisesRegex(OSError, "injected precommit crash"),
+        ):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+        self.assertIsNone(
+            ai_status.get_task(ai_status.load_state(), "BATCH-PRECOMMIT-ONE")
+        )
+
+    def test_projection_crash_after_commit_keeps_one_authoritative_event(self) -> None:
+        packet_id = "pkt-batch-postcommit-crash-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [
+            self._task_row(
+                "BATCH-POSTCOMMIT-ONE",
+                packet_id=packet_id,
+                packet_digest=digest,
+            )
+        ]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "refresh_derived_status_views_if_current",
+                side_effect=OSError("injected projection crash"),
+            ),
+            self.assertRaisesRegex(OSError, "injected projection crash"),
+        ):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 2)
+        state = ai_status.load_state()
+        self.assertIsNotNone(
+            ai_status.get_task(state, "BATCH-POSTCOMMIT-ONE")
+        )
+        before_readback = len(load_events(self.journal))
+        readback = self._run_readback(payload)
+        self.assertEqual(readback["status"], "verified")
+        self.assertEqual(len(load_events(self.journal)), before_readback)
+
+    def test_digest_mismatch_between_batch_and_row_fails_closed(self) -> None:
+        packet_id = "pkt-batch-mismatch-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        other_digest = hashlib.sha256(b"different-payload").hexdigest()
+        rows = [self._task_row("BATCH-MISMATCH-ONE", packet_id=packet_id, packet_digest=other_digest)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        with self.assertRaisesRegex(SystemExit, "packet_digest does not match the batch"):
+            ai_status.load_dev_bridge_materialize_batch(str(payload))
+
+    def test_owner_reassignment_after_materialization_then_replay_row_is_a_no_op(self) -> None:
+        """A later Human/Ops reassignment must not be clobbered by an exact replay."""
+
+        packet_id = "pkt-batch-reassign-20260811T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [self._task_row("BATCH-REASSIGN-ONE", packet_id=packet_id, packet_digest=digest)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+        self.assertEqual(self._run_main(payload), 0)
+
+        with mock.patch.object(ai_status, "validate_status_command_runtime_binding"),             mock.patch.object(ai_status, "validate_status_root_binding"):
+            ai_status.main(
+                ["ai_status.py", "assign", "BATCH-REASSIGN-ONE", "Claude", "Codex2"]
+            )
+        reassigned = ai_status.load_state()
+        task = ai_status.get_task(reassigned, "BATCH-REASSIGN-ONE")
+        self.assertEqual(task["owner"], "Claude")
+        self.assertEqual(task["reviewer"], "Codex2")
+        self.assertEqual(task["dev_bridge"]["task_spec"]["owner"], "Codex")
+
+        self.assertEqual(self._run_main(payload), 0)
+        state = ai_status.load_state()
+        task = ai_status.get_task(state, "BATCH-REASSIGN-ONE")
+        self.assertEqual(task["owner"], "Claude")
+        self.assertEqual(task["reviewer"], "Codex2")
+
+
 class StatusRootRoutingTests(unittest.TestCase):
     def _init_repo(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
@@ -3520,6 +3899,157 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(archive_task["terminal_outcome"], "superseded")
         self.assertEqual(archive_task["superseded_by"], "REG-010")
         self.assertNotIn("waiting_for", archive_task)
+
+
+class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
+    def _audited_events(
+        self,
+        *events: dict[str, str],
+        task_id: str = "REG-002",
+    ) -> list[tuple[Any, dict[str, Any]]]:
+        self._test_log_file.write_text(
+            "".join(json.dumps(event) + "\n" for event in events),
+            encoding="utf-8",
+        )
+        return ai_status._audited_reassignment_events(
+            task_id,
+            source="test reassignment audit",
+            unavailable_message="test reassignment audit unavailable",
+        )
+
+    @staticmethod
+    def _with_prefix(event: dict[str, str], prefix: str) -> dict[str, str]:
+        event = dict(event)
+        digest = ai_status._supervisor_reassignment_event_id(event).removeprefix(
+            "supervisor-reassign-"
+        )
+        event["event_id"] = f"{prefix}{digest}"
+        return event
+
+    def test_accepts_both_canonical_event_id_prefixes(self) -> None:
+        for prefix in ("supervisor-reassign-", "supervisor-task-reassigned-"):
+            with self.subTest(prefix=prefix):
+                event = self._with_prefix(audited_reassignment_event(), prefix)
+                audited = self._audited_events(event)
+
+                self.assertEqual(len(audited), 1)
+                self.assertEqual(audited[0][1]["event_id"], event["event_id"])
+
+    def test_accepts_existing_closeout_blocker_event(self) -> None:
+        event = {
+            "agent": "Orchestrator",
+            "event_id": (
+                "supervisor-task-reassigned-"
+                "dac420278948aad12f1f32f6804d6af63f2adace105fbaf8ed2212a26f510778"
+            ),
+            "message": (
+                "Auto-reassigned review from Claude to Antigravity after repeated "
+                "Claude terminal: {\"is_error\":true,\"duration_api_ms\":0,"
+                "\"num_turns\":1,\"stop_reason\":\"stop_sequence\","
+                "\"session_id\":\"c467821a-0723-4d23-a700-488d42a6d679\","
+                "\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"c"
+            ),
+            "new_owner": "Codex",
+            "new_reviewer": "Antigravity",
+            "old_owner": "Codex",
+            "old_reviewer": "Claude",
+            "task_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+            "ts": "2026-08-09T05:20:22Z",
+            "type": "task_reassigned",
+        }
+        self.assertEqual(
+            ai_status._supervisor_reassignment_event_id(event),
+            (
+                "supervisor-reassign-"
+                "dac420278948aad12f1f32f6804d6af63f2adace105fbaf8ed2212a26f510778"
+            ),
+        )
+        self._audited_events(event, task_id=event["task_id"])
+
+        result = ai_status._verified_done_reviewer_reassignment(
+            {
+                "id": event["task_id"],
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+            },
+            commit_reviewer="Claude",
+            current_reviewer="Antigravity",
+            commit_timestamp="2026-08-09T05:00:00+00:00",
+        )
+
+        self.assertEqual(result["event_id"], event["event_id"])
+
+    def test_rejects_wrong_digest_and_wrong_prefix(self) -> None:
+        base_event = audited_reassignment_event()
+        digest = ai_status._supervisor_reassignment_event_id(base_event).removeprefix(
+            "supervisor-reassign-"
+        )
+        cases = {
+            "wrong digest": "supervisor-task-reassigned-" + "0" * 64,
+            "wrong prefix": "supervisor-task-reassign-" + digest,
+        }
+        for label, event_id in cases.items():
+            with self.subTest(case=label):
+                event = dict(base_event)
+                event["event_id"] = event_id
+                self.assertEqual(self._audited_events(event), [])
+
+    def test_rejects_forged_actor(self) -> None:
+        event = self._with_prefix(
+            audited_reassignment_event(), "supervisor-task-reassigned-"
+        )
+        event["agent"] = "Codex"
+
+        self.assertEqual(self._audited_events(event), [])
+
+    def test_rejects_missing_required_fields(self) -> None:
+        for field in ("event_id", "old_owner", "new_owner", "ts"):
+            with self.subTest(field=field):
+                event = audited_reassignment_event()
+                event.pop(field)
+                if field != "event_id":
+                    event = self._with_prefix(event, "supervisor-task-reassigned-")
+                self.assertEqual(self._audited_events(event), [])
+
+    def test_rejects_cross_task_event(self) -> None:
+        event = self._with_prefix(
+            audited_reassignment_event(task_id="OTHER-001"),
+            "supervisor-task-reassigned-",
+        )
+
+        self.assertEqual(self._audited_events(event, task_id="REG-002"), [])
+
+    def test_rejects_ambiguous_chain_with_compatible_prefixes(self) -> None:
+        timestamp = "2026-08-09T05:20:22Z"
+        first = audited_reassignment_event(
+            old_owner="Codex2",
+            new_owner="Codex",
+            timestamp=timestamp,
+            message="first same-time hop",
+        )
+        second = self._with_prefix(
+            audited_reassignment_event(
+                old_owner="Codex",
+                new_owner="Antigravity",
+                timestamp=timestamp,
+                message="second same-time hop",
+            ),
+            "supervisor-task-reassigned-",
+        )
+        self._audited_events(first, second)
+
+        with self.assertRaisesRegex(SystemExit, "ordering is ambiguous"):
+            ai_status._verified_owner_reassignment(
+                {"id": "REG-002", "owner": "Antigravity", "reviewer": "Claude"},
+                evidence_owner="Codex2",
+                current_owner="Antigravity",
+            )
 
 
 class DeliveryMetadataValidationTests(unittest.TestCase):

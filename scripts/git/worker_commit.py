@@ -222,6 +222,37 @@ def main() -> int:
     scope = _normalize_paths(args.scope)
     env = _build_env(args.index_file)
 
+    # Preflight: validate message file and subject line length before staging or committing.
+    msg_path = Path(args.message_file)
+    if not msg_path.exists():
+        print(f"ERROR: message file not found: {args.message_file}", file=sys.stderr)
+        return 5
+
+    try:
+        msg_text = msg_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"ERROR: cannot read message file {args.message_file}: {exc}", file=sys.stderr)
+        return 5
+
+    msg_lines = [l for l in msg_text.splitlines() if not l.startswith("#")]
+    subject = msg_lines[0].strip() if msg_lines else ""
+
+    if not subject:
+        print(f"ERROR: commit message in {args.message_file} has an empty subject line.", file=sys.stderr)
+        return 5
+
+    if len(subject) > 72:
+        print(
+            f"ERROR: commit subject exceeds 72 characters ({len(subject)} chars): '{subject}'",
+            file=sys.stderr,
+        )
+        print(
+            "Hint: Compact the subject line (e.g. abbreviate scope/summary) to <= 72 chars. "
+            f"Keep full Task-ID in trailer (Task-ID: {args.task_id}).",
+            file=sys.stderr,
+        )
+        return 5
+
     # Step 1: clear any existing staging. With a private index this is a no-op,
     # but stays cheap and idempotent.
     _git("restore", "--staged", "--", ".", env=env, check=False)

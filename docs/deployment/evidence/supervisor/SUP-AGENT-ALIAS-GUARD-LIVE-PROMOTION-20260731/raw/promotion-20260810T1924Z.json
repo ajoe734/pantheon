@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "kind": "task_scoped_supervisor_runtime_promotion_readback",
+  "task_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+  "captured_through_utc": "2026-08-10T19:34:30Z",
+  "external_transaction_evidence": {
+    "path": "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731-0bd7cf8842a6-20260810T1924Z.json",
+    "sha256": "53de8dcc178db71689639661fe8afa7e142e9b28129473bf1fa03b5d28e3ae4b",
+    "byte_length": 19938,
+    "outcome": "promoted",
+    "exit_code": 0,
+    "state": "promoted",
+    "recorded_at_utc": "2026-08-10T19:33:26.862085Z",
+    "original_failure": null,
+    "rollback_failure": null
+  },
+  "transaction_history": [
+    {
+      "state": "prepared",
+      "at_utc": "2026-08-10T19:26:03.369999Z",
+      "candidate_commit": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "incumbent_commit": "0305c861f54c4082060120afdfbc012622e5ac0a"
+    },
+    {
+      "state": "admission_locked",
+      "at_utc": "2026-08-10T19:26:52.225358Z"
+    },
+    {
+      "state": "intent_recorded",
+      "at_utc": "2026-08-10T19:26:52.254484Z",
+      "old_pid": 1393542,
+      "target_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044"
+    },
+    {
+      "state": "incumbent_terminated",
+      "at_utc": "2026-08-10T19:26:52.305347Z"
+    },
+    {
+      "state": "candidate_config_installed",
+      "at_utc": "2026-08-10T19:26:52.314751Z",
+      "config_sha256": "54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6"
+    },
+    {
+      "state": "candidate_launched",
+      "at_utc": "2026-08-10T19:27:06.570265Z",
+      "pid": 3301275,
+      "starttime_ticks": 22907439,
+      "launch_boundary_at_utc": "2026-08-10T19:27:06.570342Z"
+    },
+    {
+      "state": "candidate_verifying",
+      "at_utc": "2026-08-10T19:27:06.570353Z"
+    },
+    {
+      "state": "promoted",
+      "at_utc": "2026-08-10T19:33:26.862059Z",
+      "fresh_loops": 3
+    }
+  ],
+  "incumbent": {
+    "pid": 1393542,
+    "starttime_ticks": 21477145,
+    "mutable_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+    "entrypoint_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+    "commit": "0305c861f54c4082060120afdfbc012622e5ac0a",
+    "tree": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
+    "config_sha256": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
+    "split_entrypoint": true
+  },
+  "rollback": {
+    "root": "/home/lupin/pantheon-ci-deploy/rollback-command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
+    "device": 2049,
+    "inode": 13480162,
+    "commit": "0305c861f54c4082060120afdfbc012622e5ac0a",
+    "tree": "249eecac3a5a1a3eb41e80006afee566bfabdd92",
+    "origin": "https://github.com/ajoe734/pantheon.git",
+    "git_status_clean": true,
+    "occupied_direct_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
+    "occupied_direct_device": 2049,
+    "occupied_direct_inode": 13894090,
+    "distinct_from_occupied_direct_root": true,
+    "launched": false
+  },
+  "candidate": {
+    "root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+    "device": 2049,
+    "inode": 4043971,
+    "commit": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+    "tree": "d795eb696d0e3e2d49053f712ef353f3b1086ab8",
+    "origin": "https://github.com/ajoe734/pantheon.git",
+    "git_status_clean": true,
+    "accepted_origin_dev_commit": true
+  },
+  "config_transaction": {
+    "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "original_sha256": "61c8aed05539a7fbd445e6696aff1bc3caf8b7995cf1ae59487e92f88f068aea",
+    "candidate_sha256": "54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+    "candidate_installed_sha256": "54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+    "rollback_sha256": "afebcf7221ea310ffef03bd27633877f0e588f068dedb475c923d318d4ee04fa",
+    "rollback_installed_sha256": null,
+    "candidate_command_argv_sha256": "2d9441111b45bc8ad2e65344fb1426d614bbcee6ba2e7dfbe0cc47326f4c5b5f",
+    "candidate_command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+    "promotion_lock_path": "/home/lupin/pantheon/.orchestrator/supervisor-runtime-promotion.lock",
+    "runtime_admission_lock_path": "/home/lupin/pantheon/.orchestrator/runtime-admission.lock"
+  },
+  "candidate_process": {
+    "process_count": 1,
+    "pid": 3301275,
+    "starttime_ticks": 22907439,
+    "cwd": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+    "cwd_commit": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+    "cwd_tree": "d795eb696d0e3e2d49053f712ef353f3b1086ab8",
+    "entrypoint": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044/.orchestrator/supervisor.py",
+    "argv_sha256": "2d9441111b45bc8ad2e65344fb1426d614bbcee6ba2e7dfbe0cc47326f4c5b5f",
+    "environment_contract": {
+      "PANTHEON_COMMAND_ROOT": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "PANTHEON_COMMAND_RUNTIME_SHA": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "PANTHEON_STATUS_ROOT": "/home/lupin/pantheon",
+      "PYTHONDONTWRITEBYTECODE": "1"
+    }
+  },
+  "candidate_observations": [
+    {
+      "observed_at_utc": "2026-08-10T19:28:45.386159Z",
+      "successful_loop_at_utc": "2026-08-10T19:28:28Z",
+      "pid": 3301275,
+      "config_sha256": "54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+      "projection_sha256": "1ec33712ed6d8a326a2afe5d2019a01f2b132e80dea45934e6c0873067bd7601",
+      "provider_baseline_sha256": "7a3d4428ba92fc3e00b93394cdc3b71ddb487f842adf2203057ececf7faf8d96",
+      "worker_queue_sha256": "006c072fb41e4fb91d49d0d94554555e3c03a6ab9879130d5a1c773de6bfdc18",
+      "invariant_failures": []
+    },
+    {
+      "observed_at_utc": "2026-08-10T19:30:10.416625Z",
+      "successful_loop_at_utc": "2026-08-10T19:30:04Z",
+      "pid": 3301275,
+      "config_sha256": "54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+      "projection_sha256": "1ec33712ed6d8a326a2afe5d2019a01f2b132e80dea45934e6c0873067bd7601",
+      "provider_baseline_sha256": "7a3d4428ba92fc3e00b93394cdc3b71ddb487f842adf2203057ececf7faf8d96",
+      "worker_queue_sha256": "290abaf753dd13a50f367323a2aafe80c0d77542e416996796b8f97b50681dd8",
+      "invariant_failures": []
+    },
+    {
+      "observed_at_utc": "2026-08-10T19:33:19.070194Z",
+      "successful_loop_at_utc": "2026-08-10T19:31:51Z",
+      "pid": 3301275,
+      "config_sha256": "54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+      "projection_sha256": "1ec33712ed6d8a326a2afe5d2019a01f2b132e80dea45934e6c0873067bd7601",
+      "provider_baseline_sha256": "7a3d4428ba92fc3e00b93394cdc3b71ddb487f842adf2203057ececf7faf8d96",
+      "worker_queue_sha256": "de2e33383e9e4fb2b330792a4ed4fc65c101a8c32d5e3ee5223404e39b2e6dae",
+      "invariant_failures": []
+    }
+  ],
+  "post_promotion_discover": {
+    "captured_at_utc": "2026-08-10T19:34:05.146582Z",
+    "exit_code": 0,
+    "eligible_for_promotion": true,
+    "invariants": {
+      "candidate_runtime_identity_immutable": true,
+      "incumbent_supervisor_process_identity_immutable": true,
+      "governed_supervisor_launch_contract_immutable": true,
+      "config_and_state_files_readable": true,
+      "runtime_health_clean": true,
+      "supervisor_lifecycle_valid": true,
+      "supervisor_pid_bound_and_locked": true,
+      "ai_status_schema_valid": true,
+      "task_state_shadow_valid": true,
+      "fresh_loop_sequence": true,
+      "worker_lease_parity_and_no_duplicates": true,
+      "provider_readiness_baseline": true,
+      "no_orphaned_in_progress_tasks": true
+    },
+    "authoritative_projection": {
+      "mode": "authoritative",
+      "ok": true,
+      "caught_up": true,
+      "last_error": null,
+      "event_count": 16074,
+      "projected_state_sha256": "1ec33712ed6d8a326a2afe5d2019a01f2b132e80dea45934e6c0873067bd7601",
+      "expected_state_sha256": "1ec33712ed6d8a326a2afe5d2019a01f2b132e80dea45934e6c0873067bd7601"
+    },
+    "worker_queue": {
+      "worker_records": 14,
+      "queue_events": 2,
+      "worktree_leases": 29,
+      "duplicate_active_workers": [],
+      "parity_reasons": []
+    },
+    "provider": {
+      "name": "antigravity",
+      "installed": true,
+      "auth_ready": true,
+      "local_cli_worker_supported": true,
+      "selected_model": "gemini-3.6-flash-low",
+      "last_auth_probe_at_utc": "2026-08-10T19:17:01Z"
+    }
+  },
+  "forbidden_actions_not_performed": [
+    "sync-dev-root.sh",
+    "check_config_drift.py --fix",
+    "manual canonical task JSON edit",
+    "manual queue JSON edit",
+    "provider configuration change",
+    "scheduler policy change",
+    "deletion, move, overwrite, or guessed reuse of the occupied direct rollback runtime"
+  ]
+}

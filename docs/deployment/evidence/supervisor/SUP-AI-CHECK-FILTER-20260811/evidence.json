@@ -1,0 +1,130 @@
+{
+  "schema_version": "supervisor_optional_check_classifier_review.v1",
+  "task": {
+    "id": "SUP-AI-CHECK-FILTER-20260811",
+    "title": "Classify optional PR diagnostics without blocking merges",
+    "phase": "Supervisor Delivery / Auto-integrator required-check classification",
+    "owner": "Codex",
+    "reviewer": "Antigravity2",
+    "status": "review_pending",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-AI-CHECK-FILTER-20260811/evidence.json",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-AI-CHECK-FILTER-20260811",
+    "base_commit": "51fbd16fcbbda1ec3b232cf1800bea9da77290bc",
+    "composed_dev_commit": "7f93be09e3f40e9f11a28cf6c0766e116a54adc6",
+    "composition_commit": "2092d52ca3901a14a2956c2f02cb1f496033f4a7"
+  },
+  "scope": {
+    "owned_layer": "Auto-integrator status-rollup requiredness enrichment, narrow diagnostic provenance classification, UNSTABLE eligibility, focused tests, contract, and task evidence.",
+    "not_changing": "Review authority, exact-head binding, trailer enforcement, branch protection, merge bypasses, canonical task state, live supervisor runtime, or direct disposition of PR #4741.",
+    "changed_paths": [
+      "scripts/git/auto_integrator.py",
+      "scripts/git/test_auto_integrator.py",
+      "scripts/git/auto_integrator_contract.md",
+      "docs/deployment/evidence/supervisor/SUP-AI-CHECK-FILTER-20260811/evidence.json",
+      "docs/deployment/evidence/supervisor/SUP-AI-CHECK-FILTER-20260811/reproduction_evidence.md"
+    ]
+  },
+  "reproduction": {
+    "target_task": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+    "pr_number": 4741,
+    "exact_target_head": "231125cf1b00c5dd758927d87ab1af9255aca347",
+    "failing_check": "Audit signed canonical review (not required issuer) (4741)",
+    "workflow_name": "Canonical Review Attestation Audit",
+    "graphql_is_required": false,
+    "original_merge_state_status": "UNSTABLE",
+    "initial_integrator_result": {
+      "action": "blocked",
+      "detail": "PR #4741 has failing checks: Audit signed canonical review (not required issuer) (4741)."
+    },
+    "independent_readback_2026_08_11": "GitHub GraphQL still returns the exact target head and isRequired=false for the failed audit context. PR #4741 has since merged through the governed flow; this task did not merge it directly."
+  },
+  "implementation": {
+    "inherited_classifier_anchor": "2bb7adf9b49a9a60d1a31e6f5a6d94133ad940db",
+    "owner_graphql_test_anchor": "d9968e8d09190b8390799240b7ca39bb4e679cb1",
+    "owner_provenance_anchor": "4f109d87f060cb673f24be7abfa7ccf6fce150f8",
+    "source_blob": "762456f633e6010a25b57f39b0322a2680cb0d3d",
+    "test_blob": "8c2645c67a36c65c056f564c426a736826ca2a8a",
+    "contract_blob": "5e78b9074e689e0dae0698e75464d0b0c7c6f323",
+    "requiredness": "Fetch CheckRun and StatusContext isRequired through GitHub GraphQL and join it to gh pr view statusCheckRollup by (__typename, name/context).",
+    "diagnostic_provenance": "Ignore a failing or pending context only when isRequired is exactly false and workflowName is the known read-only Canonical Review Attestation Audit issuer.",
+    "actual_ci_boundary": "An optional Branch CI job such as Python packaging provision still blocks on failure; isRequired=false alone is insufficient to classify a check as diagnostic.",
+    "ambiguity_policy": "Query errors, malformed payloads, unmatched identities, absent or non-boolean requiredness, missing or unknown workflow provenance, and conflicting duplicate identities all fail closed. Duplicate identities are required if any matching node is required.",
+    "merge_state": "UNSTABLE is eligible only after the full enriched rollup is green under the classifier; BLOCKED, DIRTY, stale-head, and all other disallowed states remain blocked.",
+    "auditability": "Dry-run and merged result details name every explicitly non-required diagnostic excluded from blocking."
+  },
+  "regression_matrix": {
+    "allows": [
+      "PR #4741-shaped failed audit with isRequired=false and the exact diagnostic workflow provenance",
+      "UNSTABLE merge state only after all non-diagnostic checks are green"
+    ],
+    "blocks": [
+      "required failing check",
+      "missing or ambiguous requiredness",
+      "GraphQL failure or unmatched GraphQL context",
+      "conflicting duplicate identity when any node is required",
+      "optional actual Branch CI failure",
+      "optional failure without known diagnostic workflow provenance",
+      "failing commit-trailer check",
+      "failing canonical review gate",
+      "exact approved-head drift"
+    ]
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned and dependency imports verified"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m unittest scripts/git/test_auto_integrator.py",
+      "result": "30 tests passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m py_compile scripts/git/auto_integrator.py scripts/git/test_auto_integrator.py",
+      "result": "passed"
+    },
+    {
+      "command": "Local source fetch_pr_for_task against live PR #4744, followed by summarize_status_rollup",
+      "result": "At remote head 3ffa3f494fe7d092c71fa45acb7d21be121a0f75 the enriched summary was green with no failing or pending checks and exactly one ignored diagnostic: Audit signed canonical review (not required issuer) (4744). GitHub still reported mergeStateStatus=BLOCKED because independent task review was not yet granted; no merge was attempted."
+    },
+    {
+      "command": "GitHub GraphQL requiredness readback for PR #4741",
+      "result": "Exact target head 231125cf1b00c5dd758927d87ab1af9255aca347; failed audit context isRequired=false; total rollup contexts=16."
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "After merging origin/dev at 7f93be09e3f40e9f11a28cf6c0766e116a54adc6: rerun unit tests, py_compile, jq empty, and git diff --check origin/dev...HEAD",
+      "result": "30 tests passed; py_compile, JSON validation, and diff checks passed; current dev introduced no overlapping task-artifact changes"
+    }
+  ],
+  "runtime_provenance": {
+    "governed_command_runtime_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+    "status_root": "/home/lupin/pantheon",
+    "source_only_delivery": true,
+    "live_runtime_mutated": false,
+    "supervisor_restarted_or_signaled": false,
+    "canonical_state_edited_directly": false,
+    "branch_protection_changed": false,
+    "direct_merge_performed": false
+  },
+  "review": {
+    "decision": "pending_independent_review",
+    "required_reviewer": "Antigravity2",
+    "manifest_committed_before_review": true,
+    "exact_head": "The governed review must bind the final PR head with REVIEW_HEAD_SHA; a commit cannot contain its own SHA.",
+    "required_checks": [
+      "Verify the two-factor non-required plus diagnostic-workflow classifier against the live PR-shaped regression.",
+      "Verify optional actual CI, ambiguity, trailer, canonical review, and exact-head drift remain fail closed.",
+      "Verify this manifest is present at the exact reviewed head and bind it as REVIEW_FILE."
+    ]
+  },
+  "delivery": {
+    "next": "Commit this composed review manifest, publish PR #4744, obtain Antigravity2 exact-head approval, pass required checks, and merge through the protected governed path.",
+    "post_merge_operator_action": "The supervisor-owned integrator must run a fresh governed dry-run and merge attempt from the promoted source. This source-only task does not promote or restart the live runtime.",
+    "rollback": "Revert the protected task PR merge commit; do not alter branch protection or canonical task state as rollback."
+  }
+}
