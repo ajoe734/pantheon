@@ -9,7 +9,7 @@
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811",
-    "candidate_source_commit": "2e911c654b40802a73e4b0e501452684af3dd8eb",
+    "candidate_source_commit": "da6b9ca17dc2c5ce84abf977c8423ad0c2d5cdcc",
     "base_commit": "42cd4d58f2906832cda269311c683d463cb631cc",
     "review_file": "docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811/evidence.json"
   },
@@ -59,6 +59,7 @@
     ]
   },
   "failure_injection": [
+    "every nonterminal PromotionState from created through candidate_verifying and rollback_locked through rollback_verifying, with durable aborted, rolled_back, or rollback_failed evidence",
     "wrong process generation and PID reuse",
     "orphaned singleton lock owner",
     "stale heartbeat",
@@ -75,12 +76,12 @@
       "lines_added": 673,
       "lines_deleted": 2412,
       "net_lines": -1739,
-      "command": "git diff --numstat origin/dev...2e911c654b40802a73e4b0e501452684af3dd8eb -- scripts/supervisor_runtime_health.py scripts/promote_supervisor_runtime.py"
+      "command": "git diff --numstat origin/dev...da6b9ca17dc2c5ce84abf977c8423ad0c2d5cdcc -- scripts/supervisor_runtime_health.py scripts/promote_supervisor_runtime.py"
     },
     "tests": {
-      "lines_added": 566,
-      "lines_deleted": 4319,
-      "net_lines": -3753
+      "lines_added": 652,
+      "lines_deleted": 4329,
+      "net_lines": -3677
     },
     "residue_scan": {
       "patterns": "MutableIncumbentSnapshot|LegacyTaskBriefDrift|bootstrap_mutable_incumbent|allow_legacy|legacy_|mutable_incumbent|process_alive or lock_held|lock_held or process_alive",
@@ -90,7 +91,7 @@
   "validation": [
     {
       "command": "PYTHONDONTWRITEBYTECODE=1 .venv-pantheon/bin/python -m pytest -q scripts/test_supervisor_runtime_health.py scripts/test_promote_supervisor_runtime.py",
-      "result": "262 passed in 47.23s",
+      "result": "275 passed in 65.42s",
       "conclusion": "pass"
     },
     {
@@ -99,7 +100,7 @@
       "conclusion": "pass"
     },
     {
-      "command": "git diff --check origin/dev...2e911c654b40802a73e4b0e501452684af3dd8eb",
+      "command": "git diff --check origin/dev...da6b9ca17dc2c5ce84abf977c8423ad0c2d5cdcc",
       "result": "exit 0",
       "conclusion": "pass"
     }
