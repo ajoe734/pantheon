@@ -1,0 +1,161 @@
+{
+  "schema_version": "supervisor_provider_report_call_signature.v1",
+  "task": {
+    "id": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+    "title": "Repair provider-report probe call signature without changing fleet policy",
+    "phase": "Supervisor / Provider Report Runtime Compatibility",
+    "owner": "Codex",
+    "reviewer": "Antigravity2",
+    "status": "review_pending",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811/evidence.json",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+    "base_commit": "4d2a24200e32f9e77b01006146349e75494ae83f",
+    "anchor_commit": "539ee35fb61dae2552f13d43844a1d4aae466250"
+  },
+  "scope": {
+    "owned_layer": "Supervisor entrypoint module identity, focused provider-report config-bearing tick regression coverage, and task-scoped review evidence.",
+    "not_changing": "Provider probe projection semantics, failure hysteresis, auth or quota state, account grouping, fleet limits, task scheduling or reviewer policy, credentials, live runtime files, or supervisor processes.",
+    "changed_paths": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811/evidence.json"
+    ]
+  },
+  "incident": {
+    "observed_phase": "load_provider_report_tick",
+    "observed_error": "TypeError: apply_provider_probe_to_report() got an unexpected keyword argument 'config'",
+    "pinned_command_runtime_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+    "source_shapes": [
+      {
+        "source": "pinned command runtime",
+        "path": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044/.orchestrator/supervisor.py",
+        "signature": "apply_provider_probe_to_report(provider_report, provider_key, probe, config=None)"
+      },
+      {
+        "source": "deployed dev root",
+        "path": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/supervisor.py",
+        "signature": "apply_provider_probe_to_report(provider_report, provider_key, probe, config=None)"
+      },
+      {
+        "source": "canonical status root checkout",
+        "path": "/home/lupin/pantheon/.orchestrator/supervisor.py",
+        "signature": "apply_provider_probe_to_report(provider_report, provider_key, probe)"
+      },
+      {
+        "source": "task base origin/dev",
+        "path": ".orchestrator/supervisor.py",
+        "signature": "apply_provider_probe_to_report(provider_report, provider_key, probe, config=None)"
+      }
+    ],
+    "root_cause": "The daemon executes the pinned supervisor file as __main__, while provider_permissions imports apply_provider_probe_to_report lazily from the module name supervisor. A second supervisor module can therefore resolve from another checkout in the same process. The confirmed status-root source shape still has the legacy three-argument function, while the pinned runtime caller passes config=.",
+    "reproduction": "The focused regression installs a legacy three-argument supervisor module, confirms the config-bearing refreshed report raises the observed TypeError before binding, binds the running __main__ implementation, and then proves probe_provider_reports completes through load_provider_report_tick."
+  },
+  "call_signature_inventory": [
+    {
+      "path": ".orchestrator/supervisor.py",
+      "location": "apply_provider_probe_to_report definition",
+      "shape": "provider_report, provider_key, probe, config=None"
+    },
+    {
+      "path": ".orchestrator/supervisor.py",
+      "location": "refresh_provider_auth_before_dispatch",
+      "shape": "apply_provider_probe_to_report(provider_report, provider_key, probe, config=config)"
+    },
+    {
+      "path": ".orchestrator/supervisor.py",
+      "location": "probe_provider_reports targeted recovery projection",
+      "shape": "apply_provider_probe_to_report(report, provider_key, probe, config=config)"
+    },
+    {
+      "path": ".orchestrator/provider_permissions.py",
+      "location": "provider_capabilities lazy import and live-probe projection",
+      "shape": "from supervisor import apply_provider_probe_to_report; apply_provider_probe_to_report(report, pkey, auth_probe, config=config)"
+    }
+  ],
+  "repair": {
+    "mechanism": "When and only when supervisor.py is the running __main__ module, bind sys.modules['supervisor'] to that same module before provider_permissions is imported.",
+    "normal_import_behavior": "Importing supervisor normally leaves sys.modules unchanged because __name__ is supervisor rather than __main__.",
+    "compatibility_effect": "The lazy provider_permissions import always resolves the function implemented by the running supervisor runtime, so its caller and signature cannot come from different checkouts.",
+    "policy_effect": "None. The function body and all provider, hysteresis, auth, quota, scheduling, and persistence decisions are unchanged."
+  },
+  "acceptance": {
+    "pinned_shape_and_typeerror_reproduced": {
+      "status": "proven",
+      "test": ".orchestrator/test_supervisor.py::RuntimeConfigTests::test_provider_report_tick_uses_running_config_compatible_supervisor",
+      "proof": "The test asserts the legacy module raises the exact unexpected-config TypeError before binding."
+    },
+    "config_bearing_tick_repaired": {
+      "status": "proven",
+      "test": ".orchestrator/test_supervisor.py::RuntimeConfigTests::test_provider_report_tick_uses_running_config_compatible_supervisor",
+      "proof": "After binding, probe_provider_reports projects a failed live probe with config and updates the report through load_provider_report_tick without TypeError."
+    },
+    "call_sites_identified": {
+      "status": "proven",
+      "proof": "The source and pinned runtime each contain one compatible definition and three production calls; every production caller remains config-compatible."
+    },
+    "provider_semantics_preserved": {
+      "status": "proven",
+      "proof": "Focused provider recovery suites and the full supervisor suite pass without changing apply_provider_probe_to_report or scheduler logic."
+    },
+    "source_only_boundary": {
+      "status": "proven_by_declared_scope",
+      "proof": "The task diff is limited to supervisor source, its test, and this evidence manifest; no live runtime, task state, credential, configuration, or process mutation was performed."
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "checkout-scoped .venv-pantheon provisioned and dependency imports verified"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::RuntimeConfigTests::test_provider_report_tick_uses_running_config_compatible_supervisor",
+      "result": "1 passed in 1.68s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'RuntimeConfigTests or CachedProviderCapabilityLoopTests or ProviderPauseRecoveryProbeTests or ProviderStaleCacheReadmissionProbeTests'",
+      "result": "21 passed, 614 deselected, 5 subtests passed in 3.66s"
+    },
+    {
+      "command": "cd .orchestrator && ../.venv-pantheon/bin/python3 -m pytest -q test_provider_permissions.py -k 'not provider_capabilities_include_custom_claude_cli_provider and not provider_capabilities_include_custom_gemini_provider and not provider_capabilities_marks_codex_revoked_token_auth_down and not provider_capabilities_include_custom_antigravity_provider'",
+      "result": "99 passed, 4 deselected, 7 subtests passed in 7.50s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+      "result": "635 passed, 161 subtests passed in 192.51s"
+    }
+  ],
+  "known_pre_existing_provider_fixture_gap": {
+    "excluded_tests": [
+      "ProviderPermissionsTest::test_provider_capabilities_include_custom_claude_cli_provider",
+      "ProviderPermissionsTest::test_provider_capabilities_include_custom_gemini_provider",
+      "ProviderPermissionsTest::test_provider_capabilities_marks_codex_revoked_token_auth_down",
+      "ProviderPermissionsTest::test_provider_capabilities_include_custom_antigravity_provider"
+    ],
+    "cause": "These synthetic configs omit paths.provider_capabilities, a pre-existing fixture gap already recorded by the merged SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811 evidence.",
+    "task_disposition": "Excluded explicitly because repairing unrelated provider-capability fixtures would broaden this source-only call-signature task."
+  },
+  "review": {
+    "decision": "pending_independent_review",
+    "reviewer": "Antigravity2",
+    "exact_head": "The governed review must bind the final PR head with REVIEW_HEAD_SHA; a commit cannot contain its own SHA.",
+    "required_checks": [
+      "Confirm the __main__ alias is installed before provider_permissions import and is a no-op for normal module imports.",
+      "Confirm the test reproduces the exact config keyword TypeError before binding and exercises load_provider_report_tick after binding.",
+      "Confirm all production call sites remain compatible and provider/fleet policy is unchanged.",
+      "Confirm the declared three-path diff and full supervisor verification."
+    ]
+  },
+  "delivery": {
+    "source_merge_order": [
+      "Commit this final regression and evidence on the task branch.",
+      "Publish the task branch and open a protected PR to dev.",
+      "Obtain Antigravity2 independent exact-head approval with this manifest bound as REVIEW_FILE.",
+      "Merge only after required checks pass."
+    ],
+    "live_rollout": "Not performed or authorized by this source task.",
+    "post_merge_rollout": "Use the governed immutable supervisor runtime promotion flow; do not patch the status root, dev root, or running process by hand.",
+    "rollback": "Revert the task PR merge commit to remove the entrypoint alias and regression; no provider state, credential, or scheduler rollback is required."
+  }
+}

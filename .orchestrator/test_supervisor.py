@@ -292,6 +292,8 @@ class RuntimeConfigTests(unittest.TestCase):
                 mock.patch.object(supervisor, "write_activity_log"),
                 mock.patch.object(supervisor, "_safe_phase", wraps=supervisor._safe_phase) as safe_phase,
             ):
+                with self.assertRaisesRegex(TypeError, "unexpected keyword argument 'config'"):
+                    refreshed_report(config)
                 supervisor._bind_running_supervisor_import("__main__", running_supervisor)
                 _previous, report = supervisor.probe_provider_reports(config, quiet=True)
 
