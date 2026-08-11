@@ -5223,7 +5223,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         persist.assert_not_called()
         queue_delivery_event.assert_not_called()
 
-    def test_dispatcher_does_not_helper_claim_catalog_locked_task(self) -> None:
+    def test_helper_claim_reassigns_unlocked_catalog_task(self) -> None:
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -5232,6 +5232,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 "reviewer_field": "reviewer",
             },
             "ready_dispatcher": {
+                "enabled": True,
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "owned_statuses": ["todo", "in_progress"],
+                "dependency_done_statuses": ["done"],
                 "helper_claim": {
                     "enabled": True,
                     "task_statuses": ["todo"],
@@ -5239,21 +5244,22 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 }
             },
             "worker_reassignment": {
+                "eligible_statuses": ["todo"],
                 "owner_fallbacks": {
                     "Copilot": ["Codex"],
                 }
             },
             "agents": {
-                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
-                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
-                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex", "capabilities": ["execution"]},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot", "capabilities": ["execution"]},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude", "capabilities": ["governance-review"]},
             },
             "providers": {},
         }
         status = {
             "tasks": [
                 {
-                    "id": "L12-LOCKED-001",
+                    "id": "L12-CATALOG-001",
                     "status": "todo",
                     "owner": "Copilot",
                     "reviewer": "Claude",
@@ -5263,23 +5269,34 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             ]
         }
 
+        report = {
+            "providers": {
+                "copilot": {"auth_ready": False},
+                "codex": {"auth_ready": True},
+                "claude": {"auth_ready": True},
+            }
+        }
+
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            mock.patch.object(supervisor, "write_activity_log"),
         ):
             changed = supervisor.dispatch_ready_tasks(
                 config,
                 {"queue": {"events": {}}, "workers": {}},
+                agent_ids_override=["codex"],
             )
 
         self.assertTrue(changed)
-        persist.assert_not_called()
-        queued_event = queue_delivery_event.call_args.args[1]
-        self.assertEqual(queued_event["task_id"], "L12-LOCKED-001")
-        self.assertEqual(queued_event["target_agent"], "Copilot")
-        self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "L12-CATALOG-001")
+        self.assertEqual(kwargs["new_owner"], "Codex")
 
     def test_dispatcher_helper_claims_unrelated_task_during_failure_loop(self) -> None:
         config = {
@@ -6243,7 +6260,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Codex")
         self.assertEqual(kwargs["new_reviewer"], "Claude")
 
-    def test_normalize_does_not_reassign_catalog_locked_task(self) -> None:
+    def test_normalize_mainline_task_assignment_allows_catalog_task(self) -> None:
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -6280,13 +6297,13 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         }
         with (
             mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
-            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             changed = supervisor.normalize_mainline_task_assignment(config, task)
 
-        self.assertFalse(changed)
-        persist.assert_not_called()
+        self.assertTrue(changed)
+        persist.assert_called_once()
 
     def test_normalize_does_not_reassign_when_owner_auth_ready(self) -> None:
         config = {
@@ -12953,7 +12970,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertEqual(blocker["status"], "resolved")
         self.assertEqual(blocker["resolution_ref"], "chair_reassignment:T-PUSH")
 
-    def test_persist_task_reassignment_rejects_catalog_assignment_drift(self) -> None:
+    def test_persist_task_reassignment_allows_catalog_assignment(self) -> None:
         status_path = self.root / "ai-status.json"
         original = {
             "tasks": [
@@ -12974,15 +12991,12 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 task_id="L12-LOCKED-001",
                 new_owner="Claude",
                 new_reviewer="Codex2",
-                message="Helper claim must not rewrite a catalog assignment.",
+                message="Helper claim allows reassignment under work-conserving canonical routing.",
             )
 
-        self.assertFalse(applied)
-        sync.assert_not_called()
-        self.assertEqual(
-            json.loads(status_path.read_text(encoding="utf-8")),
-            original,
-        )
+        self.assertTrue(applied)
+        sync.assert_called_once()
+
 
     def test_persist_task_reassignment_cas_rejects_stale_assignment(self) -> None:
         status_path = self.root / "ai-status.json"
@@ -23227,6 +23241,58 @@ class MaxConcurrentWorkersCapTests(unittest.TestCase):
             "schema": {},
             "agents": {},
         }
+
+    def test_dispatch_ready_tasks_queues_unadmitted_dev_bridge_task(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "max_concurrent_workers": 10,
+                "max_dispatches_per_tick": 4,
+                "owned_statuses": ["todo"],
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+            },
+            "providers": {},
+        }
+        task = {
+            "id": "TASK-UNADMITTED-DIRECT-001",
+            "title": "Direct Dispatch Unadmitted Dev Bridge Task",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+            "depends_on": [],
+            "dev_bridge": {
+                "packet_id": "pkt-unadmitted-direct-123",
+                "packet_digest": "invalid_digest",
+                "task_spec_hash": "invalid_hash",
+            },
+        }
+        status = {"tasks": [task]}
+        state = {"queue": {"events": {}}, "workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "assistant_dev_bridge_task_is_admitted", return_value=False),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["codex"])
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "TASK-UNADMITTED-DIRECT-001")
+        self.assertEqual(queued_event["target_agent"], "Codex")
 
     def test_dispatch_ready_tasks_skips_when_global_cap_reached(self) -> None:
         config = self._base_config()

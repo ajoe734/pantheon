@@ -1,0 +1,108 @@
+{
+  "schema_version": "supervisor_work_conserving_canonical_routing.v1",
+  "task": {
+    "id": "SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811",
+    "title": "Make canonical scheduling work-conserving and lease-truthful",
+    "phase": "Canonical Scheduling / Work-Conserving Routing",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "ready_for_review",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811/evidence.json",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811"
+  },
+  "scope": {
+    "owned_layer": "Make canonical supervisor scheduling work-conserving by removing catalog assignment lock execution gates so all safe eligible capacity can be filled.",
+    "not_changing": "Task state store, worker process lifecycle, queue event persistence, or dev-bridge atomic materialization.",
+    "changed_paths": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_explain_dispatch.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/explain_dispatch.py",
+      "docs/deployment/evidence/supervisor/SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811/evidence.json"
+    ]
+  },
+  "scheduler_predicates_order": [
+    "1. global_block_reason / ready_dispatcher enabled & max_concurrent_workers cap",
+    "2. agent_auto_dispatch_block_reason (pause / provider health)",
+    "3. quota_group_concurrency_limit (account group capacity)",
+    "4. agent_dispatch_capacity (per-agent slot limit)",
+    "5. task_execution_dispatch_candidate (role/status eligibility: finalize -> review -> owned -> unowned helper claim)",
+    "6. agent_can_take_task (capability/sidecar restrictions)",
+    "7. failure_loop_task_agents & chair_reassignment_triage_needed_for_task gates",
+    "8. task_assignment_is_catalog_locked (returns False for work-conserving routing)",
+    "9. dependencies_satisfied (dependency & lineage completion check)",
+    "10. pending_event_keys & dispatch_event_is_in_unchanged_cooldown (pending event and cooldown gates)",
+    "Note: dev bridge admission check (assistant_dev_bridge_task_is_admitted) is audit-only during dev-bridge ingress/materialization and is omitted from live execution and routing dispatch gates."
+  ],
+  "synthetic_fleet_utilization": {
+    "before_catalog_lock": {
+      "active_workers": 2,
+      "max_capacity": 10,
+      "utilization": "20%",
+      "blocked_by_catalog_lock": "8 eligible catalog-assigned tasks skipped due to initial catalog hash lock"
+    },
+    "after_work_conserving": {
+      "active_workers": 10,
+      "max_capacity": 10,
+      "utilization": "100%",
+      "status": "work-conserving fully saturated up to max_concurrent_workers"
+    }
+  },
+  "implementation": {
+    "work_conserving_policy": {
+      "catalog_lock_gate": "task_assignment_is_catalog_locked returns False to allow helper claims and provider fallback to fill eligible capacity.",
+      "audit_only_admission": "assistant_dev_bridge_task_is_admitted checks remain in materialization/ingress audit and are omitted from live supervisor and explain_dispatch routing gates.",
+      "explain_dispatch_parity": "explain_dispatch uses the same bound status root and predicate order as supervisor."
+    }
+  },
+  "acceptance": {
+    "catalog_assignment_does_not_block_dispatch": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_normalize_mainline_task_assignment_allows_catalog_task",
+        ".orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_helper_claim_reassigns_unlocked_catalog_task",
+        ".orchestrator/test_supervisor.py::ChairReviewDispatchTests::test_persist_task_reassignment_allows_catalog_assignment",
+        ".orchestrator/test_explain_dispatch.py::TestExplainDispatch::test_catalog_locked_task"
+      ]
+    },
+    "dev_bridge_unadmitted_task_remains_dispatchable": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::MaxConcurrentWorkersCapTests::test_dispatch_ready_tasks_queues_unadmitted_dev_bridge_task",
+        ".orchestrator/test_explain_dispatch.py::TestExplainDispatch::test_dev_bridge_unadmitted_task_remains_dispatchable"
+      ]
+    },
+    "supervisor_and_explain_dispatch_suite": {
+      "status": "proven",
+      "test_summary": "880 passed, 200 subtests passed across test_supervisor.py, test_explain_dispatch.py, and test_ai_status.py in 292.63s"
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "passed; checkout-scoped .venv-pantheon provisioned"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_explain_dispatch.py scripts/test_ai_status.py",
+        "result": "880 passed, 200 subtests passed in 292.63s"
+      },
+      {
+        "command": "git diff --check",
+        "result": "passed"
+      },
+      {
+        "command": "jq empty docs/deployment/evidence/supervisor/SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811/evidence.json",
+        "result": "passed"
+      }
+    ]
+  },
+  "independent_review": {
+    "reviewer": "Codex2",
+    "status": "pending",
+    "required_binding": "Exact-head review with REVIEW_FILE set to this manifest before approval."
+  }
+}
