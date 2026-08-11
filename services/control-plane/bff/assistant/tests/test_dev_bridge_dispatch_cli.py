@@ -112,16 +112,14 @@ def test_cli_materializes_raw_signed_packet_through_ai_status(tmp_path: Path) ->
 
     calls = (repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
     record = json.loads(calls[0])
-    assert record["argv"] == [
-        "assign",
-        "CLI-TASK-001",
-        "Codex",
-        "Claude",
-        "Materialize assistant generated task",
-    ]
+    assert record["argv"][0] == "dev-bridge-materialize-batch"
+    assert len(record["argv"]) == 2
     assert record["ai_name"] == "Human/Ops"
     assert record["auto_worker_markers"] == {}
-    bridge = record["metadata"]["dev_bridge"]
+    assert record["packet_id"] == "pkt_cli_live"
+    assert len(record["tasks"]) == 1
+    assert record["tasks"][0]["task_id"] == "CLI-TASK-001"
+    bridge = record["tasks"][0]["task_metadata"]["dev_bridge"]
     assert bridge["packet_id"] == "pkt_cli_live"
     assert bridge["conversation_id"] == "mgmt-nl-cli"
     assert bridge["source_turn_ids"] == ["turn-user", "turn-assistant"]

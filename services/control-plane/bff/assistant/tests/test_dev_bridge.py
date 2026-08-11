@@ -5,12 +5,13 @@ Covers:
 - HMAC-SHA256 signing and verification
 - Replay protection (duplicate packet rejected)
 - Dispatcher dry-run materialises no subprocess calls
-- Dispatcher live-run calls ai_status.py assign per task
+- Dispatcher live-run calls one atomic ai_status.py materialization batch
 - Constraint enforcement (noDirectShellFromWeb, allowedRepos)
 - Audit refs link packet_id, conversation_id, and documents
 """
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -263,6 +264,45 @@ class TestDispatcher(unittest.TestCase):
         self.assertEqual(len(result.task_records), 1)
         self.assertEqual(result.task_records[0].status, "already_dispatched")
         self.assertEqual(result.audit_refs["packetDigest"], packet_digest(req.packet))
+
+    def test_replay_after_live_reassignment_is_not_a_provenance_mismatch(self):
+        """SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811.
+
+        A later Human/Ops or supervisor-governed owner/reviewer change is live
+        routing state, not part of the packet's immutable declared scope. A
+        replay of the same exact packet must still validate the frozen
+        `dev_bridge.task_spec` provenance, but must not fail just because the
+        live top-level owner/reviewer no longer equal the packet's originally
+        signed values.
+        """
+
+        req = self._signed_request(packet_id="pkt_reassign001")
+        dispatch_task_packet(req, key_store=_TEST_KEY_STORE)
+
+        status_path = Path(self.repo_root, "ai-status.json")
+        state = json.loads(status_path.read_text(encoding="utf-8"))
+        task = next(t for t in state["tasks"] if t["id"] == "TEST-TASK-001")
+        self.assertEqual(task["owner"], "Codex")
+        self.assertEqual(task["reviewer"], "Claude")
+        # Simulate a governed reassignment landing after materialization.
+        task["owner"] = "Claude"
+        task["reviewer"] = "Codex2"
+        status_path.write_text(json.dumps(state), encoding="utf-8")
+
+        req2 = self._signed_request(packet_id="pkt_reassign001")
+        result = dispatch_task_packet(req2, key_store=_TEST_KEY_STORE)
+
+        self.assertTrue(result.replay_rejected)
+        self.assertEqual(result.admission_status, "admitted_replay")
+        self.assertEqual(result.errors, [])
+        # The reassignment must survive the replay untouched.
+        reread = json.loads(status_path.read_text(encoding="utf-8"))
+        replayed_task = next(t for t in reread["tasks"] if t["id"] == "TEST-TASK-001")
+        self.assertEqual(replayed_task["owner"], "Claude")
+        self.assertEqual(replayed_task["reviewer"], "Codex2")
+        # The originally signed provenance stays frozen regardless of routing.
+        self.assertEqual(replayed_task["dev_bridge"]["task_spec"]["owner"], "Codex")
+        self.assertEqual(replayed_task["dev_bridge"]["task_spec"]["reviewer"], "Claude")
 
     def test_invalid_signature_raises(self):
         pkt = _make_packet(packet_id="pkt_badsig")
