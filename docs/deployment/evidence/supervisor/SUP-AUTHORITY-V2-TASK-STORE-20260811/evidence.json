@@ -11,11 +11,11 @@
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-AUTHORITY-V2-TASK-STORE-20260811",
-    "candidate_source_commit": "1381d04aed804b82a9658b4cf3ea2f00bbf15749",
-    "review_baseline_commit": "4f79db4ce17635a2f02b3a26b7bcb78bb19d6610"
+    "candidate_source_commit": "5b155dfd3d9fca4f3f5188643e741ac8fd09c832",
+    "review_baseline_commit": "da47a1d42d80323488024162b6499f1018d177ef"
   },
   "scope": {
-    "owned_layer": "Authoritative task-state V2 persistence: compact current head, append-only state deltas, V1 archive migration and offline integrity verification, task-store architecture specification, and runtime caller telemetry migration.",
+    "owned_layer": "Authoritative task-state V2 persistence: compact current head, append-only state deltas, V1 archive migration and offline integrity verification, task-store architecture specification, and runtime caller migration to explicit observational reads.",
     "not_changing": "Supervisor scheduling policy, task lifecycle policy, fleet routing, provider policy, live configuration, canonical live state, service processes, or deployment.",
     "changed_paths": [
       ".orchestrator/rewrite/task_state_store.py",
@@ -24,6 +24,7 @@
       "docs/02-architecture/supervisor-authority-v2.md",
       "scripts/ai_status.py",
       "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802/dispatcher_snapshot_scale_bench.py",
       "scripts/migrate_task_state_store_v2.py",
       "scripts/test_ai_status.py",
       "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
@@ -43,9 +44,9 @@
   },
   "deletion_and_caller_report": {
     "gross_source_delta_against_origin_dev_before_manifest": {
-      "lines_added": 1643,
-      "lines_deleted": 2106,
-      "command": "git diff --numstat origin/dev...1381d04aed804b82a9658b4cf3ea2f00bbf15749"
+      "lines_added": 1557,
+      "lines_deleted": 2122,
+      "command": "git diff --numstat origin/dev...5b155dfd3d9fca4f3f5188643e741ac8fd09c832, excluding this evidence manifest"
     },
     "removed_hot_path": [
       "V1 full-board state on every event",
@@ -59,7 +60,7 @@
       "supervisor task-state reconciliation",
       "dispatcher authoritative snapshot admission"
     ],
-    "caller_boundary": "All remaining production callers use load_snapshot(), snapshot_transaction(), or append_state_commit(); load_events() and project_latest_state() are offline audit compatibility readers only."
+    "caller_boundary": "All remaining production callers use load_snapshot(), snapshot_transaction(), or append_state_commit(); read-only callers select the explicit observational keyword. load_events() and project_latest_state() are offline audit compatibility readers only."
   },
   "acceptance_evidence": {
     "delta_not_full_state": "A 1,200-task board status change serializes one tasks[index].status set delta, while materializing or archiving one row serializes one indexed insert or remove; no transition persists a state field.",
@@ -77,11 +78,11 @@
   },
   "verification": [
     {
-      "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_STATUS_ROOT /home/lupin/pantheon/.venv/bin/pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_task_state_runtime_env.py scripts/test_migrate_task_state_store_v2.py scripts/test_verify_task_state_store.py scripts/test_ai_status.py::ArchiveWorkflowTests::test_real_show_is_bounded_and_does_not_mutate_pending_outbox scripts/test_ai_status.py::ArchiveWorkflowTests::test_real_show_returns_immediately_when_writer_holds_task_lock scripts/test_dispatch_twelve_loop_gap_2026_07_26.py --deselect scripts/test_dispatch_twelve_loop_gap_2026_07_26.py::test_human_task_cards_mirror_assignment_header scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py .orchestrator/test_supervisor.py::TaskStateShadowCatchupTests",
-      "result": "126 passed, 1 deselected in 21.85s"
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_STATUS_ROOT \"$PANTHEON_PY\" -m pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_task_state_runtime_env.py scripts/test_migrate_task_state_store_v2.py scripts/test_verify_task_state_store.py scripts/test_ai_status.py::ArchiveWorkflowTests::test_real_show_is_bounded_and_does_not_mutate_pending_outbox scripts/test_ai_status.py::ArchiveWorkflowTests::test_real_show_returns_immediately_when_writer_holds_task_lock scripts/test_dispatch_twelve_loop_gap_2026_07_26.py --deselect scripts/test_dispatch_twelve_loop_gap_2026_07_26.py::test_human_task_cards_mirror_assignment_header scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py .orchestrator/test_supervisor.py::TaskStateShadowCatchupTests",
+      "result": "126 passed, 1 deselected in 22.02s"
     },
     {
-      "command": "python3 -m py_compile .orchestrator/rewrite/task_state_store.py scripts/verify_task_state_store.py scripts/migrate_task_state_store_v2.py scripts/ai_status.py scripts/dispatch_twelve_loop_gap_2026_07_26.py .orchestrator/test_supervisor.py && git diff --check",
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m py_compile .orchestrator/rewrite/task_state_store.py scripts/verify_task_state_store.py scripts/migrate_task_state_store_v2.py scripts/ai_status.py scripts/dispatch_twelve_loop_gap_2026_07_26.py .orchestrator/test_supervisor.py docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802/dispatcher_snapshot_scale_bench.py && git diff --check",
       "result": "passed"
     }
   ],
@@ -97,6 +98,6 @@
   "review": {
     "decision": "pending_independent_review",
     "required_reviewer": "Codex",
-    "protocol": "Review this committed manifest, all changed paths, and the exact PR head, including candidate source commit 1381d04aed804b82a9658b4cf3ea2f00bbf15749 and its compact row-count, archive-resume, manifest-identity, and post-head-tail regressions. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
+    "protocol": "Review this committed manifest, all changed paths, and the exact PR head, including candidate source commit 5b155dfd3d9fca4f3f5188643e741ac8fd09c832 and its compact row-count, archive-resume, manifest-identity, post-head-tail, and explicit observational-read regressions. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
   }
 }
