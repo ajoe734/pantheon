@@ -1252,25 +1252,19 @@ def _claim_processing_files(
                     continue
 
             is_retryable = retry is not None and _identity_matches(retry, identity)
-            # Give non-retryable (0) priority over retryable (1) when constructing buckets,
-            # but preserve sub-order within each bucket.
-            ready_candidates.append((path, identity, 1.0 if is_retryable else 0.0))
+            ready_candidates.append((path, identity, is_retryable))
 
-        # Separate into non-retryable and retryable buckets
-        non_retryable_bucket = [item for item in ready_candidates if item[2] == 0.0]
-        retryable_bucket = [item for item in ready_candidates if item[2] > 0.0]
+        retryables = [(path, ident) for path, ident, is_r in ready_candidates if is_r]
+        fresh = [(path, ident) for path, ident, is_r in ready_candidates if not is_r]
 
-        # Interleave buckets round-robin: non-retryable first, then retryable
         ordered_candidates: list[tuple[Path, Dict[str, str]]] = []
-        idx_nr, idx_r = 0, 0
-        len_nr, len_r = len(non_retryable_bucket), len(retryable_bucket)
-        while idx_nr < len_nr or idx_r < len_r:
-            if idx_nr < len_nr:
-                ordered_candidates.append((non_retryable_bucket[idx_nr][0], non_retryable_bucket[idx_nr][1]))
-                idx_nr += 1
-            if idx_r < len_r:
-                ordered_candidates.append((retryable_bucket[idx_r][0], retryable_bucket[idx_r][1]))
-                idx_r += 1
+        if fresh and retryables and max_items is not None and max_items > 0:
+            retry_bound = max(0, max_items - 1)
+            ordered_candidates.extend(retryables[:retry_bound])
+            ordered_candidates.extend(fresh)
+            ordered_candidates.extend(retryables[retry_bound:])
+        else:
+            ordered_candidates.extend((path, ident) for path, ident, _ in ready_candidates)
 
         claims: list[tuple[Path, str, int]] = []
         for path, identity in ordered_candidates:
