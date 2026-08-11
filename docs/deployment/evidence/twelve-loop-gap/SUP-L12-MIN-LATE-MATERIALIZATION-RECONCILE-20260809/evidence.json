@@ -4,7 +4,7 @@
   "program_id": "pantheon-twelve-loop-minimum-functional-closure-2026-08-08",
   "owner": "Antigravity",
   "reviewer": "Codex",
-  "verified_at": "2026-08-11T18:49:00Z",
+  "verified_at": "2026-08-11T19:01:30Z",
   "authoritative_snapshot_digest": "3ea702b7fe2bdd7ef644c7f779972c6a9103be82",
   "authoritative_snapshot_algorithm": "git-object-sha1",
   "authoritative_snapshot_source": "PR base / origin-dev tip at admission time",
@@ -148,10 +148,38 @@
     "direct_push_used": false
   },
   "review_summary": "Reconciliation evidence generated. Late materialization of L12-VERIFY-LEARN-REAL-VERIFIER-001 reconciled as superseded by L12-MIN-E2E-20260808. Successor DAG dependencies and artifact scopes verified.",
-  "authoritative_status_root_snapshot": {
-    "source_file": "ai-status.json",
-    "authoritative_root": "PANTHEON_STATUS_ROOT",
+  "authoritative_journal_state": {
+    "event_log": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl",
+    "sequence": 16871,
+    "event_id": "task-state-1d1a86185877e5ba50260de4a03bf538755e344c306999e9a194b81ca5eff749",
+    "state_sha256": "c6fbb30c2754b796cd8bb8b775083d995776741fd880cf7ec8fbeab0a903e8e8",
     "status_sha256": "3c405b5d22d2446602645254fe7d1f78db1117e728b163e374f0448244df2617",
-    "recorded_at": "2026-08-11T18:49:00Z"
+    "recorded_at": "2026-08-11T19:01:30Z"
+  },
+  "archived_records_sha256": {
+    "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808": {
+      "path": "ai-task-archive/tasks/SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808.json",
+      "sha256": "40c77a8cd3e32e8fc910e6780e1535e7b70e87dbdd99516d53a70918b75c3b70"
+    },
+    "L12-MIN-TEACH-20260808": {
+      "path": "ai-task-archive/tasks/L12-MIN-TEACH-20260808.json",
+      "sha256": "45f0506d7aaa2a37ce221bb46afa0285fd5e39da2c816c09631ba1685a68a10d"
+    },
+    "L12-MIN-CONS-20260808": {
+      "path": "ai-task-archive/tasks/L12-MIN-CONS-20260808.json",
+      "sha256": "0eb7514f117faeded15b83dfda8fa0ba3175c32f59a6569f724ec61f01c460f1"
+    },
+    "L12-MIN-DEP-20260808": {
+      "path": "ai-task-archive/tasks/L12-MIN-DEP-20260808.json",
+      "sha256": "a0d81ae7e9c2a52eaa38379f0c2d2bb43146d770faf98542c0e178126be570fd"
+    },
+    "L12-MIN-CAP-20260808": {
+      "path": "ai-task-archive/tasks/L12-MIN-CAP-20260808.json",
+      "sha256": "bde9548791d4a6ba746359d47a00a2be38d6e04c408708b163e9a514621f6505"
+    },
+    "L12-VERIFY-LEARN-REAL-VERIFIER-001": {
+      "path": "ai-task-archive/tasks/L12-VERIFY-LEARN-REAL-VERIFIER-001.json",
+      "sha256": "87158ab44314671d665245491379600afdc1328f3fde755b18802c390e6e013b"
+    }
   }
 }
