@@ -11,8 +11,8 @@
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-AUTHORITY-V2-TASK-STORE-20260811",
-    "candidate_source_commit": "5b155dfd3d9fca4f3f5188643e741ac8fd09c832",
-    "review_baseline_commit": "da47a1d42d80323488024162b6499f1018d177ef"
+    "candidate_source_commit": "7376fd7ee89453df53d347d3aff61e09c032e1fd",
+    "review_baseline_commit": "602685bb81b8d8814cd2580a391742f5e54b15b3"
   },
   "scope": {
     "owned_layer": "Authoritative task-state V2 persistence: compact current head, append-only state deltas, V1 archive migration and offline integrity verification, task-store architecture specification, and runtime caller migration to explicit observational reads.",
@@ -44,9 +44,9 @@
   },
   "deletion_and_caller_report": {
     "gross_source_delta_against_origin_dev_before_manifest": {
-      "lines_added": 1557,
-      "lines_deleted": 2122,
-      "command": "git diff --numstat origin/dev...5b155dfd3d9fca4f3f5188643e741ac8fd09c832, excluding this evidence manifest"
+      "lines_added": 1671,
+      "lines_deleted": 2118,
+      "command": "git diff --numstat origin/dev...7376fd7ee89453df53d347d3aff61e09c032e1fd -- . ':!docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-TASK-STORE-20260811/evidence.json'"
     },
     "removed_hot_path": [
       "V1 full-board state on every event",
@@ -65,6 +65,7 @@
   "acceptance_evidence": {
     "delta_not_full_state": "A 1,200-task board status change serializes one tasks[index].status set delta, while materializing or archiving one row serializes one indexed insert or remove; no transition persists a state field.",
     "constant_hot_read_cost": "Synthetic multi-megabyte V1 archive migration test performs repeated load_snapshot calls with archive parsing patched to fail; every hot read succeeds.",
+    "streamed_archive_migration_memory": "A streaming fixture of 260 full-board revisions across 1,100 tasks is at least 16 MiB. The legacy reader regression forbids _read_regular_bytes, records only 64 KiB os.read calls, and requires traced allocation below 8 MiB, below one quarter of journal bytes, and below 16 times the largest record plus 4 MiB. The reader incrementally computes exact journal bytes and SHA-256 while retaining only the unfinished record and newest projected state. Production preflight budget is 64 MiB plus 16R + 4S, where R is the largest record and S is the largest decoded state footprint; it is independent of journal length J.",
     "failure_boundaries": [
       "stale expected sequence/head CAS is rejected",
       "nonterminal task loss is rejected before append",
@@ -78,8 +79,8 @@
   },
   "verification": [
     {
-      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_STATUS_ROOT \"$PANTHEON_PY\" -m pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_task_state_runtime_env.py scripts/test_migrate_task_state_store_v2.py scripts/test_verify_task_state_store.py scripts/test_ai_status.py::ArchiveWorkflowTests::test_real_show_is_bounded_and_does_not_mutate_pending_outbox scripts/test_ai_status.py::ArchiveWorkflowTests::test_real_show_returns_immediately_when_writer_holds_task_lock scripts/test_dispatch_twelve_loop_gap_2026_07_26.py --deselect scripts/test_dispatch_twelve_loop_gap_2026_07_26.py::test_human_task_cards_mirror_assignment_header scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py .orchestrator/test_supervisor.py::TaskStateShadowCatchupTests",
-      "result": "126 passed, 1 deselected in 22.02s"
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_STATUS_ROOT \"$PANTHEON_PY\" -m pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_task_state_runtime_env.py scripts/test_migrate_task_state_store_v2.py scripts/test_verify_task_state_store.py",
+      "result": "34 passed in 20.36s"
     },
     {
       "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m py_compile .orchestrator/rewrite/task_state_store.py scripts/verify_task_state_store.py scripts/migrate_task_state_store_v2.py scripts/ai_status.py scripts/dispatch_twelve_loop_gap_2026_07_26.py .orchestrator/test_supervisor.py docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802/dispatcher_snapshot_scale_bench.py && git diff --check",
@@ -98,6 +99,6 @@
   "review": {
     "decision": "pending_independent_review",
     "required_reviewer": "Codex",
-    "protocol": "Review this committed manifest, all changed paths, and the exact PR head, including candidate source commit 5b155dfd3d9fca4f3f5188643e741ac8fd09c832 and its compact row-count, archive-resume, manifest-identity, post-head-tail, and explicit observational-read regressions. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
+    "protocol": "Review this committed manifest, all changed paths, and the exact PR head. Confirm candidate source commit 7376fd7ee89453df53d347d3aff61e09c032e1fd replaces legacy full-payload/splitlines validation with O_NOFOLLOW 64 KiB streaming reads, incremental byte/SHA accounting, complete-record and V1 chain/state validation, and that dry-run, initial migration, resume, and offline verification all invoke the same bounded reader. Inspect the 16 MiB+ streaming regression and the documented 64 MiB + 16R + 4S migration budget. Bind this same review_file through the governed approve command; any changed PR head requires a new independent review."
   }
 }
