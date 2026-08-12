@@ -207,8 +207,9 @@ def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
 
 def test_rollback_baseline_uses_the_accepted_frontend_pair_manifest() -> None:
     """A failed BFF cannot erase the last accepted release identity needed to
-    repair it.  The immutable frontend deployment manifest carries that pair;
-    a live BFF response is only a consistency check when available."""
+    repair it. The immutable frontend deployment manifest carries that pair;
+    a known dev-ancestor live BFF drift is recorded, never promoted to the
+    rollback baseline."""
     dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
     start = dev.index("      - name: Capture exact hosted FE and BFF rollback baseline")
     end = dev.index("      - name: Seal exact-pair admission artifact", start)
@@ -219,12 +220,18 @@ def test_rollback_baseline_uses_the_accepted_frontend_pair_manifest() -> None:
     )
     assert 'baseline_source="accepted_frontend_pair_manifest"' in baseline
     assert 'baseline_source="accepted_frontend_pair_manifest+live_bff_match"' in baseline
-    assert "Hosted BFF identity does not match the accepted frontend pair manifest." in baseline
+    assert 'baseline_source="accepted_frontend_pair_manifest+live_bff_drift_recovery"' in baseline
+    assert '[[ "${observed_previous}" =~ ^[0-9a-f]{40}$ ]]' in baseline
+    assert '"${observed_previous}" refs/remotes/origin/dev' in baseline
+    assert "Hosted BFF drift identity is not an exact commit SHA." in baseline
+    assert "Hosted BFF drift identity is not contained in Pantheon dev." in baseline
+    assert "retaining the accepted pair as rollback authority" in baseline
     assert "recovering from the accepted frontend pair manifest" in baseline
     assert 'manifest.get("deploymentState") != "accepted"' in baseline
     assert 'manifest.get("bffCommitEvidence") is not True' in baseline
     assert 'bff.get("baseUrl", "").rstrip("/") != expected_bff_url' in baseline
     assert '"baseline_source": sys.argv[7]' in baseline
+    assert '"observed_live_bff_sha": sys.argv[8] or None' in baseline
 
 
 def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() -> None:
