@@ -36,7 +36,7 @@ class RecoveryObservation:
     @property
     def caught_up(self) -> bool:
         return (
-            self.checkpoint == self.source_high_watermark
+            self.checkpoint >= self.source_high_watermark
             and self.backlog == 0
         )
 
@@ -119,14 +119,12 @@ def classify_readiness(
             "source_high_watermark",
         )
         backlog = _integer(projector, "backlog")
-        if checkpoint != source_high_watermark or backlog != 0:
-            # The projector health file is assembled from independently
-            # advancing counters.  An exact/live/accepted response can
-            # therefore briefly expose a mixed snapshot (including
-            # checkpoint > source_high_watermark).  It is not safe to accept,
-            # but it is also not a structural readiness failure.  Keep it
-            # inside the ordinary restart budget; this state must never grant
-            # the trusted recovery extension.
+        expected_backlog = max(0, source_high_watermark - checkpoint)
+        if backlog != expected_backlog or checkpoint < source_high_watermark:
+            # ``telemetry_events`` is a retained source window.  A durable
+            # checkpoint may safely exceed its latest retained row, but a
+            # checkpoint behind the observed window must report matching
+            # backlog and cannot advertise ready truth.
             return "snapshot_inconsistent", None
         return "ready", None
 
@@ -176,9 +174,7 @@ def classify_readiness(
         )
     except ReadinessError:
         return "unavailable", None
-    if checkpoint > source_high_watermark:
-        return "unavailable", None
-    if backlog != source_high_watermark - checkpoint:
+    if backlog != max(0, source_high_watermark - checkpoint):
         return "unavailable", None
 
     return (

@@ -238,7 +238,11 @@ class SupervisorAdmissionLockIdentity:
     sha256: str
     mtime_ns: int
     ctime_ns: int
-    kernel_lock_id: str
+    # ``/proc/locks`` assigns this row ordinal while rendering the global lock
+    # table.  Unrelated lock churn can renumber it even when this exact inode,
+    # owner PID generation, and FLOCK mode have not changed.  Keep it in
+    # evidence, but never use it as a promotion identity/CAS field.
+    kernel_lock_id: str = field(compare=False)
     kernel_lock_kind: str
     kernel_lock_class: str
     kernel_lock_mode: str
@@ -4736,15 +4740,28 @@ def evaluate_promotion_invariants(
 
     # V2 has no alternate control-worker authority. Promotion may not adopt a
     # legacy chair, discussion-planning, or coordination worker/queue row.
+    # These are terminal runtime history states: they retain audit evidence,
+    # but their process has already ended and no delivery lease remains. They
+    # must not turn an otherwise drained V1 runtime into a fictitious mixed
+    # writer. In contrast, ``retry_backoff`` remains nonterminal because it
+    # still represents a delivery authority that must return to the queue.
+    terminal_runtime_statuses = {
+        "completed",
+        "failed",
+        "cancelled",
+        "done",
+        "superseded",
+        "terminated",
+        "retried",
+        "retry_quarantined",
+    }
     legacy_control_workers: list[str] = []
     legacy_control_queue_events: list[str] = []
     for worker_name, worker_info in workers.items():
         if not isinstance(worker_info, dict):
             continue
-        worker_status = str(worker_info.get("status") or "")
-        if worker_status in {
-            "completed", "failed", "cancelled", "done", "superseded"
-        }:
+        worker_status = str(worker_info.get("status") or "").strip().lower()
+        if worker_status in terminal_runtime_statuses:
             continue
         snapshot = worker_info.get("request_snapshot")
         snapshot = snapshot if isinstance(snapshot, dict) else {}
@@ -4761,9 +4778,8 @@ def evaluate_promotion_invariants(
     for event_id, event_info in queue_events.items():
         if not isinstance(event_info, dict):
             continue
-        if str(event_info.get("status") or "") in {
-            "completed", "failed", "cancelled", "done"
-        }:
+        event_status = str(event_info.get("status") or "").strip().lower()
+        if event_status in terminal_runtime_statuses:
             continue
         marker = " ".join(
             str(event_info.get(key) or "")
@@ -4775,9 +4791,8 @@ def evaluate_promotion_invariants(
         if not isinstance(event_info, dict):
             legacy_control_queue_events.append(f"durable:{index}:invalid")
             continue
-        if str(event_info.get("status") or "queued") in {
-            "completed", "failed", "cancelled", "done", "superseded"
-        }:
+        event_status = str(event_info.get("status") or "queued").strip().lower()
+        if event_status in terminal_runtime_statuses:
             continue
         marker = " ".join(
             str(event_info.get(key) or "")
@@ -4804,9 +4819,6 @@ def evaluate_promotion_invariants(
     # V1 workers retain their original command runtime and TaskStore journal
     # environment. They cannot cross the authority switch safely: after the
     # task lock is released they could write V1 while V2 is already canonical.
-    terminal_runtime_statuses = {
-        "completed", "failed", "cancelled", "done", "superseded", "terminated"
-    }
     undrained_workers = sorted(
         str(worker_name)
         for worker_name, worker_info in workers.items()

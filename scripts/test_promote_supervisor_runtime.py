@@ -635,6 +635,63 @@ def test_v1_execution_authority_must_drain_before_task_store_cutover() -> None:
     assert drained_gate["ok"] is True
 
 
+def test_v1_retry_history_is_drained_but_retry_backoff_is_not() -> None:
+    health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 100}}
+    retry_history_state = {
+        "workers": {
+            "retired-chair": {
+                "status": "retried",
+                "request_snapshot": {"reason": "chair_review:approval"},
+            },
+            "retired-retry": {"status": "retry_quarantined"},
+        },
+        "worker_worktrees": {"leases": {}},
+        "queue": {
+            "events": {
+                "retired-chair-event": {
+                    "status": "retried",
+                    "reason": "chair_review:approval",
+                }
+            }
+        },
+    }
+    active_backoff_state = {
+        "workers": {"retrying": {"status": "retry_backoff"}},
+        "worker_worktrees": {"leases": {}},
+        "queue": {"events": {}},
+    }
+
+    with patch("promote_supervisor_runtime.pid_is_alive", return_value=True), patch(
+        "promote_supervisor_runtime.lock_held", return_value=True
+    ):
+        drained = evaluate_promotion_invariants(
+            health_report=health_report,
+            ai_status={"tasks": []},
+            state=retry_history_state,
+            lock_path=Path("/tmp/fake.lock"),
+        )
+        active = evaluate_promotion_invariants(
+            health_report=health_report,
+            ai_status={"tasks": []},
+            state=active_backoff_state,
+            lock_path=Path("/tmp/fake.lock"),
+        )
+
+    drained_v1 = next(
+        item for item in drained if item["name"] == "v1_execution_authority_drained"
+    )
+    drained_control = next(
+        item for item in drained if item["name"] == "legacy_control_paths_drained"
+    )
+    active_v1 = next(
+        item for item in active if item["name"] == "v1_execution_authority_drained"
+    )
+    assert drained_v1["ok"] is True
+    assert drained_control["ok"] is True
+    assert active_v1["ok"] is False
+    assert active_v1["details"]["workers"] == ["retrying"]
+
+
 def test_evaluate_promotion_invariants_detects_duplicate_active_workers() -> None:
     health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 100}}
     ai_status = {"tasks": []}
@@ -3980,20 +4037,24 @@ def test_process_identity_rejects_executable_mismatch(tmp_path: Path) -> None:
         _discover_injected(candidate, reader)
 
 
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"kernel_lock_id": "72"},
-        {"mtime_ns": 34},
-    ],
-)
-def test_process_identity_rejects_admission_lock_generation_drift(
+def test_process_identity_allows_admission_lock_row_ordinal_drift(
     tmp_path: Path,
-    changes: dict[str, Any],
 ) -> None:
     candidate, reader, _argv = _injected_process_fixture(tmp_path)
     original = reader.locks[0]
-    reader.locks[1] = replace(original, **changes)
+    reader.locks[1] = replace(original, kernel_lock_id="72")
+
+    discovered = _discover_injected(candidate, reader)
+
+    assert discovered.admission_lock.kernel_lock_id == "72"
+
+
+def test_process_identity_rejects_admission_lock_generation_drift(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(original, mtime_ns=34)
 
     with pytest.raises(ValueError, match="admission lock generation mismatch"):
         _discover_injected(candidate, reader)
