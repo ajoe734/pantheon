@@ -1,330 +1,294 @@
 from __future__ import annotations
 
-import fcntl
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-import supervisor_runtime_health as health
 from supervisor_runtime_health import evaluate_runtime_health
+
+
+NOW = datetime(2026, 8, 11, 18, 30, tzinfo=timezone.utc)
+COMMIT = "a" * 40
+PID = 4321
+STARTTIME = 987654
 
 
 def write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def configure_exact_runtime(repo: Path, monkeypatch: object) -> None:
-    config_path = repo / ".orchestrator" / "config.json"
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    config.setdefault("watchdog", {})["supervisor_command"] = [
+def healthy_fixture(repo: Path) -> dict[str, Any]:
+    status_root = repo / "status-root"
+    runtime_root = repo / "command-runtime"
+    runtime_root.mkdir(parents=True)
+    state_path = status_root / ".orchestrator" / "state.json"
+    status_path = status_root / "ai-status.json"
+    provider_path = status_root / ".orchestrator" / "provider-capabilities.json"
+    queue_path = status_root / ".orchestrator" / "event-queue.jsonl"
+    event_log = repo / "runtime" / "task-state-events.jsonl"
+    head_path = event_log.with_name(f"{event_log.name}.head.json")
+    config_path = repo / "runtime" / "live-config.json"
+    argv = (
         "/usr/bin/python3",
-        str(repo / ".orchestrator" / "supervisor.py"),
+        "-u",
+        "-B",
+        str(runtime_root / ".orchestrator" / "supervisor.py"),
         "--config",
         str(config_path),
-    ]
-    write_json(config_path, config)
-    (repo / ".orchestrator" / "supervisor.pid").write_text("1234\n", encoding="utf-8")
-    monkeypatch.setattr(health, "pid_is_alive", lambda pid: pid == 1234)
-    monkeypatch.setattr(
-        health,
-        "pid_matches_supervisor",
-        lambda pid, **_kwargs: pid == 1234,
+        "--verbose",
     )
-
-
-def test_health_passes_when_exact_runtime_lock_and_progress_are_fresh(
-    tmp_path: Path,
-    monkeypatch: object,
-) -> None:
-    repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
-    write_json(
-        repo / ".orchestrator" / "config.json",
-        {
-            "paths": {"state_file": ".orchestrator/state.json"},
-            "watchdog": {"heartbeat_stale_seconds": 900},
+    config = {
+        "paths": {
+            "state_file": str(state_path),
+            "status_file": str(status_path),
+            "provider_capabilities": str(provider_path),
+            "event_queue": str(queue_path),
         },
-    )
-    write_json(
-        repo / ".orchestrator" / "state.json",
-        {
-            "supervisor": {
-                "last_heartbeat_at": "2026-06-06T06:29:30Z",
-                "last_successful_loop_at": "2026-06-06T06:29:20Z",
-                "lifecycle": "running",
-                "last_loop_error": None,
-            }
+        "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
+        "watchdog": {
+            "heartbeat_stale_seconds": 120,
+            "state_file": str(status_root / ".orchestrator" / "watchdog-state.json"),
+            "contention_metrics_file": str(status_root / ".orchestrator" / "watchdog-contention.jsonl"),
+            "supervisor_command": list(argv),
         },
-    )
-    configure_exact_runtime(repo, monkeypatch)
-    lock_path = repo / ".orchestrator" / "supervisor.lock"
-    lock_handle = lock_path.open("a+", encoding="utf-8")
-    try:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-        report = evaluate_runtime_health(repo, now=now)
-    finally:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-        lock_handle.close()
-
-    assert report["healthy"] is True
-    assert report["supervisor"]["lock_held"] is True
-    assert all(section["ok"] for section in report["dimensions"].values())
-
-
-def test_health_fails_on_stale_heartbeat(tmp_path: Path) -> None:
-    repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
-    write_json(repo / ".orchestrator" / "config.json", {"paths": {"state_file": ".orchestrator/state.json"}})
-    write_json(
-        repo / ".orchestrator" / "state.json",
-        {
-            "supervisor": {
-                "last_heartbeat_at": "2026-06-06T06:00:00Z",
-                "last_successful_loop_at": "2026-06-06T06:00:00Z",
-                "lifecycle": "running",
-            }
+        "supervisor": {
+            "poll_interval_seconds": 30,
+            "stall_after_seconds": 120,
+            "cycle_budget_seconds": 60,
+            "dispatch_latency_budget_seconds": 45,
         },
-    )
-
-    report = evaluate_runtime_health(repo, now=now, max_heartbeat_age=90)
-
-    assert report["healthy"] is False
-    failed = {item["name"] for item in report["checks"] if not item["ok"]}
-    assert "supervisor_process_alive" in failed
-    assert "supervisor_heartbeat_fresh" in failed
-
-
-def test_require_watchdog_fails_when_probe_is_stale(
-    tmp_path: Path,
-    monkeypatch: object,
-) -> None:
-    repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
-    write_json(
-        repo / ".orchestrator" / "config.json",
-        {
-            "paths": {"state_file": ".orchestrator/state.json"},
-            "watchdog": {"state_file": ".orchestrator/watchdog-state.json"},
-        },
-    )
-    write_json(
-        repo / ".orchestrator" / "state.json",
-        {
-            "supervisor": {
-                "last_heartbeat_at": "2026-06-06T06:29:50Z",
-                "last_successful_loop_at": "2026-06-06T06:29:45Z",
-                "lifecycle": "running",
-            }
-        },
-    )
-    configure_exact_runtime(repo, monkeypatch)
-    write_json(repo / ".orchestrator" / "watchdog-state.json", {"updated_at": "2026-06-06T06:00:00Z"})
-    lock_path = repo / ".orchestrator" / "supervisor.lock"
-    lock_handle = lock_path.open("a+", encoding="utf-8")
-    try:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-        report = evaluate_runtime_health(repo, now=now, require_watchdog=True, max_watchdog_age=180)
-    finally:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-        lock_handle.close()
-
-    assert report["healthy"] is False
-    failed = {item["name"] for item in report["checks"] if not item["ok"]}
-    assert "watchdog_probe_fresh" in failed
-
-
-def test_require_watchdog_accepts_fresh_lock_contention_probe(
-    tmp_path: Path,
-    monkeypatch: object,
-) -> None:
-    repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
-    write_json(
-        repo / ".orchestrator" / "config.json",
-        {
-            "paths": {"state_file": ".orchestrator/state.json"},
-            "watchdog": {
-                "state_file": ".orchestrator/watchdog-state.json",
-                "contention_metrics_file": ".orchestrator/metrics/watchdog-contention.jsonl",
+        "providers": {"codex": {"enabled": True}},
+    }
+    state = {
+        "supervisor": {
+            "pid": PID,
+            "last_heartbeat_at": "2026-08-11T18:29:50Z",
+            "last_loop_started_at": "2026-08-11T18:29:40Z",
+            "last_loop_finished_at": "2026-08-11T18:29:50Z",
+            "last_successful_loop_at": "2026-08-11T18:29:50Z",
+            "last_loop_error": None,
+            "lifecycle": "running",
+            "last_cycle_metrics": {
+                "cycle_elapsed_seconds": 10.0,
+                "queue_to_start": {"count": 1, "average_seconds": 2.0, "max_seconds": 2.0},
+            },
+            "task_state_shadow": {
+                "mode": "authoritative",
+                "ok": True,
+                "caught_up": True,
+                "last_error": None,
+                "projected_state_sha256": "projection-sha",
+                "expected_state_sha256": "projection-sha",
             },
         },
-    )
-    write_json(
-        repo / ".orchestrator" / "state.json",
-        {
-            "supervisor": {
-                "last_heartbeat_at": "2026-06-06T06:29:50Z",
-                "last_successful_loop_at": "2026-06-06T06:29:45Z",
-                "lifecycle": "running",
+        "workers": {
+            "run-1": {
+                "status": "running",
+                "current_task_id": "TASK-1",
+                "queue_event_id": "evt-1",
             }
         },
-    )
-    configure_exact_runtime(repo, monkeypatch)
-    write_json(repo / ".orchestrator" / "watchdog-state.json", {"updated_at": "2026-06-06T06:00:00Z"})
-    contention_path = repo / ".orchestrator" / "metrics" / "watchdog-contention.jsonl"
-    contention_path.parent.mkdir(parents=True, exist_ok=True)
-    contention_path.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "version": 1,
-                        "at": "2026-06-06T06:29:40Z",
-                        "decision": "skip",
-                        "reason": "lock_contention",
-                        "lock_held": True,
-                    }
-                ),
-                "{partial",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    lock_path = repo / ".orchestrator" / "supervisor.lock"
-    lock_handle = lock_path.open("a+", encoding="utf-8")
-    try:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        "queue": {
+            "events": {
+                "evt-1": {"status": "started", "task_id": "TASK-1"}
+            }
+        },
+        "worker_worktrees": {"leases": {"TASK-1": {"task_id": "TASK-1"}}},
+    }
+    status = {
+        "tasks": [
+            {
+                "id": "TASK-1",
+                "status": "in_progress",
+                "owner": "Codex",
+                "depends_on": [],
+            }
+        ]
+    }
+    process = {
+        "pid": PID,
+        "starttime_ticks": STARTTIME,
+        "state": "S",
+        "argv": argv,
+        "cwd": str(runtime_root),
+        "environment": {
+            "PANTHEON_COMMAND_ROOT": str(runtime_root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": COMMIT,
+            "PANTHEON_STATUS_ROOT": str(status_root),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        "singleton_owner_pid": PID,
+        "singleton_owner_starttime_ticks": STARTTIME,
+    }
+    write_json(config_path, config)
+    write_json(state_path, state)
+    write_json(status_path, status)
+    write_json(provider_path, {"providers": {"codex": {"auth_ready": True}}})
+    write_json(head_path, {"sequence": 7, "state": status})
+    queue_path.parent.mkdir(parents=True, exist_ok=True)
+    queue_path.write_text(json.dumps({"event_id": "evt-1", "task_id": "TASK-1"}) + "\n", encoding="utf-8")
+    state_path.with_name("supervisor.pid").write_text(f"{PID}\n", encoding="utf-8")
+    return {
+        "config": config,
+        "config_path": config_path,
+        "state": state,
+        "state_path": state_path,
+        "status": status,
+        "status_path": status_path,
+        "provider_path": provider_path,
+        "runtime_root": runtime_root,
+        "process": process,
+        "status_root": status_root,
+    }
 
-        report = evaluate_runtime_health(repo, now=now, require_watchdog=True, max_watchdog_age=180)
-    finally:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-        lock_handle.close()
+
+def evaluate(repo: Path, fixture: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    kwargs = {
+        "config_path_arg": fixture["config_path"],
+        "now": NOW,
+        "expected_command_root": fixture["runtime_root"],
+        "expected_source_commit": COMMIT,
+        "expected_config_sha256": hashlib.sha256(fixture["config_path"].read_bytes()).hexdigest(),
+        "expected_process_generation": (PID, STARTTIME),
+        "verified_runtime_identity": fixture["process"],
+    }
+    kwargs.update(overrides)
+    return evaluate_runtime_health(repo, **kwargs)
+
+
+def failed_checks(report: dict[str, Any]) -> set[str]:
+    return {item["name"] for item in report["checks"] if not item["ok"]}
+
+
+def test_health_reports_four_independent_healthy_dimensions(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+
+    report = evaluate(tmp_path, fixture)
 
     assert report["healthy"] is True
-    assert report["watchdog"]["probe_source"] == "contention_metric"
-    assert report["watchdog"]["probe_updated_at"] == "2026-06-06T06:29:40Z"
+    assert set(report["dimensions"]) == {"identity", "liveness", "readiness", "progress"}
+    assert all(dimension["healthy"] for dimension in report["dimensions"].values())
+    assert report["identity"]["pid_generation"] == [PID, STARTTIME]
 
 
-def test_require_watchdog_rejects_untrusted_contention_probe(
-    tmp_path: Path,
-    monkeypatch: object,
-) -> None:
-    repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
-    write_json(
-        repo / ".orchestrator" / "config.json",
-        {
-            "paths": {"state_file": ".orchestrator/state.json"},
-            "watchdog": {"state_file": ".orchestrator/watchdog-state.json"},
-        },
-    )
-    write_json(
-        repo / ".orchestrator" / "state.json",
-        {
-            "supervisor": {
-                "last_heartbeat_at": "2026-06-06T06:29:50Z",
-                "last_successful_loop_at": "2026-06-06T06:29:45Z",
-                "lifecycle": "running",
-            }
-        },
-    )
-    configure_exact_runtime(repo, monkeypatch)
-    write_json(repo / ".orchestrator" / "watchdog-state.json", {"updated_at": "2026-06-06T06:00:00Z"})
-    contention_path = repo / ".orchestrator" / "metrics" / "supervisor-watchdog-contention.jsonl"
-    contention_path.parent.mkdir(parents=True, exist_ok=True)
+def test_held_singleton_cannot_compensate_for_wrong_process_generation(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    fixture["process"]["starttime_ticks"] = STARTTIME + 1
+    fixture["process"]["singleton_owner_starttime_ticks"] = STARTTIME + 1
+
+    report = evaluate(tmp_path, fixture)
+
+    assert report["healthy"] is False
+    assert report["dimensions"]["identity"]["healthy"] is False
+    assert report["dimensions"]["liveness"]["healthy"] is False
+    assert "identity_pid_generation_exact" in failed_checks(report)
+    assert "liveness_exact_process_generation_alive" in failed_checks(report)
+
+
+def test_live_process_cannot_compensate_for_orphaned_singleton_lock(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    fixture["process"]["singleton_owner_pid"] = PID + 1
+
+    report = evaluate(tmp_path, fixture)
+
+    assert report["dimensions"]["identity"]["healthy"] is True
+    assert report["dimensions"]["liveness"]["healthy"] is False
+    assert "liveness_singleton_owned_by_generation" in failed_checks(report)
+
+
+def test_fresh_identity_and_lock_do_not_compensate_for_stale_heartbeat(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    fixture["state"]["supervisor"]["last_heartbeat_at"] = "2026-08-11T18:00:00Z"
+    write_json(fixture["state_path"], fixture["state"])
+
+    report = evaluate(tmp_path, fixture)
+
+    assert report["dimensions"]["identity"]["healthy"] is True
+    assert report["dimensions"]["liveness"]["healthy"] is True
+    assert report["dimensions"]["progress"]["healthy"] is False
+    assert "progress_heartbeat_fresh" in failed_checks(report)
+
+
+def test_fresh_heartbeat_without_runnable_backlog_service_is_not_progress(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    fixture["state"]["workers"] = {}
+    fixture["state"]["queue"] = {"events": {}}
+    write_json(fixture["state_path"], fixture["state"])
+
+    report = evaluate(tmp_path, fixture)
+
+    assert report["dimensions"]["progress"]["healthy"] is False
+    assert "progress_runnable_backlog_serviced" in failed_checks(report)
+
+
+def test_wrong_runtime_root_fails_identity_even_when_process_is_live(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    fixture["process"]["environment"]["PANTHEON_COMMAND_ROOT"] = str(tmp_path / "wrong-root")
+
+    report = evaluate(tmp_path, fixture)
+
+    assert report["dimensions"]["identity"]["healthy"] is False
+    assert "identity_command_root_exact" in failed_checks(report)
+
+
+def test_readiness_requires_provider_registry_access(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    fixture["provider_path"].unlink()
+
+    report = evaluate(tmp_path, fixture)
+
+    assert report["dimensions"]["readiness"]["healthy"] is False
+    assert "readiness_provider_registry_accessible" in failed_checks(report)
+
+
+def test_require_watchdog_accepts_fresh_lock_contention_probe(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    watchdog_path = Path(fixture["config"]["watchdog"]["state_file"])
+    contention_path = Path(fixture["config"]["watchdog"]["contention_metrics_file"])
+    write_json(watchdog_path, {"updated_at": "2026-08-11T18:00:00Z"})
     contention_path.write_text(
         json.dumps(
             {
                 "version": 1,
-                "at": "2026-06-06T06:29:40Z",
+                "at": "2026-08-11T18:29:40Z",
+                "decision": "skip",
+                "reason": "lock_contention",
+                "lock_held": True,
+            }
+        )
+        + "\n{partial",
+        encoding="utf-8",
+    )
+
+    report = evaluate(tmp_path, fixture, require_watchdog=True, max_watchdog_age=180)
+
+    assert report["healthy"] is True
+    assert report["watchdog"]["probe_source"] == "contention_metric"
+
+
+def test_require_watchdog_rejects_untrusted_contention_probe(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    watchdog_path = Path(fixture["config"]["watchdog"]["state_file"])
+    contention_path = Path(fixture["config"]["watchdog"]["contention_metrics_file"])
+    write_json(watchdog_path, {"updated_at": "2026-08-11T18:00:00Z"})
+    contention_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "at": "2026-08-11T18:29:40Z",
                 "decision": "skip",
                 "reason": "lock_contention",
                 "lock_held": False,
             }
-        ),
+        )
+        + "\n",
         encoding="utf-8",
     )
-    lock_path = repo / ".orchestrator" / "supervisor.lock"
-    lock_handle = lock_path.open("a+", encoding="utf-8")
-    try:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 
-        report = evaluate_runtime_health(repo, now=now, require_watchdog=True, max_watchdog_age=180)
-    finally:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-        lock_handle.close()
+    report = evaluate(tmp_path, fixture, require_watchdog=True, max_watchdog_age=180)
 
     assert report["healthy"] is False
-    failed = {item["name"] for item in report["checks"] if not item["ok"]}
-    assert "watchdog_probe_fresh" in failed
-
-
-def test_lock_without_exact_process_identity_is_not_healthy(tmp_path: Path) -> None:
-    repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
-    write_json(
-        repo / ".orchestrator" / "config.json",
-        {
-            "paths": {"state_file": ".orchestrator/state.json"},
-            "watchdog": {"heartbeat_stale_seconds": 900},
-            "supervisor": {"stall_after_seconds": 900},
-        },
-    )
-    write_json(
-        repo / ".orchestrator" / "state.json",
-        {
-            "supervisor": {
-                "last_heartbeat_at": "2026-06-06T06:29:50Z",
-                "last_successful_loop_at": "2026-06-06T06:29:45Z",
-                "lifecycle": "running",
-                "last_loop_error": None,
-            }
-        },
-    )
-    lock_path = repo / ".orchestrator" / "supervisor.lock"
-    lock_handle = lock_path.open("a+", encoding="utf-8")
-    try:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        report = evaluate_runtime_health(repo, now=now)
-    finally:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-        lock_handle.close()
-
-    assert report["healthy"] is False
-    assert report["dimensions"]["identity"]["ok"] is False
-    assert report["supervisor"]["lock_held"] is True
-    assert report["supervisor"]["process_alive"] is False
-
-
-def test_fresh_heartbeat_does_not_hide_stalled_progress(
-    tmp_path: Path,
-    monkeypatch: object,
-) -> None:
-    repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
-    write_json(
-        repo / ".orchestrator" / "config.json",
-        {
-            "paths": {"state_file": ".orchestrator/state.json"},
-            "watchdog": {"heartbeat_stale_seconds": 900},
-            "supervisor": {"stall_after_seconds": 60},
-        },
-    )
-    write_json(
-        repo / ".orchestrator" / "state.json",
-        {
-            "supervisor": {
-                "last_heartbeat_at": "2026-06-06T06:29:50Z",
-                "last_successful_loop_at": "2026-06-06T06:00:00Z",
-                "lifecycle": "running",
-                "last_loop_error": None,
-            }
-        },
-    )
-    configure_exact_runtime(repo, monkeypatch)
-    lock_path = repo / ".orchestrator" / "supervisor.lock"
-    lock_handle = lock_path.open("a+", encoding="utf-8")
-    try:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        report = evaluate_runtime_health(repo, now=now)
-    finally:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-        lock_handle.close()
-
-    assert report["healthy"] is False
-    assert report["dimensions"]["identity"]["ok"] is True
-    assert report["dimensions"]["liveness"]["ok"] is True
-    assert report["dimensions"]["progress"]["ok"] is False
+    assert "progress_watchdog_probe_fresh" in failed_checks(report)

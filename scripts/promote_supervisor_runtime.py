@@ -4043,6 +4043,21 @@ def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str,
     }
 
 
+def _runtime_health_identity(process: SupervisorProcessIdentity) -> dict[str, Any]:
+    """Adapt the already generation-guarded promotion capture to #4763 health."""
+
+    return {
+        "pid": process.generation.pid,
+        "starttime_ticks": process.generation.starttime_ticks,
+        "state": process.generation.state,
+        "argv": process.argv,
+        "cwd": str(process.cwd.path),
+        "environment": dict(process.environment_contract),
+        "singleton_owner_pid": process.admission_lock.owner_pid,
+        "singleton_owner_starttime_ticks": process.admission_lock.owner_starttime_ticks,
+    }
+
+
 def capture_promotion_snapshot(
     repo_root: Path,
     *,
@@ -4130,6 +4145,20 @@ def capture_promotion_snapshot(
         config = {}
         file_errors.append({"file": str(config_path_resolved), "error": str(e)})
 
+    health_identity_args: dict[str, Any] = {}
+    if candidate_identity is not None and supervisor_process_identity is not None:
+        health_identity_args = {
+            "expected_command_root": candidate_identity.candidate_root,
+            "expected_source_commit": candidate_identity.head_commit,
+            "expected_config_sha256": candidate_identity.config_sha256,
+            "expected_process_generation": (
+                supervisor_process_identity.generation.pid,
+                supervisor_process_identity.generation.starttime_ticks,
+            ),
+            "verified_runtime_identity": _runtime_health_identity(
+                supervisor_process_identity
+            ),
+        }
     health_report = evaluate_runtime_health(
         candidate_identity.candidate_root if candidate_identity is not None else repo_root,
         config_path_arg=(
@@ -4138,6 +4167,7 @@ def capture_promotion_snapshot(
             else config_path_resolved
         ),
         now=now,
+        **health_identity_args,
     )
 
     paths = config.get("paths") if isinstance(config.get("paths"), dict) else None
@@ -5246,6 +5276,14 @@ def capture_runtime_observation(
         identity.candidate_root,
         config_path_arg=identity.config_path,
         now=observed_at,
+        expected_command_root=identity.candidate_root,
+        expected_source_commit=identity.head_commit,
+        expected_config_sha256=identity.config_sha256,
+        expected_process_generation=(
+            process.generation.pid,
+            process.generation.starttime_ticks,
+        ),
+        verified_runtime_identity=_runtime_health_identity(process),
     )
     invariants = evaluate_promotion_invariants(
         health_report=health_report,

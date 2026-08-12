@@ -166,6 +166,10 @@ def create_realistic_healthy_fixture(repo: Path) -> tuple[dict[str, Any], dict[s
             "last_loop_error": None,
             "lifecycle": "running",
             "pid": 12345,
+            "last_cycle_metrics": {
+                "cycle_elapsed_seconds": 1.0,
+                "queue_to_start": {"max_seconds": 0.0},
+            },
             "task_state_shadow": {
                 "mode": "authoritative",
                 "ok": True,
@@ -1231,7 +1235,14 @@ def _make_candidate_fixture(
     _git(source, "config", "user.email", "promotion@example.test")
     (source / "README.md").write_text("trusted candidate\n", encoding="utf-8")
     if full_preflight:
-        create_realistic_healthy_fixture(source)
+        fixture_config, fixture_state, _fixture_status, _fixture_providers = (
+            create_realistic_healthy_fixture(source)
+        )
+        fixture_state["supervisor"]["pid"] = 7171
+        write_json(Path(fixture_config["paths"]["state_file"]), fixture_state)
+        Path(fixture_config["paths"]["state_file"]).with_name(
+            "supervisor.pid"
+        ).write_text("7171\n", encoding="utf-8")
         source_specs = [
             (source / ".orchestrator" / "supervisor.py", False),
             (source / ".orchestrator" / "supervisor_watchdog.py", True),
@@ -1300,6 +1311,10 @@ def _make_candidate_fixture(
         )
         event_log = live_config.parent / "task-state-events.jsonl"
         event_log.write_text("", encoding="utf-8")
+        write_json(
+            event_log.with_name(f"{event_log.name}.head.json"),
+            {"sequence": 0, "state": {"tasks": []}},
+        )
         worker_worktree_root = tmp_path / "worker-worktrees"
         worker_worktree_root.mkdir()
         executable = Path(sys.executable).resolve()
@@ -1317,12 +1332,19 @@ def _make_candidate_fixture(
             "paths": {
                 "status_file": str(status_root / "ai-status.json"),
                 "state_file": str(status_root / ".orchestrator" / "state.json"),
+                "provider_capabilities": str(
+                    status_root / ".orchestrator" / "provider_capabilities.json"
+                ),
+                "event_queue": str(
+                    status_root / ".orchestrator" / "event-queue.jsonl"
+                ),
             },
             "task_state_store": {
                 "mode": "authoritative",
                 "event_log": str(event_log),
             },
             "worker_worktrees": {"root": str(worker_worktree_root)},
+            "providers": fixture_config["providers"],
         }
         config_bytes = (
             json.dumps(live_config_payload, sort_keys=True) + "\n"
