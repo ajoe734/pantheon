@@ -80,15 +80,6 @@ def load_json_object(path: Path) -> dict[str, Any]:
     return payload
 
 
-def deep_merge(base: Any, overlay: Any) -> Any:
-    if isinstance(base, dict) and isinstance(overlay, dict):
-        merged = copy.deepcopy(base)
-        for key, value in overlay.items():
-            merged[key] = deep_merge(merged[key], value) if key in merged else copy.deepcopy(value)
-        return merged
-    return copy.deepcopy(overlay)
-
-
 def first_symlink_component(path: Path) -> Path | None:
     absolute = path.absolute()
     current = Path(absolute.anchor)
@@ -325,7 +316,18 @@ def build_live_config(
     live_config_path: Path,
     python_executable: Path,
 ) -> dict[str, Any]:
-    rendered = deep_merge(repo_config, existing_live_config or {})
+    # The live file is a deployment projection, never a policy overlay.  In
+    # particular, carrying keys that are merely absent from the candidate
+    # config forward from an incumbent reintroduces retired dispatch paths and
+    # can make a new supervisor fail its own schema validation at startup.
+    #
+    # Runtime-specific values are derived below (canonical status paths,
+    # task-store location, watchdog paths, and immutable command argv).  They
+    # do not need, and must not use, the previous live policy as a fallback.
+    # Keep the argument for the public renderer API and callers that capture
+    # the incumbent for promotion evidence, but deliberately do not merge it.
+    del existing_live_config
+    rendered = copy.deepcopy(repo_config)
     apply_provider_account_schema(repo_config, rendered)
     apply_ready_dispatcher_policy(repo_config, rendered)
     apply_agent_capacity_policy(repo_config, rendered)
