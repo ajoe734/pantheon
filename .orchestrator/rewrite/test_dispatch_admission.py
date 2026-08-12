@@ -156,7 +156,7 @@ class DispatchAdmissionTests(unittest.TestCase):
         self.assertEqual(decision.reason, DispatchBlockReason.ACCOUNT_RETRY_AFTER)
         self.assertFalse(decision.needs_health_refresh)
 
-    def test_due_unavailable_account_requests_one_account_refresh(self) -> None:
+    def test_due_unavailable_account_requests_the_current_endpoint_refresh(self) -> None:
         decision = evaluate_dispatch_intent(
             intent(),
             lane(endpoint()),
@@ -174,7 +174,7 @@ class DispatchAdmissionTests(unittest.TestCase):
         self.assertEqual(decision.reason, DispatchBlockReason.HEALTH_REFRESH_REQUIRED)
         self.assertEqual(
             decision.health_refresh_targets,
-            (HealthRefreshTarget(HealthScope.ACCOUNT, "codex-account"),),
+            (HealthRefreshTarget(HealthScope.ENDPOINT, "codex-1"),),
         )
 
     def test_account_capacity_and_task_lease_are_distinct_closed_gates(self) -> None:

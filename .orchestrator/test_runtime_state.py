@@ -212,11 +212,8 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertNotIn("chair_rotation", state)
         self.assertNotIn("underutilization", state)
         self.assertNotIn("coordination", state)
-        self.assertNotIn("task_failure_streaks", state["provider_guardrails"])
-        self.assertEqual(
-            state["supervisor"]["mode_occupancy"],
-            {"execution": {"running": 1, "pending": 0, "queued": 0}},
-        )
+        self.assertNotIn("provider_guardrails", state)
+        self.assertNotIn("mode_occupancy", state["supervisor"])
 
     def test_load_runtime_state_preserves_watchdog_safe_mode(self) -> None:
         self._write_json(

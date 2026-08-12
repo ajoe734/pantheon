@@ -363,7 +363,13 @@ def evaluate_dispatch_intent(
         if account_gate is not None:
             reasons.append(account_gate)
             if account_refresh is not None:
-                refresh_targets.append(account_refresh)
+                # An account has no independently probeable credential.  A
+                # refresh is always executed through this exact endpoint, so
+                # planner and delivery never invent an account-wide probing
+                # side channel (nor probe a different slot after queueing).
+                refresh_targets.append(
+                    HealthRefreshTarget(HealthScope.ENDPOINT, endpoint_id)
+                )
             continue
 
         account_limit = _mapping_value(snapshot.account_limits, account_id)

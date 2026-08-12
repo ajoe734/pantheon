@@ -16,7 +16,6 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
 from supervisor import (
     explain_dispatch_for_task as supervisor_explain_dispatch_for_task,
     load_config,
-    load_provider_report,
     load_status,
 )
 
@@ -73,22 +72,15 @@ def explain_dispatch_for_task(
     task_id: str,
     *,
     target_agent_filter: str | None = None,
-    provider_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load snapshots, then serialize the supervisor's one decision function."""
 
     config = bind_status_root_paths(config)
-    if provider_report is None:
-        try:
-            provider_report = load_provider_report(config, refresh=False)
-        except Exception:
-            provider_report = {}
     return supervisor_explain_dispatch_for_task(
         config,
         state,
         task_id,
         target_agent_filter=target_agent_filter,
-        provider_report=provider_report,
         status=load_status(config),
     )
 

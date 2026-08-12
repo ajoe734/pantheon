@@ -26,7 +26,6 @@ from common import (
     load_json,
     load_jsonl,
     stable_sidecar_lock,
-    summarize_failure_reason,
     utc_now,
     write_json,
 )
@@ -140,8 +139,10 @@ def default_state() -> dict[str, Any]:
         "approvals": {
             "last_reconciled_at": None,
         },
-        "provider_guardrails": {
-            "dispatch_pauses": {},
+        "delivery_health": {
+            "version": 1,
+            "endpoints": {},
+            "accounts": {},
         },
         "worker_runtime_metrics": {
             "version": 1,
@@ -170,13 +171,6 @@ def default_state() -> dict[str, Any]:
             "last_loop_finished_at": None,
             "last_loop_duration_ms": None,
             "last_loop_error": None,
-            "focus_mode": None,
-            "mode_status": "idle",
-            "mode_switch_requested": None,
-            "last_mode_switch_at": None,
-            "mode_occupancy": {
-                "execution": {"running": 0, "pending": 0, "queued": 0},
-            },
         },
     }
 
@@ -189,7 +183,14 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     # V2 does not preserve obsolete control-plane buckets as dormant state.
     # Their presence previously allowed dashboard/recovery code to revive a
     # retired authority after a restart.
-    for retired_key in ("underutilization", "chair_rotation", "coordination"):
+    for retired_key in (
+        "underutilization",
+        "chair_rotation",
+        "coordination",
+        "provider_guardrails",
+        "account_runtime_schema_version",
+        "account_runtime_topology_digest",
+    ):
         state.pop(retired_key, None)
     state.setdefault("tasks", {})
     recent_terminal_tasks = state.get("recent_terminal_tasks")
@@ -210,9 +211,12 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["auto_commit_archive"].setdefault("last_error", None)
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
-    state.setdefault("provider_guardrails", {})
-    state["provider_guardrails"].setdefault("dispatch_pauses", {})
-    state["provider_guardrails"].pop("task_failure_streaks", None)
+    delivery_health = state.get("delivery_health")
+    state["delivery_health"] = delivery_health if isinstance(delivery_health, dict) else {
+        "version": 1,
+        "endpoints": {},
+        "accounts": {},
+    }
     state.setdefault("worker_runtime_metrics", {})
     state["worker_runtime_metrics"].setdefault("version", 1)
     state["worker_runtime_metrics"].setdefault("updated_at", None)
@@ -228,6 +232,14 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["assistant_dev_bridge"].setdefault("last_drain_at", None)
     state["assistant_dev_bridge"].setdefault("last_result", None)
     state.setdefault("supervisor", {})
+    for retired_supervisor_key in (
+        "focus_mode",
+        "mode_status",
+        "mode_switch_requested",
+        "last_mode_switch_at",
+        "mode_occupancy",
+    ):
+        state["supervisor"].pop(retired_supervisor_key, None)
     state["supervisor"].setdefault("pid", None)
     state["supervisor"].setdefault("started_at", None)
     state["supervisor"].setdefault("last_heartbeat_at", None)
@@ -237,39 +249,6 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("last_loop_finished_at", None)
     state["supervisor"].setdefault("last_loop_duration_ms", None)
     state["supervisor"].setdefault("last_loop_error", None)
-    state["supervisor"].setdefault("focus_mode", None)
-    state["supervisor"].setdefault("mode_status", "idle")
-    state["supervisor"].setdefault("mode_switch_requested", None)
-    state["supervisor"].setdefault("last_mode_switch_at", None)
-    raw_occupancy = state["supervisor"].get("mode_occupancy")
-    raw_execution = (
-        raw_occupancy.get("execution")
-        if isinstance(raw_occupancy, dict)
-        and isinstance(raw_occupancy.get("execution"), dict)
-        else {}
-    )
-    execution_occupancy: dict[str, int] = {}
-    for key in ("running", "pending", "queued"):
-        try:
-            execution_occupancy[key] = max(0, int(raw_execution.get(key) or 0))
-        except (TypeError, ValueError):
-            execution_occupancy[key] = 0
-    state["supervisor"]["mode_occupancy"] = {
-        "execution": execution_occupancy
-    }
-    pauses = state.get("provider_guardrails", {}).get("dispatch_pauses", {}) or {}
-    normalized_pauses: dict[str, Any] = {}
-    for provider, entry in pauses.items():
-        if not isinstance(entry, dict):
-            continue
-        summary = summarize_failure_reason(entry.get("reason"), provider)
-        normalized = deepcopy(entry)
-        normalized["summary"] = str(entry.get("summary") or summary.get("summary") or "").strip()
-        normalized["detail"] = str(entry.get("detail") or summary.get("detail") or "").strip()
-        normalized["failure_kind"] = str(entry.get("failure_kind") or summary.get("kind") or "").strip()
-        normalized["reason"] = normalized["summary"]
-        normalized_pauses[str(provider)] = normalized
-    state["provider_guardrails"]["dispatch_pauses"] = normalized_pauses
     state["version"] = 2
     return state
 

@@ -158,6 +158,34 @@ def provider_report_fixture(*, ready: bool = True, checked_at: str | None = None
     return {"providers": providers}
 
 
+def healthy_delivery_health(config: dict[str, object]) -> dict[str, object]:
+    """Explicit live evidence for tests that are not about cold admission."""
+
+    endpoints: dict[str, object] = {}
+    accounts: dict[str, object] = {}
+    for agent_id, agent in config["agents"].items():
+        provider = str(agent["provider"])
+        account = supervisor.normalize_agent_id(
+            str(config["providers"][provider]["account"])
+        )
+        endpoints[agent_id] = {
+            "state": "healthy",
+            "valid_until": "2999-01-01T00:00:00Z",
+        }
+        accounts[account] = {
+            "state": "healthy",
+            "valid_until": "2999-01-01T00:00:00Z",
+        }
+    return {"version": 1, "endpoints": endpoints, "accounts": accounts}
+
+
+def with_healthy_delivery_health(
+    config: dict[str, object], state: dict[str, object]
+) -> dict[str, object]:
+    state.setdefault("delivery_health", healthy_delivery_health(config))
+    return state
+
+
 def planner_decision(
     config: dict[str, object],
     task: dict[str, object],
@@ -168,9 +196,20 @@ def planner_decision(
     active_task_ids: set[str] | None = None,
     pending_task_ids: set[str] | None = None,
 ) -> dict[str, object]:
-    state = state or {"workers": {}, "queue": {"events": {}}}
+    state = with_healthy_delivery_health(
+        config, state or {"workers": {}, "queue": {"events": {}}}
+    )
     status = status or {"tasks": [task]}
     task_map = {str(item["id"]): item for item in status["tasks"]}
+    active_statuses = set(
+        supervisor.ready_dispatch_settings(config)["active_worker_statuses"]
+    )
+    _agents, active_pairs = supervisor.active_worker_indexes(state, active_statuses)
+    _agents, pending_pairs, pending_keys = supervisor.outstanding_delivery_indexes(
+        config, state, [], task_map
+    )
+    active_ids = {task_id for task_id, _agent in active_pairs if task_id}
+    pending_ids = {task_id for task_id, _agent in pending_pairs if task_id}
     return supervisor.evaluate_dispatch_candidate(
         config,
         state,
@@ -179,13 +218,18 @@ def planner_decision(
         target,
         supervisor.task_resolver_for_config(config, task_map),
         settings=supervisor.ready_dispatch_settings(config),
-        provider_report=provider_report_fixture(),
-        active_task_ids=active_task_ids or set(),
-        pending_task_ids=pending_task_ids or set(),
-        pending_event_keys=set(),
-        agent_loads={"Codex": [], "Codex2": []},
-        active_account_loads={},
-        pending_account_loads={},
+        active_task_ids=active_task_ids if active_task_ids is not None else active_ids,
+        pending_task_ids=pending_task_ids if pending_task_ids is not None else pending_ids,
+        pending_event_keys=pending_keys,
+        agent_loads=supervisor.agent_dispatch_loads(
+            config, state, active_statuses, [], task_map
+        ),
+        active_account_loads=supervisor.active_account_counts(
+            config, state, active_statuses
+        ),
+        pending_account_loads=supervisor.queued_account_counts(
+            config, state, [], task_map
+        ),
         seen_event_keys={},
         checked_at="2026-08-11T00:00:01Z",
         cooldown_seconds=0,
@@ -262,13 +306,12 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
             "codex-account": 0
         }
         self.assertEqual(supervisor.account_concurrency_limit(config, "codex"), 0)
-        reason = supervisor.delivery_capacity_block_reason(
+        decision = planner_decision(
             config,
-            {"workers": {}},
-            "codex",
-            {"running"},
+            task_fixture(),
+            state=with_healthy_delivery_health(config, {"workers": {}, "queue": {"events": {}}}),
         )
-        self.assertIn("codex_account (0/0)", reason or "")
+        self.assertEqual(decision["first_blocking_gate"], "account_capacity_reached")
 
 
 class SharedPlannerContractTests(unittest.TestCase):
@@ -293,7 +336,7 @@ class SharedPlannerContractTests(unittest.TestCase):
         self.assertFalse(decision["eligible"])
         self.assertEqual(
             decision["first_blocking_gate"],
-            "lifecycle_assignment_dependencies",
+            "task_not_dispatchable",
         )
 
     def test_active_or_pending_task_is_never_planned_twice(self) -> None:
@@ -308,8 +351,8 @@ class SharedPlannerContractTests(unittest.TestCase):
             task,
             pending_task_ids={str(task["id"])},
         )
-        self.assertEqual(active["first_blocking_gate"], "active_task_lease")
-        self.assertEqual(pending["first_blocking_gate"], "pending_delivery_intent")
+        self.assertEqual(active["first_blocking_gate"], "task_leased")
+        self.assertEqual(pending["first_blocking_gate"], "task_pending")
 
     def test_planner_uses_only_supplied_snapshots(self) -> None:
         self.config["ready_dispatcher"]["worker_os_duplicate_guard"] = True
@@ -319,18 +362,15 @@ class SharedPlannerContractTests(unittest.TestCase):
                 "scan_live_worker_pids_by_agent",
                 side_effect=AssertionError("planner must not scan live processes"),
             ),
-            mock.patch.object(
-                supervisor,
-                "_cached_provider_capabilities",
-                side_effect=AssertionError("planner must not read provider cache"),
-            ),
         ):
             decision = planner_decision(self.config, task_fixture())
         self.assertTrue(decision["eligible"])
 
     def test_dispatch_reserves_intent_without_launching(self) -> None:
         task = task_fixture()
-        state = {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+        )
         queued: list[dict[str, object]] = []
         with (
             mock.patch.object(
@@ -342,7 +382,6 @@ class SharedPlannerContractTests(unittest.TestCase):
             changed = supervisor.dispatch_ready_tasks(
                 self.config,
                 state,
-                provider_report=provider_report_fixture(),
                 status_snapshot={"tasks": [task]},
                 queue_events_snapshot=[],
                 live_total_snapshot=0,
@@ -363,7 +402,9 @@ class SharedPlannerContractTests(unittest.TestCase):
             )
 
     def test_build_plan_is_side_effect_free_and_reservation_is_single_writer(self) -> None:
-        state = {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+        )
         with mock.patch.object(
             supervisor,
             "_queue_delivery_event_locked",
@@ -374,7 +415,6 @@ class SharedPlannerContractTests(unittest.TestCase):
                 state,
                 {"tasks": [task_fixture()]},
                 [],
-                provider_report_fixture(),
                 live_total=0,
             )
         self.assertEqual(len(plan["events"]), 1)
@@ -401,17 +441,20 @@ class SharedPlannerContractTests(unittest.TestCase):
     def test_reservation_rechecks_account_capacity(self) -> None:
         plan = supervisor.build_dispatch_plan(
             self.config,
-            {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}},
+            with_healthy_delivery_health(
+                self.config, {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+            ),
             {"tasks": [task_fixture()]},
             [],
-            provider_report_fixture(),
             live_total=0,
         )
         self.assertEqual(len(plan["events"]), 1)
         self.config["ready_dispatcher"]["max_concurrent_per_account"] = {
             "codex-account": 0
         }
-        state = {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+        )
         with (
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(
@@ -452,7 +495,7 @@ class SharedPlannerContractTests(unittest.TestCase):
             target="Codex2",
         )
         self.assertFalse(decision["eligible"])
-        self.assertEqual(decision["first_blocking_gate"], "account_health")
+        self.assertEqual(decision["first_blocking_gate"], "account_capacity_reached")
 
 
 class DurableQueueContractTests(unittest.TestCase):
@@ -471,6 +514,7 @@ class DurableQueueContractTests(unittest.TestCase):
                 "event_key": self.event["key"],
                 "target_agent": "codex",
                 "target_display_name": "Codex",
+                "delivery_endpoint_id": "codex",
                 "message": "wake",
             }
         )
@@ -501,13 +545,14 @@ class DurableQueueContractTests(unittest.TestCase):
             config = config_fixture(Path(tmpdir))
             (Path(tmpdir) / ".orchestrator").mkdir()
             task = task_fixture(status="in_progress") | {"generation": 7}
-            state = {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+            state = with_healthy_delivery_health(
+                config, {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
+            )
             plan = supervisor.build_dispatch_plan(
                 config,
                 state,
                 {"tasks": [task]},
                 [],
-                provider_report_fixture(),
                 live_total=0,
             )
             with (
@@ -531,9 +576,9 @@ class DurableQueueContractTests(unittest.TestCase):
                 mock.patch.object(supervisor, "write_activity_log"),
             ):
                 self.assertTrue(
-                    supervisor.process_queue(config, state, provider_report_fixture())
+                    supervisor.process_queue(config, state)
                 )
-            request = launch.call_args.args[3]
+            request = launch.call_args.args[2]
             self.assertEqual(request.metadata["task_generation"], 7)
 
     def test_suspended_approval_returns_to_queue_without_direct_spawn(self) -> None:
@@ -564,7 +609,6 @@ class DurableQueueContractTests(unittest.TestCase):
                 self.config,
                 state,
                 worker,
-                provider_report={},
                 pending=[],
                 resolved=[{"approval_id": "approval-1", "decision": "allow"}],
                 alive=False,
@@ -578,7 +622,9 @@ class DurableQueueContractTests(unittest.TestCase):
         self.assertNotIn("run_id", record)
 
     def test_current_event_launches_after_full_revalidation(self) -> None:
-        state = {"workers": {}, "queue": {"events": {}}}
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
         request = supervisor.DeliveryRequest(
             agent_id="codex",
             provider="codex",
@@ -606,18 +652,24 @@ class DurableQueueContractTests(unittest.TestCase):
             ),
             mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
         ):
-            changed = supervisor.process_queue(self.config, state, provider_report_fixture())
+            changed = supervisor.process_queue(self.config, state)
         self.assertTrue(changed)
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
         launch.assert_called_once()
 
     def test_missing_or_stale_auth_evidence_stays_pending(self) -> None:
-        stale = provider_report_fixture(
-            checked_at=(datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        )
-        for label, report in (("missing", {}), ("stale", stale)):
+        stale = {
+            "version": 1,
+            "endpoints": {
+                "codex": {"state": "healthy", "valid_until": "2000-01-01T00:00:00Z"}
+            },
+            "accounts": {
+                "codex-account": {"state": "healthy", "valid_until": "2000-01-01T00:00:00Z"}
+            },
+        }
+        for label, health in (("missing", {}), ("stale", stale)):
             with self.subTest(label=label):
-                state = {"workers": {}, "queue": {"events": {}}}
+                state = {"workers": {}, "queue": {"events": {}}, "delivery_health": health}
                 with (
                     mock.patch.object(supervisor, "load_event_queue", return_value=[self.event]),
                     mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
@@ -632,13 +684,10 @@ class DurableQueueContractTests(unittest.TestCase):
                         side_effect=AssertionError("delivery must not probe inline"),
                     ),
                 ):
-                    supervisor.process_queue(self.config, state, report)
+                    supervisor.process_queue(self.config, state)
                 record = state["queue"]["events"]["evt-1"]
                 self.assertEqual(record["status"], "pending")
-                self.assertRegex(
-                    record["last_wait_reason"],
-                    r"authentication|provider capability",
-                )
+                self.assertEqual(record["last_wait_reason"], "health_refresh_required")
 
     def test_one_runtime_reservation_launches_at_most_one_process(self) -> None:
         second_task = task_fixture("TASK-2", status="in_progress")
@@ -654,10 +703,13 @@ class DurableQueueContractTests(unittest.TestCase):
                 "event_key": second_event["key"],
                 "target_agent": "codex",
                 "target_display_name": "Codex",
+                "delivery_endpoint_id": "codex",
                 "message": "wake",
             }
         )
-        state = {"workers": {}, "queue": {"events": {}}}
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
         def request_for_event(_config, event, agent_id_override=None):
             return supervisor.DeliveryRequest(
                 agent_id=agent_id_override or "codex",
@@ -681,7 +733,7 @@ class DurableQueueContractTests(unittest.TestCase):
             ) as launch,
             mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
         ):
-            supervisor.process_queue(self.config, state, provider_report_fixture())
+            supervisor.process_queue(self.config, state)
         launch.assert_called_once()
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
         self.assertNotIn("evt-2", state["queue"]["events"])
@@ -699,7 +751,7 @@ class DurableQueueContractTests(unittest.TestCase):
             ),
             mock.patch.object(supervisor, "write_activity_log"),
         ):
-            supervisor.process_queue(self.config, state, provider_report_fixture())
+            supervisor.process_queue(self.config, state)
         record = state["queue"]["events"]["evt-1"]
         self.assertEqual(record["status"], "completed")
         self.assertEqual(record["skip_reason"], "stale_dispatch_event")
@@ -717,24 +769,25 @@ class DurableQueueContractTests(unittest.TestCase):
             ),
             mock.patch.object(supervisor, "write_activity_log"),
         ):
-            supervisor.process_queue(self.config, state, provider_report_fixture())
+            supervisor.process_queue(self.config, state)
         record = state["queue"]["events"]["evt-1"]
         self.assertEqual(record["status"], "completed")
         self.assertEqual(record["skip_reason"], "unsupported_dispatch_reason")
 
     def test_delivery_revalidates_account_capacity(self) -> None:
-        state = {
+        self.config["providers"]["codex2"]["account"] = "codex-account"
+        state = with_healthy_delivery_health(self.config, {
             "workers": {
                 "busy": {
                     "run_id": "busy",
-                    "agent_id": "codex",
-                    "provider": "codex",
+                    "agent_id": "codex2",
+                    "provider": "codex2",
                     "task_id": "OTHER",
                     "status": "running",
                 }
             },
             "queue": {"events": {}},
-        }
+        })
         self.config["ready_dispatcher"]["max_concurrent_per_account"] = {
             "codex-account": 1
         }
@@ -747,32 +800,37 @@ class DurableQueueContractTests(unittest.TestCase):
                 side_effect=AssertionError("capacity-blocked intent must not launch"),
             ),
         ):
-            supervisor.process_queue(self.config, state, {})
+            supervisor.process_queue(self.config, state)
         record = state["queue"]["events"]["evt-1"]
         self.assertEqual(record["status"], "pending")
-        self.assertIn("account capacity", record["last_wait_reason"])
+        self.assertEqual(record["last_wait_reason"], "account_capacity_reached")
 
-    def test_delivery_checks_live_process_duplicate_before_launch(self) -> None:
-        self.config["ready_dispatcher"]["worker_os_duplicate_guard"] = True
-        state = {"workers": {}, "queue": {"events": {}}}
+    def test_delivery_revalidates_exact_endpoint_reservation_before_launch(self) -> None:
+        state = with_healthy_delivery_health(self.config, {
+            "workers": {
+                "busy": {
+                    "run_id": "busy",
+                    "agent_id": "codex",
+                    "provider": "codex",
+                    "task_id": "OTHER",
+                    "status": "running",
+                }
+            },
+            "queue": {"events": {}},
+        })
         with (
             mock.patch.object(supervisor, "load_event_queue", return_value=[self.event]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
             mock.patch.object(
                 supervisor,
-                "scan_live_worker_pids_by_agent",
-                return_value={"Codex": [4321]},
-            ),
-            mock.patch.object(
-                supervisor,
                 "start_worker_for_request",
-                side_effect=AssertionError("duplicate process must not launch"),
+                side_effect=AssertionError("reserved endpoint must not launch"),
             ),
         ):
-            supervisor.process_queue(self.config, state, provider_report_fixture())
+            supervisor.process_queue(self.config, state)
         record = state["queue"]["events"]["evt-1"]
         self.assertEqual(record["status"], "pending")
-        self.assertIn("already has live worker", record["last_wait_reason"])
+        self.assertEqual(record["last_wait_reason"], "endpoint_busy")
 
     def test_due_retry_returns_to_queue_and_never_launches(self) -> None:
         due = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
@@ -800,7 +858,6 @@ class DurableQueueContractTests(unittest.TestCase):
             changed = supervisor.retry_due_workers(
                 self.config,
                 state,
-                {},
                 datetime.now(timezone.utc),
             )
         self.assertTrue(changed)
@@ -812,7 +869,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()
 
-    def test_runtime_account_migration_is_one_shot(self) -> None:
+    def test_runtime_reset_discards_retired_guardrail_state(self) -> None:
         state = {
             "provider_guardrails": {
                 "dispatch_pauses": {
@@ -831,13 +888,15 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
                 }
             },
         }
-        self.assertTrue(supervisor.migrate_runtime_account_state(self.config, state))
-        self.assertIn("codex_account", state["provider_guardrails"]["dispatch_pauses"])
-        self.assertEqual(state["workers"]["run"]["account"], "codex_account")
+        self.assertTrue(supervisor.normalize_runtime_delivery_health(state))
+        health = state["delivery_health"]
+        self.assertEqual(health, {"version": 1, "endpoints": {}, "accounts": {}})
+        self.assertNotIn("provider_guardrails", state)
+        self.assertNotIn("account", state["workers"]["run"])
         self.assertNotIn("quota_group", state["workers"]["run"])
-        self.assertFalse(supervisor.migrate_runtime_account_state(self.config, state))
+        self.assertFalse(supervisor.normalize_runtime_delivery_health(state))
 
-    def test_runtime_account_migration_reacts_to_governed_topology_change(self) -> None:
+    def test_runtime_reset_does_not_carry_account_topology_aliases(self) -> None:
         state = {
             "provider_guardrails": {
                 "dispatch_pauses": {
@@ -851,34 +910,37 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
             },
             "workers": {"run": {"provider": "codex", "account": "codex_account"}},
         }
-        self.assertTrue(supervisor.migrate_runtime_account_state(self.config, state))
+        self.assertTrue(supervisor.normalize_runtime_delivery_health(state))
         self.config["providers"]["codex"]["account"] = "codex-primary"
         self.config["ready_dispatcher"]["max_concurrent_per_account"]["codex_primary"] = 2
-        self.assertTrue(supervisor.migrate_runtime_account_state(self.config, state))
-        self.assertIn("codex_primary", state["provider_guardrails"]["dispatch_pauses"])
-        self.assertNotIn("codex_account", state["provider_guardrails"]["dispatch_pauses"])
-        self.assertEqual(state["workers"]["run"]["account"], "codex_primary")
+        self.assertFalse(supervisor.normalize_runtime_delivery_health(state))
+        self.assertEqual(state["delivery_health"], {"version": 1, "endpoints": {}, "accounts": {}})
+        self.assertNotIn("account", state["workers"]["run"])
 
     def test_terminal_pause_reassigns_once_without_launching(self) -> None:
         task = task_fixture(reviewer="Human/Ops")
         state = {
-            "account_runtime_schema_version": supervisor.ACCOUNT_RUNTIME_SCHEMA_VERSION,
             "workers": {},
             "queue": {"events": {}},
-            "provider_guardrails": {
-                "dispatch_pauses": {
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
                     "codex_account": {
-                        "provider": "codex_account",
-                        "pause_kind": "quota_terminal",
-                        "blocked_until": "9999-12-31T23:59:59Z",
-                    }
-                }
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
             },
         }
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-            mock.patch.object(supervisor, "agent_provider_auth_blocked", return_value=False),
             mock.patch.object(
                 supervisor,
                 "persist_task_reassignment",
@@ -898,23 +960,27 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
     def test_terminal_pause_reopens_stale_blocked_assignment_for_normal_dispatch(self) -> None:
         task = task_fixture(status="blocked", reviewer="Human/Ops")
         state = {
-            "account_runtime_schema_version": supervisor.ACCOUNT_RUNTIME_SCHEMA_VERSION,
             "workers": {},
             "queue": {"events": {}},
-            "provider_guardrails": {
-                "dispatch_pauses": {
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
                     "codex_account": {
-                        "provider": "codex_account",
-                        "pause_kind": "quota_terminal",
-                        "blocked_until": "9999-12-31T23:59:59Z",
-                    }
-                }
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
             },
         }
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
-            mock.patch.object(supervisor, "agent_provider_auth_blocked", return_value=False),
             mock.patch.object(
                 supervisor,
                 "persist_task_reassignment",
@@ -944,7 +1010,6 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         task = task_fixture(status="blocked", reviewer="Human/Ops")
         task["waiting_for"] = "Human/Ops"
         state = {
-            "account_runtime_schema_version": supervisor.ACCOUNT_RUNTIME_SCHEMA_VERSION,
             "workers": {},
             "queue": {"events": {}},
             "provider_guardrails": {
@@ -996,7 +1061,8 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         source = inspect.getsource(supervisor.run_once)
         self.assertLess(source.index('"dispatch_plan_transaction"'), source.index('"sync_github_bus"'))
         self.assertLess(source.index('"process_queue_reserved"'), source.index('"sync_github_bus"'))
-        self.assertLess(source.index('"process_queue_reserved"'), source.index('"reconcile_blocked_tasks"'))
+        self.assertNotIn('"reconcile_blocked_tasks"', source)
+        self.assertLess(source.index('"process_queue_reserved"'), source.index("probe_demanded_delivery_health"))
         self.assertNotIn("dispatch_chair_review", source)
         self.assertNotIn("discussion_planning", source)
 

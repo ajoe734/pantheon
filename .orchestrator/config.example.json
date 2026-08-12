@@ -72,12 +72,10 @@
       "--verbose"
     ]
   },
-  "provider_guardrails": {
-    "pause_on_capacity_failure": true,
-    "pause_on_auth_failure": true,
-    "capacity_pause_seconds": 900,
-    "auth_pause_seconds": 900,
-    "delivery_auth_max_age_seconds": 300
+  "delivery_health": {
+    "evidence_ttl_seconds": 300,
+    "retry_after_seconds": 60,
+    "refresh_max_per_cycle": 4
   },
   "worker_tree_guard": {
     "enabled": false,
