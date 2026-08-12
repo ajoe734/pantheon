@@ -6130,6 +6130,13 @@ def default_reassignment_candidates(config: dict[str, Any], exclude: set[str] | 
 EXPLICIT_HUMAN_REVIEWER = "Human/Ops"
 
 
+def task_is_l12_recovery_work(task: Mapping[str, Any] | None) -> bool:
+    """Return whether a task belongs to the bounded L12 recovery lane."""
+
+    task_id = str((task or {}).get("id") or "").strip().upper()
+    return task_id.startswith("L12-") or task_id.startswith("SUP-L12-")
+
+
 def reviewer_is_explicit_human_gate(reviewer: str | None) -> bool:
     """Return whether the canonical task explicitly requires Human/Ops review.
 
@@ -6176,14 +6183,16 @@ def bounded_fallback_candidates(
     *,
     roots: list[str],
     preferred: list[str] | None = None,
+    preferred_first: bool = False,
 ) -> list[str]:
     """Return a deterministic, cycle-safe breadth-first fallback order.
 
-    Direct configured fallbacks retain their declared order. Task-preferred
-    lanes follow those direct candidates, and every discovered candidate may
-    contribute its own configured fallbacks. A case-insensitive seen set bounds
-    traversal by the finite configured/roster names even when mappings contain
-    cycles such as Codex -> Codex2 -> Codex.
+    Direct configured fallbacks normally retain their declared order before
+    task-preferred lanes. L12 recovery tasks may invert those two inputs so a
+    declared provider lane is tried before the generic Codex-family fallback.
+    Every discovered candidate may contribute its own configured fallbacks. A
+    case-insensitive seen set bounds traversal by the finite configured/roster
+    names even when mappings contain cycles such as Codex -> Codex2 -> Codex.
     """
 
     queue: list[str] = []
@@ -6197,11 +6206,21 @@ def bounded_fallback_candidates(
         seen.add(key)
         queue.append(name)
 
-    for root in roots:
-        for candidate in normalized_mapping_values(mapping, root):
+    def enqueue_roots() -> None:
+        for root in roots:
+            for candidate in normalized_mapping_values(mapping, root):
+                enqueue(candidate)
+
+    def enqueue_preferred() -> None:
+        for candidate in preferred or []:
             enqueue(candidate)
-    for candidate in preferred or []:
-        enqueue(candidate)
+
+    if preferred_first:
+        enqueue_preferred()
+        enqueue_roots()
+    else:
+        enqueue_roots()
+        enqueue_preferred()
 
     ordered: list[str] = []
     cursor = 0
@@ -6269,6 +6288,7 @@ def plan_task_assignment_pair(
             owner_mapping,
             roots=[owner] if owner else [],
             preferred=[lane for lane in preferred_lanes if lane != owner],
+            preferred_first=task_is_l12_recovery_work(task),
         )
         if not owner_fallbacks:
             owner_fallbacks = default_reassignment_candidates(
@@ -13001,8 +13021,7 @@ def task_l12_review_priority_rank(task: dict[str, Any], base_priority: int) -> i
     review_priority = dispatch_reason_priority(REASON_REVIEW_READY)
     if review_priority is None or base_priority != review_priority:
         return 1_000_000
-    task_id = str(task.get("id") or "").strip().upper()
-    if task_id.startswith("L12-") or task_id.startswith("SUP-L12-"):
+    if task_is_l12_recovery_work(task):
         return 0
     return 1_000_000
 

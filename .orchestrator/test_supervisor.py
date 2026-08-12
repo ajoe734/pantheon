@@ -275,6 +275,37 @@ class SharedPlannerContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()
 
+    def _add_l12_provider_lanes(self) -> None:
+        for agent_id, display_name in (
+            ("claude2", "Claude2"),
+            ("antigravity", "Antigravity"),
+        ):
+            account = f"{agent_id}-account"
+            self.config["agents"][agent_id] = {
+                "id": agent_id,
+                "display_name": display_name,
+                "provider": agent_id,
+                "adapter": agent_id,
+                "max_parallel": 1,
+            }
+            self.config["providers"][agent_id] = {
+                "delivery_mode": agent_id,
+                "account": account,
+            }
+            self.config["ready_dispatcher"]["max_concurrent_per_account"][account] = 1
+        self.config["worker_reassignment"]["owner_fallbacks"].update(
+            {
+                "Claude2": ["Codex", "Codex2"],
+                "Antigravity": ["Codex", "Codex2"],
+            }
+        )
+        self.config["worker_reassignment"]["reviewer_fallbacks"].update(
+            {
+                "Claude2": ["Codex", "Codex2"],
+                "Antigravity": ["Codex", "Codex2"],
+            }
+        )
+
     def test_owner_todo_is_dispatchable(self) -> None:
         decision = planner_decision(self.config, task_fixture())
         self.assertTrue(decision["eligible"])
@@ -351,6 +382,113 @@ class SharedPlannerContractTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["task_id"], "TASK-1")
+
+    def test_legacy_l12_missing_process_streak_cannot_suppress_assigned_lane(self) -> None:
+        self._add_l12_provider_lanes()
+        for agent_id, owner in (
+            ("claude2", "Claude2"),
+            ("antigravity", "Antigravity"),
+        ):
+            with self.subTest(owner=owner):
+                task = task_fixture(
+                    "SUP-L12-STALE-MISSING-PROCESS-20260729",
+                    status="in_progress",
+                    owner=owner,
+                    reviewer="Antigravity" if owner == "Claude2" else "Claude2",
+                )
+                task["preferred_lane_order"] = ["Claude2", "Antigravity"]
+                legacy_key = f"{task['id']}:{agent_id}"
+                state = {
+                    "workers": {},
+                    "queue": {"events": {}},
+                    "seen_event_keys": {},
+                    "provider_guardrails": {
+                        "dispatch_pauses": {},
+                        "task_failure_streaks": {
+                            legacy_key: {
+                                "task_id": task["id"],
+                                "provider": agent_id,
+                                "count": 3,
+                                "last_failure_kind": "missing_process",
+                                "last_failure_at": "2026-07-29T11:30:00Z",
+                            }
+                        },
+                    },
+                }
+                queued: list[dict[str, object]] = []
+                with (
+                    mock.patch.object(
+                        supervisor,
+                        "agent_auto_dispatch_block_reason",
+                        return_value=None,
+                    ),
+                    mock.patch.object(
+                        supervisor,
+                        "agent_can_take_task",
+                        return_value=True,
+                    ),
+                ):
+                    changed = supervisor.dispatch_ready_tasks(
+                        self.config,
+                        state,
+                        provider_report={},
+                        agent_ids_override=["codex2", agent_id],
+                        max_dispatches_override=1,
+                        status_snapshot={"tasks": [task]},
+                        queue_events_snapshot=[],
+                        live_total_snapshot=0,
+                        event_sink=lambda _config, event: queued.append(event) or True,
+                    )
+                self.assertTrue(changed)
+                self.assertEqual(len(queued), 1)
+                self.assertEqual(queued[0]["target_agent"], owner)
+                self.assertEqual(
+                    queued[0]["reason"],
+                    supervisor.REASON_OWNED_IN_PROGRESS,
+                )
+                self.assertIn(
+                    legacy_key,
+                    state["provider_guardrails"]["task_failure_streaks"],
+                )
+
+    def test_l12_assignment_prefers_declared_provider_before_codex_fallback(self) -> None:
+        self._add_l12_provider_lanes()
+
+        def lane_ready(
+            _config: dict[str, object],
+            agent_name: str,
+            _task: dict[str, object],
+            **_kwargs: object,
+        ) -> bool:
+            return agent_name != "Claude2"
+
+        l12_task = task_fixture(
+            "SUP-L12-PROVIDER-FIRST-20260729",
+            status="in_progress",
+            owner="Claude2",
+            reviewer="Antigravity",
+        )
+        l12_task["preferred_lane_order"] = ["Claude2", "Antigravity"]
+        ordinary_task = dict(l12_task, id="OPS-GENERIC-FALLBACK-20260729")
+
+        with mock.patch.object(
+            supervisor,
+            "agent_can_take_task",
+            side_effect=lane_ready,
+        ):
+            l12_pair = supervisor.plan_task_assignment_pair(
+                self.config,
+                l12_task,
+            )
+            ordinary_pair = supervisor.plan_task_assignment_pair(
+                self.config,
+                ordinary_task,
+            )
+
+        self.assertIsNotNone(l12_pair)
+        self.assertEqual(l12_pair[0], "Antigravity")
+        self.assertIsNotNone(ordinary_pair)
+        self.assertEqual(ordinary_pair[0], "Codex")
 
     def test_planner_cannot_write_the_delivery_queue(self) -> None:
         with self.assertRaisesRegex(ValueError, "in-memory event sink"):

@@ -1,5 +1,5 @@
 {
-  "schema_version": "pantheon.supervisor.stale_l12_failure_streak_reaper_evidence.v1",
+  "schema_version": "pantheon.supervisor.stale_l12_failure_streak_reaper_evidence.v2",
   "task": {
     "id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
     "title": "Durable stale L12 failure-streak reaper",
@@ -11,116 +11,125 @@
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
-    "evidence_cut_at": "2026-07-30T16:10:48Z"
+    "evidence_cut_at": "2026-08-12T10:54:18Z"
   },
   "scope": {
-    "owned_layer": "Supervisor policy that reaps stale blocking L12 missing_process failure streaks before reassignment/chair triage and on direct or self-claim dispatch paths.",
+    "owned_layer": "Supervisor Authority V2 assignment ordering and dispatch regression coverage for stale L12 missing_process residue.",
     "not_changing": [
       ".orchestrator/config.json",
+      "Supervisor Authority V2 single-planner ownership",
       "generic quota or authentication failure handling",
-      "non-L12 failure-loop policy",
+      "non-L12 fallback ordering",
       "provider credentials or readiness",
-      "product services or hosted deployment"
+      "product services or hosted deployment",
+      "live runtime state"
     ],
     "changed_files": [
       ".orchestrator/supervisor.py",
       ".orchestrator/test_supervisor.py",
-      ".orchestrator/task-briefs/sup_l12_stale_failure_streak_reaper_20260729.md",
       "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/README.md",
       "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json"
     ]
   },
+  "authority_migration": {
+    "historical_policy": "reap_stale_l12_missing_process_failure_streaks",
+    "historical_pull_request": 4590,
+    "historical_merge_commit": "23ae23c2185d31d2aeacafaa9b051127a6d53136",
+    "content_restore_revert": "eb04f84873e2b33d92b9c7f0a6b047d6994aa98a",
+    "authority_v2_commit": "b17c015b3cf217065a8f6bd16013da498ef33567",
+    "current_truth": [
+      ".orchestrator/runtime_state.py migrate_state removes provider_guardrails.task_failure_streaks as an obsolete control-plane bucket.",
+      ".orchestrator/supervisor.py dispatch_ready_tasks is the sole planner and does not consult legacy task failure streaks.",
+      "Missing worker processes use the current bounded retry and terminal block/recovery lifecycle instead of a failure-streak suppression loop."
+    ],
+    "reason_not_to_restore_old_reaper": "Authority V2 explicitly rejects retired failure-streak control-plane symbols; restoring the old policy would create a second scheduling authority."
+  },
   "implementation": {
-    "anchor_commit": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
-    "policy_function": "reap_stale_l12_missing_process_failure_streaks",
-    "per_cycle_limit": 4,
-    "eligibility": [
-      "Task id begins with L12- or SUP-L12-.",
-      "Streak count meets the configured chair failure-loop threshold.",
-      "last_failure_kind is exactly missing_process.",
-      "The failed logical lane is the current owner for owned/finalize states or current reviewer for review.",
-      "The task last_update is strictly newer than the streak last_failure_at.",
-      "No matching active worker or pending delivery exists for the task and logical lane."
+    "merge_base": "ea8766efdc0cfd7658d6413bf69826bfef6dceda",
+    "preimplementation_merge_commit": "a7c635d778dab3f98cb811e96a7217f942eb0717",
+    "policy_functions": [
+      "task_is_l12_recovery_work",
+      "bounded_fallback_candidates",
+      "plan_task_assignment_pair"
     ],
-    "integration_points": [
-      "_run_once_locked invokes the reaper after worker polling and before failure-streak reassignment or chair failure-loop triage.",
-      "dispatch_ready_tasks invokes the same idempotent policy before computing failure-loop exclusions, covering direct dispatch and worker self-claim."
-    ],
-    "fail_closed_exclusions": [
-      "Fresh missing_process failures",
-      "Missing or malformed timestamps",
-      "Below-threshold streaks",
-      "Quota, auth, terminal, transient, and generic failures",
-      "Non-L12 tasks",
-      "Streaks for a lane no longer assigned to the task",
-      "Task/lane pairs with active or pending runtime evidence"
-    ],
-    "audit_event": "stale_l12_missing_process_streaks_reaped"
+    "behavior": [
+      "L12 recovery work is identified only by L12- or SUP-L12- task ids.",
+      "For L12 recovery work, declared preferred_lane_order candidates are enqueued before direct generic reassignment fallbacks.",
+      "The finite, cycle-safe fallback traversal remains bounded by the configured agent roster.",
+      "Non-L12 work keeps direct configured fallbacks ahead of task-preferred lanes.",
+      "The sole dispatch planner remains driven by canonical owner/reviewer truth and ignores a raw legacy task_failure_streaks bucket."
+    ]
   },
   "acceptance": [
     {
       "id": "AC1",
-      "criterion": "Reproduce the stale L12 missing_process streak blocker.",
+      "criterion": "Reproduce stale L12 missing_process streak blocker.",
       "status": "pass",
-      "proof": "Dispatcher regressions seed above-threshold stale streaks that previously entered failure_loop_task_ids and suppressed owner, helper, or reviewer dispatch."
+      "proof": "The planner regression seeds an above-threshold legacy missing_process record for both Claude2 and Antigravity while offering a Codex-family lane first."
     },
     {
       "id": "AC2",
-      "criterion": "Add a bounded reaper or eligibility check.",
+      "criterion": "Add bounded reaper or eligibility check.",
       "status": "pass",
-      "proof": "The reaper applies six fail-closed predicates and removes at most four records per cycle; the bounded regression leaves the fifth eligible record intact."
+      "proof": "Authority V2 removes the obsolete bucket at runtime load and the sole planner eligibility path ignores raw residue; the regression proves the residue cannot suppress canonical dispatch without reviving the retired reaper."
     },
     {
       "id": "AC3",
       "criterion": "Prove Claude2/Antigravity dispatch before Codex-family fallback.",
       "status": "pass",
-      "proof": "One regression offers Codex2 before Claude2 and observes only Claude2 owner dispatch; one seeds a review-stage Claude2 reviewer blocker and observes review_ready_dispatch; another offers Codex2 before Antigravity with Claude2 paused and observes only the next preferred Antigravity helper claim."
+      "proof": "The planner dispatches the assigned Claude2 and Antigravity lanes when Codex2 is evaluated first. Assignment recovery selects declared Antigravity before configured Codex/Codex2 fallbacks for L12 work, while a non-L12 control still selects Codex."
     },
     {
       "id": "AC4",
       "criterion": "No config edits.",
       "status": "pass",
-      "proof": "git diff --quiet -- .orchestrator/config.json passed after implementation and full regression."
+      "proof": "git diff --quiet origin/dev -- .orchestrator/config.json returned 0."
     },
     {
       "id": "AC5",
       "criterion": "Full supervisor regression passes.",
       "status": "pass",
-      "proof": "462 supervisor tests passed in 12.639 seconds after rebase onto origin/dev 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e."
+      "proof": "All 43 Supervisor Authority V2 contract tests passed after the focused L12 regressions."
     }
   ],
   "verification": {
-    "checkout_python": "python3",
+    "checkout_python": ".venv-pantheon/bin/python3 provisioned by scripts/dev/provision_python_distribution.py",
     "commands": [
       {
-        "command": "PYTHONPATH=.orchestrator python3 -m unittest test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_missing_process_streak_for_claude2 test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_l12_reviewer_streak_for_claude2_review test_supervisor.ProcessQueueDispatchGuardTests.test_dispatcher_reaps_stale_owner_streak_then_prefers_antigravity_helper test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_preserves_fresh_and_guarded_streaks test_supervisor.WorkerReassignmentTests.test_stale_l12_missing_process_reaper_is_bounded_per_cycle",
+        "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; cd .orchestrator; \"$PANTHEON_TASK_PY\" -m unittest -v test_supervisor.SharedPlannerContractTests.test_legacy_l12_missing_process_streak_cannot_suppress_assigned_lane test_supervisor.SharedPlannerContractTests.test_l12_assignment_prefers_declared_provider_before_codex_fallback",
         "result": "pass",
-        "conclusion": "5 focused regressions passed in 0.007 seconds."
+        "conclusion": "2 focused tests passed in 0.003 seconds, including Claude2 and Antigravity subtests."
       },
       {
-        "command": "PYTHONPATH=.orchestrator python3 .orchestrator/test_supervisor.py",
+        "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_TASK_PY\" .orchestrator/test_supervisor.py",
         "result": "pass",
-        "conclusion": "462 supervisor tests passed in 12.639 seconds."
+        "conclusion": "43 tests passed in 0.605 seconds."
+      },
+      {
+        "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; cd .orchestrator; \"$PANTHEON_TASK_PY\" -m unittest -v test_runtime_state.LoadRuntimeStateTests.test_load_runtime_state_drops_retired_control_plane_buckets",
+        "result": "pass",
+        "conclusion": "The Authority V2 retired-bucket migration regression passed in 0.002 seconds."
       },
       {
         "command": "git diff --check",
         "result": "pass",
-        "conclusion": "No whitespace errors before the anchor commit."
+        "conclusion": "No whitespace errors."
       },
       {
-        "command": "git diff --quiet -- .orchestrator/config.json",
+        "command": "git diff --quiet origin/dev -- .orchestrator/config.json",
         "result": "pass",
         "conclusion": "No supervisor configuration change."
       }
     ],
-    "validated_at": "2026-07-30T16:10:48Z",
-    "command_runtime_sha": "not_applicable_local_task_worktree",
-    "base_sha": "6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e"
+    "validated_at": "2026-08-12T10:54:18Z",
+    "command_runtime_sha": "ea8766efdc0cfd7658d6413bf69826bfef6dceda",
+    "base_sha": "ea8766efdc0cfd7658d6413bf69826bfef6dceda"
   },
   "delivery": {
-    "anchor_commit": "9d53a94a295d71ee49aea6f4b96e47fbcfd29093",
-    "pull_request": 4385,
-    "merge_commit": null,
+    "historical_pull_request": 4590,
+    "historical_merge_commit": "23ae23c2185d31d2aeacafaa9b051127a6d53136",
+    "current_pull_request": null,
+    "current_head_sha": null,
     "deployment": "not_applicable_repository_supervisor_policy"
   },
   "review": {
@@ -129,11 +138,15 @@
     "decision": null,
     "reviewed_head_sha": null,
     "reviewed_at": null,
-    "notes": []
+    "notes": [
+      "Reviewer must verify that the V2 repair does not reintroduce retired failure-streak authority.",
+      "Reviewer must bind the exact PR head through the governed approve command."
+    ]
   },
   "known_limitations": [
-    "The policy does not claim current Claude2 or Antigravity provider readiness; readiness remains governed by live provider probes.",
-    "The policy does not clear a fresh process-loss loop merely because no process is alive.",
-    "This repository change does not mutate the current live runtime state or provider configuration."
+    "The repair does not claim current Claude2 or Antigravity provider readiness; readiness remains governed by live provider probes.",
+    "Direct unit invocation leaves a seeded legacy bucket untouched; authoritative runtime loading removes it before scheduling.",
+    "The repair changes only L12 fallback ordering and does not alter non-L12 reassignment policy.",
+    "This repository change does not mutate current live runtime state or provider configuration."
   ]
 }
