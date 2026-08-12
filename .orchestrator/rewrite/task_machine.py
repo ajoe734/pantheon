@@ -208,19 +208,3 @@ def dispatch_reason(
     if current is TaskState.TODO and is_owner and deps_satisfied:
         return DispatchReason.OWNED_READY
     return None
-
-
-def dispatch_priority(
-    status: object,
-    *,
-    is_owner: bool,
-    is_reviewer: bool,
-    deps_satisfied: bool,
-) -> int | None:
-    reason = dispatch_reason(
-        status,
-        is_owner=is_owner,
-        is_reviewer=is_reviewer,
-        deps_satisfied=deps_satisfied,
-    )
-    return reason.value if reason is not None else None

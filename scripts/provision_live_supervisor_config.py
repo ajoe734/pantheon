@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import argparse
 import copy
-import importlib
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 # This command is executed from the immutable candidate before its cleanliness
 # gate runs.  Importing the promotion verifier must not create executable
@@ -27,49 +27,11 @@ from typing import Any
 sys.dont_write_bytecode = True
 
 
-class _LazyRuntimePromotion:
-    """Avoid the promotion/provision import cycle while preserving injection."""
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(importlib.import_module("promote_supervisor_runtime"), name)
-
-
-runtime_promotion = _LazyRuntimePromotion()
-
-LEGACY_PROVIDER_ACCOUNT_KEYS = ("account_group", "quota_group", "dispatch_group")
 WATCHDOG_RUNTIME_PATH_DEFAULTS = {
     "state_file": ".orchestrator/watchdog-state.json",
     "metrics_file": ".orchestrator/metrics/supervisor-watchdog.jsonl",
     "contention_metrics_file": ".orchestrator/metrics/supervisor-watchdog-contention.jsonl",
 }
-REPO_OWNED_SUPERVISOR_LEASE_POLICY = {
-    "supervisor": (
-        "observe_worker_commit_progress",
-        "lease_requires_work_progress",
-    ),
-    "worker_runtime": (
-        "worker_lease_seconds",
-        "work_progress_stale_seconds",
-    ),
-}
-REPO_OWNED_READY_DISPATCHER_POLICY = (
-    "enabled",
-    "seen_event_history_limit",
-    "pending_handoff_statuses",
-    "sidecar_only_agents",
-    "target_workload",
-    "max_dispatches_per_tick",
-    "max_active_workers_per_task",
-    "max_concurrent_per_account",
-    "max_concurrent_workers",
-)
-RETIRED_READY_DISPATCHER_POLICY = (
-    "disabled_agents",
-    "max_tasks_per_agent",
-    "max_tasks_per_agent_by_agent",
-    "max_concurrent_per_quota_group",
-)
-REPO_OWNED_AGENT_POLICY = ("max_parallel",)
 TASK_STATE_STORE_DEFAULT_FILENAME = "task-state-events.jsonl"
 
 
@@ -153,105 +115,20 @@ def canonical_watchdog_runtime_paths(
     return rendered
 
 
-def apply_provider_account_schema(
-    repo_config: dict[str, Any], rendered: dict[str, Any]
-) -> None:
-    """Make repo-owned account identity fields win over stale live overlays."""
-    repo_ready = repo_config.get("ready_dispatcher")
-    if repo_ready is None:
-        return
-    rendered_ready = rendered.setdefault("ready_dispatcher", {})
-    if not isinstance(repo_ready, dict) or not isinstance(rendered_ready, dict):
-        raise ValueError("ready_dispatcher config must be a JSON object")
+def validate_provider_accounts(config: Mapping[str, Any]) -> None:
+    """Accept only explicit V2 provider account identities."""
 
-    for key in ("max_concurrent_per_account",):
-        if key in repo_ready:
-            rendered_ready[key] = copy.deepcopy(repo_ready[key])
-
-    rendered_ready.pop("max_concurrent_per_quota_group", None)
-
-    repo_providers = repo_config.get("providers") or {}
-    rendered_providers = rendered.get("providers") or {}
-    if not isinstance(repo_providers, dict) or not isinstance(rendered_providers, dict):
-        raise ValueError("providers config must be a JSON object")
-
-    missing_accounts: list[str] = []
-    for provider, provider_cfg in rendered_providers.items():
+    providers = config.get("providers")
+    if not isinstance(providers, dict) or not providers:
+        raise ValueError("providers config must be a non-empty JSON object")
+    for provider, provider_cfg in providers.items():
         if not isinstance(provider_cfg, dict):
             raise ValueError(f"providers.{provider} must be a JSON object")
-        repo_provider_cfg = repo_providers.get(provider)
-        if isinstance(repo_provider_cfg, dict) and repo_provider_cfg.get("account"):
-            provider_cfg["account"] = copy.deepcopy(repo_provider_cfg["account"])
-        for key in LEGACY_PROVIDER_ACCOUNT_KEYS:
-            provider_cfg.pop(key, None)
+        for retired_key in ("account_group", "quota_group", "dispatch_group"):
+            if retired_key in provider_cfg:
+                raise ValueError(f"providers.{provider}.{retired_key} is retired; use account")
         if not str(provider_cfg.get("account") or "").strip():
-            missing_accounts.append(str(provider))
-
-    if missing_accounts:
-        raise ValueError(
-            "strict provider account migration left providers without account: "
-            + ", ".join(sorted(missing_accounts))
-        )
-
-
-def apply_ready_dispatcher_policy(
-    repo_config: dict[str, Any], rendered: dict[str, Any]
-) -> None:
-    """Keep fleet enablement and capacity aligned with the reviewed repo policy.
-
-    The split-root live config may carry environment-specific paths and
-    credentials, but a stale overlay must not silently disable all healthy
-    worker lanes after a supervisor restart. Emergency capacity changes belong
-    in the reviewed repo policy so provisioning, drift repair, and the running
-    supervisor converge on the same frontier.
-    """
-
-    repo_ready = repo_config.get("ready_dispatcher")
-    if repo_ready is None:
-        return
-    rendered_ready = rendered.setdefault("ready_dispatcher", {})
-    if not isinstance(repo_ready, dict) or not isinstance(rendered_ready, dict):
-        raise ValueError("ready_dispatcher config must be a JSON object")
-    for key in REPO_OWNED_READY_DISPATCHER_POLICY:
-        if key in repo_ready:
-            rendered_ready[key] = copy.deepcopy(repo_ready[key])
-    for key in RETIRED_READY_DISPATCHER_POLICY:
-        rendered_ready.pop(key, None)
-
-
-def apply_agent_capacity_policy(
-    repo_config: dict[str, Any], rendered: dict[str, Any]
-) -> None:
-    repo_agents = repo_config.get("agents") or {}
-    rendered_agents = rendered.get("agents") or {}
-    if not isinstance(repo_agents, dict) or not isinstance(rendered_agents, dict):
-        raise ValueError("agents config must be a JSON object")
-    for agent_id, repo_agent in repo_agents.items():
-        if not isinstance(repo_agent, dict) or repo_agent.get("dispatch_slot_for"):
-            continue
-        rendered_agent = rendered_agents.get(agent_id)
-        if not isinstance(rendered_agent, dict):
-            raise ValueError(f"agents.{agent_id} must be a JSON object")
-        for key in REPO_OWNED_AGENT_POLICY:
-            if key not in repo_agent:
-                raise ValueError(f"agents.{agent_id}.{key} is required")
-            rendered_agent[key] = copy.deepcopy(repo_agent[key])
-
-
-def apply_supervisor_lease_policy(
-    repo_config: dict[str, Any], rendered: dict[str, Any]
-) -> None:
-    """Make safety-critical worker lease policy win over stale live overlays."""
-    for section_name, keys in REPO_OWNED_SUPERVISOR_LEASE_POLICY.items():
-        repo_section = repo_config.get(section_name)
-        if repo_section is None:
-            continue
-        rendered_section = rendered.setdefault(section_name, {})
-        if not isinstance(repo_section, dict) or not isinstance(rendered_section, dict):
-            raise ValueError(f"{section_name} config must be a JSON object")
-        for key in keys:
-            if key in repo_section:
-                rendered_section[key] = copy.deepcopy(repo_section[key])
+            raise ValueError(f"providers.{provider}.account is required")
 
 
 def apply_task_state_store(
@@ -269,8 +146,8 @@ def apply_task_state_store(
     if not isinstance(repo_store, dict):
         raise ValueError("task_state_store config must be a JSON object")
     mode = str(repo_store.get("mode") or "").strip().lower()
-    if mode not in {"off", "shadow", "authoritative"}:
-        raise ValueError("task_state_store.mode must be 'off', 'shadow', or 'authoritative'")
+    if mode != "authoritative":
+        raise ValueError("task_state_store.mode must be 'authoritative'")
     raw_event_log = str(
         repo_store.get("event_log") or TASK_STATE_STORE_DEFAULT_FILENAME
     ).strip()
@@ -328,10 +205,7 @@ def build_live_config(
     # the incumbent for promotion evidence, but deliberately do not merge it.
     del existing_live_config
     rendered = copy.deepcopy(repo_config)
-    apply_provider_account_schema(repo_config, rendered)
-    apply_ready_dispatcher_policy(repo_config, rendered)
-    apply_agent_capacity_policy(repo_config, rendered)
-    apply_supervisor_lease_policy(repo_config, rendered)
+    validate_provider_accounts(rendered)
     apply_task_state_store(
         repo_config,
         rendered,
@@ -462,22 +336,55 @@ def validated_root(path: Path, *, label: str, required: tuple[str, ...]) -> Path
 
 
 def validated_immutable_command_root(path: Path) -> dict[str, str]:
-    """Bind provisioning to the promotion layer's immutable runtime identity.
+    """Validate the one V2 command tree used to launch the supervisor.
 
-    Provisioning is intentionally not a second, weaker admission path.  The
-    command root must pass the same direct-child, no-follow Git, trusted remote,
-    accepted-dev ancestry, tree identity, and cleanliness checks used by the
-    transactional promotion operator.
+    This is deliberately local and small: a V2 replacement only needs an
+    exact, clean Git source tree containing the launch entry points.  It does
+    not inspect or reconstruct a retired runtime in order to promote it.
     """
 
-    root = runtime_promotion.resolve_candidate_root(path)
-    remote_url = runtime_promotion.parse_origin_url(root)
-    remote = runtime_promotion.validate_remote_url(remote_url)
-    head = runtime_promotion.verify_git_head_and_dev_ancestry(root, root.name)
-    tree = runtime_promotion.verify_working_tree_cleanliness(
-        root,
-        expected_head=head,
+    root = validated_root(
+        path,
+        label="immutable command root",
+        required=(".git", ".orchestrator/config.json", ".orchestrator/supervisor.py"),
     )
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        remote_url = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("immutable command root has unusable Git metadata") from exc
+    if len(head) != 40 or any(character not in "0123456789abcdef" for character in head):
+        raise ValueError("immutable command root has invalid HEAD")
+    if not remote_url:
+        raise ValueError("immutable command root has no origin remote")
+    if dirty:
+        raise ValueError("immutable command root must be clean")
+    tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     for relative, require_executable in (
         (".orchestrator/supervisor.py", False),
         ("scripts/run-supervisor-watchdog.sh", True),
@@ -497,7 +404,7 @@ def validated_immutable_command_root(path: Path) -> dict[str, str]:
         "head": head,
         "tree": tree,
         "remote": remote_url,
-        "repository": remote.slug,
+        "repository": remote_url,
     }
 
 
