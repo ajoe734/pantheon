@@ -18,3 +18,13 @@ def test_docker_build_context_excludes_lean_test_artifacts() -> None:
 
     assert "lean/Tests" in dockerignore
     assert "lean/Tests/**" in dockerignore
+
+
+def test_bff_build_context_includes_only_the_shared_canonical_assertion_module() -> None:
+    """The BFF imports this verifier at process start; runtime state stays excluded."""
+
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+
+    assert ".orchestrator" not in dockerignore
+    assert ".orchestrator/*" in dockerignore
+    assert "!.orchestrator/canonical_mutation_assertion.py" in dockerignore
