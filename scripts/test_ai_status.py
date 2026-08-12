@@ -789,6 +789,21 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                         command, [self.task_id, "attempted role impersonation"]
                     )
 
+    def test_operator_assertion_allows_only_verified_merge_reconciliation_lane(self) -> None:
+        """The lease gate admits the bounded closeout command, whose separate
+        external preflight still verifies merged delivery and protected review
+        evidence before it can write a terminal task state."""
+
+        with mock.patch.dict(
+            os.environ,
+            {ai_status.OPERATOR_ASSERTION_ENV: "{}"},
+            clear=True,
+        ):
+            ai_status.validate_active_status_command_lease(
+                "reconcile_merged_done",
+                [self.task_id, "verified merged delivery closeout"],
+            )
+
     def test_operator_assertion_cannot_create_a_source_task(self) -> None:
         with mock.patch.dict(
             os.environ,

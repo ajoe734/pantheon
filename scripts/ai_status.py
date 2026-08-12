@@ -790,7 +790,7 @@ def validate_active_status_command_lease(
             if command not in OPERATOR_ASSERTION_ACTIONS:
                 raise RuntimeError(
                     f"operator assertions cannot authorize {command}; "
-                    "allowed actions are assign, reopen, and note"
+                    "allowed actions are assign, reopen, note, and reconcile_merged_done"
                 )
             return
         raise RuntimeError(
