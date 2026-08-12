@@ -31,10 +31,7 @@
     "adaptive_stall_detection": true,
     "observe_worker_commit_progress": true,
     "lease_requires_work_progress": true,
-    "max_worker_history": 200,
-    "auto_refresh_provider_capabilities": false,
-    "provider_capability_refresh_interval_seconds": 300,
-    "provider_probe_failure_hysteresis_threshold": 3
+    "max_worker_history": 200
   },
   "worker_runtime": {
     "worker_lease_seconds": 600,

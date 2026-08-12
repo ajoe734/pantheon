@@ -2,7 +2,7 @@
 """Contract tests for Supervisor Authority V2.
 
 The previous file mirrored thousands of lines of implementation detail for
-retired chair, discussion-planning, failure-streak, shadow-writer, fallback,
+retired chair, discussion-planning, failure-streak, fallback,
 and priority-preemption paths.  These tests intentionally exercise only the
 remaining authority boundaries: one planner, one durable queue, one launcher,
 explicit capacity/account health, bounded assignment recovery, leases, and an
@@ -1125,26 +1125,6 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
             )
         finally:
             supervisor._CYCLE_METRICS.reset(token)
-
-    def test_task_projection_rejects_shadow_mode(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            config = config_fixture(root)
-            Path(config["paths"]["status_file"]).write_text('{"tasks": []}')
-            state: dict[str, object] = {}
-            with mock.patch.object(
-                supervisor,
-                "task_state_store_runtime_env",
-                return_value={
-                    "PANTHEON_TASK_STATE_STORE_MODE": "shadow",
-                    "PANTHEON_TASK_STATE_EVENT_LOG": config["paths"]["task_state_event_log"],
-                },
-            ):
-                changed = supervisor.sync_task_state_shadow(config, state)
-        self.assertFalse(changed)
-        report = state["supervisor"]["task_state_shadow"]
-        self.assertFalse(report["ok"])
-        self.assertIn("V2 requires authoritative", report["last_error"])
 
     def test_source_has_no_retired_control_planes(self) -> None:
         source = inspect.getsource(supervisor)

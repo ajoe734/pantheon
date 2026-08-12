@@ -91,8 +91,7 @@ from watch_events import (
     trim_seen_events,
 )
 
-# Supervisor Authority V2 modules. These are the production authorities, not a
-# shadow or feature-flagged fallback implementation.
+# Supervisor Authority V2 modules.
 from rewrite import concurrency as rewrite_concurrency
 from rewrite import dispatch_admission as rewrite_dispatch_admission
 from rewrite import provider_health as rewrite_provider_health
@@ -4138,7 +4137,7 @@ def worker_uses_structured_provider_stream(worker: dict[str, Any]) -> bool:
     if bool(worker.get("stream_json") or worker.get("structured_stream") or worker.get("provider_uses_stream_json")):
         return True
     mode = str(worker.get("mode") or "").strip().lower()
-    if mode in {"claude_cli", "qwen", "stream_json"}:
+    if mode in {"claude_cli", "stream_json"}:
         return True
     return False
 
@@ -12632,7 +12631,7 @@ def apply_post_dispatch_maintenance(
     *,
     delivery_health_observations: Iterable[Mapping[str, Any]],
     ownerless_pr_snapshots: dict[str, dict[str, Any]],
-    task_state_shadow_snapshot: dict[str, Any] | None,
+    task_state_projection_snapshot: dict[str, Any] | None,
     assistant_dev_bridge_snapshot: dict[str, Any] | None,
     quiet: bool,
 ) -> bool:
@@ -12660,11 +12659,11 @@ def apply_post_dispatch_maintenance(
         )
     ) or changed
     changed = bool(maybe_auto_commit_archive(config, state)) or changed
-    if isinstance(task_state_shadow_snapshot, dict):
-        report = task_state_shadow_snapshot.get("report")
+    if isinstance(task_state_projection_snapshot, dict):
+        report = task_state_projection_snapshot.get("report")
         if isinstance(report, dict):
-            state.setdefault("supervisor", {})["task_state_shadow"] = deepcopy(report)
-            changed = bool(task_state_shadow_snapshot.get("changed")) or changed
+            state.setdefault("supervisor", {})["task_state_projection"] = deepcopy(report)
+            changed = bool(task_state_projection_snapshot.get("changed")) or changed
     return changed
 
 
@@ -12847,9 +12846,9 @@ def run_once(
             dispatch_plan.get("health_refresh_targets", []),
             quiet=quiet,
         )
-        task_state_shadow_snapshot = _safe_phase(
-            "prefetch_task_state_shadow",
-            prefetch_task_state_shadow,
+        task_state_projection_snapshot = _safe_phase(
+            "prefetch_task_state_projection",
+            prefetch_task_state_projection,
             config,
             maintenance_runtime_snapshot,
             quiet=quiet,
@@ -12883,7 +12882,7 @@ def run_once(
                     state,
                     delivery_health_observations=delivery_health_observations,
                     ownerless_pr_snapshots=ownerless_pr_snapshots,
-                    task_state_shadow_snapshot=task_state_shadow_snapshot,
+                    task_state_projection_snapshot=task_state_projection_snapshot,
                     assistant_dev_bridge_snapshot=bridge_snapshot,
                     quiet=quiet,
                 ),
@@ -12972,33 +12971,15 @@ def run_once(
         _CYCLE_METRICS.reset(cycle_metrics_token)
 
 
-def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> bool:
+def sync_task_state_projection(config: dict[str, Any], state: dict[str, Any]) -> bool:
     """Reconcile the durable task journal with its derived board projection.
 
-    Governed ``ai-status`` commands append their own shadow commit, but legacy
-    and operator-side writers can still update the canonical file without the
-    live command environment. A successful supervisor cycle closes that gap
-    while ``ai-status.json`` remains authoritative. After cutover the direction
-    reverses: the journal is authoritative and a divergent JSON board is
-    repaired from its latest validated event, never imported into the journal.
-
-    Two properties are load-bearing here and were previously wrong:
-
-    ``caught_up`` reports parity, not work. It used to be assigned the
-    *divergence* predicate, so a healthy cycle published ``caught_up: false``
-    and a cycle that had just repaired a drifted board published
-    ``caught_up: true``. Whether a write was needed is now ``repaired``.
-
-    The journal is read exactly once. The old body replayed the whole log four
-    times inside the exclusive canonical lock -- ``load_events``,
-    ``project_latest_state``, then ``verify_projection`` which loaded and
-    projected it all over again -- so reconciliation cost scaled with journal
-    size four times per cycle while every reviewer, approve, and note command
-    queued behind that same lock.
+    The V2 journal is authoritative.  This phase verifies its derived JSON
+    projection once and repairs only that projection; it never imports state
+    from a retired format or a second authority.
     """
 
     runtime_env = task_state_store_runtime_env(config)
-    mode = str(runtime_env.get("PANTHEON_TASK_STATE_STORE_MODE") or "").strip()
     raw_event_log = str(runtime_env.get("PANTHEON_TASK_STATE_EVENT_LOG") or "").strip()
     if not raw_event_log:
         return False
@@ -13007,14 +12988,10 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
     event_log = Path(raw_event_log)
     status_file = config_path(config, "status_file", "ai-status.json")
     supervisor_state = state.setdefault("supervisor", {})
-    previous = supervisor_state.get("task_state_shadow")
+    previous = supervisor_state.get("task_state_projection")
     previous = previous if isinstance(previous, dict) else {}
 
     try:
-        if mode != "authoritative":
-            raise RuntimeError(
-                f"task-state store mode {mode!r} is unsupported; V2 requires authoritative"
-            )
         with canonical_task_state_lock_file(status_file, shared=False):
             file_state = load_json(status_file, default={})
             if not isinstance(file_state, dict):
@@ -13034,11 +13011,10 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             caught_up = bool(report["ok"])
             if not caught_up:
                 raise RuntimeError(
-                    f"task-state {mode} projection remains divergent after reconciliation"
+                    "task-state projection remains divergent after reconciliation"
                 )
 
-        supervisor_state["task_state_shadow"] = {
-            "mode": mode,
+        supervisor_state["task_state_projection"] = {
             "ok": True,
             "event_log": str(event_log),
             "last_checked_at": checked_at,
@@ -13052,7 +13028,6 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
         return repaired
     except Exception as exc:  # per-phase isolation keeps the incumbent loop observable
         failure = {
-            "mode": mode,
             "ok": False,
             "event_log": str(event_log),
             "last_checked_at": checked_at,
@@ -13070,15 +13045,15 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
         ):
             if key in previous:
                 failure[key] = previous[key]
-        supervisor_state["task_state_shadow"] = failure
+        supervisor_state["task_state_projection"] = failure
         console_log(
-            f"task-state {mode} reconciliation failed: {failure['last_error']}",
+            f"task-state projection reconciliation failed: {failure['last_error']}",
             quiet=SUPERVISOR_LOG_QUIET,
         )
         return False
 
 
-def prefetch_task_state_shadow(
+def prefetch_task_state_projection(
     config: dict[str, Any],
     runtime_snapshot: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -13091,21 +13066,21 @@ def prefetch_task_state_shadow(
     """
 
     previous = (
-        (runtime_snapshot.get("supervisor") or {}).get("task_state_shadow")
+        (runtime_snapshot.get("supervisor") or {}).get("task_state_projection")
         if isinstance(runtime_snapshot, dict)
         else None
     )
     scratch = {
         "supervisor": {
             **(
-                {"task_state_shadow": deepcopy(previous)}
+                {"task_state_projection": deepcopy(previous)}
                 if isinstance(previous, dict)
                 else {}
             )
         }
     }
-    changed = sync_task_state_shadow(config, scratch)
-    report = scratch["supervisor"].get("task_state_shadow")
+    changed = sync_task_state_projection(config, scratch)
+    report = scratch["supervisor"].get("task_state_projection")
     if not isinstance(report, dict):
         return None
     return {
