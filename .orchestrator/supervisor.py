@@ -84,7 +84,18 @@ from dispatch_policy import (
 from github_bus import GitHubBusError, resolve_gh_binary, run_gh_process, sync_github_bus
 from provider_permissions import probe_provider_auth
 from rebase_helper import continue_or_skip_empty
-from runtime_state import load_approval_state, load_event_queue, load_runtime_state, load_runtime_state_snapshot, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
+from runtime_state import (
+    load_approval_state,
+    load_event_queue,
+    load_runtime_state,
+    load_runtime_state_snapshot,
+    prune_worker_records,
+    queue_event_record,
+    replace_event_queue,
+    runtime_state_lock,
+    runtime_state_update,
+    save_runtime_state,
+)
 from task_archive import TaskResolver
 from watch_events import (
     _queue_delivery_event_locked,
@@ -958,17 +969,25 @@ def stamp_supervisor_runtime_state(
     ):
         supervisor_state["last_successful_loop_at"] = loop_finished_at
 
-def bootstrap_supervisor_runtime_state(config: dict[str, Any], *, lifecycle: str = "starting") -> dict[str, Any]:
-    with runtime_state_lock(config, shared=False, nonblocking=False):
+def bootstrap_supervisor_runtime_state(
+    config: dict[str, Any],
+    *,
+    lifecycle: str = "starting",
+) -> dict[str, Any]:
+    """Initialize one supervisor process without discarding active leases.
+
+    Every V2 process start restores the exact V2 runtime cache.  This retains
+    each active lease across supervisor replacement and watchdog restart.
+    """
+
+    with runtime_state_update(config) as state:
         heartbeat_at = utc_now()
-        state = load_runtime_state(config)
         stamp_supervisor_runtime_state(
             config,
             state,
             heartbeat_at=heartbeat_at,
             lifecycle=lifecycle,
         )
-        save_runtime_state(config, state)
         return state
 
 
@@ -1066,6 +1085,8 @@ def validate_provider_accounts(config: dict[str, Any]) -> None:
         "max_tasks_per_agent": "use agents.<id>.max_parallel",
         "max_tasks_per_agent_by_agent": "use agents.<id>.max_parallel",
         "max_concurrent_per_quota_group": "use max_concurrent_per_account",
+        "preferred_lane_order": "task assignment is owner/reviewer only",
+        "preferredLaneOrder": "task assignment is owner/reviewer only",
     }
     for key, replacement in retired_ready_keys.items():
         if key in settings:
@@ -3848,8 +3869,6 @@ def worker_process_activity_advanced(previous: dict[str, Any] | None, current: d
 # Worker wakeup template always embeds `auto worker 身分是：<DisplayName>` in argv;
 # scan /proc to recover the truth when state["workers"] bookkeeping drifts.
 WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
-
-
 def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, list[int]]:
     """Return live worker PIDs grouped by agent display name parsed from /proc/*/cmdline."""
     root = proc_root if proc_root is not None else Path("/proc")
@@ -5067,15 +5086,13 @@ def bounded_fallback_candidates(
     mapping: dict[str, Any],
     *,
     roots: list[str],
-    preferred: list[str] | None = None,
 ) -> list[str]:
     """Return a deterministic, cycle-safe breadth-first fallback order.
 
-    Direct configured fallbacks retain their declared order. Task-preferred
-    lanes follow those direct candidates, and every discovered candidate may
-    contribute its own configured fallbacks. A case-insensitive seen set bounds
-    traversal by the finite configured/roster names even when mappings contain
-    cycles such as Codex -> Codex2 -> Codex.
+    Direct configured fallbacks retain their declared order and every discovered
+    candidate may contribute its own configured fallbacks. A case-insensitive
+    seen set bounds traversal by the finite configured/roster names even when
+    mappings contain cycles such as Codex -> Codex2 -> Codex.
     """
 
     queue: list[str] = []
@@ -5092,8 +5109,6 @@ def bounded_fallback_candidates(
     for root in roots:
         for candidate in normalized_mapping_values(mapping, root):
             enqueue(candidate)
-    for candidate in preferred or []:
-        enqueue(candidate)
 
     ordered: list[str] = []
     cursor = 0
@@ -10706,7 +10721,9 @@ def record_missing_worker_terminal_outcome(
 
 
 def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
-    changed = migrate_runtime_account_state(config, state)
+    # Account topology is V2 configuration, not runtime state to migrate.
+    # Starting from a persisted V2 cache therefore needs no account rewrite.
+    changed = False
     now = datetime.now(timezone.utc)
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     redispatch_statuses = redispatch_candidate_statuses(config)
@@ -11398,20 +11415,6 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
 
     return str(build_dispatch_event(task, target_agent, reason, resolver).get("key") or "")
 
-
-
-def task_declared_priority_rank(task: dict[str, Any]) -> int:
-    """Return a stable lower-is-more-urgent rank for an optional P<n> field."""
-
-    raw_priority = task.get("priority")
-    if isinstance(raw_priority, bool) or raw_priority in (None, ""):
-        return 1_000_000
-    if isinstance(raw_priority, int):
-        return max(0, raw_priority)
-    match = re.fullmatch(r"P(\d+)", str(raw_priority).strip().upper())
-    if match is None:
-        return 1_000_000
-    return int(match.group(1))
 
 
 def task_execution_dispatch_candidate(
@@ -12140,7 +12143,7 @@ def dispatch_ready_tasks(
         if available_slots == 0:
             continue
 
-        candidates: list[tuple[int, int, int, dict[str, Any], dict[str, Any]]] = []
+        candidates: list[tuple[int, int, dict[str, Any], dict[str, Any]]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
@@ -12178,17 +12181,16 @@ def dispatch_ready_tasks(
             candidates.append(
                 (
                     priority,
-                    task_declared_priority_rank(task),
                     index,
                     task,
                     decision,
                 )
             )
 
-        candidates.sort(key=lambda item: item[:3])
+        candidates.sort(key=lambda item: item[:2])
         occurrence_limit = 1 if weighted else available_slots
         occurrence_limit = min(occurrence_limit, max_dispatches - dispatches)
-        for _, _, _, task, decision in candidates[:occurrence_limit]:
+        for _, _, task, decision in candidates[:occurrence_limit]:
             task_id = str(task.get(task_id_field) or "")
             reason = str(decision["reason"])
             event = dict(decision["event"])
@@ -13390,7 +13392,10 @@ def main() -> int:
     terminate_other_supervisors(config)
     atexit.register(clear_supervisor_pid, config)
     write_supervisor_pid(config)
-    bootstrap_supervisor_runtime_state(config, lifecycle="starting")
+    bootstrap_supervisor_runtime_state(
+        config,
+        lifecycle="starting",
+    )
     poll_interval, poll_source = resolve_poll_interval(
         config,
         cli_value=args.poll_interval,

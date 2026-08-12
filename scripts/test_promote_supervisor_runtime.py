@@ -119,9 +119,6 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
     candidate, status_root = _candidate(tmp_path)
     live_config = tmp_path / "runtime" / "live.json"
     events: list[str] = []
-    real_stop = promotion.stop_existing_supervisor
-    real_launch = promotion.launch_v2_supervisor
-
     def stop(pid_path: Path, *, timeout_seconds: float) -> int:
         events.append("stop")
         return 41
@@ -148,8 +145,6 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
     assert installed["task_state_store"]["mode"] == "authoritative"
     assert not hasattr(promotion, "migrate_task_state_store_v2")
     assert not hasattr(promotion, "PromotionTransaction")
-    monkeypatch.setattr(promotion, "stop_existing_supervisor", real_stop)
-    monkeypatch.setattr(promotion, "launch_v2_supervisor", real_launch)
 
 
 def test_launch_failure_is_reported_without_a_rollback_path(

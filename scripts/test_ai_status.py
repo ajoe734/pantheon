@@ -29,6 +29,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
 import task_archive
+from common import rotate_activity_log_unlocked
+
+
+def _rotate_activity_log_for_test(log_path: Path) -> Path | None:
+    with ai_status.activity_audit_lock_file(
+        log_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        return rotate_activity_log_unlocked(
+            log_path,
+            max_bytes=ai_status.LOG_ROTATE_MAX_BYTES,
+            keep_lines=ai_status.LOG_ROTATE_KEEP_LINES,
+            archive_dir=log_path.parent / "archive" / "logs",
+        )
 
 
 def _command_approve(state: dict[str, Any], args: list[str]) -> None:
@@ -3896,7 +3911,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
                 mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 0),
             ):
-                archive = ai_status.maybe_rotate_activity_log()
+                archive = _rotate_activity_log_for_test(log_file)
                 self.assertIsNotNone(
                     archive, "expected the event to be rotated into an archive"
                 )
@@ -4503,7 +4518,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
                 mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 0),
             ):
-                archive = ai_status.maybe_rotate_activity_log()
+                archive = _rotate_activity_log_for_test(log_file)
                 self.assertIsNotNone(
                     archive, "expected the event to be rotated into an archive"
                 )
@@ -9258,7 +9273,7 @@ class ActivityLogRotationTests(unittest.TestCase):
             mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1_000_000),
             mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 5),
         ):
-            archive = ai_status.maybe_rotate_activity_log()
+            archive = _rotate_activity_log_for_test(log_path)
         self.assertIsNone(archive)
         self.assertEqual(len(log_path.read_bytes().splitlines()), 10)
         archive_dir = log_path.parent / "archive" / "logs"
@@ -9271,7 +9286,7 @@ class ActivityLogRotationTests(unittest.TestCase):
             mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 5_000),
             mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 8),
         ):
-            archive = ai_status.maybe_rotate_activity_log()
+            archive = _rotate_activity_log_for_test(log_path)
         assert archive is not None
         self.assertTrue(archive.exists())
         self.assertTrue(str(archive).endswith(".gz"))
@@ -9303,7 +9318,7 @@ class ActivityLogRotationTests(unittest.TestCase):
             mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
             mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 3),
         ):
-            ai_status.maybe_rotate_activity_log()
+            _rotate_activity_log_for_test(log_path)
         after_inode = lock_path.stat().st_ino
         self.assertEqual(before_inode, after_inode)
 

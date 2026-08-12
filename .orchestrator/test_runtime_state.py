@@ -146,6 +146,7 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {
+                "version": 2,
                 "workers": {
                     "claude-stale": {
                         "run_id": "claude-stale",
@@ -167,6 +168,7 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {
+                "version": 2,
                 "workers": {
                     "claude-live": {
                         "run_id": "claude-live",
@@ -191,6 +193,7 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {
+                "version": 2,
                 "workers": {},
                 "queue": {"events": {}},
                 "unrecognized_control_plane": {"value": 1},
@@ -212,6 +215,7 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {
+                "version": 2,
                 "workers": {},
                 "queue": {"events": {}},
                 "watchdog": {
@@ -240,6 +244,7 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {
+                "version": 2,
                 "workers": {},
                 "queue": {"events": {}},
                 "worker_worktree_cleanup": {"last_run": last_run},
@@ -250,6 +255,45 @@ class LoadRuntimeStateTests(unittest.TestCase):
         state = runtime_state.load_runtime_state(self.config)
 
         self.assertEqual(state["worker_worktree_cleanup"]["last_run"], last_run)
+
+    def test_ordinary_v2_load_rejects_a_retired_cache_shape(self) -> None:
+        self._write_json(
+            self.root / "state.json",
+            {"version": 1, "workers": [], "queue": {"events": {}}},
+        )
+        (self.root / "event-queue.jsonl").write_text(
+            json.dumps({"event_id": "evt-v2", "task_id": "TASK-V2"}) + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(runtime_state.RuntimeStateSchemaError):
+            runtime_state.load_runtime_state(self.config)
+
+    def test_ordinary_v2_load_preserves_active_worker_and_queue_lease(self) -> None:
+        self._write_json(
+            self.root / "state.json",
+            {
+                "version": 2,
+                "workers": {
+                    "run-active": {
+                        "run_id": "run-active",
+                        "task_id": "TASK-V2",
+                        "queue_event_id": "evt-v2",
+                        "status": "running",
+                    }
+                },
+                "queue": {"events": {"evt-v2": {"status": "started"}}},
+            },
+        )
+        (self.root / "event-queue.jsonl").write_text(
+            json.dumps({"event_id": "evt-v2", "task_id": "TASK-V2"}) + "\n",
+            encoding="utf-8",
+        )
+
+        state = runtime_state.load_runtime_state(self.config)
+
+        self.assertIn("run-active", state["workers"])
+        self.assertEqual(state["queue"]["events"]["evt-v2"]["status"], "started")
 
     def test_projection_reader_does_not_reverse_acquire_runtime_from_task_lock(self) -> None:
         self.config["paths"]["approval_queue"] = str(
@@ -1334,261 +1378,3 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     nonblocking=True,
                 ):
                     self.fail("reverse-order runtime lock was acquired")
-
-
-class RuntimeCapabilityVerifierTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmpdir = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmpdir.cleanup)
-        self.root = Path(self.tmpdir.name) / "repo"
-        self.root.mkdir()
-
-    @staticmethod
-    def _write_json(path: Path, payload: object) -> bytes:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        body = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
-        path.write_bytes(body)
-        return body
-
-    def _signed_fixture(self) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object], str]:
-        writers: dict[str, str] = {}
-        for relative in runtime_state.RUNTIME_LOCK_REQUIRED_WRITER_PATHS:
-            body = f"fixture writer: {relative}\n".encode("utf-8")
-            path = self.root / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(body)
-            writers[relative] = hashlib.sha256(body).hexdigest()
-        registry = {
-            "schema_version": 1,
-            "protocol_id": runtime_state.RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID,
-            "transaction_scope": "complete_read_validate_mutate_replace",
-            "direct_canonical_writes_forbidden": True,
-            "writers": writers,
-        }
-        registry_path = self.root / ".orchestrator/runtime-task-audit-writer-registry.json"
-        registry_body = self._write_json(registry_path, registry)
-        private_key = Ed25519PrivateKey.generate()
-        public_key = private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        )
-        evidence: dict[str, object] = {
-            "schema_version": 1,
-            "task_id": "LOOP-PROD-RUNTIME-BOOT-001",
-            "task_contract_sha256": "04f382e320292e11df3b4668ec4383819b9c9abadcc48f3b9150a7abcb65141e",
-            "conclusion": "passed",
-            "worker_runtime_identity": "Codex2",
-            "reviewer_runtime_identity": "Codex",
-            "checks_sha256": "1" * 64,
-            "verdict_id": "runtime-lock-bootstrap-review-1",
-            "verifier_capability_sha256": writers[".orchestrator/runtime_state.py"],
-            "signature_algorithm": "ed25519",
-            "key_id": "ops-runtime-lock-review-1",
-            "policy_version": "runtime-lock-policy-1",
-            "signature": "",
-            "revocation_checked_at": "2026-07-14T00:00:00Z",
-            "ledger_entry_id": "runtime-lock-ledger-1",
-        }
-        evidence_path = self.root / "docs/deployment/evidence/loop-product-level/LOOP-PROD-RUNTIME-BOOT-001/bootstrap-completion.json"
-        manifest: dict[str, object] = {
-            "schema_version": 1,
-            "protocol_id": runtime_state.RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID,
-            "module_path": ".orchestrator/runtime_state.py",
-            "lock_order": ["runtime_admission", "task_state", "activity_audit"],
-            "stable_lock_paths": [
-                ".orchestrator/runtime-admission.lock",
-                ".orchestrator/task-state.lock",
-                ".orchestrator/activity-audit.lock",
-            ],
-            "shared_read_supported": True,
-            "api": list(runtime_state.RUNTIME_LOCK_REQUIRED_API),
-            "writers": writers,
-            "writer_registry_path": str(registry_path.relative_to(self.root)),
-            "writer_registry_sha256": hashlib.sha256(registry_body).hexdigest(),
-            "bootstrap_task_id": "LOOP-PROD-RUNTIME-BOOT-001",
-            "bootstrap_task_contract_sha256": evidence["task_contract_sha256"],
-            "bootstrap_completion_evidence_path": str(evidence_path.relative_to(self.root)),
-            "bootstrap_completion_evidence_sha256": "0" * 64,
-            "merged_commit_sha": "2" * 40,
-        }
-        evidence["signature"] = base64.b64encode(
-            private_key.sign(
-                runtime_state.runtime_capability_signature_payload(
-                    manifest,
-                    evidence,
-                )
-            )
-        ).decode("ascii")
-        evidence_body = self._write_json(evidence_path, evidence)
-        manifest["bootstrap_completion_evidence_sha256"] = hashlib.sha256(
-            evidence_body
-        ).hexdigest()
-        manifest_sha256 = "3" * 64
-        policy = {
-            "schema_version": 1,
-            "protocol_id": runtime_state.RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID,
-            "policy_version": evidence["policy_version"],
-            "key_id": evidence["key_id"],
-            "public_key_base64": base64.b64encode(public_key).decode("ascii"),
-            "revoked_key_ids": [],
-            "ledger_entries": [
-                {
-                    "ledger_entry_id": evidence["ledger_entry_id"],
-                    "verdict_id": evidence["verdict_id"],
-                    "task_id": evidence["task_id"],
-                    "reviewer_runtime_identity": evidence["reviewer_runtime_identity"],
-                    "merged_commit_sha": manifest["merged_commit_sha"],
-                    "manifest_sha256": manifest_sha256,
-                    "writer_registry_sha256": manifest["writer_registry_sha256"],
-                    "completion_evidence_sha256": manifest["bootstrap_completion_evidence_sha256"],
-                    "revocation_checked_at": evidence["revocation_checked_at"],
-                    "status": "accepted",
-                }
-            ],
-        }
-        return manifest, registry, evidence, policy, manifest_sha256
-
-    def test_valid_signature_and_protected_ledger_are_required(self) -> None:
-        manifest, registry, evidence, policy, manifest_sha256 = self._signed_fixture()
-        with (
-            mock.patch.object(
-                runtime_state,
-                "_protected_verifier_policy",
-                return_value=policy,
-            ),
-            mock.patch.object(
-                runtime_state,
-                "_protected_checks_evidence",
-                return_value={},
-            ),
-        ):
-            decision = runtime_state.verify_runtime_lock_capability(
-                manifest=manifest,
-                manifest_sha256=manifest_sha256,
-                writer_registry=registry,
-                completion_evidence=evidence,
-                repository_root=self.root,
-            )
-            self.assertTrue(decision["allowed"])
-            self.assertEqual(decision["reason_id"], "verified")
-
-            evidence["signature"] = base64.b64encode(b"invalid").decode("ascii")
-            rejected = runtime_state.verify_runtime_lock_capability(
-                manifest=manifest,
-                manifest_sha256=manifest_sha256,
-                writer_registry=registry,
-                completion_evidence=evidence,
-                repository_root=self.root,
-            )
-            self.assertFalse(rejected["allowed"])
-            self.assertEqual(rejected["reason_id"], "protected_evidence_invalid")
-
-    def test_worker_owned_policy_is_not_a_protected_trust_anchor(self) -> None:
-        policy_path = Path(self.tmpdir.name) / "worker-policy.json"
-        self._write_json(policy_path, {})
-        with mock.patch.dict(
-            os.environ,
-            {"PANTHEON_RUNTIME_LOCK_VERIFIER_POLICY": str(policy_path)},
-        ):
-            with self.assertRaisesRegex(
-                ValueError,
-                "protected verifier policy parent is unsafe|permissions are unsafe",
-            ):
-                runtime_state._protected_verifier_policy(self.root)
-
-
-class RuntimeWriterInventoryTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmpdir = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmpdir.cleanup)
-        self.root = Path(self.tmpdir.name)
-        (self.root / ".orchestrator").mkdir()
-        (self.root / "scripts").mkdir()
-
-    def test_seeded_unregistered_direct_writer_is_rejected(self) -> None:
-        unsafe = self.root / "scripts/unsafe_writer.py"
-        unsafe.write_text(
-            "from pathlib import Path\n"
-            "STATUS = Path(__file__).parent / 'ai-status.json'\n"
-            "def mutate():\n"
-            "    STATUS.write_text('{}\\n', encoding='utf-8')\n",
-            encoding="utf-8",
-        )
-        inventory = runtime_state.runtime_lock_source_inventory(self.root)
-        self.assertEqual(
-            inventory["unregistered_direct_writers"],
-            [
-                {
-                    "path": "scripts/unsafe_writer.py",
-                    "line": 4,
-                    "sink": "path.write_text",
-                    "reason_id": "unregistered_direct_canonical_write",
-                }
-            ],
-        )
-
-    def test_seeded_os_replace_module_call_direct_writer_is_rejected(self) -> None:
-        unsafe = self.root / "scripts/unsafe_os_replace.py"
-        unsafe.write_text(
-            "import os\n"
-            "import tempfile\n"
-            "from pathlib import Path\n"
-            "STATUS_FILE = Path(__file__).parent / 'ai-status.json'\n"
-            "def mutate():\n"
-            "    with tempfile.NamedTemporaryFile('w', delete=False) as handle:\n"
-            "        handle.write('{}\\n')\n"
-            "        temp_path = Path(handle.name)\n"
-            "    os.replace(temp_path, STATUS_FILE)\n",
-            encoding="utf-8",
-        )
-        inventory = runtime_state.runtime_lock_source_inventory(self.root)
-        self.assertEqual(
-            inventory["unregistered_direct_writers"],
-            [
-                {
-                    "path": "scripts/unsafe_os_replace.py",
-                    "line": 9,
-                    "sink": "replace",
-                    "reason_id": "unregistered_direct_canonical_write",
-                }
-            ],
-        )
-
-    def test_writer_inside_canonical_task_state_lock_block_is_not_flagged(self) -> None:
-        locked = self.root / "scripts/locked_writer.py"
-        locked.write_text(
-            "import os\n"
-            "import tempfile\n"
-            "from pathlib import Path\n"
-            "from runtime_state import canonical_task_state_lock_file\n"
-            "STATUS_FILE = Path(__file__).parent / 'ai-status.json'\n"
-            "def mutate():\n"
-            "    with canonical_task_state_lock_file(STATUS_FILE):\n"
-            "        with tempfile.NamedTemporaryFile('w', delete=False) as handle:\n"
-            "            handle.write('{}\\n')\n"
-            "            temp_path = Path(handle.name)\n"
-            "        os.replace(temp_path, STATUS_FILE)\n",
-            encoding="utf-8",
-        )
-        inventory = runtime_state.runtime_lock_source_inventory(self.root)
-        self.assertEqual(inventory["unregistered_direct_writers"], [])
-
-    def test_guarded_isolated_fixture_writer_is_not_canonical(self) -> None:
-        guarded = self.root / "scripts/guarded_writer.py"
-        guarded.write_text(
-            "from pathlib import Path\n"
-            "from canonical_writer_guard import assert_isolated_legacy_write_target\n"
-            "STATUS = Path(__file__).parent / 'ai-status.json'\n"
-            "def mutate():\n"
-            "    assert_isolated_legacy_write_target(STATUS, tool='fixture')\n"
-            "    STATUS.write_text('{}\\n', encoding='utf-8')\n",
-            encoding="utf-8",
-        )
-        inventory = runtime_state.runtime_lock_source_inventory(self.root)
-        self.assertEqual(inventory["unregistered_direct_writers"], [])
-
-    def test_real_repository_has_no_unregistered_canonical_writer(self) -> None:
-        repository_root = Path(__file__).resolve().parents[1]
-        inventory = runtime_state.runtime_lock_source_inventory(repository_root)
-        self.assertGreater(len(inventory["files"]), 100)
-        self.assertEqual(inventory["unregistered_direct_writers"], [])

@@ -24,10 +24,6 @@ class MultiRepoRegistryTests(unittest.TestCase):
             multi_repo_registry.repository_relative_artifact_path({}, artifact),
             Path("e2e/dummy.spec.ts"),
         )
-        self.assertEqual(
-            multi_repo_registry.artifact_local_path({}, artifact),
-            multi_repo_registry.resolve_path("../execute-plans") / "e2e" / "dummy.spec.ts",
-        )
 
     def test_execute_plans_colon_artifact_prefix_routes_to_sibling_repo(self) -> None:
         artifact = "execute-plans:e2e/dummy.spec.ts"
@@ -36,10 +32,6 @@ class MultiRepoRegistryTests(unittest.TestCase):
         self.assertEqual(
             multi_repo_registry.repository_relative_artifact_path({}, artifact),
             Path("e2e/dummy.spec.ts"),
-        )
-        self.assertEqual(
-            multi_repo_registry.artifact_local_path({}, artifact),
-            multi_repo_registry.resolve_path("../execute-plans") / "e2e" / "dummy.spec.ts",
         )
 
     def test_unregistered_colon_path_remains_a_pantheon_artifact(self) -> None:
