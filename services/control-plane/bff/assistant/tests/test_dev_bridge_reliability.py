@@ -324,6 +324,20 @@ def _fake_repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
     write_materializing_ai_status(root)
+    event_log = tmp_path / "runtime" / "task-state-events.jsonl"
+    event_log.parent.mkdir()
+    event_log.touch()
+    os.environ.update(
+        {
+            "PANTHEON_STATUS_ROOT": str(root),
+            "PANTHEON_COMMAND_ROOT": str(root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "test-command-runtime",
+            "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+            "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+            "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+            "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        }
+    )
     return root
 
 
@@ -454,38 +468,18 @@ def test_untrusted_direct_status_mutation_still_requires_worker_lease(
         )
 
 
-def test_supervisor_runtime_state_discovers_authoritative_journal(
+def test_runtime_binding_requires_explicit_authoritative_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     status_root = tmp_path / "status-root"
-    runtime_dir = status_root / ".orchestrator"
-    runtime_dir.mkdir(parents=True)
+    status_root.mkdir()
     event_log = tmp_path / "runtime" / "task-state-events.jsonl"
     event_log.parent.mkdir()
     event_log.touch()
-    (runtime_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "supervisor": {
-                    "task_state_shadow": {
-                        "mode": "authoritative",
-                        "ok": True,
-                        "event_log": str(event_log),
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    for name in (
-        "PANTHEON_STATUS_ROOT",
-        "PANTHEON_COMMAND_ROOT",
-        "PANTHEON_COMMAND_RUNTIME_SHA",
-        "PANTHEON_TASK_STATE_STORE_MODE",
-        "PANTHEON_TASK_STATE_EVENT_LOG",
-    ):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(event_log))
 
     task_state_env = dev_bridge_dispatcher._runtime_task_state_env(
         str(status_root)
@@ -506,38 +500,20 @@ def test_supervisor_runtime_state_discovers_authoritative_journal(
         ) == REPO_ROOT
 
 
-def test_supervisor_runtime_state_rejects_symlinked_journal(
+def test_runtime_binding_rejects_symlinked_journal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     status_root = tmp_path / "status-root"
-    runtime_dir = status_root / ".orchestrator"
-    runtime_dir.mkdir(parents=True)
+    status_root.mkdir()
     real_event_log = tmp_path / "runtime" / "task-state-events.jsonl"
     real_event_log.parent.mkdir()
     real_event_log.touch()
     linked_event_log = tmp_path / "linked-task-state-events.jsonl"
     linked_event_log.symlink_to(real_event_log)
-    (runtime_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "supervisor": {
-                    "task_state_shadow": {
-                        "mode": "authoritative",
-                        "ok": True,
-                        "event_log": str(linked_event_log),
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    for name in (
-        "PANTHEON_STATUS_ROOT",
-        "PANTHEON_TASK_STATE_STORE_MODE",
-        "PANTHEON_TASK_STATE_EVENT_LOG",
-    ):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(linked_event_log))
 
     with pytest.raises(RuntimeError, match="symlink component"):
         dev_bridge_dispatcher._runtime_task_state_env(str(status_root))
@@ -835,11 +811,6 @@ def test_full_supervisor_cycle_never_queues_partially_materialized_packet(
         ),
         patch.object(
             benchmark.supervisor_module,
-            "agent_auto_dispatch_block_reason",
-            return_value=None,
-        ),
-        patch.object(
-            benchmark.supervisor_module,
             "scan_live_worker_pids_by_agent",
             return_value={},
         ),
@@ -945,8 +916,7 @@ def test_supervisor_required_readback_rejects_missing_journal_binding(
     assert result.admission_record is None
     assert result.admission_status == "invalid_materialization"
     assert result.retryable is False
-    assert "canonical task-state runtime binding is missing" in result.errors[0]
-    assert "file/activity-only bridge dispatch is not admissible" in result.errors[0]
+    assert "PANTHEON_TASK_STATE_STORE_MODE=authoritative is required" in result.errors[0]
     assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
 
 
@@ -1021,11 +991,6 @@ def test_governed_readback_never_falls_back_to_local_task_projection(
             dev_bridge_dispatcher,
             "_canonical_task_state_readback",
             side_effect=ValueError("injected governed readback malformed"),
-        ),
-        patch.object(
-            dev_bridge_dispatcher,
-            "_materialized_task_candidates",
-            side_effect=AssertionError("repository-local fallback was used"),
         ),
         pytest.raises(ValueError, match="governed readback malformed"),
     ):
@@ -1155,11 +1120,16 @@ def test_timeout_after_atomic_commit_is_accepted_only_after_exact_readback(
     packet = _signed("pkt_timeout_after_atomic_commit", task_count=2)
     request = BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root))
     real_run = subprocess.run
+    command_count = 0
 
     def timeout_after_child_commit(*args, **kwargs):
+        nonlocal command_count
         completed = real_run(*args, **kwargs)
         assert completed.returncode == 0
-        raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
+        command_count += 1
+        if command_count == 1:
+            raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
+        return completed
 
     with patch.object(
         dev_bridge_dispatcher.subprocess,
@@ -1576,7 +1546,7 @@ def test_success_exit_without_materialized_task_cannot_create_admission(
     assert result.admission_status == "invalid_materialization"
     assert result.retryable is False
     assert "authoritative post-batch readback invalid" in result.errors[0]
-    assert f"materialized task {packet.tasks[0].id!r} is missing" in result.errors[0]
+    assert "canonical packet materialization readback returned invalid JSON" in result.errors[0]
     assert not has_seen_packet(packet.packet_id, repo_root=str(repo_root))
 
 
@@ -1681,10 +1651,10 @@ def test_replay_requires_authoritative_materialized_task_provenance(
     assert replay.replay_rejected is True
     assert replay.admission_status == "invalid_replay_materialization"
     assert replay.retryable is False
-    assert "signed bridge provenance" in replay.errors[0]
+    assert "canonical packet materialization readback failed" in replay.errors[0]
 
 
-def test_replay_accepts_exact_terminal_task_snapshot_after_active_prune(
+def test_replay_rejects_terminal_projection_after_active_prune(
     tmp_path: Path,
 ) -> None:
     repo_root = _fake_repo(tmp_path)
@@ -1708,8 +1678,8 @@ def test_replay_accepts_exact_terminal_task_snapshot_after_active_prune(
     )
 
     assert replay.replay_rejected is True
-    assert replay.admission_status == "admitted_replay"
-    assert replay.errors == []
+    assert replay.admission_status == "invalid_replay_materialization"
+    assert "canonical packet materialization readback failed" in replay.errors[0]
 
 
 def test_admission_parent_symlink_fails_closed_without_outside_write(

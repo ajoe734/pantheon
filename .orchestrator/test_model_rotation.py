@@ -236,7 +236,6 @@ class SupervisorRotationHelperTests(unittest.TestCase):
                         self.config,
                         self.state,
                         worker,
-                        provider_report={},
                     )
 
                 self.assertEqual(outcome, {"changed": False, "stop": True})

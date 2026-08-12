@@ -190,7 +190,7 @@ class OrchestratorStatusResponse(AssistantBaseModel):
     handoffs: List[Dict[str, Any]]
     blockers: List[Dict[str, Any]]
     supervisor: Dict[str, Any]
-    provider_guardrails: Dict[str, Any] = Field(default_factory=dict, alias="providerGuardrails")
+    delivery_health: Dict[str, Any] = Field(default_factory=dict, alias="deliveryHealth")
     provider_readiness: Dict[str, Any] = Field(default_factory=dict, alias="providerReadiness")
     openclaw_tool_policy: Dict[str, Any] = Field(default_factory=dict, alias="openclawToolPolicy")
     assistant_dev_bridge: Dict[str, Any] = Field(default_factory=dict, alias="assistantDevBridge")
