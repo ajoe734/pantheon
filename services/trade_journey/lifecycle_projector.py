@@ -81,8 +81,6 @@ LIFECYCLE_EVENT_TYPES = frozenset(
         "reconciliation_failed",
     }
 )
-LIFECYCLE_EVENT_TYPE_QUERY = tuple(sorted(LIFECYCLE_EVENT_TYPES))
-
 FIXTURE_EVENT_TYPE = "trade_journey_fixture"
 FIXTURE_SCHEMA_VERSION = "pantheon.trade-journey-fixture.v1"
 FIXTURE_SOURCE = "tj_e2e_012_hosted_seed_v3"
@@ -657,6 +655,8 @@ def projector_readiness(
     controller_status = str(controller.get("status") or "unavailable")
     mode = str(controller.get("mode") or "unknown")
     accepted_live = bool(controller.get("accepted_live"))
+    checkpoint = int(payload.get("checkpoint") or 0)
+    source_high_watermark = int(controller.get("source_high_watermark") or 0)
     backlog = int(controller.get("backlog") or 0)
     controller_generation = int(
         controller.get("generation")
@@ -667,6 +667,10 @@ def projector_readiness(
         reasons.append(f"last_error:{controller.get('last_error')}")
     if backlog > configured_max_backlog:
         reasons.append(f"backlog_exceeds_policy:{backlog}>{configured_max_backlog}")
+    if checkpoint != source_high_watermark:
+        reasons.append(
+            f"cursor_not_caught_up:{checkpoint}!={source_high_watermark}"
+        )
     if controller_status != "ready":
         reasons.append(f"controller_not_ready:{controller_status}")
     if mode != "live" or not accepted_live:
@@ -732,8 +736,8 @@ def projector_readiness(
             "controller_status": controller_status,
             "mode": mode,
             "accepted_live": accepted_live,
-            "checkpoint": int(payload.get("checkpoint") or 0),
-            "source_high_watermark": int(controller.get("source_high_watermark") or 0),
+            "checkpoint": checkpoint,
+            "source_high_watermark": source_high_watermark,
             "backlog": backlog,
             "current_generation": current_generation,
             "controller_generation": controller_generation,
@@ -1066,9 +1070,17 @@ class LifecycleProjector:
             0,
             int(controller["source_high_watermark"]) - int(candidate.get("checkpoint", 0)),
         )
-        if mode == "live" and accepted:
+        # The ingestion cursor spans every committed telemetry row, while only
+        # some rows materialize a lifecycle aggregate.  A live batch that has
+        # caught up to that global cursor is therefore a successful live
+        # admission even when it contains only irrelevant telemetry.  Requiring
+        # an empty poll here would deadlock readiness on a continuously busy
+        # telemetry stream.
+        live_admissible = self._live_admissible(controller, mode=mode)
+        if live_admissible:
             controller["last_live_success_at"] = now
-            controller["last_live_event_at"] = inc_mat.last_live_event_at(staged)
+            if accepted:
+                controller["last_live_event_at"] = inc_mat.last_live_event_at(staged)
         elif mode == "recovery":
             controller["last_recovery_at"] = now
         elif mode == "backfill":
@@ -1076,7 +1088,7 @@ class LifecycleProjector:
         elif mode == "replay":
             controller["last_replay_at"] = now
         historic_live = bool(controller.get("last_live_success_at"))
-        controller["accepted_live"] = mode == "live" and historic_live
+        controller["accepted_live"] = live_admissible
         controller["truth_level"] = (
             "canonical_live"
             if controller["accepted_live"]
@@ -1088,7 +1100,7 @@ class LifecycleProjector:
             "degraded"
             if controller["quarantine_count"]
             else "ready"
-            if mode == "live" and controller["accepted_live"] and controller["backlog"] == 0
+            if controller["accepted_live"]
             else "recovering"
             if mode == "recovery" or controller["backlog"]
             else "repair_only"
@@ -1162,13 +1174,14 @@ class LifecycleProjector:
                 "error_publication_failure": None,
             }
         )
+        live_admissible = self._live_admissible(controller, mode=mode)
         historic_live = bool(controller.get("last_live_success_at"))
-        if mode == "live" and int(backlog) == 0:
+        if live_admissible:
             # A successful zero-backlog read is the controller's authoritative
             # live admission boundary after startup/recovery, even when no new
             # trade arrived during that poll.
             controller["last_live_success_at"] = now
-            controller["accepted_live"] = True
+            controller["accepted_live"] = live_admissible
             controller["truth_level"] = "canonical_live"
         else:
             controller["accepted_live"] = False
@@ -1179,7 +1192,7 @@ class LifecycleProjector:
             "degraded"
             if int(controller.get("quarantine_count") or 0) > 0
             else "ready"
-            if mode == "live" and int(backlog) == 0
+            if controller["accepted_live"]
             else "recovering"
             if mode == "recovery" or int(backlog) > 0
             else "repair_only"
@@ -1202,6 +1215,21 @@ class LifecycleProjector:
             # serializing the full canonical event history every poll.
             self._persist_health_only(candidate)
         self.state = candidate
+
+    @staticmethod
+    def _live_admissible(controller: Mapping[str, Any], *, mode: str) -> bool:
+        """Return current live truth, never inferred from historic success.
+
+        Historical success is useful audit evidence, but cannot allow a
+        controller with backlog or quarantined records to advertise canonical
+        live readiness.
+        """
+        return (
+            mode == "live"
+            and int(controller.get("checkpoint") or 0)
+            == int(controller.get("source_high_watermark") or 0)
+            and int(controller.get("quarantine_count") or 0) == 0
+        )
 
     def record_source_failure(self, error: str, *, backlog: int | None = None) -> None:
         """Record source failure while preserving the last-good read-model bundle."""
@@ -1547,9 +1575,7 @@ class PostgresLifecycleSource:
         try:
             return int(
                 await conn.fetchval(
-                    "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
-                    "WHERE event_type = ANY($1::text[])",
-                    list(LIFECYCLE_EVENT_TYPE_QUERY),
+                    "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
                 )
                 or 0
             )
@@ -1564,10 +1590,8 @@ class PostgresLifecycleSource:
             rows = await conn.fetch(
                 "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
                 "FROM telemetry_events WHERE ingested_seq > $1 "
-                "AND event_type = ANY($2::text[]) "
-                "ORDER BY ingested_seq ASC LIMIT $3",
+                "ORDER BY ingested_seq ASC LIMIT $2",
                 int(checkpoint),
-                list(LIFECYCLE_EVENT_TYPE_QUERY),
                 int(limit),
             )
         finally:

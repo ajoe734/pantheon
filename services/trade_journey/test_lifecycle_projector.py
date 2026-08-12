@@ -21,7 +21,6 @@ from services.trade_journey.lifecycle_projector import (
     AtomicProjectionBundle,
     ConflictingLifecycleEvent,
     DEFAULT_HEALTH_MAX_AGE_SECONDS,
-    LIFECYCLE_EVENT_TYPE_QUERY,
     LIFECYCLE_EVENT_TYPES,
     LifecycleProjector,
     PostgresLifecycleSource,
@@ -153,22 +152,21 @@ def _current_json(tmp_path: Path, filename: str) -> dict:
     return json.loads((tmp_path / "current" / filename).read_text(encoding="utf-8"))
 
 
-def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
+def test_postgres_lifecycle_source_uses_the_global_commit_cursor(monkeypatch):
     calls: list[tuple] = []
 
     class Connection:
-        async def fetchval(self, query: str, event_types: list[str]) -> int:
-            calls.append(("fetchval", query, tuple(event_types)))
+        async def fetchval(self, query: str) -> int:
+            calls.append(("fetchval", query))
             return 44
 
         async def fetch(
             self,
             query: str,
             checkpoint: int,
-            event_types: list[str],
             limit: int,
         ) -> list[dict]:
-            calls.append(("fetch", query, checkpoint, tuple(event_types), limit))
+            calls.append(("fetch", query, checkpoint, limit))
             return []
 
         async def close(self) -> None:
@@ -186,13 +184,90 @@ def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
 
     fetchval = next(call for call in calls if call[0] == "fetchval")
     fetch = next(call for call in calls if call[0] == "fetch")
-    assert "event_type = ANY" in fetchval[1]
-    assert "event_type = ANY" in fetch[1]
-    assert fetchval[2] == LIFECYCLE_EVENT_TYPE_QUERY
+    assert "event_type = ANY" not in fetchval[1]
+    assert "event_type = ANY" not in fetch[1]
+    assert "MAX(ingested_seq)" in fetchval[1]
     assert fetch[2] == 7
-    assert fetch[3] == LIFECYCLE_EVENT_TYPE_QUERY
-    assert fetch[4] == 9
-    assert "heartbeat" not in fetchval[2]
+    assert fetch[3] == 9
+
+
+def test_non_lifecycle_rows_advance_the_global_cursor_without_materializing(tmp_path):
+    projector = _projector(tmp_path)
+    ignored = {
+        "ingested_seq": 41,
+        "ingested_at": NOW,
+        "event_id": "heartbeat-41",
+        "event_type": "heartbeat",
+        "created_at": NOW,
+        "payload": {},
+    }
+
+    result = projector.project_records([ignored], mode="live", source_high_watermark=41)
+
+    assert result.ignored == 1
+    assert projector.checkpoint == 41
+    assert projector.controller["source_high_watermark"] == 41
+    assert projector.controller["backlog"] == 0
+    assert projector.controller["accepted_live"] is True
+    assert projector.controller["status"] == "ready"
+
+
+def test_continuous_non_lifecycle_telemetry_stays_live_when_the_global_cursor_is_caught_up(
+    tmp_path,
+):
+    projector = _projector(tmp_path)
+
+    for sequence in range(41, 46):
+        projector.project_records(
+            [
+                {
+                    "ingested_seq": sequence,
+                    "ingested_at": NOW,
+                    "event_id": f"heartbeat-{sequence}",
+                    "event_type": "heartbeat",
+                    "created_at": NOW,
+                    "payload": {},
+                }
+            ],
+            mode="live",
+            source_high_watermark=sequence,
+        )
+        assert projector.checkpoint == sequence
+        assert projector.controller["backlog"] == 0
+        assert projector.controller["accepted_live"] is True
+        assert projector.controller["status"] == "ready"
+
+
+def test_global_cursor_read_fetch_race_cannot_admit_live_truth(tmp_path):
+    projector = _projector(tmp_path, clock=lambda: NOW)
+    ahead = {
+        "ingested_seq": 42,
+        "ingested_at": NOW,
+        "event_id": "heartbeat-42",
+        "event_type": "heartbeat",
+        "created_at": NOW,
+        "payload": {},
+    }
+
+    # A row can commit after the high-watermark query but before the subsequent
+    # cursor fetch.  The sampled high watermark is stale and must not be used
+    # to claim caught-up live truth.
+    projector.project_records([ahead], mode="live", source_high_watermark=41)
+    assert projector.checkpoint == 42
+    assert projector.controller["source_high_watermark"] == 41
+    assert projector.controller["accepted_live"] is False
+    assert projector.controller["status"] == "repair_only"
+    readiness = projector_readiness(
+        state_path=tmp_path / "health_state.json",
+        bundle_root=tmp_path,
+        now=datetime.fromisoformat(NOW.replace("Z", "+00:00")),
+    )
+    assert readiness["ready"] is False
+    assert "cursor_not_caught_up:42!=41" in readiness["reasons"]
+
+    projector.record_poll(source_high_watermark=42, backlog=0, mode="live")
+    assert projector.controller["accepted_live"] is True
+    assert projector.controller["status"] == "ready"
 
 
 def test_postgres_lifecycle_source_startup_check_is_read_only_and_bounded(monkeypatch):
@@ -287,6 +362,59 @@ def test_worker_startup_verifies_read_contract_before_publishing_identity(monkey
     assert _current_json(tmp_path, "loop_runs.json")["controller"]["deployment_sha"] == (
         "cafebabecafebabecafebabecafebabecafebabe"
     )
+
+
+def test_worker_reaffirms_a_global_cursor_checkpoint_with_a_new_deployment_identity(
+    monkeypatch, tmp_path
+):
+    prior = _projector(tmp_path)
+    prior.project_records(
+        [
+            {
+                "ingested_seq": 41,
+                "ingested_at": NOW,
+                "event_id": "heartbeat-41",
+                "event_type": "heartbeat",
+                "created_at": NOW,
+                "payload": {},
+            }
+        ],
+        mode="live",
+        source_high_watermark=41,
+    )
+    prior.record_poll(source_high_watermark=41, backlog=0, mode="live")
+
+    class Source:
+        async def verify_read_contract(self) -> None:
+            return None
+
+        async def high_watermark(self) -> int:
+            return 41
+
+        async def start_listener(self) -> None:
+            return None
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            assert checkpoint == 41
+            return []
+
+        async def wait(self, timeout: float) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda _: Source())
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "1")
+    monkeypatch.setenv("GIT_SHA", "feedfacefeedfacefeedfacefeedfacefeedface")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    controller = _current_json(tmp_path, "loop_runs.json")["controller"]
+    assert controller["deployment_sha"] == "feedfacefeedfacefeedfacefeedfacefeedface"
+    assert controller["checkpoint"] == controller["source_high_watermark"] == 41
+    assert controller["accepted_live"] is True
 
 
 def test_worker_startup_contract_failure_publishes_degraded_health(monkeypatch, tmp_path):
@@ -495,6 +623,36 @@ def test_missing_identity_is_quarantined_and_cursor_progresses(tmp_path):
     assert projector.checkpoint == 1
     assert projector.controller["status"] == "degraded"
     assert projector.controller["accepted_live"] is False
+
+
+def test_historic_live_evidence_never_overrides_current_quarantine_or_backlog(tmp_path):
+    projector = _projector(tmp_path)
+    projector.project_records(lifecycle_rows()[:1], mode="live", source_high_watermark=1)
+    assert projector.controller["accepted_live"] is True
+
+    invalid = lifecycle_rows()[1]
+    del invalid["payload"]["run_id"]
+    del invalid["payload"]["metadata"]["run_id"]
+    projector.project_records([invalid], mode="live", source_high_watermark=2)
+    assert projector.controller["accepted_live"] is False
+    assert projector.controller["truth_level"] == "live_with_historic_live"
+    assert projector.controller["status"] == "degraded"
+
+    # A later empty poll cannot erase the durable quarantine or restore live
+    # readiness.  It remains an explicit repair action, not a heartbeat side
+    # effect.
+    projector.record_poll(source_high_watermark=2, backlog=0, mode="live")
+    assert projector.controller["accepted_live"] is False
+    assert projector.controller["truth_level"] == "live_with_historic_live"
+    assert projector.controller["status"] == "degraded"
+
+    # Backlog independently revokes admission even if the prior projection was
+    # healthy.
+    clean = _projector(tmp_path / "backlog")
+    clean.project_records(lifecycle_rows()[:1], mode="live", source_high_watermark=1)
+    clean.record_poll(source_high_watermark=2, backlog=1, mode="live")
+    assert clean.controller["accepted_live"] is False
+    assert clean.controller["truth_level"] == "live_with_historic_live"
 
 
 def test_bundle_failure_never_switches_partial_generation_or_checkpoint(tmp_path):

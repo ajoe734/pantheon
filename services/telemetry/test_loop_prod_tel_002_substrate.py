@@ -33,7 +33,6 @@ def test_db_migration_and_bootstrap_install_the_same_ingestion_cursor() -> None:
         assert "OWNED BY telemetry_events.ingested_seq" in ddl
         assert "idx_telemetry_events_ingested_seq" in ddl
         assert "idx_telemetry_events_ingested_at" in ddl
-        assert "idx_telemetry_events_event_type_ingested_seq" in ddl
 
 
 def test_ingestion_cursor_is_unique_and_commit_timestamp_is_queryable() -> None:
@@ -46,12 +45,6 @@ def test_ingestion_cursor_is_unique_and_commit_timestamp_is_queryable() -> None:
     )
     assert re.search(
         r"CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+idx_telemetry_events_ingested_at",
-        migration,
-        re.IGNORECASE,
-    )
-    assert re.search(
-        r"CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+idx_telemetry_events_event_type_ingested_seq"
-        r"\s+ON\s+telemetry_events\s*\(event_type,\s*ingested_seq\)",
         migration,
         re.IGNORECASE,
     )
