@@ -476,6 +476,108 @@ def test_evaluate_promotion_invariants_healthy(mock_alive, mock_lock, tmp_path: 
     assert all(inv["ok"] for inv in invariants)
 
 
+@patch("promote_supervisor_runtime.lock_held", return_value=True)
+@patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
+def test_evaluate_promotion_invariants_accepts_verified_v1_headless_baseline(
+    _mock_alive: Mock,
+    _mock_lock: Mock,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path
+    config, state, ai_status, provider_capabilities = create_realistic_healthy_fixture(repo)
+    v1_log = repo / "runtime" / "task-state-events.jsonl"
+    v1_log.parent.mkdir(parents=True, exist_ok=True)
+    v1_log.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "type": "task_state_committed",
+                "sequence": 1,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    config["task_state_store"] = {"event_log": str(v1_log)}
+    health_report = {
+        "healthy": False,
+        "supervisor": state["supervisor"],
+        "checks": [
+            {
+                "name": "readiness_task_head_accessible",
+                "ok": False,
+                "task_head": str(v1_log.with_name(f"{v1_log.name}.head.json")),
+                "error": "FileNotFoundError: V1 has no V2 task head",
+            }
+        ],
+    }
+
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        provider_capabilities=provider_capabilities,
+        lock_path=Path("/tmp/fake.lock"),
+        now=datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc),
+        config=config,
+        allow_v1_headless_task_store=True,
+    )
+
+    runtime_health = next(
+        invariant for invariant in invariants if invariant["name"] == "runtime_health_clean"
+    )
+    assert runtime_health["ok"] is True
+    assert runtime_health["details"]["v1_headless_baseline_compatibility"] is True
+
+
+@patch("promote_supervisor_runtime.lock_held", return_value=True)
+@patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
+def test_evaluate_promotion_invariants_rejects_headless_non_v1_store(
+    _mock_alive: Mock,
+    _mock_lock: Mock,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path
+    config, state, ai_status, provider_capabilities = create_realistic_healthy_fixture(repo)
+    event_log = repo / "runtime" / "task-state-events.jsonl"
+    event_log.parent.mkdir(parents=True, exist_ok=True)
+    event_log.write_text(
+        json.dumps({"version": 2, "type": "task_state_v2_genesis", "sequence": 1})
+        + "\n",
+        encoding="utf-8",
+    )
+    config["task_state_store"] = {"event_log": str(event_log)}
+    health_report = {
+        "healthy": False,
+        "supervisor": state["supervisor"],
+        "checks": [
+            {
+                "name": "readiness_task_head_accessible",
+                "ok": False,
+                "task_head": str(event_log.with_name(f"{event_log.name}.head.json")),
+                "error": "FileNotFoundError: V2 task head missing",
+            }
+        ],
+    }
+
+    invariants = evaluate_promotion_invariants(
+        health_report=health_report,
+        ai_status=ai_status,
+        state=state,
+        provider_capabilities=provider_capabilities,
+        lock_path=Path("/tmp/fake.lock"),
+        now=datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc),
+        config=config,
+        allow_v1_headless_task_store=True,
+    )
+
+    runtime_health = next(
+        invariant for invariant in invariants if invariant["name"] == "runtime_health_clean"
+    )
+    assert runtime_health["ok"] is False
+    assert runtime_health["details"]["v1_headless_baseline_compatibility"] is False
+
+
 def test_evaluate_promotion_invariants_detects_pid_unbound_or_unlocked() -> None:
     health_report = {
         "healthy": True,

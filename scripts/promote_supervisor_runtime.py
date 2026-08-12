@@ -38,6 +38,8 @@ from supervisor_runtime_health import (
 )
 from provision_live_supervisor_config import build_live_config, load_json_object
 from migrate_task_state_store_v2 import (
+    LEGACY_EVENT_TYPE,
+    LEGACY_EVENT_VERSION,
     migrate as migrate_task_state_store_v2,
     snapshot_transaction,
 )
@@ -4370,6 +4372,64 @@ def capture_promotion_snapshot(
     }
 
 
+def _is_verified_v1_headless_baseline(
+    config: Mapping[str, Any],
+    failed_health_checks: list[dict[str, Any]],
+) -> bool:
+    """Accept only the V1 journal shape that exists immediately before migration.
+
+    This is deliberately not a filename heuristic and it does not validate a
+    V1 journal in full.  The migration transaction performs that full
+    hash-chain audit while holding the authority locks.  Here we merely avoid
+    requiring the V2 sidecar that a genuine V1 journal has never written.
+    """
+
+    if len(failed_health_checks) != 1:
+        return False
+    failed = failed_health_checks[0]
+    if failed.get("name") != "readiness_task_head_accessible":
+        return False
+
+    store = config.get("task_state_store")
+    if not isinstance(store, Mapping):
+        return False
+    raw_event_log = store.get("event_log")
+    if not isinstance(raw_event_log, str) or not raw_event_log.strip():
+        return False
+    event_log = Path(raw_event_log)
+    if not event_log.is_absolute() or event_log.is_symlink():
+        return False
+    expected_head = event_log.with_name(f"{event_log.name}.head.json")
+    if failed.get("task_head") != str(expected_head):
+        return False
+    if not str(failed.get("error") or "").startswith("FileNotFoundError:"):
+        return False
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(event_log, flags)
+    except OSError:
+        return False
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return False
+        first_line = os.read(descriptor, 128 * 1024).split(b"\n", 1)[0]
+    except OSError:
+        return False
+    finally:
+        os.close(descriptor)
+    try:
+        first_event = json.loads(first_line.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(first_event, dict)
+        and first_event.get("version") == LEGACY_EVENT_VERSION
+        and first_event.get("type") == LEGACY_EVENT_TYPE
+        and first_event.get("sequence") == 1
+    )
+
+
 def evaluate_promotion_invariants(
     health_report: dict[str, Any],
     ai_status: dict[str, Any],
@@ -4380,6 +4440,7 @@ def evaluate_promotion_invariants(
     now: datetime | None = None,
     config: dict[str, Any] | None = None,
     durable_queue_events: list[dict[str, Any]] | None = None,
+    allow_v1_headless_task_store: bool = False,
 ) -> list[dict[str, Any]]:
     """Evaluate read-only promotion invariants against live schema state."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -4396,12 +4457,29 @@ def evaluate_promotion_invariants(
         "details": {"file_errors": file_errors},
     })
 
-    # Invariant 1: Health checks must all pass
-    health_ok = health_report.get("healthy", False)
+    # Invariant 1: Health checks must all pass.  A V1 incumbent has no V2
+    # ``.head.json`` by design.  During a V1-to-V2 transaction only, accept
+    # that one absent file after binding it to a real V1 journal header.  The
+    # shadow invariant below still requires the V1 projection to be current;
+    # candidate and ordinary runtime health never use this exception.
+    failed_health_checks = [
+        check
+        for check in health_report.get("checks", [])
+        if isinstance(check, dict) and check.get("ok") is not True
+    ]
+    v1_headless_compatibility = _is_verified_v1_headless_baseline(
+        config,
+        failed_health_checks,
+    ) if allow_v1_headless_task_store else False
+    health_ok = bool(health_report.get("healthy", False)) or v1_headless_compatibility
     invariants.append({
         "name": "runtime_health_clean",
         "ok": health_ok,
-        "details": {"healthy": health_ok, "failed_checks": [c["name"] for c in health_report.get("checks", []) if not c.get("ok")]},
+        "details": {
+            "healthy": health_report.get("healthy", False),
+            "failed_checks": [str(check.get("name") or "unnamed") for check in failed_health_checks],
+            "v1_headless_baseline_compatibility": v1_headless_compatibility,
+        },
     })
 
     # Invariant 2: Supervisor lifecycle must be explicitly valid (e.g., 'running') and not None or 'degraded'
@@ -5236,6 +5314,7 @@ def capture_runtime_observation(
     reader: RuntimeProcessReader | None = None,
     now: datetime | None = None,
     require_current_dev_identity: bool = True,
+    allow_v1_headless_task_store: bool = False,
     cwd_git_identity_reader: Callable[
         [ProcessCwdIdentity], tuple[str, str]
     ] = _read_process_cwd_git_identity,
@@ -5307,6 +5386,7 @@ def capture_runtime_observation(
         now=observed_at,
         config=config,
         durable_queue_events=list(durable_queue_document.rows),
+        allow_v1_headless_task_store=allow_v1_headless_task_store,
     )
     failures = [
         str(invariant.get("name") or "unnamed_invariant")
@@ -5683,6 +5763,7 @@ class OSPromotionBackend:
             expected_argv=seed_argv,
             expected_generation=incumbent_process.generation,
             reader=self.reader,
+            allow_v1_headless_task_store=True,
         )
         if baseline.invariant_failures:
             raise ValueError(
@@ -5750,6 +5831,7 @@ class OSPromotionBackend:
             expected_argv=plan.incumbent_process.argv,
             expected_generation=plan.incumbent_process.generation,
             reader=self.reader,
+            allow_v1_headless_task_store=True,
         )
 
     def migrate_task_state_store(self, plan: PromotionPlan) -> dict[str, Any]:
@@ -5847,6 +5929,7 @@ class OSPromotionBackend:
             expected_generation=generation,
             reader=self.reader,
             require_current_dev_identity=require_current_dev_identity,
+            allow_v1_headless_task_store=not require_current_dev_identity,
         )
 
     def record_intent(
