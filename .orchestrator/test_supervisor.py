@@ -72,6 +72,15 @@ class V2StartupCacheTests(unittest.TestCase):
         update.assert_called_once_with(config)
         self.assertIn("run-active", result["workers"])
 
+    def test_boot_reconciliation_does_not_require_retired_account_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            state = runtime_state.default_state()
+            with mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
+                self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
+
 
 def config_fixture(root: Path | None = None) -> dict[str, object]:
     paths: dict[str, str] = {}
