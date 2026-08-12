@@ -81,6 +81,8 @@ LIFECYCLE_EVENT_TYPES = frozenset(
         "reconciliation_failed",
     }
 )
+LIFECYCLE_EVENT_TYPE_QUERY = tuple(sorted(LIFECYCLE_EVENT_TYPES))
+
 FIXTURE_EVENT_TYPE = "trade_journey_fixture"
 FIXTURE_SCHEMA_VERSION = "pantheon.trade-journey-fixture.v1"
 FIXTURE_SOURCE = "tj_e2e_012_hosted_seed_v3"
@@ -655,8 +657,6 @@ def projector_readiness(
     controller_status = str(controller.get("status") or "unavailable")
     mode = str(controller.get("mode") or "unknown")
     accepted_live = bool(controller.get("accepted_live"))
-    checkpoint = int(payload.get("checkpoint") or 0)
-    source_high_watermark = int(controller.get("source_high_watermark") or 0)
     backlog = int(controller.get("backlog") or 0)
     controller_generation = int(
         controller.get("generation")
@@ -667,10 +667,6 @@ def projector_readiness(
         reasons.append(f"last_error:{controller.get('last_error')}")
     if backlog > configured_max_backlog:
         reasons.append(f"backlog_exceeds_policy:{backlog}>{configured_max_backlog}")
-    if checkpoint != source_high_watermark:
-        reasons.append(
-            f"cursor_not_caught_up:{checkpoint}!={source_high_watermark}"
-        )
     if controller_status != "ready":
         reasons.append(f"controller_not_ready:{controller_status}")
     if mode != "live" or not accepted_live:
@@ -736,8 +732,8 @@ def projector_readiness(
             "controller_status": controller_status,
             "mode": mode,
             "accepted_live": accepted_live,
-            "checkpoint": checkpoint,
-            "source_high_watermark": source_high_watermark,
+            "checkpoint": int(payload.get("checkpoint") or 0),
+            "source_high_watermark": int(controller.get("source_high_watermark") or 0),
             "backlog": backlog,
             "current_generation": current_generation,
             "controller_generation": controller_generation,
@@ -1070,12 +1066,6 @@ class LifecycleProjector:
             0,
             int(controller["source_high_watermark"]) - int(candidate.get("checkpoint", 0)),
         )
-        # The ingestion cursor spans every committed telemetry row, while only
-        # some rows materialize a lifecycle aggregate.  A live batch that has
-        # caught up to that global cursor is therefore a successful live
-        # admission even when it contains only irrelevant telemetry.  Requiring
-        # an empty poll here would deadlock readiness on a continuously busy
-        # telemetry stream.
         live_admissible = self._live_admissible(controller, mode=mode)
         if live_admissible:
             controller["last_live_success_at"] = now
@@ -1226,8 +1216,11 @@ class LifecycleProjector:
         """
         return (
             mode == "live"
-            and int(controller.get("checkpoint") or 0)
-            == int(controller.get("source_high_watermark") or 0)
+            # ``telemetry_events`` is a retained source window.  The durable
+            # checkpoint is a global sequence and may be higher than the
+            # newest retained lifecycle record after source truncation; that is
+            # not a backlog.  ``backlog`` is the only current window lag.
+            and int(controller.get("backlog") or 0) == 0
             and int(controller.get("quarantine_count") or 0) == 0
         )
 
@@ -1513,7 +1506,13 @@ def _stage_status(value: Any) -> str:
 
 
 class PostgresLifecycleSource:
-    """Read committed telemetry rows and receive transaction-scoped wakeups."""
+    """Read the retained lifecycle source window and receive wakeups.
+
+    ``ingested_seq`` is global, but ``telemetry_events`` is retained and may be
+    truncated independently of the durable projection.  Both the watermark and
+    fetch therefore use the same lifecycle-type window; a historical checkpoint
+    greater than an empty retained window is valid, not a source rewind.
+    """
 
     def __init__(self, dsn: str, *, channel: str = DEFAULT_CHANNEL) -> None:
         self.dsn = dsn
@@ -1575,7 +1574,9 @@ class PostgresLifecycleSource:
         try:
             return int(
                 await conn.fetchval(
-                    "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
+                    "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
+                    "WHERE event_type = ANY($1::text[])",
+                    list(LIFECYCLE_EVENT_TYPE_QUERY),
                 )
                 or 0
             )
@@ -1590,8 +1591,10 @@ class PostgresLifecycleSource:
             rows = await conn.fetch(
                 "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
                 "FROM telemetry_events WHERE ingested_seq > $1 "
-                "ORDER BY ingested_seq ASC LIMIT $2",
+                "AND event_type = ANY($2::text[]) "
+                "ORDER BY ingested_seq ASC LIMIT $3",
                 int(checkpoint),
+                list(LIFECYCLE_EVENT_TYPE_QUERY),
                 int(limit),
             )
         finally:
