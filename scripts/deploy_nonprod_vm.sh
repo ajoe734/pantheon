@@ -2280,8 +2280,6 @@ PY
         --status-root "${PANTHEON_STATUS_ROOT_HOST}"
     else
       promotion_args=(--promote --repo "$command_root")
-      if [[ ! "$configured_root" =~ ^${DEV_SUPERVISOR_COMMAND_RUNTIME_PARENT}/[0-9a-f]{40}$ ]]; then
-      fi
       info "requesting governed supervisor promotion configured=${configured_root} candidate=${command_root}"
       "${command_root}/scripts/promote-supervisor-runtime.sh" "${promotion_args[@]}" \
         || error "governed supervisor promotion handoff failed"
