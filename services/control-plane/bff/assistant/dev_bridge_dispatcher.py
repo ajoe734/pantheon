@@ -3,7 +3,7 @@
 ASST-INTEG-006 — owned by Claude2.
 
 Flow:
-1. Verify packet signature (HMAC-SHA256 via dev_bridge_signer).
+1. Verify packet signature (Ed25519 via dev_bridge_signer).
 2. Reject duplicate packets via replay protection.
 3. Submit every BridgeTask in one bounded ``dev-bridge-materialize-batch``
    command to the installed governed scripts/ai_status.py runtime. The command
@@ -45,14 +45,16 @@ from .dev_bridge_models import (
     TaskDispatchRecord,
 )
 from .dev_bridge_signer import (
+    PUBLIC_KEYS_ENV,
     mark_packet_seen,
     packet_digest,
     packet_replay_lock,
     replay_record,
+    public_key_environment,
     verify_packet,
 )
 
-BRIDGE_STATUS_ACTOR = "Human/Ops"
+BRIDGE_STATUS_ACTOR = "assistant.dev.source"
 STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
 COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
 COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
@@ -442,6 +444,28 @@ def _merged_environment(
     return environment
 
 
+_SUBPROCESS_SIGNING_AUTHORITY_ENV = {
+    "BRIDGE_SIGNING_PRIVATE_KEY",
+    "BRIDGE_SIGNING_KEY",
+    "BRIDGE_SIGNING_KEY_ID",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_JSON",
+}
+
+
+def _verification_subprocess_environment(
+    environment: Mapping[str, str],
+) -> Dict[str, str]:
+    """Expose verification material, never signing/operator authority."""
+
+    sanitized = dict(environment)
+    for name in _SUBPROCESS_SIGNING_AUTHORITY_ENV:
+        sanitized.pop(name, None)
+    return sanitized
+
+
 def _environment_targets_status_root(
     repo_root: str,
     *,
@@ -490,6 +514,7 @@ def _git_stdout(repo_root: Path, *args: str) -> str:
         capture_output=True,
         text=True,
         check=False,
+        env=_verification_subprocess_environment(os.environ),
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "git command failed").strip()
@@ -717,6 +742,7 @@ def _task_spec_hash(task: BridgeTask) -> str:
 
 
 def _task_metadata(packet: DevTaskPacket, task: BridgeTask) -> Dict[str, object]:
+    operator = packet.operator_authorization
     return {
         "dev_bridge": {
             "packet_id": packet.packet_id,
@@ -734,6 +760,10 @@ def _task_metadata(packet: DevTaskPacket, task: BridgeTask) -> Dict[str, object]
             "intent": packet.intent,
             "mode": packet.mode,
             "actor": packet.actor.model_dump(mode="json", by_alias=True),
+            "operator_id": operator.operator_id if operator else None,
+            "control_activation_id": operator.control_activation_id if operator else None,
+            "operator_capability": operator.capability if operator else None,
+            "operator_authorized_at": operator.issued_at if operator else None,
         }
     }
 
@@ -745,6 +775,7 @@ def _materialization_batch_payload(packet: DevTaskPacket) -> Dict[str, object]:
         "packet_id": packet.packet_id,
         "packet_digest": digest,
         "actor": BRIDGE_STATUS_ACTOR,
+        "signed_packet": packet.model_dump(mode="json", by_alias=False),
         "tasks": [
             {
                 "task_id": task.id,
@@ -991,7 +1022,9 @@ def _canonical_task_state_readback(
         raise ValueError(
             "canonical task-state readback requires the governed command runtime"
         )
-    command_environment = {**environment, **status_env}
+    command_environment = _verification_subprocess_environment(
+        {**environment, **status_env}
+    )
     for name in AUTO_WORKER_ENV_NAMES:
         command_environment.pop(name, None)
     command_environment["AI_NAME"] = BRIDGE_STATUS_ACTOR
@@ -1160,6 +1193,7 @@ def _dispatch_task_batch(
             # to this repo_root remains fail-closed below.
             env.pop(REQUIRE_TASK_STATE_READBACK_ENV, None)
     env.update(status_env)
+    env = _verification_subprocess_environment(env)
     # Signature verification and constraint checks happen before this private
     # helper is reached. Run the canonical mutation as the repo-local bridge
     # service rather than borrowing any ambient auto-worker lease. The signed
@@ -1354,6 +1388,8 @@ def _dispatch_task_packet_under_fence(
     dry_run = request.dry_run
     dispatched_at = _now()
     environment = _merged_environment(runtime_env)
+    if key_store:
+        environment[PUBLIC_KEYS_ENV] = public_key_environment(key_store)
 
     verification_started = time.monotonic()
     verify_packet(packet, key_store=key_store)

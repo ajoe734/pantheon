@@ -36,6 +36,19 @@ def test_render_systemd_service_pins_explicit_live_config() -> None:
     ) in unit
 
 
+def test_render_systemd_service_loads_public_verifier_environment() -> None:
+    repo = Path("/tmp/pantheon repo")
+    authority = Path("/tmp/pantheon runtime/supervisor public.env")
+
+    unit = render_systemd_service(repo, authority_env_file=authority)
+
+    assert 'EnvironmentFile="/tmp/pantheon runtime/supervisor public.env"' in unit
+    assert (
+        'Environment=PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE="/tmp/pantheon runtime/supervisor public.env"'
+        in unit
+    )
+
+
 def test_render_systemd_timer_runs_every_minute() -> None:
     timer = render_systemd_timer()
 
@@ -66,3 +79,16 @@ def test_render_cron_line_pins_shell_quoted_live_config() -> None:
 
     assert "cd '/home/lupin/pantheon dev'" in line
     assert "--config '/home/lupin/pantheon runtime/live supervisor.json'" in line
+
+
+def test_render_cron_line_loads_public_verifier_environment() -> None:
+    repo = Path("/home/lupin/pantheon")
+    authority = Path("/home/lupin/runtime/supervisor public.env")
+
+    line = render_cron_line(repo, authority_env_file=authority)
+
+    assert (
+        "PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE='/home/lupin/runtime/supervisor public.env' "
+        "bash scripts/run-supervisor-watchdog.sh"
+        in line
+    )

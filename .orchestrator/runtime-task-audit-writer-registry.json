@@ -4,14 +4,12 @@
   "transaction_scope": "complete_read_validate_mutate_replace",
   "direct_canonical_writes_forbidden": true,
   "writers": {
-    ".orchestrator/runtime_state.py": "f076ba30170ec2160eaec6c6439122945f39b87efa8ffcaa4c1199659069518c",
-    ".orchestrator/supervisor.py": "ee95bdb6507a86d4cd4553536dbd417ecb75eda690ed9ab8ac8f66f8b7d850d6",
-    ".orchestrator/common.py": "75265090bcf6f2c476d30ead15ba1bbbd10f3a62020fbf29fdae2d70e6dbf50d",
-    ".orchestrator/approval_queue.py": "08d0ebf738fe022b5eaa9b79cd626d4859772cce8e09ef4efd63b8a5d7006c3e",
-    ".orchestrator/adapters/file_inbox.py": "c5d6949c13d41b528b7b6033e4caa1b7acb54ab2454ce8cd38f34a8c772f4e49",
-    ".orchestrator/watch_events.py": "9a8f38a903191f02b4ccea6bf68cb419e8a0fdc4cfd523354cf1b09f1d8cc5af",
-    ".orchestrator/supervisor_watchdog.py": "1f8b1d2099c35ca8123c940e6429d81ac69fea1be55e8b11006e334ff1e6d176",
-    "scripts/ai_status.py": "434016289d8f0e82cde045e46ba07c788e9abaefcba01e95a761d96e80b20cfd",
-    "scripts/dispatch_loop_product_level_remediation_2026-07-13.py": "06500bbb85cbe81c42efc616abc184bdc638c068c90474b782c09d9c07086dd1"
+    ".orchestrator/runtime_state.py": "96d8521d7c4952b772aa00bc75918ed60d449f05104a556ac300de8cfc58ba51",
+    ".orchestrator/supervisor.py": "b41a2835c6ac132578ef8c883fdcab0dcc9b184074a4709aa0c1e1f0629a58d2",
+    ".orchestrator/common.py": "f7c5a4cfa7f99b8409c9fd963f86a83d868741ff6d5a09b869ce5748212891be",
+    ".orchestrator/approval_queue.py": "4fe8bff848a9987308b8d501cb52d72486b423db1b67c0ef2c885e3f5d0d1963",
+    ".orchestrator/watch_events.py": "58f7e807a369eae720986263d8d98be80bc3fc8ddcee261010e3081fc8c86d84",
+    ".orchestrator/supervisor_watchdog.py": "ddff92e5f48538ceba1da4ff91f73e54c97200add1841471bf014c28f1fa3b26",
+    "scripts/ai_status.py": "78b73b8c1dfa33ea74f23e91539c6f45c5fe5d713ea34f65f1806a9f0dfd0231"
   }
 }

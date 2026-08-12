@@ -1,159 +1,37 @@
 # Agent Orchestrator
 
-## What This Is
+The current control-plane specification is
+[`docs/02-architecture/supervisor-authority-v2.md`](02-architecture/supervisor-authority-v2.md).
+This page is only the short operator entry point.
 
-This repo now contains a WSL-native orchestrator under `.orchestrator/` that currently uses these shared-state files:
-
-- `ai-status.json`
-- `ai-activity-log.jsonl`
-- `current-work.md`
-- `docs-site/index.html`
-
-Framework redesign note:
-- the current shared-state model is still operational, but it is too coarse for long-lived collaboration
-- the proposed layered replacement is documented in [orchestrator-state-plane-redesign.md](/home/ajoe734/code/pantheon/docs/orchestrator-state-plane-redesign.md)
-
-The old model let each provider read the shared-state files for broad context. The redesign direction is to move execution workers onto task-scoped briefs while keeping shared-state files as durable truth or derived narrative, depending on the file.
-
-## Why We Do Not Use Windows GUI Automation
-
-This design does not depend on:
-
-- window focus
-- clipboard injection
-- SendKeys
-- browser automation
-- desktop clicking
-
-Instead it uses verified local capabilities:
-
-- provider CLIs when they exist
-- VS Code workspace files
-- Claude hooks plus a local permission broker
-- file inbox fallback when no verified shell entrypoint exists
-
-## Runtime Layout
-
-Text form:
-
-1. `.orchestrator/watch_events.py` watches `ai-status.json`
-2. It de-duplicates transitions and appends minimal wake jobs to `.orchestrator/event-queue.jsonl`
-3. `.orchestrator/supervisor.py` drains that queue, starts provider workers, and tracks runtime state in `.orchestrator/state.json`
-4. Claude approvals flow through `.orchestrator/approval_queue.py` and the local MCP permission broker
-5. Activity is appended to `ai-activity-log.jsonl`
-6. GitHub approval bus mirrors review/blocker state through `.orchestrator/github_bus.py`
-
-`ai-status.json` remains the durable execution source of truth. Queue, approval, and worker session files under `.orchestrator/` are transient control-plane state. `current-work.md` is a derived human summary and should not be the default machine context for worker execution. Planning-backed execution tasks now carry structured `source_ref` metadata back to the accepted planning packet instead of copying planning narrative into task text.
-
-The supervisor now also understands cross-repo delivery handoffs through `.coordination/*.yaml` and can mirror them into GitHub coordination issues while keeping Pantheon as the runtime authority.
-
-## Start The System
-
-Run the full local orchestrator:
+Start the supervisor:
 
 ```bash
 python3 .orchestrator/supervisor.py
 ```
 
-One-shot processing pass:
+Run one complete cycle:
 
 ```bash
 python3 .orchestrator/supervisor.py --once
 ```
 
-Watcher-only scan:
+Inspect why a canonical task is or is not dispatchable:
 
 ```bash
-python3 .orchestrator/watch_events.py --once
+python3 scripts/explain_dispatch.py TASK-ID --json
 ```
 
-## Test It
-
-Refresh the capability report:
+Verify runtime identity and readiness:
 
 ```bash
-python3 .orchestrator/doctor.py
+python3 scripts/supervisor_runtime_health.py --require-watchdog --json
 ```
 
-Queue a manual wake-up:
+There is no watcher-only dispatch, manual wake event, GitHub `/dispatch`,
+chair lane, or coordination queue replay in V2. Create or update a canonical
+task through `scripts/ai-status.sh`; the shared planner is the only producer of
+delivery intents, and the delivery queue is the only worker-launch route.
 
-```bash
-python3 .orchestrator/emit_test_event.py --agent claude --task-id TEST-001 --title "Manual wake-up test"
-```
-
-Queue and dispatch immediately:
-
-```bash
-python3 .orchestrator/emit_test_event.py --agent claude --task-id TEST-001 --title "Manual wake-up test" --dispatch-now
-```
-
-Run the approval queue over HTTP:
-
-```bash
-python3 .orchestrator/approval_queue.py serve --listen 127.0.0.1:8765
-```
-
-Apply provider permission settings:
-
-```bash
-python3 .orchestrator/sync_provider_permissions.py --apply
-```
-
-GitHub approval bus docs:
-
-```bash
-sed -n '1,220p' docs/github-approval-bus.md
-```
-
-Delivery coordination bus docs:
-
-```bash
-sed -n '1,260p' docs/delivery-coordination-bus.md
-```
-
-## Claude Path
-
-- Primary path: `claude -p` with stream-json output, hook events, and a committed MCP config at `.orchestrator/claude-approval-broker.mcp.json`
-- Broker path: `.orchestrator/claude_permission_prompt_mcp.py`
-- Policy path: `.orchestrator/permission_broker.py`
-- Queue path: `.orchestrator/approval_queue.py`
-
-Routine read/search/repo-local edit actions are auto-allowed. Destructive actions are auto-denied. Unknown or high-risk actions are sent to the local approval queue, where you can resolve them with:
-
-```bash
-python3 .orchestrator/approval_queue.py list
-python3 .orchestrator/approval_queue.py allow <approval-id>
-python3 .orchestrator/approval_queue.py deny <approval-id>
-```
-
-For Claude deferred tool calls, the broker now resumes with the exact approved tool rule only. It temporarily suppresses conflicting `ask` rules, resumes the session with the approved `allowedTools`, and restores the original policy after the tool finishes.
-
-If the `claude` CLI is not installed, the adapter falls back to `.llm-inbox/claude.md`.
-
-## Copilot Path
-
-There are two Copilot execution routes:
-
-- `copilot_local`: uses Copilot CLI autopilot in the current WSL workspace
-- `copilot_cloud`: uses `gh agent-task create` when GitHub CLI and auth are available
-
-`grok` is treated as a Copilot model preference, not a standalone provider. If Copilot CLI is missing, the local adapter falls back to `.llm-inbox/copilot.md` or `.llm-inbox/grok.md`. If the requested model is not available on the authenticated Copilot account, the worker now exits as `failed` and the reason is written to `ai-activity-log.jsonl`.
-
-## Extending To Another Repo
-
-Copy these pieces:
-
-- `.orchestrator/`
-- `.llm-inbox/`
-- `.github/agents/`
-- `.claude/settings.local.example.json`
-- `docs/provider-capabilities.md`
-- `docs/provider-permissions.md`
-
-Then update `.orchestrator/config.json`:
-
-- shared-state file paths
-- task schema mappings
-- agent/provider mappings
-- provider runtime settings
-- approval queue/broker defaults
+Provider permission and approval tools remain separate safety controls for the
+worker process. They do not assign tasks or create dispatch intents.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline verification for the authoritative Supervisor V2 task-state store."""
+"""Verify Supervisor Authority V2 head parity or run an explicit offline audit."""
 from __future__ import annotations
 
 import argparse
@@ -18,8 +18,9 @@ if str(ORCHESTRATOR) not in sys.path:
 from common import canonical_task_state_lock_file
 from rewrite.task_state_store import (
     TaskStateStoreError,
+    audit_full_journal,
     load_snapshot,
-    verify_full_chain,
+    verify_archive_anchor,
     verify_snapshot,
 )
 
@@ -29,7 +30,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--event-log",
         default=os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG"),
-        help="Append-only journal path (or PANTHEON_TASK_STATE_EVENT_LOG).",
+        help="V2 transition-delta journal path (or PANTHEON_TASK_STATE_EVENT_LOG).",
     )
     parser.add_argument(
         "--status-file",
@@ -38,9 +39,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
-        "--skip-full-chain",
+        "--full-replay",
         action="store_true",
-        help="Skip offline validation of every V2 transition and frozen V1 archive.",
+        help="Offline-only: replay and hash every V2 delta event.",
+    )
+    parser.add_argument(
+        "--verify-archive",
+        action="store_true",
+        help="Offline-only: additionally hash the immutable legacy V1 archive.",
     )
     return parser.parse_args(argv)
 
@@ -53,6 +59,7 @@ def emit(payload: dict[str, Any], *, as_json: bool) -> None:
         "task-state shadow verification: "
         f"ok={payload.get('ok')} events={payload.get('event_count', 0)} "
         f"nonterminal_tasks={payload.get('nonterminal_task_count', '-')} "
+        f"tail_events={payload.get('replayed_tail_events', '-')} "
         f"error={payload.get('error') or '-'}"
     )
 
@@ -74,10 +81,23 @@ def main(argv: list[str] | None = None) -> int:
             status = json.loads(status_path.read_text(encoding="utf-8"))
             if not isinstance(status, dict):
                 raise ValueError("status projection must be a JSON object")
-            snapshot = load_snapshot(Path(args.event_log).expanduser())
+            # A regular verification reads only the atomic V2 head and any tail
+            # after its recorded offset.  It never hashes the journal prefix.
+            snapshot = load_snapshot(
+                Path(args.event_log).expanduser(),
+                refresh_checkpoint=False,
+            )
         report = verify_snapshot(snapshot, status)
-        if not args.skip_full_chain:
-            report["full_chain"] = verify_full_chain(Path(args.event_log).expanduser())
+        if args.full_replay:
+            audit = audit_full_journal(Path(args.event_log).expanduser())
+            report["full_audit"] = {
+                key: value for key, value in audit.items() if key != "state"
+            }
+            report["ok"] = bool(report["ok"] and audit["state_sha256"] == snapshot["state_sha256"])
+        if args.verify_archive:
+            archive = verify_archive_anchor(Path(args.event_log).expanduser())
+            report["archive_audit"] = archive
+            report["ok"] = bool(report["ok"] and archive["ok"])
     except TaskStateStoreError as exc:
         payload = {"ok": False, "error": str(exc), "error_kind": "integrity"}
         emit(payload, as_json=args.json)

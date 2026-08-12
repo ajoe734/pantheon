@@ -170,38 +170,22 @@ def build_fixture(
     task_rows: int,
     command_specs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Write a valid hash-chained journal in one pass.
-
-    Appending through ``append_state_commit`` would re-read the growing file
-    once per commit, making fixture construction quadratic; the chain is built
-    directly here using the store's own digest rules.
-    """
+    """Write a valid V2 delta journal and atomic current head."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
-    previous_sha256: str | None = None
-    with path.open("wb") as handle:
-        for sequence in range(1, events + 1):
-            state = board(
-                task_rows,
-                sequence,
-                command_specs=command_specs,
-            )
-            event: dict[str, Any] = {
-                "version": store.EVENT_VERSION,
-                "type": store.EVENT_TYPE_STATE_COMMITTED,
-                "sequence": sequence,
-                "committed_at": "2026-07-26T22:00:00Z",
-                "source": "bench-fixture",
-                "previous_event_sha256": previous_sha256,
-                "state_sha256": store.sha256_json(state),
-                "state": state,
-            }
-            event_sha256 = store.sha256_json(event)
-            event["event_sha256"] = event_sha256
-            event["event_id"] = f"task-state-{event_sha256}"
-            handle.write(store.canonical_json_bytes(event) + b"\n")
-            previous_sha256 = event_sha256
+    for sequence in range(1, events + 1):
+        state = board(
+            task_rows,
+            sequence,
+            command_specs=command_specs,
+        )
+        store.append_state_commit(
+            path,
+            state,
+            source="bench-fixture",
+            committed_at="2026-07-26T22:00:00Z",
+        )
     return {
         "events": events,
         "task_rows": task_rows,
@@ -224,12 +208,10 @@ def legacy_commit(path: Path, state: dict[str, Any]) -> None:
     sample measures the same journal.
     """
 
-    event_path = store._prepare_parent(path)
-    with store._store_lock(event_path, shared=False):
-        events = store._load_events_unlocked(event_path)
-        store.validate_state_transition(state, events[-1]["state"] if events else None)
-        store.sha256_json(state)
-        store._load_events_unlocked(event_path)
+    events = store.load_events(path)
+    store.validate_state_transition(state, events[-1]["state"] if events else None)
+    store.sha256_json(state)
+    store.load_events(path)
 
 
 def current_load_state(path: Path) -> dict[str, Any]:
@@ -246,8 +228,8 @@ def current_commit(path: Path, state: dict[str, Any]) -> None:
 
     event_path = store._prepare_parent(path)
     with store._store_lock(event_path, shared=False):
-        snapshot = store._load_snapshot_unlocked(event_path)
-        store.validate_state_transition(state, snapshot["last_event"]["state"])
+        snapshot = store._snapshot_from_head_and_tail(event_path, repair=True)
+        store.validate_state_transition(state, snapshot["state"])
         store.sha256_json(state)
 
 

@@ -11,10 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
+import promote_supervisor_runtime as promotion
 import provision_live_supervisor_config as provision
 
 from provision_live_supervisor_config import (
-    apply_coordination_policy,
     apply_provider_account_schema,
     apply_ready_dispatcher_policy,
     apply_supervisor_lease_policy,
@@ -109,16 +109,19 @@ def _immutable_runtime_fixture(
     _git(tmp_path, "clone", "--no-local", str(seed), str(candidate))
     _git(candidate, "checkout", "--detach", second)
     _git(candidate, "remote", "set-url", "origin", "https://github.com/ajoe734/pantheon.git")
-    monkeypatch.setattr(provision.runtime_promotion, "ALLOWED_COMMAND_RUNTIMES_PREFIX", parent)
-    monkeypatch.setattr(provision.runtime_promotion, "TRUSTED_ORIGIN_DEV_URL", str(remote))
+    monkeypatch.setattr(promotion, "ALLOWED_COMMAND_RUNTIMES_PREFIX", parent)
+    monkeypatch.setattr(
+        promotion,
+        "ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX",
+        tmp_path / "rollback-command-runtimes",
+    )
+    monkeypatch.setattr(promotion, "TRUSTED_ORIGIN_DEV_URL", str(remote))
     return remote, seed, candidate, first, second
 
 
 def test_apply_provider_account_schema_removes_stale_live_aliases() -> None:
     repo = {
         "ready_dispatcher": {
-            "require_explicit_provider_accounts": True,
-            "allow_legacy_provider_account_aliases": False,
             "max_concurrent_per_account": {"shared": 1},
         },
         "providers": {
@@ -147,7 +150,7 @@ def test_apply_provider_account_schema_removes_stale_live_aliases() -> None:
 
 def test_apply_provider_account_schema_rejects_unknown_provider_without_account() -> None:
     repo = {
-        "ready_dispatcher": {"require_explicit_provider_accounts": True},
+        "ready_dispatcher": {},
         "providers": {"codex": {"account": "codex1"}},
     }
     rendered = {
@@ -159,14 +162,12 @@ def test_apply_provider_account_schema_rejects_unknown_provider_without_account(
         apply_provider_account_schema(repo, rendered)
 
 
-def test_apply_ready_dispatcher_policy_replaces_stale_disabled_capacity_overlay() -> None:
+def test_apply_ready_dispatcher_policy_replaces_capacity_and_removes_retired_overlay() -> None:
     repo = {
         "ready_dispatcher": {
             "enabled": True,
-            "disabled_agents": ["Antigravity2", "Copilot"],
             "sidecar_only_agents": [],
             "target_workload": {"Codex": 30, "Codex2": 30},
-            "max_tasks_per_agent_by_agent": {"Codex": 4, "Codex2": 4},
             "max_dispatches_per_tick": 10,
             "max_active_workers_per_task": 1,
             "max_concurrent_per_account": {"codex1": 4, "codex2": 4},
@@ -236,27 +237,6 @@ def test_apply_supervisor_lease_policy_replaces_stale_live_overlay() -> None:
     }
 
 
-def test_apply_coordination_policy_replaces_stale_live_overlay() -> None:
-    repo = {
-        "coordination": {
-            "enabled": False,
-        },
-    }
-    rendered = {
-        "coordination": {
-            "enabled": True,
-            "environment_only_key": "preserved",
-        },
-    }
-
-    apply_coordination_policy(repo, rendered)
-
-    assert rendered["coordination"] == {
-        "enabled": False,
-        "environment_only_key": "preserved",
-    }
-
-
 def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Path) -> None:
     command_root = tmp_path / "dev-root"
     status_root = tmp_path / "canonical-root"
@@ -269,7 +249,6 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
             "activity_log": "ai-activity-log.jsonl",
         },
         "watchdog": {"enabled": True, "supervisor_command": ["stale"]},
-        "coordination": {"enabled": False},
         "supervisor": {"lease_requires_work_progress": True},
         "worker_runtime": {"worker_lease_seconds": 600},
         "task_state_store": {
@@ -279,7 +258,6 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
     }
     existing = {
         "github_bus": {"enabled": False},
-        "coordination": {"enabled": True},
         "paths": {"status_file": "/stale/ai-status.json"},
         "supervisor": {"lease_requires_work_progress": False},
         "worker_runtime": {"worker_lease_seconds": 1800},
@@ -303,7 +281,6 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         "state_file": str(status_root / ".orchestrator" / "state.json"),
         "activity_log": str(status_root / "ai-activity-log.jsonl"),
     }
-    assert rendered["coordination"]["enabled"] is False
     assert rendered["github_bus"]["enabled"] is False
     assert rendered["supervisor"]["lease_requires_work_progress"] is True
     assert rendered["worker_runtime"]["worker_lease_seconds"] == 600

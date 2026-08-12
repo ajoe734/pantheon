@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import gzip
+import base64
 import hashlib
+import hmac
 import io
 import json
 import contextlib
@@ -15,15 +17,39 @@ import tempfile
 import time
 import unittest
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest import mock
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
 import task_archive
+
+
+def _command_approve(state: dict[str, Any], args: list[str]) -> None:
+    ai_status.execute_external_mutation_command("approve", state, args)
+
+
+def _command_reopen(state: dict[str, Any], args: list[str]) -> None:
+    ai_status.execute_external_mutation_command("reopen", state, args)
+
+
+def _command_done(state: dict[str, Any], args: list[str]) -> None:
+    ai_status.execute_external_mutation_command("done", state, args)
+
+
+def _command_reconcile_merged_done(
+    state: dict[str, Any], args: list[str]
+) -> None:
+    ai_status.execute_external_mutation_command(
+        "reconcile_merged_done", state, args
+    )
 
 
 def audited_reassignment_event(
@@ -80,6 +106,7 @@ def _setup_test_isolation(test_case):
     test_case._test_status_file = test_case._test_root / "ai-status.json"
     test_case._test_log_file = test_case._test_root / "ai-activity-log.jsonl"
 
+    (test_case._test_root / ".orchestrator").mkdir()
     test_case._test_status_file.write_text("{}\n", encoding="utf-8")
     test_case._test_log_file.write_text("", encoding="utf-8")
 
@@ -89,7 +116,6 @@ def _setup_test_isolation(test_case):
         "LOG_FILE": ai_status.LOG_FILE,
         "CURRENT_WORK_FILE": ai_status.CURRENT_WORK_FILE,
         "DOCS_SITE_DIR": ai_status.DOCS_SITE_DIR,
-        "PLANNING_STATE_FILE": ai_status.PLANNING_STATE_FILE,
         "ORCHESTRATOR_STATE_FILE": ai_status.ORCHESTRATOR_STATE_FILE,
         "APPROVAL_QUEUE_FILE": ai_status.APPROVAL_QUEUE_FILE,
         "DASHBOARD_BUNDLE_FILE": ai_status.DASHBOARD_BUNDLE_FILE,
@@ -116,7 +142,6 @@ def _teardown_test_isolation(test_case):
     ai_status.LOG_FILE = paths["LOG_FILE"]
     ai_status.CURRENT_WORK_FILE = paths["CURRENT_WORK_FILE"]
     ai_status.DOCS_SITE_DIR = paths["DOCS_SITE_DIR"]
-    ai_status.PLANNING_STATE_FILE = paths["PLANNING_STATE_FILE"]
     ai_status.ORCHESTRATOR_STATE_FILE = paths["ORCHESTRATOR_STATE_FILE"]
     ai_status.APPROVAL_QUEUE_FILE = paths["APPROVAL_QUEUE_FILE"]
     ai_status.DASHBOARD_BUNDLE_FILE = paths["DASHBOARD_BUNDLE_FILE"]
@@ -231,14 +256,11 @@ class StrictActivityTailParsingTests(unittest.TestCase):
     def test_derived_activity_tail_readers_reject_duplicate_keys(self) -> None:
         ambiguous_rows = (
             '{"event_id":"first","event_id":"second",'
-            '"type":"task_helper_claimed"}\n',
-            '{"event_id":"nested","type":"task_helper_claimed",'
+            '"type":"worker_started"}\n',
+            '{"event_id":"nested","type":"worker_started",'
             '"metadata":{"role":"a","role":"b"}}\n',
         )
-        readers = (
-            ("load_logs", ai_status.load_logs),
-            ("recent_helper_claims", ai_status.recent_helper_claims),
-        )
+        readers = (("load_logs", ai_status.load_logs),)
         original_log_file = ai_status.LOG_FILE
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -508,6 +530,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                     "tasks": [
                         {
                             "id": self.task_id,
+                            "generation": 1,
                             "owner": "Codex",
                             "reviewer": "Claude",
                             "status": "in_progress",
@@ -549,6 +572,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                     "run_id": self.run_id,
                     "logical_agent_id": logical_agent_id,
                     "task_id": worker_task_id,
+                    "task_generation": 1,
                     "status": "running",
                     "lease_expires_at": lease_expires_at,
                     "workspace_path": str(self.workspace),
@@ -558,6 +582,11 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                     "pid": pid,
                     "pid_start_ticks": pid_start_ticks,
                     "process_generation": process_generation,
+                    "request_snapshot": {
+                        "task_id": worker_task_id,
+                        "task_generation": 1,
+                        "metadata": {"task_generation": 1},
+                    },
                 }
             },
             "worker_worktrees": {
@@ -650,6 +679,31 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             runtime_state=self._runtime_state(logical_agent_id="claude"),
         )
 
+    def test_recalled_assignment_generation_revokes_old_worker_mutations(self) -> None:
+        self._validate(
+            "note",
+            [self.task_id, "stale note"],
+            actor="Codex",
+            env_task_id=self.task_id,
+        )
+        recalled_state = {
+            "tasks": [
+                {
+                    "id": self.task_id,
+                    "generation": 2,
+                    "owner": "Codex2",
+                    "reviewer": "Claude",
+                    "status": "in_progress",
+                }
+            ]
+        }
+        with self.assertRaisesRegex(RuntimeError, "task generation mismatch"):
+            ai_status.validate_bound_status_command_task_authority(
+                recalled_state,
+                "note",
+                [self.task_id, "stale note"],
+            )
+
     def test_accepts_refreshed_process_generation_after_resume_pid_replacement(self) -> None:
         runtime_state = self._runtime_state()
         worker = runtime_state["workers"][self.run_id]
@@ -698,11 +752,54 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 RuntimeError,
-                "status command lease required for auto worker: Codex",
+                "exact active worker lease or a BFF-issued operator assertion",
             ):
                 ai_status.validate_active_status_command_lease(
                     "progress", [self.task_id, "missing lease"]
                 )
+
+    def test_rejects_human_ops_and_reviewer_spoof_without_run_lease(self) -> None:
+        for actor, command in (("Human/Ops", "reopen"), ("Claude", "approve")):
+            with (
+                self.subTest(actor=actor),
+                mock.patch.dict(os.environ, {"AI_NAME": actor}, clear=True),
+                mock.patch.object(ai_status, "STATUS_ROOT", self.root),
+                mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "exact active worker lease"):
+                    ai_status.validate_active_status_command_lease(
+                        command, [self.task_id, "spoofed mutation"]
+                    )
+
+    def test_operator_assertion_cannot_impersonate_reviewer_or_owner_actions(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Claude",
+                ai_status.OPERATOR_ASSERTION_ENV: "{}",
+            },
+            clear=True,
+        ):
+            self.assertEqual(ai_status.current_actor(), "Human/Ops")
+            for command in ("approve", "done", "handoff", "progress"):
+                with self.subTest(command=command), self.assertRaisesRegex(
+                    RuntimeError, "operator assertions cannot authorize"
+                ):
+                    ai_status.validate_active_status_command_lease(
+                        command, [self.task_id, "attempted role impersonation"]
+                    )
+
+    def test_operator_assertion_cannot_create_a_source_task(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {ai_status.OPERATOR_ASSERTION_ENV: "{}"},
+            clear=True,
+        ), self.assertRaisesRegex(RuntimeError, "cannot create source tasks"):
+            ai_status.authorize_operator_assertion_if_needed(
+                {"tasks": []},
+                "assign",
+                ["NEW-SOURCE-TASK", "Codex", "Claude"],
+            )
 
     def test_rejects_expired_run_lease(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "status command lease .* is expired"):
@@ -1043,6 +1140,13 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         _setup_test_isolation(self)
         self.addCleanup(_teardown_test_isolation, self)
         self.journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        self.bridge_private_key = Ed25519PrivateKey.from_private_bytes(
+            hashlib.sha256(b"bridge-test-key-for-ai-status-p0-authority").digest()
+        )
+        bridge_public_key = self.bridge_private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
         self.env_patch = mock.patch.dict(
             os.environ,
             {
@@ -1054,6 +1158,13 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
                 "ORCH_AGENT_ID": "",
                 "ORCH_PROVIDER": "",
                 "ORCH_SESSION_ID": "",
+                "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": json.dumps(
+                    {
+                        "assistant-bridge-dev": base64.urlsafe_b64encode(
+                            bridge_public_key
+                        ).decode().rstrip("=")
+                    }
+                ),
             },
             clear=False,
         )
@@ -1117,6 +1228,44 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         }
 
     def _payload_path(self, rows: list[dict[str, Any]], *, packet_id: str, packet_digest: str) -> Path:
+        now = datetime.now(timezone.utc)
+        signed_packet = {
+            "version": "pantheon.assistant.dev-task.v1",
+            "packet_id": packet_id,
+            "intent": "governed_supervisor_architecture_cutover",
+            "emitted_at": now.isoformat().replace("+00:00", "Z"),
+            "actor": {"id": "management-ai", "roles": ["source"], "capabilities": ["assistant.dev.source"]},
+            "operator_authorization": {
+                "operator_id": "op-test",
+                "control_activation_id": "activation-test",
+                "capability": "assistant.canonical.mutate",
+                "mfa_verified": True,
+                "issued_at": now.isoformat().replace("+00:00", "Z"),
+                "expires_at": (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                "nonce": packet_id + "-nonce",
+            },
+            "mode": "kernel_debug",
+            "source_conversation_id": "conversation-20260811",
+            "source_turn_ids": ["turn-1"],
+            "documents": [],
+            "tasks": [deepcopy(row["task_metadata"]["dev_bridge"]["task_spec"]) for row in rows],
+            "constraints": {"allowed_repos": ["pantheon"], "requires_branch_pr_merge": True, "no_direct_shell_from_web": True},
+            "audit_conversation_href": None,
+            "signature": None,
+        }
+        body = deepcopy(signed_packet)
+        body.pop("signature")
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        packet_digest = hashlib.sha256(canonical).hexdigest()
+        signed_packet["signature"] = {
+            "key_id": "assistant-bridge-dev",
+            "algorithm": "Ed25519",
+            "value": base64.urlsafe_b64encode(
+                self.bridge_private_key.sign(canonical)
+            ).decode().rstrip("="),
+        }
+        for row in rows:
+            row["task_metadata"]["dev_bridge"]["packet_digest"] = packet_digest
         payload = self._test_root / "batch.json"
         payload.write_text(
             json.dumps(
@@ -1124,7 +1273,8 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
                     "schema_version": ai_status.DEV_BRIDGE_BATCH_SCHEMA_VERSION,
                     "packet_id": packet_id,
                     "packet_digest": packet_digest,
-                    "actor": "Human/Ops",
+                    "actor": "assistant.dev.source",
+                    "signed_packet": signed_packet,
                     "tasks": rows,
                 }
             ),
@@ -1161,6 +1311,25 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             )
         return json.loads(output.getvalue())
 
+    def test_bridge_consume_does_not_evict_operator_assertion_receipts(self) -> None:
+        packet_id = "pkt-ledger-isolation-20260811T000000Z"
+        row = self._task_row("LEDGER-ISOLATION", packet_id=packet_id)
+        payload = self._payload_path([row], packet_id=packet_id, packet_digest="unused")
+        batch = ai_status.load_dev_bridge_materialize_batch(str(payload))
+        state = {
+            "consumed_canonical_mutation_assertions": {
+                "op_keep": {
+                    "nonce": "operator-nonce",
+                    "consumed_at": "2026-01-01T00:00:00Z",
+                }
+            }
+        }
+
+        ai_status.verify_signed_dev_bridge_packet(batch, state=state)
+
+        self.assertIn("op_keep", state["consumed_canonical_mutation_assertions"])
+        self.assertEqual(len(state["consumed_dev_bridge_packets"]), 1)
+
     def test_batch_commits_every_task_in_exactly_one_journal_event(self) -> None:
         packet_id = "pkt-batch-ok-20260811T000000Z"
         digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
@@ -1169,6 +1338,7 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             self._task_row("BATCH-ATOMIC-TWO", packet_id=packet_id, packet_digest=digest),
         ]
         payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+        bound_digest = ai_status.load_dev_bridge_materialize_batch(str(payload))["packet_digest"]
 
         result = self._run_main(payload)
 
@@ -1192,7 +1362,7 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         )
         for task in batch_tasks:
             self.assertEqual(task["dev_bridge"]["packet_id"], packet_id)
-            self.assertEqual(task["dev_bridge"]["packet_digest"], digest)
+            self.assertEqual(task["dev_bridge"]["packet_digest"], bound_digest)
 
     def test_second_row_failure_commits_nothing_not_even_the_first_row(self) -> None:
         packet_id = "pkt-batch-partial-20260811T000000Z"
@@ -1238,10 +1408,9 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             first_state.get(ai_status.STATUS_ACTIVITY_OUTBOX_KEY)
         )
 
-        # An exact retry -- every row already matches its bound provenance --
-        # adds zero journal events: it must not error, duplicate the row,
-        # drift its bound provenance, or grow the journal at all.
-        self.assertEqual(self._run_main(payload), 0)
+        # Operator authority is one-shot even when packet provenance is exact.
+        with self.assertRaisesRegex(SystemExit, "already consumed"):
+            self._run_main(payload)
         self.assertEqual(len(load_events(self.journal)), events_after_first)
         second_state = ai_status.load_state()
         second_task = ai_status.get_task(second_state, "BATCH-RETRY-ONE")
@@ -1284,7 +1453,7 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         full_payload = self._payload_path(
             [first, second], packet_id=packet_id, packet_digest=digest
         )
-        with self.assertRaisesRegex(SystemExit, "partial pre-existing packet"):
+        with self.assertRaisesRegex(SystemExit, "already consumed"):
             self._run_main(full_payload)
 
         self.assertEqual(len(load_events(self.journal)), before)
@@ -1307,7 +1476,7 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             ),
             mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
             mock.patch.object(ai_status, "validate_status_root_binding"),
-            self.assertRaisesRegex(SystemExit, "can only be created by"),
+            self.assertRaisesRegex(RuntimeError, "exact active worker lease"),
         ):
             ai_status.main(
                 [
@@ -1377,9 +1546,44 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         other_digest = hashlib.sha256(b"different-payload").hexdigest()
         rows = [self._task_row("BATCH-MISMATCH-ONE", packet_id=packet_id, packet_digest=other_digest)]
         payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+        raw = json.loads(payload.read_text(encoding="utf-8"))
+        raw["tasks"][0]["task_metadata"]["dev_bridge"]["packet_digest"] = other_digest
+        payload.write_text(json.dumps(raw), encoding="utf-8")
 
         with self.assertRaisesRegex(SystemExit, "packet_digest does not match the batch"):
             ai_status.load_dev_bridge_materialize_batch(str(payload))
+
+    def test_forged_self_consistent_batch_without_matching_signed_packet_fails(self) -> None:
+        packet_id = "pkt-forged-batch-20260811T000000Z"
+        rows = [self._task_row("BATCH-FORGED-ONE", packet_id=packet_id)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest="0" * 64)
+        batch = ai_status.load_dev_bridge_materialize_batch(str(payload))
+        batch["tasks"][0]["owner"] = "Claude2"
+        batch["tasks"][0]["task_metadata"]["dev_bridge"]["task_spec"]["owner"] = "Claude2"
+        with self.assertRaisesRegex(SystemExit, "owner binding failed"):
+            ai_status.verify_signed_dev_bridge_packet(batch)
+
+    def test_durable_signed_packet_remains_valid_after_short_admission_expiry(self) -> None:
+        packet_id = "pkt-durable-expiry-20260811T000000Z"
+        rows = [self._task_row("BATCH-DURABLE-ONE", packet_id=packet_id)]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest="0" * 64)
+        raw = json.loads(payload.read_text(encoding="utf-8"))
+        auth = raw["signed_packet"]["operator_authorization"]
+        auth["issued_at"] = "2026-08-11T00:00:00Z"
+        auth["expires_at"] = "2026-08-11T00:05:00Z"
+        body = deepcopy(raw["signed_packet"])
+        body.pop("signature")
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        digest = hashlib.sha256(canonical).hexdigest()
+        raw["packet_digest"] = digest
+        raw["signed_packet"]["signature"]["value"] = base64.urlsafe_b64encode(
+            self.bridge_private_key.sign(canonical)
+        ).decode().rstrip("=")
+        raw["tasks"][0]["task_metadata"]["dev_bridge"]["packet_digest"] = digest
+        payload.write_text(json.dumps(raw), encoding="utf-8")
+        ai_status.verify_signed_dev_bridge_packet(
+            ai_status.load_dev_bridge_materialize_batch(str(payload))
+        )
 
     def test_owner_reassignment_after_materialization_then_replay_row_is_a_no_op(self) -> None:
         """A later Human/Ops reassignment must not be clobbered by an exact replay."""
@@ -1390,21 +1594,60 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
         self.assertEqual(self._run_main(payload), 0)
 
-        with mock.patch.object(ai_status, "validate_status_command_runtime_binding"),             mock.patch.object(ai_status, "validate_status_root_binding"):
-            ai_status.main(
-                ["ai_status.py", "assign", "BATCH-REASSIGN-ONE", "Claude", "Codex2"]
-            )
+        with mock.patch.object(ai_status, "validate_status_command_runtime_binding"), \
+             mock.patch.object(ai_status, "validate_status_root_binding"), \
+             self.assertRaisesRegex(RuntimeError, "exact active worker lease"):
+            ai_status.main(["ai_status.py", "assign", "BATCH-REASSIGN-ONE", "Claude", "Codex2"])
         reassigned = ai_status.load_state()
         task = ai_status.get_task(reassigned, "BATCH-REASSIGN-ONE")
-        self.assertEqual(task["owner"], "Claude")
-        self.assertEqual(task["reviewer"], "Codex2")
+        self.assertEqual(task["owner"], "Codex")
+        self.assertEqual(task["reviewer"], "Antigravity")
         self.assertEqual(task["dev_bridge"]["task_spec"]["owner"], "Codex")
 
-        self.assertEqual(self._run_main(payload), 0)
+        with self.assertRaisesRegex(SystemExit, "already consumed"):
+            self._run_main(payload)
         state = ai_status.load_state()
         task = ai_status.get_task(state, "BATCH-REASSIGN-ONE")
-        self.assertEqual(task["owner"], "Claude")
-        self.assertEqual(task["reviewer"], "Codex2")
+        self.assertEqual(task["owner"], "Codex")
+        self.assertEqual(task["reviewer"], "Antigravity")
+
+    def test_human_ops_reassignment_is_not_blocked_by_retired_wave_state(self) -> None:
+        state = {
+            "agents": [
+                {"name": "Codex", "current_task_ids": ["WAVE-RETIRED-ONE"]},
+                {"name": "Codex2", "current_task_ids": []},
+                {"name": "Claude", "current_task_ids": []},
+            ],
+            "tasks": [
+                {
+                    "id": "WAVE-RETIRED-ONE",
+                    "title": "Retired wave guard",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "status": "todo",
+                    "depends_on": [],
+                    "artifacts": [],
+                    "last_update": "2026-08-11T00:00:00Z",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+            "wave_state": {"status": "frozen", "current_wave_id": "legacy"},
+        }
+        with mock.patch.dict(
+            os.environ,
+            {"AI_NAME": "Human/Ops", "TASK_ASSIGN_REASON": "operator recall"},
+            clear=False,
+        ):
+            ai_status.command_assign(
+                state,
+                ["WAVE-RETIRED-ONE", "Codex2", "Claude"],
+            )
+
+        task = ai_status.get_task(state, "WAVE-RETIRED-ONE")
+        self.assertEqual(task["owner"], "Codex2")
+        self.assertEqual(task["reviewer"], "Claude")
+        self.assertEqual(task["generation"], 2)
 
 
 class StatusRootRoutingTests(unittest.TestCase):
@@ -1424,6 +1667,7 @@ class StatusRootRoutingTests(unittest.TestCase):
         state["tasks"] = [
             {
                 "id": "CENTRAL-ROOT-001",
+                "generation": 1,
                 "title": "Central root routing",
                 "phase": "test",
                 "owner": owner,
@@ -1448,10 +1692,12 @@ class StatusRootRoutingTests(unittest.TestCase):
             "scripts/ai-status.sh",
             "scripts/loop_done_guardrail.py",
             ".orchestrator/common.py",
+            ".orchestrator/canonical_mutation_assertion.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",
             ".orchestrator/rewrite/__init__.py",
+            ".orchestrator/rewrite/task_machine.py",
             ".orchestrator/rewrite/task_state_store.py",
             ".orchestrator/config.json",
         ):
@@ -1622,6 +1868,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                                 "logical_agent_id": "codex2",
                                 "agent_id": "codex2_1",
                                 "task_id": "CENTRAL-ROOT-001",
+                                "task_generation": 1,
                                 "status": "running",
                                 "lease_acquired_at": "2026-07-17T00:00:00Z",
                                 "lease_expires_at": "2999-01-01T00:00:00Z",
@@ -1633,7 +1880,10 @@ class StatusRootRoutingTests(unittest.TestCase):
                                 "status_root": str(central),
                                 "status_command_runtime": issued_runtime,
                                 "request_snapshot": {
+                                    "task_id": "CENTRAL-ROOT-001",
+                                    "task_generation": 1,
                                     "metadata": {
+                                        "task_generation": 1,
                                         "workspace_task_id": "CENTRAL-ROOT-001",
                                         "workspace_path": str(worktree),
                                         "status_root": str(central),
@@ -1741,22 +1991,38 @@ class StatusRootRoutingTests(unittest.TestCase):
                 result = run_status(args, actor="Codex2")
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
+            def bind_runtime_actor(logical_actor: str, agent_id: str) -> None:
+                runtime = json.loads(central_state_path.read_text(encoding="utf-8"))
+                runtime["workers"]["codex-test-run"]["logical_agent_id"] = logical_actor
+                runtime["workers"]["codex-test-run"]["agent_id"] = agent_id
+                central_state_path.write_text(
+                    json.dumps(runtime, indent=2) + "\n", encoding="utf-8"
+                )
+
+            bind_runtime_actor("antigravity", "antigravity_1")
             reopen = run_status(
                 ["reopen", "CENTRAL-ROOT-001", "review requested central changes only"],
                 actor="Antigravity",
+                extra_env={"ORCH_RUN_ID": "codex-test-run"},
             )
             self.assertEqual(reopen.returncode, 0, reopen.stderr + reopen.stdout)
+            bind_runtime_actor("codex2", "codex2_1")
             second_handoff = run_status(
                 ["handoff", "CENTRAL-ROOT-001", "Antigravity", "central second review only"],
                 actor="Codex2",
             )
             self.assertEqual(second_handoff.returncode, 0, second_handoff.stderr + second_handoff.stdout)
+            bind_runtime_actor("antigravity", "antigravity_1")
             approve = run_status(
                 ["approve", "CENTRAL-ROOT-001", "central approval only"],
                 actor="Antigravity",
-                extra_env={"REVIEW_NOTES_ZH": "central approve"},
+                extra_env={
+                    "REVIEW_NOTES_ZH": "central approve",
+                    "ORCH_RUN_ID": "codex-test-run",
+                },
             )
             self.assertEqual(approve.returncode, 0, approve.stderr + approve.stdout)
+            bind_runtime_actor("codex2", "codex2_1")
             done = run_status(
                 ["done", "CENTRAL-ROOT-001", "central done and archive only"],
                 actor="Codex2",
@@ -1823,6 +2089,8 @@ class StatusRootRoutingTests(unittest.TestCase):
                         "pid": worker_pid,
                         "pid_start_ticks": worker_pid_start_ticks,
                         "process_generation": worker_process_generation,
+                        "task_generation": 1,
+                        "actor": "Codex2",
                     },
                 )
             self.assertEqual(
@@ -2221,11 +2489,11 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
     def test_approve_creates_owner_finalize_handoff(self) -> None:
         self.state["tasks"][0]["failure_streak"] = 2
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False):
-            ai_status.command_approve(self.state, ["REG-002", "Review passed. Owner should finalize."])
+            _command_approve(self.state, ["REG-002", "Review passed. Owner should finalize."])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
-        self.assertEqual(task["failure_streak"], 0)
+        self.assertNotIn("failure_streak", task)
         self.assertEqual(task["review_notes_zh"], ["審查通過", "交回 owner 收尾"])
 
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
@@ -2233,6 +2501,84 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertIn("finalize", pending[0]["message"].lower())
+
+    def test_approve_command_has_no_inline_network_fallback(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "resolve_approval_binding",
+                side_effect=AssertionError("network preflight ran under mutation"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "lock-free external mutation preflight"),
+        ):
+            ai_status.command_approve(self.state, ["REG-002", "Approved."])
+
+    def test_external_preflight_task_digest_is_a_short_locked_cas(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(ai_status, "resolve_approval_binding", return_value={}),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                return_value=None,
+            ),
+        ):
+            task = ai_status.get_task(self.state, "REG-002")
+            preflight = ai_status.prepare_external_mutation_preflight(
+                "approve", task, ["REG-002", "Approved."]
+            )
+            task["next"] = "concurrent writer changed this task"
+            with (
+                ai_status.bound_external_mutation_preflight(preflight),
+                self.assertRaisesRegex(SystemExit, "changed after external review evidence"),
+            ):
+                ai_status.command_approve(self.state, ["REG-002", "Approved."])
+
+        self.assertEqual(task["status"], "review")
+
+    def test_canonical_preflight_releases_task_lock_before_external_io(self) -> None:
+        held = {"task": False}
+
+        @contextlib.contextmanager
+        def task_lock(*, shared: bool):
+            self.assertTrue(shared)
+            held["task"] = True
+            try:
+                yield
+            finally:
+                held["task"] = False
+
+        def prepare(command, task, args):
+            self.assertFalse(held["task"])
+            return {
+                "command": command,
+                "task_id": task["id"],
+                "task_digest": ai_status.task_mutation_cas_digest(task),
+            }
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude", "ORCH_RUN_ID": ""}, clear=False),
+            mock.patch.object(ai_status, "canonical_task_state_lock", side_effect=task_lock),
+            mock.patch.object(
+                ai_status,
+                "authoritative_task_state_transaction",
+                return_value=contextlib.nullcontext(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value=self.state),
+            mock.patch.object(ai_status, "validate_active_status_command_lease"),
+            mock.patch.object(
+                ai_status,
+                "prepare_external_mutation_preflight",
+                side_effect=prepare,
+            ) as external,
+        ):
+            result = ai_status.canonical_external_mutation_preflight(
+                "approve", ["REG-002", "Approved."]
+            )
+
+        self.assertEqual(result["task_id"], "REG-002")
+        external.assert_called_once()
 
     def _approval_events(self) -> list[dict]:
         lines = self._test_log_file.read_text(encoding="utf-8").splitlines()
@@ -2274,7 +2620,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 return_value=bridge_evidence,
             ) as github_bridge,
         ):
-            ai_status.command_approve(
+            _command_approve(
                 self.state,
                 ["REG-002", "Approved the exact head."],
             )
@@ -2319,7 +2665,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(SystemExit, "REVIEW_REQUIRED"),
         ):
-            ai_status.command_approve(
+            _command_approve(
                 self.state,
                 ["REG-002", "Internal approval alone is insufficient."],
             )
@@ -2366,7 +2712,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 ai_status, "bridge_github_review_decision", return_value=bridge_evidence
             ) as github_bridge,
         ):
-            ai_status.command_approve(
+            _command_approve(
                 self.state,
                 ["REG-002", "Approved via live-discovered head."],
             )
@@ -2393,7 +2739,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(ai_status, "repository_slug", return_value="ajoe734/pantheon"),
             mock.patch.object(ai_status, "discover_open_pr_binding", return_value=None),
         ):
-            ai_status.command_approve(self.state, ["REG-002", "Approved."])
+            _command_approve(self.state, ["REG-002", "Approved."])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
@@ -2453,7 +2799,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         """Not every task has a PR, so the refusal belongs to the merge gate."""
 
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
-            ai_status.command_approve(self.state, ["REG-002", "Approved."])
+            _command_approve(self.state, ["REG-002", "Approved."])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
@@ -2470,7 +2816,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
             self.assertRaisesRegex(SystemExit, "internal activity approval alone"),
         ):
-            ai_status.command_approve(
+            _command_approve(
                 self.state,
                 ["REG-002", "No exact head supplied."],
             )
@@ -2503,7 +2849,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     {"AI_NAME": "Claude"},
                     clear=False,
                 ):
-                    ai_status.command_approve(
+                    _command_approve(
                         state,
                         ["REG-002", "Approved without a PR binding."],
                     )
@@ -2538,7 +2884,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             clear=False,
         ):
             with self.assertRaisesRegex(SystemExit, "40-hex"):
-                ai_status.command_approve(
+                _command_approve(
                     self.state,
                     ["REG-002", "Approved."],
                 )
@@ -2552,7 +2898,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             clear=False,
         ):
             with self.assertRaisesRegex(SystemExit, "REVIEW_PR"):
-                ai_status.command_approve(
+                _command_approve(
                     self.state,
                     ["REG-002", "Approved."],
                 )
@@ -2581,7 +2927,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 return_value=verdict_ref,
             ) as protected,
         ):
-            ai_status.command_approve(
+            _command_approve(
                 self.state,
                 ["REG-002", "Protected review passed."],
             )
@@ -2609,7 +2955,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(SystemExit, "verdict missing"),
         ):
-            ai_status.command_approve(
+            _command_approve(
                 self.state,
                 ["REG-002", "Attempted protected approval."],
             )
@@ -2733,7 +3079,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 clear=False,
             ),
         ):
-            ai_status.command_approve(
+            _command_approve(
                 self.state,
                 ["L12-CLOSE-001", "Independent protected review passed."],
             )
@@ -2785,7 +3131,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(SystemExit, "missing or not regular"),
         ):
-            ai_status.command_approve(
+            _command_approve(
                 self.state,
                 ["L12-CLOSE-001", "Manifest outside the trusted roots."],
             )
@@ -2794,93 +3140,97 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(blocked["status"], "review")
         self.assertNotIn("protected_closeout_verdict", blocked)
 
-    def test_restore_approved_revalidates_protected_verdict(self) -> None:
-        task = self.state["tasks"][0]
-        task["status"] = "in_progress"
-        task["review_notes_zh"] = ["Prior independent approval."]
-        task["requires_human_ops_signoff"] = True
-        verdict_ref = {
-            "verdict_id": "pclose-restore-001",
-            "ledger_entry_id": "pclose-issue-restore-001",
-        }
-        with (
-            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
-            mock.patch.object(
-                ai_status,
-                "validate_protected_closeout_transition",
-                return_value=verdict_ref,
-            ) as protected,
-        ):
-            ai_status.command_restore_approved(
-                self.state,
-                ["REG-002", "Restore independently approved state."],
-            )
-
-        self.assertEqual(task["status"], "review_approved")
-        self.assertEqual(task["protected_closeout_verdict"], verdict_ref)
-        protected.assert_called_once_with(
-            task,
-            transition="review_approved",
-        )
-
-    def test_restore_approved_protected_failure_keeps_in_progress(self) -> None:
-        task = self.state["tasks"][0]
-        task["status"] = "in_progress"
-        task["review_notes_zh"] = ["Prior independent approval."]
-        task["requires_human_ops_signoff"] = True
-        with (
-            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
-            mock.patch.object(
-                ai_status,
-                "validate_protected_closeout_transition",
-                side_effect=SystemExit("protected verdict expired"),
-            ),
-            self.assertRaisesRegex(SystemExit, "verdict expired"),
-        ):
-            ai_status.command_restore_approved(
-                self.state,
-                ["REG-002", "Attempt stale restore."],
-            )
-
-        self.assertEqual(task["status"], "in_progress")
-
-    def test_progress_promotes_todo_to_in_progress(self) -> None:
+    def test_progress_rejects_todo_without_start(self) -> None:
         self.state["tasks"][0]["status"] = "todo"
 
-        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
-            ai_status.command_progress(self.state, ["REG-002", "Implementation started"])
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "cannot progress"),
+        ):
+            ai_status.command_progress(
+                self.state, ["REG-002", "Implementation started"]
+            )
 
         task = ai_status.get_task(self.state, "REG-002")
-        self.assertEqual(task["status"], "in_progress")
-        self.assertEqual(task["next"], "Implementation started")
+        self.assertEqual(task["status"], "todo")
 
-    def test_progress_preserves_review_approved_for_owner_finalize(self) -> None:
+    def test_progress_rejects_review_approved(self) -> None:
         self.state["tasks"][0]["status"] = "review_approved"
 
-        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
-            ai_status.command_progress(self.state, ["REG-002", "Checking status before finalization"])
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "cannot progress"),
+        ):
+            ai_status.command_progress(
+                self.state, ["REG-002", "Checking status before finalization"]
+            )
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
-        self.assertEqual(task["next"], "Checking status before finalization")
+
+    def test_commands_reject_illegal_source_states_without_overwrite(self) -> None:
+        task = self.state["tasks"][0]
+        cases = [
+            (
+                "review",
+                "Codex",
+                lambda: ai_status.command_start(
+                    self.state, ["REG-002", "Illegal restart"]
+                ),
+                "cannot start",
+            ),
+            (
+                "todo",
+                "Codex",
+                lambda: ai_status.command_handoff(
+                    self.state, ["REG-002", "Claude", "Illegal handoff"]
+                ),
+                "cannot handoff",
+            ),
+            (
+                "done",
+                "Human/Ops",
+                lambda: _command_reopen(
+                    self.state, ["REG-002", "Illegal terminal reopen"]
+                ),
+                "cannot reopen",
+            ),
+            (
+                "in_progress",
+                "Claude",
+                lambda: _command_approve(
+                    self.state, ["REG-002", "Illegal early approval"]
+                ),
+                "cannot approve",
+            ),
+        ]
+        for status, actor, command, error in cases:
+            with self.subTest(status=status, actor=actor):
+                task["status"] = status
+                with (
+                    mock.patch.dict(os.environ, {"AI_NAME": actor}, clear=False),
+                    self.assertRaisesRegex(SystemExit, error),
+                ):
+                    command()
+                self.assertEqual(task["status"], status)
 
     def test_done_requires_owner_and_review_approved(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
             with self.assertRaises(SystemExit):
-                ai_status.command_done(self.state, ["REG-002", "Attempted direct completion"])
+                _command_done(self.state, ["REG-002", "Attempted direct completion"])
 
         self.state["tasks"][0]["status"] = "review_approved"
 
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaises(SystemExit):
-                ai_status.command_done(self.state, ["REG-002", "Reviewer cannot finalize"])
+                _command_done(self.state, ["REG-002", "Reviewer cannot finalize"])
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
             mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
         ):
-            ai_status.command_done(self.state, ["REG-002", "Owner finalized approved task"])
+            _command_done(self.state, ["REG-002", "Owner finalized approved task"])
 
         terminal = ai_status.get_task(self.state, "REG-002")
         self.assertIsNotNone(terminal)
@@ -2904,7 +3254,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
             mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
         ):
-            ai_status.command_done(
+            _command_done(
                 self.state,
                 ["REG-002", "Owner finalized with the reviewed evidence manifest"],
             )
@@ -2935,7 +3285,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(ai_status, "review_evidence_file_committed", return_value=False) as check,
             self.assertRaisesRegex(SystemExit, "was not present at"),
         ):
-            ai_status.command_done(self.state, ["REG-002", "Owner adds evidence post-approval"])
+            _command_done(self.state, ["REG-002", "Owner adds evidence post-approval"])
 
         check.assert_called_once_with(
             repository=mock.ANY,
@@ -2964,7 +3314,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
             mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
         ):
-            ai_status.command_done(self.state, ["REG-002", "Owner binds the already-reviewed manifest"])
+            _command_done(self.state, ["REG-002", "Owner binds the already-reviewed manifest"])
 
         archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
         self.assertEqual(archive_task["status"], "done")
@@ -2985,7 +3335,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(ai_status, "review_evidence_file_committed", return_value=False),
             self.assertRaisesRegex(SystemExit, "was not found at the reviewed"),
         ):
-            ai_status.command_approve(self.state, ["REG-002", "Claiming evidence that is not really there"])
+            _command_approve(self.state, ["REG-002", "Claiming evidence that is not really there"])
 
         self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
 
@@ -3008,7 +3358,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 return_value={},
             ),
         ):
-            ai_status.command_approve(self.state, ["REG-002", "Evidence verified present at the head"])
+            _command_approve(self.state, ["REG-002", "Evidence verified present at the head"])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review_approved")
@@ -3039,7 +3389,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ) as protected,
             mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
         ):
-            ai_status.command_done(
+            _command_done(
                 self.state,
                 ["REG-002", "Protected owner closeout complete."],
             )
@@ -3075,7 +3425,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(SystemExit, "verdict replay"),
         ):
-            ai_status.command_done(
+            _command_done(
                 self.state,
                 ["REG-002", "Attempted replayed closeout."],
             )
@@ -3093,7 +3443,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.state["tasks"][0]["status"] = "blocked"
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
             with self.assertRaisesRegex(SystemExit, "Only Human/Ops or the task's current reviewer"):
-                ai_status.command_reconcile_merged_done(
+                _command_reconcile_merged_done(
                     self.state,
                     ["REG-002", "Merged delivery reconciled"],
                 )
@@ -3124,7 +3474,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ),
             mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
         ):
-            ai_status.command_reconcile_merged_done(
+            _command_reconcile_merged_done(
                 self.state,
                 ["REG-002", "Reviewer self-service reconcile"],
             )
@@ -3143,7 +3493,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.state["tasks"][0]["reviewer"] = "Gemini"
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaisesRegex(SystemExit, "Only Human/Ops or the task's current reviewer"):
-                ai_status.command_reconcile_merged_done(
+                _command_reconcile_merged_done(
                     self.state,
                     ["REG-002", "Merged delivery reconciled"],
                 )
@@ -3180,7 +3530,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ) as protected,
             mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
         ):
-            ai_status.command_reconcile_merged_done(
+            _command_reconcile_merged_done(
                 self.state,
                 ["REG-002", "Merged delivery reconciled"],
             )
@@ -3226,7 +3576,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(SystemExit, "verdict missing"),
         ):
-            ai_status.command_reconcile_merged_done(
+            _command_reconcile_merged_done(
                 self.state,
                 ["REG-002", "Attempt protected recovery."],
             )
@@ -3700,21 +4050,22 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 ai_status.command_handoff(self.state, ["REG-002", "Gemini", "Wrong reviewer"])
 
         self.state["tasks"][0]["failure_streak"] = 2
+        self.state["tasks"][0]["status"] = "in_progress"
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
             ai_status.command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
 
         self.assertEqual(self.state["tasks"][0]["status"], "review")
-        self.assertEqual(self.state["tasks"][0]["failure_streak"], 0)
+        self.assertNotIn("failure_streak", self.state["tasks"][0])
 
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
         self.state["tasks"][0]["failure_streak"] = 2
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
-            ai_status.command_reopen(self.state, ["REG-002", "Please address the requested changes"])
+            _command_reopen(self.state, ["REG-002", "Please address the requested changes"])
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "in_progress")
-        self.assertEqual(task["failure_streak"], 0)
+        self.assertNotIn("failure_streak", task)
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["from"], "Claude")
@@ -3747,7 +4098,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 return_value=bridge_evidence,
             ) as github_bridge,
         ):
-            ai_status.command_reopen(
+            _command_reopen(
                 self.state,
                 ["REG-002", "GitHub gate must remain blocked."],
             )
@@ -3773,7 +4124,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
             self.assertRaisesRegex(SystemExit, "rejection.*GitHub review gate"),
         ):
-            ai_status.command_reopen(
+            _command_reopen(
                 self.state,
                 ["REG-002", "Changes are required."],
             )
@@ -3803,7 +4154,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         ]
 
         with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
-            ai_status.command_reopen(
+            _command_reopen(
                 self.state,
                 ["REG-002", "Allowlisted GitHub operator requested retry"],
             )
@@ -5054,7 +5405,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
         with mock.patch.object(ai_status, "archived_task_snapshot", return_value={"task_id": "REG-100"}):
             with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
                 with self.assertRaises(SystemExit) as exc_info:
-                    ai_status.command_reopen(self.state, ["REG-100", "Resume work"])
+                    _command_reopen(self.state, ["REG-100", "Resume work"])
 
         self.assertIn("archived", str(exc_info.exception))
         self.assertIn("follow-up", str(exc_info.exception))
@@ -5679,6 +6030,93 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertEqual(task["reviewer"], "Codex")
         self.assertEqual(task["artifact_conflict_guard"], revised)
         self.assertEqual(task["catalog_task_contract_sha256"], "c" * 64)
+
+    def test_human_ops_runtime_recall_does_not_rerun_source_scope_admission(self) -> None:
+        guard = self._artifact_guard(
+            "CATALOG-BFF-RECALL",
+            "services/control-plane/bff/main.py",
+            [],
+        )
+        self.state["tasks"].extend(
+            [
+                {
+                    "id": "CATALOG-BFF-RECALL",
+                    "status": "in_progress",
+                    "owner": "Codex2",
+                    "reviewer": "Claude",
+                    "title": "Protected source task",
+                    "artifacts": ["services/control-plane/bff/main.py"],
+                    "target_repo": "pantheon",
+                    "artifact_conflict_guard": guard,
+                },
+                {
+                    "id": "LATER-BFF-OVERLAP",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "title": "Later overlapping task",
+                    "artifacts": ["services/control-plane/bff"],
+                },
+            ]
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Human/Ops",
+                "TASK_ASSIGN_REASON": "Recall the current runtime assignment.",
+                "TASK_ASSIGN_EXPECTED_OWNER": "Codex2",
+                "TASK_ASSIGN_EXPECTED_REVIEWER": "Claude",
+            },
+            clear=False,
+        ):
+            ai_status.command_assign(
+                self.state,
+                ["CATALOG-BFF-RECALL", "Human/Ops", "Claude"],
+            )
+
+        task = ai_status.get_task(self.state, "CATALOG-BFF-RECALL")
+        self.assertEqual(task["owner"], "Human/Ops")
+        self.assertEqual(task["reviewer"], "Claude")
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["artifact_conflict_guard"], guard)
+
+    def test_human_ops_recall_cannot_change_admitted_contract_metadata(self) -> None:
+        self.state["tasks"].append(
+            {
+                "id": "SOURCE-CONTRACT-RECALL",
+                "status": "todo",
+                "owner": "Codex2",
+                "reviewer": "Claude",
+                "title": "Immutable source contract",
+                "artifacts": ["scripts/source.py"],
+                "acceptance": ["tests pass"],
+                "target_repo": "pantheon",
+            }
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Human/Ops",
+                "TASK_ASSIGN_REASON": "operator recall",
+                "TASK_METADATA_JSON": json.dumps(
+                    {"target_repo": "execute-plans"}
+                ),
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(
+                SystemExit, "contract metadata is immutable"
+            ):
+                ai_status.command_assign(
+                    self.state,
+                    ["SOURCE-CONTRACT-RECALL", "Human/Ops", "Claude"],
+                )
+
+        task = ai_status.get_task(self.state, "SOURCE-CONTRACT-RECALL")
+        self.assertEqual(task["owner"], "Codex2")
+        self.assertEqual(task["target_repo"], "pantheon")
 
     def test_catalog_revision_rejects_scope_or_allowlist_change(self) -> None:
         guard = self._artifact_guard(
@@ -6316,129 +6754,6 @@ class PortableStateRenderingTests(unittest.TestCase):
             content,
         )
 
-    def test_build_onboarding_prompt_mentions_active_planning(self) -> None:
-        state = {
-            "canonical_document_layers": {
-                "L0 Collaboration & State": [
-                    "AI_COLLABORATION_GUIDE.md",
-                    "ai-status.json",
-                    "ai-activity-log.jsonl",
-                ],
-                "L0.5 Derived Narrative": [
-                    "current-work.md",
-                ],
-                "L2 Planning & Execution": [
-                    "docs/02-architecture/consensus/phase1/README.md",
-                    "docs/02-architecture/consensus/phase1/planning-session.json",
-                ],
-            }
-        }
-
-        with mock.patch.object(ai_status, "load_planning_state", return_value={"status": "active"}):
-            prompt = ai_status.build_onboarding_prompt(state)
-
-        self.assertIn("Discussion planning is active", prompt)
-        self.assertIn("docs/02-architecture/consensus/phase1/README.md", prompt)
-        self.assertIn("docs/02-architecture/consensus/phase1/planning-session.json", prompt)
-
-    def test_write_current_work_includes_planning_snapshot(self) -> None:
-        state = {
-            "updated_at": "2026-04-11T00:00:00Z",
-            "objective": "Stand up a planning-aware control plane.",
-            "sprint": "2026-04-11-planning-mode",
-            "canonical_document_layers": {
-                "L0 Collaboration & State": [
-                    "AI_COLLABORATION_GUIDE.md",
-                    "ai-status.json",
-                    "ai-activity-log.jsonl",
-                ],
-                "L0.5 Derived Narrative": [
-                    "current-work.md",
-                ],
-                "L2 Planning & Execution": [
-                    "docs/02-architecture/consensus/phase1/README.md",
-                    "docs/02-architecture/consensus/phase1/planning-session.json",
-                ],
-            },
-            "agents": [
-                {"name": "Codex", "capability_lane": ["integration"], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
-            ],
-            "tasks": [],
-            "handoffs": [],
-            "blockers": [],
-            "workload": {},
-            "workload_summary": {},
-        }
-
-        planning_state = {
-            "session_id": "phase1-2026-04-11",
-            "status": "active",
-            "baton_owner": "Codex",
-            "current_round": 1,
-            "consensus_status": "draft",
-            "human_gate_status": "pending",
-            "switch_gate": {
-                "ready_for_human": False,
-                "ready_to_materialize": False,
-            },
-        }
-
-        with tempfile.TemporaryDirectory(prefix="ai-status-planning-current-work-") as temp_dir:
-            output_path = Path(temp_dir) / "current-work.md"
-            with mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path):
-                with mock.patch.object(ai_status, "load_planning_state", return_value=planning_state):
-                    ai_status.write_current_work(state, [])
-
-            content = output_path.read_text(encoding="utf-8")
-
-        self.assertIn("## Discussion Planning", content)
-        self.assertIn("phase1-2026-04-11", content)
-        self.assertIn("`active`", content)
-
-    def test_write_current_work_keeps_active_planning_session_out_of_canonical_files(self) -> None:
-        state = {
-            "updated_at": "2026-04-11T00:00:00Z",
-            "objective": "Keep planning records separate from blueprint truth.",
-            "sprint": "2026-04-11-planning-boundary",
-            "canonical_document_layers": ai_status.default_canonical_document_layers(),
-            "agents": [],
-            "tasks": [],
-            "handoffs": [],
-            "blockers": [],
-            "workload": {},
-            "workload_summary": {},
-        }
-        planning_state = {
-            "session_id": "phase6-2026-04-16-oss-ecosystem-closure",
-            "status": "accepted",
-            "artifacts": {
-                "planning_readme": {
-                    "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/README.md"
-                },
-                "planning_session": {
-                    "path": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json"
-                },
-            },
-            "session_file": "docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/planning-session.json",
-        }
-
-        with tempfile.TemporaryDirectory(prefix="ai-status-planning-boundary-") as temp_dir:
-            output_path = Path(temp_dir) / "current-work.md"
-            with mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path):
-                with mock.patch.object(ai_status, "load_planning_state", return_value=planning_state):
-                    ai_status.write_current_work(state, [])
-
-            content = output_path.read_text(encoding="utf-8")
-
-        self.assertIn(
-            "- Planning mode: `docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/README.md`",
-            content,
-        )
-        self.assertNotIn(
-            "`docs/02-architecture/consensus/sessions/phase6-2026-04-16-oss-ecosystem-closure/README.md`,",
-            content.split("- Canonical files: ", 1)[1].split("\n", 1)[0],
-        )
-
     def test_write_current_work_includes_lovable_coordination_snapshot(self) -> None:
         state = {
             "updated_at": "2026-04-11T00:00:00Z",
@@ -6621,7 +6936,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         self.assertEqual(bundle["focus_mode"], "execution")
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
@@ -6630,12 +6945,8 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["execution_summary"]["ready_now"], 0)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
         self.assertEqual(bundle["execution_summary"]["in_review"], 1)
-        self.assertEqual(bundle["planning_summary"]["materialized_count"], 2)
-        self.assertEqual(bundle["bridge_summary"]["source_plane"], "planning")
-        self.assertEqual(bundle["bridge_summary"]["session_id"], "phase2-2026-04-13-blueprint-gap")
-        self.assertEqual(bundle["bridge_summary"]["materialized_count"], 2)
-        self.assertEqual(bundle["bridge_summary"]["pending_materialization_count"], 1)
-        self.assertEqual(bundle["bridge_summary"]["consensus_packet"], "docs/02-architecture/consensus/phase2/consensus-packet.md")
+        self.assertNotIn("planning_summary", bundle)
+        self.assertNotIn("bridge_summary", bundle)
         self.assertEqual(len(bundle["truth_mismatches"]), 1)
         self.assertEqual({item["type"] for item in bundle["truth_mismatches"]}, {"running_worker_on_todo"})
         mismatch_hints = {item["type"]: item["resolution_hint"] for item in bundle["truth_mismatches"]}
@@ -6890,7 +7201,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         mismatch_ids = {item["id"] for item in bundle["truth_mismatches"]}
         self.assertNotIn("active-task-without-worker:BP5-SVC-001", mismatch_ids)
@@ -6954,7 +7265,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         mismatch_ids = {item["id"] for item in bundle["truth_mismatches"]}
         self.assertNotIn("active-task-without-worker:BP5-SVC-002", mismatch_ids)
@@ -7009,12 +7320,12 @@ class PortableStateRenderingTests(unittest.TestCase):
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         mismatch_ids = {item["id"] for item in bundle["truth_mismatches"]}
         self.assertNotIn("active-task-without-worker:BP5-LUV-007", mismatch_ids)
 
-    def test_coordination_worker_missing_taskboard_entry_does_not_flag_truth_mismatch(self) -> None:
+    def test_legacy_coordination_worker_missing_taskboard_entry_is_flagged(self) -> None:
         state = {
             "updated_at": "2026-04-16T06:53:55Z",
             "agents": [],
@@ -7066,10 +7377,10 @@ class PortableStateRenderingTests(unittest.TestCase):
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         mismatch_ids = {item["id"] for item in bundle["truth_mismatches"]}
-        self.assertNotIn("worker-task-missing:codex-1", mismatch_ids)
+        self.assertIn("worker-task-missing:codex-1", mismatch_ids)
 
     def test_pending_approval_task_does_not_flag_without_live_worker(self) -> None:
         state = {
@@ -7129,7 +7440,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         mismatch_ids = {item["id"] for item in bundle["truth_mismatches"]}
         self.assertNotIn("active-task-without-worker:BP5-SVC-003", mismatch_ids)
@@ -7162,10 +7473,9 @@ class PortableStateRenderingTests(unittest.TestCase):
             output_path = Path(temp_dir) / "dashboard-bundle.json"
             with mock.patch.object(ai_status, "DASHBOARD_BUNDLE_FILE", output_path):
                 with mock.patch.object(ai_status, "load_config", return_value=config):
-                    with mock.patch.object(ai_status, "load_planning_state", return_value=planning_state):
-                        with mock.patch.object(ai_status, "load_runtime_state", return_value=orchestrator_state) as load_runtime_state:
-                            with mock.patch.object(ai_status, "load_json_file", return_value=approval_state) as load_json_file:
-                                ai_status.write_dashboard_bundle(state)
+                    with mock.patch.object(ai_status, "load_runtime_state", return_value=orchestrator_state) as load_runtime_state:
+                        with mock.patch.object(ai_status, "load_json_file", return_value=approval_state) as load_json_file:
+                            ai_status.write_dashboard_bundle(state)
 
             bundle = json.loads(output_path.read_text(encoding="utf-8"))
 
@@ -7230,7 +7540,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                 },
             ),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         self.assertEqual(bundle["execution_summary"]["ready_now"], 1)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
@@ -7306,14 +7616,14 @@ class PortableStateRenderingTests(unittest.TestCase):
             },
         }
         approval_state = {"pending": [], "history": []}
-        config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Claude": 1}}}
+        config = {"agents": {"claude": {"display_name": "Claude", "max_parallel": 1}}}
 
         with (
             mock.patch.object(ai_status, "load_config", return_value=config),
             mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
             mock.patch.object(ai_status, "pid_is_alive", return_value=True),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
         self.assertEqual(bundle["execution_summary"]["ready_now"], 0)
@@ -7367,8 +7677,8 @@ class PortableStateRenderingTests(unittest.TestCase):
         }
         approval_state = {"pending": [], "history": []}
         config = {
+            "agents": {"codex": {"display_name": "Codex", "max_parallel": 2}},
             "ready_dispatcher": {
-                "max_tasks_per_agent_by_agent": {"Codex": 2},
                 "max_concurrent_per_account": {"codex1": 4},
             }
         }
@@ -7378,15 +7688,13 @@ class PortableStateRenderingTests(unittest.TestCase):
             mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
             mock.patch.object(ai_status, "pid_is_alive", return_value=True),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
         self.assertEqual(bundle["execution_summary"]["ready_now"], 1)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
-        self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent"], None)
-        self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent_by_agent"], {"Codex": 2})
+        self.assertEqual(bundle["dispatch_policy"]["max_parallel_by_agent"], {"codex": 2})
         self.assertEqual(bundle["dispatch_policy"]["max_concurrent_per_account"], {"codex1": 4})
-        self.assertEqual(bundle["dispatch_policy"]["max_concurrent_per_quota_group"], {"codex1": 4})
 
     def test_build_dashboard_bundle_includes_coordination_summary(self) -> None:
         state = {
@@ -7460,7 +7768,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             mock.patch.object(ai_status, "coordination_local_response_path", return_value=None),
             mock.patch.object(ai_status, "coordination_review_snapshot", return_value=None),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         summary = bundle["coordination_summary"]
         self.assertEqual(summary["last_scan_at"], "2026-04-14T02:04:00Z")
@@ -7551,7 +7859,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             mock.patch.object(ai_status, "coordination_local_response_path", return_value=None),
             mock.patch.object(ai_status, "coordination_review_snapshot", return_value=None),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         summary = bundle["coordination_summary"]
         self.assertEqual(summary["counts"]["open_bff_gaps"], 0)
@@ -7619,7 +7927,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                 return_value={"path": ".coordination/reviews/F-042-review.md", "disposition": "approved"},
             ),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         feature = bundle["coordination_summary"]["features"][0]
         self.assertEqual(feature["stage"], "frontend_feedback_reviewed")
@@ -7695,7 +8003,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             mock.patch.object(ai_status, "coordination_review_snapshot", return_value=None),
             mock.patch.object(ai_status, "load_local_coordination_payload", return_value=None),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         feature = bundle["coordination_summary"]["features"][0]
         self.assertEqual(feature["stage"], "loop_complete")
@@ -7762,7 +8070,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             mock.patch.object(ai_status, "coordination_review_snapshot", return_value=None),
             mock.patch.object(ai_status, "coordination_repo_root", return_value=None),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         feature = bundle["coordination_summary"]["features"][0]
         self.assertEqual(feature["stage"], "loop_complete")
@@ -7839,7 +8147,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             mock.patch.object(ai_status, "coordination_review_snapshot", return_value=None),
             mock.patch.object(ai_status, "load_local_coordination_payload", return_value=None),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         feature = bundle["coordination_summary"]["features"][0]
         self.assertEqual(feature["stage"], "closed")
@@ -7929,7 +8237,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                 side_effect=lambda _root, _feature_id, marker: marker in {"dispatch-emitted", "received"},
             ),
         ):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         feature = bundle["coordination_summary"]["features"][0]
         flags = feature["state_flags"]
@@ -7986,7 +8294,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             "queue": {
                 "events": {
                     "evt-1": {
-                        "status": "manual_pending",
+                        "status": "waiting_approval",
                         "run_id": "claude-run-1",
                         "processed_at": "2026-04-14T00:42:04Z",
                     }
@@ -8019,14 +8327,14 @@ class PortableStateRenderingTests(unittest.TestCase):
         }
 
         with mock.patch.object(ai_status, "pid_is_alive", return_value=False):
-            bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+            bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 0)
         self.assertEqual(bundle["runtime_summary"]["pending_workers"], 0)
         self.assertEqual(bundle["worker_task_links"], [])
         self.assertFalse(any(item["type"] == "queue_started_without_worker" for item in bundle["truth_mismatches"]))
 
-    def test_build_dashboard_bundle_skips_planning_approval_without_task_board_row(self) -> None:
+    def test_build_dashboard_bundle_flags_legacy_planning_approval_without_task_board_row(self) -> None:
         state = {
             "updated_at": "2026-04-14T05:35:00Z",
             "agents": [],
@@ -8064,11 +8372,11 @@ class PortableStateRenderingTests(unittest.TestCase):
             "history": [],
         }
 
-        bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+        bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
-        self.assertFalse(any(item["type"] == "approval_missing_task" for item in bundle["truth_mismatches"]))
+        self.assertTrue(any(item["type"] == "approval_missing_task" for item in bundle["truth_mismatches"]))
 
-    def test_build_dashboard_bundle_skips_planning_worker_without_task_board_row(self) -> None:
+    def test_build_dashboard_bundle_flags_legacy_planning_worker_without_task_board_row(self) -> None:
         state = {
             "updated_at": "2026-04-14T05:37:00Z",
             "agents": [],
@@ -8096,9 +8404,9 @@ class PortableStateRenderingTests(unittest.TestCase):
         }
         approval_state = {"pending": [], "history": []}
 
-        bundle = ai_status.build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+        bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
-        self.assertFalse(any(item["type"] == "worker_task_missing" for item in bundle["truth_mismatches"]))
+        self.assertTrue(any(item["type"] == "worker_task_missing" for item in bundle["truth_mismatches"]))
 
 
 class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
@@ -9164,11 +9472,6 @@ class ProgramProofOwnershipTests(unittest.TestCase):
                     self.state,
                     ["L12-TEACH-001", self.overlay, "Invalid delegation."],
                 )
-
-    def test_quarantined_status_in_schema_constants(self) -> None:
-        self.assertIn("quarantined", ai_status.STATUS_LABELS)
-        self.assertEqual(ai_status.STATUS_LABELS["quarantined"], "quarantined")
-        self.assertIn("quarantined", ai_status.ACTIVE_TASK_STATUSES)
 
 
 class TestSentinelTimestampOverflow(unittest.TestCase):

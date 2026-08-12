@@ -19,7 +19,7 @@ from adapters.codex import CodexAdapter
 from adapters.gemini import GeminiAdapter
 
 
-class AdapterFallbackPolicyTests(unittest.TestCase):
+class AdapterDeliveryPolicyTests(unittest.TestCase):
     def test_codex_alias_sets_agent_identity_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -196,11 +196,10 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(result.command[0], str(cli))
         self.assertEqual(result.command[result.command.index("-C") + 1], str(workspace))
 
-    def test_claude_can_disable_inbox_fallback(self) -> None:
+    def test_claude_unavailable_fails_closed(self) -> None:
         config = {
             "providers": {
                 "claude": {
-                    "allow_inbox_fallback": False,
                     "runtime": {"cli": "claude"},
                 }
             }
@@ -236,7 +235,6 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                 },
                 "providers": {
                     "claude2": {
-                        "allow_inbox_fallback": False,
                         "runtime": {
                             "cli": ".orchestrator/bin/claude",
                             "home": "~/.claude2",
@@ -280,7 +278,6 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                 "paths": {"status_file": str(root / "ai-status.json")},
                 "providers": {
                     "claude": {
-                        "allow_inbox_fallback": False,
                         "runtime": {
                             "cli": ".orchestrator/bin/claude",
                             "oauth_token_file": str(token_file),
@@ -310,7 +307,6 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             "paths": {"status_file": "ai-status.json"},
             "providers": {
                 "claude": {
-                    "allow_inbox_fallback": False,
                     "runtime": {
                         "cli": ".orchestrator/bin/claude",
                         "output_format": "stream-json",
@@ -343,7 +339,6 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             "paths": {"status_file": "ai-status.json"},
             "providers": {
                 "claude": {
-                    "allow_inbox_fallback": False,
                     "runtime": {
                         "cli": ".orchestrator/bin/claude",
                         "output_format": "stream-json",
@@ -367,12 +362,11 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertNotIn("--model", result.command)
         self.assertNotIn("--effort", result.command)
 
-    def test_gemini_can_disable_inbox_fallback(self) -> None:
+    def test_gemini_unavailable_fails_closed(self) -> None:
         config = {
             "agents": {"gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"}},
             "providers": {
                 "gemini": {
-                    "allow_inbox_fallback": False,
                     "gemini": {"cli": "gemini"},
                 }
             },
@@ -401,7 +395,6 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                 "providers": {
                     "gemini2": {
                         "delivery_mode": "gemini",
-                        "allow_inbox_fallback": False,
                         "gemini": {
                             "cli": "gemini",
                             "config_home": str(root / "gemini2-home"),
@@ -458,12 +451,11 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
         self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(root / "supervisor-root"))
 
-    def test_antigravity_can_disable_inbox_fallback(self) -> None:
+    def test_antigravity_unavailable_fails_closed(self) -> None:
         config = {
             "agents": {"antigravity": {"id": "antigravity", "display_name": "Antigravity", "provider": "antigravity"}},
             "providers": {
                 "antigravity": {
-                    "allow_inbox_fallback": False,
                     "antigravity": {"cli": "agy"},
                 }
             },
@@ -494,7 +486,6 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                 "providers": {
                     "antigravity2": {
                         "delivery_mode": "antigravity",
-                        "allow_inbox_fallback": False,
                         "antigravity": {
                             "cli": "agy",
                             "config_home": str(root / "agy2-home"),
@@ -569,7 +560,6 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             "providers": {
                 "antigravity": {
                     "delivery_mode": "antigravity",
-                    "allow_inbox_fallback": False,
                     "antigravity": {
                         "cli": "agy",
                         "model": "gemini-3.6-flash-low",
@@ -634,11 +624,10 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(result.command[result.command.index("--model") + 1], "Claude Sonnet 4.6 (Thinking)")
         self.assertEqual(spawn.call_args.kwargs["env"]["ORCH_MODEL_ROTATION_SLOT"], model_rotation.SLOT_FALLBACK)
 
-    def test_copilot_can_disable_inbox_fallback(self) -> None:
+    def test_copilot_unavailable_fails_closed(self) -> None:
         config = {
             "providers": {
                 "copilot": {
-                    "allow_inbox_fallback": False,
                     "local": {"cli": "copilot"},
                     "cloud": {"cli": "gh"},
                 }

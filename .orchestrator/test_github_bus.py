@@ -77,7 +77,6 @@ class GitHubBusCommandTests(unittest.TestCase):
 
         with (
             mock.patch.object(github_bus, "run_ai_status") as run_ai_status,
-            mock.patch.object(github_bus, "queue_resume_for_task", return_value=True) as queue_resume,
             mock.patch.object(github_bus, "write_activity_log"),
         ):
             changed, reply = github_bus.apply_bus_command(
@@ -91,58 +90,16 @@ class GitHubBusCommandTests(unittest.TestCase):
             )
 
         self.assertTrue(changed)
-        self.assertEqual(reply, "Queued retry for `LIN-001`.")
+        self.assertEqual(
+            reply,
+            "Reopened `LIN-001`; the canonical planner will redispatch it.",
+        )
         run_ai_status.assert_called_once_with(
             "reopen",
             "LIN-001",
             "GitHub retry requested via issue #4 by @ajoe734.",
             actor="Human/Ops",
         )
-        queue_resume.assert_called_once_with(self.config, status["tasks"][0])
-
-    def test_queue_resume_marks_github_retry_as_isolated_task_work(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            queue_path = root / "event-queue.jsonl"
-            activity_path = root / "activity-log.jsonl"
-            config = {
-                "paths": {
-                    "event_queue": str(queue_path),
-                    "activity_log": str(activity_path),
-                },
-                "agents": {
-                    "codex": {
-                        "id": "codex",
-                        "display_name": "Codex",
-                        "provider": "codex",
-                    }
-                },
-            }
-            task = {
-                "id": "OPS-RETRY-001",
-                "owner": "Codex",
-                "artifacts": [".orchestrator/supervisor.py"],
-                "next": "retry",
-            }
-            with (
-                mock.patch.object(github_bus, "render_wakeup_message", return_value="wake"),
-                mock.patch.object(
-                    github_bus,
-                    "execution_context_files",
-                    return_value=["AI_COLLABORATION_GUIDE.md"],
-                ),
-                mock.patch.object(github_bus, "write_activity_log"),
-            ):
-                queued = github_bus.queue_resume_for_task(config, task)
-
-            events = github_bus.load_jsonl(queue_path)
-
-        self.assertTrue(queued)
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["reason"], "github_retry")
-        self.assertEqual(events[0]["metadata"]["workspace_task_id"], "OPS-RETRY-001")
-        self.assertTrue(events[0]["metadata"]["require_isolated_worktree"])
-        self.assertEqual(events[0]["metadata"]["explicit_retry_source"], "github_bus")
 
     def test_poll_pr_reviews_approved_uses_reviewer_approval(self) -> None:
         status = {
@@ -1011,80 +968,6 @@ class GitHubBusProcessTests(unittest.TestCase):
                 github_bus.run_gh(["auth", "status"], allow_offline=False)
 
             self.assertEqual(run_gh_process.call_args.kwargs["gh_binary"], str(vendored))
-
-
-class GitHubCoordinationCommandTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmpdir = tempfile.TemporaryDirectory()
-        root = Path(self.tmpdir.name)
-        self.pantheon = root / "pantheon"
-        (self.pantheon / "docs-site").mkdir(parents=True, exist_ok=True)
-        (self.pantheon / ".orchestrator").mkdir(parents=True, exist_ok=True)
-        (self.pantheon / "ai-status.json").write_text('{"tasks":[],"handoffs":[]}\n', encoding="utf-8")
-        (self.pantheon / "current-work.md").write_text("# current work\n", encoding="utf-8")
-        (self.pantheon / "ai-activity-log.jsonl").write_text("", encoding="utf-8")
-        (self.pantheon / "docs-site" / "index.html").write_text("<html></html>\n", encoding="utf-8")
-        self.config = {
-            "paths": {
-                "status_file": str(self.pantheon / "ai-status.json"),
-                "activity_log": str(self.pantheon / "ai-activity-log.jsonl"),
-                "current_work": str(self.pantheon / "current-work.md"),
-                "dashboard": str(self.pantheon / "docs-site" / "index.html"),
-                "event_queue": str(self.pantheon / ".orchestrator" / "event-queue.jsonl"),
-            },
-            "agents": {
-                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex", "adapter": "codex"},
-                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude", "adapter": "claude_cli"},
-            },
-            "coordination": {
-                "enabled": True,
-                "worker_routes": {
-                    "pantheon-bff-worker": {"target_agent": "Codex"},
-                    "engine-worker": {"target_agent": "Claude", "requires_human_approval": True},
-                },
-            },
-        }
-        self.bus_state = {"tasks": {}, "coordination": {}}
-        self.status = {"tasks": []}
-
-    def tearDown(self) -> None:
-        self.tmpdir.cleanup()
-
-    def test_dispatch_command_queues_coordination_event(self) -> None:
-        command = GitHubCommand(verb="dispatch", target="pantheon-bff", raw="/dispatch pantheon-bff F-042", args=("pantheon-bff", "F-042"))
-        changed, reply = github_bus.apply_bus_command(
-            self.config,
-            self.bus_state,
-            self.status,
-            "ajoe734/pantheon",
-            command,
-            "ajoe734",
-            runtime_state={"coordination": {"features": {"F-042": {"feature_id": "F-042"}}}},
-        )
-
-        self.assertTrue(changed)
-        self.assertEqual(reply, "Queued `pantheon-bff-worker` for `F-042`.")
-        queue = github_bus.load_jsonl(Path(self.config["paths"]["event_queue"]))
-        self.assertEqual(len(queue), 1)
-        self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "pantheon-bff-worker")
-
-    def test_approve_engine_command_bypasses_manual_gate(self) -> None:
-        command = GitHubCommand(verb="approve-engine", target="F-042", raw="/approve-engine F-042", args=("F-042",))
-        changed, reply = github_bus.apply_bus_command(
-            self.config,
-            self.bus_state,
-            self.status,
-            "ajoe734/pantheon",
-            command,
-            "ajoe734",
-            runtime_state={"coordination": {"features": {"F-042": {"feature_id": "F-042"}}}},
-        )
-
-        self.assertTrue(changed)
-        self.assertEqual(reply, "Queued engine worker for `F-042`.")
-        queue = github_bus.load_jsonl(Path(self.config["paths"]["event_queue"]))
-        self.assertEqual(len(queue), 1)
-        self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "engine-worker")
 
 
 if __name__ == "__main__":

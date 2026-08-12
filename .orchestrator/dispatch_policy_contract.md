@@ -1,8 +1,11 @@
 # Dispatch Policy Contract
 
-Status: task-scoped contract for OPS-REFACTOR-001
+Status: subordinate contract for Supervisor Authority V2
 
-This refactor re-applies the intent from tag `archive/codex-orchestrator-dispatch-policy-cleanup-2026-04-28` on top of current master instead of cherry-picking the archived supervisor change. The archived tag introduced the dispatch policy extraction, but current `supervisor.py` has since gained sidecar, disabled-agent, and orphaned-queue settings that must remain part of the policy defaults.
+The authoritative architecture is
+`docs/02-architecture/supervisor-authority-v2.md`. This module contains the
+shared pure dispatch constants consumed by the planner and diagnostic CLI; it
+does not define another scheduler.
 
 ## Public Helpers
 
@@ -13,7 +16,8 @@ This refactor re-applies the intent from tag `archive/codex-orchestrator-dispatc
 
 ## Supervisor Boundary
 
-`supervisor.py` keeps its public API and queue/event behavior. It imports the helpers from `.orchestrator/dispatch_policy.py` and uses them at dispatch eligibility, status sync, stale-event, and priority checks. The refactor intentionally avoids changing status lifecycle rules or task assignment semantics.
+`supervisor.py` imports these helpers for eligibility, delivery revalidation,
+status synchronization, and stale-intent checks. Unknown reasons fail closed.
 
 ## Current Defaults
 
@@ -23,13 +27,16 @@ The extracted policy preserves these current-master defaults:
 - finalize statuses: `["review_approved"]`
 - owned statuses: `["in_progress", "todo"]`
 - dependency done statuses: `["done"]`
-- worker terminal statuses: `done_statuses` when configured, otherwise `["done", "review_approved"]`
-- active worker statuses: `["running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"]`
+- worker terminal statuses: `["done", "review_approved"]`
+- active worker statuses: `["running", "waiting_approval", "retry_backoff", "stalled"]`
 - sidecar-only agents: `[]`
-- disabled agents: `[]`
-- max tasks per agent: `1`
+- per-agent capacity: required `agents.<id>.max_parallel`
+- per-account capacity: `ready_dispatcher.max_concurrent_per_account`
 - max dispatches per tick: `4`
 - orphaned queue event grace seconds: `300`
+
+There is no file-inbox/manual-pending fallback, chair lane, discussion-planning
+lane, helper claim, priority preemption, or direct retry launch.
 
 ## Verification
 

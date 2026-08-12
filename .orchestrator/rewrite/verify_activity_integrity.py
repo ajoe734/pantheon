@@ -1,4 +1,4 @@
-"""Offline activity-log integrity verifier — Phase 2 (SUPERVISOR_REWRITE_PLAN.md
+"""Offline activity-log integrity verifier for Supervisor Authority V2.
 §3.2, anti-pattern B).
 
 The activity log carries a content-addressed cryptographic lineage that the

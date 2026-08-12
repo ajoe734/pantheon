@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import gzip
+import base64
+import binascii
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -15,11 +18,14 @@ import tempfile
 import urllib.parse
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from threading import local
 from typing import Any, Generator, Mapping
 from zoneinfo import ZoneInfo
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 try:
     import yaml
@@ -97,6 +103,14 @@ from rewrite.task_state_store import (
     load_snapshot,
     snapshot_transaction,
 )
+from rewrite import task_machine
+from canonical_mutation_assertion import (
+    ASSERTION_ENV as OPERATOR_ASSERTION_ENV,
+    DEV_BRIDGE_CONSUMED_KEY,
+    migrate_legacy_consumed_ledgers,
+    verify_and_consume as verify_and_consume_operator_assertion,
+    OPERATOR_ACTIONS as OPERATOR_ASSERTION_ACTIONS,
+)
 from common import (
     ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
@@ -135,7 +149,7 @@ DEV_BRIDGE_BATCH_SCHEMA_VERSION = 1
 DEV_BRIDGE_BATCH_MAX_TASKS = 64
 DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND = "dev-bridge-materialize-batch"
 DEV_BRIDGE_BATCH_READBACK_COMMAND = "dev-bridge-materialize-readback"
-DEV_BRIDGE_BATCH_ACTOR = "Human/Ops"
+DEV_BRIDGE_BATCH_ACTOR = "assistant.dev.source"
 GLOBAL_STATUS_LOCK_ORDER = (
     "runtime_admission",
     "task_state",
@@ -144,17 +158,15 @@ GLOBAL_STATUS_LOCK_ORDER = (
 _ACTIVITY_TRANSACTION_LOCAL = local()
 _TASK_STATE_TRANSACTION_LOCAL = local()
 _STATUS_COMMAND_LEASE_LOCAL = local()
+_OPERATOR_ASSERTION_LOCAL = local()
 _DEV_BRIDGE_MATERIALIZATION_LOCAL = local()
+_EXTERNAL_MUTATION_PREFLIGHT_LOCAL = local()
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
-PLANNING_STATE_FILE = STATUS_ROOT / ".orchestrator" / "planning-state.json"
 ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
 APPROVAL_QUEUE_FILE = STATUS_ROOT / ".orchestrator" / "approval-queue.json"
 DASHBOARD_BUNDLE_FILE = STATUS_ROOT / "dashboard-bundle.json"
-DEFAULT_PLANNING_README = "docs/02-architecture/consensus/phase1/README.md"
-DEFAULT_PLANNING_SESSION_FILE = "docs/02-architecture/consensus/phase1/planning-session.json"
-DEFAULT_PLANNING_CHECKLIST_FILE = "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md"
 
 
 def configure_status_root_paths(status_root: str | Path) -> Path:
@@ -162,7 +174,7 @@ def configure_status_root_paths(status_root: str | Path) -> Path:
 
     global STATUS_ROOT
     global STATUS_FILE, LOG_FILE, CURRENT_WORK_FILE, DOCS_SITE_DIR
-    global PLANNING_STATE_FILE, ORCHESTRATOR_STATE_FILE, APPROVAL_QUEUE_FILE
+    global ORCHESTRATOR_STATE_FILE, APPROVAL_QUEUE_FILE
     global DASHBOARD_BUNDLE_FILE, ARCHIVE_TASKS_DIR
 
     root = Path(status_root).expanduser().resolve()
@@ -171,7 +183,6 @@ def configure_status_root_paths(status_root: str | Path) -> Path:
     LOG_FILE = root / "ai-activity-log.jsonl"
     CURRENT_WORK_FILE = root / "current-work.md"
     DOCS_SITE_DIR = root / "docs-site"
-    PLANNING_STATE_FILE = root / ".orchestrator" / "planning-state.json"
     ORCHESTRATOR_STATE_FILE = root / ".orchestrator" / "state.json"
     APPROVAL_QUEUE_FILE = root / ".orchestrator" / "approval-queue.json"
     DASHBOARD_BUNDLE_FILE = root / "dashboard-bundle.json"
@@ -431,6 +442,25 @@ def _clear_status_command_lease_binding() -> None:
         pass
 
 
+def _clear_operator_assertion_binding() -> None:
+    try:
+        delattr(_OPERATOR_ASSERTION_LOCAL, "binding")
+    except AttributeError:
+        pass
+
+
+def operator_assertion_audit_fields() -> dict[str, Any]:
+    binding = getattr(_OPERATOR_ASSERTION_LOCAL, "binding", None)
+    if not isinstance(binding, Mapping):
+        return {}
+    return {
+        "operator_id": binding["operator_id"],
+        "control_activation_id": binding["control_activation_id"],
+        "operator_assertion_id": binding["assertion_id"],
+        "operator_reason": binding["reason"],
+    }
+
+
 def _validated_status_command_worker_lease(
     worker: Mapping[str, Any],
     *,
@@ -443,6 +473,34 @@ def _validated_status_command_worker_lease(
     process_generation = str(worker.get("process_generation") or "").strip()
     pid = worker.get("pid")
     pid_start_ticks = worker.get("pid_start_ticks")
+    request_snapshot = worker.get("request_snapshot")
+    snapshot_generation = (
+        request_snapshot.get("task_generation")
+        if isinstance(request_snapshot, Mapping)
+        else None
+    )
+    metadata_generation = (
+        (request_snapshot.get("metadata") or {}).get("task_generation")
+        if isinstance(request_snapshot, Mapping)
+        and isinstance(request_snapshot.get("metadata"), Mapping)
+        else None
+    )
+    raw_task_generation = worker.get("task_generation")
+    generation_values = [
+        value
+        for value in (raw_task_generation, snapshot_generation, metadata_generation)
+        if value is not None
+    ]
+    if not generation_values or any(
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 1
+        for value in generation_values
+    ) or len(set(generation_values)) != 1:
+        raise RuntimeError(
+            f"active status command lease for ORCH_RUN_ID={run_id} has no exact task generation"
+        )
+    task_generation = int(generation_values[0])
     if worker_run_id != run_id or worker_task_id != task_id:
         raise RuntimeError("active status command process generation has mismatched run/task identity")
     if (
@@ -476,6 +534,8 @@ def _validated_status_command_worker_lease(
         "pid": pid,
         "pid_start_ticks": pid_start_ticks,
         "process_generation": process_generation,
+        "task_generation": task_generation,
+        "actor": normalize_worker_actor(dict(worker)),
     }
 
 
@@ -511,7 +571,6 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "handoff": 0,
     "blocker": 0,
     "done": 0,
-    "restore_approved": 0,
     "reconcile_merged_done": 0,
     "supersede": 0,
     "approve": 0,
@@ -522,10 +581,8 @@ ACTIVE_WORKER_LEASE_STATUSES = {
     "started",
     "waiting_approval",
     "suspended_approval",
-    "manual_pending",
     "retry_backoff",
     "stalled",
-    "fallback",
 }
 
 
@@ -728,33 +785,18 @@ def validate_active_status_command_lease(
     run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
     actor = current_actor()
 
-    is_auto_worker = False
-    canonical_actor = canonical_agent_name(actor)
-    if canonical_actor and canonical_actor.lower() not in {"human", "human/ops", "ops"}:
-        is_auto_worker = True
-
     if not run_id:
-        if is_auto_worker:
-            task_id = args[0] if args else ""
-            is_reviewer = False
-            if task_id:
-                try:
-                    if STATUS_FILE.exists():
-                        status_data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
-                        tasks = status_data.get("tasks", [])
-                        for t in tasks:
-                            if t.get("id") == task_id:
-                                rev = str(t.get("reviewer") or "").strip()
-                                if rev and normalize_logical_actor(actor) == normalize_logical_actor(rev):
-                                    is_reviewer = True
-                                    break
-                except Exception:
-                    pass
-            if is_reviewer and command in {"reopen", "approve", "note"}:
-                pass
-            else:
-                raise RuntimeError(f"status command lease required for auto worker: {actor}")
-        return
+        if str(os.environ.get(OPERATOR_ASSERTION_ENV) or "").strip():
+            if command not in OPERATOR_ASSERTION_ACTIONS:
+                raise RuntimeError(
+                    f"operator assertions cannot authorize {command}; "
+                    "allowed actions are assign, reopen, and note"
+                )
+            return
+        raise RuntimeError(
+            "canonical mutation requires an exact active worker lease or a "
+            "BFF-issued operator assertion"
+        )
 
     config = config_snapshot if isinstance(config_snapshot, dict) else load_config()
     runtime_state = (
@@ -989,7 +1031,6 @@ def validate_status_root_binding() -> None:
         "current_work": CURRENT_WORK_FILE,
         "docs_site": DOCS_SITE_DIR,
         "dashboard_bundle": DASHBOARD_BUNDLE_FILE,
-        "planning_state": PLANNING_STATE_FILE,
         "orchestrator_state": ORCHESTRATOR_STATE_FILE,
         "approval_queue": APPROVAL_QUEUE_FILE,
         "archive_dir": task_archive_module.ARCHIVE_DIR,
@@ -1002,7 +1043,6 @@ def validate_status_root_binding() -> None:
         "docs_site_dashboard_bundle": DOCS_SITE_DIR / "dashboard-bundle.json",
         "docs_site_orchestrator_state": DOCS_SITE_DIR / "orchestrator-state.json",
         "docs_site_approval_queue": DOCS_SITE_DIR / "approval-queue.json",
-        "docs_site_planning_state": DOCS_SITE_DIR / "planning-state.json",
         "docs_site_ai_activity_log": DOCS_SITE_DIR / "ai-activity-log.jsonl",
     }.items():
         if not _path_parent_under_root(Path(path), root):
@@ -1118,12 +1158,11 @@ STATUS_LABELS = {
     "review": "review",
     "review_approved": "review_approved",
     "blocked": "blocked",
-    "quarantined": "quarantined",
     "done": "done",
 }
 
 DEPENDENCY_DONE_STATUSES = {"done"}
-ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked", "quarantined"}
+ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked"}
 EXTERNAL_TASK_PREFIXES = {"OC", "RS", "LP", "OSS", "SPIKE"}
 EXTERNAL_TASK_ID_TOKENS = {
     "DATASOURCE",
@@ -1348,21 +1387,6 @@ def unique_strings(items: list[str]) -> list[str]:
     return ordered
 
 
-def planning_reference_files(planning_state: dict[str, Any] | None) -> list[str]:
-    if not planning_state:
-        return []
-    artifacts = planning_state.get("artifacts", {}) if isinstance(planning_state.get("artifacts"), dict) else {}
-    files = [
-        str(((artifacts.get("planning_readme") or {}).get("path")) or DEFAULT_PLANNING_README).strip(),
-        str(planning_state.get("session_file") or ((artifacts.get("planning_session") or {}).get("path")) or DEFAULT_PLANNING_SESSION_FILE).strip(),
-    ]
-    files.extend(str(item).strip() for item in planning_state.get("brief_files", []) if str(item).strip())
-    checklist_path = str(((artifacts.get("backend_completion_checklist") or {}).get("path")) or "").strip()
-    if checklist_path:
-        files.append(checklist_path)
-    return unique_strings(files)
-
-
 def build_onboarding_prompt(state: dict[str, Any]) -> str:
     canonical_files = canonical_file_set(state)
     prompt_files = [item for item in FIRST_PROMPT_PRIORITY if item in canonical_files]
@@ -1374,13 +1398,6 @@ def build_onboarding_prompt(state: dict[str, Any]) -> str:
         parts.append("Use current-work.md as a human summary only; do not treat it as the primary machine context.")
     if "ai-activity-log.jsonl" in canonical_files:
         parts.append("Use ai-activity-log.jsonl only when you need targeted recent history.")
-    planning_state = load_planning_state()
-    if planning_state and planning_state.get("status") in {"active", "human_required"}:
-        planning_files = planning_reference_files(planning_state)[:4]
-        if planning_files:
-            parts.append(
-                f"Discussion planning is {planning_state['status']}; read {human_join(planning_files)} before implementation work."
-            )
     parts.append("Treat generated views as derived from machine-readable state.")
     parts.append("Follow the canonical lifecycle todo -> in_progress -> review -> review_approved -> done.")
     parts.append("Use scripts/ai-status.sh for every state change.")
@@ -1449,6 +1466,11 @@ def active_agent_name(name: str | None) -> str:
 
 
 def current_actor(default: str = "Codex") -> str:
+    if (
+        not str(os.environ.get("ORCH_RUN_ID") or "").strip()
+        and str(os.environ.get(OPERATOR_ASSERTION_ENV) or "").strip()
+    ):
+        return "Human/Ops"
     return canonical_agent_name(os.environ.get("AI_NAME", default))
 
 
@@ -1682,16 +1704,6 @@ def load_log_tail_lines(max_lines: int = 5000) -> list[str]:
     return payload.decode("utf-8", errors="replace").splitlines()
 
 
-def load_planning_state() -> dict[str, Any] | None:
-    if not PLANNING_STATE_FILE.exists():
-        return None
-    try:
-        payload = json.loads(PLANNING_STATE_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
 def load_json_file(path: Path, default: Any) -> Any:
     if not path.exists():
         return deepcopy(default)
@@ -1741,34 +1753,11 @@ def load_config() -> dict[str, Any]:
     return payload
 
 
-def bool_config_setting(settings: dict[str, Any], key: str, default: bool = False) -> bool:
-    value = settings.get(key, default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return bool(value)
-
-
 def int_config_setting(settings: dict[str, Any], key: str, default: int) -> int:
     try:
         return int(settings.get(key, default))
     except (TypeError, ValueError):
         return default
-
-
-def optional_int_config_setting(settings: dict[str, Any], key: str) -> int | None:
-    value = settings.get(key)
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def int_mapping_config_setting(settings: dict[str, Any], key: str) -> dict[str, int]:
@@ -1786,34 +1775,18 @@ def int_mapping_config_setting(settings: dict[str, Any], key: str) -> dict[str, 
 
 def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
     ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
-    helper_claim = ready_dispatcher.get("helper_claim") if isinstance(ready_dispatcher.get("helper_claim"), dict) else {}
-    worker_self_claim = ready_dispatcher.get("worker_self_claim") if isinstance(ready_dispatcher.get("worker_self_claim"), dict) else {}
-    claim_idle_work = bool_config_setting(helper_claim, "claim_idle_work", False)
-    helper_claim_enabled = bool_config_setting(helper_claim, "enabled", True)
-    worker_self_claim_enabled = bool_config_setting(worker_self_claim, "enabled", False)
-    account_cap_key = (
-        "max_concurrent_per_account"
-        if "max_concurrent_per_account" in ready_dispatcher
-        else "max_concurrent_per_quota_group"
-    )
-    account_caps = int_mapping_config_setting(ready_dispatcher, account_cap_key)
+    account_caps = int_mapping_config_setting(ready_dispatcher, "max_concurrent_per_account")
+    agent_caps = {
+        str(agent_id): max(0, int((agent or {}).get("max_parallel", 0) or 0))
+        for agent_id, agent in (config.get("agents", {}) or {}).items()
+        if not str((agent or {}).get("dispatch_slot_for") or "").strip()
+    }
     return {
-        "mode": "worker_self_claim" if worker_self_claim_enabled else ("idle_worker_claim" if helper_claim_enabled and claim_idle_work else "supervisor_owned_dispatch"),
-        "worker_self_claim_enabled": worker_self_claim_enabled,
-        "worker_self_claim_command": worker_self_claim.get("claim_command") or "",
-        "helper_claim_enabled": helper_claim_enabled,
-        "claim_idle_work": claim_idle_work,
-        "claim_sidecars_when_idle": bool_config_setting(helper_claim, "claim_sidecars_when_idle", False),
-        "require_owner_higher_priority_load": bool_config_setting(helper_claim, "require_owner_higher_priority_load", True),
-        "owned_work_first": True,
+        "mode": "single_dispatch_planner",
         "max_dispatches_per_tick": int_config_setting(ready_dispatcher, "max_dispatches_per_tick", 4),
-        "max_tasks_per_agent": optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent"),
-        "max_tasks_per_agent_by_agent": int_mapping_config_setting(ready_dispatcher, "max_tasks_per_agent_by_agent"),
+        "max_parallel_by_agent": agent_caps,
         "max_concurrent_per_account": account_caps,
-        # Deprecated dashboard compatibility alias; source configs use account.
-        "max_concurrent_per_quota_group": account_caps,
         "sidecar_only_agents": ready_dispatcher.get("sidecar_only_agents") or [],
-        "disabled_agents": ready_dispatcher.get("disabled_agents") or [],
     }
 
 
@@ -1839,83 +1812,13 @@ def _dashboard_agent_id(config: dict[str, Any], agent_name: str | None) -> str:
     return canonical or raw
 
 
-def _dashboard_slot_count(config: dict[str, Any], agent_id: str) -> int:
-    agents = config.get("agents", {}) or {}
-    agent = agents.get(agent_id) or {}
-    slots = [str(slot or "").strip() for slot in (agent.get("worker_slots", []) or [])]
-    slot_ids = {slot for slot in slots if slot and slot in agents}
-    for slot_id, slot_agent in agents.items():
-        if str((slot_agent or {}).get("dispatch_slot_for") or "").strip() == agent_id:
-            slot_ids.add(str(slot_id))
-    return len(slot_ids)
-
-
 def dashboard_agent_capacity(config: dict[str, Any], agent_name: str | None) -> int:
-    ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
-    caps = ready_dispatcher.get("max_tasks_per_agent_by_agent")
     agent_id = _dashboard_agent_id(config, agent_name)
-    canonical = canonical_agent_name(agent_name)
-    lookup_keys = {
-        str(agent_name or "").strip().lower(),
-        canonical.lower(),
-        agent_id.lower(),
-        agent_id.lower().replace("_", "-"),
-        agent_id.lower().replace("-", "_"),
-    }
-    if isinstance(caps, dict):
-        for key, value in caps.items():
-            if str(key).strip().lower() not in lookup_keys:
-                continue
-            try:
-                return max(1, int(value))
-            except (TypeError, ValueError):
-                continue
-
-    default_capacity = optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent")
-    slot_count = _dashboard_slot_count(config, agent_id)
-    if slot_count:
-        return max(default_capacity or 0, slot_count)
-    return default_capacity or 1
-
-
-def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dict[str, Any]]:
-    claims: list[dict[str, Any]] = []
-    for line_no, line in enumerate(reversed(load_log_tail_lines(max_lines=max_scan_lines)), start=1):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            entry = strict_activity_json_loads(stripped)
-        except DuplicateActivityJSONKeyError as exc:
-            raise RuntimeError(
-                "ai-activity-log.jsonl tail line "
-                f"-{line_no} contains {exc}"
-            ) from exc
-        except json.JSONDecodeError as exc:
-            print(
-                f"Warning: skipping malformed ai-activity-log.jsonl tail line -{line_no}: {exc}",
-                file=sys.stderr,
-            )
-            continue
-        if not isinstance(entry, dict):
-            raise RuntimeError(
-                f"ai-activity-log.jsonl tail line -{line_no} is not an object row"
-            )
-        if str(entry.get("type") or "") != "task_helper_claimed":
-            continue
-        claims.append(
-            {
-                "task_id": entry.get("task_id"),
-                "from_owner": entry.get("from_owner") or entry.get("from"),
-                "to_owner": entry.get("to_owner") or entry.get("to"),
-                "new_reviewer": entry.get("new_reviewer") or entry.get("reviewer"),
-                "message": entry.get("message"),
-                "ts": entry.get("ts") or entry.get("updated_at"),
-            }
-        )
-        if len(claims) >= limit:
-            break
-    return claims
+    agent = (config.get("agents", {}) or {}).get(agent_id, {}) or {}
+    try:
+        return max(0, int(agent.get("max_parallel", 0)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def save_state(state: dict[str, Any]) -> None:
@@ -2666,6 +2569,49 @@ def get_task(state: dict[str, Any], task_id: str) -> dict[str, Any] | None:
     return None
 
 
+def task_assignment_generation(task: Mapping[str, Any] | None) -> int:
+    """Return the persisted assignment epoch; legacy snapshots start at one."""
+
+    if not isinstance(task, Mapping):
+        return 0
+    value = task.get("generation", 1)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise RuntimeError(
+            f"Task {task.get('id') or '?'} has invalid assignment generation"
+        )
+    return value
+
+
+def validate_bound_status_command_task_authority(
+    state: dict[str, Any], command: str, args: list[str]
+) -> None:
+    """Revalidate the worker lease against the locked canonical task row."""
+
+    binding = getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", None)
+    if not isinstance(binding, Mapping):
+        return
+    task_id = _command_task_id(command, args)
+    task = get_task(state, task_id)
+    if task is None:
+        raise RuntimeError(f"active status command task is missing: {task_id}")
+    lease_generation = binding.get("task_generation")
+    current_generation = task_assignment_generation(task)
+    if lease_generation != current_generation:
+        raise RuntimeError(
+            f"active status command task generation mismatch: "
+            f"lease {lease_generation} != canonical {current_generation}"
+        )
+    actor = canonical_agent_name(str(binding.get("actor") or current_actor()))
+    current_roles = {
+        canonical_agent_name(task.get("owner")),
+        canonical_agent_name(task.get("reviewer")),
+    }
+    if actor not in current_roles:
+        raise RuntimeError(
+            f"active status command actor {actor} no longer owns a canonical role for {task_id}"
+        )
+
+
 def parse_csv_env(name: str) -> list[str]:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -3306,13 +3252,6 @@ def validate_state(state: dict[str, Any]) -> None:
             raise SystemExit(f"Task {task['id']} has identical owner and reviewer")
         if task["status"] == "blocked" and not task.get("waiting_for"):
             raise SystemExit(f"Blocked task {task['id']} is missing waiting_for")
-        if "failure_streak" in task and (
-            isinstance(task["failure_streak"], bool)
-            or not isinstance(task["failure_streak"], int)
-            or task["failure_streak"] < 0
-        ):
-            raise SystemExit(f"Task {task['id']} has invalid failure_streak")
-
     for blocker in state.get("blockers", []):
         ensure_agent(blocker["owner"])
         ensure_agent(blocker["waiting_for"])
@@ -3563,7 +3502,6 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     current_logs = logs[-20:]
     canonical_files = canonical_file_set(state)
     tier_labels = canonical_tier_labels(state)
-    planning_state = load_planning_state()
     orchestrator_state = load_json_file(ORCHESTRATOR_STATE_FILE, {})
     coordination_summary = build_coordination_summary(orchestrator_state)
     archive_index = load_archive_index()
@@ -3577,9 +3515,6 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         "- Canonical files: " + ", ".join(f"`{item}`" for item in state["canonical_files"]),
         "- Canonical tiers: " + (", ".join(tier_labels) if tier_labels else "-"),
     ]
-    planning_reference = planning_reference_files(planning_state)
-    if planning_reference:
-        current_sprint_lines.append(f"- Planning mode: `{planning_reference[0]}`")
     for path, label in OPTIONAL_CURRENT_WORK_REFERENCES:
         if path in canonical_files:
             current_sprint_lines.append(f"- {label}: `{path}`")
@@ -3604,23 +3539,6 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         "",
     ]
 
-    if planning_state:
-        gate = planning_state.get("switch_gate", {})
-        lines.extend(
-            [
-                "## Discussion Planning",
-                "",
-                f"- Session: `{planning_state.get('session_id', '-')}`",
-                f"- Status: `{planning_state.get('status', '-')}`",
-                f"- Baton owner: `{planning_state.get('baton_owner', '-')}`",
-                f"- Current round: `{planning_state.get('current_round', 0)}`",
-                f"- Consensus: `{planning_state.get('consensus_status', '-')}`",
-                f"- Human gate: `{planning_state.get('human_gate_status', '-')}`",
-                f"- Ready for human: `{gate.get('ready_for_human', False)}`",
-                f"- Ready to materialize execution: `{gate.get('ready_to_materialize', False)}`",
-                "",
-            ]
-        )
     lines.extend(
         [
         "## Active Slices",
@@ -3893,27 +3811,8 @@ def normalize_worker_actor(worker: dict[str, Any]) -> str:
     return str(worker.get("agent_id") or worker.get("provider") or "").strip()
 
 
-def runtime_dispatch_mode(payload: dict[str, Any] | None) -> str:
-    if not isinstance(payload, dict):
-        return "execution"
-    explicit = str(payload.get("dispatch_mode") or "").strip()
-    if explicit:
-        return explicit
-    request_snapshot = payload.get("request_snapshot") if isinstance(payload.get("request_snapshot"), dict) else {}
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else request_snapshot.get("metadata", {})
-    if isinstance(metadata.get("planning"), dict) and metadata.get("planning"):
-        return str(metadata["planning"].get("mode") or "discussion_planning")
-    if isinstance(metadata.get("chair"), dict) and metadata.get("chair"):
-        return "chair_review"
-    if isinstance(metadata.get("coordination"), dict) and metadata.get("coordination"):
-        return "coordination"
-    reason = str(payload.get("reason") or request_snapshot.get("reason") or "").strip()
-    if reason.startswith("discussion_planning_"):
-        return "discussion_planning"
-    if reason.startswith("chair_review:"):
-        return "chair_review"
-    if reason.startswith("coordination:"):
-        return "coordination"
+def runtime_dispatch_mode(_payload: dict[str, Any] | None) -> str:
+    """V2 has one runtime mode; legacy metadata never revives alternate lanes."""
     return "execution"
 
 
@@ -3964,7 +3863,7 @@ def worker_has_live_runtime(worker: dict[str, Any], *, pid_alive: bool | None = 
         if has_pid:
             return bool(pid_alive)
         return True
-    if status in {"suspended_approval", "manual_pending", "retry_backoff", "fallback", "stalled"}:
+    if status in {"suspended_approval", "retry_backoff", "stalled"}:
         if has_pid:
             return bool(pid_alive)
         return False
@@ -4240,12 +4139,6 @@ def detect_truth_mismatches(
         for approval in (approval_state.get("pending") or [])
         if str(approval.get("task_id") or "").strip()
     }
-    approval_worker_modes = {
-        str(worker.get("run_id") or "").strip(): str(worker.get("dispatch_mode") or "").strip()
-        for worker in workers
-        if str(worker.get("run_id") or "").strip()
-    }
-
     def related_live_worker_covers_task(task: dict[str, Any]) -> bool:
         expected_actor = expected_task_actor(task)
         if not expected_actor:
@@ -4282,8 +4175,6 @@ def detect_truth_mismatches(
         if task_id:
             live_workers_by_task.setdefault(task_id, []).append(worker)
         else:
-            if str(worker.get("dispatch_mode") or "").strip() == "chair_review":
-                continue
             push(
                 {
                     "id": f"worker-without-task:{worker.get('run_id')}",
@@ -4299,8 +4190,6 @@ def detect_truth_mismatches(
 
         task = task_map.get(task_id)
         if task is None:
-            if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination", "chair_review"}:
-                continue
             if resolver.source(task_id) == "archive":
                 continue
             if worker.get("task_source") == "handoff":
@@ -4451,7 +4340,7 @@ def detect_truth_mismatches(
     live_queue_ids = {str(worker.get("queue_event_id") or "") for worker in live_workers if worker.get("queue_event_id")}
     for event in queue_events:
         event_status = str(event.get("status") or "").lower()
-        if event_status not in {"started", "manual_pending"}:
+        if event_status not in {"started", "waiting_approval"}:
             continue
         if (
             str(event.get("run_id") or "").strip() in pending_approval_run_ids
@@ -4476,8 +4365,6 @@ def detect_truth_mismatches(
     for approval in (approval_state.get("pending") or []):
         task_id = str(approval.get("task_id") or "").strip()
         worker_run_id = str(approval.get("worker_run_id") or "").strip()
-        if approval_worker_modes.get(worker_run_id) in {"discussion_planning", "coordination"}:
-            continue
         if not task_id or task_id in task_map or resolver.source(task_id) == "archive":
             continue
         push(
@@ -4517,107 +4404,6 @@ def normalized_source_ref(task: dict[str, Any] | None) -> dict[str, Any]:
             continue
         normalized[str(key)] = text
     return normalized
-
-
-def build_bridge_summary(state: dict[str, Any], planning: dict[str, Any]) -> dict[str, Any]:
-    resolver = task_resolver(state)
-    task_map = resolver.active_task_map()
-    proposed = planning.get("proposed_execution_tasks") or []
-    contract = planning.get("materialization_contract") if isinstance(planning.get("materialization_contract"), dict) else {}
-    artifacts = planning.get("artifacts") if isinstance(planning.get("artifacts"), dict) else {}
-    consensus_packet = str(contract.get("consensus_packet") or ((artifacts.get("consensus_packet") or {}).get("path")) or "").strip()
-    execution_materialization = str(
-        contract.get("execution_materialization")
-        or ((artifacts.get("execution_materialization") or {}).get("path"))
-        or ""
-    ).strip()
-    session_id = str(contract.get("session_id") or planning.get("session_id") or "").strip()
-    planning_backed_tasks = [
-        task
-        for task in state.get("tasks", [])
-        if str(task.get("source_plane") or "").strip().lower() == "planning"
-    ]
-
-    status_counts = {
-        "done": 0,
-        "review_approved": 0,
-        "in_progress": 0,
-        "review": 0,
-        "todo": 0,
-        "blocked": 0,
-    }
-    pending_proposals: list[dict[str, Any]] = []
-    active_materialized: list[dict[str, Any]] = []
-    materialized_task_ids: list[str] = []
-    missing_source_ref_count = 0
-    current_session_materialized = 0
-
-    for proposal in proposed:
-        task_id = str(proposal.get("id") or "").strip()
-        if not task_id:
-            continue
-        current = resolver.get(task_id)
-        if current is None:
-            pending_proposals.append(
-                {
-                    "id": task_id,
-                    "title": str(proposal.get("title") or "").strip(),
-                    "summary_zh": str(proposal.get("summary_zh") or "").strip(),
-                    "owner": str(proposal.get("owner") or "").strip(),
-                    "reviewer": str(proposal.get("reviewer") or "").strip(),
-                }
-            )
-            continue
-
-        materialized_task_ids.append(task_id)
-        current_status = str(current.get("status") or "").lower()
-        if current_status in status_counts:
-            status_counts[current_status] += 1
-        source_ref = normalized_source_ref(current)
-        if not source_ref:
-            missing_source_ref_count += 1
-        elif session_id and str(source_ref.get("session_id") or "").strip() == session_id:
-            current_session_materialized += 1
-        if current_status != "done":
-            active_materialized.append(
-                {
-                    "id": task_id,
-                    "title": str(current.get("title") or proposal.get("title") or "").strip(),
-                    "summary_zh": str(current.get("summary_zh") or proposal.get("summary_zh") or "").strip(),
-                    "status": str(current.get("status") or "").strip(),
-                    "owner": str(current.get("owner") or "").strip(),
-                    "reviewer": str(current.get("reviewer") or "").strip(),
-                }
-            )
-
-    return {
-        "source_plane": "planning",
-        "session_id": session_id,
-        "phase": str(contract.get("phase") or planning.get("phase") or "").strip(),
-        "profile": str(contract.get("profile") or planning.get("profile") or "").strip(),
-        "planning_dir": str(contract.get("planning_dir") or planning.get("planning_dir") or "").strip(),
-        "session_file": str(contract.get("session_file") or planning.get("session_file") or "").strip(),
-        "consensus_packet": consensus_packet,
-        "execution_materialization": execution_materialization,
-        "proposed_total": len(proposed),
-        "materialized_count": len(materialized_task_ids),
-        "pending_materialization_count": len(pending_proposals),
-        "done": status_counts["done"],
-        "review_approved": status_counts["review_approved"],
-        "in_progress": status_counts["in_progress"],
-        "review": status_counts["review"],
-        "todo": status_counts["todo"],
-        "blocked": status_counts["blocked"],
-        "materialized_task_ids": materialized_task_ids,
-        "pending_proposals": pending_proposals,
-        "active_materialized_tasks": active_materialized,
-        "planning_backed_total": len(planning_backed_tasks),
-        "planning_backed_active": sum(
-            1 for task in planning_backed_tasks if str(task.get("status") or "").lower() in {"todo", "in_progress", "review", "review_approved", "blocked"}
-        ),
-        "current_session_materialized": current_session_materialized,
-        "missing_source_ref_count": missing_source_ref_count,
-    }
 
 
 def coordination_payload_resolved(entry: dict[str, Any] | None) -> bool:
@@ -5042,11 +4828,9 @@ def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dic
 
 def build_dashboard_bundle(
     state: dict[str, Any],
-    planning_state: dict[str, Any] | None,
     orchestrator_state: dict[str, Any] | None,
     approval_state: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    planning = planning_state or {}
     orchestrator = orchestrator_state or {}
     approvals = approval_state or {}
     config = load_config()
@@ -5073,7 +4857,6 @@ def build_dashboard_bundle(
         resolver,
         orchestrator,
     )
-    bridge_summary = build_bridge_summary(state, planning)
     coordination_summary = build_coordination_summary(orchestrator)
     supervisor_state = orchestrator.get("supervisor") if isinstance(orchestrator.get("supervisor"), dict) else {}
 
@@ -5194,59 +4977,33 @@ def build_dashboard_bundle(
             }
         )
 
-    proposed = planning.get("proposed_execution_tasks") or []
-    materialized_count = int(bridge_summary.get("materialized_count") or 0)
-    runtime_mode = str(planning.get("runtime_mode") or "supervisor_managed_execution")
-    planning_status = str(planning.get("status") or "inactive")
-    supervisor_focus = str(supervisor_state.get("focus_mode") or "").strip()
-    if supervisor_focus in {"planning", "execution"}:
-        focus_mode = supervisor_focus
-        focus_mode_source = "supervisor"
-    else:
-        focus_mode = "planning" if planning_status in {"active", "human_required"} else "execution" if runtime_mode == "supervisor_managed_execution" else "execution"
-        focus_mode_source = "planning_state_fallback"
+    focus_mode = "execution"
+    focus_mode_source = "supervisor_authority_v2"
 
     live_worker_queue_ids = {str(worker.get("queue_event_id") or "") for worker in live_workers if str(worker.get("queue_event_id") or "")}
     computed_mode_occupancy = {
-        "planning": {"running": 0, "pending": 0, "queued": 0},
         "execution": {"running": 0, "pending": 0, "queued": 0},
-        "coordination": {"running": 0, "pending": 0, "queued": 0},
-        "chair_review": {"running": 0, "pending": 0, "queued": 0},
-    }
-    dispatch_mode_map = {
-        "discussion_planning": "planning",
-        "execution": "execution",
-        "coordination": "coordination",
-        "chair_review": "chair_review",
+        "legacy": {"running": 0, "pending": 0, "queued": 0},
     }
     for worker in live_workers:
-        mode_name = dispatch_mode_map.get(str(worker.get("dispatch_mode") or "").strip())
-        if not mode_name:
-            continue
+        mode_name = (
+            "execution"
+            if str(worker.get("dispatch_mode") or "execution").strip() == "execution"
+            else "legacy"
+        )
         bucket_name = "running" if worker.get("bucket") == "running" else "pending"
         computed_mode_occupancy[mode_name][bucket_name] += 1
     for event in queue_events:
         event_id = str(event.get("id") or "")
         if event_id and event_id in live_worker_queue_ids:
             continue
-        mode_name = dispatch_mode_map.get(str(event.get("dispatch_mode") or "").strip())
-        if not mode_name:
-            continue
+        mode_name = (
+            "execution"
+            if str(event.get("dispatch_mode") or "execution").strip() == "execution"
+            else "legacy"
+        )
         computed_mode_occupancy[mode_name]["queued"] += 1
     mode_occupancy = computed_mode_occupancy
-
-    chair_rotation = orchestrator.get("chair_rotation") if isinstance(orchestrator.get("chair_rotation"), dict) else {}
-    chair_summary = {
-        "current_index": int(chair_rotation.get("current_index") or 0),
-        "last_chair_agent": chair_rotation.get("last_chair_agent"),
-        "last_chair_run_at": chair_rotation.get("last_chair_run_at"),
-        "last_chair_reason": chair_rotation.get("last_chair_reason"),
-        "last_review_path": chair_rotation.get("last_review_path"),
-        "last_review_summary": chair_rotation.get("last_review_summary") or [],
-        "pending_review_path": chair_rotation.get("pending_review_path"),
-        "pending_review_agent": chair_rotation.get("pending_review_agent"),
-        "sidecar_approved_until": chair_rotation.get("sidecar_approved_until"),
-    }
 
     lanes: dict[str, dict[str, int]] = {}
     for worker in workers:
@@ -5294,8 +5051,7 @@ def build_dashboard_bundle(
             "running_workers": sum(1 for worker in live_workers if worker.get("bucket") == "running"),
             "pending_workers": sum(1 for worker in live_workers if worker.get("bucket") == "pending"),
             "mismatch_count": len(mismatches),
-            "mode_status": supervisor_state.get("mode_status") or ("active" if focus_mode == "planning" else "idle"),
-            "mode_switch_requested": supervisor_state.get("mode_switch_requested"),
+            "mode_status": "active",
             "mode_occupancy": mode_occupancy,
             "lanes": lanes,
             "dispatch_targets": dispatch_targets,
@@ -5311,24 +5067,6 @@ def build_dashboard_bundle(
             "superseded": superseded,
             "live_attached": sum(1 for linked in live_workers_by_task.values() if any(worker.get("bucket") == "running" for worker in linked)),
             "mismatch_count": len(mismatches),
-            "planning_backed_total": int(bridge_summary.get("planning_backed_total") or 0),
-            "planning_backed_active": int(bridge_summary.get("planning_backed_active") or 0),
-        },
-        "planning_summary": {
-            "status": planning.get("status"),
-            "consensus_status": planning.get("consensus_status"),
-            "human_gate_status": planning.get("human_gate_status"),
-            "counts": planning.get("counts") or {},
-            "materialized_count": materialized_count,
-            "proposed_execution_tasks": len(proposed),
-            "active_session": planning.get("active_session")
-            or {
-                "session_id": planning.get("session_id"),
-                "planning_dir": planning.get("planning_dir"),
-                "session_file": planning.get("session_file"),
-                "status": planning.get("status"),
-            },
-            "recent_sessions": planning.get("recent_sessions") or [],
         },
         "archive_summary": {
             "updated_at": archive_index.get("updated_at"),
@@ -5345,10 +5083,7 @@ def build_dashboard_bundle(
             "bff_consol_archived_ids": bff_consol_archived_ids,
         },
         "coordination_summary": coordination_summary,
-        "bridge_summary": bridge_summary,
-        "chair_summary": chair_summary,
         "dispatch_policy": dispatch_policy,
-        "recent_helper_claims": recent_helper_claims(),
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
     }
@@ -5356,13 +5091,12 @@ def build_dashboard_bundle(
 
 def write_dashboard_bundle(state: dict[str, Any]) -> None:
     config = load_config()
-    planning_state = load_planning_state()
     try:
         orchestrator_state = load_runtime_state(config)
     except KeyError:
         orchestrator_state = {}
     approval_state = load_json_file(APPROVAL_QUEUE_FILE, {"pending": [], "history": []})
-    bundle = build_dashboard_bundle(state, planning_state, orchestrator_state, approval_state)
+    bundle = build_dashboard_bundle(state, orchestrator_state, approval_state)
     DASHBOARD_BUNDLE_FILE.write_text(json.dumps(bundle, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
@@ -5407,7 +5141,6 @@ def sync_docs_site(state: dict[str, Any]) -> None:
         DASHBOARD_BUNDLE_FILE,
         ORCHESTRATOR_STATE_FILE,
         APPROVAL_QUEUE_FILE,
-        PLANNING_STATE_FILE,
     ]
     rename_map = {
         "state.json": "orchestrator-state.json",
@@ -5890,14 +5623,8 @@ def _catalog_assignment_revision_allows_guard_change(
 
 
 def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
-    from wave_guards import WaveGuardError, check_wave_assign
-
     if len(args) < 3:
         raise SystemExit("Usage: assign <task-id> <owner> <reviewer> [title]")
-    try:
-        check_wave_assign(state.get("wave_state") or {})
-    except WaveGuardError as exc:
-        raise SystemExit(f"Wave guard rejected assign: {exc}") from exc
     task_id, owner, reviewer = args[0], canonical_agent_name(args[1]), canonical_agent_name(args[2])
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
@@ -5961,27 +5688,53 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "id": task_id,
             "artifacts": artifacts,
             **metadata,
-        }
-    else:
-        candidate = deepcopy(task)
-        candidate.update(metadata)
-    candidate.update(
-        {
-            "id": task_id,
             "owner": owner,
             "reviewer": reviewer,
             "title": title,
         }
-    )
-    if catalog_assignment_revision:
+        enforce_artifact_conflict_admission(state, candidate)
+    elif bridge is not None:
+        # Existing bridge rows have their own exact packet/digest/spec replay
+        # check below.  Keep its precise conflict semantics instead of treating
+        # a mismatched signed packet as an ordinary metadata edit.
+        pass
+    elif catalog_assignment_revision:
+        candidate = deepcopy(task)
+        candidate.update(metadata)
+        candidate.update(
+            {
+                "id": task_id,
+                "owner": owner,
+                "reviewer": reviewer,
+                "title": title,
+            }
+        )
         # This transition does not admit a new scope. Validate that the revised
         # candidate still matches the pre-existing exact guard, but do not
         # retroactively reject it because another already-active task later
         # acquired a conflicting scope.
         _validated_artifact_conflict_guard(candidate)
     else:
-        enforce_artifact_conflict_admission(state, candidate)
+        # An existing task is already admitted.  Replacing its current runtime
+        # owner/reviewer must not re-run repository artifact admission: a task
+        # that later overlaps the same path would otherwise make Human/Ops
+        # unable to revoke a broken assignment.  Conversely, assignment is not
+        # a back door for changing the admitted source contract.
+        changed_metadata = sorted(
+            key for key, value in metadata.items() if task.get(key) != value
+        )
+        if changed_metadata:
+            raise SystemExit(
+                f"Task {task_id} contract metadata is immutable during reassignment: "
+                + ", ".join(changed_metadata)
+            )
+        if title and title != task.get("title"):
+            raise SystemExit(
+                f"Task {task_id} title is immutable during reassignment."
+            )
     timestamp = iso_now()
+    old_owner = str(task.get("owner") or "") if task is not None else ""
+    old_reviewer = str(task.get("reviewer") or "") if task is not None else ""
     if task is None:
         if archived_task_snapshot(task_id):
             raise SystemExit(
@@ -5989,6 +5742,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             )
         task = {
             "id": task_id,
+            "generation": 1,
             "title": title,
             "summary_zh": summary_zh,
             "phase": phase,
@@ -6024,8 +5778,42 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
                 f"Bridge assignment conflict: task {task_id} is already bound to "
                 f"packet={existing_packet!r} digest={existing_digest!r} spec={existing_hash!r}"
             )
-        task["owner"] = owner
-        task["reviewer"] = reviewer
+        if current_actor() != "Human/Ops":
+            raise SystemExit(
+                "Only Human/Ops may change an existing task assignment."
+            )
+        operator_binding = getattr(_OPERATOR_ASSERTION_LOCAL, "binding", None)
+        assignment_reason = (
+            str(operator_binding.get("reason") or "").strip()
+            if isinstance(operator_binding, Mapping)
+            else ""
+        ) or (
+            os.environ.get("TASK_ASSIGN_REASON", "").strip()
+            or assignment_next
+            or "Human/Ops updated the current runtime assignment."
+        )
+        try:
+            assignment = task_machine.assignment_transition(
+                old_owner,
+                old_reviewer,
+                owner,
+                reviewer,
+                actor=current_actor(),
+                reason=assignment_reason,
+                expected_owner=(
+                    os.environ.get("TASK_ASSIGN_EXPECTED_OWNER") or None
+                ),
+                expected_reviewer=(
+                    os.environ.get("TASK_ASSIGN_EXPECTED_REVIEWER") or None
+                ),
+            )
+        except task_machine.TransitionError as exc:
+            raise SystemExit(
+                f"Task {task_id} assignment transition rejected: {exc}"
+            ) from exc
+        task["owner"] = assignment.new_owner
+        task["reviewer"] = assignment.new_reviewer
+        task["generation"] = task_assignment_generation(task) + 1
         if title:
             task["title"] = title
         if summary_zh:
@@ -6039,26 +5827,42 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     if os.environ.get("TASK_BRANCH"):
         agent["branch"] = os.environ["TASK_BRANCH"]
 
-    append_log(
-        {
+    event = {
             "ts": timestamp,
             "agent": current_actor(),
-            "type": "assign",
+            "type": "task_reassigned" if old_owner or old_reviewer else "assign",
             "task_id": task_id,
             "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
         }
-    )
-
-
-def require_reopen_before_leaving_quarantine(
-    task: Mapping[str, Any], *, command: str
-) -> None:
-    """Keep task quarantine durable until the governed reopen transition."""
-
-    if task.get("status") == "quarantined":
-        raise SystemExit(
-            f"Task {task.get('id')} is quarantined; use reopen before {command}."
+    if old_owner or old_reviewer:
+        event.update(
+            {
+                "old_owner": old_owner,
+                "new_owner": owner,
+                "old_reviewer": old_reviewer,
+                "new_reviewer": reviewer,
+                "reason": assignment_reason,
+                "generation": task["generation"],
+            }
         )
+    event.update(operator_assertion_audit_fields())
+    append_log(event)
+
+
+def apply_task_lifecycle_transition(
+    task: dict[str, Any], action: str
+) -> task_machine.TaskState:
+    """Apply the target returned by the sole canonical lifecycle authority."""
+
+    try:
+        target = task_machine.transition(task.get("status"), action)
+    except task_machine.TransitionError as exc:
+        raise SystemExit(
+            f"Task {task.get('id') or '?'} cannot {action}: {exc}"
+        ) from exc
+    task["status"] = target.value
+    task.pop("failure_streak", None)
+    return target
 
 
 def command_start(state: dict[str, Any], args: list[str]) -> None:
@@ -6072,9 +5876,8 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can start {task_id}")
-    require_reopen_before_leaving_quarantine(task, command="start")
     timestamp = iso_now()
-    task["status"] = "in_progress"
+    apply_task_lifecycle_transition(task, "start")
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -6093,8 +5896,7 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can progress {task_id}")
     timestamp = iso_now()
-    if task["status"] == "todo":
-        task["status"] = "in_progress"
+    apply_task_lifecycle_transition(task, "progress")
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -6112,7 +5914,16 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
     timestamp = iso_now()
     task["last_update"] = timestamp
     task["next"] = message
-    append_log({"ts": timestamp, "agent": actor, "type": "note", "task_id": task_id, "message": message})
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "note",
+            "task_id": task_id,
+            "message": message,
+            **operator_assertion_audit_fields(),
+        }
+    )
 
 
 def command_reopen(state: dict[str, Any], args: list[str]) -> None:
@@ -6134,34 +5945,10 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(
             f"Only the owner ({owner}), reviewer ({reviewer}), or Human/Ops can reopen {task_id}"
         )
-    binding: dict[str, Any] = {}
-    github_review_bridge: dict[str, Any] = {}
-    if actor == reviewer:
-        explicit_binding = bool(
-            os.environ.get("REVIEW_PR", "").strip()
-            or os.environ.get("REVIEW_HEAD_SHA", "").strip()
-        )
-        if explicit_binding:
-            binding = resolve_approval_binding(task, warn_if_unbound=False)
-        elif isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
-            binding = dict(task[APPROVAL_BINDING_KEY])
-        elif task_has_pr_review_target(task):
-            raise SystemExit(
-                f"{task_id} is PR-backed but reviewer reopen has no exact-head "
-                "binding. Set REVIEW_PR and REVIEW_HEAD_SHA so the rejection "
-                "also closes the GitHub review gate."
-            )
-        if binding:
-            github_review_bridge = bridge_github_review_decision(
-                task,
-                actor=actor,
-                decision="reopen",
-                message=message,
-                binding=binding,
-            )
+    preflight = consume_external_mutation_preflight("reopen", task)
+    github_review_bridge = dict(preflight.get(GITHUB_REVIEW_BRIDGE_KEY) or {})
     timestamp = iso_now()
-    task["status"] = "in_progress"
-    task["failure_streak"] = 0
+    apply_task_lifecycle_transition(task, "reopen")
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
@@ -6187,6 +5974,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             "type": "reopen",
             "task_id": task_id,
             "message": message,
+            **operator_assertion_audit_fields(),
             **(
                 {GITHUB_REVIEW_BRIDGE_KEY: dict(github_review_bridge)}
                 if github_review_bridge
@@ -6212,10 +6000,8 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(
             f"{task_id} handoff target must match the assigned reviewer ({task.get('reviewer')}); reassign reviewer first if needed"
         )
-    require_reopen_before_leaving_quarantine(task, command="handoff")
     timestamp = iso_now()
-    task["status"] = "review"
-    task["failure_streak"] = 0
+    apply_task_lifecycle_transition(task, "handoff")
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -6308,9 +6094,8 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can block {task_id}")
-    require_reopen_before_leaving_quarantine(task, command="block")
     timestamp = iso_now()
-    task["status"] = "blocked"
+    apply_task_lifecycle_transition(task, "block")
     task["waiting_for"] = waiting_for
     task["last_update"] = timestamp
     task["next"] = message
@@ -6326,53 +6111,6 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     }
     state.setdefault("blockers", []).append(blocker)
     append_log({"ts": timestamp, "agent": actor, "type": "blocker", "task_id": task_id, "message": f"Blocked on {waiting_for}: {message}"})
-
-
-def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
-    """Recover a task that was incorrectly downgraded from review_approved to in_progress by the supervisor.
-
-    Only allowed when:
-    - actor is the owner
-    - current status is in_progress
-    - task has review_notes_zh (evidence of a prior approval)
-    """
-    if len(args) < 2:
-        raise SystemExit("Usage: restore_approved <task-id> <message>")
-    task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
-    task = get_task(state, task_id)
-    if task is None:
-        raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
-        raise SystemExit(f"Only the owner ({task.get('owner')}) can restore {task_id}")
-    if task.get("status") != "in_progress":
-        raise SystemExit(f"restore_approved is only valid when status is in_progress (current: {task.get('status')})")
-    if not task.get("review_notes_zh"):
-        raise SystemExit(
-            f"restore_approved requires review_notes_zh to be present as evidence of a prior approval. "
-            f"Use the normal review lifecycle if the task has not been reviewed yet."
-        )
-    verdict_ref = validate_protected_closeout_transition(
-        task,
-        transition="review_approved",
-    )
-    timestamp = iso_now()
-    task["status"] = "review_approved"
-    task["failure_streak"] = 0
-    task["last_update"] = timestamp
-    task["next"] = message
-    if verdict_ref is not None:
-        task["protected_closeout_verdict"] = verdict_ref
-    append_log(
-        {
-            "ts": timestamp,
-            "agent": actor,
-            "type": "restore_approved",
-            "task_id": task_id,
-            "message": message,
-        }
-    )
 
 
 def _required_reconcile_env(name: str) -> str:
@@ -6636,10 +6374,16 @@ def _verified_owner_reassignment(
 
 
 def _supervisor_reassignment_event_id(event: Mapping[str, Any]) -> str:
+    generation_binding = ""
+    if event.get("old_generation") is not None and event.get("generation") is not None:
+        generation_binding = (
+            f"{event.get('old_generation')}\0{event.get('generation')}\0"
+        )
     payload = (
         f"{event.get('task_id') or ''}\0{event.get('ts') or ''}\0"
         f"{event.get('old_owner') or ''}\0{event.get('new_owner') or ''}\0"
         f"{event.get('old_reviewer') or ''}\0{event.get('new_reviewer') or ''}\0"
+        f"{generation_binding}"
         f"{event.get('message') or ''}"
     )
     return "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -7029,29 +6773,18 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
             f"({current_reviewer or 'unknown'}) can reconcile an already-merged "
             "task to done"
         )
-    if str(task.get("status") or "") not in {
-        "todo",
-        "in_progress",
-        "blocked",
-        "review",
-        "review_approved",
-    }:
-        raise SystemExit(
-            f"{task_id} cannot be reconciled from status {task.get('status') or 'missing'}"
-        )
+    validate_task_lifecycle_transition(task, "reconcile_done")
 
-    delivery = validate_merged_done_evidence(task)
+    preflight = consume_external_mutation_preflight(
+        "reconcile_merged_done", task
+    )
+    delivery = deepcopy(preflight["delivery"])
     timestamp = iso_now()
     delivery["recorded_at"] = timestamp
-    verdict_ref = validate_protected_closeout_transition(
-        task,
-        transition="done",
-        consume=True,
-        transition_actor=actor,
-    )
+    verdict_ref = deepcopy(preflight.get("protected_closeout_verdict"))
     if verdict_ref is not None:
         task["protected_closeout_verdict"] = verdict_ref
-    task["status"] = "done"
+    apply_task_lifecycle_transition(task, "reconcile_done")
     task["terminal_outcome"] = "completed"
     task["last_update"] = timestamp
     task["next"] = message
@@ -7083,46 +6816,17 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
-    if task.get("status") != "review_approved":
-        raise SystemExit(f"{task_id} must be review_approved before it can move to done")
-    # Allow owner to supply review evidence at done time when reviewer did not set it,
-    # but only when it was already present at the head the reviewer actually
-    # approved -- not added afterward. See review_evidence_file_committed().
-    done_review_file = os.environ.get("REVIEW_FILE", "").strip()
-    if done_review_file and not task.get("review_file"):
-        approved_head_sha = str((task.get(APPROVAL_BINDING_KEY) or {}).get("head_sha") or "").strip()
-        if approved_head_sha:
-            config = load_config()
-            repository_id = task_primary_repository_id(config, task)
-            repository_slug_value = repository_slug(config, repository_id)
-            if not repository_slug_value or not review_evidence_file_committed(
-                repository=repository_slug_value,
-                head_sha=approved_head_sha,
-                review_file=done_review_file,
-            ):
-                raise SystemExit(
-                    f"{task_id}: REVIEW_FILE={done_review_file!r} was not present at "
-                    f"the reviewed head {approved_head_sha[:12]} the reviewer actually "
-                    "approved. Evidence added after approval invalidates the exact-head "
-                    "binding and requires a fresh independent review of the commit that "
-                    "adds it -- see task-closeout-finalization.md 'Review Evidence "
-                    "Manifest Rule'. Do not bind a manifest that was only added "
-                    "post-approval."
-                )
+    preflight = consume_external_mutation_preflight("done", task)
+    done_review_file = str(preflight.get("review_file") or "")
+    if done_review_file:
         task["review_file"] = done_review_file
-    validate_loop_completion_claim(task)
     timestamp = iso_now()
-    delivery = collect_done_delivery_metadata(task, actor)
+    delivery = deepcopy(preflight["delivery"])
     delivery["recorded_at"] = timestamp
-    verdict_ref = validate_protected_closeout_transition(
-        task,
-        transition="done",
-        consume=True,
-        transition_actor=actor,
-    )
+    verdict_ref = deepcopy(preflight.get("protected_closeout_verdict"))
     if verdict_ref is not None:
         task["protected_closeout_verdict"] = verdict_ref
-    task["status"] = "done"
+    apply_task_lifecycle_transition(task, "done")
     task["terminal_outcome"] = "completed"
     task["last_update"] = timestamp
     task["next"] = message
@@ -7158,7 +6862,7 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
     if actor not in {owner, reviewer}:
         raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can supersede {task_id}")
     timestamp = iso_now()
-    task["status"] = "done"
+    apply_task_lifecycle_transition(task, "supersede")
     task["terminal_outcome"] = TASK_TERMINAL_SUPERSEDED
     task["last_update"] = timestamp
     task["next"] = message
@@ -7460,6 +7164,274 @@ def github_review_bridge_evidence_matches(task: Mapping[str, Any]) -> bool:
     return review_recorded and required_status_recorded
 
 
+EXTERNAL_MUTATION_COMMANDS = frozenset(
+    {"approve", "reopen", "done", "reconcile_merged_done"}
+)
+
+
+def task_mutation_cas_digest(task: Mapping[str, Any]) -> str:
+    """Digest the exact task row inspected before external review I/O."""
+
+    encoded = json.dumps(
+        task,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_task_lifecycle_transition(task: Mapping[str, Any], action: str) -> None:
+    try:
+        task_machine.transition(task.get("status"), action)
+    except task_machine.TransitionError as exc:
+        raise SystemExit(
+            f"Task {task.get('id') or '?'} cannot {action}: {exc}"
+        ) from exc
+
+
+def prepare_external_mutation_preflight(
+    command: str,
+    task: dict[str, Any],
+    args: list[str],
+) -> dict[str, Any]:
+    """Perform slow review/delivery evidence work without canonical locks.
+
+    The returned task digest is checked again under the exclusive task-state
+    lock immediately before applying the lifecycle transition.  A concurrent
+    mutation therefore invalidates the prepared result instead of committing
+    evidence for a task row the reviewer did not inspect.
+    """
+
+    if command not in EXTERNAL_MUTATION_COMMANDS:
+        raise RuntimeError(f"unsupported external mutation preflight: {command}")
+    if len(args) < 2:
+        raise SystemExit(f"Usage: {command} <task-id> <message>")
+    task_id, message = args[0], args[1]
+    if str(task.get("id") or "") != task_id:
+        raise SystemExit(f"Unknown task: {task_id}")
+    actor = current_actor()
+    ensure_agent(actor)
+    digest = task_mutation_cas_digest(task)
+    payload: dict[str, Any] = {
+        "command": command,
+        "task_id": task_id,
+        "task_digest": digest,
+    }
+
+    if command == "approve":
+        if canonical_agent_name(task.get("reviewer")) != actor:
+            raise SystemExit(
+                f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}"
+            )
+        validate_task_lifecycle_transition(task, "approve")
+        review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
+        review_file = os.environ.get("REVIEW_FILE", "").strip()
+        config = load_config()
+        repository_id = task_primary_repository_id(config, task)
+        repository_slug_value = repository_slug(config, repository_id)
+        binding = resolve_approval_binding(task, repository=repository_slug_value)
+        if review_file and binding and (
+            not repository_slug_value
+            or not review_evidence_file_committed(
+                repository=repository_slug_value,
+                head_sha=binding["head_sha"],
+                review_file=review_file,
+            )
+        ):
+            raise SystemExit(
+                f"{task_id}: REVIEW_FILE={review_file!r} was not found at the reviewed "
+                f"head {binding['head_sha'][:12]} in {repository_slug_value or '?'}. "
+                "The evidence manifest must already be committed and present in the PR "
+                "diff before approval."
+            )
+        candidate = deepcopy(task)
+        if review_notes:
+            candidate["review_notes_zh"] = review_notes
+        if review_file:
+            candidate["review_file"] = review_file
+        verdict_ref = validate_protected_closeout_transition(
+            candidate,
+            transition="review_approved",
+        )
+        bridge_result = (
+            bridge_github_review_decision(
+                task,
+                actor=actor,
+                decision="approve",
+                message=message,
+                binding=binding,
+            )
+            if binding
+            else {}
+        )
+        payload.update(
+            {
+                "review_notes_zh": review_notes,
+                "review_file": review_file,
+                APPROVAL_BINDING_KEY: dict(binding),
+                GITHUB_REVIEW_BRIDGE_KEY: dict(bridge_result),
+                "protected_closeout_verdict": deepcopy(verdict_ref),
+            }
+        )
+        return payload
+
+    if command == "reopen":
+        owner = canonical_agent_name(task.get("owner"))
+        reviewer = canonical_agent_name(task.get("reviewer"))
+        if actor not in {owner, reviewer, "Human/Ops"}:
+            raise SystemExit(
+                f"Only the owner ({owner}), reviewer ({reviewer}), or Human/Ops "
+                f"can reopen {task_id}"
+            )
+        validate_task_lifecycle_transition(task, "reopen")
+        binding: dict[str, Any] = {}
+        bridge_result: dict[str, Any] = {}
+        if actor == reviewer:
+            explicit_binding = bool(
+                os.environ.get("REVIEW_PR", "").strip()
+                or os.environ.get("REVIEW_HEAD_SHA", "").strip()
+            )
+            if explicit_binding:
+                binding = resolve_approval_binding(task, warn_if_unbound=False)
+            elif isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
+                binding = dict(task[APPROVAL_BINDING_KEY])
+            elif task_has_pr_review_target(task):
+                raise SystemExit(
+                    f"{task_id} is PR-backed but reviewer reopen has no exact-head "
+                    "binding. Set REVIEW_PR and REVIEW_HEAD_SHA so the rejection "
+                    "also closes the GitHub review gate."
+                )
+            if binding:
+                bridge_result = bridge_github_review_decision(
+                    task,
+                    actor=actor,
+                    decision="reopen",
+                    message=message,
+                    binding=binding,
+                )
+        payload.update(
+            {
+                APPROVAL_BINDING_KEY: dict(binding),
+                GITHUB_REVIEW_BRIDGE_KEY: dict(bridge_result),
+            }
+        )
+        return payload
+
+    if command == "reconcile_merged_done":
+        current_reviewer = canonical_agent_name(task.get("reviewer"))
+        if actor != "Human/Ops" and actor != current_reviewer:
+            raise SystemExit(
+                "Only Human/Ops or the task's current reviewer "
+                f"({current_reviewer or 'unknown'}) can reconcile an already-merged "
+                "task to done"
+            )
+        validate_task_lifecycle_transition(task, "reconcile_done")
+        delivery = validate_merged_done_evidence(task)
+        verdict_ref = validate_protected_closeout_transition(
+            task,
+            transition="done",
+            consume=True,
+            transition_actor=actor,
+        )
+        payload.update(
+            {
+                "delivery": deepcopy(delivery),
+                "protected_closeout_verdict": deepcopy(verdict_ref),
+            }
+        )
+        return payload
+
+    if canonical_agent_name(task.get("owner")) != actor:
+        raise SystemExit(
+            f"Only the owner ({task.get('owner')}) can finalize {task_id} to done"
+        )
+    validate_task_lifecycle_transition(task, "done")
+    candidate = deepcopy(task)
+    done_review_file = os.environ.get("REVIEW_FILE", "").strip()
+    if done_review_file and not candidate.get("review_file"):
+        approved_head_sha = str(
+            (candidate.get(APPROVAL_BINDING_KEY) or {}).get("head_sha") or ""
+        ).strip()
+        if approved_head_sha:
+            config = load_config()
+            repository_id = task_primary_repository_id(config, candidate)
+            repository_slug_value = repository_slug(config, repository_id)
+            if not repository_slug_value or not review_evidence_file_committed(
+                repository=repository_slug_value,
+                head_sha=approved_head_sha,
+                review_file=done_review_file,
+            ):
+                raise SystemExit(
+                    f"{task_id}: REVIEW_FILE={done_review_file!r} was not present at "
+                    f"the reviewed head {approved_head_sha[:12]} the reviewer actually "
+                    "approved. Evidence added after approval invalidates the exact-head "
+                    "binding and requires a fresh independent review of the commit that "
+                    "adds it -- see task-closeout-finalization.md 'Review Evidence "
+                    "Manifest Rule'. Do not bind a manifest that was only added "
+                    "post-approval."
+                )
+        candidate["review_file"] = done_review_file
+    validate_loop_completion_claim(candidate)
+    delivery = collect_done_delivery_metadata(candidate, actor)
+    verdict_ref = validate_protected_closeout_transition(
+        candidate,
+        transition="done",
+        consume=True,
+        transition_actor=actor,
+    )
+    payload.update(
+        {
+            "review_file": done_review_file if not task.get("review_file") else "",
+            "delivery": deepcopy(delivery),
+            "protected_closeout_verdict": deepcopy(verdict_ref),
+        }
+    )
+    return payload
+
+
+@contextmanager
+def bound_external_mutation_preflight(
+    preflight: Mapping[str, Any] | None,
+) -> Generator[None, None, None]:
+    previous = getattr(_EXTERNAL_MUTATION_PREFLIGHT_LOCAL, "value", None)
+    _EXTERNAL_MUTATION_PREFLIGHT_LOCAL.value = deepcopy(preflight)
+    try:
+        yield
+    finally:
+        if previous is None:
+            try:
+                delattr(_EXTERNAL_MUTATION_PREFLIGHT_LOCAL, "value")
+            except AttributeError:
+                pass
+        else:
+            _EXTERNAL_MUTATION_PREFLIGHT_LOCAL.value = previous
+
+
+def consume_external_mutation_preflight(
+    command: str, task: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Validate prepared external evidence under the canonical write lock."""
+
+    value = getattr(_EXTERNAL_MUTATION_PREFLIGHT_LOCAL, "value", None)
+    if not isinstance(value, Mapping):
+        raise RuntimeError(
+            f"{command} requires lock-free external mutation preflight"
+        )
+    task_id = str(task.get("id") or "")
+    if value.get("command") != command or value.get("task_id") != task_id:
+        raise RuntimeError(
+            f"external mutation preflight identity mismatch for {command} {task_id}"
+        )
+    current_digest = task_mutation_cas_digest(task)
+    if value.get("task_digest") != current_digest:
+        raise SystemExit(
+            f"{task_id} changed after external review evidence was prepared; "
+            f"discarding stale {command} result and requiring a fresh attempt"
+        )
+    return deepcopy(dict(value))
+
+
 def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: approve <task-id> <message>")
@@ -7471,51 +7443,15 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     if task.get("reviewer") != actor:
         raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
-    if task.get("status") != "review":
-        raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
-
-    review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
-    review_file = os.environ.get("REVIEW_FILE", "").strip()
-    config = load_config()
-    repository_id = task_primary_repository_id(config, task)
-    repository_slug_value = repository_slug(config, repository_id)
-    binding = resolve_approval_binding(task, repository=repository_slug_value)
-    if review_file and binding:
-        if not repository_slug_value or not review_evidence_file_committed(
-            repository=repository_slug_value,
-            head_sha=binding["head_sha"],
-            review_file=review_file,
-        ):
-            raise SystemExit(
-                f"{task_id}: REVIEW_FILE={review_file!r} was not found at the reviewed "
-                f"head {binding['head_sha'][:12]} in {repository_slug_value or '?'}. "
-                "The evidence manifest must already be committed and present in the PR "
-                "diff before approval."
-            )
-    transition_candidate = dict(task)
-    if review_notes:
-        transition_candidate["review_notes_zh"] = review_notes
-    if review_file:
-        transition_candidate["review_file"] = review_file
-    verdict_ref = validate_protected_closeout_transition(
-        transition_candidate,
-        transition="review_approved",
-    )
-    github_review_bridge = (
-        bridge_github_review_decision(
-            task,
-            actor=actor,
-            decision="approve",
-            message=message,
-            binding=binding,
-        )
-        if binding
-        else {}
-    )
+    preflight = consume_external_mutation_preflight("approve", task)
+    review_notes = list(preflight.get("review_notes_zh") or [])
+    review_file = str(preflight.get("review_file") or "")
+    binding = dict(preflight.get(APPROVAL_BINDING_KEY) or {})
+    verdict_ref = deepcopy(preflight.get("protected_closeout_verdict"))
+    github_review_bridge = dict(preflight.get(GITHUB_REVIEW_BRIDGE_KEY) or {})
 
     timestamp = iso_now()
-    task["status"] = "review_approved"
-    task["failure_streak"] = 0
+    apply_task_lifecycle_transition(task, "approve")
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
@@ -7985,73 +7921,6 @@ def _emit_fail_closed(error: ActivityAuditInvariantError) -> None:
     )
 
 
-def command_wave(state: dict[str, Any], args: list[str]) -> None:
-    """wave open <wave-id> | wave close | wave freeze"""
-    from wave_guards import (  # lazy: only needed for this command
-        WaveGuardError,
-        check_wave_close,
-        check_wave_freeze,
-        check_wave_open,
-    )
-
-    if not args:
-        raise SystemExit("Usage: wave <open <wave-id> | close | freeze>")
-
-    subcommand = args[0]
-    actor = current_actor()
-    timestamp = iso_now()
-    wave_state: dict[str, Any] = state.setdefault("wave_state", {})
-    planning_state = load_planning_state()
-
-    if subcommand == "open":
-        if len(args) < 2:
-            raise SystemExit("Usage: wave open <wave-id>")
-        new_wave_id = args[1]
-        try:
-            check_wave_open(wave_state, new_wave_id, actor, planning_state)
-        except WaveGuardError as exc:
-            raise SystemExit(f"Wave guard rejected open: {exc}") from exc
-        wave_state["current_wave_id"] = new_wave_id
-        wave_state["status"] = "open"
-        wave_state["opened_at"] = timestamp
-        wave_state["frozen_at"] = None
-        wave_state["closed_at"] = None
-        wave_state["branch"] = f"wave/{new_wave_id}"
-        wave_state.setdefault("history", []).append(
-            {"ts": timestamp, "event": "open", "wave_id": new_wave_id, "actor": actor, "branch": f"wave/{new_wave_id}"}
-        )
-        append_log({"ts": timestamp, "agent": actor, "type": "wave_open", "wave_id": new_wave_id})
-
-    elif subcommand == "close":
-        try:
-            check_wave_close(wave_state, actor, planning_state)
-        except WaveGuardError as exc:
-            raise SystemExit(f"Wave guard rejected close: {exc}") from exc
-        current_wave_id = wave_state.get("current_wave_id", "")
-        wave_state["status"] = "closed"
-        wave_state["closed_at"] = timestamp
-        wave_state.setdefault("history", []).append(
-            {"ts": timestamp, "event": "close", "wave_id": current_wave_id, "actor": actor}
-        )
-        append_log({"ts": timestamp, "agent": actor, "type": "wave_close", "wave_id": current_wave_id})
-
-    elif subcommand == "freeze":
-        try:
-            check_wave_freeze(wave_state, actor, planning_state)
-        except WaveGuardError as exc:
-            raise SystemExit(f"Wave guard rejected freeze: {exc}") from exc
-        current_wave_id = wave_state.get("current_wave_id", "")
-        wave_state["status"] = "frozen"
-        wave_state["frozen_at"] = timestamp
-        wave_state.setdefault("history", []).append(
-            {"ts": timestamp, "event": "freeze", "wave_id": current_wave_id, "actor": actor}
-        )
-        append_log({"ts": timestamp, "agent": actor, "type": "wave_freeze", "wave_id": current_wave_id})
-
-    else:
-        raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
-
-
 def load_supervisor_dispatch_batch(path_value: str) -> list[dict[str, Any]]:
     """Load one bounded, exact dispatch mutation packet from a regular file."""
 
@@ -8211,6 +8080,9 @@ def run_supervisor_dispatch_batch(
                 runtime_state_snapshot=runtime_snapshot,
                 config_snapshot=config,
             )
+            validate_bound_status_command_task_authority(
+                state, command, command_args
+            )
             commands[command](state, command_args)
 
 
@@ -8243,7 +8115,10 @@ def load_dev_bridge_materialize_batch(path_value: str) -> dict[str, Any]:
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise SystemExit(f"Invalid dev bridge materialize batch payload: {exc}") from exc
 
-    exact_keys = {"schema_version", "packet_id", "packet_digest", "actor", "tasks"}
+    exact_keys = {
+        "schema_version", "packet_id", "packet_digest", "actor",
+        "signed_packet", "tasks",
+    }
     if not isinstance(payload, dict) or set(payload) != exact_keys:
         raise SystemExit("Dev bridge materialize batch payload schema is not exact")
     if payload.get("schema_version") != DEV_BRIDGE_BATCH_SCHEMA_VERSION:
@@ -8321,13 +8196,138 @@ def load_dev_bridge_materialize_batch(path_value: str) -> dict[str, Any]:
         seen_task_ids.add(task_id)
         normalized_tasks.append(normalized)
 
+    signed_packet = payload.get("signed_packet")
+    if not isinstance(signed_packet, dict):
+        raise SystemExit("Dev bridge materialize batch signed_packet is required")
+
     return {
         "schema_version": DEV_BRIDGE_BATCH_SCHEMA_VERSION,
         "packet_id": packet_id.strip(),
         "packet_digest": packet_digest,
         "actor": actor.strip(),
+        "signed_packet": deepcopy(signed_packet),
         "tasks": normalized_tasks,
     }
+
+
+def verify_signed_dev_bridge_packet(
+    batch: Mapping[str, Any], *, state: dict[str, Any] | None = None
+) -> None:
+    """Verify BFF packet authority and optionally consume it atomically."""
+
+    packet = batch.get("signed_packet")
+    if not isinstance(packet, Mapping):
+        raise SystemExit("Dev bridge signed packet is missing")
+    signature = packet.get("signature")
+    if not isinstance(signature, Mapping):
+        raise SystemExit("Dev bridge signed packet signature is missing")
+    if signature.get("algorithm") != "Ed25519":
+        raise SystemExit("Dev bridge signed packet signature algorithm is invalid")
+    raw_keys = str(os.environ.get("BRIDGE_SIGNING_PUBLIC_KEYS_JSON") or "").strip()
+    if not raw_keys:
+        raise SystemExit(
+            "BRIDGE_SIGNING_PUBLIC_KEYS_JSON is required; no dev fallback may authorize canonical mutation"
+        )
+    try:
+        public_keys = json.loads(raw_keys)
+    except json.JSONDecodeError as exc:
+        raise SystemExit("Dev bridge public key policy is invalid JSON") from exc
+    if not isinstance(public_keys, Mapping) or not public_keys:
+        raise SystemExit("Dev bridge public key policy must contain at least one key")
+    key_id = str(signature.get("key_id") or signature.get("keyId") or "").strip()
+    encoded_public_key = public_keys.get(key_id)
+    if not isinstance(encoded_public_key, str):
+        raise SystemExit("Dev bridge signed packet key is not trusted")
+    body = deepcopy(dict(packet))
+    body.pop("signature", None)
+    canonical = json.dumps(
+        body, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode()
+    try:
+        public_key = base64.urlsafe_b64decode(
+            encoded_public_key + "=" * (-len(encoded_public_key) % 4)
+        )
+        signature_value = str(signature.get("value") or "")
+        signature_bytes = base64.urlsafe_b64decode(
+            signature_value + "=" * (-len(signature_value) % 4)
+        )
+        Ed25519PublicKey.from_public_bytes(public_key).verify(
+            signature_bytes,
+            canonical,
+        )
+    except (ValueError, binascii.Error, InvalidSignature) as exc:
+        raise SystemExit("Dev bridge signed packet verification failed")
+    digest = hashlib.sha256(canonical).hexdigest()
+    if packet.get("packet_id") != batch.get("packet_id") or digest != batch.get("packet_digest"):
+        raise SystemExit("Dev bridge signed packet identity binding failed")
+    source = packet.get("actor")
+    authorization = packet.get("operator_authorization")
+    if not isinstance(source, Mapping) or not isinstance(authorization, Mapping):
+        raise SystemExit("Dev bridge source and operator authorization must be separate")
+    if authorization.get("capability") != "assistant.canonical.mutate":
+        raise SystemExit("Dev bridge operator capability is invalid")
+    if authorization.get("mfa_verified") is not True:
+        raise SystemExit("Dev bridge operator authorization requires MFA")
+    operator_id = str(authorization.get("operator_id") or "").strip()
+    activation_id = str(authorization.get("control_activation_id") or "").strip()
+    nonce = str(authorization.get("nonce") or "").strip()
+    if not operator_id or not activation_id or not nonce:
+        raise SystemExit("Dev bridge operator authorization binding is incomplete")
+    issued = _parse_utc_timestamp(authorization.get("issued_at"))
+    expires = _parse_utc_timestamp(authorization.get("expires_at"))
+    now = datetime.now(timezone.utc)
+    if issued is None or expires is None or expires <= issued:
+        raise SystemExit("Dev bridge operator authorization lifetime is invalid")
+    if (expires - issued).total_seconds() > 300 or now < issued:
+        raise SystemExit("Dev bridge operator authorization is not yet valid")
+    # Expiry bounds admission at the authenticated BFF boundary.  The signed
+    # packet is the durable receipt; a queued packet may drain later without
+    # turning supervisor wall-clock latency into an authorization failure.
+    packet_tasks = packet.get("tasks")
+    if not isinstance(packet_tasks, list) or len(packet_tasks) != len(batch["tasks"]):
+        raise SystemExit("Dev bridge signed packet task count does not match batch")
+    for index, (packet_task, row) in enumerate(zip(packet_tasks, batch["tasks"])):
+        if not isinstance(packet_task, Mapping):
+            raise SystemExit(f"Dev bridge signed packet task {index} is invalid")
+        for field in ("id", "owner", "reviewer", "title"):
+            row_field = "task_id" if field == "id" else field
+            if packet_task.get(field) != row.get(row_field):
+                raise SystemExit(
+                    f"Dev bridge signed packet task {index} {field} binding failed"
+                )
+    if state is not None:
+        try:
+            _operator_consumed, consumed = migrate_legacy_consumed_ledgers(state)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if state.get(DEV_BRIDGE_CONSUMED_KEY) is not consumed:
+            raise SystemExit("Dev bridge replay ledger is invalid")
+        cutoff = now - timedelta(days=7)
+        for consumed_id, record in list(consumed.items()):
+            consumed_at = (
+                _parse_utc_timestamp(record.get("consumed_at"))
+                if isinstance(record, Mapping)
+                else None
+            )
+            if consumed_at is None or consumed_at < cutoff:
+                consumed.pop(consumed_id, None)
+        if len(consumed) >= 2048:
+            ordered = sorted(
+                consumed,
+                key=lambda item: str(consumed[item].get("consumed_at") or ""),
+            )
+            for consumed_id in ordered[: len(consumed) - 2047]:
+                consumed.pop(consumed_id, None)
+        assertion_id = f"bridge:{batch['packet_id']}:{nonce}"
+        if assertion_id in consumed:
+            raise SystemExit("Dev bridge operator authorization was already consumed")
+        consumed[assertion_id] = {
+            "nonce": nonce,
+            "task_id": batch["packet_id"],
+            "action": DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND,
+            "operator_id": operator_id,
+            "consumed_at": iso_now(),
+        }
 
 
 @contextmanager
@@ -8463,6 +8463,159 @@ def read_dev_bridge_materialized_batch(
     return results
 
 
+def execute_external_mutation_command(
+    command: str,
+    state: dict[str, Any],
+    args: list[str],
+) -> None:
+    """Execute a review mutation with the same two-phase path as the CLI.
+
+    This is intentionally useful for isolated tests and in-process callers;
+    production CLI code snapshots the task under a shared lock before calling
+    the same preflight function.
+    """
+
+    task_id = args[0] if args else ""
+    task = get_task(state, task_id)
+    if task is None:
+        if command == "reopen" and archived_task_snapshot(task_id):
+            raise SystemExit(
+                f"Task {task_id} is archived and cannot be reopened in place. "
+                f"Create a new follow-up task that references {task_id}."
+            )
+        raise SystemExit(f"Unknown task: {task_id}")
+    preflight = prepare_external_mutation_preflight(command, task, args)
+    functions = {
+        "approve": command_approve,
+        "reopen": command_reopen,
+        "done": command_done,
+        "reconcile_merged_done": command_reconcile_merged_done,
+    }
+    with bound_external_mutation_preflight(preflight):
+        functions[command](state, args)
+
+
+def canonical_external_mutation_preflight(
+    command: str,
+    args: list[str],
+) -> dict[str, Any]:
+    """Snapshot one task under shared locks, then do all external I/O unlocked."""
+
+    task_id = args[0] if args else ""
+
+    def read_task_snapshot() -> dict[str, Any]:
+        with canonical_task_state_lock(shared=True):
+            with authoritative_task_state_transaction():
+                state = load_state()
+                task = get_task(state, task_id)
+                if task is None:
+                    if command == "reopen" and archived_task_snapshot(task_id):
+                        raise SystemExit(
+                            f"Task {task_id} is archived and cannot be reopened in place. "
+                            f"Create a new follow-up task that references {task_id}."
+                        )
+                    raise SystemExit(f"Unknown task: {task_id}")
+                return deepcopy(task)
+
+    if str(os.environ.get("ORCH_RUN_ID") or "").strip():
+        config = load_config()
+        with runtime_state_lock(config, shared=True):
+            validate_active_status_command_lease(command, args)
+            task_snapshot = read_task_snapshot()
+    else:
+        config = load_config()
+        with runtime_state_lock(config, shared=True):
+            validate_active_status_command_lease(command, args)
+            task_snapshot = read_task_snapshot()
+
+    # No runtime, task-state, or audit lock is held beyond this point.
+    return prepare_external_mutation_preflight(command, task_snapshot, args)
+
+
+def _operator_assignment_binding(
+    task: Mapping[str, Any] | None,
+    command: str,
+    args: list[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    old = (
+        {
+            "owner": str(task.get("owner") or ""),
+            "reviewer": str(task.get("reviewer") or ""),
+            "status": str(task.get("status") or ""),
+            "generation": task_assignment_generation(task),
+        }
+        if isinstance(task, Mapping)
+        else {}
+    )
+    new = dict(old)
+    if command == "assign":
+        next_generation = task_assignment_generation(task) + 1 if task is not None else 1
+        new = {
+            "owner": canonical_agent_name(args[1]) if len(args) > 1 else "",
+            "reviewer": canonical_agent_name(args[2]) if len(args) > 2 else "",
+            "status": old.get("status") or "todo",
+            "generation": next_generation,
+        }
+    elif task is not None and command in {
+        "start", "progress", "reopen", "handoff", "blocker", "done",
+        "reconcile_merged_done", "supersede", "approve",
+    }:
+        action = {"blocker": "block"}.get(command, command)
+        try:
+            new["status"] = task_machine.transition(task.get("status"), action).value
+        except task_machine.TransitionError:
+            # The lifecycle command remains the source of the user-facing
+            # transition failure; auth still binds to the submitted request.
+            new["status"] = old["status"]
+    return old, new
+
+
+def authorize_operator_assertion_if_needed(
+    state: dict[str, Any], command: str, args: list[str]
+) -> None:
+    """Consume an operator assertion inside the canonical task transaction."""
+
+    if str(os.environ.get("ORCH_RUN_ID") or "").strip():
+        return
+    raw = str(os.environ.get(OPERATOR_ASSERTION_ENV) or "").strip()
+    if not raw:
+        raise RuntimeError("BFF-issued operator assertion is required")
+    try:
+        assertion = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("BFF-issued operator assertion is invalid JSON") from exc
+    task_id = _command_task_id(command, args)
+    if not task_id:
+        raise RuntimeError(
+            f"operator assertion cannot authorize unscoped mutation command: {command}"
+        )
+    task = get_task(state, task_id)
+    if command == "assign" and task is None:
+        raise RuntimeError(
+            "operator assertions may reassign existing tasks but cannot create source tasks; "
+            "new tasks require a signed dev-bridge packet"
+        )
+    old_assignment, new_assignment = _operator_assignment_binding(task, command, args)
+    try:
+        verify_and_consume_operator_assertion(
+            assertion,
+            state=state,
+            task_id=task_id,
+            action=command,
+            args=args,
+            old_assignment=old_assignment,
+            new_assignment=new_assignment,
+        )
+    except ValueError as exc:
+        raise RuntimeError(f"operator assertion rejected: {exc}") from exc
+    _OPERATOR_ASSERTION_LOCAL.binding = {
+        "assertion_id": str(assertion["assertion_id"]),
+        "operator_id": str(assertion["operator_id"]),
+        "control_activation_id": str(assertion["control_activation_id"]),
+        "reason": str(assertion["reason"]),
+    }
+
+
 def main(argv: list[str]) -> int:
     validate_status_command_runtime_binding()
     validate_status_root_binding()
@@ -8484,7 +8637,6 @@ def main(argv: list[str]) -> int:
         "handoff": command_handoff,
         "blocker": command_blocker,
         "done": command_done,
-        "restore_approved": command_restore_approved,
         "reconcile_merged_done": command_reconcile_merged_done,
         "supersede": command_supersede,
         "approve": command_approve,
@@ -8492,7 +8644,6 @@ def main(argv: list[str]) -> int:
         "archive_correct_review_file": command_archive_correct_review_file,
         "attach_proof_ownership": command_attach_proof_ownership,
         "sync": command_sync,
-        "wave": command_wave,
     }
 
     if command == SUPERVISOR_DISPATCH_BATCH_COMMAND:
@@ -8545,54 +8696,50 @@ def main(argv: list[str]) -> int:
                 f"Usage: {DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND} <absolute-payload-path>"
             )
         # Same lock order as every other governed mutation:
-        # runtime_admission(shared, implicit no-op here) -> task_state(exclusive)
-        # -> activity_audit. Every packet task row is applied to one in-memory
+        # runtime_admission(shared) -> task_state(exclusive) -> activity_audit.
+        # Every packet task row is applied to one in-memory
         # snapshot and reaches the journal/status file through exactly one
         # save at the bottom of the transaction, so a failure on any row -- or
         # the process dying before that save -- leaves zero rows committed.
         batch = load_dev_bridge_materialize_batch(args[0])
+        verify_signed_dev_bridge_packet(batch)
         committed_state: dict[str, Any] | None = None
         commit_happened = False
-        with canonical_task_state_lock(shared=False):
-            validate_active_status_command_lease(
-                DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND, [batch["packet_id"]]
-            )
-            with authoritative_task_state_transaction():
-                state = load_state()
+        config = load_config()
+        with runtime_state_lock(config, shared=True):
+            with canonical_task_state_lock(shared=False):
+                with authoritative_task_state_transaction():
+                    state = load_state()
+                    verify_signed_dev_bridge_packet(batch, state=state)
                 # Receipt, archive, activity and dashboard projections are
                 # audit-only for packet materialization. Do not recover them
                 # inside this command: recovery would add an unrelated journal
                 # event and make a successful batch larger than one commit (or
                 # make an immediate exact retry larger than zero). Preserve any
                 # valid pending activity events in the next durable outbox.
-                pending_activity = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
-                pending_events: list[dict[str, Any]] = []
-                if pending_activity not in (None, {}, []):
-                    pending_events = deepcopy(
-                        _validate_status_activity_outbox(pending_activity)["events"]
-                    )
-                with buffer_activity_events() as activity_events:
-                    activity_events.extend(pending_events)
-                    results = run_dev_bridge_materialize_batch(
-                        state, batch, commands=commands
-                    )
-                    # An exact retry -- every row already matches its bound
-                    # provenance and command_assign made no mutation -- adds
-                    # zero journal events: skip the commit outright instead of
-                    # writing a byte-identical-except-`updated_at` state. A
-                    # commit that does have changed rows is still exactly one
-                    # event: the activity-log outbox flush is deferred so it
-                    # never becomes a second canonical task-state commit for
-                    # this batch (see commit_state_with_activity_outbox).
-                    if any(item["changed"] for item in results):
+                    pending_activity = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
+                    pending_events: list[dict[str, Any]] = []
+                    if pending_activity not in (None, {}, []):
+                        pending_events = deepcopy(
+                            _validate_status_activity_outbox(pending_activity)["events"]
+                        )
+                    with buffer_activity_events() as activity_events:
+                        activity_events.extend(pending_events)
+                        results = run_dev_bridge_materialize_batch(
+                            state, batch, commands=commands
+                        )
+                    # The one-shot operator authorization is itself canonical
+                    # state, so even a fully pre-existing packet commits its
+                    # nonce consumption exactly once. The activity-log outbox
+                    # remains deferred so this is still one canonical commit.
                         sync_all(
                             state,
                             refresh_views=False,
                             defer_activity_recovery=True,
                         )
                         commit_happened = True
-                if commit_happened:
-                    committed_state = deepcopy(state)
+                    if commit_happened:
+                        committed_state = deepcopy(state)
         if committed_state is not None:
             refresh_derived_status_views_if_current(committed_state)
         print(
@@ -8682,34 +8829,36 @@ def main(argv: list[str]) -> int:
         if args:
             raise SystemExit("Usage: recover")
         try:
-            with canonical_task_state_lock(shared=False, nonblocking=True):
-                with authoritative_task_state_transaction():
-                    state = load_state()
-                    pending_planes = [
-                        key
-                        for key in (
-                            STATUS_ARCHIVE_OUTBOX_KEY,
-                            STATUS_ACTIVITY_OUTBOX_KEY,
-                        )
-                        if state.get(key) not in (None, {}, [])
-                    ]
-                    try:
-                        archive_recovered = recover_status_archive_outbox(state)
-                        activity_recovered = recover_status_activity_outbox(state)
-                        if archive_recovered or activity_recovered:
-                            refresh_derived_status_views(state)
-                    except ActivityAuditInvariantError:
-                        raise
-                    except RuntimeError as exc:
-                        raise ActivityAuditInvariantError(
-                            "canonical status recovery failed integrity checks",
-                            invariant="status_recovery_integrity",
-                            evidence={
-                                "command": command,
-                                "pending_planes": pending_planes,
-                                "error": str(exc),
-                            },
-                        ) from exc
+            config = load_config()
+            with runtime_state_lock(config, shared=True):
+                with canonical_task_state_lock(shared=False, nonblocking=True):
+                    with authoritative_task_state_transaction():
+                        state = load_state()
+                        pending_planes = [
+                            key
+                            for key in (
+                                STATUS_ARCHIVE_OUTBOX_KEY,
+                                STATUS_ACTIVITY_OUTBOX_KEY,
+                            )
+                            if state.get(key) not in (None, {}, [])
+                        ]
+                        try:
+                            archive_recovered = recover_status_archive_outbox(state)
+                            activity_recovered = recover_status_activity_outbox(state)
+                            if archive_recovered or activity_recovered:
+                                refresh_derived_status_views(state)
+                        except ActivityAuditInvariantError:
+                            raise
+                        except RuntimeError as exc:
+                            raise ActivityAuditInvariantError(
+                                "canonical status recovery failed integrity checks",
+                                invariant="status_recovery_integrity",
+                                evidence={
+                                    "command": command,
+                                    "pending_planes": pending_planes,
+                                    "error": str(exc),
+                                },
+                            ) from exc
         except BlockingIOError:
             _emit_fail_closed(
                 ActivityAuditInvariantError(
@@ -8785,28 +8934,38 @@ def main(argv: list[str]) -> int:
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
+    external_preflight = (
+        canonical_external_mutation_preflight(command, args)
+        if command in EXTERNAL_MUTATION_COMMANDS
+        else None
+    )
+
     def run_mutation() -> dict[str, Any] | None:
-        state = load_state()
-        recover_status_archive_outbox(state)
-        recover_status_activity_outbox(state)
-        with buffer_activity_events():
-            command_result = commands[command](state, args)
-            if command_result is False:
-                return None
-            sync_all(state, refresh_views=False)
-        return deepcopy(state)
+        _clear_operator_assertion_binding()
+        try:
+            state = load_state()
+            authorize_operator_assertion_if_needed(state, command, args)
+            validate_bound_status_command_task_authority(state, command, args)
+            recover_status_archive_outbox(state)
+            recover_status_activity_outbox(state)
+            with bound_external_mutation_preflight(external_preflight):
+                with buffer_activity_events():
+                    command_result = commands[command](state, args)
+                    if command_result is False:
+                        return None
+                    sync_all(state, refresh_views=False)
+            return deepcopy(state)
+        finally:
+            _clear_operator_assertion_binding()
 
     committed_state: dict[str, Any] | None
-    if str(os.environ.get("ORCH_RUN_ID") or "").strip():
-        config = load_config()
-        with runtime_state_lock(config, shared=True):
+    config = load_config()
+    with runtime_state_lock(config, shared=True):
+        if str(os.environ.get("ORCH_RUN_ID") or "").strip():
             validate_active_status_command_lease(command, args)
-            with canonical_task_state_lock(shared=False):
-                with authoritative_task_state_transaction():
-                    committed_state = run_mutation()
-    else:
         with canonical_task_state_lock(shared=False):
-            validate_active_status_command_lease(command, args)
+            if not str(os.environ.get("ORCH_RUN_ID") or "").strip():
+                validate_active_status_command_lease(command, args)
             with authoritative_task_state_transaction():
                 committed_state = run_mutation()
     if committed_state is not None:

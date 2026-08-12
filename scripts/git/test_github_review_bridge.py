@@ -139,6 +139,54 @@ def binding() -> dict[str, Any]:
 
 
 class GitHubReviewBridgeTests(unittest.TestCase):
+    def test_result_evidence_validator_rejects_head_drift(self) -> None:
+        runner = FakeRunner()
+        result = bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Exact-head review passed.",
+            binding=binding(),
+            runner=runner,
+        ).as_dict()
+        result["head_sha"] = "b" * 40
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "exact-head mismatch"
+        ):
+            bridge.validate_result_evidence(
+                result,
+                repository=REPOSITORY,
+                actor="Codex2",
+                decision="approve",
+                binding=binding(),
+            )
+
+    def test_result_evidence_validator_rejects_missing_mode_evidence(self) -> None:
+        runner = FakeRunner()
+        result = bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Exact-head review passed.",
+            binding=binding(),
+            runner=runner,
+        ).as_dict()
+        result.pop("github_review_id")
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "no recognized approve evidence"
+        ):
+            bridge.validate_result_evidence(
+                result,
+                repository=REPOSITORY,
+                actor="Codex2",
+                decision="approve",
+                binding=binding(),
+            )
+
     def test_task_brief_only_successor_is_a_narrow_direct_child(self) -> None:
         successor = "b" * 40
         runner = FakeRunner()

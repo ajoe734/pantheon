@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Benchmark guarded L12 admission against a scratch clone of the live-scale store.
+"""Benchmark guarded L12 admission against a scratch clone of the live-scale journal.
 
 The source journal is held under its shared store lock only while a copy-on-write
-clone plus compact V2 head are captured. Reflink is preferred and a physical
+clone and checkpoint copy are captured. Reflink is preferred and a physical
 copy is used when unsupported. All validation and dispatcher work then runs
 against scratch paths; neither source file is opened for writing.
 """
@@ -96,19 +96,19 @@ def _file_surface(path: Path, *, include_sha256: bool = True) -> dict[str, Any]:
 
 
 def _read_only_surface(event_log: Path) -> dict[str, Any]:
-    head = event_log.with_name(f"{event_log.name}.head.json")
+    checkpoint = event_log.with_name(f"{event_log.name}.checkpoint.json")
     lock = event_log.with_name(f"{event_log.name}.lock")
     return {
         # The journal is already integrity-hashed by load_snapshot; hashing it
         # twice more here would distort the phase timing. Size/inode/stat plus
         # the validated snapshot digest identify the same immutable generation.
         "journal": _file_surface(event_log, include_sha256=False),
-        "head": _file_surface(head),
+        "checkpoint": _file_surface(checkpoint),
         "lock": _file_surface(lock),
         "directory_entries": sorted(path.name for path in event_log.parent.iterdir()),
-        "head_temp_files": sorted(
+        "checkpoint_temp_files": sorted(
             path.name
-            for path in head.parent.glob(f"{head.name}.*.tmp")
+            for path in checkpoint.parent.glob(f"{checkpoint.name}.*.tmp")
         ),
     }
 
@@ -131,10 +131,10 @@ def _shared_store_lock(event_log: Path):
 
 
 def _clone_generation(source: Path, scratch: Path) -> dict[str, Any]:
-    head = source.with_name(f"{source.name}.head.json")
+    checkpoint = source.with_name(f"{source.name}.checkpoint.json")
     lock = source.with_name(f"{source.name}.lock")
     clone = scratch / source.name
-    clone_head = clone.with_name(f"{clone.name}.head.json")
+    clone_checkpoint = clone.with_name(f"{clone.name}.checkpoint.json")
     clone_lock = clone.with_name(f"{clone.name}.lock")
     started = time.monotonic()
     with _shared_store_lock(source):
@@ -142,9 +142,8 @@ def _clone_generation(source: Path, scratch: Path) -> dict[str, Any]:
         lock_stat = lock.stat(follow_symlinks=False)
         if not stat.S_ISREG(lock_stat.st_mode):
             raise RuntimeError(f"source task-state lock is not regular: {lock}")
-        head_bytes = head.read_bytes()
-        head_sha256 = hashlib.sha256(head_bytes).hexdigest()
-        head_payload = _json(head)
+        checkpoint_bytes = checkpoint.read_bytes()
+        checkpoint_sha256 = hashlib.sha256(checkpoint_bytes).hexdigest()
         reflink = subprocess.run(
             ["cp", "--reflink=always", "--sparse=auto", str(source), str(clone)],
             capture_output=True,
@@ -163,12 +162,13 @@ def _clone_generation(source: Path, scratch: Path) -> dict[str, Any]:
             )
             clone_strategy = "reflink_auto_physical_fallback"
             reflink_rejection = reflink.stderr.strip()
-        clone_head.write_bytes(head_bytes)
+        clone_checkpoint.write_bytes(checkpoint_bytes)
         shutil.copy2(lock, clone_lock, follow_symlinks=False)
         if source.stat().st_size != source_stat.st_size:
             raise RuntimeError("source journal changed while its shared lock was held")
-        if hashlib.sha256(head.read_bytes()).hexdigest() != head_sha256:
-            raise RuntimeError("source V2 head changed while its shared lock was held")
+        if hashlib.sha256(checkpoint.read_bytes()).hexdigest() != checkpoint_sha256:
+            raise RuntimeError("source checkpoint changed while its shared lock was held")
+    checkpoint_payload = _json(clone_checkpoint)
     return {
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "clone_strategy": clone_strategy,
@@ -177,13 +177,22 @@ def _clone_generation(source: Path, scratch: Path) -> dict[str, Any]:
         "source_device": int(source_stat.st_dev),
         "source_inode": int(source_stat.st_ino),
         "journal_bytes": int(source_stat.st_size),
-        "head_sha256": head_sha256,
-        "head_sequence": head_payload.get("sequence"),
-        "head_delta_offset": head_payload.get("delta_offset"),
-        "head_state_sha256": head_payload.get("state_sha256"),
+        "checkpoint_sha256": checkpoint_sha256,
+        "checkpoint_prefix_bytes": checkpoint_payload.get("prefix_bytes"),
+        "checkpoint_prefix_sha256": checkpoint_payload.get("prefix_sha256"),
+        "checkpoint_event_count": checkpoint_payload.get("event_count"),
+        "checkpoint_last_event_id": (
+            (checkpoint_payload.get("last_event") or {}).get("event_id")
+        ),
+        "checkpoint_last_event_sha256": (
+            (checkpoint_payload.get("last_event") or {}).get("event_sha256")
+        ),
+        "checkpoint_state_sha256": (
+            (checkpoint_payload.get("last_event") or {}).get("state_sha256")
+        ),
         "clone_path": str(clone),
         "clone_bytes": clone.stat().st_size,
-        "clone_head_sha256": _sha256(clone_head),
+        "clone_checkpoint_sha256": _sha256(clone_checkpoint),
         "clone_lock_sha256": _sha256(clone_lock),
         "clone_lock_mode": oct(stat.S_IMODE(clone_lock.stat().st_mode)),
     }
@@ -305,7 +314,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         snapshot_started = time.monotonic()
         snapshot = dispatcher.load_authoritative_task_snapshot(
             {"mode": "authoritative", "event_log": clone},
-            observational=True,
+            refresh_checkpoint=False,
         )
         snapshot_seconds = round(time.monotonic() - snapshot_started, 3)
         snapshot_evidence = dispatcher.authoritative_snapshot_evidence(snapshot)
@@ -352,25 +361,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     cli_output = cli.get("output") or {}
     cli_snapshot = ((cli_output.get("task_state_store") or {}).get("snapshot") or {})
-    head_tail_consistent = (
-        input_identity["head_sequence"] <= snapshot_evidence["head_sequence"]
-        and snapshot_evidence["head_sequence"]
-        == input_identity["head_sequence"] + snapshot_evidence["tail_event_count"]
-        and input_identity["head_delta_offset"] <= input_identity["clone_bytes"]
-        and input_identity["journal_bytes"] == snapshot_evidence["byte_size"]
-        and snapshot_evidence["recovered_tail"]
-        is bool(snapshot_evidence["tail_event_count"])
-        and (
-            snapshot_evidence["tail_event_count"] > 0
-            or input_identity["head_state_sha256"] == snapshot_evidence["state_sha256"]
-        )
-    )
     input_ok = (
         input_identity["journal_bytes"] >= args.minimum_bytes
         and snapshot_evidence["event_count"] >= args.minimum_events
         and input_identity["journal_bytes"] == input_identity["clone_bytes"]
-        and input_identity["head_sha256"] == input_identity["clone_head_sha256"]
-        and head_tail_consistent
+        and input_identity["checkpoint_sha256"]
+        == input_identity["clone_checkpoint_sha256"]
     )
     cli_reached_verdict = (
         cli.get("completed") is True and cli.get("returncode") in {0, 2}
@@ -380,6 +376,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     meets_target = bool(
         input_ok
+        and snapshot_evidence["checkpoint_used"]
         and cli_reached_verdict
         and read_only_surface_preserved
         and float(cli["elapsed_seconds"]) < args.target_seconds
@@ -399,18 +396,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "implementation_paths_clean_at_candidate": True,
         },
         "input": input_identity,
-        "v2_head_tail": {
-            "consistent": head_tail_consistent,
-            "head_sequence": input_identity["head_sequence"],
-            "head_delta_offset": input_identity["head_delta_offset"],
-            "recovered_sequence": snapshot_evidence["head_sequence"],
-            "tail_event_count": snapshot_evidence["tail_event_count"],
-            "recovered_tail": snapshot_evidence["recovered_tail"],
-        },
         "baseline": {
             "observed_at": "2026-08-02T09:13:00Z",
             "journal_bytes": 2_174_900_966,
             "event_count": 8_632,
+            "checkpoint_prefix_sha256": "903d83718159c9b401cc9bdc682abfe213793396c008cb227581804d8902f656",
             "timeout_seconds": 30.0,
             "elapsed_seconds": 30.52,
             "peak_rss_kib": 5_604_472,
@@ -433,13 +423,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "minimum_bytes": args.minimum_bytes,
             "minimum_events": args.minimum_events,
             "maximum_guarded_dry_run_seconds": args.target_seconds,
-            "requires_v2_head_tail_consistency": True,
+            "requires_checkpoint": True,
             "requires_catalog_admission_verdict": True,
         },
         "meets_target": meets_target,
         "non_interference": {
             "source_event_log_opened_for_write": False,
-            "source_head_opened_for_write": False,
+            "source_checkpoint_opened_for_write": False,
             "source_lock_opened_for_write": False,
             "benchmark_journal": "scratch clone removed after run",
             "scratch_read_only_surface_before": read_only_surface_before,
