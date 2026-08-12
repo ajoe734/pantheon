@@ -967,7 +967,6 @@ EOF
                 "error refreshing token: refresh-token-revoked",
             )
             with (
-                mock.patch.object(provider_permissions, "_previous_provider_auth_probe", return_value=None),
                 mock.patch.object(provider_permissions, "run_command", side_effect=[revoked, revoked]),
             ):
                 self.assertFalse(
@@ -1420,7 +1419,6 @@ EOF
             completed = subprocess.CompletedProcess(["codex"], 0, "OK\n", "")
             with (
                 mock.patch.object(provider_permissions, "load_json", side_effect=AssertionError("auth read")),
-                mock.patch.object(provider_permissions, "_previous_provider_auth_probe", return_value={}),
                 mock.patch.object(provider_permissions, "run_command", return_value=completed),
             ):
                 probe = provider_permissions._codex_auth_probe(
@@ -1648,7 +1646,6 @@ EOF
                 provider_permissions, "_antigravity_auth_metadata",
                 return_value={"oauth_token_exists": True, "gemini_api_key_present": False, "oauth_token": str(token)},
             ),
-            mock.patch.object(provider_permissions, "_previous_provider_auth_probe", return_value=None),
             mock.patch.object(provider_permissions, "run_command", return_value=silent),
         ):
             record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
@@ -1673,7 +1670,6 @@ EOF
                 provider_permissions, "_antigravity_auth_metadata",
                 return_value={"oauth_token_exists": True, "gemini_api_key_present": False, "oauth_token": str(token)},
             ),
-            mock.patch.object(provider_permissions, "_previous_provider_auth_probe", return_value=None),
             mock.patch.object(provider_permissions, "run_command", return_value=success) as run_command,
         ):
             record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
@@ -1706,7 +1702,6 @@ EOF
                 provider_permissions, "_antigravity_auth_metadata",
                 return_value={"oauth_token_exists": True, "gemini_api_key_present": False, "oauth_token": str(token)},
             ),
-            mock.patch.object(provider_permissions, "_previous_provider_auth_probe", return_value=None),
             mock.patch.object(provider_permissions, "run_command", run_command_mock),
         )
 
@@ -1724,8 +1719,8 @@ EOF
             )
             ok = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="OK\n", stderr="")
             run_command = mock.Mock(side_effect=[quota, ok])
-            p1, p2, p3 = self._probe_patches(run_command)
-            with p1, p2, p3:
+            p1, p2 = self._probe_patches(run_command)
+            with p1, p2:
                 record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
 
             self.assertTrue(record["ready"])
@@ -1747,8 +1742,8 @@ EOF
             model_rotation.cool_slot(config, "antigravity", model_rotation.SLOT_PRIMARY)
             ok = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="OK\n", stderr="")
             run_command = mock.Mock(return_value=ok)
-            p1, p2, p3 = self._probe_patches(run_command)
-            with p1, p2, p3:
+            p1, p2 = self._probe_patches(run_command)
+            with p1, p2:
                 record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
 
             self.assertTrue(record["ready"])
@@ -1764,8 +1759,8 @@ EOF
                 stderr="Error: Individual quota reached.",
             )
             run_command = mock.Mock(return_value=quota)
-            p1, p2, p3 = self._probe_patches(run_command)
-            with p1, p2, p3:
+            p1, p2 = self._probe_patches(run_command)
+            with p1, p2:
                 record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
 
             self.assertFalse(record["ready"])
@@ -1785,8 +1780,8 @@ EOF
             before = json.loads(model_rotation.cooldown_file_path(config).read_text(encoding="utf-8"))
 
             run_command = mock.Mock(side_effect=AssertionError("must not probe while every model cools"))
-            p1, p2, p3 = self._probe_patches(run_command)
-            with p1, p2, p3:
+            p1, p2 = self._probe_patches(run_command)
+            with p1, p2:
                 record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
 
             self.assertFalse(record["ready"])
@@ -1805,21 +1800,15 @@ EOF
             stderr="Error: Individual quota reached.",
         )
         run_command = mock.Mock(return_value=quota)
-        p1, p2, p3 = self._probe_patches(run_command)
-        with p1, p2, p3:
+        p1, p2 = self._probe_patches(run_command)
+        with p1, p2:
             record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
 
         self.assertFalse(record["ready"])
         self.assertEqual(run_command.call_count, 1)
 
 class ProviderProbeGateTest(unittest.TestCase):
-    """SUP-PROVIDER-POOL-PROBE-GATE-001.
-
-    The supervisor calls the full capability report before every loop. Forcing a
-    provider CLI smoke inside it turned an intended telemetry refresh into a
-    per-tick `codex exec` / `agy --prompt` storm, and made a shared-credential
-    Antigravity pool look like several independent healthy lanes.
-    """
+    """Exact endpoint probes never inherit capability-report health cache."""
 
     @staticmethod
     def _codex_config(codex_home: Path, capabilities: Path) -> dict:
@@ -1834,33 +1823,7 @@ class ProviderProbeGateTest(unittest.TestCase):
             },
         }
 
-    @staticmethod
-    def _write_recent_capabilities(path: Path, provider_id: str, *, checked_at: str) -> None:
-        path.write_text(
-            json.dumps(
-                {
-                    "providers": {
-                        provider_id: {
-                            "auth_ready": True,
-                            "auth_probe": {
-                                "provider": provider_id,
-                                "kind": "codex",
-                                "ready": True,
-                                "status": "ready",
-                                "method": "codex_exec_oauth",
-                                "error": None,
-                                "checked_at": checked_at,
-                                "last_auth_probe_at": checked_at,
-                                "source": "live",
-                            },
-                        }
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-
-    def test_codex_probe_reuses_recent_result_inside_probe_interval(self) -> None:
+    def test_codex_probe_is_live_even_when_capability_report_has_recent_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             codex_home = root / "codex-home"
@@ -1870,43 +1833,22 @@ class ProviderProbeGateTest(unittest.TestCase):
                 encoding="utf-8",
             )
             capabilities = root / "provider-capabilities.json"
-            recent = (
-                datetime.now(timezone.utc) - timedelta(seconds=60)
-            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-            self._write_recent_capabilities(capabilities, "codex", checked_at=recent)
-            config = self._codex_config(codex_home, capabilities)
-
-            with mock.patch.object(provider_permissions, "run_command") as run_command:
-                probe = provider_permissions._codex_auth_probe(config, "codex", "/usr/bin/codex")
-
-        run_command.assert_not_called()
-        self.assertTrue(probe["ready"])
-        self.assertEqual(probe["source"], "cached")
-
-    def test_codex_probe_reruns_exec_once_the_probe_interval_elapsed(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            codex_home = root / "codex-home"
-            codex_home.mkdir()
-            (codex_home / "auth.json").write_text(
-                '{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}',
+            capabilities.write_text(
+                json.dumps({"providers": {"codex": {"auth_ready": True}}}),
                 encoding="utf-8",
             )
-            capabilities = root / "provider-capabilities.json"
-            stale = (
-                datetime.now(timezone.utc) - timedelta(seconds=3600)
-            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-            self._write_recent_capabilities(capabilities, "codex", checked_at=stale)
             config = self._codex_config(codex_home, capabilities)
-
             completed = subprocess.CompletedProcess(["codex"], 0, "OK\n", "")
+
             with mock.patch.object(
                 provider_permissions, "run_command", return_value=completed
             ) as run_command:
-                probe = provider_permissions._codex_auth_probe(config, "codex", "/usr/bin/codex")
+                probe = provider_permissions._codex_auth_probe(
+                    config, "codex", "/usr/bin/codex", force=False
+                )
 
         run_command.assert_called_once()
-        self.assertEqual(run_command.call_args.args[0][:2], ["/usr/bin/codex", "exec"])
+        self.assertTrue(probe["ready"])
         self.assertEqual(probe["source"], "live")
 
     def test_targeted_probe_provider_auth_force_still_runs_a_fresh_probe(self) -> None:
@@ -1920,10 +1862,10 @@ class ProviderProbeGateTest(unittest.TestCase):
                 encoding="utf-8",
             )
             capabilities = root / "provider-capabilities.json"
-            recent = (
-                datetime.now(timezone.utc) - timedelta(seconds=60)
-            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-            self._write_recent_capabilities(capabilities, "codex", checked_at=recent)
+            capabilities.write_text(
+                json.dumps({"providers": {"codex": {"auth_ready": True}}}),
+                encoding="utf-8",
+            )
             config = self._codex_config(codex_home, capabilities)
 
             completed = subprocess.CompletedProcess(["codex"], 0, "OK\n", "")

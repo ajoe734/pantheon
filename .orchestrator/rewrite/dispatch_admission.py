@@ -18,8 +18,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Mapping
 
-from provider_health import DeliveryHealthState as HealthState
-from task_machine import DispatchReason, dispatch_reason
+from .provider_health import DeliveryHealthState as HealthState
+from .task_machine import DispatchReason, dispatch_reason
 
 
 class HealthScope(str, Enum):

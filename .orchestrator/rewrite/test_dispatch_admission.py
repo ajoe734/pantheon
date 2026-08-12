@@ -5,9 +5,9 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dispatch_admission import (
+from rewrite.dispatch_admission import (
     AdmissionSnapshot,
     DeliveryEndpoint,
     DispatchBlockReason,
@@ -19,7 +19,7 @@ from dispatch_admission import (
     TaskIntent,
     evaluate_dispatch_intent,
 )
-from task_machine import DispatchReason
+from rewrite.task_machine import DispatchReason
 
 
 NOW = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
