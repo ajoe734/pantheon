@@ -32,115 +32,59 @@ class WorkerSlotCountTests(unittest.TestCase):
 
 
 class MaxParallelTests(unittest.TestCase):
-    def test_default_one_when_nothing_set(self) -> None:
+    def test_missing_capacity_fails_closed(self) -> None:
         cfg = {"agents": {"claude": {}}}
-        self.assertEqual(concurrency.max_parallel(cfg, "claude", settings={}), 1)
-
-    def test_global_default(self) -> None:
-        cfg = {"agents": {"claude": {}}}
-        self.assertEqual(concurrency.max_parallel(cfg, "claude", settings={"max_tasks_per_agent": 4}), 4)
-
-    def test_slots_win_over_default_when_larger(self) -> None:
-        cfg = {"agents": {"claude": {"worker_slots": ["claude_1", "claude_2", "claude_3"]},
-                          "claude_1": {}, "claude_2": {}, "claude_3": {}}}
-        self.assertEqual(concurrency.max_parallel(cfg, "claude", settings={"max_tasks_per_agent": 2}), 3)
-
-    def test_default_wins_when_larger_than_slots(self) -> None:
-        cfg = {"agents": {"claude": {"worker_slots": ["claude_1"]}, "claude_1": {}}}
-        self.assertEqual(concurrency.max_parallel(cfg, "claude", settings={"max_tasks_per_agent": 5}), 5)
-
-    def test_per_agent_override_beats_slots_and_default(self) -> None:
-        cfg = {"agents": {"claude": {"worker_slots": ["claude_1", "claude_2"]}, "claude_1": {}, "claude_2": {}}}
-        settings = {"max_tasks_per_agent": 9, "max_tasks_per_agent_by_agent": {"claude": 1}}
-        self.assertEqual(concurrency.max_parallel(cfg, "claude", settings=settings), 1)
-
-    def test_override_by_display_name(self) -> None:
-        cfg = {"agents": {"claude": {}}}
-        settings = {"max_tasks_per_agent_by_agent": {"Claude": 7}}
-        self.assertEqual(
-            concurrency.max_parallel(cfg, "claude", settings=settings, display_name="Claude"), 7
-        )
+        self.assertEqual(concurrency.max_parallel(cfg, "claude", settings={}), 0)
 
     def test_explicit_target_shape_max_parallel_field(self) -> None:
         cfg = {"agents": {"claude": {"max_parallel": 3}}}
-        # target shape wins; derivation from slots/default not needed
-        self.assertEqual(concurrency.max_parallel(cfg, "claude", settings={"max_tasks_per_agent": 9}), 3)
+        self.assertEqual(concurrency.max_parallel(cfg, "claude", settings={}), 3)
 
-    def test_min_one_floor(self) -> None:
-        cfg = {"agents": {"claude": {}}}
-        self.assertEqual(concurrency.max_parallel(cfg, "claude", settings={"max_tasks_per_agent": 0}), 1)
+    def test_zero_disables_agent(self) -> None:
+        cfg = {"agents": {"claude": {"max_parallel": 0}}}
+        self.assertEqual(concurrency.max_parallel(cfg, "claude", settings={}), 0)
 
 
 class AccountLimitTests(unittest.TestCase):
-    def test_no_cap_when_unset(self) -> None:
-        self.assertIsNone(concurrency.account_limit("grp", settings={}))
+    def test_missing_schema_closes_account(self) -> None:
+        self.assertEqual(concurrency.account_limit("grp", settings={}), 0)
 
-    def test_no_cap_when_empty_string(self) -> None:
-        self.assertIsNone(
-            concurrency.account_limit("grp", settings={"max_concurrent_per_quota_group": ""})
+    def test_empty_schema_closes_account(self) -> None:
+        self.assertEqual(
+            concurrency.account_limit("grp", settings={"max_concurrent_per_account": ""})
+            , 0
         )
 
-    def test_scalar_global_cap(self) -> None:
+    def test_scalar_legacy_schema_closes_account(self) -> None:
         self.assertEqual(
-            concurrency.account_limit("grp", settings={"max_concurrent_per_quota_group": 3}), 3
+            concurrency.account_limit("grp", settings={"max_concurrent_per_account": 3}), 0
         )
 
     def test_scalar_cap_floored_at_zero(self) -> None:
         self.assertEqual(
-            concurrency.account_limit("grp", settings={"max_concurrent_per_quota_group": -5}), 0
+            concurrency.account_limit("grp", settings={"max_concurrent_per_account": -5}), 0
         )
 
-    def test_scalar_invalid_is_none(self) -> None:
-        self.assertIsNone(
-            concurrency.account_limit("grp", settings={"max_concurrent_per_quota_group": "abc"})
-        )
-
-    def test_dict_first_matching_key_wins(self) -> None:
-        settings = {"max_concurrent_per_quota_group": {"acct_b": 5, "acct_a": 2}}
+    def test_scalar_invalid_closes_account(self) -> None:
         self.assertEqual(
-            concurrency.account_limit("acct_a", settings=settings,
-                                      identity_keys=["acct_a", "acct_b"]),
-            2,
+            concurrency.account_limit("grp", settings={"max_concurrent_per_account": "abc"})
+            , 0
         )
 
-    def test_dict_default_keys_use_account_id(self) -> None:
-        settings = {"max_concurrent_per_quota_group": {"acct_a": 4}}
+    def test_dict_uses_account_id(self) -> None:
+        settings = {"max_concurrent_per_account": {"acct_a": 4}}
         self.assertEqual(concurrency.account_limit("acct_a", settings=settings), 4)
 
-    def test_dict_no_match_is_none(self) -> None:
-        settings = {"max_concurrent_per_quota_group": {"other": 4}}
-        self.assertIsNone(
-            concurrency.account_limit("acct_a", settings=settings, identity_keys=["acct_a"])
-        )
+    def test_dict_no_match_closes_account(self) -> None:
+        settings = {"max_concurrent_per_account": {"other": 4}}
+        self.assertEqual(concurrency.account_limit("acct_a", settings=settings), 0)
 
-    def test_dict_non_int_value_is_none(self) -> None:
-        settings = {"max_concurrent_per_quota_group": {"acct_a": "lots"}}
-        self.assertIsNone(
-            concurrency.account_limit("acct_a", settings=settings, identity_keys=["acct_a"])
-        )
+    def test_dict_non_int_value_closes_account(self) -> None:
+        settings = {"max_concurrent_per_account": {"acct_a": "lots"}}
+        self.assertEqual(concurrency.account_limit("acct_a", settings=settings), 0)
 
-    def test_dict_skips_empty_keys(self) -> None:
-        settings = {"max_concurrent_per_quota_group": {"acct_a": 1}}
-        # empty/None keys are skipped; the real one still matches
-        self.assertEqual(
-            concurrency.account_limit("", settings=settings, identity_keys=["", None, "acct_a"]),
-            1,
-        )
-
-    def test_explicit_account_cap_ignores_legacy_identity_aliases(self) -> None:
-        settings = {"max_concurrent_per_account": {"acct_a": 2, "legacy_alias": 9}}
-        self.assertEqual(
-            concurrency.account_limit(
-                "acct_a", settings=settings, identity_keys=["legacy_alias", "acct_a"]
-            ),
-            2,
-        )
-
-    def test_explicit_account_setting_wins_over_legacy_setting(self) -> None:
-        settings = {
-            "max_concurrent_per_account": {"acct_a": 2},
-            "max_concurrent_per_quota_group": {"acct_a": 7},
-        }
+    def test_account_keys_are_normalized(self) -> None:
+        settings = {"max_concurrent_per_account": {"acct-a": 2}}
         self.assertEqual(concurrency.account_limit("acct_a", settings=settings), 2)
 
 

@@ -15,19 +15,14 @@
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
   "task_state_store": {
-    "mode": "shadow",
-    "event_log": ".orchestrator/task-state-events.jsonl"
+    "mode": "authoritative",
+    "event_log": ".orchestrator/task-state-events-v2.jsonl"
   },
   "permission_broker": {
     "allowed_workspace_roots": [
       ".",
       "../execute-plans"
     ]
-  },
-  "watcher": {
-    "poll_interval_seconds": 2.0,
-    "replay_on_start": false,
-    "max_seen_events": 2000
   },
   "supervisor": {
     "poll_interval_seconds": 2.0,
@@ -81,7 +76,8 @@
     "pause_on_capacity_failure": true,
     "pause_on_auth_failure": true,
     "capacity_pause_seconds": 900,
-    "auth_pause_seconds": 900
+    "auth_pause_seconds": 900,
+    "delivery_auth_max_age_seconds": 300
   },
   "worker_tree_guard": {
     "enabled": false,
@@ -115,9 +111,7 @@
       "owned_ready_dispatch",
       "owned_in_progress_dispatch",
       "owned_finalize_dispatch",
-      "review_ready_dispatch",
-      "github_retry",
-      "chair_review:*"
+      "review_ready_dispatch"
     ]
   },
   "worker_worktree_cleanup": {
@@ -163,19 +157,10 @@
       "quota exhausted",
       "exhausted your capacity",
       "no capacity available for model"
-    ],
-    "fallback_mode": "file_inbox"
+    ]
   },
   "worker_reassignment": {
     "enabled": true,
-    "after_attempts": 2,
-    "reassign_on_terminal_failure": true,
-    "eligible_statuses": [
-      "todo",
-      "in_progress",
-      "review",
-      "review_approved"
-    ],
     "owner_fallbacks": {
       "Claude": [
         "Codex"
@@ -215,70 +200,11 @@
         "Codex",
         "Claude"
       ]
-    }
-  },
-  "underutilization_dispatch": {
-    "enabled": true,
-    "threshold_ratio": 0.5,
-    "continuous_window_seconds": 0,
-    "cooldown_seconds": 0,
-    "max_new_sidecars_per_wave": 2,
-    "max_active_sidecars_per_agent": 1,
-    "productive_worker_statuses": [
-      "running",
-      "waiting_approval",
-      "suspended_approval",
-      "retry_backoff"
-    ]
+    },
+    "max_reassignments_per_cycle": 4
   },
   "approvals": {
     "stale_pending_seconds": 1800
-  },
-  "coordination": {
-    "enabled": true,
-    "repositories": {
-      "pantheon": {
-        "repo": null,
-        "local_path": ".",
-        "default_branch": "master"
-      },
-      "execute_plans": {
-        "repo": "ajoe734/execute-plans",
-        "local_path": "../execute-plans",
-        "default_branch": "main"
-      },
-      "runtime_platform": {
-        "repo": "your-org/lean-platform",
-        "local_path": "../lean-platform",
-        "default_branch": "main"
-      },
-      "lean_engine": {
-        "repo": "your-org/pantheon-lean",
-        "local_path": "../Lean",
-        "default_branch": "master"
-      }
-    },
-    "worker_routes": {
-      "pantheon-bff-worker": {
-        "target_agent": "Codex"
-      },
-      "front-sync-worker": {
-        "target_agent": "Codex"
-      },
-      "front-ui-worker": {
-        "target_agent": "Copilot"
-      },
-      "runtime-worker": {
-        "target_agent": "Gemini"
-      },
-      "engine-worker": {
-        "target_agent": "Claude",
-        "requires_human_approval": true
-      },
-      "qa-worker": {
-        "target_agent": "Claude"
-      }
-    }
   },
   "github_bus": {
     "enabled": true,
@@ -314,13 +240,8 @@
       "/approve",
       "/deny",
       "/retry",
-      "/resume",
       "/recheck",
-      "/status",
-      "/dispatch",
-      "/needs-runtime",
-      "/contract-ready",
-      "/approve-engine"
+      "/status"
     ],
     "reviewers": {
       "Claude": [
@@ -371,78 +292,47 @@
     "next_field": "next",
     "last_update_field": "last_update"
   },
-  "events": {
-    "enqueue_runtime_events": false,
-    "review_statuses": [
-      "review"
-    ],
-    "status_targets": {
-      "needs_reply": "owner",
-      "needs_input": "owner",
-      "handoff": "owner"
-    },
-    "waiting_status_patterns": [
-      "^waiting_on_(?P<agent>[A-Za-z0-9_-]+)$"
-    ],
-    "watch_assignee_changes": false,
-    "watch_reviewer_changes": false,
-    "watch_handoffs": false,
-    "pending_handoff_statuses": [
-      "pending"
-    ]
-  },
   "agents": {
     "claude": {
       "display_name": "Claude",
       "provider": "claude",
+      "max_parallel": 3,
       "adapter": "claude_cli",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/claude.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "gemini": {
       "display_name": "Gemini",
       "provider": "gemini",
+      "max_parallel": 1,
       "adapter": "gemini",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/gemini.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "gemini2": {
       "display_name": "Gemini2",
       "provider": "gemini2",
+      "max_parallel": 1,
       "adapter": "gemini",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/gemini2.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex": {
       "display_name": "Codex",
       "provider": "codex",
+      "max_parallel": 4,
       "adapter": "codex",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/codex.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "copilot": {
       "display_name": "Copilot",
       "provider": "copilot",
+      "max_parallel": 1,
       "adapter": "copilot_local",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/copilot.md"
-    },
-    "grok": {
-      "display_name": "Copilot (legacy alias)",
-      "provider": "copilot",
-      "adapter": "copilot_local",
-      "wake_template": ".orchestrator/templates/wakeup.txt",
-      "file_inbox_path": ".llm-inbox/grok.md"
+      "wake_template": ".orchestrator/templates/wakeup.txt"
     }
   },
   "providers": {
     "claude": {
       "delivery_mode": "claude_cli",
       "account": "claude",
-      "file_inbox": {
-        "path": ".llm-inbox/claude.md",
-        "open_in_vscode": false
-      },
       "runtime": {
         "cli": "claude",
         "output_format": "stream-json",
@@ -472,10 +362,6 @@
     "gemini": {
       "delivery_mode": "gemini",
       "account": "gemini",
-      "file_inbox": {
-        "path": ".llm-inbox/gemini.md",
-        "open_in_vscode": false
-      },
       "gemini": {
         "cli": "gemini",
         "include_directories": true
@@ -492,10 +378,6 @@
     "gemini2": {
       "delivery_mode": "gemini",
       "account": "gemini2",
-      "file_inbox": {
-        "path": ".llm-inbox/gemini2.md",
-        "open_in_vscode": false
-      },
       "gemini": {
         "cli": ".orchestrator/bin/gemini2",
         "config_home": "~/.gemini2",
@@ -523,10 +405,6 @@
     "codex": {
       "delivery_mode": "codex",
       "account": "codex1",
-      "file_inbox": {
-        "path": ".llm-inbox/codex.md",
-        "open_in_vscode": false
-      },
       "codex": {
         "cli": "codex",
         "ask_for_approval": "never",
@@ -543,14 +421,6 @@
     "copilot": {
       "delivery_mode": "copilot_local",
       "account": "copilot",
-      "file_inbox": {
-        "path": ".llm-inbox/copilot.md",
-        "open_in_vscode": false,
-        "agent_paths": {
-          "grok": ".llm-inbox/grok.md",
-          "copilot": ".llm-inbox/copilot.md"
-        }
-      },
       "local": {
         "cli": "copilot",
         "autopilot": true,
@@ -582,6 +452,10 @@
   },
   "ready_dispatcher": {
     "enabled": true,
+    "seen_event_history_limit": 2000,
+    "pending_handoff_statuses": [
+      "pending"
+    ],
     "review_statuses": [
       "review"
     ],
@@ -592,7 +466,6 @@
       "in_progress",
       "todo"
     ],
-    "disabled_agents": [],
     "dependency_done_statuses": [
       "done"
     ],
@@ -606,48 +479,15 @@
       "waiting_approval",
       "suspended_approval",
       "retry_backoff",
-      "manual_pending",
       "stalled"
     ],
-    "helper_claim": {
-      "enabled": true,
-      "task_statuses": [
-        "todo"
-      ],
-      "require_owner_higher_priority_load": true,
-      "claim_idle_work": true,
-      "claim_sidecars_when_idle": true
-    },
-    "worker_self_claim": {
-      "enabled": true,
-      "claim_command": "AI_NAME=$AI_NAME python3 .orchestrator/supervisor.py --claim-agent \"$AI_NAME\" --release-task \"$TASK_ID\" --quiet",
-      "release_task_statuses": [
-        "review",
-        "review_approved",
-        "done",
-        "blocked"
-      ]
-    },
-    "max_tasks_per_agent_by_agent": {
-      "Claude": 3,
-      "Claude2": 1,
-      "Gemini": 1,
-      "Gemini2": 1,
-      "Codex": 4,
-      "Codex2": 4,
-      "Copilot": 1
-    },
     "max_dispatches_per_tick": 2,
     "max_active_workers_per_task": 1,
-    "require_explicit_provider_accounts": true,
-    "allow_legacy_provider_account_aliases": false,
     "max_concurrent_per_account": {
       "claude": 3,
-      "claude2": 1,
       "gemini": 1,
       "gemini2": 1,
       "codex1": 4,
-      "codex2": 4,
       "copilot": 1
     },
     "max_concurrent_workers": 2

@@ -187,15 +187,36 @@ class LoadRuntimeStateTests(unittest.TestCase):
 
         self.assertIn("claude-live", state["workers"])
 
-    def test_load_runtime_state_adds_chair_rotation_defaults(self) -> None:
-        self._write_json(self.root / "state.json", {"workers": {}, "queue": {"events": {}}})
+    def test_load_runtime_state_drops_retired_control_plane_buckets(self) -> None:
+        self._write_json(
+            self.root / "state.json",
+            {
+                "workers": {},
+                "queue": {"events": {}},
+                "chair_rotation": {"current_index": 3},
+                "underutilization": {"last_sidecar_wave_at": "2026-01-01T00:00:00Z"},
+                "coordination": {"features": {"F-1": {}}},
+                "provider_guardrails": {"task_failure_streaks": {"TASK-1": {}}},
+                "supervisor": {
+                    "mode_occupancy": {
+                        "execution": {"running": 1},
+                        "chair_review": {"running": 2},
+                    }
+                },
+            },
+        )
         (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         state = runtime_state.load_runtime_state(self.config)
 
-        self.assertEqual(state["chair_rotation"]["current_index"], 0)
-        self.assertIsNone(state["chair_rotation"]["last_chair_agent"])
-        self.assertIn("chair_review", state["supervisor"]["mode_occupancy"])
+        self.assertNotIn("chair_rotation", state)
+        self.assertNotIn("underutilization", state)
+        self.assertNotIn("coordination", state)
+        self.assertNotIn("task_failure_streaks", state["provider_guardrails"])
+        self.assertEqual(
+            state["supervisor"]["mode_occupancy"],
+            {"execution": {"running": 1, "pending": 0, "queued": 0}},
+        )
 
     def test_load_runtime_state_preserves_watchdog_safe_mode(self) -> None:
         self._write_json(
@@ -926,18 +947,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                 ):
                     writer()
 
-    def test_runtime_event_append_requires_exact_readback(self) -> None:
-        self._write_valid_sources()
-        with mock.patch.object(runtime_state, "_pread_exact", return_value=b"corrupt"):
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "canonical event_queue append readback mismatch",
-            ):
-                runtime_state.enqueue_event(
-                    self.config,
-                    {"event_id": "evt-new", "task_id": "TASK-A"},
-                )
-
     def test_input_and_strict_reason_ids_are_stable(self) -> None:
         self._write_valid_sources()
         cases = (
@@ -1406,7 +1415,6 @@ class RuntimeCapabilityVerifierTests(unittest.TestCase):
             "writers": writers,
             "writer_registry_path": str(registry_path.relative_to(self.root)),
             "writer_registry_sha256": hashlib.sha256(registry_body).hexdigest(),
-            "dispatcher_sha256": writers["scripts/dispatch_loop_product_level_remediation_2026-07-13.py"],
             "bootstrap_task_id": "LOOP-PROD-RUNTIME-BOOT-001",
             "bootstrap_task_contract_sha256": evidence["task_contract_sha256"],
             "bootstrap_completion_evidence_path": str(evidence_path.relative_to(self.root)),

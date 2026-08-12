@@ -2156,7 +2156,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             },
         },
         "agent_adapters": {
-            agent_id: build_adapter(agent.get("adapter", "file_inbox"), config=config, provider_capabilities={})
+            agent_id: build_adapter(str(agent.get("adapter") or ""), config=config, provider_capabilities={})
             .capability(agent_id)
             .as_dict()
             for agent_id, agent in config.get("agents", {}).items()
@@ -2273,7 +2273,12 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             },
         },
     }
-    existing_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    capabilities_path = (config.get("paths") or {}).get("provider_capabilities")
+    existing_report = (
+        load_json(config_path(config, "provider_capabilities"), default={}) or {}
+        if capabilities_path
+        else {}
+    )
     existing_providers = existing_report.get("providers", {}) if isinstance(existing_report.get("providers"), dict) else {}
     from supervisor import apply_provider_probe_to_report
     for pkey, pdata in report.get("providers", {}).items():
@@ -2307,7 +2312,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     # (supervisor.build_adapter at the delivery path) passes the full report and the adapters
     # index into it with .get("providers", {}) themselves.
     report["agent_adapters"] = {
-        agent_id: build_adapter(agent.get("adapter", "file_inbox"), config=config, provider_capabilities=report)
+        agent_id: build_adapter(str(agent.get("adapter") or ""), config=config, provider_capabilities=report)
         .capability(agent_id)
         .as_dict()
         for agent_id, agent in config.get("agents", {}).items()

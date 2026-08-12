@@ -1,4 +1,4 @@
-"""Worker lifecycle primitives — Phase 4 (SUPERVISOR_REWRITE_PLAN.md, anti-pattern E).
+"""Worker lifecycle primitives for Supervisor Authority V2.
 
 Two of the plan's Phase-4 fixes are self-contained and land here first, each a
 pure/injectable helper the incumbent driver can adopt without touching the

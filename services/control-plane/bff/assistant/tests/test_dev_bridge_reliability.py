@@ -19,6 +19,7 @@ from ..dev_bridge_inbox import drain_task_packet_inbox, queue_task_packet
 from ..dev_bridge_models import (
     BridgeActor,
     BridgeDispatchRequest,
+    BridgeOperatorAuthorization,
     BridgeTask,
     DevTaskPacket,
     MAX_TASKS_PER_PACKET,
@@ -28,6 +29,7 @@ from ..dev_bridge_signer import (
     has_seen_packet,
     mark_packet_seen,
     packet_digest,
+    public_key_environment,
     sign_packet,
 )
 from .dev_bridge_test_support import (
@@ -39,6 +41,14 @@ from .dev_bridge_test_support import (
 REPO_ROOT = Path(__file__).resolve().parents[5]
 TEST_KEY = b"test-key-for-dev-bridge-reliability"
 KEY_STORE = {"assistant-bridge-dev": TEST_KEY}
+
+
+@pytest.fixture(autouse=True)
+def _trusted_bridge_public_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
+        public_key_environment(KEY_STORE),
+    )
 
 ACTIVITY_ONLY_AI_STATUS_SCRIPT = """import json
 import os
@@ -277,6 +287,15 @@ def _packet(packet_id: str, *, task_count: int = 1) -> DevTaskPacket:
             roles=["operator"],
             capabilities=["assistant.kernel.repair"],
         ),
+        operatorAuthorization=BridgeOperatorAuthorization(
+            operatorId="human-ops-reliability",
+            controlActivationId=f"control-{packet_id}",
+            capability="assistant.canonical.mutate",
+            mfaVerified=True,
+            issuedAt="2026-07-15T00:00:00Z",
+            expiresAt="2026-07-15T00:05:00Z",
+            nonce=f"reliability-{packet_id}",
+        ),
         mode="kernel_repair",
         sourceConversationId="conversation-reliability",
         sourceTurnIds=["turn-user", "turn-assistant"],
@@ -405,7 +424,7 @@ def test_verified_bridge_uses_trusted_status_actor_without_worker_lease(
     call = json.loads(
         (repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()[0]
     )
-    assert call["ai_name"] == "Human/Ops"
+    assert call["ai_name"] == "assistant.dev.source"
     assert call["auto_worker_markers"] == {}
     assert len(call["tasks"]) == 1
     assert (
@@ -428,7 +447,7 @@ def test_untrusted_direct_status_mutation_still_requires_worker_lease(
     ):
         monkeypatch.delenv(marker, raising=False)
 
-    with pytest.raises(RuntimeError, match="status command lease required"):
+    with pytest.raises(RuntimeError, match="exact active worker lease"):
         AI_STATUS.validate_active_status_command_lease(
             "assign",
             ["UNTRUSTED-TASK", "Codex", "Claude", "Untrusted mutation"],
@@ -683,7 +702,6 @@ def test_full_supervisor_cycle_drains_signed_packet_with_authoritative_readback(
     ):
         changed = benchmark.supervisor_module.run_once(
             config,
-            watch=False,
             quiet=True,
             once=True,
         )
@@ -708,10 +726,9 @@ def test_full_supervisor_cycle_drains_signed_packet_with_authoritative_readback(
         for task in final_snapshot["state"]["tasks"]
         if task.get("id") == packet.tasks[0].id
     )
-    assert benchmark.supervisor_module.assistant_dev_bridge_task_is_admitted(
-        config,
-        materialized,
-    ) is True
+    assert materialized["owner"] == packet.tasks[0].owner
+    assert materialized["reviewer"] == packet.tasks[0].reviewer
+    assert materialized["status"] == "todo"
     assert benchmark.store.sha256_json(
         json.loads(status_path.read_text(encoding="utf-8"))
     ) == final_snapshot["state_sha256"]
@@ -834,7 +851,6 @@ def test_full_supervisor_cycle_never_queues_partially_materialized_packet(
     ):
         changed = benchmark.supervisor_module.run_once(
             config,
-            watch=False,
             quiet=True,
             once=True,
         )

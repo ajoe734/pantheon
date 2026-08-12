@@ -22,6 +22,38 @@ from urllib.error import HTTPError
 import common
 
 
+class WorkerSpawnAuthorityBoundaryTests(unittest.TestCase):
+    def test_final_spawn_boundary_removes_control_plane_signing_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "worker.log"
+            fake_process = mock.Mock(pid=321)
+            with mock.patch.object(
+                common.subprocess,
+                "Popen",
+                return_value=fake_process,
+            ) as popen:
+                common.spawn_background_process(
+                    ["worker"],
+                    log_path=log_path,
+                    env={
+                        "BRIDGE_SIGNING_KEY": "bridge-secret",
+                        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY": "private-secret",
+                        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": "{}",
+                    },
+                    runner_enabled=False,
+                )
+            spawned_env = popen.call_args.kwargs["env"]
+            self.assertNotIn("BRIDGE_SIGNING_KEY", spawned_env)
+            self.assertNotIn(
+                "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
+                spawned_env,
+            )
+            self.assertIn(
+                "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
+                spawned_env,
+            )
+
+
 def _sigkill_during_activity_rotation(log_path: str, point: str) -> None:
     os.environ["LOOP_TEST_ACTIVITY_ROTATION_SIGKILL_AFTER"] = point
     common.write_activity_log(
@@ -107,39 +139,6 @@ class RuntimeLogPathTests(unittest.TestCase):
         self.assertEqual(evidence_path, orchestrator_dir / "evidence")
 
 
-class PlanningSharedFilesTests(unittest.TestCase):
-    def test_planning_shared_files_follow_active_session_paths(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            planning_dir = root / "docs" / "02-architecture" / "consensus" / "sessions" / "phase3-test"
-            planning_dir.mkdir(parents=True)
-            readme = planning_dir / "README.md"
-            session_file = planning_dir / "planning-session.json"
-            state_file = root / ".orchestrator" / "planning-state.json"
-            state_file.parent.mkdir(parents=True)
-            readme.write_text("# phase3\n", encoding="utf-8")
-            session_file.write_text("{}", encoding="utf-8")
-            state_file.write_text(
-                json.dumps(
-                    {
-                        "status": "active",
-                        "session_file": str(session_file),
-                        "artifacts": {
-                            "planning_readme": {
-                                "path": str(readme),
-                            }
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            with mock.patch.object(common, "PLANNING_STATE_PATH", state_file):
-                files = common.planning_shared_files()
-
-        self.assertEqual(files, [readme, session_file])
-
-
 class JsonLoadResilienceTests(unittest.TestCase):
     def test_load_json_still_allows_empty_optional_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -188,7 +187,7 @@ class JsonLoadResilienceTests(unittest.TestCase):
 
 
             result = subprocess.run(
-                [sys.executable, str(repo_root / "scripts" / "ai_status.py"), "sync"],
+                [sys.executable, str(repo_root / "scripts" / "ai_status.py"), "show", "EMPTY"],
                 cwd=repo_root,
                 env=env,
                 capture_output=True,

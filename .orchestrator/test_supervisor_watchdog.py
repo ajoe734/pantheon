@@ -407,6 +407,30 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(result["reason"], "resource_pressure:state_read_failed")
         start.assert_not_called()
 
+    def test_slow_promotion_lock_suppresses_stale_heartbeat_restart(self) -> None:
+        self.write_pid(123)
+        self.write_state(
+            {
+                "supervisor": {
+                    "pid": 123,
+                    "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                    "lifecycle": "running",
+                }
+            }
+        )
+        with (
+            mock.patch.object(supervisor_watchdog, "supervisor_lock_held", return_value=True),
+            mock.patch.object(supervisor_watchdog, "exclusive_lock_held", return_value=True),
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog, "start_supervisor") as start,
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "suppress_restart")
+        self.assertEqual(result["reason"], "supervisor_runtime_promotion_in_progress")
+        start.assert_not_called()
+
     def test_resource_pressure_suppresses_restart_and_opens_circuit(self) -> None:
         self.write_pid(123)
         self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
@@ -751,7 +775,16 @@ class SupervisorWatchdogTests(unittest.TestCase):
             return _FakeProc()
 
         now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
-        with mock.patch.object(supervisor_watchdog.subprocess, "Popen", _fake_popen):
+        authority_env = {
+            "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": '{"bridge":"public"}',
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": '{"operator":"public"}',
+            "BRIDGE_SIGNING_PRIVATE_KEY": "must-not-leak",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY": "must-not-leak",
+        }
+        with (
+            mock.patch.dict(os.environ, authority_env, clear=False),
+            mock.patch.object(supervisor_watchdog.subprocess, "Popen", _fake_popen),
+        ):
             pid, _log_path = supervisor_watchdog.start_supervisor(self.config, {}, now)
         self.assertEqual(pid, 4242)
         self.assertIsNotNone(captured["env"])
@@ -760,6 +793,29 @@ class SupervisorWatchdogTests(unittest.TestCase):
             str(status_file.parent),
         )
         self.assertEqual(captured["env"].get("PYTHONDONTWRITEBYTECODE"), "1")
+        self.assertEqual(
+            captured["env"].get("BRIDGE_SIGNING_PUBLIC_KEYS_JSON"),
+            authority_env["BRIDGE_SIGNING_PUBLIC_KEYS_JSON"],
+        )
+        self.assertNotIn("BRIDGE_SIGNING_PRIVATE_KEY", captured["env"])
+        self.assertNotIn(
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
+            captured["env"],
+        )
+
+    def test_start_supervisor_rejects_missing_public_verifier_environment(self) -> None:
+        now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
+        missing = {
+            "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": "",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": "",
+        }
+        with (
+            mock.patch.dict(os.environ, missing, clear=False),
+            mock.patch.object(supervisor_watchdog.subprocess, "Popen") as popen,
+            self.assertRaisesRegex(ValueError, "valid JSON|public-key map"),
+        ):
+            supervisor_watchdog.start_supervisor(self.config, {}, now)
+        popen.assert_not_called()
 
     def test_supervisor_lock_held_true_when_locked(self) -> None:
         self.hold_lock()
@@ -1110,8 +1166,8 @@ class SupervisorWatchdogTests(unittest.TestCase):
         if contention_file.exists():
             self.assertEqual(contention_file.read_text(encoding="utf-8"), "")
 
-    def test_lock_release_and_probe_updates_state(self) -> None:
-        """After releasing the lock, a subsequent probe succeeds, updates the state files, and is healthy."""
+    def test_lock_release_updates_state_but_fake_runtime_is_not_healthy(self) -> None:
+        """Watchdog state persists, but a lock plus an unrelated PID is not health."""
         lock_dir = self.root / ".orchestrator"
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_path = lock_dir / "runtime-admission.lock"
@@ -1148,8 +1204,8 @@ class SupervisorWatchdogTests(unittest.TestCase):
         watchdog_state_file = self.root / "watchdog-state.json"
         self.assertTrue(watchdog_state_file.exists())
 
-        # Validate with supervisor_runtime_health.py --require-watchdog --json
-        # We lock supervisor.lock to simulate that the supervisor process is alive
+        # The health command must reject this fixture: the held singleton lock
+        # and mocked watchdog PID do not prove an exact immutable runtime.
         sup_lock_path = supervisor_watchdog.supervisor_lock_path(self.config)
         sup_lock_path.parent.mkdir(parents=True, exist_ok=True)
         sup_lock_handle = open(sup_lock_path, "w", encoding="utf-8")
@@ -1184,9 +1240,14 @@ class SupervisorWatchdogTests(unittest.TestCase):
         fcntl.flock(sup_lock_handle.fileno(), fcntl.LOCK_UN)
         sup_lock_handle.close()
 
-        self.assertEqual(p.returncode, 0, f"Health check failed with stderr: {stderr.decode()}")
+        self.assertEqual(p.returncode, 1, stderr.decode())
         health_report = json.loads(stdout.decode())
-        self.assertTrue(health_report["healthy"])
+        self.assertFalse(health_report["healthy"])
+        failed = {
+            item["name"] for item in health_report["checks"] if not item["ok"]
+        }
+        self.assertIn("configured_runtime_identity_present", failed)
+        self.assertIn("supervisor_runtime_identity_matches", failed)
 
     def test_contention_metric_dropped_on_eagain(self) -> None:
         """Verify that when the contention metrics file lock raises EAGAIN, the metric write is dropped and warning is printed to stderr."""

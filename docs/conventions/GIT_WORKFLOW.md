@@ -583,10 +583,10 @@ loop that keeps acting after the protected run is done.
 
 **Detecting a stuck disabled workflow:** `scripts/check_shared_deploy_workflow_disabled.py`
 reports (and, with `--enable`, restores) any watched workflow found in
-`disabled_manually` state. Wire it into cron the same way as
-`scripts/reap_hung_workers.py` (see the `pantheon-hung-worker-reap` cron
-line) so a stray disable cannot silently freeze the fleet's deploy path
-until a human happens to notice.
+`disabled_manually` state. Run it from the deployment-health monitor; it must
+not mutate canonical task state or act as a second worker-recovery path.
+Worker stalls are owned by the supervisor Worker Manager, which reconciles the
+exact worker process, lease, task generation, and queue intent before retrying.
 
 ---
 
@@ -725,7 +725,7 @@ is retired by OPS-GIT-REDESIGN-001:
 - `scripts/git/check_commit_trailers.py`, `scripts/git/check_commit_scope.py`
 - `scripts/git/publish_promote.py`, `scripts/git/notify_orchestrator.py`
 - `scripts/dev_environment_lease.py`, `scripts/run_with_dev_environment_lease.sh`
-- `scripts/check_shared_deploy_workflow_disabled.py`, `scripts/reap_hung_workers.py`
+- `scripts/check_shared_deploy_workflow_disabled.py`
 - `.orchestrator/templates/wakeup.txt`
 - `.orchestrator/skills/worker-anchor-commit.md`
 - `.orchestrator/skills/task-closeout-finalization.md`
