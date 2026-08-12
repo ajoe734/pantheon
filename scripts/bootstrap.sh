@@ -225,9 +225,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_events_ingested_seq
 CREATE INDEX IF NOT EXISTS idx_telemetry_events_ingested_at
     ON telemetry_events (ingested_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type_ingested_seq
-    ON telemetry_events (event_type, ingested_seq);
-
 CREATE INDEX IF NOT EXISTS idx_telemetry_events_created_at
     ON telemetry_events (created_at DESC);
 

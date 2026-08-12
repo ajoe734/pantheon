@@ -75,12 +75,6 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_ingested_at
         ON telemetry_events (ingested_at DESC);
     """,
-    # Projector hot-path cursor lookup; migrations own this index because the
-    # long-lived projector must never perform DDL at startup.
-    """
-    CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type_ingested_seq
-        ON telemetry_events (event_type, ingested_seq);
-    """,
     # Index for time-range queries
     """
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_created_at
