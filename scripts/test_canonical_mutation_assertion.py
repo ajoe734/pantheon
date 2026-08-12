@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / ".orchestrator"))
 from canonical_mutation_assertion import (  # noqa: E402
     DEV_BRIDGE_CONSUMED_KEY,
     CONSUMED_KEY,
+    OPERATOR_ACTIONS,
     issue_assertion,
     migrate_legacy_consumed_ledgers,
     public_key_bytes,
@@ -162,6 +163,12 @@ class CanonicalMutationAssertionTests(unittest.TestCase):
         self.verify(self.assertion(), state)
         self.assertIn("bridge:pkt:nonce", state[DEV_BRIDGE_CONSUMED_KEY])
         self.assertEqual(len(state[CONSUMED_KEY]), 1)
+
+    def test_operator_actions_allow_only_bounded_merged_delivery_closeout(self):
+        self.assertIn("reconcile_merged_done", OPERATOR_ACTIONS)
+        self.assertNotIn("done", OPERATOR_ACTIONS)
+        self.assertNotIn("supersede", OPERATOR_ACTIONS)
+        self.assertNotIn("approve", OPERATOR_ACTIONS)
 
 
 if __name__ == "__main__":
