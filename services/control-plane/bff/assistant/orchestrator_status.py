@@ -42,12 +42,16 @@ def _now() -> str:
 
 
 def _find_repo_root(start: Optional[str] = None) -> Path:
-    """Walk up from *start* to find the Pantheon repo root."""
+    """Resolve the requested repository root without ambient-runtime fallback."""
     if start:
         candidate = Path(start)
-    else:
-        env = os.environ.get("PANTHEON_STATUS_ROOT")
-        candidate = Path(env) if env else Path(__file__).resolve()
+        # Callers that supply repo_root ask for that exact snapshot.  Walking
+        # into /tmp (or another parent) can silently read an unrelated live
+        # ai-status.json when the requested snapshot is empty.
+        return candidate if candidate.is_dir() else candidate.parent
+
+    env = os.environ.get("PANTHEON_STATUS_ROOT")
+    candidate = Path(env) if env else Path(__file__).resolve()
     candidate = candidate if candidate.is_dir() else candidate.parent
     for _ in range(12):
         if (candidate / "ai-status.json").exists():
