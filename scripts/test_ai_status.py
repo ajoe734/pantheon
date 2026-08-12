@@ -11,7 +11,6 @@ import contextlib
 import multiprocessing
 import os
 import shutil
-import stat
 import subprocess
 import tempfile
 import time
@@ -84,7 +83,7 @@ def audited_reassignment_event(
     return event
 
 from canonical_writer_guard import assert_isolated_legacy_write_target
-from rewrite.task_state_store import load_events, verify_projection
+from rewrite.task_state_store import load_events
 
 
 REVIEW_BINDING_ENV_KEYS = (
@@ -281,16 +280,16 @@ class StrictActivityTailParsingTests(unittest.TestCase):
             ai_status.LOG_FILE = original_log_file
 
 
-class TaskStateShadowTests(unittest.TestCase):
+class TaskStateAuthorityModeTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
 
     def tearDown(self) -> None:
         _teardown_test_isolation(self)
 
-    def test_save_state_appends_owner_only_shadow_commit(self) -> None:
+    def test_save_state_rejects_retired_shadow_mode(self) -> None:
         journal = self._test_root / "runtime" / "task-state-events.jsonl"
-        state = {"sprint": "shadow", "tasks": [{"id": "STATE-001", "status": "todo"}]}
+        state = {"sprint": "retired-mode", "tasks": [{"id": "STATE-001", "status": "todo"}]}
 
         with mock.patch.dict(
             os.environ,
@@ -301,39 +300,24 @@ class TaskStateShadowTests(unittest.TestCase):
             },
             clear=False,
         ):
-            ai_status.save_state(state)
+            with self.assertRaisesRegex(RuntimeError, "must be authoritative"):
+                ai_status.save_state(state)
 
-        events = load_events(journal)
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["source"], "run-shadow-001")
-        self.assertEqual(events[0]["state"], state)
-        self.assertTrue(verify_projection(journal, state)["ok"])
-        self.assertEqual(stat.S_IMODE(journal.stat().st_mode), 0o600)
+        self.assertFalse(journal.exists())
+        self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), {})
 
-    def test_shadow_failure_warns_after_incumbent_write_succeeds(self) -> None:
-        real_parent = self._test_root / "real-runtime"
-        real_parent.mkdir()
-        linked_parent = self._test_root / "linked-runtime"
-        linked_parent.symlink_to(real_parent, target_is_directory=True)
-        state = {"sprint": "shadow", "tasks": [{"id": "STATE-002", "status": "todo"}]}
-        stderr = io.StringIO()
+    def test_save_state_rejects_retired_off_mode(self) -> None:
+        state = {"sprint": "retired-mode", "tasks": [{"id": "STATE-002", "status": "todo"}]}
 
-        with (
-            mock.patch.dict(
-                os.environ,
-                {
-                    ai_status.TASK_STATE_STORE_MODE_ENV: "shadow",
-                    ai_status.TASK_STATE_EVENT_LOG_ENV: str(linked_parent / "events.jsonl"),
-                },
-                clear=False,
-            ),
-            mock.patch.object(ai_status.sys, "stderr", stderr),
+        with mock.patch.dict(
+            os.environ,
+            {ai_status.TASK_STATE_STORE_MODE_ENV: "off"},
+            clear=False,
         ):
-            ai_status.save_state(state)
+            with self.assertRaisesRegex(RuntimeError, "must be authoritative"):
+                ai_status.save_state(state)
 
-        self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), state)
-        self.assertIn("task-state shadow append failed", stderr.getvalue())
-        self.assertFalse((real_parent / "events.jsonl").exists())
+        self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), {})
 
     def test_authoritative_load_ignores_divergent_file_and_save_advances_journal(self) -> None:
         journal = self._test_root / "runtime" / "task-state-events.jsonl"
@@ -1720,10 +1704,6 @@ class StatusRootRoutingTests(unittest.TestCase):
             target = destination / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
-        config_path = destination / ".orchestrator" / "config.json"
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        config["task_state_store"]["mode"] = "shadow"
-        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     def _commit_all(self, repo: Path, message: str = "install status tooling") -> str:
         subprocess.run(["git", "add", "."], cwd=repo, check=True)
@@ -1802,6 +1782,12 @@ class StatusRootRoutingTests(unittest.TestCase):
                 central,
                 owner="Codex2",
                 next_value="central task is current",
+            )
+            task_state_event_log = root / "runtime" / "task-state-events-v2.jsonl"
+            ai_status.append_state_commit(
+                task_state_event_log,
+                json.loads((central / "ai-status.json").read_text(encoding="utf-8")),
+                source="test-fixture",
             )
             self._write_status_state(
                 worktree,
@@ -1930,11 +1916,6 @@ class StatusRootRoutingTests(unittest.TestCase):
             )
 
             env = os.environ.copy()
-            # The fixture installs a shadow-mode command runtime. Do not let an
-            # auto-worker's live authoritative journal binding replace that isolated
-            # test configuration in the child status commands.
-            env.pop(ai_status.TASK_STATE_STORE_MODE_ENV, None)
-            env.pop(ai_status.TASK_STATE_EVENT_LOG_ENV, None)
             env.update(
                 {
                     "AI_NAME": "Codex2",
@@ -1949,6 +1930,8 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
                     "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
                     "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                    "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                    "PANTHEON_TASK_STATE_EVENT_LOG": str(task_state_event_log),
                 }
             )
 
@@ -6953,7 +6936,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         ):
             bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
-        self.assertEqual(bundle["focus_mode"], "execution")
+        self.assertNotIn("focus_mode", bundle)
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
         self.assertEqual(bundle["runtime_summary"]["dispatch_targets"]["Codex"], 35)
         self.assertEqual(bundle["runtime_summary"]["dispatch_targets"]["Gemini"], 5)
@@ -7251,15 +7234,6 @@ class PortableStateRenderingTests(unittest.TestCase):
         planning_state = {"mode": "execution", "proposed_execution_tasks": []}
         orchestrator_state = {
             "supervisor": {"pid": 123, "last_heartbeat_at": "2026-04-15T16:35:46Z"},
-            "provider_guardrails": {
-                "dispatch_pauses": {
-                    "qwen": {
-                        "provider": "qwen",
-                        "blocked_until": "2099-04-15T16:38:40Z",
-                        "summary": "Capacity / rate limit failure",
-                    }
-                }
-            },
             "queue": {"events": {}},
             "workers": {},
         }
@@ -7498,7 +7472,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         load_json_file.assert_called_once_with(ai_status.APPROVAL_QUEUE_FILE, {"pending": [], "history": []})
         self.assertEqual(bundle["runtime_summary"]["supervisor_pid"], 1)
         self.assertEqual(bundle["execution_summary"]["in_progress"], 1)
-        self.assertEqual(bundle["focus_mode"], "execution")
+        self.assertNotIn("focus_mode", bundle)
         self.assertIn("worker_task_links", bundle)
         self.assertIn("truth_mismatches", bundle)
 
@@ -7564,7 +7538,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["archive_summary"]["recent_terminal_ids"], ["REG-100"])
         self.assertEqual(bundle["archive_summary"]["recent_terminal_tasks"][0]["task_id"], "REG-100")
 
-    def test_build_dashboard_bundle_distinguishes_dependency_ready_from_dispatchable_ready(self) -> None:
+    def test_build_dashboard_bundle_reports_lifecycle_ready_without_policy_inference(self) -> None:
         state = {
             "updated_at": "2026-04-16T08:50:00Z",
             "agents": [],
@@ -7606,7 +7580,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         }
         planning_state = {"status": "accepted", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
         orchestrator_state = {
-            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-16T08:50:05Z", "focus_mode": "execution"},
+            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-16T08:50:05Z"},
             "queue": {"events": {}},
             "workers": {
                 "claude-run": {
@@ -7617,16 +7591,6 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "last_event_at": "2026-04-16T08:50:04Z",
                     "queue_event_id": "evt-1",
                     "pid": 1234,
-                }
-            },
-            "provider_guardrails": {
-                "dispatch_pauses": {
-                    "codex": {
-                        "provider": "codex",
-                        "paused_at": "2026-04-16T08:45:00Z",
-                        "blocked_until": "2026-04-16T09:00:00Z",
-                        "reason": "402 You have no quota",
-                    }
                 }
             },
         }
@@ -7641,7 +7605,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
-        self.assertEqual(bundle["execution_summary"]["ready_now"], 0)
+        self.assertEqual(bundle["execution_summary"]["ready_now"], 2)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 2)
 
     def test_build_dashboard_bundle_counts_ready_capacity_when_owner_has_free_slots(self) -> None:
@@ -7673,7 +7637,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         }
         planning_state = {"status": "accepted", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
         orchestrator_state = {
-            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-16T08:50:05Z", "focus_mode": "execution"},
+            "supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-16T08:50:05Z"},
             "queue": {"events": {}},
             "workers": {
                 "codex-run": {
@@ -7688,7 +7652,6 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "pid": 1234,
                 }
             },
-            "provider_guardrails": {"dispatch_pauses": {}},
         }
         approval_state = {"pending": [], "history": []}
         config = {
@@ -8299,12 +8262,6 @@ class PortableStateRenderingTests(unittest.TestCase):
             "supervisor": {
                 "pid": 490443,
                 "last_heartbeat_at": "2026-04-14T01:42:22Z",
-                "mode_status": "active",
-                "mode_occupancy": {
-                    "planning": {"running": 0, "pending": 0, "queued": 0},
-                    "execution": {"running": 0, "pending": 1, "queued": 0},
-                    "coordination": {"running": 0, "pending": 0, "queued": 0},
-                },
             },
             "queue": {
                 "events": {

@@ -11,8 +11,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from scripts.ai_status import status_worker_process_generation_id
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / ".orchestrator"))
+
+from rewrite.task_state_store import append_state_commit
 
 
 class StatusCommandRuntimePinTests(unittest.TestCase):
@@ -45,10 +50,12 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             "scripts/ai-status.sh",
             "scripts/loop_done_guardrail.py",
             ".orchestrator/common.py",
+            ".orchestrator/canonical_mutation_assertion.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",
             ".orchestrator/rewrite/__init__.py",
+            ".orchestrator/rewrite/task_machine.py",
             ".orchestrator/rewrite/task_state_store.py",
             ".orchestrator/config.json",
         ):
@@ -56,10 +63,6 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             target = destination / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
-        config_path = destination / ".orchestrator" / "config.json"
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        config["task_state_store"]["mode"] = "shadow"
-        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     def _iso(self, delta_seconds: int = 3600) -> str:
         return (
@@ -68,33 +71,44 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
         ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     def _write_status_state(self, status_root: Path, *, task_id: str = "RUNTIME-PIN-001") -> None:
-        (status_root / "ai-status.json").write_text(
-            json.dumps(
+        state = {
+            "project": "pantheon",
+            "sprint": "runtime-pin-test",
+            "objective": "Synthetic runtime pin status command fixture.",
+            "agents": [],
+            "tasks": [
                 {
-                    "project": "pantheon",
-                    "sprint": "runtime-pin-test",
-                    "objective": "Synthetic runtime pin status command fixture.",
-                    "agents": [],
-                    "tasks": [
-                        {
-                            "id": task_id,
-                            "title": "Runtime pin fixture",
-                            "owner": "Codex2",
-                            "reviewer": "Claude",
-                            "status": "in_progress",
-                            "next": "fixture",
-                            "last_update": "2026-07-17T00:00:00Z",
-                        }
-                    ],
-                    "handoffs": [],
-                    "blockers": [],
-                },
-                indent=2,
-            )
-            + "\n",
+                    "id": task_id,
+                    "generation": 1,
+                    "title": "Runtime pin fixture",
+                    "owner": "Codex2",
+                    "reviewer": "Claude",
+                    "status": "in_progress",
+                    "next": "fixture",
+                    "last_update": "2026-07-17T00:00:00Z",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+        (status_root / "ai-status.json").write_text(
+            json.dumps(state, indent=2) + "\n",
             encoding="utf-8",
         )
+        append_state_commit(
+            self._task_state_event_log(status_root),
+            state,
+            source="test-fixture",
+        )
         (status_root / "ai-activity-log.jsonl").write_text("", encoding="utf-8")
+
+    @staticmethod
+    def _task_state_event_log(status_root: Path) -> Path:
+        return (
+            status_root.parent
+            / "runtime"
+            / f"{status_root.name}-task-state-events-v2.jsonl"
+        )
 
     def _runtime_record(
         self,
@@ -117,20 +131,34 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             "remote": "ajoe734/pantheon",
             "base_ref": "origin/dev",
         }
+        pid = 4242
+        pid_start_ticks = 987654
+        queue_event_id = f"evt-{run_id}"
         worker = {
             "run_id": run_id,
             "provider": "codex",
             "agent_id": "codex2",
             "task_id": task_id,
+            "task_generation": 1,
             "status": status,
             "lease_acquired_at": self._iso(-10),
             "lease_expires_at": self._iso(expires_delta_seconds),
-            "queue_event_id": f"evt-{run_id}",
+            "queue_event_id": queue_event_id,
+            "pid": pid,
+            "pid_start_ticks": pid_start_ticks,
+            "process_generation": status_worker_process_generation_id(
+                task_id=task_id,
+                worker_run_id=run_id,
+                queue_event_id=queue_event_id,
+                pid=pid,
+                pid_start_ticks=pid_start_ticks,
+            ),
             "workspace_path": str(worktree),
             "status_root": str(status_root),
             "status_command_runtime": runtime,
             "request_snapshot": {
                 "metadata": {
+                    "task_generation": 1,
                     "workspace_task_id": workspace_task_id,
                     "workspace_path": str(worktree),
                     "status_root": str(status_root),
@@ -257,6 +285,10 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
                 "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
                 "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
                 "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                "PANTHEON_TASK_STATE_EVENT_LOG": str(
+                    self._task_state_event_log(status_root)
+                ),
             }
         )
         return env
@@ -282,7 +314,6 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
                 command_root=command_root,
                 command_sha=command_sha,
             )
-
             proc = subprocess.run(
                 ["bash", str(command_root / "scripts" / "ai-status.sh"), "show", "TASK-1"],
                 cwd=worktree,
@@ -330,6 +361,8 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
                 command_root=command_root,
                 command_sha=command_sha,
             )
+            env.pop("PANTHEON_TASK_STATE_STORE_MODE")
+            env.pop("PANTHEON_TASK_STATE_EVENT_LOG")
 
             rejected = subprocess.run(
                 ["bash", str(command_root / "scripts" / "ai-status.sh"), "show", "TASK-1"],

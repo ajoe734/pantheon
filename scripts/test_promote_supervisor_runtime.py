@@ -170,7 +170,7 @@ def create_realistic_healthy_fixture(repo: Path) -> tuple[dict[str, Any], dict[s
                 "cycle_elapsed_seconds": 1.0,
                 "queue_to_start": {"max_seconds": 0.0},
             },
-            "task_state_shadow": {
+            "task_state_projection": {
                 "mode": "authoritative",
                 "ok": True,
                 "caught_up": True,
@@ -478,7 +478,7 @@ def test_evaluate_promotion_invariants_healthy(mock_alive, mock_lock, tmp_path: 
 
 @patch("promote_supervisor_runtime.lock_held", return_value=True)
 @patch("promote_supervisor_runtime.pid_is_alive", return_value=True)
-def test_evaluate_promotion_invariants_accepts_verified_v1_headless_baseline(
+def test_evaluate_promotion_invariants_accepts_verified_legacy_journal_migration_source(
     _mock_alive: Mock,
     _mock_lock: Mock,
     tmp_path: Path,
@@ -507,7 +507,7 @@ def test_evaluate_promotion_invariants_accepts_verified_v1_headless_baseline(
                 "name": "readiness_task_head_accessible",
                 "ok": False,
                 "task_head": str(v1_log.with_name(f"{v1_log.name}.head.json")),
-                "error": "FileNotFoundError: V1 has no V2 task head",
+                "error": "FileNotFoundError: legacy journal has no V2 task head",
             }
         ],
     }
@@ -520,14 +520,14 @@ def test_evaluate_promotion_invariants_accepts_verified_v1_headless_baseline(
         lock_path=Path("/tmp/fake.lock"),
         now=datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc),
         config=config,
-        allow_v1_headless_task_store=True,
+        allow_legacy_journal_migration_source=True,
     )
 
     runtime_health = next(
         invariant for invariant in invariants if invariant["name"] == "runtime_health_clean"
     )
     assert runtime_health["ok"] is True
-    assert runtime_health["details"]["v1_headless_baseline_compatibility"] is True
+    assert runtime_health["details"]["legacy_journal_migration_source"] is True
 
 
 @patch("promote_supervisor_runtime.lock_held", return_value=True)
@@ -568,14 +568,14 @@ def test_evaluate_promotion_invariants_rejects_headless_non_v1_store(
         lock_path=Path("/tmp/fake.lock"),
         now=datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc),
         config=config,
-        allow_v1_headless_task_store=True,
+        allow_legacy_journal_migration_source=True,
     )
 
     runtime_health = next(
         invariant for invariant in invariants if invariant["name"] == "runtime_health_clean"
     )
     assert runtime_health["ok"] is False
-    assert runtime_health["details"]["v1_headless_baseline_compatibility"] is False
+    assert runtime_health["details"]["legacy_journal_migration_source"] is False
 
 
 def test_evaluate_promotion_invariants_detects_pid_unbound_or_unlocked() -> None:
@@ -598,14 +598,14 @@ def test_evaluate_promotion_invariants_detects_pid_unbound_or_unlocked() -> None
     assert pid_inv["ok"] is False
 
 
-def test_evaluate_promotion_invariants_detects_invalid_task_state_shadow() -> None:
+def test_evaluate_promotion_invariants_detects_invalid_task_state_projection() -> None:
     health_report = {
         "healthy": True,
         "supervisor": {
             "lifecycle": "running",
             "pid": 12345,
-            "task_state_shadow": {
-                "mode": "shadow",  # Not authoritative
+            "task_state_projection": {
+                "mode": "retired",  # Not authoritative
                 "ok": True,
                 "caught_up": False,  # Not caught up
                 "last_error": "Diverged",
@@ -623,15 +623,15 @@ def test_evaluate_promotion_invariants_detects_invalid_task_state_shadow() -> No
             lock_path=Path("/tmp/fake.lock"),
         )
 
-    shadow_inv = next(i for i in invariants if i["name"] == "task_state_shadow_valid")
-    assert shadow_inv["ok"] is False
-    reasons = shadow_inv["details"]["reasons"]
-    assert "mode_not_authoritative:shadow" in reasons
+    projection_inv = next(i for i in invariants if i["name"] == "task_state_projection_valid")
+    assert projection_inv["ok"] is False
+    reasons = projection_inv["details"]["reasons"]
+    assert "mode_not_authoritative:retired" in reasons
     assert "caught_up_not_true:False" in reasons
     assert "has_last_error:Diverged" in reasons
 
 
-def test_evaluate_promotion_invariants_detects_missing_task_state_shadow() -> None:
+def test_evaluate_promotion_invariants_detects_missing_task_state_projection() -> None:
     health_report = {"healthy": True, "supervisor": {"lifecycle": "running", "pid": 12345}}
     ai_status = {"tasks": []}
     state = {}
@@ -644,9 +644,9 @@ def test_evaluate_promotion_invariants_detects_missing_task_state_shadow() -> No
             lock_path=Path("/tmp/fake.lock"),
         )
 
-    shadow_inv = next(i for i in invariants if i["name"] == "task_state_shadow_valid")
-    assert shadow_inv["ok"] is False
-    assert "task_state_shadow_missing" in shadow_inv["details"]["reasons"]
+    projection_inv = next(i for i in invariants if i["name"] == "task_state_projection_valid")
+    assert projection_inv["ok"] is False
+    assert "task_state_projection_missing" in projection_inv["details"]["reasons"]
 
 
 def test_evaluate_promotion_invariants_detects_fresh_loop_sequence_failures() -> None:
@@ -857,13 +857,13 @@ def test_evaluate_promotion_invariants_detects_unready_provider_capabilities() -
     assert "provider_auth_not_ready:claude" in provider_inv["details"]["reasons"]
 
 
-def test_evaluate_promotion_invariants_detects_missing_shadow_hashes() -> None:
+def test_evaluate_promotion_invariants_detects_missing_projection_hashes() -> None:
     health_report = {
         "healthy": True,
         "supervisor": {
             "lifecycle": "running",
             "pid": 12345,
-            "task_state_shadow": {
+            "task_state_projection": {
                 "mode": "authoritative",
                 "ok": True,
                 "caught_up": True,
@@ -881,9 +881,9 @@ def test_evaluate_promotion_invariants_detects_missing_shadow_hashes() -> None:
             lock_path=Path("/tmp/fake.lock"),
         )
 
-    shadow_inv = next(i for i in invariants if i["name"] == "task_state_shadow_valid")
-    assert shadow_inv["ok"] is False
-    reasons = shadow_inv["details"]["reasons"]
+    projection_inv = next(i for i in invariants if i["name"] == "task_state_projection_valid")
+    assert projection_inv["ok"] is False
+    reasons = projection_inv["details"]["reasons"]
     assert "missing_projected_state_sha256" in reasons
     assert "missing_expected_state_sha256" in reasons
 
@@ -4299,7 +4299,7 @@ def _transaction_observation(
     successful_loop: bool = True,
     invariant_failures: tuple[str, ...] = (),
     config_sha256: str = "c" * 64,
-    projection_sha256: str = "projection-baseline",
+    task_state_projection_sha256: str = "projection-baseline",
     worker_queue_sha256: str = "worker-queue-baseline",
     provider_baseline_sha256: str = "provider-baseline",
 ) -> RuntimeObservation:
@@ -4312,7 +4312,7 @@ def _transaction_observation(
         status_sha256="status-baseline",
         provider_document_sha256="provider-document-baseline",
         provider_baseline_sha256=provider_baseline_sha256,
-        projection_sha256=projection_sha256,
+        task_state_projection_sha256=task_state_projection_sha256,
         worker_queue_sha256=worker_queue_sha256,
         durable_queue_sha256="durable-queue-baseline",
         config_sha256=config_sha256,
@@ -4500,7 +4500,7 @@ class _FakePromotionBackend:
                     successful_loop=False,
                 )
             failure_map = {
-                "projection_mismatch": "task_state_shadow_valid",
+                "projection_mismatch": "task_state_projection_valid",
                 "lease_mismatch": "worker_lease_parity_and_no_duplicates",
                 "duplicate_worker": "worker_lease_parity_and_no_duplicates",
                 "provider_not_ready": "provider_readiness_baseline",
@@ -4573,7 +4573,7 @@ class _FakePromotionBackend:
             config_sha256=(
                 "e" * 64 if self.fault == "rollback_config_drift" else "c" * 64
             ),
-            projection_sha256=(
+            task_state_projection_sha256=(
                 "projection-drift"
                 if self.fault == "rollback_projection_drift"
                 else "projection-baseline"
@@ -4800,7 +4800,7 @@ def test_candidate_queue_or_worker_authority_forbids_v1_rollback(
         ("wrong_candidate_cwd", "wrong_candidate_cwd"),
         ("wrong_candidate_commit", "wrong_candidate_commit"),
         ("wrong_candidate_tree", "wrong_candidate_tree"),
-        ("projection_mismatch", "task_state_shadow_valid"),
+        ("projection_mismatch", "task_state_projection_valid"),
         ("lease_mismatch", "worker_lease_parity_and_no_duplicates"),
         ("duplicate_worker", "worker_lease_parity_and_no_duplicates"),
         ("provider_not_ready", "provider_readiness_baseline"),

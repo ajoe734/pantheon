@@ -11,14 +11,14 @@ import common
 from rewrite import task_state_store
 
 
-def test_shadow_store_env_is_added_to_issued_runtime_metadata(
+def test_authoritative_store_env_is_added_to_issued_runtime_metadata(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     event_log = tmp_path / "runtime" / "task-state-events.jsonl"
     config = {
         "task_state_store": {
-            "mode": "shadow",
+            "mode": "authoritative",
             "event_log": str(event_log),
         }
     }
@@ -34,19 +34,20 @@ def test_shadow_store_env_is_added_to_issued_runtime_metadata(
     )
 
     assert env[common.STATUS_COMMAND_ROOT_ENV] == "/issued/root"
-    assert env[common.TASK_STATE_STORE_MODE_ENV] == "shadow"
+    assert env[common.TASK_STATE_STORE_MODE_ENV] == "authoritative"
     assert env[common.TASK_STATE_EVENT_LOG_ENV] == str(event_log)
 
 
-def test_relative_repo_template_is_not_exposed_to_status_commands() -> None:
-    assert common.task_state_store_runtime_env(
+def test_relative_repo_template_is_rejected_for_status_commands() -> None:
+    with pytest.raises(RuntimeError, match="provisioned absolute event_log"):
+        common.task_state_store_runtime_env(
         {
             "task_state_store": {
-                "mode": "shadow",
+                "mode": "authoritative",
                 "event_log": ".orchestrator/task-state-events.jsonl",
             }
         }
-    ) == {}
+        )
 
 
 def test_authoritative_store_env_is_added_to_status_commands(tmp_path: Path) -> None:

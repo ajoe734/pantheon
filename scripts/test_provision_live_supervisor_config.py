@@ -253,7 +253,7 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         "supervisor": {"lease_requires_work_progress": True},
         "worker_runtime": {"worker_lease_seconds": 600},
         "task_state_store": {
-            "mode": "shadow",
+            "mode": "authoritative",
             "event_log": ".orchestrator/task-state-events.jsonl",
         },
     }
@@ -263,7 +263,7 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         "supervisor": {"lease_requires_work_progress": False},
         "worker_runtime": {"worker_lease_seconds": 1800},
         "task_state_store": {
-            "mode": "off",
+            "mode": "authoritative",
             "event_log": "/stale/task-state-events.jsonl",
         },
     }
@@ -286,7 +286,7 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
     assert rendered["supervisor"]["lease_requires_work_progress"] is True
     assert rendered["worker_runtime"]["worker_lease_seconds"] == 600
     assert rendered["task_state_store"] == {
-        "mode": "shadow",
+        "mode": "authoritative",
         "event_log": str(live_config.parent / "task-state-events.jsonl"),
     }
     assert rendered["watchdog"]["supervisor_command"] == [
@@ -372,7 +372,7 @@ def test_task_state_store_rejects_runtime_path_inside_git_roots(tmp_path: Path) 
         apply_task_state_store(
             {
                 "task_state_store": {
-                    "mode": "shadow",
+                    "mode": "authoritative",
                     "event_log": ".orchestrator/task-state-events.jsonl",
                 }
             },
@@ -394,7 +394,7 @@ def test_task_state_store_rejects_symlink_event_log(tmp_path: Path) -> None:
         apply_task_state_store(
             {
                 "task_state_store": {
-                    "mode": "shadow",
+                    "mode": "authoritative",
                     "event_log": ".orchestrator/task-state-events.jsonl",
                 }
             },

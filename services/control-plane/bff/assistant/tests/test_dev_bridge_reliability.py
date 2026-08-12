@@ -454,38 +454,18 @@ def test_untrusted_direct_status_mutation_still_requires_worker_lease(
         )
 
 
-def test_supervisor_runtime_state_discovers_authoritative_journal(
+def test_runtime_binding_requires_explicit_authoritative_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     status_root = tmp_path / "status-root"
-    runtime_dir = status_root / ".orchestrator"
-    runtime_dir.mkdir(parents=True)
+    status_root.mkdir()
     event_log = tmp_path / "runtime" / "task-state-events.jsonl"
     event_log.parent.mkdir()
     event_log.touch()
-    (runtime_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "supervisor": {
-                    "task_state_shadow": {
-                        "mode": "authoritative",
-                        "ok": True,
-                        "event_log": str(event_log),
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    for name in (
-        "PANTHEON_STATUS_ROOT",
-        "PANTHEON_COMMAND_ROOT",
-        "PANTHEON_COMMAND_RUNTIME_SHA",
-        "PANTHEON_TASK_STATE_STORE_MODE",
-        "PANTHEON_TASK_STATE_EVENT_LOG",
-    ):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(event_log))
 
     task_state_env = dev_bridge_dispatcher._runtime_task_state_env(
         str(status_root)
@@ -506,38 +486,20 @@ def test_supervisor_runtime_state_discovers_authoritative_journal(
         ) == REPO_ROOT
 
 
-def test_supervisor_runtime_state_rejects_symlinked_journal(
+def test_runtime_binding_rejects_symlinked_journal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     status_root = tmp_path / "status-root"
-    runtime_dir = status_root / ".orchestrator"
-    runtime_dir.mkdir(parents=True)
+    status_root.mkdir()
     real_event_log = tmp_path / "runtime" / "task-state-events.jsonl"
     real_event_log.parent.mkdir()
     real_event_log.touch()
     linked_event_log = tmp_path / "linked-task-state-events.jsonl"
     linked_event_log.symlink_to(real_event_log)
-    (runtime_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "supervisor": {
-                    "task_state_shadow": {
-                        "mode": "authoritative",
-                        "ok": True,
-                        "event_log": str(linked_event_log),
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    for name in (
-        "PANTHEON_STATUS_ROOT",
-        "PANTHEON_TASK_STATE_STORE_MODE",
-        "PANTHEON_TASK_STATE_EVENT_LOG",
-    ):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(linked_event_log))
 
     with pytest.raises(RuntimeError, match="symlink component"):
         dev_bridge_dispatcher._runtime_task_state_env(str(status_root))
@@ -1021,11 +983,6 @@ def test_governed_readback_never_falls_back_to_local_task_projection(
             dev_bridge_dispatcher,
             "_canonical_task_state_readback",
             side_effect=ValueError("injected governed readback malformed"),
-        ),
-        patch.object(
-            dev_bridge_dispatcher,
-            "_materialized_task_candidates",
-            side_effect=AssertionError("repository-local fallback was used"),
         ),
         pytest.raises(ValueError, match="governed readback malformed"),
     ):

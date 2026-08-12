@@ -4372,16 +4372,16 @@ def capture_promotion_snapshot(
     }
 
 
-def _is_verified_v1_headless_baseline(
+def _is_verified_legacy_journal_migration_source(
     config: Mapping[str, Any],
     failed_health_checks: list[dict[str, Any]],
 ) -> bool:
-    """Accept only the V1 journal shape that exists immediately before migration.
+    """Accept only the legacy journal shape immediately before one migration.
 
     This is deliberately not a filename heuristic and it does not validate a
-    V1 journal in full.  The migration transaction performs that full
+    legacy journal in full.  The migration transaction performs that full
     hash-chain audit while holding the authority locks.  Here we merely avoid
-    requiring the V2 sidecar that a genuine V1 journal has never written.
+    requiring the V2 head file that a genuine legacy journal has never written.
     """
 
     if len(failed_health_checks) != 1:
@@ -4440,7 +4440,7 @@ def evaluate_promotion_invariants(
     now: datetime | None = None,
     config: dict[str, Any] | None = None,
     durable_queue_events: list[dict[str, Any]] | None = None,
-    allow_v1_headless_task_store: bool = False,
+    allow_legacy_journal_migration_source: bool = False,
 ) -> list[dict[str, Any]]:
     """Evaluate read-only promotion invariants against live schema state."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -4457,28 +4457,26 @@ def evaluate_promotion_invariants(
         "details": {"file_errors": file_errors},
     })
 
-    # Invariant 1: Health checks must all pass.  A V1 incumbent has no V2
-    # ``.head.json`` by design.  During a V1-to-V2 transaction only, accept
-    # that one absent file after binding it to a real V1 journal header.  The
-    # shadow invariant below still requires the V1 projection to be current;
-    # candidate and ordinary runtime health never use this exception.
+    # Invariant 1: health checks must all pass.  The only exception is the
+    # offline pre-migration source audit, where a verified legacy journal has
+    # no V2 head file yet. Candidate and ordinary runtime health never use it.
     failed_health_checks = [
         check
         for check in health_report.get("checks", [])
         if isinstance(check, dict) and check.get("ok") is not True
     ]
-    v1_headless_compatibility = _is_verified_v1_headless_baseline(
+    legacy_journal_migration_source = _is_verified_legacy_journal_migration_source(
         config,
         failed_health_checks,
-    ) if allow_v1_headless_task_store else False
-    health_ok = bool(health_report.get("healthy", False)) or v1_headless_compatibility
+    ) if allow_legacy_journal_migration_source else False
+    health_ok = bool(health_report.get("healthy", False)) or legacy_journal_migration_source
     invariants.append({
         "name": "runtime_health_clean",
         "ok": health_ok,
         "details": {
             "healthy": health_report.get("healthy", False),
             "failed_checks": [str(check.get("name") or "unnamed") for check in failed_health_checks],
-            "v1_headless_baseline_compatibility": v1_headless_compatibility,
+            "legacy_journal_migration_source": legacy_journal_migration_source,
         },
     })
 
@@ -4512,41 +4510,50 @@ def evaluate_promotion_invariants(
         "details": {"is_dict": isinstance(ai_status, dict), "has_tasks": "tasks" in ai_status if isinstance(ai_status, dict) else False},
     })
 
-    # Invariant 5: Task state shadow authoritative / ok / caught_up validation
-    # Live schema requires task_state_shadow to exist and have:
+    # Invariant 5: authoritative task-state projection validation.
+    # Live schema requires task_state_projection to exist and have:
     # mode == "authoritative", ok is True, caught_up is True, last_error is None,
     # and projected_state_sha256 == expected_state_sha256 (if hash keys present/populated)
-    shadow = supervisor_info.get("task_state_shadow")
-    if not isinstance(shadow, dict):
-        shadow = state.get("supervisor", {}).get("task_state_shadow") if isinstance(state.get("supervisor"), dict) else None
+    projection = supervisor_info.get("task_state_projection")
+    if not isinstance(projection, dict):
+        projection = (
+            state.get("supervisor", {}).get("task_state_projection")
+            if isinstance(state.get("supervisor"), dict)
+            else None
+        )
 
-    shadow_ok = False
-    shadow_reasons: list[str] = []
-    if not isinstance(shadow, dict) or not shadow:
-        shadow_reasons.append("task_state_shadow_missing")
+    projection_ok = False
+    projection_reasons: list[str] = []
+    if not isinstance(projection, dict) or not projection:
+        if not legacy_journal_migration_source:
+            projection_reasons.append("task_state_projection_missing")
     else:
-        if shadow.get("mode") != "authoritative":
-            shadow_reasons.append(f"mode_not_authoritative:{shadow.get('mode')}")
-        if shadow.get("ok") is not True:
-            shadow_reasons.append(f"ok_not_true:{shadow.get('ok')}")
-        if shadow.get("caught_up") is not True:
-            shadow_reasons.append(f"caught_up_not_true:{shadow.get('caught_up')}")
-        if shadow.get("last_error") is not None:
-            shadow_reasons.append(f"has_last_error:{shadow.get('last_error')}")
-        proj_sha = shadow.get("projected_state_sha256")
-        exp_sha = shadow.get("expected_state_sha256")
+        if projection.get("mode") != "authoritative":
+            projection_reasons.append(f"mode_not_authoritative:{projection.get('mode')}")
+        if projection.get("ok") is not True:
+            projection_reasons.append(f"ok_not_true:{projection.get('ok')}")
+        if projection.get("caught_up") is not True:
+            projection_reasons.append(f"caught_up_not_true:{projection.get('caught_up')}")
+        if projection.get("last_error") is not None:
+            projection_reasons.append(f"has_last_error:{projection.get('last_error')}")
+        proj_sha = projection.get("projected_state_sha256")
+        exp_sha = projection.get("expected_state_sha256")
         if not proj_sha or not isinstance(proj_sha, str) or not proj_sha.strip():
-            shadow_reasons.append("missing_projected_state_sha256")
+            projection_reasons.append("missing_projected_state_sha256")
         if not exp_sha or not isinstance(exp_sha, str) or not exp_sha.strip():
-            shadow_reasons.append("missing_expected_state_sha256")
+            projection_reasons.append("missing_expected_state_sha256")
         if proj_sha and exp_sha and proj_sha != exp_sha:
-            shadow_reasons.append(f"sha_mismatch:{proj_sha}!={exp_sha}")
+            projection_reasons.append(f"sha_mismatch:{proj_sha}!={exp_sha}")
 
-    shadow_ok = len(shadow_reasons) == 0
+    projection_ok = len(projection_reasons) == 0
     invariants.append({
-        "name": "task_state_shadow_valid",
-        "ok": shadow_ok,
-        "details": {"task_state_shadow": shadow, "reasons": shadow_reasons},
+        "name": "task_state_projection_valid",
+        "ok": projection_ok,
+        "details": {
+            "task_state_projection": projection,
+            "reasons": projection_reasons,
+            "legacy_journal_migration_source": legacy_journal_migration_source,
+        },
     })
 
     # Invariant 6: Fresh-loop sequence or staleness check
@@ -5031,7 +5038,7 @@ class RuntimeObservation:
     status_sha256: str
     provider_document_sha256: str
     provider_baseline_sha256: str
-    projection_sha256: str | None
+    task_state_projection_sha256: str | None
     worker_queue_sha256: str
     durable_queue_sha256: str
     config_sha256: str
@@ -5314,7 +5321,7 @@ def capture_runtime_observation(
     reader: RuntimeProcessReader | None = None,
     now: datetime | None = None,
     require_current_dev_identity: bool = True,
-    allow_v1_headless_task_store: bool = False,
+    allow_legacy_journal_migration_source: bool = False,
     cwd_git_identity_reader: Callable[
         [ProcessCwdIdentity], tuple[str, str]
     ] = _read_process_cwd_git_identity,
@@ -5386,7 +5393,7 @@ def capture_runtime_observation(
         now=observed_at,
         config=config,
         durable_queue_events=list(durable_queue_document.rows),
-        allow_v1_headless_task_store=allow_v1_headless_task_store,
+        allow_legacy_journal_migration_source=allow_legacy_journal_migration_source,
     )
     failures = [
         str(invariant.get("name") or "unnamed_invariant")
@@ -5402,10 +5409,10 @@ def capture_runtime_observation(
     successful_loop_at = parse_utc_timestamp(
         supervisor_state.get("last_successful_loop_at")
     )
-    shadow = supervisor_state.get("task_state_shadow")
-    projection_sha = (
-        str(shadow.get("projected_state_sha256"))
-        if isinstance(shadow, dict) and shadow.get("projected_state_sha256")
+    projection = supervisor_state.get("task_state_projection")
+    task_state_projection_sha = (
+        str(projection.get("projected_state_sha256"))
+        if isinstance(projection, dict) and projection.get("projected_state_sha256")
         else None
     )
     parity_payload = {
@@ -5426,7 +5433,7 @@ def capture_runtime_observation(
         status_sha256=status_document.sha256,
         provider_document_sha256=provider_document.sha256,
         provider_baseline_sha256=_canonical_json_sha256(provider_payload),
-        projection_sha256=projection_sha,
+        task_state_projection_sha256=task_state_projection_sha,
         worker_queue_sha256=_canonical_json_sha256(parity_payload),
         durable_queue_sha256=durable_queue_document.sha256,
         config_sha256=identity.config_sha256,
@@ -5763,7 +5770,7 @@ class OSPromotionBackend:
             expected_argv=seed_argv,
             expected_generation=incumbent_process.generation,
             reader=self.reader,
-            allow_v1_headless_task_store=True,
+            allow_legacy_journal_migration_source=True,
         )
         if baseline.invariant_failures:
             raise ValueError(
@@ -5831,7 +5838,7 @@ class OSPromotionBackend:
             expected_argv=plan.incumbent_process.argv,
             expected_generation=plan.incumbent_process.generation,
             reader=self.reader,
-            allow_v1_headless_task_store=True,
+            allow_legacy_journal_migration_source=True,
         )
 
     def migrate_task_state_store(self, plan: PromotionPlan) -> dict[str, Any]:
@@ -5929,7 +5936,7 @@ class OSPromotionBackend:
             expected_generation=generation,
             reader=self.reader,
             require_current_dev_identity=require_current_dev_identity,
-            allow_v1_headless_task_store=not require_current_dev_identity,
+            allow_legacy_journal_migration_source=not require_current_dev_identity,
         )
 
     def record_intent(
@@ -6198,7 +6205,7 @@ def _observation_summary(observation: RuntimeObservation) -> dict[str, Any]:
         "status_sha256": observation.status_sha256,
         "provider_document_sha256": observation.provider_document_sha256,
         "provider_baseline_sha256": observation.provider_baseline_sha256,
-        "projection_sha256": observation.projection_sha256,
+        "task_state_projection_sha256": observation.task_state_projection_sha256,
         "worker_queue_sha256": observation.worker_queue_sha256,
         "durable_queue_sha256": observation.durable_queue_sha256,
         "config_sha256": observation.config_sha256,
@@ -6401,7 +6408,10 @@ class PromotionTransaction:
                         if rollback:
                             final = observations[-1]
                             mismatches = []
-                            if final.projection_sha256 != baseline.projection_sha256:
+                            if (
+                                final.task_state_projection_sha256
+                                != baseline.task_state_projection_sha256
+                            ):
                                 mismatches.append("projection")
                             if final.worker_queue_sha256 != baseline.worker_queue_sha256:
                                 mismatches.append("worker_queue_lease_parity")

@@ -269,8 +269,8 @@ def apply_task_state_store(
     if not isinstance(repo_store, dict):
         raise ValueError("task_state_store config must be a JSON object")
     mode = str(repo_store.get("mode") or "").strip().lower()
-    if mode not in {"off", "shadow", "authoritative"}:
-        raise ValueError("task_state_store.mode must be 'off', 'shadow', or 'authoritative'")
+    if mode != "authoritative":
+        raise ValueError("task_state_store.mode must be 'authoritative'")
     raw_event_log = str(
         repo_store.get("event_log") or TASK_STATE_STORE_DEFAULT_FILENAME
     ).strip()
