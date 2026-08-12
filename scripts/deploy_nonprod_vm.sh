@@ -204,8 +204,8 @@ Options:
   --environment <name>   Required. dev or staging-live.
   --component <name>     auto, root, bff, control, exec, or all. Default: auto.
                          auto maps to root for dev and all for staging-live.
-                         bff (dev only): rebuild only operator-bff; paper fleet
-                         and all other services are left running untouched.
+                         bff (dev only): rebuild operator-bff and its lifecycle
+                         projector; paper fleet and all other services stay running.
   --sha <commit>         Required unless GITHUB_SHA is set. Commit to deploy.
   --project-id <id>      GCP project. Default: pantheon-lupin-dev-20260719.
   --allow-dirty          Emergency only: stash dirty managed deploy worktree
@@ -2572,8 +2572,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ;;
 
   bff)
-    # Rebuild and restart only operator-bff.  All other compose services —
-    # including the paper fleet and runtime-manager — are left running.
+    # Rebuild operator-bff and the lifecycle projector that owns the readiness
+    # evidence it serves. All other compose services — including the paper
+    # fleet and runtime-manager — are left running.
     # Use this component when deploying a BFF-only fix to avoid the OOM
     # pressure that a full root-stack rebuild causes on the dev VM.
     snapshot_remote_state pantheon docker-compose.yml
@@ -2656,7 +2657,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
     PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
     PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build --no-deps operator-bff \
+      docker compose -p pantheon -f docker-compose.yml up -d --build --no-deps operator-bff loop-run-projector-scheduler \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }

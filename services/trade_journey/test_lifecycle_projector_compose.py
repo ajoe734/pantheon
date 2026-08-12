@@ -175,13 +175,14 @@ def test_managed_dev_deploy_forwards_lifecycle_freshness_budget():
     assert bff_block.count(compose_override) == 1
 
 
-def test_bff_only_deploy_does_not_rebuild_or_restart_lifecycle_projector():
+def test_bff_only_deploy_rebuilds_its_lifecycle_projector_only():
     script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
     bff_block = script.split("\n  bff)", 1)[1].split("\n  exec)", 1)[0]
 
     compose_up = (
         "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --build --no-deps operator-bff"
+        "up -d --build --no-deps operator-bff loop-run-projector-scheduler"
     )
     assert bff_block.count(compose_up) == 1
-    assert "loop-run-projector-scheduler" not in bff_block
+    assert "runtime-manager" not in compose_up
+    assert "paper-fleet" not in compose_up
