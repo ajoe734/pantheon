@@ -139,6 +139,32 @@ class RuntimeLogPathTests(unittest.TestCase):
         self.assertEqual(evidence_path, orchestrator_dir / "evidence")
 
 
+class AgentConfigurationTests(unittest.TestCase):
+    def test_registered_agent_keeps_its_explicit_delivery_identity(self) -> None:
+        agent = common.agent_config_for(
+            {
+                "agents": {
+                    "codex2": {
+                        "provider": "codex_shared",
+                        "adapter": "codex",
+                    }
+                }
+            },
+            "Codex2",
+        )
+
+        self.assertEqual(agent["id"], "codex2")
+        self.assertEqual(agent["provider"], "codex_shared")
+        self.assertEqual(agent["adapter"], "codex")
+
+    def test_unregistered_agent_fails_closed_without_provider_inference(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "agent configuration is required for delivery identity: 'codex2'",
+        ):
+            common.agent_config_for({"agents": {}}, "Codex2")
+
+
 class JsonLoadResilienceTests(unittest.TestCase):
     def test_load_json_still_allows_empty_optional_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -149,13 +175,22 @@ class JsonLoadResilienceTests(unittest.TestCase):
 
         self.assertEqual(result, {"fallback": True})
 
-    def test_load_status_rejects_empty_status_file(self) -> None:
+    def test_load_status_rejects_empty_authoritative_journal(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             status_file = Path(tmpdir) / "ai-status.json"
             status_file.write_text("", encoding="utf-8")
+            event_log = Path(tmpdir) / "task-state-events.jsonl"
 
-            with self.assertRaisesRegex(RuntimeError, "status file is empty"):
-                common.load_status({"paths": {"status_file": str(status_file)}})
+            with self.assertRaisesRegex(RuntimeError, "journal is empty"):
+                common.load_status(
+                    {
+                        "paths": {"status_file": str(status_file)},
+                        "task_state_store": {
+                            "mode": "authoritative",
+                            "event_log": str(event_log),
+                        },
+                    }
+                )
 
     def test_ai_status_sync_rejects_empty_existing_status_file(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -498,153 +533,33 @@ class RecentTaskActivityTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            from rewrite import task_state_store
+
+            event_log = root / "task-state-events.jsonl"
+            task_state_store.append_state_commit(
+                event_log,
+                json.loads(status_file.read_text(encoding="utf-8")),
+                source="test",
+            )
             brief_path = root / "task-brief.md"
             config = {
                 "paths": {
                     "status_file": str(status_file),
                     "activity_log": str(root / "huge-activity-log.jsonl"),
-                }
+                },
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(event_log),
+                },
             }
 
-            with (
-                mock.patch.object(common, "task_brief_path", return_value=brief_path),
-                mock.patch.object(
-                    common,
-                    "_recent_task_activity",
-                    side_effect=AssertionError("global activity scan must not run"),
-                ) as recent_activity,
-            ):
+            with mock.patch.object(common, "task_brief_path", return_value=brief_path):
                 result = common.write_task_brief(config, "TASK-1")
 
-            recent_activity.assert_not_called()
             self.assertEqual(result, brief_path)
             rendered = brief_path.read_text(encoding="utf-8")
             self.assertIn("Finish without global history scan", rendered)
             self.assertIn("Omitted from automatic dispatch context", rendered)
-
-    def test_recent_task_activity_returns_latest_rows_from_validated_history(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            activity_log = root / "ai-activity-log.jsonl"
-            archive_dir = root / "archive" / "logs"
-            archive_dir.mkdir(parents=True)
-            archive = (
-                archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
-            )
-            archived = [
-                {
-                    "event_id": f"archived-{idx}",
-                    "task_id": "TASK-1",
-                    "message": f"match-{idx}",
-                }
-                for idx in range(5)
-            ]
-            with gzip.open(archive, "wt", encoding="utf-8") as handle:
-                handle.write("".join(json.dumps(row) + "\n" for row in archived))
-            active = [
-                {
-                    "event_id": f"active-{idx}",
-                    "task_id": "TASK-1",
-                    "message": f"match-{idx + 5}",
-                }
-                for idx in range(3)
-            ]
-            activity_log.write_text(
-                "".join(json.dumps(row) + "\n" for row in active),
-                encoding="utf-8",
-            )
-
-            result = common._recent_task_activity({"paths": {"activity_log": str(activity_log)}}, "TASK-1", limit=3)
-
-        self.assertEqual([entry["message"] for entry in result], ["match-5", "match-6", "match-7"])
-
-    def test_recent_task_activity_rejects_late_invalid_row_before_result(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            activity_log = root / "ai-activity-log.jsonl"
-            activity_log.write_text(
-                json.dumps(
-                    {
-                        "event_id": "valid-first",
-                        "task_id": "TASK-1",
-                        "message": "must-not-return",
-                    }
-                )
-                + "\n{bad late json}\n",
-                encoding="utf-8",
-            )
-
-            with self.assertRaises(common.ActivityAuditInvariantError) as ctx:
-                common._recent_task_activity(
-                    {"paths": {"activity_log": str(activity_log)}},
-                    "TASK-1",
-                    limit=3,
-                )
-
-        self.assertEqual(
-            ctx.exception.diagnostic["record_type"],
-            "pantheon.activity.fail_closed.v1",
-        )
-        self.assertEqual(
-            ctx.exception.diagnostic["evidence"]["operation"],
-            "recent_task_activity",
-        )
-        self.assertIn("Bad JSON", ctx.exception.diagnostic["message"])
-
-    def test_recent_task_activity_rejects_duplicate_keys_in_active_and_gzip(self) -> None:
-        ambiguous = (
-            '{"event_id":"ambiguous","task_id":"OTHER",'
-            '"task_id":"TASK-1","metadata":{"role":"a","role":"b"}}\n'
-        )
-        for source_kind in ("active", "gzip"):
-            with self.subTest(source=source_kind), tempfile.TemporaryDirectory() as tmpdir:
-                root = Path(tmpdir)
-                activity_log = root / "ai-activity-log.jsonl"
-                if source_kind == "active":
-                    activity_log.write_text(ambiguous, encoding="utf-8")
-                else:
-                    archive_dir = root / "archive" / "logs"
-                    archive_dir.mkdir(parents=True)
-                    archive = (
-                        archive_dir
-                        / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
-                    )
-                    with gzip.open(archive, "wt", encoding="utf-8") as handle:
-                        handle.write(ambiguous)
-
-                with self.assertRaisesRegex(RuntimeError, "duplicate JSON key"):
-                    common._recent_task_activity(
-                        {"paths": {"activity_log": str(activity_log)}},
-                        "TASK-1",
-                        limit=3,
-                    )
-
-    def test_recent_task_activity_fails_closed_on_partial_tail(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            activity_log = root / "ai-activity-log.jsonl"
-            activity_log.write_text(
-                json.dumps(
-                    {
-                        "event_id": "complete",
-                        "task_id": "TASK-1",
-                        "message": "older",
-                    }
-                )
-                + '\n{"task_id":"TASK-1","message":"partial"',
-                encoding="utf-8",
-            )
-
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "interrupted trailing row",
-            ):
-                common._recent_task_activity(
-                    {"paths": {"activity_log": str(activity_log)}},
-                    "TASK-1",
-                    limit=3,
-                )
-
 
 class StableCanonicalLockPathTests(unittest.TestCase):
     def test_data_leaf_symlinks_are_rejected_before_lock_acquisition(self) -> None:

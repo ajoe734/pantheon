@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -25,9 +26,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import supervisor
+import runtime_state
 
 
 _OLD_ENV: dict[str, str] = {}
+
+
+@contextmanager
+def _runtime_state_update(state: dict[str, object]):
+    yield state
 
 
 def setUpModule() -> None:
@@ -41,6 +48,29 @@ def setUpModule() -> None:
 def tearDownModule() -> None:
     os.environ.clear()
     os.environ.update(_OLD_ENV)
+
+
+class V2StartupCacheTests(unittest.TestCase):
+    def test_ordinary_bootstrap_restores_existing_v2_cache(self) -> None:
+        config = {"paths": {}}
+        existing = runtime_state.default_state()
+        existing["workers"] = {
+            "run-active": {"status": "running", "queue_event_id": "evt-active"}
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "runtime_state_update",
+                return_value=_runtime_state_update(existing),
+            ) as update,
+            mock.patch.object(supervisor, "stamp_supervisor_runtime_state"),
+        ):
+            result = supervisor.bootstrap_supervisor_runtime_state(config)
+
+        self.assertIs(result, existing)
+        update.assert_called_once_with(config)
+        self.assertIn("run-active", result["workers"])
 
 
 def config_fixture(root: Path | None = None) -> dict[str, object]:
@@ -271,6 +301,8 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
             "max_tasks_per_agent",
             "max_tasks_per_agent_by_agent",
             "max_concurrent_per_quota_group",
+            "preferred_lane_order",
+            "preferredLaneOrder",
         ):
             with self.subTest(retired=retired):
                 config = config_fixture()
@@ -322,6 +354,53 @@ class SharedPlannerContractTests(unittest.TestCase):
         decision = planner_decision(self.config, task_fixture())
         self.assertTrue(decision["eligible"])
         self.assertEqual(decision["reason"], supervisor.REASON_OWNED_READY)
+
+    def test_retired_lane_hints_and_priority_cannot_reenter_dispatch(self) -> None:
+        """Legacy L12 metadata must not override owner/reviewer admission.
+
+        PR #4795-era packets may still contain these historical fields in the
+        canonical board.  They remain readable, but the planner must neither
+        reroute them nor let their declared priority bypass the shared
+        admission evaluator and canonical board order.
+        """
+
+        self.config["ready_dispatcher"]["max_concurrent_workers"] = 1
+        legacy_task = task_fixture(
+            "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+        )
+        legacy_task.update(
+            {
+                "preferred_lane_order": ["Codex2"],
+                "preferredLaneOrder": ["Codex2"],
+                "priority": "P9",
+            }
+        )
+        ordinary_task = task_fixture("TASK-ORDINARY-1")
+        ordinary_task["priority"] = "P0"
+        queued: list[dict[str, object]] = []
+        state = with_healthy_delivery_health(
+            self.config,
+            {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}},
+        )
+
+        changed = supervisor.dispatch_ready_tasks(
+            self.config,
+            state,
+            agent_ids_override=["codex"],
+            status_snapshot={"tasks": [legacy_task, ordinary_task]},
+            queue_events_snapshot=[],
+            live_total_snapshot=0,
+            event_sink=lambda _config, event: queued.append(event) or True,
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual([event["task_id"] for event in queued], [legacy_task["id"]])
+        self.assertEqual(queued[0]["target_agent"], "Codex")
+        self.assertNotIn("preferred_lane_order", queued[0]["task"])
+        self.assertNotIn("preferredLaneOrder", queued[0]["task"])
+        wrong_owner = planner_decision(self.config, legacy_task, target="Codex2")
+        self.assertFalse(wrong_owner["eligible"])
+        self.assertEqual(wrong_owner["first_blocking_gate"], "task_not_dispatchable")
 
     def test_reviewer_review_is_dispatchable(self) -> None:
         task = task_fixture(status="review")

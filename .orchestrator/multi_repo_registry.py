@@ -23,9 +23,6 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
         "coordination_dir": ".coordination",
         "requests_dir": ".coordination/requests",
         "responses_dir": ".coordination/responses",
-        "screen_docs_dir": "docs/screens",
-        "bff_docs_dir": "docs/bff",
-        "examples_dir": "docs/examples",
     },
     "front_ai_trading_system": {
         "display_name": "front-ai-trading-system",
@@ -36,7 +33,6 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
         "coordination_dir": ".coordination",
         "requests_dir": ".coordination/requests",
         "responses_dir": ".coordination/responses",
-        "screen_docs_dir": "docs/screens",
     },
     "execute_plans": {
         "display_name": "execute-plans",
@@ -66,45 +62,6 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
         "requests_dir": ".coordination/requests",
         "responses_dir": ".coordination/responses",
     },
-}
-
-
-DEFAULT_WORKER_ROUTES: dict[str, dict[str, Any]] = {
-    "pantheon-bff-worker": {
-        "target_agent": "Codex",
-        "description": "Pantheon BFF and contract work",
-    },
-    "front-sync-worker": {
-        "target_agent": "Codex",
-        "description": "Front-end type, SDK, and hook sync work",
-    },
-    "front-ui-worker": {
-        "target_agent": "Copilot",
-        "description": "Front-end UI implementation work",
-    },
-    "runtime-worker": {
-        "target_agent": "Gemini",
-        "description": "Runtime and platform integration work",
-    },
-    "engine-worker": {
-        "target_agent": "Claude",
-        "description": "LEAN engine capability work",
-        "requires_human_approval": True,
-    },
-    "qa-worker": {
-        "target_agent": "Claude",
-        "description": "QA verification and acceptance work",
-    },
-}
-
-
-WORKER_ALIASES = {
-    "pantheon-bff": "pantheon-bff-worker",
-    "front-sync": "front-sync-worker",
-    "front-ui": "front-ui-worker",
-    "runtime": "runtime-worker",
-    "engine": "engine-worker",
-    "qa": "qa-worker",
 }
 
 
@@ -334,14 +291,6 @@ def repository_relative_artifact_path(
     return Path(candidate)
 
 
-def artifact_local_path(config: dict[str, Any], artifact_path: str | Path | None) -> Path | None:
-    repo_id = artifact_repository_id(config, artifact_path)
-    repo_root = repository_local_path(config, repo_id)
-    if repo_root is None:
-        return None
-    return repo_root / repository_relative_artifact_path(config, artifact_path, repo_id)
-
-
 def task_artifact_repository_ids(config: dict[str, Any], task: dict[str, Any]) -> list[str]:
     repo_ids: list[str] = []
     seen: set[str] = set()
@@ -364,48 +313,12 @@ def task_primary_repository_id(config: dict[str, Any], task: dict[str, Any]) -> 
     return "pantheon"
 
 
-def coordination_requests_dir(config: dict[str, Any], repo_id: str | None) -> Path | None:
-    base = repository_local_path(config, repo_id)
-    if base is None:
-        return None
-    repo = resolve_repository(config, repo_id or "")
-    rel = str(repo.get("requests_dir") or ".coordination/requests")
-    return base / rel if not Path(rel).is_absolute() else Path(rel)
-
-
 def coordination_responses_dir(config: dict[str, Any], repo_id: str | None) -> Path | None:
     base = repository_local_path(config, repo_id)
     if base is None:
         return None
     repo = resolve_repository(config, repo_id or "")
     rel = str(repo.get("responses_dir") or ".coordination/responses")
-    return base / rel if not Path(rel).is_absolute() else Path(rel)
-
-
-def screen_docs_dir(config: dict[str, Any], repo_id: str | None) -> Path | None:
-    base = repository_local_path(config, repo_id)
-    if base is None:
-        return None
-    repo = resolve_repository(config, repo_id or "")
-    rel = str(repo.get("screen_docs_dir") or "docs/screens")
-    return base / rel if not Path(rel).is_absolute() else Path(rel)
-
-
-def bff_docs_dir(config: dict[str, Any], repo_id: str | None) -> Path | None:
-    base = repository_local_path(config, repo_id)
-    if base is None:
-        return None
-    repo = resolve_repository(config, repo_id or "")
-    rel = str(repo.get("bff_docs_dir") or "docs/bff")
-    return base / rel if not Path(rel).is_absolute() else Path(rel)
-
-
-def examples_dir(config: dict[str, Any], repo_id: str | None) -> Path | None:
-    base = repository_local_path(config, repo_id)
-    if base is None:
-        return None
-    repo = resolve_repository(config, repo_id or "")
-    rel = str(repo.get("examples_dir") or "docs/examples")
     return base / rel if not Path(rel).is_absolute() else Path(rel)
 
 
@@ -417,26 +330,3 @@ def iter_local_repositories(config: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(local_path, Path):
             items.append(resolved)
     return items
-
-
-def worker_routes(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    merged = deepcopy(DEFAULT_WORKER_ROUTES)
-    for worker_kind, override in (coordination_config(config).get("worker_routes", {}) or {}).items():
-        current = merged.setdefault(worker_kind, {})
-        current.update(deepcopy(override or {}))
-    return merged
-
-
-def worker_route(config: dict[str, Any], worker_kind: str | None) -> dict[str, Any] | None:
-    if not worker_kind:
-        return None
-    return worker_routes(config).get(str(worker_kind).strip())
-
-
-def resolve_worker_kind(alias: str | None) -> str | None:
-    value = str(alias or "").strip().lower()
-    if not value:
-        return None
-    if value in DEFAULT_WORKER_ROUTES:
-        return value
-    return WORKER_ALIASES.get(value)

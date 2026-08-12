@@ -1055,12 +1055,15 @@ def display_name_for(config: dict[str, Any], agent_id: str) -> str:
 def agent_config_for(config: dict[str, Any], agent_id: str) -> dict[str, Any]:
     normalized = normalize_agent_id(agent_id)
     agent = config.get("agents", {}).get(normalized)
-    if agent:
+    if isinstance(agent, Mapping):
         merged = deepcopy(agent)
         merged.setdefault("id", normalized)
         merged.setdefault("display_name", agent_id)
         return merged
-    return {"id": normalized, "display_name": agent_id, "provider": normalized, "adapter": ""}
+    raise ValueError(
+        "agent configuration is required for delivery identity: "
+        f"{normalized or str(agent_id or '').strip()!r}"
+    )
 
 
 def render_template(path: Path, variables: dict[str, Any]) -> str:
@@ -1207,62 +1210,6 @@ def durable_write_bytes(
         _fsync_directory(path.parent)
     finally:
         temp_path.unlink(missing_ok=True)
-
-
-def durable_create_bytes(
-    path: Path,
-    payload: bytes,
-    *,
-    mode: int = 0o600,
-) -> None:
-    """Durably create one regular-file evidence leaf without clobbering it."""
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    flags = (
-        os.O_RDWR
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    descriptor = os.open(path, flags, mode)
-    try:
-        descriptor_stat = os.fstat(descriptor)
-        path_stat = path.lstat()
-        if (
-            not stat.S_ISREG(descriptor_stat.st_mode)
-            or stat.S_ISLNK(path_stat.st_mode)
-            or (path_stat.st_dev, path_stat.st_ino)
-            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
-        ):
-            raise RuntimeError(f"created evidence leaf is not stable: {path}")
-        view = memoryview(payload)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                raise OSError(f"evidence write made no progress: {path}")
-            view = view[written:]
-        os.fchmod(descriptor, mode)
-        os.fsync(descriptor)
-        after_stat = path.lstat()
-        readback = bytearray()
-        offset = 0
-        while len(readback) < len(payload):
-            chunk = os.pread(descriptor, len(payload) - len(readback), offset)
-            if not chunk:
-                break
-            readback.extend(chunk)
-            offset += len(chunk)
-        if (
-            stat.S_ISLNK(after_stat.st_mode)
-            or (after_stat.st_dev, after_stat.st_ino)
-            != (descriptor_stat.st_dev, descriptor_stat.st_ino)
-            or bytes(readback) != payload
-        ):
-            raise RuntimeError(f"created evidence readback mismatch: {path}")
-    finally:
-        os.close(descriptor)
-    _fsync_directory(path.parent)
 
 
 def read_regular_file_snapshot(
@@ -3291,17 +3238,6 @@ def rotate_activity_log_unlocked(
     return recover_activity_log_rotation_unlocked(log_path)
 
 
-def _rotate_activity_log_if_needed(
-    config: dict[str, Any],
-    log_path: Path,
-) -> Path | None:
-    return rotate_activity_log_unlocked(
-        log_path,
-        max_bytes=_activity_log_rotate_threshold(config),
-        keep_lines=0,
-    )
-
-
 def activity_audit_source_paths_unlocked(log_path: Path) -> list[Path]:
     """Return disjoint rotated sources plus active while audit SH/EX is held."""
 
@@ -4688,10 +4624,6 @@ def selected_shared_files(config: dict[str, Any]) -> list[Path]:
     return files
 
 
-def serialize_shared_files(paths: list[Path]) -> str:
-    return "\n".join(f"- {relpath(path)}" for path in paths)
-
-
 def compact_whitespace(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
@@ -4781,11 +4713,6 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
 def task_brief_path(task_id: str | None) -> Path:
     slug = normalize_agent_id(task_id or "unknown-task") or "unknown-task"
     return TASK_BRIEFS_DIR / f"{slug}.md"
-
-
-def _recent_task_activity(config: dict[str, Any], task_id: str, *, limit: int = 6) -> list[dict[str, Any]]:
-    path = config_path(config, "activity_log")
-    return validated_recent_task_activity(path, task_id, limit=limit)
 
 
 def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:
@@ -4893,31 +4820,6 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
     )
     path.write_text("\n".join(body), encoding="utf-8")
     return path
-
-
-def execution_context_files(config: dict[str, Any], task_id: str | None) -> list[str]:
-    files = ["AI_COLLABORATION_GUIDE.md"]
-    try:
-        brief = write_task_brief(config, task_id)
-    except Exception as exc:
-        write_activity_log(
-            config,
-            {
-                "type": "task_brief_generation_failed",
-                "task_id": task_id,
-                "message": f"Fell back to minimal execution context after task brief generation failed: {type(exc).__name__}: {exc}",
-            },
-        )
-        files.append("ai-status.json")
-        return unique_strings(files)
-    if brief is not None:
-        files.append(relpath(brief))
-    if WORKER_ANCHOR_SPEC_PATH.exists():
-        files.append(relpath(WORKER_ANCHOR_SPEC_PATH))
-    if CLOSEOUT_SPEC_PATH.exists():
-        files.append(relpath(CLOSEOUT_SPEC_PATH))
-    files.append("ai-status.json")
-    return unique_strings(files)
 
 
 def write_failure_evidence(

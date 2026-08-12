@@ -8,7 +8,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
@@ -193,21 +192,6 @@ def inspect_supervisor_process(pid: int) -> dict[str, Any]:
         "cwd": str(cwd),
         "environment": _read_process_environment(pid),
     }
-
-
-def pid_matches_supervisor(pid: int | None, repo_root: Path) -> bool:
-    if not pid_is_alive(pid):
-        return False
-    try:
-        process = inspect_supervisor_process(int(pid))
-    except (OSError, ProcessLookupError, UnicodeDecodeError, ValueError):
-        return False
-    argv = tuple(process.get("argv") or ())
-    return (
-        process.get("state") != "Z"
-        and Path(str(process.get("cwd"))).resolve() == repo_root.resolve()
-        and sum(PurePosixPath(part).name == "supervisor.py" for part in argv[1:]) == 1
-    )
 
 
 def lock_held(lock_path: Path) -> bool:
