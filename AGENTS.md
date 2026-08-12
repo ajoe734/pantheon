@@ -6,81 +6,32 @@ of enforcement for this workflow.
 
 ## Chatbox Work Classification And Dispatch Authority
 
-Every Codex IDE/chatbox turn must classify the requested work before making any
-repository or runtime mutation. There are two execution lanes.
+### Explicit Operator Bypass
 
-### Direct Component Repair Lane
+When the operator explicitly tells the current chatbox to implement a stated
+scope directly or to bypass a named repository workflow, the chatbox may do so.
+This applies to component, cross-component, supervisor, fleet, task-state,
+deployment, architecture, cleanup, and integration work. The chatbox does not
+need to route that scope through the supervisor, auto-workers, assistant dev
+bridge, canonical task materialization, or task packets.
 
-A chatbox may implement a repair directly only when all of the following are
-true:
+The bypass is limited to the scope and workflow the operator explicitly names;
+it must not be inferred for unrelated work. The chatbox must not both dispatch
+and implement the same scope unless the operator explicitly requests both.
+Repository delivery requirements below still apply.
 
-- the operator explicitly authorizes that chatbox to implement the repair;
-- the work is bounded to one clearly identified component or failure;
-- the change does not redesign cross-component architecture, supervisor
-  scheduling, fleet policy, task-state governance, or deployment authority;
-- the chatbox uses a clean task branch or worktree and completes the normal
-  commit, PR, checks, review, and merge flow; and
-- the chatbox does not expand the repair into adjacent systems without new
-  operator direction.
+A repository workflow bypass changes how work is performed; it does not permit
+forged credentials or evidence, secret disclosure, hand-edited canonical task
+or queue JSON, or unrequested destructive, production, or capital-affecting
+actions.
 
-A bounded development-control-plane repair may also use this lane when the
-operator explicitly authorizes the current chatbox and the supervisor, bridge,
-or canonical command path cannot dispatch the repair without depending on the
-same failing mechanism. This exception permits only the changes needed to
-remove that dependency. It does not authorize unrelated product, scheduling,
-fleet-policy, or deployment changes, and the chatbox must not both queue and
-implement the same repair.
+### Default Coordination
 
-A request such as a specifically authorized dashboard failure repair may use
-this lane. Direct repair permission for one component does not grant permission
-to modify the supervisor, auto-worker routing, canonical task state, or another
-component.
-
-### Integration And Coordination Lane
-
-System-wide inspection, development-progress synthesis, cross-component
-integration, multi-task gap closure, supervisor or fleet evolution, release
-coordination, and architecture planning are coordination work. A chatbox
-handling this lane must not implement the resulting product or control-plane
-changes itself, except for the bounded development-control-plane repair above.
-
-The chatbox must instead:
-
-1. inspect current state read-only and deduplicate against active tasks,
-   archives, open PRs, branches, and worktrees;
-2. write a concrete work plan with objective, current evidence, gaps,
-   dependency order, declared file scopes, out-of-scope boundaries,
-   acceptance criteria, validation, merge order, rollout, and rollback;
-3. split the plan into governed task packets with task ID, owner capability,
-   independent reviewer capability, dependencies, expected branch/worktree,
-   merge target, and required artifacts;
-4. queue those packets through the governed assistant dev bridge or canonical
-   task command, never by hand-editing queue or state JSON;
-5. wait for a supervisor receipt and canonical task materialization before
-   claiming that implementation is underway; and
-6. monitor supervisor, auto-worker, PR, check, merge, and deployment evidence,
-   reporting blockers without taking over implementation.
-
-For this lane, Codex extension subagents may perform read-only exploration,
-test analysis, plan review, or summarization. They must not apply patches,
-commit, push, open implementation PRs, modify live runtime, or act as a parallel
-implementation fleet. Code-writing work belongs to supervisor-dispatched
-auto-workers.
-
-### Single Dispatch Authority
-
-The Pantheon supervisor is the only routine implementation dispatcher.
-Chatboxes must not create a parallel scheduling path, invent unregistered task
-IDs, implement first and register later, or both queue and implement the same
-scope. They must not directly patch `/home/lupin/pantheon-ci-deploy/dev-root`,
-force live rescue refs, edit canonical runtime state, or start/stop services as
-part of ordinary coordination work. The bounded development-control-plane
-repair exception above does not create a second routine dispatcher.
-
-The existing Live Repair Rule below is the only exception for an urgent runtime
-incident. A live rescue must remain minimal and temporary; permanent source or
-configuration changes still require a governed task worktree and the full
-repository delivery flow.
+Without an explicit direct-implementation or bypass instruction, the Pantheon
+supervisor remains the routine implementation dispatcher for coordination,
+system-wide, fleet, and integration work. The chatbox may inspect, diagnose,
+plan, create governed task packets, and monitor execution without silently
+taking over implementation.
 
 Configured agent identities, including `Codex` and `Codex2`, remain distinct.
 Account relationships, quota grouping, and reviewer eligibility must follow
