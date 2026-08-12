@@ -10721,7 +10721,9 @@ def record_missing_worker_terminal_outcome(
 
 
 def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
-    changed = migrate_runtime_account_state(config, state)
+    # Account topology is V2 configuration, not runtime state to migrate.
+    # Starting from a persisted V2 cache therefore needs no account rewrite.
+    changed = False
     now = datetime.now(timezone.utc)
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     redispatch_statuses = redispatch_candidate_statuses(config)
