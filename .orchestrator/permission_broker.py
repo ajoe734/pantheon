@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import json
 import os
 import re
@@ -1386,138 +1385,6 @@ def remember_rule(config: dict[str, Any], *, decision: str, rule: str) -> dict[s
     return settings
 
 
-def _parse_permission_rule(rule: str) -> tuple[str | None, str | None]:
-    match = re.match(r"^([A-Za-z0-9_]+)\((.*)\)$", rule)
-    if match:
-        return match.group(1), match.group(2)
-    if rule:
-        return rule, None
-    return None, None
-
-
-def _bash_rule_matches(rule_content: str, shell_command: str) -> bool:
-    if "*" in rule_content:
-        return fnmatch.fnmatchcase(shell_command, rule_content)
-    return shell_command == rule_content
-
-
-def _permission_rule_matches(rule: str, *, tool_name: str, tool_input: dict[str, Any]) -> bool:
-    parsed_tool_name, rule_content = _parse_permission_rule(rule)
-    if not parsed_tool_name or parsed_tool_name != tool_name:
-        return False
-    if rule_content is None:
-        return True
-    if tool_name == "Bash":
-        shell_command = str(tool_input.get("command") or tool_input.get("cmd") or tool_input.get("raw_command") or "")
-        return _bash_rule_matches(rule_content, shell_command)
-    return False
-
-
-def suspend_matching_rules(
-    config: dict[str, Any],
-    *,
-    bucket: str,
-    tool_name: str,
-    tool_input: dict[str, Any],
-) -> list[str]:
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
-    permissions = settings.get("permissions", {})
-    existing_rules = list(permissions.get(bucket, []) or [])
-    removed_rules = [rule for rule in existing_rules if _permission_rule_matches(rule, tool_name=tool_name, tool_input=tool_input)]
-    if not removed_rules:
-        return []
-    permissions[bucket] = [rule for rule in existing_rules if rule not in removed_rules]
-    settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
-    write_activity_log(
-        config,
-        {
-            "type": "permission_rule_temporary_removed",
-            "provider": _approval_provider(config),
-            "message": f"Temporarily removed Claude {bucket} rule(s): {', '.join(removed_rules)}",
-            "bucket": bucket,
-            "rules": removed_rules,
-        },
-    )
-    return removed_rules
-
-
-def restore_rules(config: dict[str, Any], *, bucket: str, rules: list[str]) -> list[str]:
-    if not rules:
-        return []
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
-    permissions = settings.get("permissions", {})
-    existing_rules = list(permissions.get(bucket, []) or [])
-    restored: list[str] = []
-    for rule in rules:
-        if rule not in existing_rules:
-            existing_rules.append(rule)
-            restored.append(rule)
-    if not restored:
-        return []
-    permissions[bucket] = existing_rules
-    settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
-    write_activity_log(
-        config,
-        {
-            "type": "permission_rule_temporary_restored",
-            "provider": _approval_provider(config),
-            "message": f"Restored Claude {bucket} rule(s): {', '.join(restored)}",
-            "bucket": bucket,
-            "rules": restored,
-        },
-    )
-    return restored
-
-
-def add_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> bool:
-    if not rule:
-        return False
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
-    permissions = settings.get("permissions", {})
-    allow_rules = list(permissions.get("allow", []) or [])
-    if rule in allow_rules:
-        return False
-    allow_rules.append(rule)
-    permissions["allow"] = allow_rules
-    settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
-    write_activity_log(
-        config,
-        {
-            "type": "permission_rule_temporary_added",
-            "provider": _approval_provider(config),
-            "message": f"Temporarily added Claude allow rule: {rule}",
-            "rule": rule,
-        },
-    )
-    return True
-
-
-def remove_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> bool:
-    if not rule:
-        return False
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
-    permissions = settings.get("permissions", {})
-    allow_rules = list(permissions.get("allow", []) or [])
-    if rule not in allow_rules:
-        return False
-    permissions["allow"] = [entry for entry in allow_rules if entry != rule]
-    settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
-    write_activity_log(
-        config,
-        {
-            "type": "permission_rule_temporary_removed",
-            "provider": _approval_provider(config),
-            "message": f"Removed temporary Claude allow rule: {rule}",
-            "rule": rule,
-        },
-    )
-    return True
-
-
 def emit_hook_response(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
@@ -1535,16 +1402,6 @@ def log_event(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
             "hook_payload": payload,
             "ts_local": utc_now(),
         },
-    )
-
-
-def _approval_timeout_seconds(config: dict[str, Any]) -> float:
-    provider_id = _approval_provider(config)
-    return float(
-        config.get("providers", {})
-        .get(provider_id, {})
-        .get("broker", {})
-        .get("approval_wait_seconds", 3600)
     )
 
 

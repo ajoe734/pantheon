@@ -27,8 +27,8 @@ The target system has seven responsibilities:
 5. **Account Health** owns normalized auth, quota, retry-at, and capacity for a
    real provider account shared by one or more configured agents.
 6. **Recovery** maps an observed inconsistency to exactly one corrective action.
-7. **Rollout Transaction** promotes one immutable runtime candidate and restores
-   one immutable known-good runtime on failure.
+7. **Direct V2 Replacement** stops the outgoing supervisor and installs one
+   immutable V2 candidate while retaining existing V2 worker leases.
 
 There is no supervisor-owned chair authority. Explicit governance or review
 work is either a Human/Ops action or an ordinary canonical task.
@@ -244,10 +244,11 @@ operations. A well-formed task list is represented by task identity:
 - `order`: task identity order, only when order changed.
 
 Malformed or duplicate-identity task containers fail closed to a generic value
-replacement. They retain compatibility without weakening the live-task removal
-guard, but are not a supported steady-state representation.
+replacement. This is an integrity boundary, not a compatibility path, and is
+not a supported steady-state representation.
 
-The first V2 event is a genesis delta from `{}` to the migrated current state.
+The first V2 event is a genesis delta from `{}` to the current authoritative
+V2 state.
 It necessarily contains enough information to reconstruct that state. Every
 subsequent routine task update contains only changed rows and metadata.
 
@@ -331,43 +332,14 @@ python3 scripts/verify_task_state_store.py \
 No environment variable can silently switch production hot reads back to full
 replay.
 
-## 7. V1 archive and migration
+## 7. V2-only deployment posture
 
-The existing full-state journal must not be loaded by V2 production code or
-rewritten in place. Migration is an offline, one-time operation:
+TaskStore V2 is the only supported live store. There is no V1 migration
+command, dual-store mode, fallback reader, or rollback path in the runtime.
 
-1. Stop task-state writers or otherwise hold the deployment admission boundary.
-2. Stream the V1 journal once while validating every event, state digest,
-   sequence, and hash-chain link.
-3. Compare its final state digest with the current `ai-status.json` projection.
-4. Record an archive anchor containing the resolved immutable path, exact byte
-   size, full journal SHA-256, event count, last event identity, and final state
-   digest.
-5. Write a fresh V2 genesis event bound to the archive-anchor digest.
-6. Verify V2 head/projection parity and run one explicit V2 full audit.
-7. Update configuration to the new V2 event-log path only during the immutable
-   runtime promotion transaction.
-
-The migration command is:
-
-```bash
-python3 scripts/migrate_task_state_store_v2.py \
-  --legacy-event-log /runtime/task-state-events.jsonl \
-  --event-log /runtime/task-state-events-v2.jsonl \
-  --status-file /status-root/ai-status.json \
-  --json
-```
-
-The command refuses to:
-
-- use the same path for V1 and V2;
-- accept a malformed or broken V1 chain;
-- migrate a journal tip that differs from the supplied projection;
-- overwrite an existing V2 journal or head.
-
-The V1 file remains read-only rollback and audit evidence. Runtime rollback
-restores the prior immutable runtime **and its matching store configuration**;
-it does not point V1 code at the V2 delta journal or V2 code at the V1 journal.
+An already-present legacy archive anchor is immutable historical audit metadata
+only. It is never a launch input, a hot-read dependency, or a route back to a
+prior runtime. A V2 process configured with a non-V2 journal fails closed.
 
 ## 8. Failure semantics
 
@@ -380,8 +352,8 @@ it does not point V1 code at the V2 delta journal or V2 code at the V1 journal.
 | Head digest mismatch | Fail closed; do not fall back to journal scanning in hot path |
 | Complete malformed tail record | Integrity failure; do not truncate silently |
 | Journal shorter than head offset | Integrity failure |
-| V1 journal supplied to V2 | Fail with explicit migration-required error |
-| Archive missing after migration | Hot state remains readable; explicit archive audit fails |
+| Non-V2 journal supplied to V2 | Fail closed; correct the V2 binding rather than converting at runtime |
+| Historical archive missing | Hot state remains readable; an explicit historical audit fails |
 | Archive content changed | Explicit archive audit reports digest/size mismatch |
 | Owner/reviewer auth terminal or quota terminal | Account Health pauses that account; bounded Recovery may CAS reassign current role; task failure count is unchanged |
 | Auth state unknown or probe stale | Fail closed for new delivery; do not reassign until durable terminal evidence or Human/Ops action |
@@ -391,7 +363,7 @@ it does not point V1 code at the V2 delta journal or V2 code at the V1 journal.
 | Human/Ops revokes assignment with queued intent | Assignment CAS invalidates the matching intent generation before the new assignment is dispatchable |
 | Human/Ops revokes assignment with active worker | Assignment CAS revokes the old actor; the exact old lease blocks new delivery until Worker Manager drains/terminates it |
 | GitHub approval head differs from current PR head | Approval is invalid; task remains in review and no finalize intent is emitted |
-| Legacy chair/discussion worker exists at promotion | Promotion fails preflight until the exact worker is drained; V2 never adopts it as authority |
+| Worker exists at supervisor replacement | The new V2 supervisor restores the existing exact lease; it does not clear, recreate, or requeue it |
 
 ## 9. Deletion map
 
@@ -461,8 +433,6 @@ TaskStore V2 is acceptable only when all of the following pass:
 - live task disappearance remains rejected unless exactly audited;
 - identical state writes remain idempotent;
 - the explicit full audit matches the current head and projection;
-- migration validates V1 parity, binds V2 genesis to the archive, and refuses
-  overwrite;
 - normal verification exposes replayed tail count so crash residue cannot be
   hidden behind an overall green result.
 
@@ -488,42 +458,30 @@ Integration acceptance additionally requires:
 - provider/auth/quota failures do not increment task failure streaks;
 - Human/Ops revoke/reassign works for queued, active, review, and stale-worker
   cases with a complete audit record;
-- V2 promotion refuses active legacy chair/discussion workers, mutable source,
-  store mismatch, identity mismatch, or failed migration parity;
-- the complete supervisor, ai-status, migration, rollout, health, and deployment
+- V2 replacement refuses a mutable source, invalid V2 binding, invalid runtime
+  identity, or a failed fresh-loop smoke check;
+- the complete supervisor, ai-status, rollout, health, and deployment
   suites pass with no legacy expectation hidden or skipped.
 
-## 11. Cutover and rollback
+## 11. Direct V2 replacement
 
-TaskStore V2 is merged before scheduler cutover but is not selected by a live
-runtime until all task writers in that immutable command runtime understand V2.
-There is no mixed writer mode.
+The deployment unit is one immutable V2 command runtime and one authoritative
+V2 task-state binding. Replacement is intentionally simple:
 
-Cutover sequence:
+1. Stop the outgoing supervisor. Active worker records and leases remain in the
+   V2 cache; they are not adopted, cleared, or requeued by replacement.
+2. Install the reviewed V2 config atomically.
+3. Start the persistent V2 watchdog/supervisor. Every start restores the same
+   V2 cache and its leases under one atomic runtime-state update lock. A missing
+   cache initializes an empty V2 state; any malformed cache fails closed. Do
+   not convert old fields or touch canonical task state.
+4. Require fresh successful loops, exact command-root identity, and
+   delivery-health visibility before accepting the replacement.
 
-1. Build and review an immutable runtime containing V2 readers and writers.
-2. Stop admission for task-state writes.
-3. Run V1-to-V2 migration and parity/full-audit validation.
-4. Launch the candidate with the V2 path.
-5. Require fresh loops, exact runtime identity, TaskStore parity, and successful
-   test mutation/readback before promotion.
-6. Retain the immutable V1 runtime, V1 configuration, V1 journal, and V1 archive
-   digest as the rollback unit.
-
-Before step 2, promotion preflight requires no live legacy chair/discussion
-worker and no nonterminal legacy control queue event. Existing execution workers
-must finish and drain under their exact V1 identities before migration begins;
-none may survive the authority switch. V2 never adopts or relabels them.
-Human/Ops then uses the audited assignment transition to revoke any task packet
-that was materialized solely by the retired coordination path.
-
-Rollback before any accepted V2 mutation restores the complete V1 unit only if
-the worker/queue/lease authority and durable delivery queue still equal the
-drained V1 baseline. A candidate-created queued intent, lease, or worker forces
-forward recovery even if TaskStore remains at its genesis sequence.
-Rollback after accepted V2 mutations requires a deliberate reverse projection
-export and operator decision; code must not silently dual-write V1 and V2 to
-make that case appear easy.
+There is no in-place V1 recovery, rollback, cache reset, or mixed-writer mode.
+The watchdog may restart a failed V2 supervisor only through this same
+lease-preserving V2 path; it never resets cache. An invalid V2 configuration or
+runtime cache remains non-dispatching and fails closed until corrected.
 
 ## 12. Implementation traceability
 
@@ -531,14 +489,14 @@ This specification maps to:
 
 - `.orchestrator/rewrite/task_state_store.py` — V2 head, delta journal, crash
   recovery, transition validation, audit, and archive-anchor verification;
-- `scripts/migrate_task_state_store_v2.py` — one-time V1 audit and anchored V2
-  genesis;
 - `scripts/verify_task_state_store.py` — hot parity verification and explicit
   offline audits;
 - `.orchestrator/rewrite/test_task_state_store.py` — storage, integrity,
   crash-window, size, and removal invariants;
-- `scripts/test_migrate_task_state_store_v2.py` and
-  `scripts/test_verify_task_state_store.py` — operational tooling contracts.
+- `.orchestrator/runtime_state.py` — V2 runtime cache and durable delivery
+  queue projection. Every restart preserves leases under one atomic update
+  lock. It is not task authority;
+- `scripts/test_verify_task_state_store.py` — operational audit contracts.
 
 Scheduler, queue, worker, review, account-health, recovery, and rollout changes
 must obey Sections 1–4 and integrate through this TaskStore contract. They must

@@ -9,24 +9,6 @@ of enforcement for this workflow.
 Every Codex IDE/chatbox turn must classify the requested work before making any
 repository or runtime mutation. There are two execution lanes.
 
-### Explicit Operator Authorization Override
-
-When the operator explicitly authorizes the current chatbox to implement a
-specific change, the chatbox may implement that change directly. This includes
-single-component, cross-component, system-wide, supervisor, fleet, task-state,
-deployment, architecture, cleanup, and integration work.
-
-This override takes precedence over the Direct Component Repair Lane,
-Integration And Coordination Lane, and Single Dispatch Authority below. The
-chatbox must perform the authorized work itself and must not delegate it to the
-supervisor, auto-workers, task packets, or subagents unless the operator
-explicitly requests delegation.
-
-Authorization is limited to the operator's stated scope. Clean worktree,
-validation, commit, PR, review, and merge requirements still apply. Destructive
-production actions, secret disclosure, credential rotation, and capital-affecting
-actions still require separate explicit authorization.
-
 ### Direct Component Repair Lane
 
 A chatbox may implement a repair directly only when all of the following are

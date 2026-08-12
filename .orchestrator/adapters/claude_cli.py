@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
@@ -17,7 +16,6 @@ from common import (
     shell_quote,
     spawn_background_process,
     command_exists,
-    run_command,
     worker_runtime_paths,
 )
 

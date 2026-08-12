@@ -13,7 +13,7 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from common import config_path, load_config, load_json, utc_now, write_activity_log, write_json
+from common import config_path, load_json, utc_now, write_activity_log, write_json
 
 
 def default_relay_state() -> dict[str, Any]:

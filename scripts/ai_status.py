@@ -6,7 +6,6 @@ import base64
 import binascii
 import fcntl
 import hashlib
-import hmac
 import json
 import os
 import re
@@ -83,7 +82,6 @@ from task_archive import (
     load_archived_snapshot,
     rebuild_archive_index,
     recent_terminal_summaries,
-    task_satisfies_dependency,
 )
 from multi_repo_registry import (
     repository_local_path,
@@ -123,7 +121,6 @@ from common import (
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
     read_regular_file_bytes,
-    rotate_activity_log_unlocked,
     strict_activity_json_loads,
     validated_activity_event_digests_unlocked,
 )
@@ -1699,19 +1696,6 @@ def load_logs() -> list[dict[str, Any]]:
     return logs
 
 
-def load_log_tail_lines(max_lines: int = 5000) -> list[str]:
-    try:
-        payload = read_activity_log_tail_bytes(
-            LOG_FILE,
-            max_lines=max_lines,
-        )
-    except OSError:
-        return []
-    if payload is None:
-        return []
-    return payload.decode("utf-8", errors="replace").splitlines()
-
-
 def load_json_file(path: Path, default: Any) -> Any:
     if not path.exists():
         return deepcopy(default)
@@ -2092,23 +2076,6 @@ def buffer_activity_events():
             _ACTIVITY_TRANSACTION_LOCAL.events = previous
 
 
-def _maybe_rotate_activity_log_unlocked(log_path: Path) -> Path | None:
-    """Durably rotate through the shared restart-recoverable intent protocol."""
-
-    return rotate_activity_log_unlocked(
-        log_path,
-        max_bytes=LOG_ROTATE_MAX_BYTES,
-        keep_lines=LOG_ROTATE_KEEP_LINES,
-        archive_dir=log_path.parent / "archive" / "logs",
-    )
-
-
-def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
-    log_path = path if path is not None else LOG_FILE
-    with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
-        return _maybe_rotate_activity_log_unlocked(log_path)
-
-
 def _append_log_unlocked(entry: dict[str, Any]) -> None:
     _append_logs_unlocked([entry])
 
@@ -2130,10 +2097,6 @@ def append_log(entry: dict[str, Any]) -> None:
         return
     with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
         _append_log_unlocked(event)
-
-
-def _activity_audit_sources() -> list[Path]:
-    return activity_audit_source_paths_unlocked(LOG_FILE)
 
 
 def _activity_event_index_unlocked(event_ids: set[str]) -> dict[str, str]:
@@ -3160,10 +3123,6 @@ def task_metadata_from_env() -> dict[str, Any]:
 
 def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
     return resolver.dependency_satisfied(dep_id)
-
-
-def dependency_status_label(resolver: TaskResolver, dep_id: str) -> str:
-    return resolver.dependency_status(dep_id)
 
 
 def ensure_review_finalize_handoff(

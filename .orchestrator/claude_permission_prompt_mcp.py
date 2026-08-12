@@ -14,7 +14,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from approval_queue import create_approval, validated_approval_binding, wait_for_decision
-from common import load_config, utc_now, write_activity_log
+from common import load_config, write_activity_log
 from permission_broker import evaluate_tool_request
 
 

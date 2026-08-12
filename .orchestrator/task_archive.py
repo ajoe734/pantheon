@@ -453,13 +453,6 @@ def correct_archived_task_review_file(
         return deepcopy(corrected)
 
 
-def load_archived_task(task_id: str | None) -> dict[str, Any] | None:
-    snapshot = load_archived_snapshot(task_id)
-    if not snapshot:
-        return None
-    return task_from_archive_snapshot(snapshot)
-
-
 def task_from_archive_snapshot(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     """Normalize modern nested and legacy top-level archive task shapes."""
 
@@ -941,26 +934,6 @@ def rebuild_archive_index(*, recent_limit: int = DEFAULT_RECENT_LIMIT) -> dict[s
             allow_uncommitted=True,
             bypass_downgrade_check=False,
         )
-
-
-def rebuild_archive_index_from_commit(
-    *,
-    recent_limit: int = DEFAULT_RECENT_LIMIT,
-    pinned_commit: str = "HEAD",
-    bypass_downgrade_check: bool = False,
-) -> dict[str, Any]:
-    with canonical_task_state_lock_file(
-        STATUS_FILE,
-        shared=False,
-        nonblocking=False,
-    ):
-        return _rebuild_archive_index_locked(
-            recent_limit=recent_limit,
-            allow_uncommitted=False,
-            bypass_downgrade_check=bypass_downgrade_check,
-            pinned_commit=pinned_commit,
-        )
-
 
 
 def _archive_task_snapshot_locked(

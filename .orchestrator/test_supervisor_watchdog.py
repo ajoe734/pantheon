@@ -15,6 +15,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import supervisor_watchdog  # noqa: E402
+import runtime_state  # noqa: E402
 
 
 _OLD_ENV = {}
@@ -67,7 +68,13 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.activity_log.write_text("", encoding="utf-8")
 
     def write_state(self, payload: dict) -> None:
-        self.state_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        state = runtime_state.default_state()
+        for key, value in payload.items():
+            if isinstance(value, dict) and isinstance(state.get(key), dict):
+                state[key].update(value)
+            else:
+                state[key] = value
+        self.state_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
     def write_pid(self, pid: int) -> None:
         (self.state_file.parent / "supervisor.pid").write_text(f"{pid}\n", encoding="utf-8")
@@ -1246,8 +1253,8 @@ class SupervisorWatchdogTests(unittest.TestCase):
         failed = {
             item["name"] for item in health_report["checks"] if not item["ok"]
         }
-        self.assertIn("configured_runtime_identity_present", failed)
-        self.assertIn("supervisor_runtime_identity_matches", failed)
+        self.assertIn("identity_command_root_exact", failed)
+        self.assertIn("liveness_exact_process_generation_alive", failed)
 
     def test_contention_metric_dropped_on_eagain(self) -> None:
         """Verify that when the contention metrics file lock raises EAGAIN, the metric write is dropped and warning is printed to stderr."""

@@ -60,7 +60,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                 "history": [],
             },
         )
-        self._write_json(self.root / "state.json", {"workers": {}, "queue": {"events": {}}})
+        self._write_json(self.root / "state.json", {"version": 2, "workers": {}, "queue": {"events": {}}})
         (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         pruned = approval_queue.prune_stale_approvals(self.config)
@@ -97,6 +97,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {
+                "version": 2,
                 "workers": {
                     "claude-live": {
                         "run_id": "claude-live",
@@ -139,6 +140,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {
+                "version": 2,
                 "workers": {
                     "claude-resume": {
                         "run_id": "claude-resume",
@@ -184,6 +186,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {
+                "version": 2,
                 "workers": {
                     "claude2-resume": {
                         "run_id": "claude2-resume",
@@ -231,6 +234,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {
+                "version": 2,
                 "workers": {
                     "claude-live-stale": {
                         "run_id": "claude-live-stale",
@@ -279,6 +283,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {
+                "version": 2,
                 "workers": {
                     "claude-resume-stale": {
                         "run_id": "claude-resume-stale",
