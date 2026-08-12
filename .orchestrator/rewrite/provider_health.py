@@ -83,7 +83,7 @@ def empty_delivery_health() -> dict[str, Any]:
 
 
 def normalize_delivery_health(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Return a safe, detached V1 delivery-health snapshot.
+    """Return a safe, detached V2 delivery-health snapshot.
 
     Health is deliberately independent of the provider-capabilities report:
     that report is topology/telemetry and can legitimately be stale.  Unknown

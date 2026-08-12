@@ -74,7 +74,7 @@ RUNTIME_LOCK_REQUIRED_API = (
 )
 RUNTIME_LOCK_SOURCE_ROOTS = (".orchestrator", "scripts")
 RUNTIME_LOCK_SOURCE_SUFFIXES = {".py", ".sh"}
-RUNTIME_LOCK_WRITER_SCANNER_ID = "pantheon-canonical-writer-ast-v1"
+RUNTIME_LOCK_WRITER_SCANNER_ID = "pantheon-canonical-writer-ast-v2"
 _CANONICAL_PATH_LITERALS = {
     "ai-status.json",
     "ai-activity-log.jsonl",
