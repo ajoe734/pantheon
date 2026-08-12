@@ -38,7 +38,6 @@ def bind_status_root_paths(config: dict[str, Any]) -> dict[str, Any]:
         "event_queue",
         "approval_queue",
         "activity_log",
-        "provider_capabilities",
     ):
         value = paths.get(name)
         if value and not Path(str(value)).is_absolute():
