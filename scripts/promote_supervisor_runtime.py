@@ -238,7 +238,11 @@ class SupervisorAdmissionLockIdentity:
     sha256: str
     mtime_ns: int
     ctime_ns: int
-    kernel_lock_id: str
+    # ``/proc/locks`` assigns this row ordinal while rendering the global lock
+    # table.  Unrelated lock churn can renumber it even when this exact inode,
+    # owner PID generation, and FLOCK mode have not changed.  Keep it in
+    # evidence, but never use it as a promotion identity/CAS field.
+    kernel_lock_id: str = field(compare=False)
     kernel_lock_kind: str
     kernel_lock_class: str
     kernel_lock_mode: str
