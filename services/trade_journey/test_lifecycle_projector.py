@@ -22,6 +22,7 @@ from services.trade_journey.lifecycle_projector import (
     ConflictingLifecycleEvent,
     DEFAULT_HEALTH_MAX_AGE_SECONDS,
     LIFECYCLE_EVENT_TYPES,
+    LIFECYCLE_EVENT_TYPE_QUERY,
     LifecycleProjector,
     PostgresLifecycleSource,
     _fingerprint,
@@ -152,21 +153,22 @@ def _current_json(tmp_path: Path, filename: str) -> dict:
     return json.loads((tmp_path / "current" / filename).read_text(encoding="utf-8"))
 
 
-def test_postgres_lifecycle_source_uses_the_global_commit_cursor(monkeypatch):
+def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
     calls: list[tuple] = []
 
     class Connection:
-        async def fetchval(self, query: str) -> int:
-            calls.append(("fetchval", query))
+        async def fetchval(self, query: str, event_types: list[str]) -> int:
+            calls.append(("fetchval", query, event_types))
             return 44
 
         async def fetch(
             self,
             query: str,
             checkpoint: int,
+            event_types: list[str],
             limit: int,
         ) -> list[dict]:
-            calls.append(("fetch", query, checkpoint, limit))
+            calls.append(("fetch", query, checkpoint, event_types, limit))
             return []
 
         async def close(self) -> None:
@@ -184,90 +186,13 @@ def test_postgres_lifecycle_source_uses_the_global_commit_cursor(monkeypatch):
 
     fetchval = next(call for call in calls if call[0] == "fetchval")
     fetch = next(call for call in calls if call[0] == "fetch")
-    assert "event_type = ANY" not in fetchval[1]
-    assert "event_type = ANY" not in fetch[1]
+    assert "event_type = ANY" in fetchval[1]
+    assert "event_type = ANY" in fetch[1]
     assert "MAX(ingested_seq)" in fetchval[1]
+    assert tuple(fetchval[2]) == LIFECYCLE_EVENT_TYPE_QUERY
     assert fetch[2] == 7
-    assert fetch[3] == 9
-
-
-def test_non_lifecycle_rows_advance_the_global_cursor_without_materializing(tmp_path):
-    projector = _projector(tmp_path)
-    ignored = {
-        "ingested_seq": 41,
-        "ingested_at": NOW,
-        "event_id": "heartbeat-41",
-        "event_type": "heartbeat",
-        "created_at": NOW,
-        "payload": {},
-    }
-
-    result = projector.project_records([ignored], mode="live", source_high_watermark=41)
-
-    assert result.ignored == 1
-    assert projector.checkpoint == 41
-    assert projector.controller["source_high_watermark"] == 41
-    assert projector.controller["backlog"] == 0
-    assert projector.controller["accepted_live"] is True
-    assert projector.controller["status"] == "ready"
-
-
-def test_continuous_non_lifecycle_telemetry_stays_live_when_the_global_cursor_is_caught_up(
-    tmp_path,
-):
-    projector = _projector(tmp_path)
-
-    for sequence in range(41, 46):
-        projector.project_records(
-            [
-                {
-                    "ingested_seq": sequence,
-                    "ingested_at": NOW,
-                    "event_id": f"heartbeat-{sequence}",
-                    "event_type": "heartbeat",
-                    "created_at": NOW,
-                    "payload": {},
-                }
-            ],
-            mode="live",
-            source_high_watermark=sequence,
-        )
-        assert projector.checkpoint == sequence
-        assert projector.controller["backlog"] == 0
-        assert projector.controller["accepted_live"] is True
-        assert projector.controller["status"] == "ready"
-
-
-def test_global_cursor_read_fetch_race_cannot_admit_live_truth(tmp_path):
-    projector = _projector(tmp_path, clock=lambda: NOW)
-    ahead = {
-        "ingested_seq": 42,
-        "ingested_at": NOW,
-        "event_id": "heartbeat-42",
-        "event_type": "heartbeat",
-        "created_at": NOW,
-        "payload": {},
-    }
-
-    # A row can commit after the high-watermark query but before the subsequent
-    # cursor fetch.  The sampled high watermark is stale and must not be used
-    # to claim caught-up live truth.
-    projector.project_records([ahead], mode="live", source_high_watermark=41)
-    assert projector.checkpoint == 42
-    assert projector.controller["source_high_watermark"] == 41
-    assert projector.controller["accepted_live"] is False
-    assert projector.controller["status"] == "repair_only"
-    readiness = projector_readiness(
-        state_path=tmp_path / "health_state.json",
-        bundle_root=tmp_path,
-        now=datetime.fromisoformat(NOW.replace("Z", "+00:00")),
-    )
-    assert readiness["ready"] is False
-    assert "cursor_not_caught_up:42!=41" in readiness["reasons"]
-
-    projector.record_poll(source_high_watermark=42, backlog=0, mode="live")
-    assert projector.controller["accepted_live"] is True
-    assert projector.controller["status"] == "ready"
+    assert tuple(fetch[3]) == LIFECYCLE_EVENT_TYPE_QUERY
+    assert fetch[4] == 9
 
 
 def test_postgres_lifecycle_source_startup_check_is_read_only_and_bounded(monkeypatch):
@@ -364,38 +289,28 @@ def test_worker_startup_verifies_read_contract_before_publishing_identity(monkey
     )
 
 
-def test_worker_reaffirms_a_global_cursor_checkpoint_with_a_new_deployment_identity(
+def test_worker_reaffirms_retained_snapshot_after_source_window_truncates(
     monkeypatch, tmp_path
 ):
     prior = _projector(tmp_path)
-    prior.project_records(
-        [
-            {
-                "ingested_seq": 41,
-                "ingested_at": NOW,
-                "event_id": "heartbeat-41",
-                "event_type": "heartbeat",
-                "created_at": NOW,
-                "payload": {},
-            }
-        ],
-        mode="live",
-        source_high_watermark=41,
-    )
-    prior.record_poll(source_high_watermark=41, backlog=0, mode="live")
+    row = lifecycle_rows()[0]
+    row["ingested_seq"] = 6_099_223
+    prior.project_records([row], mode="live", source_high_watermark=6_099_223)
 
     class Source:
         async def verify_read_contract(self) -> None:
             return None
 
         async def high_watermark(self) -> int:
-            return 41
+            # The source table is a retained window.  Its currently-empty
+            # lifecycle subset must not invalidate the durable projection.
+            return 0
 
         async def start_listener(self) -> None:
             return None
 
         async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
-            assert checkpoint == 41
+            assert checkpoint == 6_099_223
             return []
 
         async def wait(self, timeout: float) -> None:
@@ -413,7 +328,9 @@ def test_worker_reaffirms_a_global_cursor_checkpoint_with_a_new_deployment_ident
     assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
     controller = _current_json(tmp_path, "loop_runs.json")["controller"]
     assert controller["deployment_sha"] == "feedfacefeedfacefeedfacefeedfacefeedface"
-    assert controller["checkpoint"] == controller["source_high_watermark"] == 41
+    assert controller["checkpoint"] == 6_099_223
+    assert controller["source_high_watermark"] == 0
+    assert controller["backlog"] == 0
     assert controller["accepted_live"] is True
 
 
