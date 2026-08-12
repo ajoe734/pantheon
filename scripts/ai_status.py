@@ -1593,6 +1593,10 @@ def _validate_task_state_projection_binding(store_mode: str) -> None:
 
 def load_state() -> dict[str, Any]:
     store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
+    if store_mode and store_mode != "authoritative":
+        raise SystemExit(
+            f"{TASK_STATE_STORE_MODE_ENV} must be authoritative when configured"
+        )
     if store_mode == "authoritative":
         _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
@@ -1644,6 +1648,10 @@ def authoritative_task_state_transaction():
     """Reuse one validated journal snapshot across a governed mutation."""
 
     store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
+    if store_mode and store_mode != "authoritative":
+        raise RuntimeError(
+            f"{TASK_STATE_STORE_MODE_ENV} must be authoritative when configured"
+        )
     if store_mode != "authoritative":
         yield
         return
@@ -1790,39 +1798,12 @@ def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _dashboard_agent_id(config: dict[str, Any], agent_name: str | None) -> str:
-    raw = str(agent_name or "").strip()
-    canonical = canonical_agent_name(raw)
-    candidates = {
-        raw.lower(),
-        canonical.lower(),
-        raw.lower().replace("-", "_"),
-        canonical.lower().replace("-", "_"),
-    }
-    for agent_id, agent in (config.get("agents", {}) or {}).items():
-        display_name = str((agent or {}).get("display_name") or "").strip()
-        values = {
-            str(agent_id).lower(),
-            str(agent_id).lower().replace("-", "_"),
-            display_name.lower(),
-            display_name.lower().replace("-", "_"),
-        }
-        if candidates & values:
-            return str(agent_id)
-    return canonical or raw
-
-
-def dashboard_agent_capacity(config: dict[str, Any], agent_name: str | None) -> int:
-    agent_id = _dashboard_agent_id(config, agent_name)
-    agent = (config.get("agents", {}) or {}).get(agent_id, {}) or {}
-    try:
-        return max(0, int(agent.get("max_parallel", 0)))
-    except (TypeError, ValueError):
-        return 0
-
-
 def save_state(state: dict[str, Any]) -> None:
     store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
+    if store_mode and store_mode != "authoritative":
+        raise RuntimeError(
+            f"{TASK_STATE_STORE_MODE_ENV} must be authoritative when configured"
+        )
     if store_mode == "authoritative":
         _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
@@ -1846,8 +1827,6 @@ def save_state(state: dict[str, Any]) -> None:
     _fsync_directory(STATUS_FILE.parent)
     if STATUS_FILE.read_text(encoding="utf-8") != serialized:
         raise RuntimeError("canonical task-state readback mismatch")
-    if store_mode == "shadow":
-        _append_task_state_shadow(state)
 
 
 def _task_state_event_path(mode: str) -> Path:
@@ -1858,23 +1837,6 @@ def _task_state_event_path(mode: str) -> Path:
     if not event_path.is_absolute():
         raise SystemExit(f"{TASK_STATE_EVENT_LOG_ENV} must be an absolute path")
     return event_path
-
-
-def _append_task_state_shadow(state: dict[str, Any]) -> None:
-    if str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower() != "shadow":
-        return
-    try:
-        _validate_task_state_projection_binding("shadow")
-        event_path = _task_state_event_path("shadow")
-        source = (
-            str(os.environ.get("ORCH_RUN_ID") or "").strip()
-            or str(os.environ.get("AI_NAME") or "").strip()
-            or "ai-status"
-        )
-        append_state_commit(event_path, state, source=source)
-    except Exception as exc:
-        # Shadow mode cannot make the incumbent canonical write unavailable.
-        print(f"Warning: task-state shadow append failed: {exc}", file=sys.stderr)
 
 
 def _fsync_directory(path: Path) -> None:
@@ -3811,11 +3773,6 @@ def normalize_worker_actor(worker: dict[str, Any]) -> str:
     return str(worker.get("agent_id") or worker.get("provider") or "").strip()
 
 
-def runtime_dispatch_mode(_payload: dict[str, Any] | None) -> str:
-    """V2 has one runtime mode; legacy metadata never revives alternate lanes."""
-    return "execution"
-
-
 def expected_task_actor(task: dict[str, Any]) -> str:
     if str(task.get("status") or "").lower() == "review":
         return canonical_agent_name(task.get("reviewer"))
@@ -3917,8 +3874,6 @@ def normalize_runtime_workers(state: dict[str, Any], orchestrator_state: dict[st
                 "task_source": task_source,
                 "reason": reason,
                 "handoff": handoff,
-                "delivery_mode": worker.get("mode"),
-                "dispatch_mode": runtime_dispatch_mode(worker),
                 "last_event_at": worker.get("last_event_at"),
                 "started_at": worker.get("started_at"),
                 "last_error": worker.get("last_error"),
@@ -3950,7 +3905,6 @@ def normalize_runtime_queue(orchestrator_state: dict[str, Any]) -> list[dict[str
                 "agent": canonical_agent_name(event.get("target_display_name") or event.get("target_agent") or linked_worker.get("agent_id")),
                 "provider": event.get("provider") or linked_worker.get("provider"),
                 "reason": event.get("reason") or linked_worker.get("reason") or (linked_worker.get("request_snapshot") or {}).get("reason"),
-                "dispatch_mode": runtime_dispatch_mode(event or linked_worker),
                 "run_id": event.get("run_id") or linked_worker.get("run_id"),
                 "last_event_at": event.get("last_event_at") or event.get("processed_at") or event.get("last_attempt_at") or linked_worker.get("last_event_at"),
             }
@@ -4112,15 +4066,7 @@ def detect_truth_mismatches(
     orchestrator_state: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     task_map = {task["id"]: task for task in state.get("tasks", [])}
-    orchestrator = orchestrator_state or {}
-    provider_guardrails = orchestrator.get("provider_guardrails") if isinstance(orchestrator.get("provider_guardrails"), dict) else {}
-    dispatch_pauses = (
-        provider_guardrails.get("dispatch_pauses")
-        if isinstance(provider_guardrails.get("dispatch_pauses"), dict)
-        else orchestrator.get("dispatch_pauses")
-        if isinstance(orchestrator.get("dispatch_pauses"), dict)
-        else {}
-    )
+    del orchestrator_state
     live_workers = [
         worker
         for worker in workers
@@ -4866,25 +4812,6 @@ def build_dashboard_bundle(
         if task_id:
             live_workers_by_task.setdefault(task_id, []).append(worker)
 
-    dispatch_pauses = (
-        orchestrator.get("provider_guardrails", {}).get("dispatch_pauses")
-        if isinstance(orchestrator.get("provider_guardrails"), dict)
-        and isinstance(orchestrator.get("provider_guardrails", {}).get("dispatch_pauses"), dict)
-        else orchestrator.get("dispatch_pauses")
-        if isinstance(orchestrator.get("dispatch_pauses"), dict)
-        else {}
-    )
-    paused_actors = {str(actor or "").strip().lower() for actor in dispatch_pauses.keys() if str(actor or "").strip()}
-    actor_loads: dict[str, int] = {}
-    for worker in live_workers:
-        if str(worker.get("bucket") or "").lower() not in {"running", "pending"}:
-            continue
-        actor = canonical_agent_name(worker.get("actor") or worker.get("provider"))
-        if not actor:
-            continue
-        actor_key = actor.lower()
-        actor_loads[actor_key] = actor_loads.get(actor_key, 0) + 1
-
     ready_now = 0
     dependency_ready = 0
     in_progress = 0
@@ -4897,15 +4824,7 @@ def build_dashboard_bundle(
         status = str(task.get("status") or "").lower()
         if status == "todo" and all(dependency_is_satisfied(resolver, dep_id) for dep_id in task.get("depends_on", [])):
             dependency_ready += 1
-            owner = canonical_agent_name(task.get("owner"))
-            owner_key = owner.lower()
-            if not owner_key:
-                continue
-            if owner_key in paused_actors:
-                continue
             if any(worker.get("bucket") in {"running", "pending"} for worker in live_workers_by_task.get(str(task.get("id") or ""), [])):
-                continue
-            if actor_loads.get(owner_key, 0) >= dashboard_agent_capacity(config, owner):
                 continue
             ready_now += 1
         elif status == "in_progress":
@@ -4967,8 +4886,6 @@ def build_dashboard_bundle(
                 "worker_status": worker.get("status"),
                 "runtime_bucket": worker.get("bucket"),
                 "dispatch_reason": worker.get("reason"),
-                "mode": worker.get("dispatch_mode"),
-                "delivery_mode": worker.get("delivery_mode"),
                 "last_event_at": worker.get("last_event_at"),
                 "last_error": worker.get("last_error"),
                 "mismatch_flags": mismatch_index.get((task_id, str(worker.get("run_id") or "")), []),
@@ -4976,34 +4893,6 @@ def build_dashboard_bundle(
                 "resolution_hints": [str(item.get("resolution_hint") or "") for item in linked_mismatches if str(item.get("resolution_hint") or "")],
             }
         )
-
-    focus_mode = "execution"
-    focus_mode_source = "supervisor_authority_v2"
-
-    live_worker_queue_ids = {str(worker.get("queue_event_id") or "") for worker in live_workers if str(worker.get("queue_event_id") or "")}
-    computed_mode_occupancy = {
-        "execution": {"running": 0, "pending": 0, "queued": 0},
-        "legacy": {"running": 0, "pending": 0, "queued": 0},
-    }
-    for worker in live_workers:
-        mode_name = (
-            "execution"
-            if str(worker.get("dispatch_mode") or "execution").strip() == "execution"
-            else "legacy"
-        )
-        bucket_name = "running" if worker.get("bucket") == "running" else "pending"
-        computed_mode_occupancy[mode_name][bucket_name] += 1
-    for event in queue_events:
-        event_id = str(event.get("id") or "")
-        if event_id and event_id in live_worker_queue_ids:
-            continue
-        mode_name = (
-            "execution"
-            if str(event.get("dispatch_mode") or "execution").strip() == "execution"
-            else "legacy"
-        )
-        computed_mode_occupancy[mode_name]["queued"] += 1
-    mode_occupancy = computed_mode_occupancy
 
     lanes: dict[str, dict[str, int]] = {}
     for worker in workers:
@@ -5041,8 +4930,6 @@ def build_dashboard_bundle(
 
     return {
         "generated_at": iso_now(),
-        "focus_mode": focus_mode,
-        "focus_mode_source": focus_mode_source,
         "runtime_summary": {
             "supervisor_pid": supervisor_state.get("pid"),
             "heartbeat_at": supervisor_state.get("last_heartbeat_at") or orchestrator.get("last_heartbeat_at"),
@@ -5051,8 +4938,6 @@ def build_dashboard_bundle(
             "running_workers": sum(1 for worker in live_workers if worker.get("bucket") == "running"),
             "pending_workers": sum(1 for worker in live_workers if worker.get("bucket") == "pending"),
             "mismatch_count": len(mismatches),
-            "mode_status": "active",
-            "mode_occupancy": mode_occupancy,
             "lanes": lanes,
             "dispatch_targets": dispatch_targets,
         },
@@ -5124,7 +5009,6 @@ def dashboard_orchestrator_state(state: dict[str, Any], orchestrator_state: dict
         dashboard_workers[run_id]["pid_state"] = worker.get("pid_state")
         dashboard_workers[run_id]["is_live_runtime"] = worker.get("is_live_runtime")
         dashboard_workers[run_id]["runtime_bucket"] = worker.get("bucket")
-        dashboard_workers[run_id]["dispatch_mode"] = worker.get("dispatch_mode")
     return dashboard_state
 
 

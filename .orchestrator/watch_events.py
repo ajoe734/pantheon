@@ -219,6 +219,10 @@ def _queue_delivery_event_locked(
         "target_agent": agent["id"],
         "target_display_name": display_name_for(config, agent["id"]),
         "provider": agent.get("provider", agent["id"]),
+        # The pure planner selects one physical endpoint.  The queue must keep
+        # that choice so late revalidation can fail closed instead of silently
+        # hopping to a different slot after an assignment has been reserved.
+        "delivery_endpoint_id": prepared.get("delivery_endpoint_id"),
         "reason": reason,
         "message": render_wakeup_message(config, prepared, target_agent),
         "context_files": context_files,

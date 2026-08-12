@@ -543,14 +543,18 @@ def evaluate_runtime_health(
     queue_ok, queue_detail = _validated_jsonl_access(queue_path)
     task_head_path = _task_head_path(repo_root, config)
     task_head, task_head_error = _load_json_object(task_head_path) if task_head_path is not None else (None, "not_configured")
-    shadow = supervisor.get("task_state_shadow") if isinstance(supervisor.get("task_state_shadow"), dict) else {}
+    projection = (
+        supervisor.get("task_state_projection")
+        if isinstance(supervisor.get("task_state_projection"), dict)
+        else {}
+    )
     projection_ok = bool(
-        shadow.get("mode") == "authoritative"
-        and shadow.get("ok") is True
-        and shadow.get("caught_up") is True
-        and shadow.get("last_error") is None
-        and shadow.get("projected_state_sha256")
-        and shadow.get("projected_state_sha256") == shadow.get("expected_state_sha256")
+        projection.get("mode") == "authoritative"
+        and projection.get("ok") is True
+        and projection.get("caught_up") is True
+        and projection.get("last_error") is None
+        and projection.get("projected_state_sha256")
+        and projection.get("projected_state_sha256") == projection.get("expected_state_sha256")
     )
     readiness_checks = [
         check("readiness_runtime_state_accessible", state_error is None, {"state_file": str(state_path), "error": state_error}),
@@ -564,7 +568,11 @@ def evaluate_runtime_health(
             status_error is None and isinstance(status.get("tasks"), list),
             {"status_file": str(status_path), "error": status_error},
         ),
-        check("readiness_task_projection_caught_up", projection_ok, {"task_state_shadow": shadow}),
+        check(
+            "readiness_task_projection_caught_up",
+            projection_ok,
+            {"task_state_projection": projection},
+        ),
         check("readiness_queue_accessible", queue_ok, queue_detail),
         check(
             "readiness_provider_registry_accessible",
@@ -700,7 +708,7 @@ def evaluate_runtime_health(
             "max_heartbeat_age_seconds": max_heartbeat_age,
             "lifecycle": supervisor.get("lifecycle"),
             "last_loop_error": supervisor.get("last_loop_error"),
-            "task_state_shadow": supervisor.get("task_state_shadow"),
+            "task_state_projection": supervisor.get("task_state_projection"),
         },
         "watchdog": watchdog_report,
         "checks": checks,

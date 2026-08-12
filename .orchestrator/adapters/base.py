@@ -58,44 +58,6 @@ class DeliveryResult:
         return asdict(self)
 
 
-def hysteresis_held_auth_ready(
-    provider_capabilities: dict[str, Any] | None,
-    provider_id: str | None,
-    *,
-    config: dict[str, Any] | None = None,
-    fallback_provider_key: str | None = None,
-) -> bool:
-    """Return True when the capability report is actively holding auth_ready open.
-
-    CLI adapters derive auth_ready from their own local checks (credential file on
-    disk, CLI handshake). Those checks are exactly as flaky under load as the probe
-    this hysteresis exists to debounce, so an adapter that ignored the report would
-    independently re-derive ``can_auto_deliver=False`` on the first transient failure
-    and defeat the hold recorded in ``provider_capabilities.json``.
-
-    The hold requires an *active* streak (>= 1) still under the configured threshold.
-    Requiring an active streak keeps this a debounce and not a pin: a provider with
-    no failing live probe has streak 0 and gets no hold at all, and a provider whose
-    streak has reached the threshold has already flipped to False upstream.
-    """
-
-    providers = (provider_capabilities or {}).get("providers")
-    if not isinstance(providers, dict):
-        return False
-    entry = providers.get(provider_id) if provider_id else None
-    if not isinstance(entry, dict) and fallback_provider_key:
-        entry = providers.get(fallback_provider_key)
-    if not isinstance(entry, dict) or entry.get("auth_ready") is not True:
-        return False
-    try:
-        streak = int(entry.get("consecutive_probe_failures", 0))
-        threshold = int(
-            (config or {}).get("supervisor", {}).get("provider_probe_failure_hysteresis_threshold", 3)
-        )
-    except (TypeError, ValueError):
-        return False
-    return 1 <= streak < threshold
-
 
 class BaseAdapter:
     name = "base"

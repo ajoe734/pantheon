@@ -115,15 +115,15 @@ def test_ready_dispatcher_capacity_drift_is_actionable_by_default() -> None:
     }
 
 
-def test_task_state_shadow_mode_drift_is_actionable_by_default() -> None:
+def test_task_state_store_mode_drift_is_actionable_by_default() -> None:
     report = find_drift(
-        {"task_state_store": {"mode": "shadow"}},
-        {"task_state_store": {"mode": "off"}},
+        {"task_state_store": {"mode": "authoritative"}},
+        {"task_state_store": {"mode": "invalid"}},
     )
 
     assert report["intentional"] == []
     assert report["drift"] == [
-        {"path": "task_state_store.mode", "repo": "shadow", "live": "off"}
+        {"path": "task_state_store.mode", "repo": "authoritative", "live": "invalid"}
     ]
 
 

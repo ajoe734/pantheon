@@ -49,7 +49,7 @@ class SupervisorV2SmokeTests(unittest.TestCase):
         self.assertEqual(classified["kind"], "quota_terminal")
         self.assertNotIn("reassigned_to", worker)
 
-    def test_bootstrap_is_execution_only(self) -> None:
+    def test_bootstrap_publishes_lifecycle_only(self) -> None:
         config = json.loads((ORCH_DIR / "config.json").read_text())
         state = runtime_state.default_state()
         supervisor.stamp_supervisor_runtime_state(
@@ -60,8 +60,9 @@ class SupervisorV2SmokeTests(unittest.TestCase):
             loop_started_at="2026-08-11T00:00:00Z",
         )
         runtime = state["supervisor"]
-        self.assertEqual(runtime["focus_mode"], "execution")
-        self.assertEqual(set(runtime["mode_occupancy"]), {"execution"})
+        self.assertEqual(runtime["lifecycle"], "starting")
+        self.assertNotIn("focus_mode", runtime)
+        self.assertNotIn("mode_occupancy", runtime)
 
     def test_retry_and_recovery_cannot_launch_workers(self) -> None:
         retry_source = inspect.getsource(supervisor.retry_due_workers)
