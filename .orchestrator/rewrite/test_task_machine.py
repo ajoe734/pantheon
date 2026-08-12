@@ -55,13 +55,6 @@ class DispatchReasonTests(unittest.TestCase):
             task_machine.dispatch_reason("blocked", is_owner=True, is_reviewer=True, deps_satisfied=True)
         )
 
-    def test_priority_values_match_incumbent_ladder(self) -> None:
-        self.assertEqual(task_machine.dispatch_priority("review", is_owner=False, is_reviewer=True, deps_satisfied=True), 0)
-        self.assertEqual(task_machine.dispatch_priority("review_approved", is_owner=True, is_reviewer=False, deps_satisfied=True), 1)
-        self.assertEqual(task_machine.dispatch_priority("in_progress", is_owner=True, is_reviewer=False, deps_satisfied=True), 2)
-        self.assertEqual(task_machine.dispatch_priority("todo", is_owner=True, is_reviewer=False, deps_satisfied=True), 3)
-        self.assertIsNone(task_machine.dispatch_priority("done", is_owner=True, is_reviewer=True, deps_satisfied=True))
-
     def test_case_insensitive_status(self) -> None:
         self.assertEqual(
             task_machine.dispatch_reason("REVIEW", is_owner=False, is_reviewer=True, deps_satisfied=True),

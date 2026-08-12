@@ -272,80 +272,21 @@ def _auth_probe_settings(config: dict[str, Any] | None = None, provider_id: str 
     return settings
 
 
-def _parse_auth_probe_time(value: Any) -> datetime | None:
-    if not value:
-        return None
-    text = str(value).strip()
-    if text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _previous_provider_auth_probe(config: dict[str, Any], provider_id: str) -> dict[str, Any]:
-    try:
-        previous_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
-    except (KeyError, OSError, TypeError):
-        return {}
-    previous_provider = ((previous_report.get("providers") or {}).get(provider_id) or {})
-    if not isinstance(previous_provider, dict):
-        return {}
-    probe = previous_provider.get("auth_probe")
-    if isinstance(probe, dict) and probe:
-        return dict(probe)
-    if previous_provider.get("last_auth_probe_at"):
-        return {
-            "ready": previous_provider.get("auth_ready"),
-            "error": previous_provider.get("auth_error"),
-            "checked_at": previous_provider.get("last_auth_probe_at"),
-            "method": previous_provider.get("auth_method"),
-            "source": "legacy_provider_capabilities",
-        }
-    return {}
-
-
-def _auth_probe_due(config: dict[str, Any], provider_id: str, previous: dict[str, Any]) -> bool:
-    settings = _auth_probe_settings(config, provider_id)
-    if not to_bool(settings.get("enabled", True)):
-        return False
-    if _truthy_env("PANTHEON_PROVIDER_AUTH_PROBE_FORCE"):
-        return True
-    checked_at = _parse_auth_probe_time(previous.get("checked_at") or previous.get("last_auth_probe_at"))
-    if checked_at is None:
-        return True
-    interval_key = "failed_probe_interval_seconds" if previous.get("ready") is False else "probe_interval_seconds"
-    try:
-        interval_seconds = int(settings.get(interval_key, AUTH_PROBE_DEFAULT_INTERVAL_SECONDS))
-    except (TypeError, ValueError):
-        interval_seconds = AUTH_PROBE_DEFAULT_INTERVAL_SECONDS
-    if interval_seconds <= 0:
-        return True
-    return (datetime.now(timezone.utc) - checked_at).total_seconds() >= interval_seconds
-
-
 def provider_auth_probe_due(
     config: dict[str, Any],
     provider_id: str,
     previous: dict[str, Any] | None = None,
 ) -> bool:
-    """Return whether one targeted provider probe may spend a live call.
+    """Compatibility shim for callers not yet migrated to delivery health.
 
-    Supervisor recovery paths already have the capability row in memory.  Let
-    them consult the same success/failure intervals as the provider probes
-    before forcing an authoritative check, rather than calling ``force=True``
-    on every supervisor tick.  Ambiguous/unsupported results are fail-closed
-    recovery outcomes, so they use the shorter failed-probe interval too.
+    It intentionally never reads cached capability evidence or applies a
+    probe interval.  The unified supervisor replaces this call with its
+    demand-derived refresh set; until then ``True`` preserves the safe side of
+    the old contract (a caller may observe, but may not reuse stale auth).
     """
 
-    previous_probe = dict(previous or _previous_provider_auth_probe(config, provider_id))
-    if previous_probe.get("ready") is not True:
-        previous_probe["ready"] = False
-    return _auth_probe_due(config, provider_id, previous_probe)
+    _ = (config, provider_id, previous)
+    return True
 
 
 def _auth_probe_record(
@@ -373,21 +314,6 @@ def _auth_probe_record(
     }
     if metadata:
         record["metadata"] = metadata
-    return record
-
-
-def _reuse_auth_probe(provider_id: str, kind: str, previous: dict[str, Any], *, method: str) -> dict[str, Any]:
-    record = dict(previous)
-    record.setdefault("provider", provider_id)
-    record.setdefault("kind", kind)
-    record.setdefault("method", method)
-    record.setdefault("status", "ready" if record.get("ready") is True else "not_ready")
-    record.setdefault("source", "cached")
-    if record.get("checked_at") and not record.get("last_auth_probe_at"):
-        record["last_auth_probe_at"] = record.get("checked_at")
-    if record.get("last_auth_probe_at") and not record.get("checked_at"):
-        record["checked_at"] = record.get("last_auth_probe_at")
-    record["source"] = "cached"
     return record
 
 
@@ -757,6 +683,9 @@ def _codex_auth_probe(
     force: bool = False,
     recover_incompatible_models_cache: bool = False,
 ) -> dict[str, Any]:
+    # Kept for caller compatibility only.  Delivery health owns freshness; a
+    # probe primitive never reuses provider-capabilities evidence.
+    _ = force
     env = _codex_runtime_env_with_overrides(config, provider_id, env)
     metadata = _codex_auth_metadata(config, provider_id, env)
     if not binary:
@@ -785,10 +714,7 @@ def _codex_auth_probe(
             metadata=metadata,
         )
 
-    previous = _previous_provider_auth_probe(config, provider_id)
     method = "codex_exec_api_key" if metadata.get("api_key_env_present") else "codex_exec_oauth"
-    if previous and not force and not _auth_probe_due(config, provider_id, previous):
-        return _reuse_auth_probe(provider_id, "codex", previous, method=method)
 
     settings = _auth_probe_settings(config, provider_id)
     prompt = str(settings.get("probe_prompt") or AUTH_PROBE_PROMPT)
@@ -934,6 +860,8 @@ def _claude_auth_probe(
     *,
     force: bool = False,
 ) -> dict[str, Any]:
+    # See _codex_auth_probe: this is always a live observation.
+    _ = force
     metadata = {
         "credentials": str(claude_credentials_path(env)),
         "credentials_exists": claude_credentials_path(env).exists(),
@@ -950,9 +878,6 @@ def _claude_auth_probe(
             status="cli_missing",
             metadata=metadata,
         )
-    previous = _previous_provider_auth_probe(config, provider_id)
-    if previous and not force and not _auth_probe_due(config, provider_id, previous):
-        return _reuse_auth_probe(provider_id, "claude", previous, method="claude_auth_status_refresh")
     status_payload = _claude_auth_status_payload(config, provider_id, binary, env)
     account_identity = _claude_account_identity(status_payload)
     account_group = _claude_account_group(account_identity)
@@ -1142,6 +1067,8 @@ def _antigravity_auth_probe(
     *,
     force: bool = False,
 ) -> dict[str, Any]:
+    # See _codex_auth_probe: this is always a live observation.
+    _ = force
     env = _antigravity_runtime_env(config, provider_id)
     metadata = _antigravity_auth_metadata(config, provider_id, env)
     if not binary:
@@ -1165,10 +1092,7 @@ def _antigravity_auth_probe(
             metadata=metadata,
         )
 
-    previous = _previous_provider_auth_probe(config, provider_id)
     method = "agy_prompt_api_key" if metadata.get("gemini_api_key_present") else "agy_prompt_oauth"
-    if previous and not force and not _auth_probe_due(config, provider_id, previous):
-        return _reuse_auth_probe(provider_id, "antigravity", previous, method=method)
 
     provider_settings = (config.get("providers", {}).get(provider_id, {}) or {}).get("antigravity", {}) or {}
     settings = _auth_probe_settings(config, provider_id)
@@ -1377,12 +1301,13 @@ def probe_provider_auth(
     force: bool = True,
     recover_incompatible_models_cache: bool = False,
 ) -> dict[str, Any]:
-    """Probe one concrete provider immediately before dispatch.
+    """Return one fresh, concrete endpoint observation.
 
-    The periodic capability report is useful fleet telemetry, but its cached
-    Claude/Antigravity probes are not an authoritative launch gate.  This
-    targeted entry point probes only the account about to own a worker and can
-    force a fresh check without rebuilding every provider capability.
+    ``force`` remains accepted for external caller compatibility, but has no
+    behavioural effect: probe freshness is owned by the runtime delivery-health
+    snapshot, never by ``provider_capabilities.json``.  The scheduler decides
+    when demand warrants this potentially slow operation; this function only
+    observes the exact requested endpoint.
 
     Providers without a live CLI challenge still return a normalized material
     check.  An unknown delivery mode returns ``ready=None`` so new adapters are
@@ -2273,41 +2198,10 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
             },
         },
     }
-    capabilities_path = (config.get("paths") or {}).get("provider_capabilities")
-    existing_report = (
-        load_json(config_path(config, "provider_capabilities"), default={}) or {}
-        if capabilities_path
-        else {}
-    )
-    existing_providers = existing_report.get("providers", {}) if isinstance(existing_report.get("providers"), dict) else {}
-    from supervisor import apply_provider_probe_to_report
-    for pkey, pdata in report.get("providers", {}).items():
-        if isinstance(pdata, dict):
-            auth_probe = pdata.get("auth_probe")
-            has_live_probe = (
-                isinstance(auth_probe, dict)
-                and str(auth_probe.get("source") or "").strip().lower() == "live"
-            )
-            if has_live_probe and pkey in existing_providers and isinstance(existing_providers[pkey], dict):
-                # Inheritance is gated on this provider actually having a live probe.
-                # apply_provider_probe_to_report below is the only thing that advances
-                # consecutive_probe_failures, and it only runs for live probes, so a
-                # probe-less provider's streak would stay 0 < threshold forever and the
-                # inherited auth_ready=True would become an irreversible pin -- a genuinely
-                # revoked credential could never flip back to False. Providers without a
-                # live probe (e.g. copilot, grok, shared_credential_group members) keep
-                # their freshly computed value.
-                prev = existing_providers[pkey]
-                if "consecutive_probe_failures" in prev:
-                    pdata["consecutive_probe_failures"] = prev["consecutive_probe_failures"]
-                prev_streak = int(prev.get("consecutive_probe_failures", 0))
-                max_streak = int(config.get("supervisor", {}).get("provider_probe_failure_hysteresis_threshold", 3))
-                if prev.get("auth_ready") is True and prev_streak < max_streak:
-                    pdata["auth_ready"] = True
-            if has_live_probe:
-                apply_provider_probe_to_report(report, pkey, auth_probe, config=config)
-
-    # Re-evaluate agent_adapters so can_auto_deliver incorporates hysteresis-held provider auth_ready.
+    # Capability reports are telemetry only.  Dispatch consumes the separate
+    # V2 delivery-health snapshot, so this report never inherits a prior probe,
+    # maintains failure streaks, or imports scheduler policy back into provider
+    # inspection.
     # Adapters are handed the whole report, not report["providers"]: every other call site
     # (supervisor.build_adapter at the delivery path) passes the full report and the adapters
     # index into it with .get("providers", {}) themselves.
