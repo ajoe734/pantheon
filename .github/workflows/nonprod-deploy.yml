@@ -271,26 +271,68 @@ jobs:
           deployment_json="${EVIDENCE_DIR}/frontend-deployment-before.json"
           curl --fail-with-body --silent --show-error \
             --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
-            "${DEV_BFF_URL%/}/bff/version" > "${version_json}"
-          curl --fail-with-body --silent --show-error \
-            --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
             "${DEV_FE_URL%/}/deployment.json" > "${deployment_json}"
-          previous="$(
-            python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("source_commit_sha") or "")' \
-              "${version_json}"
-          )"
-          previous_frontend="$(
-            python3 -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")); print(value.get("frontendSha") or value.get("commit") or "")' \
-              "${deployment_json}"
-          )"
-          [[ "${previous}" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "Hosted BFF did not report an exact rollback commit." >&2
-            exit 1
-          }
-          [[ "${previous_frontend}" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "Hosted frontend did not report an exact rollback commit." >&2
-            exit 1
-          }
+          read -r previous previous_frontend < <(
+            python3 - "${deployment_json}" "${DEV_BFF_URL}" <<'PY'
+          import json
+          import re
+          import sys
+
+          manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected_bff_url = sys.argv[2].rstrip("/")
+          sha = re.compile(r"^[0-9a-f]{40}$")
+
+          def exact_sha(*values):
+              if not values or any(not isinstance(value, str) or not sha.fullmatch(value) for value in values):
+                  raise SystemExit("accepted frontend deployment manifest lacks an exact release identity")
+              if len(set(values)) != 1:
+                  raise SystemExit("accepted frontend deployment manifest has conflicting release identities")
+              return values[0]
+
+          if (
+              manifest.get("schemaVersion") != 1
+              or manifest.get("app") != "execute-plans"
+              or manifest.get("repository") != "ajoe734/execute-plans"
+              or manifest.get("sourceBranch") != "dev"
+              or manifest.get("deploymentState") != "accepted"
+              or manifest.get("bffCommitEvidence") is not True
+          ):
+              raise SystemExit("frontend deployment manifest is not an accepted Pantheon dev release")
+          bff = manifest.get("bff") or {}
+          if not isinstance(bff, dict) or bff.get("baseUrl", "").rstrip("/") != expected_bff_url:
+              raise SystemExit("frontend deployment manifest is not bound to the expected BFF endpoint")
+          frontend = manifest.get("frontend") or {}
+          if not isinstance(frontend, dict):
+              raise SystemExit("frontend deployment manifest has no frontend release identity")
+          backend_sha = exact_sha(
+              manifest.get("bffCommit"),
+              manifest.get("bffSourceCommitSha"),
+              bff.get("sourceCommitSha"),
+          )
+          frontend_sha = exact_sha(
+              manifest.get("commit"),
+              manifest.get("frontendSha"),
+              frontend.get("commitSha"),
+          )
+          print(backend_sha, frontend_sha)
+          PY
+          )
+          baseline_source="accepted_frontend_pair_manifest"
+          if curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
+            "${DEV_BFF_URL%/}/bff/version" > "${version_json}"; then
+            observed_previous="$(
+              python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("source_commit_sha") or "")' \
+                "${version_json}"
+            )"
+            [[ "${observed_previous}" == "${previous}" ]] || {
+              echo "Hosted BFF identity does not match the accepted frontend pair manifest." >&2
+              exit 1
+            }
+            baseline_source="accepted_frontend_pair_manifest+live_bff_match"
+          else
+            echo "Hosted BFF version endpoint is unavailable; recovering from the accepted frontend pair manifest." >&2
+          fi
           git -C .agora-gate-controller merge-base --is-ancestor \
             "${previous}" refs/remotes/origin/dev || {
               echo "Hosted rollback commit ${previous} is not contained in Pantheon dev." >&2
@@ -303,7 +345,7 @@ jobs:
             }
           python3 - "${EVIDENCE_DIR}/rollback-baseline.json" "${previous}" "${previous_frontend}" \
             "${{ steps.target.outputs.sha }}" "${{ steps.frontend.outputs.sha }}" \
-            "${{ steps.release_admission.outputs.release_candidate_id }}" <<'PY'
+            "${{ steps.release_admission.outputs.release_candidate_id }}" "${baseline_source}" <<'PY'
           import json
           import pathlib
           import sys
@@ -317,6 +359,7 @@ jobs:
                       "candidate_backend_sha": sys.argv[4],
                       "candidate_frontend_sha": sys.argv[5],
                       "release_candidate_id": sys.argv[6],
+                      "baseline_source": sys.argv[7],
                   },
                   indent=2,
                   sort_keys=True,
