@@ -1185,7 +1185,7 @@ def create_assistant_router(
                 422,
                 ErrorCode.VALIDATION_FAILED,
                 "Canonical mutation action is not Human/Ops authority",
-                "Only assignment, reopen, and audited note actions may use an operator assertion",
+                "Only assignment, reopen, audited note, and verified merged-delivery reconciliation actions may use an operator assertion",
                 field="action",
             )
         activation_id = str(

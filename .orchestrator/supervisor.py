@@ -9991,8 +9991,7 @@ def _persist_task_reassignment_locked(
     if lifecycle_action is not None:
         try:
             task["status"] = rewrite_task_machine.transition(
-                old_status,
-                lifecycle_action,
+                old_status, lifecycle_action.value
             ).value
         except rewrite_task_machine.TransitionError:
             return False
@@ -10130,6 +10129,36 @@ def assignment_terminal_unavailability(
     return None
 
 
+def task_has_explicit_recovery_hold(
+    status: Mapping[str, Any], task: Mapping[str, Any]
+) -> bool:
+    """Whether a blocked task carries an explicit non-provider wait.
+
+    A durable quota/auth pause is enough to move a stranded execution
+    assignment, but it must never erase a Human/Ops wait, an unresolved
+    blocker, or a pending handoff.  Legacy rows with none of those markers are
+    the only blocked rows eligible for the same recovery transition as a
+    stranded todo/in-progress task.
+    """
+
+    if str(task.get("waiting_for") or "").strip():
+        return True
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return True
+    for blocker in status.get("blockers", []) or []:
+        if not isinstance(blocker, Mapping) or str(blocker.get("task_id") or "") != task_id:
+            continue
+        if str(blocker.get("status") or "").strip().lower() not in {"resolved", "done", "closed"}:
+            return True
+    for handoff in status.get("handoffs", []) or []:
+        if not isinstance(handoff, Mapping) or str(handoff.get("task_id") or "") != task_id:
+            continue
+        if str(handoff.get("status") or "").strip().lower() not in {"done", "resolved", "closed"}:
+            return True
+    return False
+
+
 def reconcile_unavailable_assignments(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -10161,7 +10190,7 @@ def reconcile_unavailable_assignments(
     busy_task_ids = {
         task_id for task_id, _agent in active_pairs | pending_pairs if task_id
     }
-    eligible_owner_statuses = {"todo", "in_progress", "review_approved"}
+    eligible_owner_statuses = {"todo", "in_progress", "review_approved", "blocked"}
     review_statuses = normalized_status_set(
         ready_dispatch_settings(config).get("review_statuses"), ["review"]
     )
@@ -10174,6 +10203,8 @@ def reconcile_unavailable_assignments(
         task_id = str(task.get("id") or "").strip()
         task_status = str(task.get("status") or "").strip().lower()
         if not task_id or task_id in busy_task_ids:
+            continue
+        if task_status == "blocked" and task_has_explicit_recovery_hold(status, task):
             continue
         owner = canonical_agent_name(config, str(task.get("owner") or ""))
         reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
@@ -10240,6 +10271,11 @@ def reconcile_unavailable_assignments(
             new_owner=new_owner,
             new_reviewer=new_reviewer,
             message=message,
+            lifecycle_action=(
+                rewrite_task_machine.TaskAction.REOPEN
+                if task_status == "blocked"
+                else None
+            ),
             handoff_from=unavailable_actor,
             handoff_to=new_reviewer if role == "reviewer" else None,
             expected_owner=owner,

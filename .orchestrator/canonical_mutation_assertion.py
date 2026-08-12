@@ -28,7 +28,12 @@ PRIVATE_KEY_ID_ENV = "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID"
 PUBLIC_KEYS_ENV = "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON"
 ASSERTION_ENV = "PANTHEON_CANONICAL_MUTATION_ASSERTION_JSON"
 CAPABILITY = "assistant.canonical.mutate"
-OPERATOR_ACTIONS = frozenset({"assign", "reopen", "note"})
+# Human/Ops may only make bounded assignment/recovery mutations.  A merged
+# delivery reconciliation is deliberately included because ai_status applies
+# its separate, fail-closed merged-delivery and protected-closeout evidence
+# checks before the task can become done.  Normal completion remains owner
+# authority and is intentionally not an operator assertion action.
+OPERATOR_ACTIONS = frozenset({"assign", "reopen", "note", "reconcile_merged_done"})
 SCHEMA = "pantheon.canonical-mutation-assertion.v1"
 LEGACY_CONSUMED_KEY = "consumed_operator_assertions"
 CONSUMED_KEY = "consumed_canonical_mutation_assertions"

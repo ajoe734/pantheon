@@ -895,6 +895,77 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex2")
         self.assertEqual(persist.call_args.kwargs["expected_owner"], "Codex")
 
+    def test_terminal_pause_reopens_stale_blocked_assignment_for_normal_dispatch(self) -> None:
+        task = task_fixture(status="blocked", reviewer="Human/Ops")
+        state = {
+            "account_runtime_schema_version": supervisor.ACCOUNT_RUNTIME_SCHEMA_VERSION,
+            "workers": {},
+            "queue": {"events": {}},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex_account": {
+                        "provider": "codex_account",
+                        "pause_kind": "quota_terminal",
+                        "blocked_until": "9999-12-31T23:59:59Z",
+                    }
+                }
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "agent_provider_auth_blocked", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "persist_task_reassignment",
+                return_value=True,
+            ) as persist,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex2")
+        self.assertEqual(
+            persist.call_args.kwargs["lifecycle_action"],
+            supervisor.rewrite_task_machine.TaskAction.REOPEN,
+        )
+        self.assertEqual(persist.call_args.kwargs["expected_status"], "blocked")
+        resumed = task_fixture(
+            status=supervisor.rewrite_task_machine.transition(
+                "blocked", supervisor.rewrite_task_machine.TaskAction.REOPEN.value
+            ).value,
+            owner="Codex2",
+            reviewer="Human/Ops",
+        )
+        self.assertTrue(
+            planner_decision(self.config, resumed, target="Codex2")["eligible"]
+        )
+
+    def test_terminal_pause_never_reopens_explicit_human_ops_hold(self) -> None:
+        task = task_fixture(status="blocked", reviewer="Human/Ops")
+        task["waiting_for"] = "Human/Ops"
+        state = {
+            "account_runtime_schema_version": supervisor.ACCOUNT_RUNTIME_SCHEMA_VERSION,
+            "workers": {},
+            "queue": {"events": {}},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex_account": {
+                        "provider": "codex_account",
+                        "pause_kind": "quota_terminal",
+                        "blocked_until": "9999-12-31T23:59:59Z",
+                    }
+                }
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertFalse(changed)
+        persist.assert_not_called()
+
     def test_unknown_or_missing_probe_does_not_reassign_known_lane(self) -> None:
         task = task_fixture()
         state = {"workers": {}, "queue": {"events": {}}, "provider_guardrails": {}}
