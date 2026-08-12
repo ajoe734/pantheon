@@ -811,11 +811,6 @@ def test_full_supervisor_cycle_never_queues_partially_materialized_packet(
         ),
         patch.object(
             benchmark.supervisor_module,
-            "agent_auto_dispatch_block_reason",
-            return_value=None,
-        ),
-        patch.object(
-            benchmark.supervisor_module,
             "scan_live_worker_pids_by_agent",
             return_value={},
         ),

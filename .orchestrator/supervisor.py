@@ -12802,6 +12802,11 @@ def run_once(
             if isinstance(bridge_state, dict)
             else None
         )
+        # Bridge materialization is a canonical mutation even if its optional
+        # runtime-observability snapshot loses a later CAS race.  Report the
+        # cycle as changed so callers never treat a successfully drained packet
+        # as an idle supervisor pass.
+        changed = bridge_drain_changed or changed
         _safe_phase(
             "continue_or_skip_empty",
             continue_or_skip_empty,

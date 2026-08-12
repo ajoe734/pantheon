@@ -804,8 +804,16 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             ]
             results = [proc.communicate(timeout=20) + (proc.returncode,) for proc in procs]
 
-            for stdout, stderr, returncode in results:
-                self.assertEqual(returncode, 0, stderr + stdout)
+            handoff_stdout, handoff_stderr, handoff_code = results[0]
+            progress_stdout, progress_stderr, progress_code = results[1]
+            self.assertEqual(handoff_code, 0, handoff_stderr + handoff_stdout)
+            # V2 applies lifecycle mutations linearly.  If handoff wins the
+            # race, a concurrently submitted progress update is correctly
+            # rejected from the new review state rather than being applied
+            # after the handoff.
+            self.assertIn(progress_code, {0, 1}, progress_stderr + progress_stdout)
+            if progress_code:
+                self.assertIn("review --progress-->", progress_stderr)
             state = json.loads((central / "ai-status.json").read_text(encoding="utf-8"))
             [task] = [item for item in state["tasks"] if item["id"] == task_id]
             self.assertEqual(task["status"], "review")
@@ -817,7 +825,11 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             ]
             task_events = [event for event in events if event.get("task_id") == task_id]
             event_types = {event.get("type") for event in task_events}
-            self.assertTrue({"handoff", "progress"}.issubset(event_types))
+            self.assertIn("handoff", event_types)
+            if progress_code == 0:
+                self.assertIn("progress", event_types)
+            else:
+                self.assertNotIn("progress", event_types)
             event_ids = [event.get("event_id") for event in task_events]
             self.assertEqual(len(event_ids), len(set(event_ids)))
 
