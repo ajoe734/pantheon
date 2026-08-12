@@ -11,7 +11,7 @@
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
-    "evidence_cut_at": "2026-08-12T11:08:46Z"
+    "evidence_cut_at": "2026-08-12T13:00:55Z"
   },
   "scope": {
     "owned_layer": "Supervisor Authority V2 assignment ordering and dispatch regression coverage for stale L12 missing_process residue.",
@@ -37,29 +37,31 @@
     "historical_merge_commit": "23ae23c2185d31d2aeacafaa9b051127a6d53136",
     "content_restore_revert": "eb04f84873e2b33d92b9c7f0a6b047d6994aa98a",
     "authority_v2_commit": "b17c015b3cf217065a8f6bd16013da498ef33567",
+    "unified_dispatch_v2_commit": "8f582c4d9beb8d8839bcdd175b24f3ec88b0174e",
     "current_truth": [
-      ".orchestrator/runtime_state.py migrate_state removes provider_guardrails.task_failure_streaks as an obsolete control-plane bucket.",
+      ".orchestrator/runtime_state.py migrate_state admits only V2 schema fields, so the obsolete provider_guardrails.task_failure_streaks bucket is discarded.",
       ".orchestrator/supervisor.py dispatch_ready_tasks is the sole planner and does not consult legacy task failure streaks.",
       "Missing worker processes use the current bounded retry and terminal block/recovery lifecycle instead of a failure-streak suppression loop."
     ],
     "reason_not_to_restore_old_reaper": "Authority V2 explicitly rejects retired failure-streak control-plane symbols; restoring the old policy would create a second scheduling authority."
   },
   "implementation": {
-    "merge_base": "1ca51300e6502f297244eae2ef7ce2e1b30891f2",
-    "preimplementation_merge_commit": "a7c635d778dab3f98cb811e96a7217f942eb0717",
-    "latest_dev_merge_commit": "89e72ee035eb42e1a6c33f9e6997bb850962cfd3",
+    "merge_base": "7a26b3267226da2b96d63024e2e5b8173f26ba5f",
+    "integrated_dev_sha": "7a26b3267226da2b96d63024e2e5b8173f26ba5f",
+    "dev_merge_commit": "2671104e8aad446f8020411b1dd4f18a7726f7ad",
     "policy_functions": [
       "task_is_l12_recovery_work",
+      "l12_recovery_lane_order",
       "bounded_fallback_candidates",
       "plan_task_assignment_pair",
       "reconcile_unavailable_assignments"
     ],
     "behavior": [
       "L12 recovery work is identified only by L12- or SUP-L12- task ids.",
-      "For L12 recovery work, declared preferred_lane_order candidates are enqueued before direct generic reassignment fallbacks.",
+      "Only L12 recovery work may consume declared preferred_lane_order candidates, which are enqueued before direct generic reassignment fallbacks.",
       "The finite, cycle-safe fallback traversal remains bounded by the configured agent roster.",
       "The sole durable assignment reconciler applies the same L12-first order to owner and reviewer recovery and keeps the pair independent.",
-      "Non-L12 work keeps direct configured fallbacks ahead of task-preferred lanes.",
+      "Non-L12 work ignores the narrow L12 task hint and keeps the configured fallback order unchanged.",
       "The sole dispatch planner remains driven by canonical owner/reviewer truth and ignores a raw legacy task_failure_streaks bucket."
     ]
   },
@@ -86,13 +88,13 @@
       "id": "AC4",
       "criterion": "No config edits.",
       "status": "pass",
-      "proof": "git diff --quiet origin/dev -- .orchestrator/config.json returned 0."
+      "proof": "git diff --quiet origin/dev...HEAD -- .orchestrator/config.json returned 0."
     },
     {
       "id": "AC5",
       "criterion": "Full supervisor regression passes.",
       "status": "pass",
-      "proof": "All 44 Supervisor Authority V2 contract tests passed after the focused L12 regressions."
+      "proof": "All 42 current Supervisor Authority V2 contract tests passed after composing with Unified Dispatch Health R2."
     }
   ],
   "verification": {
@@ -101,17 +103,17 @@
       {
         "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; cd .orchestrator; \"$PANTHEON_TASK_PY\" -m unittest -v test_supervisor.SharedPlannerContractTests.test_legacy_l12_missing_process_streak_cannot_suppress_assigned_lane test_supervisor.SharedPlannerContractTests.test_l12_assignment_prefers_declared_provider_before_codex_fallback test_supervisor.AccountHealthAndRecoveryContractTests.test_l12_recovery_prefers_declared_provider_lanes",
         "result": "pass",
-        "conclusion": "3 focused tests passed in 0.007 seconds, including direct dispatch, helper ordering, and durable owner/reviewer recovery scenarios."
+        "conclusion": "3 focused tests passed in 0.009 seconds, including direct dispatch, helper ordering, and durable owner/reviewer recovery scenarios."
       },
       {
         "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_TASK_PY\" .orchestrator/test_supervisor.py",
         "result": "pass",
-        "conclusion": "44 tests passed in 0.628 seconds."
+        "conclusion": "42 tests passed in 0.636 seconds."
       },
       {
-        "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; cd .orchestrator; \"$PANTHEON_TASK_PY\" -m unittest -v test_runtime_state.LoadRuntimeStateTests.test_load_runtime_state_drops_retired_control_plane_buckets",
+        "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; cd .orchestrator; \"$PANTHEON_TASK_PY\" -m unittest -v test_runtime_state.LoadRuntimeStateTests.test_load_runtime_state_keeps_only_v2_schema_fields",
         "result": "pass",
-        "conclusion": "The Authority V2 retired-bucket migration regression passed in 0.003 seconds."
+        "conclusion": "The Authority V2 schema-filtering regression passed in 0.002 seconds."
       },
       {
         "command": "git diff --check",
@@ -119,14 +121,14 @@
         "conclusion": "No whitespace errors."
       },
       {
-        "command": "git diff --quiet origin/dev -- .orchestrator/config.json",
+        "command": "git diff --quiet origin/dev...HEAD -- .orchestrator/config.json",
         "result": "pass",
         "conclusion": "No supervisor configuration change."
       }
     ],
-    "validated_at": "2026-08-12T11:08:46Z",
+    "validated_at": "2026-08-12T13:00:55Z",
     "command_runtime_sha": "1ca51300e6502f297244eae2ef7ce2e1b30891f2",
-    "base_sha": "1ca51300e6502f297244eae2ef7ce2e1b30891f2"
+    "base_sha": "7a26b3267226da2b96d63024e2e5b8173f26ba5f"
   },
   "delivery": {
     "historical_pull_request": 4590,
