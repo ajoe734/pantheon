@@ -205,6 +205,28 @@ def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
     )
 
 
+def test_rollback_baseline_uses_the_accepted_frontend_pair_manifest() -> None:
+    """A failed BFF cannot erase the last accepted release identity needed to
+    repair it.  The immutable frontend deployment manifest carries that pair;
+    a live BFF response is only a consistency check when available."""
+    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    start = dev.index("      - name: Capture exact hosted FE and BFF rollback baseline")
+    end = dev.index("      - name: Seal exact-pair admission artifact", start)
+    baseline = dev[start:end]
+
+    assert baseline.index('"${DEV_FE_URL%/}/deployment.json" > "${deployment_json}"') < baseline.index(
+        '"${DEV_BFF_URL%/}/bff/version" > "${version_json}"'
+    )
+    assert 'baseline_source="accepted_frontend_pair_manifest"' in baseline
+    assert 'baseline_source="accepted_frontend_pair_manifest+live_bff_match"' in baseline
+    assert "Hosted BFF identity does not match the accepted frontend pair manifest." in baseline
+    assert "recovering from the accepted frontend pair manifest" in baseline
+    assert 'manifest.get("deploymentState") != "accepted"' in baseline
+    assert 'manifest.get("bffCommitEvidence") is not True' in baseline
+    assert 'bff.get("baseUrl", "").rstrip("/") != expected_bff_url' in baseline
+    assert '"baseline_source": sys.argv[7]' in baseline
+
+
 def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() -> None:
     dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
 
