@@ -39,6 +39,7 @@ from multi_repo_registry import (
 
 COMMENT_MARKER = "<!-- pantheon-bus -->"
 MAX_PROCESSED_IDS = 2000
+REMOTE_BRANCH_LOOKUP_TIMEOUT_SECONDS = 8.0
 
 
 class GitHubBusError(RuntimeError):
@@ -232,7 +233,19 @@ def branch_head_sha(branch: str) -> str | None:
 
 
 def remote_branch_head_sha(branch: str, remote: str = "origin") -> str | None:
-    proc = run_command(["git", "ls-remote", "--heads", remote, branch], cwd=ROOT)
+    """Return the remote branch head, or ``None`` when it cannot be bounded.
+
+    This lookup runs in routine reconciliation.  A wedged remote helper must
+    not prevent the supervisor from finalizing its scheduling cycle.
+    """
+
+    try:
+        proc = run_bounded_process(
+            ["git", "ls-remote", "--heads", remote, branch],
+            timeout_seconds=REMOTE_BRANCH_LOOKUP_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     if proc.returncode != 0:
         return None
     expected_ref = f"refs/heads/{branch}"
@@ -258,19 +271,18 @@ def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
     return remote_branch_head_sha(branch, remote) is not None
 
 
-def run_gh_process(
-    args: list[str],
+def run_bounded_process(
+    command: list[str],
     *,
     timeout_seconds: float,
-    gh_binary: str | None = None,
+    cwd: Path = ROOT,
 ) -> subprocess.CompletedProcess[str]:
-    # Avoid subprocess.run(..., timeout=...) here: if gh gets wedged in I/O,
-    # subprocess.run waits on teardown and can stall the supervisor heartbeat.
-    binary = gh_binary or resolve_gh_binary() or "gh"
+    """Run a network-capable helper without allowing teardown to stall a cycle."""
+
     with tempfile.TemporaryFile() as stdout_handle, tempfile.TemporaryFile() as stderr_handle:
         process = subprocess.Popen(
-            [binary, *args],
-            cwd=str(ROOT),
+            command,
+            cwd=str(cwd),
             stdout=stdout_handle,
             stderr=stderr_handle,
             start_new_session=True,
@@ -292,7 +304,20 @@ def run_gh_process(
         stderr_handle.seek(0)
         stdout = stdout_handle.read().decode("utf-8", errors="replace")
         stderr = stderr_handle.read().decode("utf-8", errors="replace")
-        return subprocess.CompletedProcess([binary, *args], process.returncode or 0, stdout, stderr)
+        return subprocess.CompletedProcess(command, process.returncode or 0, stdout, stderr)
+
+
+def run_gh_process(
+    args: list[str],
+    *,
+    timeout_seconds: float,
+    gh_binary: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    binary = gh_binary or resolve_gh_binary() or "gh"
+    return run_bounded_process(
+        [binary, *args],
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def run_gh(args: list[str], *, allow_offline: bool = True) -> subprocess.CompletedProcess[str]:

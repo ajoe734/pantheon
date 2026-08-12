@@ -925,6 +925,23 @@ class PrReconciliationCandidateTests(unittest.TestCase):
 
 
 class GitHubBusProcessTests(unittest.TestCase):
+    def test_remote_branch_lookup_times_out_fail_closed(self) -> None:
+        with mock.patch.object(
+            github_bus,
+            "run_bounded_process",
+            side_effect=subprocess.TimeoutExpired(
+                cmd=["git", "ls-remote", "--heads", "origin", "task/SUP-001"],
+                timeout=github_bus.REMOTE_BRANCH_LOOKUP_TIMEOUT_SECONDS,
+            ),
+        ) as run_bounded_process:
+            head = github_bus.remote_branch_head_sha("task/SUP-001")
+
+        self.assertIsNone(head)
+        run_bounded_process.assert_called_once_with(
+            ["git", "ls-remote", "--heads", "origin", "task/SUP-001"],
+            timeout_seconds=github_bus.REMOTE_BRANCH_LOOKUP_TIMEOUT_SECONDS,
+        )
+
     def test_run_gh_process_kills_process_group_on_timeout(self) -> None:
         class FakePopen:
             def __init__(self) -> None:
