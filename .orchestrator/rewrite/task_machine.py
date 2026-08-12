@@ -1,32 +1,16 @@
-"""Explicit task state machine — Phase 3 (SUPERVISOR_REWRITE_PLAN.md, anti-pattern C).
+"""Authoritative Pantheon task lifecycle.
 
-The incumbent has no task state machine: the lifecycle
-``todo → in_progress → review → review_approved → done`` is re-derived by hand in
-five separate places (dispatch_ready_tasks, higher_priority_ready_task_exists,
-dispatch_priority_for_task, current_dispatch_event_key, worker_matches_current_
-assignment), and owner/reviewer/status is mutated from three subsystems, so tasks
-thrash between review and in_progress and never close.
+Every canonical task-status writer must ask :func:`transition` for the target
+state.  Callers may add command-specific authorization and evidence gates, but
+they must not maintain another status ladder or assign a status directly.
 
-This module makes the lifecycle a single explicit machine:
-
-    TODO ──dispatch──▶ IN_PROGRESS ──submit──▶ REVIEW ──approve──▶ REVIEW_APPROVED
-                          ▲                       │                      │
-                          └────────reject─────────┘                 finalize
-                                                                         ▼
-                                                                       DONE
-    (reject bumps bounce_count; N bounces ⇒ BLOCKED + escalation, ending thrash)
-
-Its first job is to own **dispatch eligibility** — the "who may act on this task
-next, and why" decision that the five ladders duplicate. `dispatch_reason()` is a
-pure function that reproduces the incumbent `dispatch_priority_for_task()` exactly
-(shadow-proven on the live board) so every consumer can query it instead of
-re-deriving the ladder. It takes already-resolved booleans (is_owner, is_reviewer,
-deps_satisfied) so the machine stays pure and independently testable; the caller
-resolves those from the task/config once.
+Dispatch eligibility is deliberately kept as a pure query over the same state
+vocabulary.  It does not mutate tasks and it is not a second lifecycle.
 """
 from __future__ import annotations
 
 import enum
+from dataclasses import dataclass
 
 
 class TaskState(enum.Enum):
@@ -38,35 +22,171 @@ class TaskState(enum.Enum):
     BLOCKED = "blocked"
 
 
+class TaskAction(enum.Enum):
+    START = "start"
+    PROGRESS = "progress"
+    HANDOFF = "handoff"
+    APPROVE = "approve"
+    REOPEN = "reopen"
+    DONE = "done"
+    BLOCK = "block"
+    SUPERSEDE = "supersede"
+    RECONCILE_DONE = "reconcile_done"
+
+
 class DispatchReason(enum.Enum):
-    """Why a task is dispatchable to an agent, and its priority (lower = more
-    urgent), matching the incumbent ready-dispatcher priorities exactly."""
-    REVIEW_READY = 0        # status REVIEW, agent is the reviewer
-    OWNED_FINALIZE = 1      # status REVIEW_APPROVED, agent is the owner
-    OWNED_IN_PROGRESS = 2   # status IN_PROGRESS, agent is owner, deps satisfied
-    OWNED_READY = 3         # status TODO, agent is owner, deps satisfied
+    REVIEW_READY = 0
+    OWNED_FINALIZE = 1
+    OWNED_IN_PROGRESS = 2
+    OWNED_READY = 3
 
 
-# Canonical lifecycle transitions. The ONLY sanctioned way status/owner/reviewer
-# change once the machine owns them; helper-claim, chair-review, and mainline
-# normalization become callers of `transition`, not independent mutators.
-TRANSITIONS: dict[tuple[TaskState, str], TaskState] = {
-    (TaskState.TODO, "dispatch"): TaskState.IN_PROGRESS,
-    (TaskState.IN_PROGRESS, "submit"): TaskState.REVIEW,
-    (TaskState.REVIEW, "approve"): TaskState.REVIEW_APPROVED,
-    (TaskState.REVIEW, "reject"): TaskState.IN_PROGRESS,   # bumps bounce_count
-    (TaskState.REVIEW_APPROVED, "finalize"): TaskState.DONE,
-    (TaskState.IN_PROGRESS, "block"): TaskState.BLOCKED,
-    (TaskState.BLOCKED, "unblock"): TaskState.TODO,
+class TransitionError(ValueError):
+    """The requested action is not legal from the task's current state."""
+
+
+@dataclass(frozen=True)
+class AssignmentTransition:
+    old_owner: str
+    old_reviewer: str
+    new_owner: str
+    new_reviewer: str
+    actor: str
+    reason: str
+
+
+def assignment_transition(
+    current_owner: object,
+    current_reviewer: object,
+    new_owner: object,
+    new_reviewer: object,
+    *,
+    actor: object,
+    reason: object,
+    expected_owner: object | None = None,
+    expected_reviewer: object | None = None,
+) -> AssignmentTransition:
+    """Validate the sole current-assignment transition.
+
+    Catalog provenance is intentionally absent: it fixes the original packet,
+    scope, and evidence, not the current runtime owner/reviewer.
+    """
+
+    old_owner = str(current_owner or "").strip()
+    old_reviewer = str(current_reviewer or "").strip()
+    target_owner = str(new_owner or "").strip()
+    target_reviewer = str(new_reviewer or "").strip()
+    transition_actor = str(actor or "").strip()
+    transition_reason = str(reason or "").strip()
+    if transition_actor not in {"Human/Ops", "Orchestrator"}:
+        raise TransitionError("assignment actor is not authorized")
+    if not target_owner or not target_reviewer:
+        raise TransitionError("assignment owner and reviewer are required")
+    if target_owner.casefold() == target_reviewer.casefold():
+        raise TransitionError("assignment owner and reviewer must be independent")
+    if not transition_reason:
+        raise TransitionError("assignment reason is required")
+    if expected_owner is not None and old_owner != str(expected_owner).strip():
+        raise TransitionError("assignment owner compare-and-swap mismatch")
+    if expected_reviewer is not None and old_reviewer != str(expected_reviewer).strip():
+        raise TransitionError("assignment reviewer compare-and-swap mismatch")
+    return AssignmentTransition(
+        old_owner=old_owner,
+        old_reviewer=old_reviewer,
+        new_owner=target_owner,
+        new_reviewer=target_reviewer,
+        actor=transition_actor,
+        reason=transition_reason,
+    )
+
+
+# The one lifecycle table used by canonical commands.  Self-transitions are
+# present only for commands that update progress without changing lifecycle.
+_COMMAND_TRANSITIONS: dict[tuple[TaskState, TaskAction], TaskState] = {
+    (TaskState.TODO, TaskAction.START): TaskState.IN_PROGRESS,
+    (TaskState.IN_PROGRESS, TaskAction.PROGRESS): TaskState.IN_PROGRESS,
+    (TaskState.IN_PROGRESS, TaskAction.HANDOFF): TaskState.REVIEW,
+    (TaskState.REVIEW, TaskAction.APPROVE): TaskState.REVIEW_APPROVED,
+    (TaskState.REVIEW, TaskAction.REOPEN): TaskState.IN_PROGRESS,
+    (TaskState.REVIEW_APPROVED, TaskAction.REOPEN): TaskState.IN_PROGRESS,
+    (TaskState.BLOCKED, TaskAction.REOPEN): TaskState.IN_PROGRESS,
+    (TaskState.REVIEW_APPROVED, TaskAction.DONE): TaskState.DONE,
 }
+
+for _state in (
+    TaskState.TODO,
+    TaskState.IN_PROGRESS,
+    TaskState.REVIEW,
+    TaskState.REVIEW_APPROVED,
+    TaskState.BLOCKED,
+):
+    _COMMAND_TRANSITIONS[(_state, TaskAction.BLOCK)] = TaskState.BLOCKED
+
+for _state in (
+    TaskState.TODO,
+    TaskState.IN_PROGRESS,
+    TaskState.REVIEW,
+    TaskState.REVIEW_APPROVED,
+    TaskState.BLOCKED,
+):
+    _COMMAND_TRANSITIONS[(_state, TaskAction.SUPERSEDE)] = TaskState.DONE
+    _COMMAND_TRANSITIONS[(_state, TaskAction.RECONCILE_DONE)] = TaskState.DONE
 
 
 def coerce_state(status: object) -> TaskState | None:
-    """Best-effort map a raw status string to a TaskState, else None."""
+    """Best-effort map a raw status string to a :class:`TaskState`."""
+
     try:
-        return TaskState(str(status or "").lower())
+        return TaskState(str(status or "").strip().lower())
     except ValueError:
         return None
+
+
+def coerce_action(action: object) -> TaskAction | None:
+    """Best-effort map a raw action string to a :class:`TaskAction`."""
+
+    try:
+        return TaskAction(str(action or "").strip().lower())
+    except ValueError:
+        return None
+
+
+def transition(status: object, action: object) -> TaskState:
+    """Return the sole legal target for ``status --action-->``.
+
+    Unknown states/actions and illegal pairs fail closed with one stable error
+    type so CLI, event projection, and scheduler adapters do not grow their own
+    transition tables.
+    """
+
+    current = coerce_state(status)
+    requested = coerce_action(action)
+    if current is None:
+        raise TransitionError(f"unknown task state {status!r}")
+    if requested is None:
+        raise TransitionError(f"unknown task action {action!r}")
+    target = _COMMAND_TRANSITIONS.get((current, requested))
+    if target is None:
+        raise TransitionError(
+            f"illegal task transition: {current.value} --{requested.value}-->"
+        )
+    return target
+
+
+# Append-only projection events used these verbs before command names became
+# authoritative.  This is a read/replay compatibility view generated from the
+# same lifecycle authority, not a fallback validator used by canonical writes.
+TRANSITIONS: dict[tuple[TaskState, str], TaskState] = {
+    (TaskState.TODO, "dispatch"): transition(TaskState.TODO.value, TaskAction.START.value),
+    (TaskState.IN_PROGRESS, "submit"): transition(TaskState.IN_PROGRESS.value, TaskAction.HANDOFF.value),
+    (TaskState.REVIEW, "approve"): transition(TaskState.REVIEW.value, TaskAction.APPROVE.value),
+    (TaskState.REVIEW, "reject"): transition(TaskState.REVIEW.value, TaskAction.REOPEN.value),
+    (TaskState.REVIEW_APPROVED, "finalize"): transition(TaskState.REVIEW_APPROVED.value, TaskAction.DONE.value),
+    (TaskState.IN_PROGRESS, "block"): transition(TaskState.IN_PROGRESS.value, TaskAction.BLOCK.value),
+    # Historical projections represented unblock as blocked -> todo.  Runtime
+    # canonical reopen now resumes in_progress and never consults this adapter.
+    (TaskState.BLOCKED, "unblock"): TaskState.TODO,
+}
 
 
 def dispatch_reason(
@@ -76,20 +196,16 @@ def dispatch_reason(
     is_reviewer: bool,
     deps_satisfied: bool,
 ) -> DispatchReason | None:
-    """Why (if at all) this task is dispatchable to the agent for whom the
-    is_owner/is_reviewer/deps_satisfied booleans were resolved.
+    """Return why this task is dispatchable to the supplied actor, if at all."""
 
-    Reproduces `dispatch_priority_for_task` exactly: review→reviewer,
-    review_approved→owner, in_progress→owner+deps, todo→owner+deps.
-    """
-    st = str(status or "").lower()
-    if st == TaskState.REVIEW.value and is_reviewer:
+    current = coerce_state(status)
+    if current is TaskState.REVIEW and is_reviewer:
         return DispatchReason.REVIEW_READY
-    if st == TaskState.REVIEW_APPROVED.value and is_owner:
+    if current is TaskState.REVIEW_APPROVED and is_owner:
         return DispatchReason.OWNED_FINALIZE
-    if st == TaskState.IN_PROGRESS.value and is_owner and deps_satisfied:
+    if current is TaskState.IN_PROGRESS and is_owner and deps_satisfied:
         return DispatchReason.OWNED_IN_PROGRESS
-    if st == TaskState.TODO.value and is_owner and deps_satisfied:
+    if current is TaskState.TODO and is_owner and deps_satisfied:
         return DispatchReason.OWNED_READY
     return None
 
@@ -101,9 +217,10 @@ def dispatch_priority(
     is_reviewer: bool,
     deps_satisfied: bool,
 ) -> int | None:
-    """The incumbent's integer priority (0..3) or None — a thin adapter over
-    dispatch_reason for shadow comparison against dispatch_priority_for_task."""
     reason = dispatch_reason(
-        status, is_owner=is_owner, is_reviewer=is_reviewer, deps_satisfied=deps_satisfied
+        status,
+        is_owner=is_owner,
+        is_reviewer=is_reviewer,
+        deps_satisfied=deps_satisfied,
     )
     return reason.value if reason is not None else None

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify Phase-6 shadow task-state journal integrity and projection parity."""
+"""Verify Supervisor Authority V2 head parity or run an explicit offline audit."""
 from __future__ import annotations
 
 import argparse
@@ -17,9 +17,10 @@ if str(ORCHESTRATOR) not in sys.path:
 
 from common import canonical_task_state_lock_file
 from rewrite.task_state_store import (
-    FULL_REPLAY_ENV,
     TaskStateStoreError,
+    audit_full_journal,
     load_snapshot,
+    verify_archive_anchor,
     verify_snapshot,
 )
 
@@ -29,7 +30,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--event-log",
         default=os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG"),
-        help="Append-only journal path (or PANTHEON_TASK_STATE_EVENT_LOG).",
+        help="V2 transition-delta journal path (or PANTHEON_TASK_STATE_EVENT_LOG).",
     )
     parser.add_argument(
         "--status-file",
@@ -40,11 +41,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--full-replay",
         action="store_true",
-        help=(
-            "Re-parse and revalidate every event instead of accepting the "
-            "checkpointed prefix. Every byte is hashed either way; this only "
-            "repeats the per-event digest work for a deep audit."
-        ),
+        help="Offline-only: replay and hash every V2 delta event.",
+    )
+    parser.add_argument(
+        "--verify-archive",
+        action="store_true",
+        help="Offline-only: additionally hash the immutable legacy V1 archive.",
     )
     return parser.parse_args(argv)
 
@@ -57,6 +59,7 @@ def emit(payload: dict[str, Any], *, as_json: bool) -> None:
         "task-state shadow verification: "
         f"ok={payload.get('ok')} events={payload.get('event_count', 0)} "
         f"nonterminal_tasks={payload.get('nonterminal_task_count', '-')} "
+        f"tail_events={payload.get('replayed_tail_events', '-')} "
         f"error={payload.get('error') or '-'}"
     )
 
@@ -67,8 +70,6 @@ def main(argv: list[str] | None = None) -> int:
         payload = {"ok": False, "error": "task-state event log path is not configured"}
         emit(payload, as_json=args.json)
         return 3
-    if args.full_replay:
-        os.environ[FULL_REPLAY_ENV] = "1"
     try:
         status_path = Path(args.status_file).expanduser()
         # The board and the journal must be sampled from one lock domain. Read
@@ -80,8 +81,23 @@ def main(argv: list[str] | None = None) -> int:
             status = json.loads(status_path.read_text(encoding="utf-8"))
             if not isinstance(status, dict):
                 raise ValueError("status projection must be a JSON object")
-            snapshot = load_snapshot(Path(args.event_log).expanduser())
+            # A regular verification reads only the atomic V2 head and any tail
+            # after its recorded offset.  It never hashes the journal prefix.
+            snapshot = load_snapshot(
+                Path(args.event_log).expanduser(),
+                refresh_checkpoint=False,
+            )
         report = verify_snapshot(snapshot, status)
+        if args.full_replay:
+            audit = audit_full_journal(Path(args.event_log).expanduser())
+            report["full_audit"] = {
+                key: value for key, value in audit.items() if key != "state"
+            }
+            report["ok"] = bool(report["ok"] and audit["state_sha256"] == snapshot["state_sha256"])
+        if args.verify_archive:
+            archive = verify_archive_anchor(Path(args.event_log).expanduser())
+            report["archive_audit"] = archive
+            report["ok"] = bool(report["ok"] and archive["ok"])
     except TaskStateStoreError as exc:
         payload = {"ok": False, "error": str(exc), "error_kind": "integrity"}
         emit(payload, as_json=args.json)

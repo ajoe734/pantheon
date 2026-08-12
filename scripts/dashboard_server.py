@@ -176,7 +176,6 @@ def main() -> None:
         "/dashboard-bundle.json": repo_root / "dashboard-bundle.json",
         "/orchestrator-state.json": repo_root / ".orchestrator" / "state.json",
         "/approval-queue.json": repo_root / ".orchestrator" / "approval-queue.json",
-        "/planning-state.json": repo_root / ".orchestrator" / "planning-state.json",
     }
     # Serve only the last 500 lines of the activity log to keep payload small
     NoCacheRequestHandler.tail_line_map = {

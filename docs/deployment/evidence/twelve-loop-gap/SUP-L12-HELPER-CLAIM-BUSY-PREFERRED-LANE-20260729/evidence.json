@@ -1,0 +1,123 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+    "title": "Provider-first helper claim when preferred lane is busy",
+    "phase": "L12 runtime/fleet guardrails",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "base_commit": "ab5caf7d447becd54aa82b11c3b84c3dc8502d92",
+    "task_branch": "task/SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729",
+    "pull_request": 4389,
+    "repository": "ajoe734/pantheon",
+    "delivery_commits": [
+      {
+        "sha": "db21b1a75",
+        "subject": "SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729: anchor lane guard",
+        "files": ".orchestrator/supervisor.py (+8/-3), .orchestrator/test_supervisor.py (+563/-0)"
+      }
+    ],
+    "note_on_this_commit": "The commit adding this manifest cannot name its own sha. It adds only files under this evidence directory; the code diff is entirely in db21b1a75 above."
+  },
+  "history": {
+    "superseded_head": "e2c6a52c9d5ed644b9213b195a037dc2116b35d5",
+    "why_superseded": "The former PR head was a merge of a task branch stale since 2026-07-29. Measured two-dot against dev it deleted 134 supervisor.py defs (539 -> 405) and 139 test methods (611 -> 472), i.e. it would have reverted large parts of dev. It was reopened, never approved, so no review-proof tag was orphaned. The branch was rebuilt from dev tip and force-pushed."
+  },
+  "scope": {
+    "owned_layer": "Supervisor helper-claim candidate selection only: plan_helper_claim_assignment, task_preferred_lane_blocks_helper_claim, task_next_preferred_helper_lane.",
+    "not_changing": "l12_provider_first_candidates itself, the reassignment call sites that already use it, helper-claim capacity and priority gating, bounded_fallback_candidates ordering, provider_permissions.py, and every config file. No config edits.",
+    "composes_with": "PR #4599 (OPS-DEV-BRANCH-CONTENT-RESTORE-20260806), which restores the symbols PR #4590's stale-base squash deleted; PR #4362 (SUP-PROVIDER-FIRST-HELPER-GUARD-20260729), which proposes a parallel guard on a far older base."
+  },
+  "gap": {
+    "reported": "Claude2 was busy finalizing L12-OBS work, so the helper-claim path treated the SUP-L12 task as claimable and handed it to idle Codex2 purely because Codex2 sat in owner_fallbacks. Being busy or paused is not a reason to leave the provider-first family.",
+    "root_cause": "Three helper-claim entry points built their candidate list from raw owner_fallbacks / preferred_lane_order and never passed it through l12_provider_first_candidates, the provider-first filter that dev already applies on the automatic-reassignment path."
+  },
+  "changes": {
+    "supervisor_py": [
+      "plan_helper_claim_assignment: filter the assembled fallbacks through l12_provider_first_candidates(task, fallbacks) before the emptiness check, so an L12/SUP-L12 task returns no plan for a Codex-family idle agent.",
+      "task_preferred_lane_blocks_helper_claim: keep the declared lane order for the 'is any lane declared at all' test, then filter it provider-first before deciding whether the idle agent is in it.",
+      "task_next_preferred_helper_lane: filter task_preferred_lane_order(config, task) provider-first, so the paused-owner wait slot advances past a Codex lane to the next family lane instead of stalling."
+    ],
+    "test_supervisor_py": [
+      "7 new tests in ProcessQueueDispatchGuardTests: busy-owner claim to Codex is refused; busy-owner claim to Antigravity still succeeds; a non-L12 task still allows the Codex fallback; paused-owner declared Codex lane is refused; paused-owner slot hands to the family lane; task_next_preferred_helper_lane returns Antigravity for L12 and Codex2 for non-L12; plan_helper_claim_assignment returns None for Codex2 and a plan for Antigravity."
+    ],
+    "scope_guard": "l12_provider_first_candidates returns its input unchanged when task_is_l12_recovery_work(task) is false, so no non-L12 dispatch behaviour moves."
+  },
+  "validation": {
+    "environment_note": "dev tip ab5caf7d4 cannot import supervisor at all: PR #4590's stale-base squash 23ae23c21 deleted provider_permissions.provider_auth_probe_due while supervisor.py:88 still imports it, and left 4 calls to rewrite_provider_health.classify_probe_failure_kind with no definition anywhere on dev. Exact error on dev tip: ImportError: cannot import name 'provider_auth_probe_due' from 'provider_permissions'. Repairing that is PR #4599's lane, not this one, so every run below uses PR #4599's head eb04f84873e2b33d92b9c7f0a6b047d6994aa98a as the base and applies this task's two-file diff on top. Reproduce with: git worktree add --detach <dir> eb04f8487 && git -C <dir> apply --3way <(git diff origin/dev..task/SUP-L12-HELPER-CLAIM-BUSY-PREFERRED-LANE-20260729 -- .orchestrator/supervisor.py .orchestrator/test_supervisor.py)",
+    "python": "/home/lupin/pantheon/.venv/bin/python",
+    "commands": [
+      {
+        "command": "PYTHONPATH=.orchestrator python -m pytest .orchestrator/test_supervisor.py -q",
+        "base": "eb04f8487 + this task diff",
+        "result": "pass",
+        "details": "613 passed, 162 subtests passed in 134.66s",
+        "run_at": "2026-08-06T16:44:00Z",
+        "runner": "Claude"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python -m pytest .orchestrator/test_supervisor.py -q --collect-only",
+        "base": "eb04f8487, no task diff",
+        "result": "pass",
+        "details": "606 tests collected; 606 + 7 new = 613, so this task adds tests and removes none",
+        "run_at": "2026-08-06T16:52:00Z",
+        "runner": "Claude"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python -m pytest .orchestrator/test_supervisor.py -q -k \"helper_claim or preferred_helper_lane or plan_helper_claim\"",
+        "base": "eb04f8487 + this task's test_supervisor.py only, supervisor.py reverted",
+        "result": "fail",
+        "details": "5 failed, 20 passed, 588 deselected in 4.81s -- test_dispatcher_does_not_helper_claim_busy_l12_lane_to_codex_family, test_dispatcher_helper_claim_hands_paused_owner_slot_to_provider_first_lane, test_dispatcher_helper_claim_skips_codex_preferred_lane_when_owner_paused, test_plan_helper_claim_assignment_filters_codex_out_of_l12_fallbacks, test_task_next_preferred_helper_lane_skips_codex_for_l12_work",
+        "run_at": "2026-08-06T16:57:00Z",
+        "runner": "Claude",
+        "note": "Gap proof. Sample failure: task_next_preferred_helper_lane returned 'Codex2' where the fix returns 'Antigravity'."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator python -m pytest .orchestrator/test_supervisor.py -q -k \"helper_claim or preferred_helper_lane or plan_helper_claim\"",
+        "base": "eb04f8487 + this task diff",
+        "result": "pass",
+        "details": "25 passed, 588 deselected in 2.87s",
+        "run_at": "2026-08-06T17:00:00Z",
+        "runner": "Claude",
+        "note": "Same selection as the gap-proof run above; the 5 failures become passes and the other 20 are unchanged."
+      }
+    ]
+  },
+  "acceptance": [
+    {
+      "criterion": "reproduce busy Claude2 helper claim to Codex2",
+      "met": true,
+      "evidence": "test_dispatcher_does_not_helper_claim_busy_l12_lane_to_codex_family models a running Claude2 worker on L12-OBS-001 plus an idle Codex2, and fails on the unfixed base by claiming the task."
+    },
+    {
+      "criterion": "defer or choose provider-first fallback before Codex-family",
+      "met": true,
+      "evidence": "test_dispatcher_helper_claims_busy_l12_lane_to_provider_first_fallback and test_dispatcher_helper_claim_hands_paused_owner_slot_to_provider_first_lane both assert the claim goes to Antigravity."
+    },
+    {
+      "criterion": "prove Codex2 cannot claim merely due to busy preferred lane",
+      "met": true,
+      "evidence": "The two refusal tests assert persist_task_reassignment and queue_delivery_event are never called; test_dispatcher_helper_claim_keeps_codex_fallback_for_non_l12_task pins that this is scoped to L12 work only."
+    },
+    {
+      "criterion": "no config edits",
+      "met": true,
+      "evidence": "git diff --numstat origin/dev..HEAD lists only .orchestrator/supervisor.py and .orchestrator/test_supervisor.py plus this evidence directory."
+    },
+    {
+      "criterion": "full supervisor regression passes",
+      "met": "conditional",
+      "evidence": "613 passed / 162 subtests on eb04f8487 + this diff. It cannot be demonstrated on dev tip alone because dev tip cannot import supervisor at all (see validation.environment_note). This task neither caused nor repairs that; PR #4599 does."
+    }
+  ],
+  "review_request": {
+    "reviewer": "Antigravity",
+    "please_check": [
+      "That filtering the declared preferred_lane_order provider-first is the wanted policy, rather than stalling the task when the only remaining declared lane is Codex-family.",
+      "That keeping the unfiltered declared_lanes for the 'no lanes declared' early return in task_preferred_lane_blocks_helper_claim is correct: filtering first would turn an all-Codex declared order into 'no preference' and re-open the Codex path.",
+      "That deferring the provider_permissions.py / rewrite.provider_health repair to PR #4599 is the right split."
+    ]
+  }
+}

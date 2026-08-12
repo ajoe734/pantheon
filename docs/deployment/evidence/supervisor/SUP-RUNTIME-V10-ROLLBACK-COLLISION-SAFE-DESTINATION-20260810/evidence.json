@@ -1,0 +1,35 @@
+{
+  "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+  "title": "Make rollback materialization collision-safe without root reuse",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "status": "in_progress",
+  "head_binding_policy": "The final PR head SHA is bound by REVIEW_HEAD_SHA at independent reviewer approval time via scripts/git/task_review_merge_gate.py. This evidence manifest does not claim a commit can contain its own SHA.",
+  "changed_paths": [
+    "scripts/promote_supervisor_runtime.py",
+    "scripts/test_promote_supervisor_runtime.py",
+    "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810/evidence.json"
+  ],
+  "verification_commands": [
+    ".venv-pantheon/bin/python3 -m pytest -v scripts/test_promote_supervisor_runtime.py -k test_materialize_immutable_rollback_runtime",
+    ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
+    "git diff --check"
+  ],
+  "verification_results": {
+    "focused_tests": "9 passed",
+    "full_tests": "333 passed",
+    "git_diff_check": "passed with 0 exit code"
+  },
+  "required_check_identities": [
+    "Commit trailers",
+    "Runtime mirror guard",
+    "Smoke acceptance",
+    "Pantheon canonical review gate"
+  ],
+  "dependency_and_merge_order": {
+    "depends_on_commit": "51eb129f72bac765b981a8aa42774e302f5e1b83",
+    "target_branch": "dev"
+  },
+  "no_live_rollout_boundary": "Source-only repair for rollback materialization collision without executing live rollout, process restart, or modifying live state/config.",
+  "normal_revert_plan": "Revert the commit on dev if candidate runtime identity verification or rollback materialization behavior regresses."
+}

@@ -1,0 +1,97 @@
+{
+  "schema_version": "pantheon.supervisor-review-evidence.v1",
+  "task": {
+    "id": "SUP-POST-APPROVAL-CLOSEOUT-COMMIT-REMOVAL-20260804",
+    "title": "Stop writing a post-approval closeout commit that invalidates its own review",
+    "phase": "Supervisor Dispatch Reliability",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-POST-APPROVAL-CLOSEOUT-COMMIT-REMOVAL-20260804",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-POST-APPROVAL-CLOSEOUT-COMMIT-REMOVAL-20260804/evidence.json"
+  },
+  "status": "review_ready",
+  "scope": {
+    "owned": [
+      "owner-finalize context materialization that preserves reviewed task-brief bytes and never transcribes review_approved into a fresh brief",
+      "closeout and wakeup guardrails that forbid approval-record commits after review",
+      "side-effect-free, pagination-fail-closed classification of a direct generated task-brief successor",
+      "full canonical review-gate evaluation before GitHub proof publication",
+      "proof-tag, ref, and required-workflow publication before CI rollup evaluation, followed by a later green-pass exact-head merge",
+      "negative regression coverage for review_not_approved and failed proof publication"
+    ],
+    "not_changing": [
+      "canonical task-state approval records",
+      "poll_workers, process_queue, dispatch_ready_tasks, or reconcile_queue_records",
+      "supervisor scheduling or worker selection policy",
+      "ordinary exact-head review proof behavior",
+      "generated task-state files"
+    ],
+    "composes_with": [
+      ".orchestrator/supervisor.py owner-finalize context materialization",
+      "scripts/git/task_review_merge_gate.py",
+      "scripts/git/auto_integrator.py",
+      "canonical-review-gate.yml required-check workflow"
+    ]
+  },
+  "acceptance": {
+    "post_approval_brief_rewrite_removed_at_source": {
+      "status": "pass",
+      "evidence": "owned_finalize_dispatch preserves an existing reviewed task brief byte-for-byte; a fresh finalize workspace gets a stable brief that points to governed show instead of copying review_approved or next into branch-local content. Closeout and wakeup instructions explicitly forbid committing generated approval records."
+    },
+    "commit_file_pagination_fails_closed": {
+      "status": "pass",
+      "evidence": "The classifier requests the maximum 100-file GitHub commit page and rejects a full page, so an omitted later page cannot hide a non-task-brief code change behind task-brief-only files."
+    },
+    "rejected_gate_has_no_publication_side_effects": {
+      "status": "pass",
+      "evidence": "The integration regression retains a prior unrevoked approval and a direct task-brief-only successor while canonical status is review, then proves no tag, ref, workflow dispatch, or PR merge command is emitted."
+    },
+    "approved_successor_publishes_before_red_rollup_and_waits": {
+      "status": "pass",
+      "evidence": "The execute-path regression begins with the successor canonical review check at FAILURE, then proves tag/ref/workflow publication occurs after task_brief_only_approval_carried_forward and before the full CI rollup can block. That first pass waits with no merge; after the canonical check becomes SUCCESS, a later pass reuses the proof without re-dispatching and merges the exact head."
+    },
+    "publication_failure_blocks_merge": {
+      "status": "pass",
+      "evidence": "The regression injects a review-proof tag write failure and proves the integration result is blocked with no PR merge command."
+    },
+    "dispatch_failure_is_not_silently_ignored": {
+      "status": "pass",
+      "evidence": "The bridge regression proves a carry-forward workflow-dispatch failure raises GitHubReviewBridgeError after proof publication, allowing the integrator to fail closed."
+    }
+  },
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py && .venv-pantheon/bin/python3 scripts/git/test_github_review_bridge.py && .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py",
+      "result": "127 unittest cases passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py && .venv-pantheon/bin/python3 scripts/git/test_github_review_bridge.py && .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py && .venv-pantheon/bin/python3 .orchestrator/test_supervisor.py ProcessQueueDispatchGuardTests.test_finalize_dispatch_preserves_existing_task_brief_bytes ProcessQueueDispatchGuardTests.test_finalize_dispatch_generates_a_nontranscribing_task_brief && .venv-pantheon/bin/python3 .orchestrator/test_watch_events.py WakeupMessageRoleGuardrailTests.test_finalize_dispatch_identifies_owner_without_reassignment",
+      "result": "130 unittest cases passed, including the pagination boundary, red canonical-check carry-forward regression, and task-brief finalization guards"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m py_compile scripts/git/auto_integrator.py scripts/git/github_review_bridge.py scripts/git/task_review_merge_gate.py .orchestrator/supervisor.py .orchestrator/watch_events.py && git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_auto_integrator.py scripts/git/test_github_review_bridge.py scripts/git/test_task_review_merge_gate.py .orchestrator/test_supervisor.py .orchestrator/test_watch_events.py",
+      "result": "768 passed, 161 subtests passed in 238.75 seconds"
+    }
+  ],
+  "review": {
+    "status": "pending",
+    "decision": "pending",
+    "reviewer": "Antigravity",
+    "reviewed_head": null,
+    "note": "Antigravity must independently review the exact pushed PR head and bind this already-committed manifest with REVIEW_FILE during the governed approve command."
+  },
+  "safety": {
+    "force_push": false,
+    "direct_push_to_dev_or_master": false,
+    "shared_workflow_disabled": false,
+    "unrelated_run_cancelled": false,
+    "hosted_deployment": false,
+    "real_capital_or_broker_action": false
+  }
+}

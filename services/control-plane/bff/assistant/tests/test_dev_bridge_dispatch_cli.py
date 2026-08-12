@@ -7,13 +7,14 @@ import sys
 from pathlib import Path
 
 from ..dev_bridge_models import BridgeActor, BridgeTask, DevTaskPacket
-from ..dev_bridge_signer import sign_packet
+from ..dev_bridge_signer import public_key_environment, sign_packet
 from .dev_bridge_test_support import write_materializing_ai_status
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SCRIPT = REPO_ROOT / "scripts" / "dispatch_assistant_dev_task_packet.py"
 TEST_KEY = b"test-key-for-dev-bridge-cli"
+PUBLIC_KEYS_JSON = public_key_environment({"assistant-bridge-dev": TEST_KEY})
 
 
 def _make_packet(packet_id: str) -> DevTaskPacket:
@@ -52,7 +53,7 @@ def _write_fake_repo(tmp_path: Path) -> Path:
 
 
 def _run_cli(packet_path: Path, repo_root: Path, *, dry_run: bool = False) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "BRIDGE_SIGNING_KEY": TEST_KEY.hex()}
+    env = {**os.environ, "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": PUBLIC_KEYS_JSON}
     cmd = [
         sys.executable,
         str(SCRIPT),
@@ -112,16 +113,14 @@ def test_cli_materializes_raw_signed_packet_through_ai_status(tmp_path: Path) ->
 
     calls = (repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
     record = json.loads(calls[0])
-    assert record["argv"] == [
-        "assign",
-        "CLI-TASK-001",
-        "Codex",
-        "Claude",
-        "Materialize assistant generated task",
-    ]
-    assert record["ai_name"] == "Human/Ops"
+    assert record["argv"][0] == "dev-bridge-materialize-batch"
+    assert len(record["argv"]) == 2
+    assert record["ai_name"] == "assistant.dev.source"
     assert record["auto_worker_markers"] == {}
-    bridge = record["metadata"]["dev_bridge"]
+    assert record["packet_id"] == "pkt_cli_live"
+    assert len(record["tasks"]) == 1
+    assert record["tasks"][0]["task_id"] == "CLI-TASK-001"
+    bridge = record["tasks"][0]["task_metadata"]["dev_bridge"]
     assert bridge["packet_id"] == "pkt_cli_live"
     assert bridge["conversation_id"] == "mgmt-nl-cli"
     assert bridge["source_turn_ids"] == ["turn-user", "turn-assistant"]
@@ -156,7 +155,7 @@ def test_concurrent_cli_dispatches_materialize_once(tmp_path: Path) -> None:
         json.dumps(signed.model_dump(mode="json", by_alias=True)),
         encoding="utf-8",
     )
-    env = {**os.environ, "BRIDGE_SIGNING_KEY": TEST_KEY.hex()}
+    env = {**os.environ, "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": PUBLIC_KEYS_JSON}
     cmd = [
         sys.executable,
         str(SCRIPT),

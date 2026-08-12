@@ -197,7 +197,6 @@ def test_current_mutable_root_is_not_reset_or_signalled_before_bootstrap_handoff
         "--promote",
         "--repo",
         str(candidate),
-        "--bootstrap-mutable-incumbent",
     ]
 
 

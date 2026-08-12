@@ -108,6 +108,15 @@ def _decorate_result(
     retry_backoff_seconds: float,
 ) -> dict[str, Any]:
     result = dict(payload)
+    terminal_incident_ids: list[str] = []
+    for field in ("terminal_incident_ids", "incident_ids"):
+        raw = result.get(field)
+        if not isinstance(raw, list):
+            continue
+        for value in raw:
+            incident_id = str(value or "").strip()
+            if incident_id and incident_id not in terminal_incident_ids:
+                terminal_incident_ids.append(incident_id)
     result.update(
         {
             "tick_id": tick_id,
@@ -125,6 +134,10 @@ def _decorate_result(
                 "max_attempts": max_attempts,
                 "retry_backoff_seconds": retry_backoff_seconds,
             },
+            "terminal_incident_ids": terminal_incident_ids,
+            "terminal_incident_id": (
+                terminal_incident_ids[0] if len(terminal_incident_ids) == 1 else None
+            ),
         }
     )
     return result

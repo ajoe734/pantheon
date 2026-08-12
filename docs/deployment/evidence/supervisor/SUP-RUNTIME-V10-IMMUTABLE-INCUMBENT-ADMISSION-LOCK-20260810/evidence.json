@@ -1,0 +1,18 @@
+{
+  "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+  "task_title": "Wire verified FLOCK normalization for immutable incumbent promotion",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
+  "status": "in_progress",
+  "verification": {
+    "test_command": ".venv-pantheon/bin/python3 -m pytest scripts/test_promote_supervisor_runtime.py",
+    "test_result": "336 passed",
+    "verified_at": "2026-08-10T23:57:00Z"
+  },
+  "touched_files": [
+    "scripts/promote_supervisor_runtime.py",
+    "scripts/test_promote_supervisor_runtime.py",
+    "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810/evidence.json"
+  ],
+  "summary": "Wired verified FLOCK row-ID normalization into immutable OSPromotionBackend prepare, revalidate, and observe paths, preserving all fail-closed security invariants while allowing advisory FLOCK kernel lock row ID churn during immutable incumbent preflight and revalidation."
+}

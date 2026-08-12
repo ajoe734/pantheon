@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -13,7 +14,14 @@ import verify_task_state_store as verifier
 ORCHESTRATOR = Path(__file__).resolve().parents[1] / ".orchestrator"
 sys.path.insert(0, str(ORCHESTRATOR))
 
-from rewrite.task_state_store import TaskStateStoreError, append_state_commit
+from rewrite.task_state_store import (
+    ARCHIVE_ANCHOR_TYPE,
+    ARCHIVE_ANCHOR_VERSION,
+    TaskStateStoreError,
+    append_state_commit,
+    sha256_json,
+    write_archive_anchor,
+)
 
 
 def test_verifier_reports_projection_parity(tmp_path: Path, capsys) -> None:
@@ -128,3 +136,69 @@ def test_verifier_text_output_surfaces_the_live_task_count(
 
     assert verifier.main(["--event-log", str(event_log), "--status-file", str(status_file)]) == 0
     assert "nonterminal_tasks=1" in capsys.readouterr().out
+
+
+def test_verifier_full_replay_is_explicit_and_reports_chain_digest(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    status = {"tasks": [{"id": "STATE-007", "status": "review"}]}
+    status_file = tmp_path / "ai-status.json"
+    event_log = tmp_path / "events.jsonl"
+    status_file.write_text(json.dumps(status), encoding="utf-8")
+    append_state_commit(event_log, status, source="test")
+
+    result = verifier.main(
+        [
+            "--event-log", str(event_log),
+            "--status-file", str(status_file),
+            "--full-replay",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert payload["full_audit"]["ok"] is True
+    assert len(payload["full_audit"]["journal_sha256"]) == 64
+
+
+def test_verifier_archive_audit_is_separate_from_hot_parity(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    legacy = tmp_path / "legacy.jsonl"
+    legacy.write_bytes(b"legacy archive bytes\n")
+    status = {"tasks": [{"id": "STATE-008", "status": "todo"}]}
+    status_file = tmp_path / "ai-status.json"
+    event_log = tmp_path / "events.jsonl"
+    status_file.write_text(json.dumps(status), encoding="utf-8")
+    write_archive_anchor(
+        event_log,
+        {
+            "version": ARCHIVE_ANCHOR_VERSION,
+            "type": ARCHIVE_ANCHOR_TYPE,
+            "archived_path": str(legacy),
+            "byte_size": legacy.stat().st_size,
+            "journal_sha256": hashlib.sha256(legacy.read_bytes()).hexdigest(),
+            "event_count": 1,
+            "last_event_id": "legacy-id",
+            "last_event_sha256": "a" * 64,
+            "state_sha256": sha256_json(status),
+            "created_at": "2026-08-11T00:00:00Z",
+        },
+    )
+    append_state_commit(event_log, status, source="migration")
+
+    result = verifier.main(
+        [
+            "--event-log", str(event_log),
+            "--status-file", str(status_file),
+            "--verify-archive",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert payload["archive_audit"]["ok"] is True

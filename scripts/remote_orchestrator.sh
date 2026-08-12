@@ -24,7 +24,6 @@ import sys
 repo = sys.argv[1]
 patterns = [
     r"supervisor\.py",
-    r"watch_events\.py",
     r"approval_queue\.py",
     r"dashboard_server\.py",
     r"launch-docs-site\.sh",
@@ -58,7 +57,6 @@ import sys
 repo = sys.argv[1]
 patterns = [
     r"supervisor\.py",
-    r"watch_events\.py",
     r"approval_queue\.py",
     r"dashboard_server\.py",
     r"launch-docs-site\.sh",

@@ -34,7 +34,12 @@ class _DevDocsIdentity:
         self.operator_id = "op-dev-docs"
         self.roles = ["operator"]
         self.mfa_verified = True
-        self.claims = {"capabilities": ["assistant.kernel.debug"]}
+        self.claims = {
+            "capabilities": [
+                "assistant.kernel.debug",
+                "assistant.canonical.mutate",
+            ]
+        }
 
 
 def _context_pack(session_id: str, request: Any, actor: Any) -> dict[str, Any]:
@@ -219,6 +224,10 @@ def test_dev_docs_generate_archives_and_emits_signed_task_packet(tmp_path, monke
     assert task_packet["constraints"]["noDirectShellFromWeb"] is True
     assert task_packet["tasks"][0]["owner"] == "Codex"
     assert task_packet["documents"]
+    assert task_packet["actor"]["capabilities"] == ["assistant.dev.source"]
+    assert task_packet["operatorAuthorization"]["operatorId"] == "op-dev-docs"
+    assert task_packet["operatorAuthorization"]["mfaVerified"] is True
+    assert task_packet["operatorAuthorization"]["capability"] == "assistant.canonical.mutate"
 
     system_design_path = tmp_path / packet["archiveLocations"]["systemDesign"]
     assert system_design_path.exists()

@@ -1,112 +1,58 @@
 # Auto Worker Readiness
 
-Status: current local runtime truth
-Recorded: 2026-05-03
-Task: ORCH-AUTOWORKER-READINESS-RECOVERY
+Supervisor Authority V2 separates configured capacity from observed account
+health. No historical provider matrix in this document is runtime truth.
 
-## Scope
+## Authorities
 
-This note explains which local auto workers can safely receive supervisor
-dispatches and which ones are installed but blocked by auth/profile readiness.
-It is based on:
+- `agents.<id>.max_parallel` is the sole logical-agent capacity. `0` is the
+  configured stop for that lane.
+- `providers.<id>.account` is the sole account identity.
+- `ready_dispatcher.max_concurrent_per_account` is the sole account cap.
+- `ready_dispatcher.max_concurrent_workers` is the fleet-wide cap.
+- `worker_slots` describes physical delivery topology; it does not create
+  capacity.
+- A fresh provider probe may clear a runtime auth/quota pause. A missing or
+  stale probe never proves health and never triggers task reassignment.
 
-```bash
-python3 .orchestrator/doctor.py --json --no-write
-```
+The retired `disabled_agents`, `max_tasks_per_agent`,
+`max_tasks_per_agent_by_agent`, provider account aliases, and
+`max_concurrent_per_quota_group` fields are invalid in a running V2 config.
 
-The provider list can change when credentials are refreshed. Re-run the doctor
-before enabling a worker in `ready_dispatcher` fallback lists.
+## Dispatch semantics
 
-## Current Matrix
+The planner consumes one canonical task snapshot, one runtime lease/queue
+snapshot, and cached provider health. It reserves an intent only when global,
+account, agent, lifecycle, assignment, dependency, and duplicate-intent gates
+all pass. The delivery queue revalidates those facts immediately before the
+only worker-launch call.
 
-| Worker | Auto dispatch | Current state | Blocking or caution |
-| --- | --- | --- | --- |
-| Claude | Yes, after rate window recovers | Authenticated Claude CLI profile at `/home/lupin/.claude` | Recent run hit a Claude five-hour rate event with reset at `2026-05-03T16:00:00Z`; avoid relying on it for immediate reviewer work before reset. |
-| Claude2 | No | Claude CLI is installed, separate profile configured | Missing unauthenticated profile credentials at `/home/lupin/.claude2/.claude/.credentials.json`. |
-| Codex | Yes | Codex CLI dispatch works with per-run orchestrator approval flags | Primary safe local execution worker. |
-| Codex2 | Conditional, not extra capacity | Configured as a Codex agent alias using the Codex adapter | Treat as a scheduling/profile label, not a guaranteed independent capacity pool; the human doctor provider list reports the shared `codex` provider, not a standalone `codex2` provider. |
-| Gemini | No | Gemini CLI/extension installed | Non-interactive Gemini auth is not ready for `/home/lupin/.gemini/settings.json` / OAuth credential path. |
-| Gemini2 | No | Gemini CLI/extension installed with configured model/env | Non-interactive auth is not ready for `/home/lupin/.gemini2/.gemini/settings.json`; Vertex/project env alone is insufficient. |
-| Copilot | Auth-ready, but currently disabled for mainline dispatch | Copilot CLI and GitHub CLI path are present; doctor reports `auth_ready=true` | `ready_dispatcher.disabled_agents` currently includes `Copilot`; supported model list is currently `claude`; remove the disable only after deciding it should receive mainline tasks again. |
-| Grok | Conditional through Copilot | Treated as Copilot model preference, not a standalone provider | No standalone Grok worker; only enable when Copilot model routing is verified. |
+Terminal auth, terminal quota, unknown-agent, or configured-zero-capacity
+assignments may be changed by the bounded recovery reconciler. Temporary
+capacity pressure, probe timeout, stale cache, and ordinary worker failure do
+not change task assignment.
 
-## Dispatch Rules
+Human/Ops may always correct a current owner/reviewer through canonical
+`ai-status assign`; repository branch/PR/check governance does not grant or
+revoke that runtime authority.
 
-Mainline execution should only use workers where the latest doctor report shows:
-
-```text
-local_cli_worker_supported=true
-supports_auto_approve=true
-auth_ready=true or auth_ready is not required by that adapter
-```
-
-When a provider is installed but not auto-ready, keep it out of mainline owner
-and reviewer fallbacks. It may remain documented as a future lane, but the
-supervisor should not assign production tasks to it.
-
-## Recovery Checklist
-
-Claude2:
-
-1. Log in with the isolated Claude2 HOME/profile.
-2. Confirm `/home/lupin/.claude2/.claude/.credentials.json` or the configured
-   OAuth token exists.
-3. Run `python3 .orchestrator/doctor.py --json --no-write` and verify
-   `claude2.local_cli_worker_supported=true` and `claude2.auth_ready=true`.
-4. Add Claude2 back to fallback lists only after the doctor is green.
-
-Gemini:
-
-1. Create or refresh `/home/lupin/.gemini/settings.json` with the selected
-   non-interactive auth type.
-2. Ensure the required OAuth or environment-variable auth path exists.
-3. Run the doctor and verify `gemini.auth_ready=true`.
-4. Keep inbox fallback disabled unless a human explicitly wants manual handoff.
-
-Gemini2:
-
-1. Refresh `/home/lupin/.gemini2/.gemini/settings.json`.
-2. Verify credentials, not just `GOOGLE_CLOUD_PROJECT` and model selection.
-3. Confirm the doctor reports both local CLI support and auth readiness.
-
-Copilot:
-
-1. Run `gh auth status` through the configured `.orchestrator/bin/gh`.
-2. Run `python3 .orchestrator/doctor.py --json --no-write`.
-3. Confirm `copilot.auth_ready=true`.
-4. Remove `Copilot` from `ready_dispatcher.disabled_agents` only when it should
-   receive mainline work again.
-5. Verify the desired model route; the current verified supported model is
-   `claude`.
-
-Codex2:
-
-1. Confirm the isolated `CODEX_HOME` is intentional.
-2. Use it as a scheduling label only if the underlying Codex capacity can
-   actually run a second worker.
-
-## Dashboard Expectations
-
-The dashboard should communicate provider state as readiness, not as "broken":
-
-- installed but unauthenticated means blocked, not missing;
-- rate limited means temporarily deferred;
-- sidecar-only or disabled lanes should not receive mainline tasks;
-- execution-only local guard should not be confused with provider failure.
-
-When the dashboard shows no running workers for a blocked provider, that is the
-correct fail-closed behavior.
-
-## Verification Commands
+## Verification
 
 ```bash
 python3 .orchestrator/doctor.py --json --no-write
-python3 .orchestrator/doctor.py
 python3 scripts/supervisor_runtime_health.py --require-watchdog --json
-rg -n '"disabled_agents"|"sidecar_only_agents"' .orchestrator/config.json .orchestrator/config.local.json
-tmux ls | rg 'pantheon-(dashboard|dashboard-tunnel|supervisor)' || true
+python3 scripts/check_config_drift.py --live-config /path/to/live/config.json --json
+python3 scripts/explain_dispatch.py TASK-ID --json
 ```
 
-`tmux` is only an operator convenience check. Supervisor/auto-worker readiness
-must be judged from the watchdog-backed runtime health check above; dashboard
-or tunnel sessions can stay alive after the supervisor process has died.
+Readiness requires all of the following evidence independently:
+
+- watchdog and exact supervisor process identity are live;
+- the promoted runtime reports the expected source identity;
+- canonical TaskStore head and journal are valid;
+- queue and worker leases reconcile without duplicate task generations;
+- the target provider/account is not durably paused;
+- configured global, account, and agent capacities are nonzero and available.
+
+Dashboard or terminal sessions are observational conveniences, not liveness or
+delivery authority.

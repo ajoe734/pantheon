@@ -81,7 +81,6 @@ GENERATED_EXACT_PATHS = {
     ".orchestrator/github-webhook-events.jsonl",
     ".orchestrator/provider_capabilities.json",
     ".orchestrator/state.json",
-    ".orchestrator/planning-state.json",
     ".orchestrator/supervisor.pid",
     "dashboard-bundle.json",
     "docs-site/ai-activity-log.jsonl",
@@ -90,7 +89,6 @@ GENERATED_EXACT_PATHS = {
     "docs-site/current-work.md",
     "docs-site/dashboard-bundle.json",
     "docs-site/orchestrator-state.json",
-    "docs-site/planning-state.json",
 }
 
 GENERATED_PREFIXES = (

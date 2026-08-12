@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from adapters.file_inbox import FileInboxAdapter
 from common import (
     agent_config_for,
     command_exists,
@@ -95,46 +94,33 @@ class QwenAdapter(BaseAdapter):
         if cli and auth_ready:
             notes = "Uses the official Qwen Code CLI in non-interactive mode with standalone Qwen authentication."
         elif cli:
-            notes = "Qwen Code CLI is installed but not authenticated/configured for non-interactive use, so delivery falls back to inbox."
+            notes = "Qwen Code CLI is installed but not authenticated/configured for non-interactive use."
         else:
             notes = "Qwen Code CLI is not installed."
         return DeliveryCapability(
             adapter=self.name,
             supported=bool(cli),
-            requires_manual_confirmation=not supported,
+            requires_manual_confirmation=False,
             can_auto_deliver=supported,
             can_auto_approve_edits=supported,
-            delivery_mode="qwen" if supported else "file_inbox",
+            delivery_mode="qwen",
             verified="verified" if supported else ("partial" if cli else "unavailable"),
-            host="Official Qwen Code CLI" if cli else "Qwen Code CLI + inbox fallback",
+            host="Official Qwen Code CLI",
             notes=notes,
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
         capability = self.capability(request.agent_id)
         if not capability.supported or not capability.can_auto_deliver:
-            fallback = FileInboxAdapter(config=self.config, provider_capabilities=self.provider_capabilities)
-            result = fallback.deliver(request)
-            result.adapter = self.name
-            result.mode = "file_inbox"
-            result.notes = f"{result.notes}. {capability.notes}"
-            if not capability.supported:
-                result.error = capability.notes
             return DeliveryResult(
-                ok=result.ok,
-                adapter=result.adapter,
-                mode=result.mode,
-                target=result.target,
-                auto_delivered=result.auto_delivered,
-                manual_confirmation_required=result.manual_confirmation_required,
-                error=result.error,
-                notes=result.notes,
-                command=result.command,
-                log_path=result.log_path,
-                payload_path=result.payload_path,
-                pid=result.pid,
-                run_id=result.run_id,
-                metadata=result.metadata,
+                ok=False,
+                adapter=self.name,
+                mode="qwen",
+                target=request.agent_id,
+                auto_delivered=False,
+                manual_confirmation_required=False,
+                error=capability.notes,
+                notes=capability.notes,
             )
 
         provider = self.config.get("providers", {}).get("qwen", {})

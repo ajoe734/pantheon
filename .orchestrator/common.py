@@ -37,12 +37,6 @@ CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.m
 WORKER_ANCHOR_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "worker-anchor-commit.md"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
-PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
-DEFAULT_PLANNING_SHARED_FILES = [
-    ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "README.md",
-    ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "planning-session.json",
-    ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "pantheon-backend-completion-checklist.md",
-]
 CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_OAUTH_SCOPES = (
@@ -480,12 +474,25 @@ def relpath(path: Path) -> str:
         return str(path)
 
 
+def runtime_sidecar_dir() -> Path:
+    """Return the external sidecar root for governed runtimes when available."""
+
+    status_root_value = os.environ.get("PANTHEON_STATUS_ROOT", "").strip()
+    if not status_root_value:
+        return ORCHESTRATOR_DIR
+    status_root = Path(status_root_value).expanduser()
+    if not status_root.is_absolute():
+        raise ValueError("PANTHEON_STATUS_ROOT must be absolute for runtime sidecars")
+    return status_root / ".orchestrator"
+
+
 def evidence_dir(config: dict[str, Any]) -> Path:
     configured = config.get("paths", {}).get("evidence_dir")
-    path = resolve_path(configured) if configured else EVIDENCE_DIR
-    if path is None:
-        return EVIDENCE_DIR
-    return path
+    if configured:
+        path = resolve_path(configured)
+        if path is not None:
+            return path
+    return runtime_sidecar_dir() / "evidence"
 
 
 def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
@@ -779,7 +786,33 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
     env.update(status_command_runtime_env(config, metadata))
+    task_generation = (metadata or {}).get("task_generation")
+    try:
+        normalized_generation = int(task_generation)
+    except (TypeError, ValueError):
+        normalized_generation = 0
+    if normalized_generation > 0:
+        env["ORCH_TASK_GENERATION"] = str(normalized_generation)
     return env
+
+
+WORKER_AUTHORITY_SECRET_ENV_NAMES = frozenset(
+    {
+        "BRIDGE_SIGNING_KEY",
+        "BRIDGE_SIGNING_PRIVATE_KEY",
+        "BRIDGE_SIGNING_KEY_ID",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID",
+    }
+)
+
+
+def scrub_worker_authority_secrets(env: dict[str, str]) -> None:
+    """Remove control-plane signing material at the final worker spawn boundary."""
+
+    for name in WORKER_AUTHORITY_SECRET_ENV_NAMES:
+        env.pop(name, None)
 
 
 def github_cli_config_dir(env: Mapping[str, str] | None = None) -> Path:
@@ -1018,7 +1051,7 @@ def agent_config_for(config: dict[str, Any], agent_id: str) -> dict[str, Any]:
         merged.setdefault("id", normalized)
         merged.setdefault("display_name", agent_id)
         return merged
-    return {"id": normalized, "display_name": agent_id, "provider": normalized, "adapter": "file_inbox"}
+    return {"id": normalized, "display_name": agent_id, "provider": normalized, "adapter": ""}
 
 
 def render_template(path: Path, variables: dict[str, Any]) -> str:
@@ -1026,6 +1059,63 @@ def render_template(path: Path, variables: dict[str, Any]) -> str:
     for key, value in variables.items():
         text = text.replace("{{" + key + "}}", str(value))
     return text
+
+
+def bound_commit_subject(task_id: str | None, description: str | None, max_len: int = 72) -> str:
+    r"""Format a commit subject to guarantee max_len (default 72 chars) and match SUBJECT_PATTERN.
+
+    Format: '<PREFIX>: <description>'
+    Matches pattern: ^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S
+    Full Task-ID remains in required trailers.
+    """
+    raw_prefix = str(task_id or "").strip()
+    clean_prefix = re.sub(r"[^A-Za-z0-9-]+", "-", raw_prefix).strip("-").upper()
+    if not clean_prefix:
+        clean_prefix = "TASK"
+
+    raw_desc = str(description or "").strip()
+    raw_desc = re.sub(r"\s+", " ", raw_desc)
+    if not raw_desc:
+        raw_desc = "commit"
+
+    candidate = f"{clean_prefix}: {raw_desc}"
+    if len(candidate) <= max_len:
+        return candidate
+
+    if "anchor recovered worktree WIP" in raw_desc:
+        short_desc = raw_desc.replace("anchor recovered worktree WIP", "anchor WIP")
+        candidate = f"{clean_prefix}: {short_desc}"
+        if len(candidate) <= max_len:
+            return candidate
+
+    prefix_cost = len(clean_prefix) + 2
+    avail_desc = max_len - prefix_cost
+    if avail_desc >= 10:
+        if avail_desc > 3 and len(raw_desc) > avail_desc:
+            trunc_desc = raw_desc[: avail_desc - 3].rstrip() + "..."
+        else:
+            trunc_desc = raw_desc[:avail_desc].rstrip()
+        candidate = f"{clean_prefix}: {trunc_desc}"
+        if len(candidate) <= max_len:
+            return candidate
+
+    max_prefix_len = min(35, max(10, max_len - 15))
+    compact_prefix = re.sub(r"-+$", "", clean_prefix[:max_prefix_len])
+    if not compact_prefix:
+        compact_prefix = "TASK"
+
+    prefix_cost = len(compact_prefix) + 2
+    avail_desc = max_len - prefix_cost
+    if len(raw_desc) > avail_desc and avail_desc > 3:
+        trunc_desc = raw_desc[: avail_desc - 3].rstrip() + "..."
+    else:
+        trunc_desc = raw_desc[:avail_desc].rstrip()
+
+    candidate = f"{compact_prefix}: {trunc_desc}"
+    if len(candidate) > max_len:
+        candidate = candidate[:max_len].rstrip()
+    return candidate
+
 
 
 ACTIVITY_LOG_ROTATE_BYTES_DEFAULT = 50 * 1024 * 1024  # 50 MiB
@@ -1220,57 +1310,6 @@ def read_regular_file_bytes(path: Path, *, source: str) -> bytes:
 
     payload, _ = read_regular_file_snapshot(path, source=source)
     return payload
-
-
-def restore_canonical_task_state_bytes(
-    status_file: str | Path,
-    payload: bytes,
-    *,
-    mode: int = 0o664,
-) -> None:
-    """Durably restore canonical task state under its stable lock and read it back."""
-
-    status_path = Path(status_file).expanduser()
-    with canonical_task_state_lock_file(status_path):
-        durable_write_bytes(status_path, payload, mode=mode)
-        flags = (
-            os.O_RDONLY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NONBLOCK", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-        )
-        descriptor = os.open(status_path, flags)
-        try:
-            descriptor_stat = os.fstat(descriptor)
-            path_stat = status_path.lstat()
-            if (
-                not stat.S_ISREG(descriptor_stat.st_mode)
-                or stat.S_ISLNK(path_stat.st_mode)
-                or (path_stat.st_dev, path_stat.st_ino)
-                != (descriptor_stat.st_dev, descriptor_stat.st_ino)
-            ):
-                raise RuntimeError(
-                    f"canonical task-state changed during restore: {status_path}"
-                )
-            chunks: list[bytes] = []
-            while True:
-                chunk = os.read(descriptor, 1024 * 1024)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            after_stat = status_path.lstat()
-            if (
-                stat.S_ISLNK(after_stat.st_mode)
-                or (after_stat.st_dev, after_stat.st_ino)
-                != (descriptor_stat.st_dev, descriptor_stat.st_ino)
-                or b"".join(chunks) != payload
-            ):
-                raise RuntimeError(
-                    f"canonical task-state restore readback mismatch: {status_path}"
-                )
-        finally:
-            os.close(descriptor)
-        _fsync_directory(status_path.parent)
 
 
 def _durable_write_gzip(path: Path, payload: bytes) -> None:
@@ -4491,7 +4530,7 @@ def runtime_log_path(prefix: str, target: str) -> Path:
     slug = normalize_agent_id(target) or "unknown"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     suffix = uuid.uuid4().hex[:6]
-    return ORCHESTRATOR_DIR / "logs" / f"{stamp}-{prefix}-{slug}-{suffix}.log"
+    return runtime_sidecar_dir() / "logs" / f"{stamp}-{prefix}-{slug}-{suffix}.log"
 
 
 def new_runtime_id(prefix: str) -> str:
@@ -4528,7 +4567,8 @@ def spawn_background_process(
 ) -> tuple[subprocess.Popen[str], Path]:
     ensure_parent(log_path)
     command_to_spawn = list(command)
-    spawn_env = env
+    spawn_env = dict(env or os.environ)
+    scrub_worker_authority_secrets(spawn_env)
     if runner_enabled and run_id:
         if heartbeat_path is None:
             heartbeat_path = log_path.with_suffix(log_path.suffix + ".heartbeat.json")
@@ -4536,7 +4576,6 @@ def spawn_background_process(
             status_path = log_path.with_suffix(log_path.suffix + ".status.json")
         ensure_parent(heartbeat_path)
         ensure_parent(status_path)
-        spawn_env = dict(env or os.environ)
         spawn_env["ORCH_RUN_ID"] = str(run_id)
         spawn_env["ORCH_HEARTBEAT_PATH"] = str(heartbeat_path)
         spawn_env["ORCH_RUNNER_STATUS_PATH"] = str(status_path)
@@ -4555,15 +4594,20 @@ def spawn_background_process(
             *command,
         ]
     handle = log_path.open("w", encoding="utf-8")
-    process = subprocess.Popen(
-        command_to_spawn,
-        cwd=str(cwd or ROOT),
-        stdout=handle,
-        stderr=subprocess.STDOUT,
-        text=True,
-        env=spawn_env,
-        start_new_session=True,
-    )
+    try:
+        process = subprocess.Popen(
+            command_to_spawn,
+            cwd=str(cwd or ROOT),
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=spawn_env,
+            start_new_session=True,
+        )
+    finally:
+        # Popen duplicates the descriptor for the child.  The supervisor must
+        # not retain one parent descriptor for every worker lifetime.
+        handle.close()
     return process, log_path
 
 
@@ -4655,40 +4699,12 @@ def write_status(config: dict[str, Any], payload: dict[str, Any], *, source: str
     write_json(config_path(config, "status_file"), payload)
 
 
-def planning_shared_files(planning_state: dict[str, Any] | None = None) -> list[Path]:
-    state = planning_state if planning_state is not None else (load_json(PLANNING_STATE_PATH, default={}) or {})
-    if str(state.get("status") or "") not in {"active", "human_required"}:
-        return []
-
-    files: list[Path] = []
-    readme_path = resolve_path(((state.get("artifacts", {}) or {}).get("planning_readme", {}) or {}).get("path"))
-    session_path = resolve_path(state.get("session_file"))
-    for candidate in (readme_path, session_path):
-        if candidate and candidate.exists():
-            files.append(candidate)
-
-    if not files:
-        for path in DEFAULT_PLANNING_SHARED_FILES:
-            if path.exists():
-                files.append(path)
-
-    unique: list[Path] = []
-    seen: set[Path] = set()
-    for path in files:
-        if path in seen:
-            continue
-        seen.add(path)
-        unique.append(path)
-    return unique
-
-
 def selected_shared_files(config: dict[str, Any]) -> list[Path]:
     files: list[Path] = []
     for key in ("status_file", "current_work", "activity_log", "dashboard"):
         path = config.get("paths", {}).get(key)
         if path:
             files.append(config_path(config, key))
-    files.extend(planning_shared_files())
     return files
 
 
@@ -4829,8 +4845,6 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
             )
             for dep in deps
         ]
-    planning_state = load_json(PLANNING_STATE_PATH, default={}) or {}
-    planning_active = str(planning_state.get("status") or "") in {"active", "human_required", "accepted"}
     source_ref = task.get("source_ref") if isinstance(task.get("source_ref"), dict) else {}
     source_plane = str(task.get("source_plane") or "").strip()
     path = task_brief_path(task_id)
@@ -4870,14 +4884,6 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
         "targeted forensic work."
     )
     body.extend(["", "## Relevant Canonical Files", "- AI_COLLABORATION_GUIDE.md", "- ai-status.json"])
-    if planning_active:
-        session_file = str(planning_state.get("session_file") or "").strip()
-        if session_file:
-            body.append(f"- {session_file}")
-        else:
-            fallback_planning_files = planning_shared_files(planning_state)
-            if fallback_planning_files:
-                body.append(f"- {relpath(fallback_planning_files[0])}")
     if source_plane or source_ref:
         body.extend(["", "## Planning Origin"])
         body.append(f"- Source plane: {source_plane or '-'}")

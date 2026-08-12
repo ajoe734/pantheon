@@ -29,11 +29,47 @@ ACTIVE_WORKER_STATUSES = {
     "started",
     "waiting_approval",
     "suspended_approval",
-    "manual_pending",
     "retry_backoff",
     "stalled",
-    "fallback",
 }
+
+SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES = (
+    "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
+)
+SUPERVISOR_FORBIDDEN_AUTHORITY_ENV_NAMES = (
+    "BRIDGE_SIGNING_PRIVATE_KEY",
+    "BRIDGE_SIGNING_KEY",
+    "BRIDGE_SIGNING_KEY_ID",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_JSON",
+)
+
+
+def supervisor_restart_environment(source: dict[str, str]) -> dict[str, str]:
+    """Build the final supervisor environment with verifier-only authority."""
+
+    env = dict(source)
+    for name in SUPERVISOR_FORBIDDEN_AUTHORITY_ENV_NAMES:
+        env.pop(name, None)
+    for name in SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES:
+        raw = str(env.get(name) or "").strip()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{name} must be valid JSON") from exc
+        if not isinstance(payload, dict) or not payload or any(
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(value, str)
+            or not value.strip()
+            for key, value in payload.items()
+        ):
+            raise ValueError(f"{name} must be a non-empty public-key map")
+        env[name] = raw
+    return env
 
 
 def parse_utc_timestamp(value: str | None) -> datetime | None:
@@ -91,6 +127,29 @@ def supervisor_lock_path(config: dict[str, Any]) -> Path:
     return coord_root / ".orchestrator" / "supervisor.lock"
 
 
+def supervisor_promotion_lock_path(config: dict[str, Any]) -> Path:
+    coord_root = resolved_coordinator_status_root(config)
+    return coord_root / ".orchestrator" / "supervisor-runtime-promotion.lock"
+
+
+def exclusive_lock_held(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        handle = open(path, "a+", encoding="utf-8")
+    except OSError:
+        return False
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+    finally:
+        handle.close()
+
+
 def supervisor_lock_held(config: dict[str, Any]) -> bool:
     """Return True if a live supervisor holds the singleton flock.
 
@@ -102,25 +161,7 @@ def supervisor_lock_held(config: dict[str, Any]) -> bool:
     NON-BLOCKING exclusive lock: failure means someone else holds it (alive);
     success means nobody holds it, so we release immediately and report dead.
     """
-    path = supervisor_lock_path(config)
-    if not path.exists():
-        return False
-    try:
-        handle = open(path, "a+", encoding="utf-8")
-    except OSError:
-        # Cannot open the lock file; fall back to "not held" so the pid-based
-        # signal decides rather than masking a genuinely dead supervisor.
-        return False
-    try:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            return True
-        # We acquired it -> nobody held it. Release so we never starve a relaunch.
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        return False
-    finally:
-        handle.close()
+    return exclusive_lock_held(supervisor_lock_path(config))
 
 
 def watchdog_state_path(config: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
@@ -875,7 +916,7 @@ def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: date
     # its own module location and resolves freshly-archived task dependencies as
     # "missing", stalling ready-dispatch down to a single self-claiming worker.
     # See docs/decisions/supervisor-status-root-split-brain-2026-06-09.md.
-    env = dict(os.environ)
+    env = supervisor_restart_environment(dict(os.environ))
     # Persist the immutable-runtime no-bytecode contract across watchdog
     # restarts.  The supervisor's ``-B`` argv protects its own interpreter;
     # this inherited setting protects every Python child it later launches.
@@ -1068,6 +1109,9 @@ def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_r
         settings=settings,
     )
     lock_held = supervisor_lock_held(config)
+    promotion_in_progress = exclusive_lock_held(
+        supervisor_promotion_lock_path(config)
+    )
     # The flock is the authoritative liveness signal; the pid file is a best-effort
     # hint that is absent during clean-restart seams. Folding lock_held into `alive`
     # stops the watchdog from restarting a live supervisor just because its pid file
@@ -1087,6 +1131,9 @@ def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_r
     if not settings.get("enabled", True):
         decision = "observe_only"
         reason = "watchdog_disabled"
+    elif promotion_in_progress:
+        decision = "suppress_restart"
+        reason = "supervisor_runtime_promotion_in_progress"
     elif pressure_reasons:
         decision = "suppress_restart"
         reason = "resource_pressure:" + ",".join(pressure_reasons)

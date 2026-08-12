@@ -4,19 +4,15 @@ config, and detect a stale dev-root checkout.
 
 Two failure modes this guards against, both seen in production:
 
-1. A control toggle (e.g. `chair_review.enabled`) gets hand-disabled in the
-   live config during incident "止血" and never restored, so the running
-   supervisor silently stops chair review / reassignment for days. The repo
-   config still says it should be on.
+1. A reviewed account or agent capacity gets hand-edited in the live config
+   during incident mitigation and never restored.
 
 2. The dev-root checkout the supervisor runs from drifts behind origin/dev
    (the deploy sync stops), so merged code never goes live.
 
 NOT every live != repo difference is drift. Some live overrides are
 legitimate and environment-specific. Those live on an allowlist and are
-reported as informational, never auto-fixed. Coordination is intentionally
-not allowlisted: its active mirror uses `execute-plans`, while stale legacy
-frontend packets are packet-local skips and cannot stop the supervisor loop.
+reported as informational, never auto-fixed.
 """
 from __future__ import annotations
 
@@ -29,23 +25,13 @@ from pathlib import Path
 # Control toggles that must match the repo source-of-truth unless explicitly
 # allowlisted as an environment override below.
 CRITICAL_FLAGS: tuple[str, ...] = (
-    "chair_review.enabled",
-    "worker_reassignment.enabled",
     "ready_dispatcher.enabled",
-    "ready_dispatcher.require_explicit_provider_accounts",
-    "ready_dispatcher.allow_legacy_provider_account_aliases",
-    "ready_dispatcher.disabled_agents",
     "ready_dispatcher.sidecar_only_agents",
     "ready_dispatcher.target_workload",
-    "ready_dispatcher.max_tasks_per_agent_by_agent",
     "ready_dispatcher.max_dispatches_per_tick",
     "ready_dispatcher.max_active_workers_per_task",
     "ready_dispatcher.max_concurrent_per_account",
     "ready_dispatcher.max_concurrent_workers",
-    # Silently flipping this off strands queued work behind an idle lane and
-    # disables the paused-owner rescue path, with no activity-log record.
-    "ready_dispatcher.helper_claim.enabled",
-    "coordination.enabled",
     "github_bus.enabled",
     "watchdog.enabled",
     "supervisor.observe_worker_commit_progress",
@@ -99,7 +85,24 @@ def find_drift(
     missing from live is actionable drift so --fix can provision it.
     """
     drift, intentional, missing = [], [], []
-    for path in critical_flags:
+    effective_flags = list(critical_flags)
+    for provider_id, provider in (repo_cfg.get("providers") or {}).items():
+        if isinstance(provider, dict):
+            effective_flags.append(f"providers.{provider_id}.account")
+    for agent_id, agent in (repo_cfg.get("agents") or {}).items():
+        if not isinstance(agent, dict):
+            continue
+        effective_flags.append(f"agents.{agent_id}.provider")
+        if agent.get("dispatch_slot_for"):
+            effective_flags.append(f"agents.{agent_id}.dispatch_slot_for")
+        else:
+            effective_flags.extend(
+                (
+                    f"agents.{agent_id}.max_parallel",
+                    f"agents.{agent_id}.worker_slots",
+                )
+            )
+    for path in effective_flags:
         repo_val = get_dotted(repo_cfg, path)
         live_val = get_dotted(live_cfg, path)
         if repo_val is _SENTINEL:

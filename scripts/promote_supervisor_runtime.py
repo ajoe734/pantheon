@@ -11,10 +11,10 @@ import argparse
 import copy
 import fcntl
 import hashlib
+import io
 import json
 import os
 import re
-import shutil
 import signal
 import stat
 import subprocess
@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -36,12 +36,25 @@ from supervisor_runtime_health import (
     parse_utc_timestamp,
     lock_held,
 )
+from provision_live_supervisor_config import build_live_config, load_json_object
+from migrate_task_state_store_v2 import (
+    LEGACY_EVENT_TYPE,
+    LEGACY_EVENT_VERSION,
+    migrate as migrate_task_state_store_v2,
+    snapshot_transaction,
+)
 
 
 HEX_40_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 TASK_BRIEF_PATH_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*\.md$")
+SUPERVISOR_RUNTIME_LOG_PATH_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,249}\.log$"
+)
 ALLOWED_COMMAND_RUNTIMES_PREFIX = Path(
     "/home/lupin/pantheon-ci-deploy/command-runtimes"
+)
+ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX = Path(
+    "/home/lupin/pantheon-ci-deploy/rollback-command-runtimes"
 )
 LIVE_SUPERVISOR_CONFIG_PATH = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
@@ -58,27 +71,37 @@ SUPERVISOR_ENTRYPOINT_RELATIVE = PurePosixPath(
     ".orchestrator/supervisor.py"
 )
 PROCESS_ENVIRONMENT_ALLOWLIST = (
+    "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
     "PANTHEON_COMMAND_ROOT",
     "PANTHEON_COMMAND_RUNTIME_SHA",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
     "PANTHEON_STATUS_ROOT",
     "PYTHONDONTWRITEBYTECODE",
 )
 GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT = (
+    "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
     "PANTHEON_COMMAND_BASE_REF",
     "PANTHEON_COMMAND_REMOTE",
     "PANTHEON_COMMAND_ROOT",
     "PANTHEON_COMMAND_RUNTIME_SHA",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
     "PANTHEON_STATUS_ROOT",
     "PYTHONDONTWRITEBYTECODE",
 )
 GOVERNED_LAUNCH_FORBIDDEN_ENVIRONMENT = frozenset(
     {
         "CLAUDE_CONFIG_DIR",
+        "BRIDGE_SIGNING_KEY",
+        "BRIDGE_SIGNING_PRIVATE_KEY",
+        "BRIDGE_SIGNING_KEY_ID",
         "GH_CONFIG_DIR",
         "PANTHEON_STATUS_COMMAND_BASE_REF",
         "PANTHEON_STATUS_COMMAND_REMOTE",
         "PANTHEON_STATUS_COMMAND_ROOT",
         "PANTHEON_STATUS_COMMAND_SHA",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID",
         "PANTHEON_TASK_STATE_EVENT_LOG",
         "PANTHEON_TASK_STATE_STORE_MODE",
         "PANTHEON_WORKTREE_ROOT",
@@ -122,15 +145,17 @@ ALLOWED_GENERATED_UNTRACKED_FILES = frozenset(
         PurePosixPath(".orchestrator/auto-integrator.lock"),
         PurePosixPath(".orchestrator/auto_commit_archive.lock"),
         PurePosixPath(".orchestrator/dashboard-autostart.lock"),
-        PurePosixPath(".orchestrator/planning-state.lock"),
-        PurePosixPath(".orchestrator/reap-in-progress.lock"),
         PurePosixPath(".orchestrator/runtime-admission.lock"),
         PurePosixPath(".orchestrator/status-derived-views.lock"),
         PurePosixPath(".orchestrator/supervisor.lock"),
         PurePosixPath(".orchestrator/task-state.lock"),
     }
 )
-
+ALLOWED_GENERATED_UNTRACKED_DIRECTORIES = frozenset(
+    {
+        PurePosixPath(".orchestrator/logs"),
+    }
+)
 
 @dataclass(frozen=True)
 class GitRemoteIdentity:
@@ -191,7 +216,12 @@ class TrackedGitlinkIdentity:
 class ProcessGeneration:
     pid: int
     starttime_ticks: int
-    state: str
+    # Linux scheduler state is an observation, not generation identity.  A
+    # live process can legitimately move between R and S while a promotion
+    # reads the incumbent's state.  PID reuse is instead bound by the stable
+    # (pid, starttime_ticks) pair; zombie rejection remains explicit at each
+    # guarded process read.
+    state: str = field(compare=False)
 
 
 @dataclass(frozen=True)
@@ -210,7 +240,11 @@ class SupervisorAdmissionLockIdentity:
     sha256: str
     mtime_ns: int
     ctime_ns: int
-    kernel_lock_id: str
+    # ``/proc/locks`` assigns this row ordinal while rendering the global lock
+    # table.  Unrelated lock churn can renumber it even when this exact inode,
+    # owner PID generation, and FLOCK mode have not changed.  Keep it in
+    # evidence, but never use it as a promotion identity/CAS field.
+    kernel_lock_id: str = field(compare=False)
     kernel_lock_kind: str
     kernel_lock_class: str
     kernel_lock_mode: str
@@ -263,6 +297,19 @@ class LaunchFileIdentity:
 
 
 @dataclass(frozen=True)
+class LaunchJournalFileIdentity:
+    role: str
+    path: Path
+    device: int
+    inode: int
+    mode: int
+    captured_size: int
+    prefix_sha256: str
+    captured_at_size: int = field(compare=False)
+
+
+
+@dataclass(frozen=True)
 class GovernedSupervisorLaunchContract:
     interpreter: LaunchFileIdentity
     argv: tuple[str, ...]
@@ -283,6 +330,8 @@ class GovernedSupervisorLaunchContract:
     intentional_restart_path: Path
     stdout_log_path: Path
     stderr_log_path: Path
+    task_state_event_log_identity: LaunchJournalFileIdentity | None = None
+
 
 
 @dataclass(frozen=True)
@@ -296,22 +345,6 @@ class SupervisorConfigVariant:
     sha256: str
 
 
-@dataclass(frozen=True)
-class MutableIncumbentSnapshot:
-    """Exact read-only binding for the legacy mutable incumbent generation."""
-
-    root: Path
-    root_device: int
-    root_inode: int
-    head_commit: str
-    tracked_tree_identity: str
-    accepted_dev_commit: str
-    remote_url: str
-    repository_slug: str
-    process: SupervisorProcessIdentity
-    source_identities: tuple[LaunchFileIdentity, ...]
-
-
 class LaunchFilesystem(Protocol):
     def capture_regular_file(
         self,
@@ -321,6 +354,14 @@ class LaunchFilesystem(Protocol):
         require_executable: bool,
     ) -> LaunchFileIdentity: ...
 
+    def capture_append_only_journal(
+        self,
+        path: Path,
+        *,
+        role: str,
+        baseline_identity: LaunchJournalFileIdentity | None = None,
+    ) -> LaunchJournalFileIdentity: ...
+
     def capture_directory(self, path: Path, *, label: str) -> FilesystemIdentity: ...
 
     def directory_is_writable(self, path: Path) -> bool: ...
@@ -328,6 +369,7 @@ class LaunchFilesystem(Protocol):
     def path_exists(self, path: Path) -> bool: ...
 
     def file_is_writable(self, path: Path) -> bool: ...
+
 
 
 class RuntimeProcessReader(Protocol):
@@ -378,7 +420,6 @@ class CandidateRuntimeIdentity:
     config_bytes: bytes
     config_byte_length: int
     config_sha256: str
-
     def verify_against_live_config(self, live_config_path: Path) -> None:
         """Re-read and compare the exact live-config path and byte identity."""
         if self.config_path != LIVE_SUPERVISOR_CONFIG_PATH:
@@ -426,7 +467,13 @@ class CandidateRuntimeIdentity:
                 or root_handle.identity.inode != self.candidate_root_inode
             ):
                 raise ValueError("Candidate root file identity drift detected")
-            current_git_identity = (
+            # Git may atomically refresh its index while running the read-only
+            # cleanliness probes used to build this immutable identity.  The
+            # index is not executable authority: revalidate its current
+            # contents through the complete cleanliness checks below.  The
+            # repository control directory, objects, config and HEAD remain
+            # exact identity bindings and must never be rebound here.
+            current_static_git_identity = (
                 root_handle.git_identity.device,
                 root_handle.git_identity.inode,
                 root_handle.git_objects_identity.device,
@@ -435,10 +482,8 @@ class CandidateRuntimeIdentity:
                 root_handle.git_config_identity.inode,
                 root_handle.git_head_identity.device,
                 root_handle.git_head_identity.inode,
-                root_handle.git_index_identity.device,
-                root_handle.git_index_identity.inode,
             )
-            captured_git_identity = (
+            captured_static_git_identity = (
                 self.git_directory_device,
                 self.git_directory_inode,
                 self.git_objects_device,
@@ -447,10 +492,8 @@ class CandidateRuntimeIdentity:
                 self.git_config_inode,
                 self.git_head_device,
                 self.git_head_inode,
-                self.git_index_device,
-                self.git_index_inode,
             )
-            if current_git_identity != captured_git_identity:
+            if current_static_git_identity != captured_static_git_identity:
                 raise ValueError("Candidate Git metadata identity drift detected")
 
             remote_url = parse_origin_url(root_handle)
@@ -520,6 +563,7 @@ def _subprocess_environment() -> dict[str, str]:
 def _run_git(
     cwd: Path | CandidateRootHandle,
     *args: str,
+    environment_overrides: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = _subprocess_environment()
     if isinstance(cwd, CandidateRootHandle):
@@ -558,6 +602,8 @@ def _run_git(
         cwd_arg = cwd
         pass_fds = ()
         display_cwd = cwd
+    if environment_overrides is not None:
+        env.update(environment_overrides)
     try:
         return subprocess.run(
             ["git", *args],
@@ -577,8 +623,95 @@ def _run_git(
         ) from exc
 
 
+def _run_git_bytes(
+    cwd: Path | CandidateRootHandle,
+    *args: str,
+    environment_overrides: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    env = _subprocess_environment()
+    if isinstance(cwd, CandidateRootHandle):
+        cwd_arg = Path(f"/dev/fd/{cwd.descriptor}")
+        pass_fds = (
+            cwd.descriptor,
+            cwd.git_descriptor,
+            cwd.git_objects_descriptor,
+            cwd.git_config_descriptor,
+            cwd.git_head_descriptor,
+            cwd.git_index_descriptor,
+        )
+        display_cwd = cwd.path
+        env.update(
+            {
+                "GIT_DIR": f"/dev/fd/{cwd.git_descriptor}",
+                "GIT_WORK_TREE": f"/dev/fd/{cwd.descriptor}",
+                "GIT_COMMON_DIR": f"/dev/fd/{cwd.git_descriptor}",
+                "GIT_OBJECT_DIRECTORY": f"/dev/fd/{cwd.git_objects_descriptor}",
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_INDEX_FILE": f"/dev/fd/{cwd.git_index_descriptor}",
+                "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_CONFIG_COUNT": "3",
+                "GIT_CONFIG_KEY_0": "core.fsmonitor",
+                "GIT_CONFIG_VALUE_0": "false",
+                "GIT_CONFIG_KEY_1": "core.untrackedCache",
+                "GIT_CONFIG_VALUE_1": "false",
+                "GIT_CONFIG_KEY_2": "core.hooksPath",
+                "GIT_CONFIG_VALUE_2": os.devnull,
+            }
+        )
+    else:
+        cwd_arg = cwd
+        pass_fds = ()
+        display_cwd = cwd
+    if environment_overrides is not None:
+        env.update(environment_overrides)
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd_arg,
+            capture_output=True,
+            check=True,
+            env=env,
+            pass_fds=pass_fds,
+            text=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        stderr = getattr(exc, "stderr", None)
+        detail = (
+            stderr.decode("utf-8", errors="replace")
+            if isinstance(stderr, bytes)
+            else str(stderr or exc)
+        ).strip()
+        raise ValueError(
+            f"git {' '.join(args)} failed in {display_cwd}: {detail}"
+        ) from exc
+
+
 def _git_output(cwd: Path | CandidateRootHandle, *args: str) -> str:
     return _run_git(cwd, *args).stdout.strip()
+
+
+def _run_mutable_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run read-only Git discovery against a mutable incumbent checkout."""
+    return _run_git(
+        cwd,
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+        "-c",
+        f"core.hooksPath={os.devnull}",
+        *args,
+        environment_overrides={
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+        },
+    )
+
+
+def _mutable_git_output(cwd: Path, *args: str) -> str:
+    return _run_mutable_git(cwd, *args).stdout.strip()
 
 
 def _validate_absolute_identity_path(path: Path, *, label: str) -> None:
@@ -605,6 +738,32 @@ def _identity_from_stat(path_stat: os.stat_result) -> FilesystemIdentity:
     )
 
 
+def _move_descriptor_above_standard_streams(descriptor: int) -> int:
+    """Keep descriptor-bound identities out of subprocess stdio slots.
+
+    A daemon may start with one or more of descriptors 0, 1, and 2 closed. In
+    that case ``os.open`` reuses the vacant number. These identity descriptors
+    are later exposed to Git through ``/dev/fd`` while
+    ``subprocess.run(capture_output=True)`` installs its own child-side stdout
+    and stderr pipes. Leaving a candidate directory on fd 1 or 2 therefore
+    turns the same ``/dev/fd/<n>`` into a pipe in the child and produces a
+    misleading ENOTDIR even though the descriptor is a directory in the
+    promotion process.
+
+    F_DUPFD_CLOEXEC allocates a descriptor at or above 3 while retaining the
+    explicit ``pass_fds`` boundary used for Git children.
+    """
+    if descriptor > 2:
+        return descriptor
+    try:
+        duplicate = fcntl.fcntl(descriptor, fcntl.F_DUPFD_CLOEXEC, 3)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    os.close(descriptor)
+    return duplicate
+
+
 def _open_directory_descriptor(path: Path, *, label: str) -> int:
     """Open an absolute directory one no-follow component at a time."""
     _validate_absolute_identity_path(path, label=label)
@@ -614,16 +773,20 @@ def _open_directory_descriptor(path: Path, *, label: str) -> int:
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
-    descriptor = os.open(path.anchor, flags)
+    descriptor = _move_descriptor_above_standard_streams(
+        os.open(path.anchor, flags)
+    )
     traversed = Path(path.anchor)
     try:
         for component in path.parts[1:]:
             traversed = traversed / component
             try:
-                next_descriptor = os.open(
-                    component,
-                    flags,
-                    dir_fd=descriptor,
+                next_descriptor = _move_descriptor_above_standard_streams(
+                    os.open(
+                        component,
+                        flags,
+                        dir_fd=descriptor,
+                    )
                 )
             except FileNotFoundError as exc:
                 raise FileNotFoundError(
@@ -655,7 +818,9 @@ def _capture_directory_component_identities(
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
-    descriptor = os.open(path.anchor, flags)
+    descriptor = _move_descriptor_above_standard_streams(
+        os.open(path.anchor, flags)
+    )
     traversed = Path(path.anchor)
     components = [
         PathComponentIdentity(
@@ -667,10 +832,12 @@ def _capture_directory_component_identities(
         for component in path.parts[1:]:
             traversed = traversed / component
             try:
-                next_descriptor = os.open(
-                    component,
-                    flags,
-                    dir_fd=descriptor,
+                next_descriptor = _move_descriptor_above_standard_streams(
+                    os.open(
+                        component,
+                        flags,
+                        dir_fd=descriptor,
+                    )
                 )
             except FileNotFoundError as exc:
                 raise FileNotFoundError(
@@ -744,7 +911,9 @@ def _open_relative_descriptor(
     if require_directory:
         flags |= os.O_DIRECTORY
     try:
-        descriptor = os.open(name, flags, dir_fd=parent_descriptor)
+        descriptor = _move_descriptor_above_standard_streams(
+            os.open(name, flags, dir_fd=parent_descriptor)
+        )
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"{label} does not exist") from exc
     except OSError as exc:
@@ -833,7 +1002,9 @@ def _open_path_descriptor(
         flags |= os.O_DIRECTORY
     try:
         try:
-            descriptor = os.open(path.name, flags, dir_fd=parent_descriptor)
+            descriptor = _move_descriptor_above_standard_streams(
+                os.open(path.name, flags, dir_fd=parent_descriptor)
+            )
         except FileNotFoundError as exc:
             raise FileNotFoundError(f"{label} does not exist: {path}") from exc
         except OSError as exc:
@@ -1172,10 +1343,15 @@ def _open_candidate_root_handle(
 ) -> CandidateRootHandle:
     path = candidate_path if isinstance(candidate_path, Path) else Path(candidate_path)
     trusted_parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
+    trusted_rollback_parent = ALLOWED_ROLLBACK_COMMAND_RUNTIMES_PREFIX
 
-    if require_immutable_location and path.parent != trusted_parent:
+    if (
+        require_immutable_location
+        and path.parent != trusted_parent
+        and path.parent != trusted_rollback_parent
+    ):
         raise ValueError(
-            f"Candidate root {path} is not a direct child of {trusted_parent}"
+            f"Candidate root {path} is not a direct child of {trusted_parent} or {trusted_rollback_parent}"
         )
     if require_immutable_location and not HEX_40_PATTERN.fullmatch(path.name):
         raise ValueError(
@@ -1476,6 +1652,16 @@ def _is_allowed_generated_untracked_path(path: str) -> bool:
     candidate = PurePosixPath(path)
     if candidate in ALLOWED_GENERATED_UNTRACKED_FILES:
         return True
+    return _is_task_brief_path(path)
+
+
+def _is_allowed_generated_untracked_directory(path: str) -> bool:
+    candidate = PurePosixPath(path.rstrip("/"))
+    return candidate in ALLOWED_GENERATED_UNTRACKED_DIRECTORIES
+
+
+def _is_task_brief_path(path: str) -> bool:
+    candidate = PurePosixPath(path)
     parts = candidate.parts
     return (
         len(parts) == 3
@@ -1527,6 +1713,79 @@ def _assert_allowed_generated_untracked_file(
                 )
         finally:
             os.close(leaf)
+    finally:
+        _close_descriptors(*reversed(descriptors))
+
+
+def _assert_allowed_generated_untracked_directory(
+    handle: CandidateRootHandle,
+    relative_path: str,
+) -> None:
+    """Admit only regular, non-executable ``.log`` leaves in the logs root."""
+    candidate = PurePosixPath(relative_path.rstrip("/"))
+    if candidate not in ALLOWED_GENERATED_UNTRACKED_DIRECTORIES:
+        raise ValueError(
+            f"Generated directory is not allowlisted: {relative_path!r}"
+        )
+
+    descriptors = [os.dup(handle.descriptor)]
+    try:
+        for component in candidate.parts:
+            descriptor = _open_relative_descriptor(
+                descriptors[-1],
+                component,
+                label=f"Allowed generated directory component {component!r}",
+                require_directory=True,
+            )
+            if os.fstat(descriptor).st_dev != handle.identity.device:
+                os.close(descriptor)
+                raise ValueError(
+                    "Allowed generated directory escaped the candidate filesystem: "
+                    f"{relative_path}"
+                )
+            descriptors.append(descriptor)
+
+        try:
+            with os.scandir(descriptors[-1]) as entries:
+                names = tuple(entry.name for entry in entries)
+        except OSError as exc:
+            raise ValueError(
+                f"Cannot enumerate allowed generated directory {relative_path!r}: {exc}"
+            ) from exc
+
+        for name in names:
+            if SUPERVISOR_RUNTIME_LOG_PATH_PATTERN.fullmatch(name) is None:
+                raise ValueError(
+                    "Forbidden entry in allowed generated log directory: "
+                    f"{candidate / name}"
+                )
+            leaf = _open_relative_descriptor(
+                descriptors[-1],
+                name,
+                label=f"Allowed generated log file {str(candidate / name)!r}",
+                require_directory=False,
+            )
+            try:
+                leaf_stat = os.fstat(leaf)
+                if leaf_stat.st_dev != handle.identity.device:
+                    raise ValueError(
+                        "Allowed generated log file escaped the candidate filesystem: "
+                        f"{candidate / name}"
+                    )
+                if leaf_stat.st_nlink != 1:
+                    raise ValueError(
+                        "Allowed generated log file must have exactly one link: "
+                        f"{candidate / name}"
+                    )
+                if leaf_stat.st_mode & (
+                    stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                ):
+                    raise ValueError(
+                        "Allowed generated log file must not be executable: "
+                        f"{candidate / name}"
+                    )
+            finally:
+                os.close(leaf)
     finally:
         _close_descriptors(*reversed(descriptors))
 
@@ -1808,10 +2067,16 @@ def verify_working_tree_cleanliness(
                 )
             if relative_path.endswith("/"):
                 kind = "ignored" if status_code == "!!" else "untracked"
-                raise ValueError(
-                    f"Forbidden {kind} directory found in candidate root: "
-                    f"{relative_path}"
+                if not _is_allowed_generated_untracked_directory(relative_path):
+                    raise ValueError(
+                        f"Forbidden {kind} directory found in candidate root: "
+                        f"{relative_path}"
+                    )
+                _assert_allowed_generated_untracked_directory(
+                    handle,
+                    relative_path,
                 )
+                continue
             if not _is_allowed_generated_untracked_path(relative_path):
                 kind = "ignored" if status_code == "!!" else "untracked"
                 raise ValueError(
@@ -1924,8 +2189,15 @@ def derive_supervisor_config_variant(
     identity: CandidateRuntimeIdentity,
     *,
     command_root: Path,
+    repo_config_root: Path | None = None,
 ) -> SupervisorConfigVariant:
-    """Render one target command without mutating the captured live config."""
+    """Render one target generation without mutating the live config.
+
+    Candidate promotion consumes reviewed repo-owned policy through the same
+    split-root renderer as provisioning. Rollback omits ``repo_config_root``
+    and therefore restores the exact captured incumbent policy while changing
+    only its immutable command root.
+    """
     payload = copy.deepcopy(_strict_live_config(identity))
     watchdog = payload.get("watchdog")
     if not isinstance(watchdog, dict):
@@ -1947,7 +2219,39 @@ def derive_supervisor_config_variant(
             "Captured live config must contain exactly one supervisor entrypoint"
         )
     command = list(raw_command)
+    if repo_config_root is not None:
+        repo_config_path = repo_config_root / ".orchestrator" / "config.json"
+        repo_config = load_json_object(repo_config_path)
+        _status_path, _state_path, _provider_path, status_root = (
+            _runtime_document_paths(identity)
+        )
+        payload = build_live_config(
+            repo_config,
+            existing_live_config=payload,
+            command_root=command_root,
+            status_root=status_root,
+            live_config_path=identity.config_path,
+            python_executable=Path(command[0]),
+        )
+        watchdog = payload.get("watchdog")
+        if not isinstance(watchdog, dict):
+            raise ValueError("Rendered candidate config watchdog object is missing")
+        rendered_command = watchdog.get("supervisor_command")
+        if not isinstance(rendered_command, list) or not rendered_command:
+            raise ValueError("Rendered candidate supervisor_command is invalid")
+        command = list(rendered_command)
     supervisor_index = supervisor_indexes[0]
+    if repo_config_root is not None:
+        supervisor_indexes = tuple(
+            index
+            for index, argument in enumerate(command)
+            if PurePosixPath(argument).name == "supervisor.py"
+        )
+        if len(supervisor_indexes) != 1:
+            raise ValueError(
+                "Rendered candidate config must contain exactly one supervisor entrypoint"
+            )
+        supervisor_index = supervisor_indexes[0]
     command[supervisor_index] = str(
         command_root / SUPERVISOR_ENTRYPOINT_RELATIVE
     )
@@ -2097,6 +2401,23 @@ def atomic_install_live_config(
         os.close(directory_fd)
 
 
+def _hash_descriptor_range(descriptor: int, *, length: int) -> str:
+    hasher = hashlib.sha256()
+    if length == 0:
+        return hasher.hexdigest()
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    bytes_remaining = length
+    chunk_size = 65536
+    while bytes_remaining > 0:
+        to_read = min(bytes_remaining, chunk_size)
+        chunk = os.read(descriptor, to_read)
+        if not chunk or len(chunk) == 0:
+            raise ValueError("Unexpected end of file while reading descriptor range")
+        hasher.update(chunk)
+        bytes_remaining -= len(chunk)
+    return hasher.hexdigest()
+
+
 class OSLaunchFilesystem:
     """Descriptor-bound, read-only filesystem checks for launch preflight."""
 
@@ -2118,6 +2439,8 @@ class OSLaunchFilesystem:
         )
         try:
             before = os.fstat(descriptor)
+            if before.st_nlink != 1:
+                raise ValueError(f"Governed launch {role} must not be hard-linked: {path}")
             with os.fdopen(descriptor, "rb", closefd=False) as handle:
                 content = handle.read()
             after = os.fstat(descriptor)
@@ -2127,6 +2450,7 @@ class OSLaunchFilesystem:
             before.st_dev,
             before.st_ino,
             before.st_mode,
+            before.st_nlink,
             before.st_size,
             before.st_mtime_ns,
             before.st_ctime_ns,
@@ -2135,6 +2459,7 @@ class OSLaunchFilesystem:
             after.st_dev,
             after.st_ino,
             after.st_mode,
+            after.st_nlink,
             after.st_size,
             after.st_mtime_ns,
             after.st_ctime_ns,
@@ -2160,6 +2485,102 @@ class OSLaunchFilesystem:
             mode=before.st_mode,
             byte_length=len(content),
             sha256=hashlib.sha256(content).hexdigest(),
+        )
+
+    def capture_append_only_journal(
+        self,
+        path: Path,
+        *,
+        role: str,
+        baseline_identity: LaunchJournalFileIdentity | None = None,
+    ) -> LaunchJournalFileIdentity:
+        parent_components = _capture_directory_component_identities(
+            path.parent,
+            label=f"Governed launch {role}",
+        )
+        descriptor = _open_path_descriptor(
+            path,
+            label=f"Governed launch {role}",
+            require_directory=False,
+        )
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError(f"Governed launch {role} is not a regular file: {path}")
+            if before.st_nlink != 1:
+                raise ValueError(f"Governed launch {role} must not be hard-linked: {path}")
+
+            if baseline_identity is not None:
+                if before.st_dev != baseline_identity.device:
+                    raise ValueError(f"Governed launch {role} device changed: {path}")
+                if before.st_ino != baseline_identity.inode:
+                    raise ValueError(f"Governed launch {role} inode changed: {path}")
+                if before.st_mode != baseline_identity.mode:
+                    raise ValueError(f"Governed launch {role} mode changed: {path}")
+                if before.st_size < baseline_identity.captured_size:
+                    raise ValueError(
+                        f"Governed launch {role} was truncated below baseline size: {path}"
+                    )
+                prefix_len = baseline_identity.captured_size
+                expected_prefix_sha256 = baseline_identity.prefix_sha256
+            else:
+                prefix_len = before.st_size
+                expected_prefix_sha256 = None
+
+            try:
+                prefix_sha256 = _hash_descriptor_range(descriptor, length=prefix_len)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Governed launch {role} was truncated during capture: {path}"
+                ) from exc
+
+            if expected_prefix_sha256 is not None and prefix_sha256 != expected_prefix_sha256:
+                raise ValueError(
+                    f"Governed launch {role} prefix changed from baseline: {path}"
+                )
+
+            after = os.fstat(descriptor)
+            if after.st_dev != before.st_dev:
+                raise ValueError(f"Governed launch {role} device changed during capture: {path}")
+            if after.st_ino != before.st_ino:
+                raise ValueError(f"Governed launch {role} inode changed during capture: {path}")
+            if after.st_mode != before.st_mode:
+                raise ValueError(f"Governed launch {role} mode changed during capture: {path}")
+            if after.st_nlink != 1:
+                raise ValueError(f"Governed launch {role} must not be hard-linked: {path}")
+            if after.st_size < before.st_size:
+                raise ValueError(f"Governed launch {role} was truncated during capture: {path}")
+
+            try:
+                reverified_prefix_sha256 = _hash_descriptor_range(descriptor, length=prefix_len)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Governed launch {role} was truncated during capture: {path}"
+                ) from exc
+
+            if reverified_prefix_sha256 != prefix_sha256:
+                raise ValueError(
+                    f"Governed launch {role} prefix changed during capture: {path}"
+                )
+        finally:
+            os.close(descriptor)
+
+        file_identity = _identity_from_stat(before)
+        _assert_path_component_identities(
+            parent_components
+            + (PathComponentIdentity(path=path, identity=file_identity),),
+            label=f"Governed launch {role}",
+        )
+
+        return LaunchJournalFileIdentity(
+            role=role,
+            path=path,
+            device=before.st_dev,
+            inode=before.st_ino,
+            mode=before.st_mode,
+            captured_size=prefix_len,
+            prefix_sha256=prefix_sha256,
+            captured_at_size=after.st_size,
         )
 
     def capture_directory(self, path: Path, *, label: str) -> FilesystemIdentity:
@@ -2228,8 +2649,10 @@ def _expected_governed_launch_environment(
     identity: CandidateRuntimeIdentity,
     *,
     status_root: Path,
+    authority_environment: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    return {
+    source = os.environ if authority_environment is None else authority_environment
+    expected = {
         "PANTHEON_COMMAND_BASE_REF": "origin/dev",
         "PANTHEON_COMMAND_REMOTE": identity.repository_slug,
         "PANTHEON_COMMAND_ROOT": str(identity.candidate_root),
@@ -2239,6 +2662,15 @@ def _expected_governed_launch_environment(
         # subprocess the supervisor launches from the immutable command root.
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+    for name in (
+        "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
+    ):
+        value = str(source.get(name) or "").strip()
+        if not value:
+            raise ValueError(f"Governed launch environment is missing {name}")
+        expected[name] = value
+    return expected
 
 
 def build_scrubbed_launch_environment(
@@ -2254,7 +2686,11 @@ def build_scrubbed_launch_environment(
         if not _is_forbidden_launch_environment_name(str(name))
     }
     environment.update(
-        _expected_governed_launch_environment(identity, status_root=status_root)
+        _expected_governed_launch_environment(
+            identity,
+            status_root=status_root,
+            authority_environment=source,
+        )
     )
     return environment
 
@@ -2328,14 +2764,18 @@ def build_governed_supervisor_launch_contract(
     launch_cwd: Path | None = None,
     stdout_log_path: Path | None = None,
     stderr_log_path: Path | None = None,
+    baseline_task_state_event_log_identity: LaunchJournalFileIdentity | None = None,
+    config_override: Mapping[str, Any] | None = None,
+    defer_task_state_event_log_identity: bool = False,
 ) -> GovernedSupervisorLaunchContract:
     """Assemble and validate the exact next-launch contract without mutation."""
     fs = filesystem or OSLaunchFilesystem()
     expected_process = _expected_supervisor_process_contract(
         identity,
         supervisor_argv=supervisor_argv,
+        config_override=config_override,
     )
-    config = _strict_live_config(identity)
+    config = _strict_config_payload(identity, config_override)
 
     if expected_process.argv[0] != str(expected_process.executable):
         raise ValueError(
@@ -2381,11 +2821,6 @@ def build_governed_supervisor_launch_contract(
         task_state_store.get("event_log"),
         label="task_state_store.event_log",
     )
-    fs.capture_regular_file(
-        task_state_event_log,
-        role="task_state_event_log",
-        require_executable=False,
-    )
     fs.capture_directory(
         task_state_event_log.parent,
         label="Governed task-state event-log directory",
@@ -2395,10 +2830,26 @@ def build_governed_supervisor_launch_contract(
             "Governed task-state event-log directory is not writable: "
             f"{task_state_event_log.parent}"
         )
-    if not fs.file_is_writable(task_state_event_log):
-        raise ValueError(
-            f"Governed task-state event log is not writable: {task_state_event_log}"
+    task_state_event_log_identity: LaunchJournalFileIdentity | None
+    if defer_task_state_event_log_identity:
+        if baseline_task_state_event_log_identity is not None:
+            raise ValueError("Deferred journal capture cannot carry a baseline identity")
+        if fs.path_exists(task_state_event_log):
+            raise ValueError(
+                "Deferred candidate task-state journal already exists; "
+                "migration must establish its exact identity"
+            )
+        task_state_event_log_identity = None
+    else:
+        task_state_event_log_identity = fs.capture_append_only_journal(
+            task_state_event_log,
+            role="task_state_event_log",
+            baseline_identity=baseline_task_state_event_log_identity,
         )
+        if not fs.file_is_writable(task_state_event_log):
+            raise ValueError(
+                f"Governed task-state event log is not writable: {task_state_event_log}"
+            )
     if _path_is_within(task_state_event_log, identity.candidate_root):
         raise ValueError("Task-state event log must remain outside the command runtime")
 
@@ -2423,11 +2874,7 @@ def build_governed_supervisor_launch_contract(
         raise ValueError("Worker worktree root cannot be inside the command runtime")
 
     status_root = Path(expected_process.status_root)
-    expected_environment = _expected_governed_launch_environment(
-        identity,
-        status_root=status_root,
-    )
-    final_environment = (
+    scrubbed_environment = (
         dict(launch_environment)
         if launch_environment is not None
         else build_scrubbed_launch_environment(
@@ -2436,8 +2883,13 @@ def build_governed_supervisor_launch_contract(
             inherited_environment=inherited_environment,
         )
     )
+    expected_environment = _expected_governed_launch_environment(
+        identity,
+        status_root=status_root,
+        authority_environment=scrubbed_environment,
+    )
     _validate_governed_launch_environment(
-        final_environment,
+        scrubbed_environment,
         expected=expected_environment,
     )
 
@@ -2489,13 +2941,13 @@ def build_governed_supervisor_launch_contract(
         cwd_device=cwd_identity.device,
         cwd_inode=cwd_identity.inode,
         required_environment=tuple(
-            (name, expected_environment[name])
-            for name in GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT
+            (name, str(expected_environment[name]))
+            for name in sorted(expected_environment)
         ),
         scrubbed_environment_names_sha256=_environment_names_sha256(
-            final_environment
+            scrubbed_environment
         ),
-        scrubbed_environment_variable_count=len(final_environment),
+        scrubbed_environment_variable_count=len(scrubbed_environment),
         source_identities=source_identities,
         status_command_root=identity.candidate_root,
         status_command_runtime_sha=identity.head_commit,
@@ -2503,6 +2955,7 @@ def build_governed_supervisor_launch_contract(
         status_command_base_ref="origin/dev",
         status_root=status_root,
         task_state_event_log=task_state_event_log,
+        task_state_event_log_identity=task_state_event_log_identity,
         worker_worktree_root=worker_worktree_root,
         intentional_restart_path=intentional_restart,
         stdout_log_path=stdout_path,
@@ -2926,6 +3379,20 @@ def _strict_live_config(identity: CandidateRuntimeIdentity) -> dict[str, Any]:
     return payload
 
 
+def _strict_config_payload(
+    identity: CandidateRuntimeIdentity,
+    override: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Return an isolated config generation for pre-install validation."""
+
+    if override is None:
+        return _strict_live_config(identity)
+    payload = copy.deepcopy(dict(override))
+    if not isinstance(payload, dict):
+        raise ValueError("Governed config override must be a JSON object")
+    return payload
+
+
 def _absolute_config_path(raw: Any, *, label: str) -> Path:
     if not isinstance(raw, str) or not raw or raw != raw.strip():
         raise ValueError(f"Captured live config {label} is invalid")
@@ -2944,8 +3411,9 @@ def _expected_supervisor_process_contract(
     identity: CandidateRuntimeIdentity,
     *,
     supervisor_argv: tuple[str, ...] | None = None,
+    config_override: Mapping[str, Any] | None = None,
 ) -> ExpectedSupervisorProcessContract:
-    config = _strict_live_config(identity)
+    config = _strict_config_payload(identity, config_override)
     watchdog = config.get("watchdog")
     if not isinstance(watchdog, dict):
         raise ValueError("Captured live config watchdog object is missing")
@@ -3043,11 +3511,12 @@ def discover_incumbent_supervisor_process(
     reader: RuntimeProcessReader | None = None,
     cwd_git_identity_reader: Callable[
         [ProcessCwdIdentity], tuple[str, str]
-    ] = _read_process_cwd_git_identity,
+    ] | None = None,
     candidate_revalidator: Callable[[], None] | None = None,
 ) -> SupervisorProcessIdentity:
     """Discover and bind exactly one incumbent to the immutable candidate."""
     runtime_reader = reader or ProcfsRuntimeProcessReader()
+    git_reader = cwd_git_identity_reader or _read_process_cwd_git_identity
     expected = expected_contract or _expected_supervisor_process_contract(
         identity,
         supervisor_argv=expected_argv,
@@ -3198,7 +3667,7 @@ def discover_incumbent_supervisor_process(
         runtime_reader,
         generation,
         label="cwd Git identity",
-        operation=lambda: cwd_git_identity_reader(cwd),
+        operation=lambda: git_reader(cwd),
     )
     _guarded_process_compare(
         runtime_reader,
@@ -3228,6 +3697,28 @@ def discover_incumbent_supervisor_process(
         "PANTHEON_COMMAND_RUNTIME_SHA": expected.runtime_sha,
         "PANTHEON_STATUS_ROOT": expected.status_root,
     }
+    public_key_environment_names = (
+        "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
+    )
+    present_public_key_names = {
+        name for name in public_key_environment_names if name in environment_contract
+    }
+    if present_public_key_names and present_public_key_names != set(public_key_environment_names):
+        raise ValueError("Supervisor process public-key authority environment is incomplete")
+    # A pre-V2 incumbent may have neither verifier map.  Once the V2 runtime is
+    # launched, both maps are part of its exact process identity and every
+    # later promotion must match the operator's expected public policy.
+    if present_public_key_names:
+        for name in public_key_environment_names:
+            expected_value = str(os.environ.get(name) or "").strip()
+            try:
+                decoded = json.loads(expected_value)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{name} must be valid JSON") from exc
+            if not isinstance(decoded, dict) or not decoded:
+                raise ValueError(f"{name} must be a non-empty JSON object")
+            expected_environment[name] = expected_value
     supervisor_index = expected.argv.index(str(expected.entrypoint))
     if "-B" in expected.argv[1:supervisor_index]:
         # A repaired runtime binds both layers: ``-B`` protects the supervisor
@@ -3235,13 +3726,14 @@ def discover_incumbent_supervisor_process(
         # incumbents without ``-B`` remain capturable for their one governed
         # migration; candidate and rollback variants both receive the flag.
         expected_environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    _guarded_process_compare(
-        runtime_reader,
-        generation,
-        label="environment allowlist",
-        actual=set(environment_contract),
-        expected=set(expected_environment),
-    )
+    if set(environment_contract) != set(expected_environment):
+        _guarded_process_compare(
+            runtime_reader,
+            generation,
+            label="environment allowlist",
+            actual=set(environment_contract),
+            expected=set(expected_environment),
+        )
     for name in expected_environment:
         _guarded_process_compare(
             runtime_reader,
@@ -3395,7 +3887,17 @@ def _governed_launch_contract_summary(
         },
         "status_root": str(contract.status_root),
         "task_state_event_log": str(contract.task_state_event_log),
+        "task_state_event_log_identity": {
+            "path": str(contract.task_state_event_log_identity.path),
+            "device": contract.task_state_event_log_identity.device,
+            "inode": contract.task_state_event_log_identity.inode,
+            "mode": contract.task_state_event_log_identity.mode,
+            "captured_size": contract.task_state_event_log_identity.captured_size,
+            "prefix_sha256": contract.task_state_event_log_identity.prefix_sha256,
+            "captured_at_size": contract.task_state_event_log_identity.captured_at_size,
+        } if contract.task_state_event_log_identity is not None else None,
         "worker_worktree_root": str(contract.worker_worktree_root),
+
         "intentional_restart_path": str(contract.intentional_restart_path),
         "stdout_log_path": str(contract.stdout_log_path),
         "stderr_log_path": str(contract.stderr_log_path),
@@ -3406,7 +3908,7 @@ def build_candidate_runtime_identity(
     candidate_path: Path,
     config_path: Path | None = None,
 ) -> CandidateRuntimeIdentity:
-    """Capture one immutable candidate root, Git tree, and live-config snapshot."""
+    """Capture one candidate or incumbent root, Git tree, and live-config snapshot."""
     root_handle = _open_candidate_root_handle(candidate_path)
     try:
         resolved_root = root_handle.path
@@ -3420,16 +3922,17 @@ def build_candidate_runtime_identity(
             basename,
         )
         _assert_candidate_handle_path(root_handle)
-        verify_working_tree_cleanliness(
-            root_handle,
-            expected_head=head,
-            expected_tree=tracked_tree,
-        )
 
         selected_config_path = config_path or LIVE_SUPERVISOR_CONFIG_PATH
         config_bytes, config_identity, config_path_components = _capture_config_bytes(
             selected_config_path,
             expected_path=LIVE_SUPERVISOR_CONFIG_PATH,
+        )
+
+        verify_working_tree_cleanliness(
+            root_handle,
+            expected_head=head,
+            expected_tree=tracked_tree,
         )
 
         # Repeat descriptor-bound root/tree/status checks after reading the
@@ -3441,40 +3944,57 @@ def build_candidate_runtime_identity(
             expected_head=head,
             expected_tree=tracked_tree,
         )
-        final_remote_url = parse_origin_url(root_handle)
-        final_remote = validate_remote_url(final_remote_url)
-        if final_remote_url != remote_url or final_remote.slug != remote.slug:
-            raise ValueError("Candidate remote identity changed during capture")
+        # A freshly materialized checkout can refresh and atomically replace
+        # its index while the read-only cleanliness probes run.  Re-open the
+        # candidate only after every such probe, then bind the returned
+        # snapshot to those final metadata identities.  Later revalidation
+        # still rejects any replacement after this capture point.
+        final_handle = _open_candidate_root_handle(resolved_root)
+        try:
+            if final_handle.identity != root_identity:
+                raise ValueError(
+                    "Candidate root file identity changed during capture"
+                )
+            _assert_candidate_handle_path(final_handle)
+            final_head, final_tree = _read_head_tree(final_handle)
+            if (final_head, final_tree) != (head, tracked_tree):
+                raise ValueError("Candidate HEAD/tree changed during capture")
+            final_remote_url = parse_origin_url(final_handle)
+            final_remote = validate_remote_url(final_remote_url)
+            if final_remote_url != remote_url or final_remote.slug != remote.slug:
+                raise ValueError("Candidate remote identity changed during capture")
 
-        return CandidateRuntimeIdentity(
-            candidate_root=resolved_root,
-            candidate_root_device=root_identity.device,
-            candidate_root_inode=root_identity.inode,
-            git_directory_device=root_handle.git_identity.device,
-            git_directory_inode=root_handle.git_identity.inode,
-            git_objects_device=root_handle.git_objects_identity.device,
-            git_objects_inode=root_handle.git_objects_identity.inode,
-            git_config_device=root_handle.git_config_identity.device,
-            git_config_inode=root_handle.git_config_identity.inode,
-            git_head_device=root_handle.git_head_identity.device,
-            git_head_inode=root_handle.git_head_identity.inode,
-            git_index_device=root_handle.git_index_identity.device,
-            git_index_inode=root_handle.git_index_identity.inode,
-            basename=basename,
-            head_commit=head,
-            tracked_tree_identity=tracked_tree,
-            accepted_dev_commit=trusted_dev.commit,
-            remote_url=remote_url,
-            canonical_remote=f"github.com/{remote.slug}",
-            repository_slug=remote.slug,
-            config_path=selected_config_path,
-            config_device=config_identity.device,
-            config_inode=config_identity.inode,
-            config_path_components=config_path_components,
-            config_bytes=config_bytes,
-            config_byte_length=len(config_bytes),
-            config_sha256=hashlib.sha256(config_bytes).hexdigest(),
-        )
+            return CandidateRuntimeIdentity(
+                candidate_root=resolved_root,
+                candidate_root_device=root_identity.device,
+                candidate_root_inode=root_identity.inode,
+                git_directory_device=final_handle.git_identity.device,
+                git_directory_inode=final_handle.git_identity.inode,
+                git_objects_device=final_handle.git_objects_identity.device,
+                git_objects_inode=final_handle.git_objects_identity.inode,
+                git_config_device=final_handle.git_config_identity.device,
+                git_config_inode=final_handle.git_config_identity.inode,
+                git_head_device=final_handle.git_head_identity.device,
+                git_head_inode=final_handle.git_head_identity.inode,
+                git_index_device=final_handle.git_index_identity.device,
+                git_index_inode=final_handle.git_index_identity.inode,
+                basename=basename,
+                head_commit=head,
+                tracked_tree_identity=tracked_tree,
+                accepted_dev_commit=trusted_dev.commit,
+                remote_url=remote_url,
+                canonical_remote=f"github.com/{remote.slug}",
+                repository_slug=remote.slug,
+                config_path=LIVE_SUPERVISOR_CONFIG_PATH,
+                config_device=config_identity.device,
+                config_inode=config_identity.inode,
+                config_path_components=config_path_components,
+                config_bytes=config_bytes,
+                config_byte_length=len(config_bytes),
+                config_sha256=hashlib.sha256(config_bytes).hexdigest(),
+            )
+        finally:
+            _close_candidate_root_handle(final_handle)
     finally:
         _close_candidate_root_handle(root_handle)
 
@@ -3526,6 +4046,21 @@ def _candidate_identity_summary(identity: CandidateRuntimeIdentity) -> dict[str,
         ],
         "config_byte_length": identity.config_byte_length,
         "config_sha256": identity.config_sha256,
+    }
+
+
+def _runtime_health_identity(process: SupervisorProcessIdentity) -> dict[str, Any]:
+    """Adapt the already generation-guarded promotion capture to #4763 health."""
+
+    return {
+        "pid": process.generation.pid,
+        "starttime_ticks": process.generation.starttime_ticks,
+        "state": process.generation.state,
+        "argv": process.argv,
+        "cwd": str(process.cwd.path),
+        "environment": dict(process.environment_contract),
+        "singleton_owner_pid": process.admission_lock.owner_pid,
+        "singleton_owner_starttime_ticks": process.admission_lock.owner_starttime_ticks,
     }
 
 
@@ -3616,10 +4151,29 @@ def capture_promotion_snapshot(
         config = {}
         file_errors.append({"file": str(config_path_resolved), "error": str(e)})
 
+    health_identity_args: dict[str, Any] = {}
+    if candidate_identity is not None and supervisor_process_identity is not None:
+        health_identity_args = {
+            "expected_command_root": candidate_identity.candidate_root,
+            "expected_source_commit": candidate_identity.head_commit,
+            "expected_config_sha256": candidate_identity.config_sha256,
+            "expected_process_generation": (
+                supervisor_process_identity.generation.pid,
+                supervisor_process_identity.generation.starttime_ticks,
+            ),
+            "verified_runtime_identity": _runtime_health_identity(
+                supervisor_process_identity
+            ),
+        }
     health_report = evaluate_runtime_health(
-        repo_root,
-        config_path_arg=config_path_resolved,
+        candidate_identity.candidate_root if candidate_identity is not None else repo_root,
+        config_path_arg=(
+            candidate_identity.config_path
+            if candidate_identity is not None
+            else config_path_resolved
+        ),
         now=now,
+        **health_identity_args,
     )
 
     paths = config.get("paths") if isinstance(config.get("paths"), dict) else None
@@ -3680,6 +4234,27 @@ def capture_promotion_snapshot(
         provider_capabilities = {}
         file_errors.append({"file": str(provider_cap_path), "error": str(e)})
 
+    durable_queue_events: list[dict[str, Any]] = []
+    raw_event_queue = paths.get("event_queue") if paths is not None else None
+    if not isinstance(raw_event_queue, str) or not raw_event_queue.strip():
+        file_errors.append({
+            "file": "config.json:paths.event_queue",
+            "error": "Missing required paths.event_queue in config",
+        })
+    else:
+        event_queue_path = Path(raw_event_queue)
+        if not event_queue_path.is_absolute():
+            event_queue_path = repo_root / event_queue_path
+        try:
+            durable_queue_events = list(
+                _capture_jsonl_document(
+                    event_queue_path,
+                    label="Durable supervisor event queue",
+                ).rows
+            )
+        except Exception as exc:
+            file_errors.append({"file": str(event_queue_path), "error": str(exc)})
+
     coord_root = resolved_coordinator_status_root(repo_root, config)
     lock_path = coord_root / ".orchestrator" / "supervisor.lock"
 
@@ -3698,6 +4273,7 @@ def capture_promotion_snapshot(
         file_errors=file_errors,
         now=now,
         config=config,
+        durable_queue_events=durable_queue_events,
     )
     invariants.insert(
         0,
@@ -3796,6 +4372,64 @@ def capture_promotion_snapshot(
     }
 
 
+def _is_verified_v1_headless_baseline(
+    config: Mapping[str, Any],
+    failed_health_checks: list[dict[str, Any]],
+) -> bool:
+    """Accept only the V1 journal shape that exists immediately before migration.
+
+    This is deliberately not a filename heuristic and it does not validate a
+    V1 journal in full.  The migration transaction performs that full
+    hash-chain audit while holding the authority locks.  Here we merely avoid
+    requiring the V2 sidecar that a genuine V1 journal has never written.
+    """
+
+    if len(failed_health_checks) != 1:
+        return False
+    failed = failed_health_checks[0]
+    if failed.get("name") != "readiness_task_head_accessible":
+        return False
+
+    store = config.get("task_state_store")
+    if not isinstance(store, Mapping):
+        return False
+    raw_event_log = store.get("event_log")
+    if not isinstance(raw_event_log, str) or not raw_event_log.strip():
+        return False
+    event_log = Path(raw_event_log)
+    if not event_log.is_absolute() or event_log.is_symlink():
+        return False
+    expected_head = event_log.with_name(f"{event_log.name}.head.json")
+    if failed.get("task_head") != str(expected_head):
+        return False
+    if not str(failed.get("error") or "").startswith("FileNotFoundError:"):
+        return False
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(event_log, flags)
+    except OSError:
+        return False
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return False
+        first_line = os.read(descriptor, 128 * 1024).split(b"\n", 1)[0]
+    except OSError:
+        return False
+    finally:
+        os.close(descriptor)
+    try:
+        first_event = json.loads(first_line.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(first_event, dict)
+        and first_event.get("version") == LEGACY_EVENT_VERSION
+        and first_event.get("type") == LEGACY_EVENT_TYPE
+        and first_event.get("sequence") == 1
+    )
+
+
 def evaluate_promotion_invariants(
     health_report: dict[str, Any],
     ai_status: dict[str, Any],
@@ -3805,12 +4439,15 @@ def evaluate_promotion_invariants(
     file_errors: list[dict[str, str]] | None = None,
     now: datetime | None = None,
     config: dict[str, Any] | None = None,
+    durable_queue_events: list[dict[str, Any]] | None = None,
+    allow_v1_headless_task_store: bool = False,
 ) -> list[dict[str, Any]]:
     """Evaluate read-only promotion invariants against live schema state."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     config = config or {}
     file_errors = file_errors or []
     provider_capabilities = provider_capabilities or {}
+    durable_queue_events = durable_queue_events or []
     invariants: list[dict[str, Any]] = []
 
     # Invariant 0: Fail closed file reading invariant
@@ -3820,12 +4457,29 @@ def evaluate_promotion_invariants(
         "details": {"file_errors": file_errors},
     })
 
-    # Invariant 1: Health checks must all pass
-    health_ok = health_report.get("healthy", False)
+    # Invariant 1: Health checks must all pass.  A V1 incumbent has no V2
+    # ``.head.json`` by design.  During a V1-to-V2 transaction only, accept
+    # that one absent file after binding it to a real V1 journal header.  The
+    # shadow invariant below still requires the V1 projection to be current;
+    # candidate and ordinary runtime health never use this exception.
+    failed_health_checks = [
+        check
+        for check in health_report.get("checks", [])
+        if isinstance(check, dict) and check.get("ok") is not True
+    ]
+    v1_headless_compatibility = _is_verified_v1_headless_baseline(
+        config,
+        failed_health_checks,
+    ) if allow_v1_headless_task_store else False
+    health_ok = bool(health_report.get("healthy", False)) or v1_headless_compatibility
     invariants.append({
         "name": "runtime_health_clean",
         "ok": health_ok,
-        "details": {"healthy": health_ok, "failed_checks": [c["name"] for c in health_report.get("checks", []) if not c.get("ok")]},
+        "details": {
+            "healthy": health_report.get("healthy", False),
+            "failed_checks": [str(check.get("name") or "unnamed") for check in failed_health_checks],
+            "v1_headless_baseline_compatibility": v1_headless_compatibility,
+        },
     })
 
     # Invariant 2: Supervisor lifecycle must be explicitly valid (e.g., 'running') and not None or 'degraded'
@@ -3985,7 +4639,7 @@ def evaluate_promotion_invariants(
         if isinstance(w_info, dict):
             task_id = w_info.get("current_task_id") or w_info.get("task_id")
             w_status = w_info.get("status")
-            if w_status in ("running", "started", "active") and task_id:
+            if w_status in ("running", "started", "active", "retry_backoff") and task_id:
                 if task_id in active_worker_tasks:
                     duplicate_workers.append(f"{w_name}:{task_id}")
                 else:
@@ -4081,6 +4735,11 @@ def evaluate_promotion_invariants(
         q_task = evt_info.get("task_id")
         q_run_id = evt_info.get("run_id")
         q_lease_owner = evt_info.get("lease_owner")
+        q_status = evt_info.get("status") or evt_info.get("state")
+
+        # Skip unstarted queued/pending events that do not have a lease owner assigned
+        if q_status in ("queued", "pending") and not (isinstance(q_lease_owner, str) and q_lease_owner.strip()):
+            continue
 
         # Active started event requires nonempty lease_owner
         if not q_lease_owner or not isinstance(q_lease_owner, str) or not q_lease_owner.strip():
@@ -4092,7 +4751,7 @@ def evaluate_promotion_invariants(
         # Find active workers reverse-linked to this event (matching canonical run_id == lease_owner)
         matched_workers: list[tuple[str, dict[str, Any]]] = []
         for w_name, w_info in workers.items():
-            if isinstance(w_info, dict) and w_info.get("status") in ("running", "started", "active"):
+            if isinstance(w_info, dict) and w_info.get("status") in ("running", "started", "active", "retry_backoff"):
                 c_run_id = get_canonical_run_id(w_name, w_info)
                 if c_run_id == q_lease_owner or w_info.get("queue_event_id") == evt_id:
                     matched_workers.append((w_name, w_info))
@@ -4157,7 +4816,116 @@ def evaluate_promotion_invariants(
         },
     })
 
-    # Invariant 8: Provider readiness baseline comparing provider_capabilities against configured active providers
+    # V2 has no alternate control-worker authority. Promotion may not adopt a
+    # legacy chair, discussion-planning, or coordination worker/queue row.
+    # These are terminal runtime history states: they retain audit evidence,
+    # but their process has already ended and no delivery lease remains. They
+    # must not turn an otherwise drained V1 runtime into a fictitious mixed
+    # writer. In contrast, ``retry_backoff`` remains nonterminal because it
+    # still represents a delivery authority that must return to the queue.
+    terminal_runtime_statuses = {
+        "completed",
+        "failed",
+        "cancelled",
+        "done",
+        "superseded",
+        "terminated",
+        "retried",
+        "retry_quarantined",
+    }
+    legacy_control_workers: list[str] = []
+    legacy_control_queue_events: list[str] = []
+    for worker_name, worker_info in workers.items():
+        if not isinstance(worker_info, dict):
+            continue
+        worker_status = str(worker_info.get("status") or "").strip().lower()
+        if worker_status in terminal_runtime_statuses:
+            continue
+        snapshot = worker_info.get("request_snapshot")
+        snapshot = snapshot if isinstance(snapshot, dict) else {}
+        metadata = snapshot.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        reason = str(snapshot.get("reason") or "")
+        if (
+            worker_status == "fallback"
+            or
+            reason.startswith(("chair_review:", "discussion_planning_", "coordination:"))
+            or any(isinstance(metadata.get(key), dict) for key in ("chair", "planning", "coordination"))
+        ):
+            legacy_control_workers.append(str(worker_name))
+    for event_id, event_info in queue_events.items():
+        if not isinstance(event_info, dict):
+            continue
+        event_status = str(event_info.get("status") or "").strip().lower()
+        if event_status in terminal_runtime_statuses:
+            continue
+        marker = " ".join(
+            str(event_info.get(key) or "")
+            for key in ("reason", "event_key", "task_id")
+        )
+        if any(token in marker for token in ("chair_review:", "discussion_planning_", "coordination:")):
+            legacy_control_queue_events.append(str(event_id))
+    for index, event_info in enumerate(durable_queue_events):
+        if not isinstance(event_info, dict):
+            legacy_control_queue_events.append(f"durable:{index}:invalid")
+            continue
+        event_status = str(event_info.get("status") or "queued").strip().lower()
+        if event_status in terminal_runtime_statuses:
+            continue
+        marker = " ".join(
+            str(event_info.get(key) or "")
+            for key in ("reason", "event_key", "task_id")
+        )
+        if any(
+            token in marker
+            for token in ("chair_review:", "discussion_planning_", "coordination:")
+        ):
+            legacy_control_queue_events.append(
+                f"durable:{event_info.get('event_id') or index}"
+            )
+    invariants.append(
+        {
+            "name": "legacy_control_paths_drained",
+            "ok": not legacy_control_workers and not legacy_control_queue_events,
+            "details": {
+                "workers": legacy_control_workers,
+                "queue_events": legacy_control_queue_events,
+            },
+        }
+    )
+
+    # V1 workers retain their original command runtime and TaskStore journal
+    # environment. They cannot cross the authority switch safely: after the
+    # task lock is released they could write V1 while V2 is already canonical.
+    undrained_workers = sorted(
+        str(worker_name)
+        for worker_name, worker_info in workers.items()
+        if isinstance(worker_info, dict)
+        and str(worker_info.get("status") or "").strip().lower()
+        not in terminal_runtime_statuses
+    )
+    undrained_leases = sorted(
+        str(lease_id)
+        for lease_id, lease_info in leases.items()
+        if isinstance(lease_info, dict)
+        and str(lease_info.get("status") or lease_info.get("state") or "")
+        .strip()
+        .lower()
+        in {"active", "running", "started", "leased"}
+    )
+    invariants.append(
+        {
+            "name": "v1_execution_authority_drained",
+            "ok": not undrained_workers and not undrained_leases,
+            "details": {
+                "workers": undrained_workers,
+                "leases": undrained_leases,
+                "reason": "no V1 worker or execution lease may survive the V2 TaskStore cutover",
+            },
+        }
+    )
+
+    # Invariant 9: Provider readiness baseline comparing provider_capabilities against configured active providers
     provider_reasons: list[str] = []
     baseline_capabilities: dict[str, Any] = {}
 
@@ -4247,6 +5015,14 @@ class CapturedJsonDocument:
 
 
 @dataclass(frozen=True)
+class CapturedJsonlDocument:
+    path: Path
+    rows: tuple[dict[str, Any], ...]
+    byte_length: int
+    sha256: str
+
+
+@dataclass(frozen=True)
 class RuntimeObservation:
     process: SupervisorProcessIdentity
     observed_at: datetime
@@ -4257,6 +5033,7 @@ class RuntimeObservation:
     provider_baseline_sha256: str
     projection_sha256: str | None
     worker_queue_sha256: str
+    durable_queue_sha256: str
     config_sha256: str
     invariant_failures: tuple[str, ...]
 
@@ -4270,6 +5047,26 @@ class RuntimeObservation:
             self.state_sha256,
             self.status_sha256,
             self.provider_document_sha256,
+            self.durable_queue_sha256,
+            self.config_sha256,
+        )
+
+    @property
+    def admission_identity_key(self) -> tuple[Any, ...]:
+        """Return the immutable incumbent facts that must survive admission.
+
+        State, status, and provider documents legitimately advance while a
+        rollback runtime is materialized.  The admission lock still requires
+        the incumbent process, source identity, and live configuration to be
+        exactly the prepared ones; current health invariants are re-evaluated
+        immediately before TERM.
+        """
+
+        return (
+            self.process.generation,
+            self.process.cwd,
+            self.process.cwd_commit,
+            self.process.cwd_tree,
             self.config_sha256,
         )
 
@@ -4282,11 +5079,12 @@ class PromotionPlan:
     incumbent_identity: CandidateRuntimeIdentity
     rollback_config: SupervisorConfigVariant
     incumbent_process: SupervisorProcessIdentity
-    mutable_incumbent: MutableIncumbentSnapshot | None
     rollback_launch: GovernedSupervisorLaunchContract
     baseline: RuntimeObservation
     promotion_lock_path: Path
     runtime_admission_lock_path: Path
+    task_state_lock_path: Path
+
 
 
 class PromotionState(str, Enum):
@@ -4305,6 +5103,7 @@ class PromotionState(str, Enum):
     ROLLBACK_LAUNCHED = "rollback_launched"
     ROLLBACK_VERIFYING = "rollback_verifying"
     ROLLED_BACK = "rolled_back"
+    FORWARD_RECOVERY_REQUIRED = "forward_recovery_required"
     ABORTED = "aborted"
     ROLLBACK_FAILED = "rollback_failed"
 
@@ -4430,6 +5229,82 @@ def _runtime_document_paths(
     return status_path, state_path, provider_path, status_root
 
 
+def _capture_jsonl_document(path: Path, *, label: str) -> CapturedJsonlDocument:
+    """Capture one exact bounded JSONL authority without following symlinks."""
+
+    parent_components = _capture_directory_component_identities(
+        path.parent,
+        label=label,
+    )
+    descriptor = _open_path_descriptor(
+        path,
+        label=label,
+        require_directory=False,
+    )
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"{label} is not a regular file: {path}")
+        content = _read_descriptor_bytes(
+            descriptor,
+            limit=128 * 1024 * 1024,
+            label=label,
+        )
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    stable_before = (
+        before.st_dev, before.st_ino, before.st_mode, before.st_size,
+        before.st_mtime_ns, before.st_ctime_ns,
+    )
+    stable_after = (
+        after.st_dev, after.st_ino, after.st_mode, after.st_size,
+        after.st_mtime_ns, after.st_ctime_ns,
+    )
+    if stable_before != stable_after or len(content) != before.st_size:
+        raise ValueError(f"{label} changed during capture: {path}")
+    file_identity = _identity_from_stat(before)
+    _assert_path_component_identities(
+        parent_components + (PathComponentIdentity(path=path, identity=file_identity),),
+        label=label,
+    )
+    rows: list[dict[str, Any]] = []
+    for line_number, raw_line in enumerate(content.splitlines(), 1):
+        if not raw_line.strip():
+            continue
+        try:
+            row = json.loads(raw_line.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"{label} line {line_number} is not strict JSON"
+            ) from exc
+        if not isinstance(row, dict):
+            raise ValueError(f"{label} line {line_number} must be an object")
+        rows.append(row)
+    return CapturedJsonlDocument(
+        path=path,
+        rows=tuple(rows),
+        byte_length=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+
+def _durable_queue_path(config: Mapping[str, Any], status_root: Path) -> Path:
+    paths = config.get("paths")
+    if not isinstance(paths, Mapping):
+        raise ValueError("Captured live config paths object is missing")
+    raw = paths.get("event_queue")
+    if not isinstance(raw, str) or not raw.strip() or raw != raw.strip():
+        raise ValueError("Captured live config paths.event_queue is invalid")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = status_root / path
+    _validate_absolute_identity_path(path, label="Captured live config paths.event_queue")
+    if path.parent.parent != status_root or path.parent.name != ".orchestrator":
+        raise ValueError("Captured live event queue is outside status .orchestrator")
+    return path
+
+
 def capture_runtime_observation(
     identity: CandidateRuntimeIdentity,
     *,
@@ -4439,6 +5314,10 @@ def capture_runtime_observation(
     reader: RuntimeProcessReader | None = None,
     now: datetime | None = None,
     require_current_dev_identity: bool = True,
+    allow_v1_headless_task_store: bool = False,
+    cwd_git_identity_reader: Callable[
+        [ProcessCwdIdentity], tuple[str, str]
+    ] = _read_process_cwd_git_identity,
 ) -> RuntimeObservation:
     """Capture one exact process/state/config postcheck observation."""
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -4454,6 +5333,7 @@ def capture_runtime_observation(
         expected_argv=expected_argv,
         expected_contract=expected_process_contract,
         reader=runtime_reader,
+        cwd_git_identity_reader=cwd_git_identity_reader,
         candidate_revalidator=revalidate_identity,
     )
     if expected_generation is not None and process.generation != expected_generation:
@@ -4476,13 +5356,25 @@ def capture_runtime_observation(
         provider_path,
         label="Provider capabilities",
     )
+    config = _strict_live_config(identity)
+    durable_queue_document = _capture_jsonl_document(
+        _durable_queue_path(config, status_root),
+        label="Durable supervisor event queue",
+    )
     identity.verify_against_live_config(identity.config_path)
 
-    config = _strict_live_config(identity)
     health_report = evaluate_runtime_health(
         identity.candidate_root,
         config_path_arg=identity.config_path,
         now=observed_at,
+        expected_command_root=identity.candidate_root,
+        expected_source_commit=identity.head_commit,
+        expected_config_sha256=identity.config_sha256,
+        expected_process_generation=(
+            process.generation.pid,
+            process.generation.starttime_ticks,
+        ),
+        verified_runtime_identity=_runtime_health_identity(process),
     )
     invariants = evaluate_promotion_invariants(
         health_report=health_report,
@@ -4493,6 +5385,8 @@ def capture_runtime_observation(
         file_errors=[],
         now=observed_at,
         config=config,
+        durable_queue_events=list(durable_queue_document.rows),
+        allow_v1_headless_task_store=allow_v1_headless_task_store,
     )
     failures = [
         str(invariant.get("name") or "unnamed_invariant")
@@ -4534,6 +5428,7 @@ def capture_runtime_observation(
         provider_baseline_sha256=_canonical_json_sha256(provider_payload),
         projection_sha256=projection_sha,
         worker_queue_sha256=_canonical_json_sha256(parity_payload),
+        durable_queue_sha256=durable_queue_document.sha256,
         config_sha256=identity.config_sha256,
         invariant_failures=tuple(sorted(set(failures))),
     )
@@ -4581,255 +5476,6 @@ def _discover_supervisor_seed(
     return generation, argv, cwd
 
 
-def _mutable_root_binding(
-    cwd: ProcessCwdIdentity,
-    *,
-    filesystem: LaunchFilesystem | None = None,
-) -> tuple[
-    str,
-    str,
-    TrustedDevIdentity,
-    str,
-    GitRemoteIdentity,
-    tuple[LaunchFileIdentity, ...],
-]:
-    """Capture Git and governed-source bytes from a mutable process cwd."""
-    handle = _open_candidate_root_handle(
-        cwd.path,
-        require_immutable_location=False,
-    )
-    try:
-        if (
-            handle.identity.device != cwd.device
-            or handle.identity.inode != cwd.inode
-        ):
-            raise ValueError("Mutable incumbent cwd identity changed")
-        remote_url = parse_origin_url(handle)
-        remote = validate_remote_url(remote_url)
-        head, tree = _read_head_tree(handle)
-        trusted_dev = _fetch_trusted_dev_identity(head)
-        if trusted_dev.candidate_commit_tree != tree:
-            raise ValueError(
-                "Mutable incumbent tree differs from the accepted dev commit"
-            )
-        verify_working_tree_cleanliness(
-            handle,
-            expected_head=head,
-            expected_tree=tree,
-        )
-        _assert_candidate_handle_path(handle)
-    finally:
-        _close_candidate_root_handle(handle)
-
-    fs = filesystem or OSLaunchFilesystem()
-    sources = tuple(
-        fs.capture_regular_file(
-            cwd.path / Path(relative),
-            role=role,
-            require_executable=require_executable,
-        )
-        for role, relative, require_executable in GOVERNED_LAUNCH_SOURCES
-    )
-    return head, tree, trusted_dev, remote_url, remote, sources
-
-
-def _mutable_process_contract(
-    config_identity: CandidateRuntimeIdentity,
-    *,
-    cwd: ProcessCwdIdentity,
-    argv: tuple[str, ...],
-    head_commit: str,
-    tracked_tree_identity: str,
-) -> ExpectedSupervisorProcessContract:
-    config = _strict_live_config(config_identity)
-    watchdog = config.get("watchdog")
-    if not isinstance(watchdog, dict):
-        raise ValueError("Captured live config watchdog object is missing")
-    raw_command = watchdog.get("supervisor_command")
-    if not isinstance(raw_command, list) or tuple(raw_command) != argv:
-        raise ValueError(
-            "Mutable incumbent argv is not the exact captured watchdog command"
-        )
-    expected_entrypoint = cwd.path / SUPERVISOR_ENTRYPOINT_RELATIVE
-    if argv.count(str(expected_entrypoint)) != 1:
-        raise ValueError(
-            "Mutable incumbent argv does not bind its exact cwd entrypoint"
-        )
-    if argv.count("--config") != 1:
-        raise ValueError("Mutable incumbent argv must contain one --config option")
-    config_index = argv.index("--config")
-    if (
-        config_index + 1 >= len(argv)
-        or argv[config_index + 1] != str(config_identity.config_path)
-    ):
-        raise ValueError("Mutable incumbent argv does not bind the live config")
-    executable_arg = Path(argv[0])
-    if not executable_arg.is_absolute():
-        raise ValueError("Mutable incumbent executable must be absolute")
-    executable = executable_arg.resolve(strict=True)
-    paths = config.get("paths")
-    if not isinstance(paths, dict):
-        raise ValueError("Captured live config paths object is missing")
-    status_path = _absolute_config_path(
-        paths.get("status_file"),
-        label="paths.status_file",
-    )
-    state_path = _absolute_config_path(
-        paths.get("state_file"),
-        label="paths.state_file",
-    )
-    status_root = status_path.parent
-    if state_path.parent.name != ".orchestrator":
-        raise ValueError("Captured live state path is outside .orchestrator")
-    if state_path.parent.parent != status_root:
-        raise ValueError("Captured live status and state roots differ")
-    return ExpectedSupervisorProcessContract(
-        executable=executable,
-        argv=argv,
-        entrypoint=expected_entrypoint,
-        config_path=config_identity.config_path,
-        cwd=cwd.path,
-        cwd_device=cwd.device,
-        cwd_inode=cwd.inode,
-        cwd_commit=head_commit,
-        cwd_tree=tracked_tree_identity,
-        command_root=str(cwd.path),
-        runtime_sha=head_commit,
-        status_root=str(status_root),
-        admission_lock_path=status_root / ".orchestrator" / "supervisor.lock",
-    )
-
-
-def capture_mutable_incumbent_snapshot(
-    config_identity: CandidateRuntimeIdentity,
-    *,
-    reader: RuntimeProcessReader,
-    seed_generation: ProcessGeneration,
-    seed_argv: tuple[str, ...],
-    seed_cwd: ProcessCwdIdentity,
-) -> MutableIncumbentSnapshot:
-    binding = _mutable_root_binding(seed_cwd)
-    head, tree, accepted, remote_url, remote, sources = binding
-    expected = _mutable_process_contract(
-        config_identity,
-        cwd=seed_cwd,
-        argv=seed_argv,
-        head_commit=head,
-        tracked_tree_identity=tree,
-    )
-
-    def revalidate_root() -> None:
-        current = _mutable_root_binding(seed_cwd)
-        if current != binding:
-            raise ValueError("Mutable incumbent root/source binding drifted")
-
-    process = discover_incumbent_supervisor_process(
-        config_identity,
-        expected_argv=seed_argv,
-        expected_contract=expected,
-        reader=reader,
-        cwd_git_identity_reader=lambda _cwd: (head, tree),
-        candidate_revalidator=revalidate_root,
-    )
-    if process.generation != seed_generation:
-        raise ValueError("Mutable incumbent generation changed during capture")
-    return MutableIncumbentSnapshot(
-        root=seed_cwd.path,
-        root_device=seed_cwd.device,
-        root_inode=seed_cwd.inode,
-        head_commit=head,
-        tracked_tree_identity=tree,
-        accepted_dev_commit=accepted.commit,
-        remote_url=remote_url,
-        repository_slug=remote.slug,
-        process=process,
-        source_identities=sources,
-    )
-
-
-def materialize_immutable_rollback_runtime(
-    snapshot: MutableIncumbentSnapshot,
-) -> CandidateRuntimeIdentity:
-    """Create a fresh persistent checkout for the captured mutable commit."""
-    parent = ALLOWED_COMMAND_RUNTIMES_PREFIX
-    _validate_absolute_identity_path(parent, label="Command runtime parent")
-    parent_components = _capture_directory_component_identities(
-        parent,
-        label="Command runtime parent",
-    )
-    destination = parent / snapshot.head_commit
-    if destination.exists() or destination.is_symlink():
-        raise ValueError(
-            f"Fresh rollback runtime destination already exists: {destination}"
-        )
-    temporary_root = Path(
-        tempfile.mkdtemp(prefix=".rollback-runtime-", dir=parent)
-    )
-    installed = False
-    try:
-        _run_git(temporary_root, "init", "--quiet")
-        _run_git(
-            temporary_root,
-            "remote",
-            "add",
-            "origin",
-            TRUSTED_ORIGIN_DEV_URL,
-        )
-        _run_git(
-            temporary_root,
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "origin",
-            "+refs/heads/dev:refs/remotes/origin/dev",
-        )
-        _run_git(
-            temporary_root,
-            "remote",
-            "set-url",
-            "origin",
-            TRUSTED_CANONICAL_ORIGIN_URL,
-        )
-        _run_git(
-            temporary_root,
-            "checkout",
-            "--quiet",
-            "--detach",
-            snapshot.head_commit,
-        )
-        if _git_output(temporary_root, "rev-parse", "HEAD^{tree}") != (
-            snapshot.tracked_tree_identity
-        ):
-            raise ValueError("Materialized rollback tree differs from incumbent")
-        _assert_path_component_identities(
-            parent_components,
-            label="Command runtime parent",
-        )
-        os.rename(temporary_root, destination)
-        installed = True
-        directory_fd = _open_path_descriptor(
-            parent,
-            label="Command runtime parent",
-            require_directory=True,
-        )
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-        identity = build_candidate_runtime_identity(destination)
-        if (
-            identity.head_commit != snapshot.head_commit
-            or identity.tracked_tree_identity != snapshot.tracked_tree_identity
-            or identity.accepted_dev_commit != snapshot.accepted_dev_commit
-            or identity.repository_slug != snapshot.repository_slug
-        ):
-            raise ValueError("Immutable rollback identity differs from incumbent")
-        return identity
-    finally:
-        if not installed:
-            shutil.rmtree(temporary_root, ignore_errors=True)
-
-
 class RuntimeAdmissionLock:
     """Exclusive runtime-admission lock shared with supervisor/watchdog I/O.
 
@@ -4839,11 +5485,20 @@ class RuntimeAdmissionLock:
     opening a second flock descriptor and deadlocking against itself.
     """
 
-    def __init__(self, path: Path, *, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        timeout: float = 30.0,
+        plane: str = "runtime_admission",
+    ) -> None:
         if timeout <= 0:
-            raise ValueError("Runtime-admission lock timeout must be positive")
+            raise ValueError("Stable-plane lock timeout must be positive")
+        if plane not in {"runtime_admission", "task_state"}:
+            raise ValueError(f"Unsupported stable lock plane: {plane}")
         self.path = path
         self.timeout = timeout
+        self.plane = plane
         self._manager: Any | None = None
         self._owner_pid: int | None = None
         self._depth = 0
@@ -4856,7 +5511,7 @@ class RuntimeAdmissionLock:
         owner_pid = os.getpid()
         if self._manager is not None:
             if self._owner_pid != owner_pid:
-                raise RuntimeError("Runtime-admission lock owner changed after fork")
+                raise RuntimeError(f"{self.plane} lock owner changed after fork")
             self._depth += 1
             return
 
@@ -4869,7 +5524,7 @@ class RuntimeAdmissionLock:
         while True:
             manager = stable_sidecar_lock(
                 self.path,
-                plane="runtime_admission",
+                plane=self.plane,
                 shared=False,
                 nonblocking=True,
             )
@@ -4878,7 +5533,7 @@ class RuntimeAdmissionLock:
             except BlockingIOError as exc:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
-                        f"Timed out acquiring runtime-admission lock: {self.path}"
+                        f"Timed out acquiring {self.plane} lock: {self.path}"
                     ) from exc
                 time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
                 continue
@@ -4889,7 +5544,7 @@ class RuntimeAdmissionLock:
 
     def release(self) -> None:
         if self._manager is None or self._owner_pid != os.getpid():
-            raise RuntimeError("Runtime-admission lock is not owned by this process")
+            raise RuntimeError(f"{self.plane} lock is not owned by this process")
         self._depth -= 1
         if self._depth:
             return
@@ -4988,14 +5643,22 @@ class PromotionLock:
 class PromotionBackend(Protocol):
     def promotion_lock_path(self, candidate_root: Path) -> Path: ...
 
-    def prepare(
-        self,
-        candidate_root: Path,
-        *,
-        bootstrap_mutable_incumbent: bool,
-    ) -> PromotionPlan: ...
+    def prepare(self, candidate_root: Path) -> PromotionPlan: ...
 
     def revalidate(self, plan: PromotionPlan) -> RuntimeObservation: ...
+
+    def migrate_task_state_store(self, plan: PromotionPlan) -> dict[str, Any]: ...
+
+    def finalize_candidate_launch(
+        self, plan: PromotionPlan
+    ) -> GovernedSupervisorLaunchContract: ...
+
+    def task_state_store_sequence(self, plan: PromotionPlan) -> int: ...
+
+    def runtime_execution_authority_digests(
+        self,
+        identity: CandidateRuntimeIdentity,
+    ) -> tuple[str, str]: ...
 
     def observe(
         self,
@@ -5052,54 +5715,18 @@ class OSPromotionBackend:
         _status, _state, _provider, status_root = _runtime_document_paths(identity)
         return status_root / ".orchestrator" / "supervisor-runtime-promotion.lock"
 
-    def prepare(
-        self,
-        candidate_root: Path,
-        *,
-        bootstrap_mutable_incumbent: bool,
-    ) -> PromotionPlan:
+    def prepare(self, candidate_root: Path) -> PromotionPlan:
         candidate_identity = build_candidate_runtime_identity(candidate_root)
         seed_generation, seed_argv, seed_cwd = _discover_supervisor_seed(self.reader)
-        mutable_incumbent: MutableIncumbentSnapshot | None = None
-        mutable_expected: ExpectedSupervisorProcessContract | None = None
-        if bootstrap_mutable_incumbent:
-            mutable_incumbent = capture_mutable_incumbent_snapshot(
-                candidate_identity,
-                reader=self.reader,
-                seed_generation=seed_generation,
-                seed_argv=seed_argv,
-                seed_cwd=seed_cwd,
-            )
-            if (
-                mutable_incumbent.accepted_dev_commit
-                != candidate_identity.accepted_dev_commit
-            ):
-                raise ValueError(
-                    "Candidate and mutable incumbent captured different accepted dev tips"
-                )
-            incumbent_identity = materialize_immutable_rollback_runtime(
-                mutable_incumbent
-            )
-            incumbent_process = mutable_incumbent.process
-            mutable_expected = _mutable_process_contract(
-                candidate_identity,
-                cwd=seed_cwd,
-                argv=seed_argv,
-                head_commit=mutable_incumbent.head_commit,
-                tracked_tree_identity=mutable_incumbent.tracked_tree_identity,
-            )
-            baseline_identity = candidate_identity
-        else:
-            incumbent_identity = build_candidate_runtime_identity(seed_cwd.path)
-            incumbent_process = discover_incumbent_supervisor_process(
-                incumbent_identity,
-                expected_argv=seed_argv,
-                reader=self.reader,
-                candidate_revalidator=incumbent_identity.verify_immutable_snapshot,
-            )
-            if incumbent_process.generation != seed_generation:
-                raise ValueError("Incumbent changed during promotion preparation")
-            baseline_identity = incumbent_identity
+        incumbent_identity = build_candidate_runtime_identity(seed_cwd.path)
+        incumbent_process = discover_incumbent_supervisor_process(
+            incumbent_identity,
+            expected_argv=seed_argv,
+            reader=self.reader,
+            candidate_revalidator=incumbent_identity.verify_immutable_snapshot,
+        )
+        if incumbent_process.generation != seed_generation:
+            raise ValueError("Incumbent changed during promotion preparation")
         if incumbent_identity.config_bytes != candidate_identity.config_bytes:
             raise ValueError("Candidate and rollback captured different config bytes")
         if incumbent_identity.candidate_root == candidate_identity.candidate_root:
@@ -5107,25 +5734,36 @@ class OSPromotionBackend:
         candidate_config = derive_supervisor_config_variant(
             candidate_identity,
             command_root=candidate_identity.candidate_root,
+            repo_config_root=candidate_identity.candidate_root,
         )
         rollback_config = derive_supervisor_config_variant(
             candidate_identity,
             command_root=incumbent_identity.candidate_root,
         )
+        candidate_config_payload = json.loads(candidate_config.content)
+        rollback_config_payload = json.loads(rollback_config.content)
+        candidate_store = candidate_config_payload.get("task_state_store")
+        if not isinstance(candidate_store, dict):
+            raise ValueError("Rendered candidate task_state_store is missing")
+        candidate_event_log = Path(str(candidate_store.get("event_log") or ""))
+        defer_candidate_journal = not candidate_event_log.exists()
         candidate_launch = build_governed_supervisor_launch_contract(
             candidate_identity,
             supervisor_argv=candidate_config.supervisor_argv,
+            config_override=candidate_config_payload,
+            defer_task_state_event_log_identity=defer_candidate_journal,
         )
         rollback_launch = build_governed_supervisor_launch_contract(
             incumbent_identity,
             supervisor_argv=rollback_config.supervisor_argv,
+            config_override=rollback_config_payload,
         )
         baseline = capture_runtime_observation(
-            baseline_identity,
+            incumbent_identity,
             expected_argv=seed_argv,
-            expected_process_contract=mutable_expected,
             expected_generation=incumbent_process.generation,
             reader=self.reader,
+            allow_v1_headless_task_store=True,
         )
         if baseline.invariant_failures:
             raise ValueError(
@@ -5143,7 +5781,6 @@ class OSPromotionBackend:
             incumbent_identity=incumbent_identity,
             rollback_config=rollback_config,
             incumbent_process=incumbent_process,
-            mutable_incumbent=mutable_incumbent,
             rollback_launch=rollback_launch,
             baseline=baseline,
             promotion_lock_path=(
@@ -5154,15 +5791,26 @@ class OSPromotionBackend:
             runtime_admission_lock_path=(
                 candidate_status_root / ".orchestrator" / "runtime-admission.lock"
             ),
+            task_state_lock_path=(
+                candidate_status_root / ".orchestrator" / "task-state.lock"
+            ),
         )
 
     def revalidate(self, plan: PromotionPlan) -> RuntimeObservation:
         plan.candidate_identity.verify_immutable_snapshot()
         plan.incumbent_identity.verify_immutable_snapshot()
+
         if (
             build_governed_supervisor_launch_contract(
                 plan.candidate_identity,
                 supervisor_argv=plan.candidate_config.supervisor_argv,
+                config_override=json.loads(plan.candidate_config.content),
+                defer_task_state_event_log_identity=(
+                    plan.candidate_launch.task_state_event_log_identity is None
+                ),
+                baseline_task_state_event_log_identity=(
+                    plan.candidate_launch.task_state_event_log_identity
+                ),
             )
             != plan.candidate_launch
         ):
@@ -5171,48 +5819,101 @@ class OSPromotionBackend:
             build_governed_supervisor_launch_contract(
                 plan.incumbent_identity,
                 supervisor_argv=plan.rollback_config.supervisor_argv,
+                config_override=json.loads(plan.rollback_config.content),
+                baseline_task_state_event_log_identity=plan.rollback_launch.task_state_event_log_identity,
             )
             != plan.rollback_launch
         ):
             raise ValueError("Rollback governed launch contract drift detected")
-        if plan.mutable_incumbent is None:
-            return capture_runtime_observation(
-                plan.incumbent_identity,
-                expected_argv=plan.incumbent_process.argv,
-                expected_generation=plan.incumbent_process.generation,
-                reader=self.reader,
-            )
-        current_seed = _discover_supervisor_seed(self.reader)
-        expected_seed = (
-            plan.mutable_incumbent.process.generation,
-            plan.mutable_incumbent.process.argv,
-            plan.mutable_incumbent.process.cwd,
-        )
-        if current_seed != expected_seed:
-            raise ValueError("Mutable incumbent seed changed before transaction")
-        current_mutable = capture_mutable_incumbent_snapshot(
-            plan.candidate_identity,
-            reader=self.reader,
-            seed_generation=current_seed[0],
-            seed_argv=current_seed[1],
-            seed_cwd=current_seed[2],
-        )
-        if current_mutable != plan.mutable_incumbent:
-            raise ValueError("Mutable incumbent snapshot drift detected")
-        expected = _mutable_process_contract(
-            plan.candidate_identity,
-            cwd=plan.mutable_incumbent.process.cwd,
-            argv=plan.mutable_incumbent.process.argv,
-            head_commit=plan.mutable_incumbent.head_commit,
-            tracked_tree_identity=plan.mutable_incumbent.tracked_tree_identity,
-        )
+
         return capture_runtime_observation(
-            plan.candidate_identity,
+            plan.incumbent_identity,
             expected_argv=plan.incumbent_process.argv,
-            expected_process_contract=expected,
             expected_generation=plan.incumbent_process.generation,
             reader=self.reader,
+            allow_v1_headless_task_store=True,
         )
+
+    def migrate_task_state_store(self, plan: PromotionPlan) -> dict[str, Any]:
+        """Audit V1 and create the exact candidate V2 genesis before TERM."""
+
+        incumbent_config = _strict_live_config(plan.incumbent_identity)
+        candidate_config = json.loads(plan.candidate_config.content)
+        incumbent_store = incumbent_config.get("task_state_store")
+        candidate_store = candidate_config.get("task_state_store")
+        candidate_paths = candidate_config.get("paths")
+        if not all(
+            isinstance(item, dict)
+            for item in (incumbent_store, candidate_store, candidate_paths)
+        ):
+            raise ValueError("Promotion task-state migration config is incomplete")
+        legacy_event_log = Path(str(incumbent_store.get("event_log") or ""))
+        v2_event_log = Path(str(candidate_store.get("event_log") or ""))
+        status_file = Path(str(candidate_paths.get("status_file") or ""))
+        if not legacy_event_log.is_absolute() or not v2_event_log.is_absolute():
+            raise ValueError("Promotion task-state journal paths must be absolute")
+        status_document = _capture_json_document(
+            status_file,
+            label="Canonical task status for V2 migration",
+        )
+        return migrate_task_state_store_v2(
+            legacy_event_log=legacy_event_log,
+            event_log=v2_event_log,
+            expected_state=status_document.payload,
+        )
+
+    def finalize_candidate_launch(
+        self, plan: PromotionPlan
+    ) -> GovernedSupervisorLaunchContract:
+        """Bind the post-migration V2 journal into the exact launch contract."""
+
+        return build_governed_supervisor_launch_contract(
+            plan.candidate_identity,
+            supervisor_argv=plan.candidate_config.supervisor_argv,
+            config_override=json.loads(plan.candidate_config.content),
+            baseline_task_state_event_log_identity=(
+                plan.candidate_launch.task_state_event_log_identity
+            ),
+        )
+
+    def task_state_store_sequence(self, plan: PromotionPlan) -> int:
+        candidate_config = json.loads(plan.candidate_config.content)
+        store = candidate_config.get("task_state_store")
+        if not isinstance(store, dict):
+            raise ValueError("Candidate task_state_store config is missing")
+        event_log = Path(str(store.get("event_log") or ""))
+        with snapshot_transaction(event_log) as transaction:
+            snapshot = transaction.load_snapshot()
+        return int(snapshot.get("event_count", 0) or 0)
+
+    def runtime_execution_authority_digests(
+        self,
+        identity: CandidateRuntimeIdentity,
+    ) -> tuple[str, str]:
+        """Capture the worker/queue/lease authority while admission is frozen."""
+
+        _status_path, state_path, _provider_path, status_root = (
+            _runtime_document_paths(identity)
+        )
+        state_document = _capture_json_document(
+            state_path,
+            label="Supervisor runtime state rollback authority",
+        )
+        worker_worktrees = state_document.payload.get("worker_worktrees")
+        worker_worktrees = (
+            worker_worktrees if isinstance(worker_worktrees, dict) else {}
+        )
+        parity_payload = {
+            "workers": state_document.payload.get("workers", {}),
+            "queue": state_document.payload.get("queue", {}),
+            "worker_worktree_leases": worker_worktrees.get("leases", {}),
+        }
+        config = _strict_live_config(identity)
+        durable_queue = _capture_jsonl_document(
+            _durable_queue_path(config, status_root),
+            label="Durable supervisor event queue rollback authority",
+        )
+        return _canonical_json_sha256(parity_payload), durable_queue.sha256
 
     def observe(
         self,
@@ -5228,6 +5929,7 @@ class OSPromotionBackend:
             expected_generation=generation,
             reader=self.reader,
             require_current_dev_identity=require_current_dev_identity,
+            allow_v1_headless_task_store=not require_current_dev_identity,
         )
 
     def record_intent(
@@ -5274,7 +5976,9 @@ class OSPromotionBackend:
         current_contract = build_governed_supervisor_launch_contract(
             identity,
             supervisor_argv=contract.argv,
+            baseline_task_state_event_log_identity=contract.task_state_event_log_identity,
         )
+
         if current_contract != contract:
             raise ValueError("Governed launch contract drift detected before launch")
         environment = build_scrubbed_launch_environment(
@@ -5445,10 +6149,18 @@ _ALLOWED_PROMOTION_TRANSITIONS: dict[PromotionState, frozenset[PromotionState]] 
         {PromotionState.CANDIDATE_LAUNCHED, PromotionState.ROLLBACK_LOCKED}
     ),
     PromotionState.CANDIDATE_LAUNCHED: frozenset(
-        {PromotionState.CANDIDATE_VERIFYING, PromotionState.ROLLBACK_LOCKED}
+        {
+            PromotionState.CANDIDATE_VERIFYING,
+            PromotionState.ROLLBACK_LOCKED,
+            PromotionState.FORWARD_RECOVERY_REQUIRED,
+        }
     ),
     PromotionState.CANDIDATE_VERIFYING: frozenset(
-        {PromotionState.PROMOTED, PromotionState.ROLLBACK_LOCKED}
+        {
+            PromotionState.PROMOTED,
+            PromotionState.ROLLBACK_LOCKED,
+            PromotionState.FORWARD_RECOVERY_REQUIRED,
+        }
     ),
     PromotionState.ROLLBACK_LOCKED: frozenset(
         {PromotionState.BAD_RUNTIME_TERMINATED, PromotionState.ROLLBACK_FAILED}
@@ -5467,6 +6179,7 @@ _ALLOWED_PROMOTION_TRANSITIONS: dict[PromotionState, frozenset[PromotionState]] 
     ),
     PromotionState.PROMOTED: frozenset(),
     PromotionState.ROLLED_BACK: frozenset(),
+    PromotionState.FORWARD_RECOVERY_REQUIRED: frozenset(),
     PromotionState.ABORTED: frozenset(),
     PromotionState.ROLLBACK_FAILED: frozenset(),
 }
@@ -5487,6 +6200,7 @@ def _observation_summary(observation: RuntimeObservation) -> dict[str, Any]:
         "provider_baseline_sha256": observation.provider_baseline_sha256,
         "projection_sha256": observation.projection_sha256,
         "worker_queue_sha256": observation.worker_queue_sha256,
+        "durable_queue_sha256": observation.durable_queue_sha256,
         "config_sha256": observation.config_sha256,
         "invariant_failures": list(observation.invariant_failures),
     }
@@ -5540,8 +6254,8 @@ class PromotionTransaction:
         evidence_path: Path | None = None,
         backend: PromotionBackend | None = None,
         lock_factory: Callable[[Path, float], RuntimeAdmissionLock] | None = None,
+        task_lock_factory: Callable[[Path, float], RuntimeAdmissionLock] | None = None,
         promotion_lock_factory: Callable[[Path, float], PromotionLock] | None = None,
-        bootstrap_mutable_incumbent: bool = False,
         required_fresh_loops: int = 3,
         postcheck_timeout: float = 180.0,
         poll_interval: float = 0.5,
@@ -5559,10 +6273,14 @@ class PromotionTransaction:
         self.lock_factory = lock_factory or (
             lambda path, timeout: RuntimeAdmissionLock(path, timeout=timeout)
         )
+        self.task_lock_factory = task_lock_factory or (
+            lambda path, timeout: RuntimeAdmissionLock(
+                path, timeout=timeout, plane="task_state"
+            )
+        )
         self.promotion_lock_factory = promotion_lock_factory or (
             lambda path, timeout: PromotionLock(path, timeout=timeout)
         )
-        self.bootstrap_mutable_incumbent = bootstrap_mutable_incumbent
         self.required_fresh_loops = required_fresh_loops
         self.postcheck_timeout = postcheck_timeout
         self.poll_interval = poll_interval
@@ -5585,6 +6303,7 @@ class PromotionTransaction:
         self.rollback_launch_boundary_at: datetime | None = None
         self.candidate_observations: list[RuntimeObservation] = []
         self.rollback_observations: list[RuntimeObservation] = []
+        self.task_state_migration: dict[str, Any] | None = None
         self.original_failure: str | None = None
         self.rollback_failure: str | None = None
 
@@ -5710,7 +6429,56 @@ class PromotionTransaction:
         assert self.plan is not None
         plan = self.plan
         try:
-            with lock.held():
+            with (
+                lock.held(),
+                self.task_lock_factory(
+                    plan.task_state_lock_path,
+                    self.lock_timeout,
+                ).held(),
+            ):
+                if (
+                    self.task_state_migration is not None
+                    and self.candidate_active_identity is not None
+                ):
+                    v2_sequence = self.backend.task_state_store_sequence(plan)
+                    worker_queue_sha256, durable_queue_sha256 = (
+                        self.backend.runtime_execution_authority_digests(
+                            self.candidate_active_identity
+                        )
+                    )
+                    runtime_authority_changed = (
+                        worker_queue_sha256 != plan.baseline.worker_queue_sha256
+                        or durable_queue_sha256 != plan.baseline.durable_queue_sha256
+                    )
+                    if v2_sequence > 1 or runtime_authority_changed:
+                        # This is the authoritative rollback gate.  The fast
+                        # precheck in run() may race a canonical writer or a
+                        # queue/worker reservation before this exclusive
+                        # admission lock is acquired.  V1 cannot be launched
+                        # while any candidate-era execution authority remains.
+                        self._transition(
+                            PromotionState.FORWARD_RECOVERY_REQUIRED,
+                            v2_sequence=v2_sequence,
+                            worker_queue_sha256=worker_queue_sha256,
+                            durable_queue_sha256=durable_queue_sha256,
+                            runtime_authority_changed=runtime_authority_changed,
+                            candidate_alive=(
+                                self.candidate_generation is not None
+                                and self.backend.generation_is_alive(
+                                    self.candidate_generation
+                                )
+                            ),
+                            error=self.original_failure,
+                        )
+                        result = self._evidence(
+                            "forward_recovery_required",
+                            exit_code=4,
+                        )
+                        _durable_write_transaction_evidence(
+                            self.evidence_path,
+                            result,
+                        )
+                        return result
                 self._transition(PromotionState.ROLLBACK_LOCKED)
                 if self.candidate_generation is None and self.candidate_pid is not None:
                     if not self.candidate_child_absence_proven:
@@ -5814,7 +6582,6 @@ class PromotionTransaction:
         return {
             "schema_version": 1,
             "kind": "supervisor_runtime_promotion_transaction",
-            "bootstrap_mutable_incumbent": self.bootstrap_mutable_incumbent,
             "outcome": outcome,
             "exit_code": exit_code,
             "state": self.state.value,
@@ -5824,6 +6591,7 @@ class PromotionTransaction:
             "history": self.history,
             "original_failure": self.original_failure,
             "rollback_failure": self.rollback_failure,
+            "task_state_migration": self.task_state_migration,
             "requested_evidence_path": (
                 str(self.requested_evidence_path)
                 if self.requested_evidence_path is not None
@@ -5854,50 +6622,9 @@ class PromotionTransaction:
                     "commit": plan.incumbent_identity.head_commit,
                     "tree": plan.incumbent_identity.tracked_tree_identity,
                     "config_sha256": plan.incumbent_identity.config_sha256,
+                    "rollback_root": str(plan.incumbent_identity.candidate_root),
                 }
                 if plan is not None
-                else None
-            ),
-            "mutable_incumbent": (
-                {
-                    "pid": plan.mutable_incumbent.process.generation.pid,
-                    "starttime_ticks": (
-                        plan.mutable_incumbent.process.generation.starttime_ticks
-                    ),
-                    "root": str(plan.mutable_incumbent.root),
-                    "root_device": plan.mutable_incumbent.root_device,
-                    "root_inode": plan.mutable_incumbent.root_inode,
-                    "commit": plan.mutable_incumbent.head_commit,
-                    "tree": plan.mutable_incumbent.tracked_tree_identity,
-                    "accepted_dev_commit": (
-                        plan.mutable_incumbent.accepted_dev_commit
-                    ),
-                    "remote_url": plan.mutable_incumbent.remote_url,
-                    "repository_slug": plan.mutable_incumbent.repository_slug,
-                    "config": {
-                        "path": str(plan.candidate_identity.config_path),
-                        "device": plan.candidate_identity.config_device,
-                        "inode": plan.candidate_identity.config_inode,
-                        "byte_length": plan.candidate_identity.config_byte_length,
-                        "sha256": plan.candidate_identity.config_sha256,
-                    },
-                    "process": _supervisor_process_identity_summary(
-                        plan.mutable_incumbent.process
-                    ),
-                    "argv": list(plan.mutable_incumbent.process.argv),
-                    "governed_sources": [
-                        {
-                            "role": item.role,
-                            "path": str(item.path),
-                            "device": item.device,
-                            "inode": item.inode,
-                            "byte_length": item.byte_length,
-                            "sha256": item.sha256,
-                        }
-                        for item in plan.mutable_incumbent.source_identities
-                    ],
-                }
-                if plan is not None and plan.mutable_incumbent is not None
                 else None
             ),
             "candidate": (
@@ -5971,10 +6698,7 @@ class PromotionTransaction:
             )
             promotion_lock.acquire()
             promotion_lock_acquired = True
-            self.plan = self.backend.prepare(
-                candidate_root,
-                bootstrap_mutable_incumbent=self.bootstrap_mutable_incumbent,
-            )
+            self.plan = self.backend.prepare(candidate_root)
             plan = self.plan
             if plan.promotion_lock_path != preflight_promotion_lock_path:
                 raise ValueError("Promotion lock path changed during preparation")
@@ -6002,65 +6726,90 @@ class PromotionTransaction:
                 self.lock_timeout,
             )
             with lock.held():
-                locked_observation = self.backend.revalidate(plan)
-                if locked_observation.exact_snapshot_key != plan.baseline.exact_snapshot_key:
-                    raise ValueError(
-                        "Incumbent state/config/process snapshot changed before TERM"
-                    )
-                self._transition(PromotionState.ADMISSION_LOCKED)
-                self.backend.record_intent(
-                    plan.candidate_identity,
-                    old_pid=plan.incumbent_process.generation.pid,
-                    target_sha=plan.candidate_identity.head_commit,
+                task_lock = self.task_lock_factory(
+                    plan.task_state_lock_path,
+                    self.lock_timeout,
                 )
-                self._transition(
-                    PromotionState.INTENT_RECORDED,
-                    old_pid=plan.incumbent_process.generation.pid,
-                    target_sha=plan.candidate_identity.head_commit,
-                )
-                incumbent_stop_attempted = True
-                self.backend.terminate(
-                    plan.incumbent_process.generation,
-                    timeout=self.termination_timeout,
-                )
-                if self.backend.generation_is_alive(
-                    plan.incumbent_process.generation
-                ):
-                    raise RuntimeError(
-                        "Incumbent generation remained alive after termination"
-                    )
-                self._transition(PromotionState.INCUMBENT_TERMINATED)
-                self.candidate_active_identity = self.backend.install_config(
-                    plan.candidate_identity,
-                    plan.candidate_config,
-                    allowed_predecessors={
-                        plan.candidate_identity.config_sha256: (
-                            plan.candidate_identity.config_bytes
+                # Exact writer lock order: runtime admission -> task state.
+                with task_lock.held():
+                    locked_observation = self.backend.revalidate(plan)
+                    if locked_observation.invariant_failures:
+                        raise ValueError(
+                            "Incumbent health invariants failed before TERM: "
+                            + ",".join(locked_observation.invariant_failures)
                         )
-                    },
-                )
-                self._transition(
-                    PromotionState.CANDIDATE_CONFIG_INSTALLED,
-                    config_sha256=self.candidate_active_identity.config_sha256,
-                )
-                try:
-                    self.candidate_generation = self.backend.launch(
-                        self.candidate_active_identity,
-                        plan.candidate_launch,
-                        require_current_dev_identity=True,
+                    if (
+                        locked_observation.admission_identity_key
+                        != plan.baseline.admission_identity_key
+                    ):
+                        raise ValueError(
+                            "Incumbent process/config identity changed before TERM"
+                        )
+                    self._transition(PromotionState.ADMISSION_LOCKED)
+                    self.task_state_migration = self.backend.migrate_task_state_store(plan)
+                    if self.task_state_migration.get("ok") is not True:
+                        raise ValueError("V1 to V2 task-state migration did not pass")
+                    final_launch = self.backend.finalize_candidate_launch(plan)
+                    if final_launch.task_state_event_log_identity is None:
+                        raise ValueError("Final candidate launch lacks V2 journal identity")
+                    plan = replace(plan, candidate_launch=final_launch)
+                    self.plan = plan
+                    self.history[-1]["details"]["task_state_migration"] = copy.deepcopy(
+                        self.task_state_migration
                     )
-                    self.candidate_pid = self.candidate_generation.pid
-                except ProcessLaunchError as exc:
-                    self.candidate_pid = exc.pid
-                    self.candidate_generation = exc.generation
-                    self.candidate_child_absence_proven = exc.child_absence_proven
-                    self.candidate_launch_cleanup_error = exc.cleanup_error
-                    raise
-                self._transition(
-                    PromotionState.CANDIDATE_LAUNCHED,
-                    pid=self.candidate_generation.pid,
-                    starttime_ticks=self.candidate_generation.starttime_ticks,
-                )
+                    self.backend.record_intent(
+                        plan.candidate_identity,
+                        old_pid=plan.incumbent_process.generation.pid,
+                        target_sha=plan.candidate_identity.head_commit,
+                    )
+                    self._transition(
+                        PromotionState.INTENT_RECORDED,
+                        old_pid=plan.incumbent_process.generation.pid,
+                        target_sha=plan.candidate_identity.head_commit,
+                    )
+                    incumbent_stop_attempted = True
+                    self.backend.terminate(
+                        plan.incumbent_process.generation,
+                        timeout=self.termination_timeout,
+                    )
+                    if self.backend.generation_is_alive(
+                        plan.incumbent_process.generation
+                    ):
+                        raise RuntimeError(
+                            "Incumbent generation remained alive after termination"
+                        )
+                    self._transition(PromotionState.INCUMBENT_TERMINATED)
+                    self.candidate_active_identity = self.backend.install_config(
+                        plan.candidate_identity,
+                        plan.candidate_config,
+                        allowed_predecessors={
+                            plan.candidate_identity.config_sha256: (
+                                plan.candidate_identity.config_bytes
+                            )
+                        },
+                    )
+                    self._transition(
+                        PromotionState.CANDIDATE_CONFIG_INSTALLED,
+                        config_sha256=self.candidate_active_identity.config_sha256,
+                    )
+                    try:
+                        self.candidate_generation = self.backend.launch(
+                            self.candidate_active_identity,
+                            plan.candidate_launch,
+                            require_current_dev_identity=True,
+                        )
+                        self.candidate_pid = self.candidate_generation.pid
+                    except ProcessLaunchError as exc:
+                        self.candidate_pid = exc.pid
+                        self.candidate_generation = exc.generation
+                        self.candidate_child_absence_proven = exc.child_absence_proven
+                        self.candidate_launch_cleanup_error = exc.cleanup_error
+                        raise
+                    self._transition(
+                        PromotionState.CANDIDATE_LAUNCHED,
+                        pid=self.candidate_generation.pid,
+                        starttime_ticks=self.candidate_generation.starttime_ticks,
+                    )
             if self.candidate_active_identity is None:
                 raise RuntimeError("Candidate config identity was not installed")
             self.candidate_launch_boundary_at = self._capture_launch_boundary()
@@ -6086,6 +6835,32 @@ class PromotionTransaction:
         except Exception as exc:
             self.original_failure = f"{type(exc).__name__}: {exc}"
             if self.plan is not None and incumbent_stop_attempted:
+                if self.task_state_migration is not None and self.state in {
+                    PromotionState.CANDIDATE_LAUNCHED,
+                    PromotionState.CANDIDATE_VERIFYING,
+                }:
+                    v2_sequence = self.backend.task_state_store_sequence(self.plan)
+                    if v2_sequence > 1:
+                        # Once the candidate accepts a post-genesis canonical
+                        # mutation, restoring the V1 authority would silently
+                        # discard it. Preserve V2 and require forward repair.
+                        self._transition(
+                            PromotionState.FORWARD_RECOVERY_REQUIRED,
+                            v2_sequence=v2_sequence,
+                            candidate_alive=(
+                                self.candidate_generation is not None
+                                and self.backend.generation_is_alive(
+                                    self.candidate_generation
+                                )
+                            ),
+                            error=self.original_failure,
+                        )
+                        result = self._evidence(
+                            "forward_recovery_required",
+                            exit_code=4,
+                        )
+                        _durable_write_transaction_evidence(self.evidence_path, result)
+                        return result
                 lock = self.lock_factory(
                     self.plan.runtime_admission_lock_path,
                     self.lock_timeout,
@@ -6126,15 +6901,6 @@ def parse_args() -> argparse.Namespace:
             "Explicitly execute the transactional runtime swap. Uses an "
             "external durable evidence path by default and returns nonzero "
             "after any rollback."
-        ),
-    )
-    parser.add_argument(
-        "--bootstrap-mutable-incumbent",
-        action="store_true",
-        help=(
-            "With --promote only, capture the exact mutable incumbent and "
-            "materialize its accepted commit as the immutable rollback runtime "
-            "inside the same config-switch transaction."
         ),
     )
     parser.add_argument(
@@ -6188,7 +6954,6 @@ def main() -> int:
             poll_interval=args.poll_interval,
             lock_timeout=args.lock_timeout,
             termination_timeout=args.termination_timeout,
-            bootstrap_mutable_incumbent=args.bootstrap_mutable_incumbent,
         ).run(repo_root)
         if args.json:
             print(json.dumps(result, indent=2, sort_keys=True))
@@ -6199,9 +6964,6 @@ def main() -> int:
                 f"evidence={result['evidence_path']}"
             )
         return int(result["exit_code"])
-
-    if args.bootstrap_mutable_incumbent:
-        raise SystemExit("--bootstrap-mutable-incumbent requires --promote")
 
     snapshot = capture_promotion_snapshot(repo_root, config_path_arg=config_path)
 

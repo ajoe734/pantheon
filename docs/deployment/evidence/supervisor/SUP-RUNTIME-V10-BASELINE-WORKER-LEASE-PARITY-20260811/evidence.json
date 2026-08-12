@@ -1,0 +1,32 @@
+{
+  "task_id": "SUP-RUNTIME-V10-BASELINE-WORKER-LEASE-PARITY-20260811",
+  "recorded_at": "2026-08-11T01:08:30Z",
+  "ai_name": "Antigravity2",
+  "transaction_id": "79fa5e1abe5fdd3e2a0c1c2aed75e389d1565537980310f6a8ea0b7abfe77079",
+  "incumbent_head": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+  "candidate_commit": "e2cdc4d471542f7ceeeaa3f5ae611d2e1fa75635",
+  "tree_sha": "c876ddbdb6a17b0ee54e17ef74f36c5ac201f9bb",
+  "root_cause_analysis": {
+    "observed_failure": "worker_lease_parity_and_no_duplicates",
+    "observed_reason": "missing_lease_owner:evt-20260811T001918Z-80259225",
+    "findings": [
+      "_persist_runtime_phase_launch_receipt recorded receipt in state reservations under _measured_runtime_state_lock without atomically writing current['workers'][run_id] and queue_status(current, q_evt_id) fields ('run_id', 'lease_owner', 'status').",
+      "In process_queue(), active worker matching did not evaluate record.get('lease_owner') != active_run_id, preventing repair of started events missing lease_owner.",
+      "In process_queue(), started/manual_pending events with missing lease_owner were skipped early on record.get('status') in {'started', 'manual_pending'}, bypassing active_worker resolution and repair.",
+      "In promote_supervisor_runtime.py, worker_lease_parity_and_no_duplicates evaluated missing_lease_owner on unstarted queued/pending queue events."
+    ]
+  },
+  "remediation": {
+    "atomic_publication": "Updated _persist_runtime_phase_launch_receipt and start_worker_for_request to atomically bind worker records and queue event lease_owner, run_id, and status fields under _measured_runtime_state_lock.",
+    "repair_mechanism": "Updated process_queue active_worker matching and skip conditions to detect and repair missing or mismatched lease_owner on started/manual_pending events.",
+    "promotion_invariant": "Updated promote_supervisor_runtime.py worker_lease_parity_and_no_duplicates to exempt unstarted queued/pending events while remaining fail-closed for started/in-flight events."
+  },
+  "verification": {
+    "test_suites": [
+      ".orchestrator/test_supervisor.py",
+      "scripts/test_promote_supervisor_runtime.py"
+    ],
+    "passed_tests_count": 973,
+    "status": "PASS"
+  }
+}

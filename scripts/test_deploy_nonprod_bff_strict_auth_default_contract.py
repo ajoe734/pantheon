@@ -63,6 +63,55 @@ def test_nonprod_deploy_defaults_to_strict_bff_auth() -> None:
     assert 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-permissive}"' not in script
 
 
+def test_authority_private_keys_use_per_environment_protected_files() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    command_prefix = script[
+        script.index('command_prefix="PANTHEON_DEPLOY_ENV='):
+        script.index('command_prefix+=" bash -s"')
+    ]
+
+    assert "DEV_AUTHORITY_SIGNING_ENV_FILE" in script
+    assert "STAGING_AUTHORITY_SIGNING_ENV_FILE" in script
+    assert '[[ "$mode" == "600" ]]' in script
+    assert 'docker compose --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE"' in script
+    assert "STAGING_AUTHORITY_SIGNING_ENV_FILE" in workflow
+    assert "BRIDGE_SIGNING_PRIVATE_KEY" not in command_prefix
+    assert "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY" not in command_prefix
+    assert "secrets.BRIDGE_SIGNING_PRIVATE_KEY" not in workflow
+    assert "secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY" not in workflow
+
+
+def test_payload_validation_uses_only_invalid_authority_placeholders() -> None:
+    """The early Compose syntax check runs before protected deployment
+    settings are injected.  It needs inert non-empty placeholders for all six
+    required authority fields, but must never receive a production private key
+    or replace the deploy-step public-map bindings."""
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    validation = workflow[
+        workflow.index("- name: Resolve and validate dev payload"):
+        workflow.index("- name: Resolve exact execute-plans dev payload")
+    ]
+    deploy = workflow[
+        workflow.index("- name: Deploy dev VM stack under lease"):
+        workflow.index("- name: Ensure governed dev paper baseline under lease")
+    ]
+
+    for name in (
+        "BRIDGE_SIGNING_PRIVATE_KEY",
+        "BRIDGE_SIGNING_KEY_ID",
+        "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID",
+        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
+    ):
+        assert f"{name}=" in validation
+    assert "authority-validation-only" in validation
+    assert "docker compose -f docker-compose.yml config --quiet" in validation
+    assert "secrets.BRIDGE_SIGNING_PUBLIC_KEYS_JSON" in deploy
+    assert "secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON" in deploy
+
+
 def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
     """The workflow definition comes from the dispatch ref, but checkout can
     replace the workspace with an older target ref before the deploy script is
@@ -130,6 +179,14 @@ def _run_deploy_script(
         and not k.startswith("PANTHEON_DEV_ENVIRONMENT_LEASE")
     }
     env.update(_valid_lease_env())
+    env.update(
+        {
+            "BRIDGE_SIGNING_KEY_ID": "test-bridge-v1",
+            "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": '{"test-bridge-v1":"AA"}',
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID": "test-operator-v1",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": '{"test-operator-v1":"AA"}',
+        }
+    )
     env.update(extra_env)
     return subprocess.run(
         [

@@ -220,9 +220,6 @@ if ! materialize_candidate_runtime "$DEV_ROOT" "$candidate_root" "$target_sha"; 
 fi
 
 promotion_args=(--promote --repo "$candidate_root")
-if [[ ! "$ACTIVE_ROOT" =~ ^${COMMAND_RUNTIME_PARENT}/[0-9a-f]{40}$ ]]; then
-  promotion_args+=(--bootstrap-mutable-incumbent)
-fi
 log "requesting governed supervisor promotion incumbent=$ACTIVE_ROOT candidate=$candidate_root"
 if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" "${promotion_args[@]}"; then
   log "FATAL: governed supervisor promotion handoff failed; incumbent was not directly signalled by sync-dev-root"

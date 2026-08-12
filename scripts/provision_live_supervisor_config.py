@@ -2,7 +2,7 @@
 """Render the split-root supervisor config used by the Pantheon dev VM.
 
 The supervisor code runs from an immutable deployment worktree while all
-coordination state remains in the canonical Pantheon checkout mounted into the
+control-plane state remains in the canonical Pantheon checkout mounted into the
 BFF. Relative config paths would otherwise resolve under the command checkout
 and create a second task/status universe.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import importlib
 import json
 import os
 import stat
@@ -25,8 +26,15 @@ from typing import Any
 # its entire lifetime, including imports performed by the verifier.
 sys.dont_write_bytecode = True
 
-import promote_supervisor_runtime as runtime_promotion
 
+class _LazyRuntimePromotion:
+    """Avoid the promotion/provision import cycle while preserving injection."""
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(importlib.import_module("promote_supervisor_runtime"), name)
+
+
+runtime_promotion = _LazyRuntimePromotion()
 
 LEGACY_PROVIDER_ACCOUNT_KEYS = ("account_group", "quota_group", "dispatch_group")
 WATCHDOG_RUNTIME_PATH_DEFAULTS = {
@@ -46,20 +54,22 @@ REPO_OWNED_SUPERVISOR_LEASE_POLICY = {
 }
 REPO_OWNED_READY_DISPATCHER_POLICY = (
     "enabled",
-    "disabled_agents",
+    "seen_event_history_limit",
+    "pending_handoff_statuses",
     "sidecar_only_agents",
     "target_workload",
-    "max_tasks_per_agent_by_agent",
     "max_dispatches_per_tick",
     "max_active_workers_per_task",
     "max_concurrent_per_account",
     "max_concurrent_workers",
-    "require_explicit_provider_accounts",
-    "allow_legacy_provider_account_aliases",
 )
-REPO_OWNED_COORDINATION_POLICY = (
-    "enabled",
+RETIRED_READY_DISPATCHER_POLICY = (
+    "disabled_agents",
+    "max_tasks_per_agent",
+    "max_tasks_per_agent_by_agent",
+    "max_concurrent_per_quota_group",
 )
+REPO_OWNED_AGENT_POLICY = ("max_parallel",)
 TASK_STATE_STORE_DEFAULT_FILENAME = "task-state-events.jsonl"
 
 
@@ -68,15 +78,6 @@ def load_json_object(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"config must contain a JSON object: {path}")
     return payload
-
-
-def deep_merge(base: Any, overlay: Any) -> Any:
-    if isinstance(base, dict) and isinstance(overlay, dict):
-        merged = copy.deepcopy(base)
-        for key, value in overlay.items():
-            merged[key] = deep_merge(merged[key], value) if key in merged else copy.deepcopy(value)
-        return merged
-    return copy.deepcopy(overlay)
 
 
 def first_symlink_component(path: Path) -> Path | None:
@@ -163,17 +164,11 @@ def apply_provider_account_schema(
     if not isinstance(repo_ready, dict) or not isinstance(rendered_ready, dict):
         raise ValueError("ready_dispatcher config must be a JSON object")
 
-    for key in (
-        "require_explicit_provider_accounts",
-        "allow_legacy_provider_account_aliases",
-        "max_concurrent_per_account",
-    ):
+    for key in ("max_concurrent_per_account",):
         if key in repo_ready:
             rendered_ready[key] = copy.deepcopy(repo_ready[key])
 
-    allow_legacy = bool(rendered_ready.get("allow_legacy_provider_account_aliases", True))
-    if not allow_legacy:
-        rendered_ready.pop("max_concurrent_per_quota_group", None)
+    rendered_ready.pop("max_concurrent_per_quota_group", None)
 
     repo_providers = repo_config.get("providers") or {}
     rendered_providers = rendered.get("providers") or {}
@@ -181,17 +176,15 @@ def apply_provider_account_schema(
         raise ValueError("providers config must be a JSON object")
 
     missing_accounts: list[str] = []
-    require_explicit = bool(rendered_ready.get("require_explicit_provider_accounts", False))
     for provider, provider_cfg in rendered_providers.items():
         if not isinstance(provider_cfg, dict):
             raise ValueError(f"providers.{provider} must be a JSON object")
         repo_provider_cfg = repo_providers.get(provider)
         if isinstance(repo_provider_cfg, dict) and repo_provider_cfg.get("account"):
             provider_cfg["account"] = copy.deepcopy(repo_provider_cfg["account"])
-        if not allow_legacy:
-            for key in LEGACY_PROVIDER_ACCOUNT_KEYS:
-                provider_cfg.pop(key, None)
-        if require_explicit and not str(provider_cfg.get("account") or "").strip():
+        for key in LEGACY_PROVIDER_ACCOUNT_KEYS:
+            provider_cfg.pop(key, None)
+        if not str(provider_cfg.get("account") or "").strip():
             missing_accounts.append(str(provider))
 
     if missing_accounts:
@@ -222,6 +215,27 @@ def apply_ready_dispatcher_policy(
     for key in REPO_OWNED_READY_DISPATCHER_POLICY:
         if key in repo_ready:
             rendered_ready[key] = copy.deepcopy(repo_ready[key])
+    for key in RETIRED_READY_DISPATCHER_POLICY:
+        rendered_ready.pop(key, None)
+
+
+def apply_agent_capacity_policy(
+    repo_config: dict[str, Any], rendered: dict[str, Any]
+) -> None:
+    repo_agents = repo_config.get("agents") or {}
+    rendered_agents = rendered.get("agents") or {}
+    if not isinstance(repo_agents, dict) or not isinstance(rendered_agents, dict):
+        raise ValueError("agents config must be a JSON object")
+    for agent_id, repo_agent in repo_agents.items():
+        if not isinstance(repo_agent, dict) or repo_agent.get("dispatch_slot_for"):
+            continue
+        rendered_agent = rendered_agents.get(agent_id)
+        if not isinstance(rendered_agent, dict):
+            raise ValueError(f"agents.{agent_id} must be a JSON object")
+        for key in REPO_OWNED_AGENT_POLICY:
+            if key not in repo_agent:
+                raise ValueError(f"agents.{agent_id}.{key} is required")
+            rendered_agent[key] = copy.deepcopy(repo_agent[key])
 
 
 def apply_supervisor_lease_policy(
@@ -238,22 +252,6 @@ def apply_supervisor_lease_policy(
         for key in keys:
             if key in repo_section:
                 rendered_section[key] = copy.deepcopy(repo_section[key])
-
-
-def apply_coordination_policy(
-    repo_config: dict[str, Any], rendered: dict[str, Any]
-) -> None:
-    """Make the reviewed coordination publisher policy win over stale live overlays."""
-
-    repo_coordination = repo_config.get("coordination")
-    if repo_coordination is None:
-        return
-    rendered_coordination = rendered.setdefault("coordination", {})
-    if not isinstance(repo_coordination, dict) or not isinstance(rendered_coordination, dict):
-        raise ValueError("coordination config must be a JSON object")
-    for key in REPO_OWNED_COORDINATION_POLICY:
-        if key in repo_coordination:
-            rendered_coordination[key] = copy.deepcopy(repo_coordination[key])
 
 
 def apply_task_state_store(
@@ -318,11 +316,22 @@ def build_live_config(
     live_config_path: Path,
     python_executable: Path,
 ) -> dict[str, Any]:
-    rendered = deep_merge(repo_config, existing_live_config or {})
+    # The live file is a deployment projection, never a policy overlay.  In
+    # particular, carrying keys that are merely absent from the candidate
+    # config forward from an incumbent reintroduces retired dispatch paths and
+    # can make a new supervisor fail its own schema validation at startup.
+    #
+    # Runtime-specific values are derived below (canonical status paths,
+    # task-store location, watchdog paths, and immutable command argv).  They
+    # do not need, and must not use, the previous live policy as a fallback.
+    # Keep the argument for the public renderer API and callers that capture
+    # the incumbent for promotion evidence, but deliberately do not merge it.
+    del existing_live_config
+    rendered = copy.deepcopy(repo_config)
     apply_provider_account_schema(repo_config, rendered)
     apply_ready_dispatcher_policy(repo_config, rendered)
+    apply_agent_capacity_policy(repo_config, rendered)
     apply_supervisor_lease_policy(repo_config, rendered)
-    apply_coordination_policy(repo_config, rendered)
     apply_task_state_store(
         repo_config,
         rendered,

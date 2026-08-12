@@ -1,0 +1,126 @@
+{
+  "schema_version": "assistant_dev_bridge_partial_assign_recovery_r2_evidence.v1",
+  "task": {
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809",
+    "title": "Replace partial-assign recovery with governed exact-id replay",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809",
+    "review_status": "review_pending"
+  },
+  "clean_replacement": {
+    "base_commit": "fcce625530d42ff7bcdb3e782ac6eae1a8d2244c",
+    "implementation_head": "e97daa1802a457c239b14bc52cbc67bbaf53dc9c",
+    "commits": [
+      "02a8484966a76455ab377a11a0b5712a2be2e393",
+      "e97daa1802a457c239b14bc52cbc67bbaf53dc9c"
+    ],
+    "rejected_history_reused": false,
+    "superseded_pr": 4658
+  },
+  "scope": {
+    "owned_layer": "Assistant dev bridge exact failed-leaf recovery, authoritative post-assign readback, isolated bridge test roots/audits, CLI, regressions, and task evidence.",
+    "not_changing": "No live packet recovery, live audit cleanup, canonical state edit, supervisor scheduling, fleet policy, runtime promotion, downstream task dispatch, or admission schema change.",
+    "implementation_files": [
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/dev_bridge_test_support.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "scripts/drain_assistant_dev_task_packet_inbox.py"
+    ]
+  },
+  "delivered_properties": [
+    "The drain CLI supports --recover-failed-packet-id for one exact signed failed leaf and does not drain it implicitly.",
+    "Recovery holds the inbox queue lock plus packet processing and dispatch fences; operators do not move or edit queue, failed, receipt, admission, replay, or canonical-state files.",
+    "A durable prepared marker precedes failed-to-pending rename; retry completes prepared markers after crashes on either side of rename.",
+    "Recovery identity binds packet digest, signature, actor, mode, intent, source conversation and turns, documents, constraints, task specs, owners, reviewers, and task-spec hashes.",
+    "Pending, processing, processed, failed, receipt, admission, replay, claim, retry, and live-fence collisions fail closed unless they are the exact durable idempotent recovery state.",
+    "Governed dispatch reads existing rows only through the installed authoritative show command and journal parity verification; repository-local projection/archive files are never a governed fallback.",
+    "Every nonzero or timed-out governed assign receives immediate exact authoritative readback. Missing, unavailable, malformed, or mismatched readback creates no admission or replay mark.",
+    "An already materialized task cannot be rebound through a replacement packet id because exact signed bridge provenance is validated before another assign.",
+    "All focused bridge tests inherit explicit pytest-temporary status roots, audit logs, journals, command fixtures, and inboxes."
+  ],
+  "incident_record": {
+    "incident_date": "2026-08-09",
+    "task_required_baseline": {
+      "observed_reliable_task_001_assign_rows": 55,
+      "byte_identical_duplicate_copies_temporarily_removed_under_audit_lock": 11,
+      "recoverable_tmp_backups_created": true,
+      "unique_contamination_rows_left_for_separate_governed_cleanup": 44
+    },
+    "source_task_action": "No live contamination row was modified, deleted, deduplicated, or reclassified by this source repair.",
+    "later_external_observation": {
+      "exact_assign_rows_before_r2_focused_proof": 71,
+      "exact_assign_rows_after_r2_focused_proof": 71,
+      "newer_rows_delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-assistant-dev-bridge-partial-assign-recovery-20260809",
+      "interpretation": "Additional rows came from the rejected legacy worktree while it remained externally active; the R2 suite's syscall trace proves it did not access the live audit."
+    },
+    "cleanup_owner": "separate governed Human/Ops cleanup decision"
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "status": "pass",
+      "statement": "Clean R2 source-only branch from current origin/dev without rejected implementation commits."
+    },
+    {
+      "id": "AC2",
+      "status": "pass",
+      "statement": "Supported exact-id failed recovery is lock-protected, crash-consistent, idempotent, and provenance-bound."
+    },
+    {
+      "id": "AC3",
+      "status": "pass",
+      "statement": "Queue/receipt/admission/replay/digest/task-spec/provenance/replacement-id collisions fail closed."
+    },
+    {
+      "id": "AC4",
+      "status": "pass",
+      "statement": "Nonzero governed assign requires exact authoritative show and never uses repository-local fallback."
+    },
+    {
+      "id": "AC5",
+      "status": "pass",
+      "statement": "Focused tests are isolated from live audit, runtime state, and inbox.",
+      "evidence": "live-path-isolation.json"
+    },
+    {
+      "id": "AC6",
+      "status": "pass",
+      "statement": "The contamination incident is recorded without mutating its live rows."
+    },
+    {
+      "id": "AC7",
+      "status": "review_pending",
+      "statement": "Fresh independent Codex2 exact-head review, protected merge, and owner closeout remain."
+    }
+  ],
+  "validation": {
+    "focused_bridge_suite": "69 passed in 22.18s",
+    "focused_bridge_suite_with_file_trace": "69 passed in 73.93s",
+    "new_recovery_and_readback_regressions": "18 passed, 51 deselected in 4.76s",
+    "cli_recovery_test": "1 passed in 0.78s",
+    "python_compile": "pass",
+    "git_diff_check": "pass",
+    "commit_trailers": "pass for origin/dev..implementation_head",
+    "smoke_acceptance": "pass after running through the checkout-scoped .venv-pantheon interpreter",
+    "smoke_environment_note": "The first system-Python invocation failed at pip due PEP 668; the prescribed checkout-scoped interpreter rerun passed stage0 validation and baseline.",
+    "json_validation": "pending final evidence commit"
+  },
+  "independent_review": {
+    "reviewer": "Codex2",
+    "status": "pending",
+    "review_pr": null,
+    "review_head_sha": null,
+    "decision": null,
+    "required_next_action": "Codex2 must independently inspect the final PR head, update this already-committed manifest with its exact-head decision in a reviewer commit, then invoke governed approve with REVIEW_FILE and REVIEW_HEAD_SHA binding."
+  },
+  "delivery": {
+    "merge_target": "dev",
+    "rollout": "Merge the exact reviewed R2 head through the protected integrator. Runtime promotion and recovery of the two historical packets are separate governed operations after merge.",
+    "rollback": "Revert the merged task PR, then use the normal governed runtime promotion path. Do not hand-edit live queue, receipt, admission, replay, audit, or canonical state."
+  }
+}

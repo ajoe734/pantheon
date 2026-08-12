@@ -11,18 +11,5 @@
     // Consecutive live probe failures required before auth_ready flips true->false.
     // Set to 1 to restore the incumbent single-failure flip behaviour.
     "provider_probe_failure_hysteresis_threshold": 3
-  },
-  "coordination": {
-    "repositories": {
-      "front_ai_trading_system": {
-        // Override this if your front-end checkout lives somewhere else.
-        "local_path": "../front-ai-trading-system"
-      }
-    },
-    "lovable": {
-      // Export this env var locally so generated Lovable task packets include a one-click project URL.
-      "project_url_env": "PANTHEON_FRONT_LOVABLE_PROJECT_URL",
-      "project_url": "https://lovable.dev/projects/your-project-id"
-    }
   }
 }

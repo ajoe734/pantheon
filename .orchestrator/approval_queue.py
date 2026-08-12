@@ -23,9 +23,7 @@ from common import (
     approval_tool_input_signature,
     config_path,
     load_config,
-    load_json,
     new_runtime_id,
-    resolve_path,
     utc_now,
     write_activity_log,
     write_approval_evidence,
@@ -114,10 +112,10 @@ def _orphaned_worker_note(config: dict[str, Any], item: dict[str, Any], workers:
     if (
         _provider_uses_claude_cli(config, worker.get("provider"))
         and worker.get("status") in {"waiting_approval", "suspended_approval"}
-        and (worker.get("session_id") or worker.get("resume_token"))
+        and worker.get("queue_event_id")
     ):
-        # Claude can resume from session state after approval even if the original
-        # worker process exited, so keep the approval entry live.
+        # The supervisor can return the exact durable intent to the single
+        # delivery path after approval, even when the original process exited.
         return None
     if not _pid_is_alive(worker.get("pid")):
         return "Auto-pruned approval because the worker exited before approval could be applied."
@@ -217,7 +215,31 @@ def _default_expires_at(config: dict[str, Any], created_at: str) -> str | None:
     return expires.isoformat().replace("+00:00", "Z")
 
 
+def validated_approval_binding(item: dict[str, Any]) -> tuple[str, int, str]:
+    task_id = str(item.get("task_id") or "").strip()
+    worker_run_id = str(item.get("worker_run_id") or "").strip()
+    raw_generation = item.get("task_generation")
+    try:
+        generation = int(raw_generation)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("approval requires a positive task generation") from exc
+    if not task_id:
+        raise ValueError("approval requires a task id")
+    if generation <= 0:
+        raise ValueError("approval requires a positive task generation")
+    if not worker_run_id:
+        raise ValueError("approval requires a worker run id")
+    return task_id, generation, worker_run_id
+
+
 def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    task_id, task_generation, worker_run_id = validated_approval_binding(item)
+    item = {
+        **item,
+        "task_id": task_id,
+        "task_generation": task_generation,
+        "worker_run_id": worker_run_id,
+    }
     approval_id = new_runtime_id("apr")
     raw_tool_input = item.get("tool_input")
     tool_input_signature = approval_tool_input_signature(raw_tool_input if raw_tool_input is not None else {})
@@ -229,6 +251,7 @@ def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, A
         payload={
             "provider": item.get("provider"),
             "task_id": item.get("task_id"),
+            "task_generation": item.get("task_generation"),
             "worker_run_id": item.get("worker_run_id"),
             "session_id": item.get("session_id"),
             "tool_use_id": item.get("tool_use_id"),
@@ -302,58 +325,6 @@ def _apply_remember_rule(config: dict[str, Any], item: dict[str, Any], decision:
     remember_rule(config, decision=decision, rule=rule)
 
 
-def _apply_temporary_resume_rule(config: dict[str, Any], item: dict[str, Any], decision: str) -> dict[str, Any]:
-    if decision != "allow" or item.get("provider") != "claude" or item.get("remember"):
-        return item
-    rule = item.get("suggested_rule")
-    if not rule:
-        return item
-    from permission_broker import add_temporary_allow_rule
-
-    inserted = add_temporary_allow_rule(config, rule=rule)
-    return {
-        **item,
-        "resume_override_rule": rule,
-        "resume_override_rule_inserted": inserted,
-    }
-
-
-def _approval_tool_input(item: dict[str, Any]) -> dict[str, Any]:
-    tool_input = item.get("tool_input")
-    if isinstance(tool_input, dict):
-        return tool_input
-    evidence_ref = str(item.get("evidence_ref") or "").strip()
-    if not evidence_ref:
-        return {}
-    evidence_path = resolve_path(evidence_ref)
-    if evidence_path is None or not evidence_path.exists():
-        return {}
-    evidence = load_json(evidence_path, default={}) or {}
-    loaded = evidence.get("tool_input")
-    return loaded if isinstance(loaded, dict) else {}
-
-
-def _suspend_conflicting_resume_rules(config: dict[str, Any], item: dict[str, Any], decision: str) -> dict[str, Any]:
-    if decision != "allow" or item.get("provider") != "claude" or item.get("remember"):
-        return item
-    tool_name = item.get("tool_name")
-    tool_input = _approval_tool_input(item)
-    if not isinstance(tool_name, str) or not tool_name:
-        return item
-    from permission_broker import suspend_matching_rules
-
-    suspended_ask_rules = suspend_matching_rules(
-        config,
-        bucket="ask",
-        tool_name=tool_name,
-        tool_input=tool_input,
-    )
-    return {
-        **item,
-        "resume_override_suspended_ask_rules": suspended_ask_rules,
-    }
-
-
 def resolve_approval(
     config: dict[str, Any],
     approval_id: str,
@@ -384,8 +355,6 @@ def resolve_approval(
             "resume_override_consumed_at": None,
             "resume_override_consumed_reason": None,
         }
-        item = _apply_temporary_resume_rule(config, item, decision)
-        item = _suspend_conflicting_resume_rules(config, item, decision)
         item["resolution_ref"] = write_approval_evidence(
             config,
             approval_id=approval_id,
@@ -393,6 +362,7 @@ def resolve_approval(
             payload={
                 "provider": item.get("provider"),
                 "task_id": item.get("task_id"),
+                "task_generation": item.get("task_generation"),
                 "worker_run_id": item.get("worker_run_id"),
                 "session_id": item.get("session_id"),
                 "tool_name": item.get("tool_name"),
@@ -403,7 +373,6 @@ def resolve_approval(
                 "remember": remember,
                 "request_ref": item.get("evidence_ref"),
                 "resume_override_active": item.get("resume_override_active"),
-                "resume_override_rule": item.get("resume_override_rule"),
             },
         )
         state["pending"].pop(index)
@@ -428,13 +397,22 @@ def resolve_approval(
 
 
 def _approval_signature(
-    session_id: str | None,
+    task_id: str | None,
+    task_generation: str | int | None,
     tool_name: str,
     tool_input: dict[str, Any] | None = None,
     tool_input_signature: str | None = None,
-) -> tuple[str | None, str, str]:
+) -> tuple[str, int, str, str] | None:
+    normalized_task_id = str(task_id or "").strip()
+    try:
+        normalized_generation = int(task_generation)
+    except (TypeError, ValueError):
+        return None
+    if not normalized_task_id or normalized_generation <= 0 or not tool_name:
+        return None
     return (
-        session_id,
+        normalized_task_id,
+        normalized_generation,
         tool_name,
         str(tool_input_signature or approval_tool_input_signature(tool_input if tool_input is not None else {})),
     )
@@ -443,12 +421,15 @@ def _approval_signature(
 def find_resume_override(
     config: dict[str, Any],
     *,
-    session_id: str | None,
+    task_id: str | None,
+    task_generation: str | int | None,
     tool_name: str,
     tool_input: dict[str, Any],
 ) -> dict[str, Any] | None:
     state = load_approval_state(config)
-    signature = _approval_signature(session_id, tool_name, tool_input)
+    signature = _approval_signature(task_id, task_generation, tool_name, tool_input)
+    if signature is None:
+        return None
     for item in reversed(state.get("history", [])):
         if not item.get("resume_override_active"):
             continue
@@ -457,7 +438,8 @@ def find_resume_override(
         if item.get("resume_override_consumed_at"):
             continue
         item_signature = _approval_signature(
-            item.get("session_id"),
+            item.get("task_id"),
+            item.get("task_generation"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),
         )
@@ -479,30 +461,24 @@ def consume_resume_override(
             item = history[index]
             if item.get("approval_id") != approval_id:
                 continue
+            if _approval_signature(
+                item.get("task_id"),
+                item.get("task_generation"),
+                item.get("tool_name") or "",
+                tool_input_signature=item.get("tool_input_signature"),
+            ) is None:
+                return None
             if not item.get("resume_override_active"):
-                return item
+                return None
             if item.get("resume_override_consumed_at"):
-                return item
+                return None
             updated = {
                 **item,
                 "resume_override_consumed_at": utc_now(),
                 "resume_override_consumed_reason": reason,
             }
-            rule = updated.get("resume_override_rule")
-            inserted = bool(updated.get("resume_override_rule_inserted"))
-            suspended_ask_rules = list(updated.get("resume_override_suspended_ask_rules") or [])
             history[index] = updated
             save_approval_state(config, state)
-            if inserted and rule:
-                from permission_broker import remove_temporary_allow_rule
-                from permission_broker import restore_rules
-
-                remove_temporary_allow_rule(config, rule=rule)
-                restore_rules(config, bucket="ask", rules=suspended_ask_rules)
-            elif suspended_ask_rules:
-                from permission_broker import restore_rules
-
-                restore_rules(config, bucket="ask", rules=suspended_ask_rules)
             write_activity_log(
                 config,
                 {

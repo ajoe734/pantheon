@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from adapters.file_inbox import FileInboxAdapter
 from common import (
     command_exists,
     delivery_runtime_env,
@@ -32,11 +31,6 @@ def _configured_gh_cli(config: dict | None = None) -> str | None:
     provider = ((config or {}).get("providers", {}).get("copilot", {}) or {})
     runtime = provider.get("cloud", {})
     return command_exists(runtime.get("cli") or "gh")
-
-
-def _allow_inbox_fallback(config: dict | None = None) -> bool:
-    provider = ((config or {}).get("providers", {}).get("copilot", {}) or {})
-    return bool(provider.get("allow_inbox_fallback", True))
 
 
 def _gh_auth_token(config: dict | None = None) -> str | None:
@@ -86,59 +80,37 @@ class CopilotLocalAdapter(BaseAdapter):
                 notes="Uses Copilot CLI autopilot in the current WSL workspace.",
             )
         missing_reason = "Copilot CLI is not installed" if not cli else "Copilot CLI is installed but not authenticated"
-        if not _allow_inbox_fallback(self.config):
-            return DeliveryCapability(
-                adapter=self.name,
-                supported=bool(cli),
-                requires_manual_confirmation=False,
-                can_auto_deliver=False,
-                can_auto_approve_edits=False,
-                delivery_mode="copilot_local",
-                verified="partial" if cli else "unavailable",
-                host="Copilot CLI",
-                notes=f"{missing_reason}; inbox fallback is disabled for this provider.",
-            )
         return DeliveryCapability(
             adapter=self.name,
-            supported=True,
-            requires_manual_confirmation=True,
+            supported=bool(cli),
+            requires_manual_confirmation=False,
             can_auto_deliver=False,
             can_auto_approve_edits=False,
-            delivery_mode="file_inbox",
-            verified="partial",
-            host="Copilot CLI + inbox fallback",
-            notes=f"{missing_reason}, so delivery falls back to a workspace inbox file.",
+            delivery_mode="copilot_local",
+            verified="partial" if cli else "unavailable",
+            host="Copilot CLI",
+            notes=missing_reason,
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
         cli = _configured_copilot_cli(self.config)
         auth_ready = _copilot_auth_ready(self.config)
         if not cli or not auth_ready:
-            if not _allow_inbox_fallback(self.config):
-                reason = (
-                    "Copilot CLI is unavailable; inbox fallback is disabled for this provider."
-                    if not cli
-                    else "Copilot CLI is not authenticated; inbox fallback is disabled for this provider."
-                )
-                return DeliveryResult(
-                    ok=False,
-                    adapter=self.name,
-                    mode="copilot_local",
-                    target=request.agent_id,
-                    auto_delivered=False,
-                    manual_confirmation_required=False,
-                    error=reason,
-                    notes=reason,
-                )
-            fallback = FileInboxAdapter(config=self.config, provider_capabilities=self.provider_capabilities)
-            result = fallback.deliver(request)
-            result.adapter = self.name
-            result.mode = "file_inbox"
-            if not cli:
-                result.notes = f"{result.notes}. Copilot CLI is unavailable, so inbox fallback was used."
-            else:
-                result.notes = f"{result.notes}. Copilot CLI is not authenticated, so inbox fallback was used."
-            return result
+            reason = (
+                "Copilot CLI is unavailable."
+                if not cli
+                else "Copilot CLI is not authenticated."
+            )
+            return DeliveryResult(
+                ok=False,
+                adapter=self.name,
+                mode="copilot_local",
+                target=request.agent_id,
+                auto_delivered=False,
+                manual_confirmation_required=False,
+                error=reason,
+                notes=reason,
+            )
 
         provider = self.config.get("providers", {}).get("copilot", {})
         local = provider.get("local", {})

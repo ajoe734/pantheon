@@ -22,6 +22,38 @@ from urllib.error import HTTPError
 import common
 
 
+class WorkerSpawnAuthorityBoundaryTests(unittest.TestCase):
+    def test_final_spawn_boundary_removes_control_plane_signing_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "worker.log"
+            fake_process = mock.Mock(pid=321)
+            with mock.patch.object(
+                common.subprocess,
+                "Popen",
+                return_value=fake_process,
+            ) as popen:
+                common.spawn_background_process(
+                    ["worker"],
+                    log_path=log_path,
+                    env={
+                        "BRIDGE_SIGNING_KEY": "bridge-secret",
+                        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY": "private-secret",
+                        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": "{}",
+                    },
+                    runner_enabled=False,
+                )
+            spawned_env = popen.call_args.kwargs["env"]
+            self.assertNotIn("BRIDGE_SIGNING_KEY", spawned_env)
+            self.assertNotIn(
+                "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
+                spawned_env,
+            )
+            self.assertIn(
+                "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
+                spawned_env,
+            )
+
+
 def _sigkill_during_activity_rotation(log_path: str, point: str) -> None:
     os.environ["LOOP_TEST_ACTIVITY_ROTATION_SIGKILL_AFTER"] = point
     common.write_activity_log(
@@ -53,37 +85,58 @@ def _probe_forked_stable_lock(lock_path: str, connection) -> None:
         connection.close()
 
 
-class PlanningSharedFilesTests(unittest.TestCase):
-    def test_planning_shared_files_follow_active_session_paths(self) -> None:
+class RuntimeLogPathTests(unittest.TestCase):
+    def test_governed_runtime_logs_use_external_status_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            planning_dir = root / "docs" / "02-architecture" / "consensus" / "sessions" / "phase3-test"
-            planning_dir.mkdir(parents=True)
-            readme = planning_dir / "README.md"
-            session_file = planning_dir / "planning-session.json"
-            state_file = root / ".orchestrator" / "planning-state.json"
-            state_file.parent.mkdir(parents=True)
-            readme.write_text("# phase3\n", encoding="utf-8")
-            session_file.write_text("{}", encoding="utf-8")
-            state_file.write_text(
-                json.dumps(
-                    {
-                        "status": "active",
-                        "session_file": str(session_file),
-                        "artifacts": {
-                            "planning_readme": {
-                                "path": str(readme),
-                            }
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
+            status_root = Path(tmpdir) / "status-root"
+            candidate_orchestrator = Path(tmpdir) / "candidate" / ".orchestrator"
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": str(status_root)},
+                clear=False,
+            ), mock.patch.object(common, "ORCHESTRATOR_DIR", candidate_orchestrator):
+                log_path = common.runtime_log_path("codex", "Codex2")
 
-            with mock.patch.object(common, "PLANNING_STATE_PATH", state_file):
-                files = common.planning_shared_files()
+        self.assertEqual(log_path.parent, status_root / ".orchestrator" / "logs")
+        self.assertNotIn(candidate_orchestrator, log_path.parents)
 
-        self.assertEqual(files, [readme, session_file])
+    def test_governed_runtime_evidence_uses_external_status_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "status-root"
+            candidate_orchestrator = Path(tmpdir) / "candidate" / ".orchestrator"
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": str(status_root)},
+                clear=False,
+            ), mock.patch.object(common, "ORCHESTRATOR_DIR", candidate_orchestrator):
+                evidence_path = common.evidence_dir({})
+
+        self.assertEqual(evidence_path, status_root / ".orchestrator" / "evidence")
+        self.assertNotIn(candidate_orchestrator, evidence_path.parents)
+
+    def test_local_runtime_logs_keep_repository_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            orchestrator_dir = Path(tmpdir) / ".orchestrator"
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": ""},
+                clear=False,
+            ), mock.patch.object(common, "ORCHESTRATOR_DIR", orchestrator_dir):
+                log_path = common.runtime_log_path("codex", "Codex2")
+
+        self.assertEqual(log_path.parent, orchestrator_dir / "logs")
+
+    def test_local_runtime_evidence_keeps_repository_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            orchestrator_dir = Path(tmpdir) / ".orchestrator"
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": ""},
+                clear=False,
+            ), mock.patch.object(common, "ORCHESTRATOR_DIR", orchestrator_dir):
+                evidence_path = common.evidence_dir({})
+
+        self.assertEqual(evidence_path, orchestrator_dir / "evidence")
 
 
 class JsonLoadResilienceTests(unittest.TestCase):
@@ -134,7 +187,7 @@ class JsonLoadResilienceTests(unittest.TestCase):
 
 
             result = subprocess.run(
-                [sys.executable, str(repo_root / "scripts" / "ai_status.py"), "sync"],
+                [sys.executable, str(repo_root / "scripts" / "ai_status.py"), "show", "EMPTY"],
                 cwd=repo_root,
                 env=env,
                 capture_output=True,

@@ -29,6 +29,7 @@ from services.consultation.models import (
 from services.consultation.client import ConsultationClientError, ConsultationServiceClient
 from services.consultation.store import ConsultationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from trade_journey_projection_store import configured_projection_reader
 
 _NOT_SUPPLIED = object()
 
@@ -16493,6 +16494,15 @@ class ReadSurfaceStore:
 
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
         return self._service.list_loop_runs()
+
+    def trade_journey_projection_reader(self):
+        """Return the explicitly selected scoped Postgres reader, if any.
+
+        The disabled default remains the existing JSON reader.  A selected but
+        invalid Postgres configuration returns a fail-closed sentinel so route
+        handlers cannot quietly reinterpret JSON fallback as Postgres truth.
+        """
+        return configured_projection_reader()
 
     def loop_run_projection_metadata(self) -> Dict[str, Any]:
         return self._service.envelope_metadata("loop_runs")

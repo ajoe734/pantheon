@@ -43,7 +43,7 @@ def payload(
                 "deployment_sha": deployment_sha,
                 "checkpoint": checkpoint,
                 "source_high_watermark": source,
-                "backlog": source - checkpoint,
+                "backlog": max(0, source - checkpoint),
                 "current_generation": 12,
                 "controller_generation": 12,
                 "last_poll_at": f"poll-{checkpoint}",
@@ -101,9 +101,9 @@ def test_accepts_exact_ready_payload() -> None:
     assert observation is None
 
 
-def test_requires_two_consecutive_exact_caught_up_ready_samples() -> None:
+def test_requires_two_consecutive_consistent_ready_samples() -> None:
     fake = FakeTime()
-    inconsistent = payload(ready=True, checkpoint=11, source=10)
+    inconsistent = payload(ready=True, checkpoint=9, source=10)
     inconsistent["dependencies"]["lifecycle_projector"]["backlog"] = 0
     _, fetch = sequence_fetch(
         [
@@ -126,15 +126,13 @@ def test_requires_two_consecutive_exact_caught_up_ready_samples() -> None:
     assert fake.value == 3
 
 
-def test_http_200_ahead_snapshot_converges_inside_base_window() -> None:
+def test_http_200_retained_snapshot_is_accepted_after_two_samples() -> None:
     fake = FakeTime()
-    ahead = payload(ready=True, checkpoint=11, source=10)
-    ahead["dependencies"]["lifecycle_projector"]["backlog"] = 0
+    retained = payload(ready=True, checkpoint=6_099_223, source=0)
     _, fetch = sequence_fetch(
         [
-            (200, ahead),
-            (200, payload(ready=True)),
-            (200, payload(ready=True, checkpoint=11, source=11)),
+            (200, retained),
+            (200, retained),
         ]
     )
     wait_for_readiness(
@@ -147,26 +145,19 @@ def test_http_200_ahead_snapshot_converges_inside_base_window() -> None:
         monotonic=fake.monotonic,
         sleep=fake.sleep,
     )
-    assert fake.value == 2
+    assert fake.value == 1
 
 
-def test_persistent_http_200_ahead_snapshot_fails_at_base_cap() -> None:
-    fake = FakeTime()
-    ahead = payload(ready=True, checkpoint=11, source=10)
-    ahead["dependencies"]["lifecycle_projector"]["backlog"] = 0
-    _, fetch = sequence_fetch([(200, ahead)])
-    with pytest.raises(ReadinessError, match="ordinary restart budget"):
-        wait_for_readiness(
-            fetch,
-            expected_deployment_sha=SHA,
-            initial_timeout_seconds=2,
-            recovery_extension_seconds=10,
-            stalled_timeout_seconds=2,
-            poll_interval_seconds=1,
-            monotonic=fake.monotonic,
-            sleep=fake.sleep,
-        )
-    assert fake.value == 2
+def test_http_200_checkpoint_behind_retained_high_is_not_ready() -> None:
+    inconsistent = payload(ready=True, checkpoint=9, source=10)
+    inconsistent["dependencies"]["lifecycle_projector"]["backlog"] = 0
+    state, observation = classify_readiness(
+        200,
+        inconsistent,
+        expected_deployment_sha=SHA,
+    )
+    assert state == "snapshot_inconsistent"
+    assert observation is None
 
 
 def test_uses_bounded_extension_for_trusted_recovery() -> None:
@@ -556,6 +547,17 @@ def test_rejects_inconsistent_backlog() -> None:
     assert observation is None
 
 
+def test_recovery_accepts_retained_checkpoint_ahead_of_current_window() -> None:
+    state, observation = classify_readiness(
+        503,
+        payload(ready=False, checkpoint=6_099_223, source=0),
+        expected_deployment_sha=SHA,
+    )
+    assert state == "recovering"
+    assert observation is not None
+    assert observation.caught_up is True
+
+
 def test_wrong_deployment_can_converge_to_exact_ready_inside_base_window() -> None:
     fake = FakeTime()
     _, fetch = sequence_fetch(
@@ -689,7 +691,7 @@ def test_bff_only_readiness_also_uses_exact_waiter() -> None:
     bff = _component_block(script, "bff", "exec")
     compose_up = (
         "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --build --no-deps operator-bff"
+        "up -d --build --no-deps operator-bff loop-run-projector-scheduler"
     )
     helper_call = (
         "wait_for_exact_bff_lifecycle_readiness \\\n"

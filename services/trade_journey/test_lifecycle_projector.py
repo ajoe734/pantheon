@@ -21,8 +21,8 @@ from services.trade_journey.lifecycle_projector import (
     AtomicProjectionBundle,
     ConflictingLifecycleEvent,
     DEFAULT_HEALTH_MAX_AGE_SECONDS,
-    LIFECYCLE_EVENT_TYPE_QUERY,
     LIFECYCLE_EVENT_TYPES,
+    LIFECYCLE_EVENT_TYPE_QUERY,
     LifecycleProjector,
     PostgresLifecycleSource,
     _fingerprint,
@@ -158,7 +158,7 @@ def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
 
     class Connection:
         async def fetchval(self, query: str, event_types: list[str]) -> int:
-            calls.append(("fetchval", query, tuple(event_types)))
+            calls.append(("fetchval", query, event_types))
             return 44
 
         async def fetch(
@@ -168,7 +168,7 @@ def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
             event_types: list[str],
             limit: int,
         ) -> list[dict]:
-            calls.append(("fetch", query, checkpoint, tuple(event_types), limit))
+            calls.append(("fetch", query, checkpoint, event_types, limit))
             return []
 
         async def close(self) -> None:
@@ -188,11 +188,188 @@ def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
     fetch = next(call for call in calls if call[0] == "fetch")
     assert "event_type = ANY" in fetchval[1]
     assert "event_type = ANY" in fetch[1]
-    assert fetchval[2] == LIFECYCLE_EVENT_TYPE_QUERY
+    assert "MAX(ingested_seq)" in fetchval[1]
+    assert tuple(fetchval[2]) == LIFECYCLE_EVENT_TYPE_QUERY
     assert fetch[2] == 7
-    assert fetch[3] == LIFECYCLE_EVENT_TYPE_QUERY
+    assert tuple(fetch[3]) == LIFECYCLE_EVENT_TYPE_QUERY
     assert fetch[4] == 9
-    assert "heartbeat" not in fetchval[2]
+
+
+def test_postgres_lifecycle_source_startup_check_is_read_only_and_bounded(monkeypatch):
+    calls: list[tuple] = []
+
+    class Connection:
+        async def fetchrow(self, query: str) -> None:
+            calls.append(("fetchrow", query))
+            return None
+
+        async def close(self) -> None:
+            calls.append(("close",))
+
+    async def connect(dsn: str) -> Connection:
+        calls.append(("connect", dsn))
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+
+    asyncio.run(PostgresLifecycleSource("postgresql://unit").verify_read_contract())
+
+    assert calls[0] == ("connect", "postgresql://unit")
+    assert calls[1] == (
+        "fetchrow",
+        "SELECT ingested_seq, ingested_at FROM telemetry_events LIMIT 1",
+    )
+    assert calls[2] == ("close",)
+    assert all("ALTER TABLE" not in str(call) and "UPDATE telemetry_events" not in str(call) for call in calls)
+
+
+def test_postgres_lifecycle_source_startup_close_cannot_extend_deadline(monkeypatch):
+    calls: list[str] = []
+
+    class Connection:
+        async def fetchrow(self, query: str) -> None:
+            calls.append("fetchrow")
+            return None
+
+        async def close(self) -> None:
+            calls.append("close")
+            await asyncio.Event().wait()
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+    async def connect(dsn: str) -> Connection:
+        calls.append("connect")
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    monkeypatch.setattr(lifecycle_projector_module, "DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS", 0.01)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(PostgresLifecycleSource("postgresql://unit").verify_read_contract())
+
+    assert calls == ["connect", "fetchrow", "close", "terminate"]
+
+
+def test_worker_startup_verifies_read_contract_before_publishing_identity(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    class Source:
+        async def verify_read_contract(self) -> None:
+            calls.append("verify")
+
+        async def high_watermark(self) -> int:
+            calls.append("high")
+            return 0
+
+        async def start_listener(self) -> None:
+            calls.append("listen")
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            calls.append("fetch")
+            return []
+
+        async def wait(self, timeout: float) -> None:
+            calls.append("wait")
+
+        async def close(self) -> None:
+            calls.append("close")
+
+    source = Source()
+    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda _: source)
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "1")
+    monkeypatch.setenv("GIT_SHA", "cafebabecafebabecafebabecafebabecafebabe")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    assert calls == ["verify", "high", "listen", "high", "fetch", "close"]
+    assert _current_json(tmp_path, "loop_runs.json")["controller"]["deployment_sha"] == (
+        "cafebabecafebabecafebabecafebabecafebabe"
+    )
+
+
+def test_worker_reaffirms_retained_snapshot_after_source_window_truncates(
+    monkeypatch, tmp_path
+):
+    prior = _projector(tmp_path)
+    row = lifecycle_rows()[0]
+    row["ingested_seq"] = 6_099_223
+    prior.project_records([row], mode="live", source_high_watermark=6_099_223)
+
+    class Source:
+        async def verify_read_contract(self) -> None:
+            return None
+
+        async def high_watermark(self) -> int:
+            # The source table is a retained window.  Its currently-empty
+            # lifecycle subset must not invalidate the durable projection.
+            return 0
+
+        async def start_listener(self) -> None:
+            return None
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            assert checkpoint == 6_099_223
+            return []
+
+        async def wait(self, timeout: float) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda _: Source())
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "1")
+    monkeypatch.setenv("GIT_SHA", "feedfacefeedfacefeedfacefeedfacefeedface")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    controller = _current_json(tmp_path, "loop_runs.json")["controller"]
+    assert controller["deployment_sha"] == "feedfacefeedfacefeedfacefeedfacefeedface"
+    assert controller["checkpoint"] == 6_099_223
+    assert controller["source_high_watermark"] == 0
+    assert controller["backlog"] == 0
+    assert controller["accepted_live"] is True
+
+
+def test_worker_startup_contract_failure_publishes_degraded_health(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    class Source:
+        async def verify_read_contract(self) -> None:
+            calls.append("verify")
+            raise TimeoutError("telemetry schema check timed out")
+
+        async def high_watermark(self) -> int:
+            raise AssertionError("worker must not read after startup contract failure")
+
+        async def start_listener(self) -> None:
+            raise AssertionError("worker must not listen after startup contract failure")
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            raise AssertionError("worker must not fetch after startup contract failure")
+
+        async def wait(self, timeout: float) -> None:
+            calls.append("wait")
+
+        async def close(self) -> None:
+            calls.append("close")
+
+    source = Source()
+    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda _: source)
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "1")
+    monkeypatch.setenv("GIT_SHA", "cafebabecafebabecafebabecafebabecafebabe")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    controller = _current_json(tmp_path, "loop_runs.json")["controller"]
+    assert calls == ["verify", "close", "close"]
+    assert controller["status"] == "degraded"
+    assert controller["deployment_sha"] == "cafebabecafebabecafebabecafebabecafebabe"
+    assert "TimeoutError: telemetry schema check timed out" == controller["last_error"]
 
 
 def test_full_canonical_lifecycle_projects_one_identity_consistent_journey_and_loop(tmp_path):
@@ -363,6 +540,36 @@ def test_missing_identity_is_quarantined_and_cursor_progresses(tmp_path):
     assert projector.checkpoint == 1
     assert projector.controller["status"] == "degraded"
     assert projector.controller["accepted_live"] is False
+
+
+def test_historic_live_evidence_never_overrides_current_quarantine_or_backlog(tmp_path):
+    projector = _projector(tmp_path)
+    projector.project_records(lifecycle_rows()[:1], mode="live", source_high_watermark=1)
+    assert projector.controller["accepted_live"] is True
+
+    invalid = lifecycle_rows()[1]
+    del invalid["payload"]["run_id"]
+    del invalid["payload"]["metadata"]["run_id"]
+    projector.project_records([invalid], mode="live", source_high_watermark=2)
+    assert projector.controller["accepted_live"] is False
+    assert projector.controller["truth_level"] == "live_with_historic_live"
+    assert projector.controller["status"] == "degraded"
+
+    # A later empty poll cannot erase the durable quarantine or restore live
+    # readiness.  It remains an explicit repair action, not a heartbeat side
+    # effect.
+    projector.record_poll(source_high_watermark=2, backlog=0, mode="live")
+    assert projector.controller["accepted_live"] is False
+    assert projector.controller["truth_level"] == "live_with_historic_live"
+    assert projector.controller["status"] == "degraded"
+
+    # Backlog independently revokes admission even if the prior projection was
+    # healthy.
+    clean = _projector(tmp_path / "backlog")
+    clean.project_records(lifecycle_rows()[:1], mode="live", source_high_watermark=1)
+    clean.record_poll(source_high_watermark=2, backlog=1, mode="live")
+    assert clean.controller["accepted_live"] is False
+    assert clean.controller["truth_level"] == "live_with_historic_live"
 
 
 def test_bundle_failure_never_switches_partial_generation_or_checkpoint(tmp_path):

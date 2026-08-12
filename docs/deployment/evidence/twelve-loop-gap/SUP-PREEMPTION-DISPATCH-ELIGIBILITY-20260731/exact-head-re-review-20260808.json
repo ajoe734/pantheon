@@ -1,0 +1,121 @@
+{
+  "schema_version": "pantheon.supervisor_preemption_exact_head_rereview.v1",
+  "task": {
+    "id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status_at_cut": "review",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.json",
+    "evidence_cut_at": "2026-08-08T14:24:10Z",
+    "repository": "ajoe734/pantheon",
+    "task_branch": "task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731"
+  },
+  "review_subject": {
+    "source_task_id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+    "pull_request": 4399,
+    "pull_request_state": "MERGED",
+    "requested_exact_head": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+    "pull_request_final_head": "6f391cfd4cde8fcee0a7f913bfe2937aba955d15",
+    "merge_commit": "894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+    "reviewed_files": [
+      ".orchestrator/dispatch_policy.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_dispatch_policy.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "decision": {
+    "verdict": "changes_required",
+    "overall_admission": "rejected_provider_readiness_mismatch",
+    "summary": "Dispatch consumes the live provider report, but ordinary priority preemption does not. The incumbent can be terminated for an urgent task that the same tick refuses to dispatch.",
+    "must_not_bind_approval_to_pr_4399": true,
+    "implementation_modified_by_reviewer": false
+  },
+  "accepted_areas": [
+    {
+      "area": "lifecycle and dependency eligibility",
+      "result": "pass",
+      "evidence": "task_execution_dispatch_candidate is consumed by dispatch_ready_tasks and higher_priority_ready_task_exists for review, finalize, in-progress, todo, ownership, reviewer, and dependency decisions."
+    },
+    {
+      "area": "cooldown and failure-loop triage",
+      "result": "pass",
+      "evidence": "The preemption loop applies unchanged-event cooldown, failure-loop exclusion, and chair-reassignment triage before selecting a candidate."
+    },
+    {
+      "area": "logical worker capacity",
+      "result": "pass",
+      "evidence": "Active and queued work for the logical agent are counted; preemption occurs only when an unserved urgent candidate exceeds free logical slots."
+    },
+    {
+      "area": "five-minute grace and terminal cleanup",
+      "result": "pass",
+      "evidence": "The 300-second default gates only higher_priority_ready_task_exists. Assignment changes, chair completion, dead-worker completion, and other legitimate cleanup remain outside this ordinary-priority gate."
+    }
+  ],
+  "blocking_findings": [
+    {
+      "id": "PREEMPT-PROVIDER-READINESS-001",
+      "severity": "high",
+      "status": "open",
+      "file": ".orchestrator/supervisor.py",
+      "exact_head_locations": [
+        "a924a6f3:.orchestrator/supervisor.py:12849-13032",
+        "a924a6f3:.orchestrator/supervisor.py:12935",
+        "a924a6f3:.orchestrator/supervisor.py:13301"
+      ],
+      "dispatch_behavior": "agent_auto_dispatch_block_reason(config, state, agent_id, provider_report) rejects local_cli_worker_supported=false.",
+      "preemption_behavior": "higher_priority_ready_task_exists has no provider_report input; agent_can_take_task does not reject local_cli_worker_supported=false or supports_auto_approve=false, so it returns a preemption decision of true.",
+      "impact": "The supervisor can SIGTERM a healthy incumbent for an urgent candidate and then fail to launch the replacement, recreating worker churn under a provider-readiness failure.",
+      "required_correction": "Use one in-cycle provider-readiness decision for dispatch and preemption, account for the slot that incumbent termination would release, and add local-CLI plus adapter auto-delivery regressions."
+    }
+  ],
+  "validation": {
+    "isolated_checkout_head": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+    "commands": [
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_dispatch_policy.py",
+        "result": "486 passed, 4 subtests passed in 52.56s",
+        "conclusion": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m py_compile .orchestrator/dispatch_policy.py .orchestrator/supervisor.py .orchestrator/test_dispatch_policy.py .orchestrator/test_supervisor.py",
+        "result": "passed",
+        "conclusion": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python scripts/git/check_commit_trailers.py --range a924a6f3^..a924a6f3 --skip-merge; git diff --check a924a6f3^..a924a6f3",
+        "result": "passed",
+        "conclusion": "pass"
+      },
+      {
+        "command": "git diff --exit-code a924a6f3..6f391cfd -- the four reviewed implementation/test files",
+        "result": "empty diff",
+        "conclusion": "pass"
+      },
+      {
+        "command": "PYTHONPATH=<a924-checkout>/.orchestrator <a924-python> docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/repro_provider_readiness_gap.py",
+        "result": "dispatch_block_reason='codex local CLI worker is not ready'; preemption_decision=True; AssertionError; exit 1",
+        "conclusion": "expected_failure_confirms_finding"
+      }
+    ]
+  },
+  "pre_fix_live_evidence_readback": {
+    "watchdog_log": "/home/lupin/pantheon/.orchestrator/logs/supervisor-watchdog-restart-20260731T141335Z.log",
+    "log_size_bytes": 6999,
+    "observed": "Line 16 records worker codex-20260731T141614Z-62ed770a superseded for priority escalation at 2026-07-31T14:17:11Z after the preceding active-worker sample.",
+    "limitation": "The surviving watchdog log does not contain run codex-20260731T141730Z-d2604461 or raw exit-code 143/signal-15 fields. Those details remain claims in the historical evidence manifest and were not independently recoverable from the scoped live log readback.",
+    "conclusion": "The scoped log confirms pre-fix priority-escalation churn, not post-fix correctness and not every timing field in the historical manifest."
+  },
+  "historical_evidence_boundary": {
+    "canonical_manifest": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json",
+    "canonical_manifest_mutated": false,
+    "contradicted_claim": "behavioral_proof.failure_and_degraded_behavior describes provider-ineligible exclusion as accepted from auth-down focused coverage and the call path; the new counterexample shows the broader local-CLI and auto-delivery readiness variants do not share that call path.",
+    "reason_for_additive_record": "The canonical manifest declares logical append-only mutation semantics, so this re-review is a separate reviewed record rather than an in-place rewrite of the historical closeout cut."
+  },
+  "scope": {
+    "owned_layer": "Independent exact-head re-review and evidence correction notice.",
+    "not_changing": "PR #4399 implementation, .orchestrator/config.json, runtime state, provider credentials, canonical status files, or live deployment.",
+    "next_authority": "Codex2 reviews this rejection packet. Because the source implementation task is archived, Human/Ops or the supervisor must create a new corrective follow-up task rather than reopen the archive in place."
+  }
+}

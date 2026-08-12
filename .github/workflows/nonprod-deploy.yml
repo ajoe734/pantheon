@@ -159,6 +159,18 @@ jobs:
             auto|root|bff) ;;
             *) echo "Invalid dev deployment component: ${TARGET_COMPONENT}" >&2; exit 1 ;;
           esac
+          # Payload validation must prove the Compose graph is syntactically
+          # sound before the deployment step receives protected settings.  The
+          # operator-BFF authority fields are deliberately required by Compose,
+          # so use invalid, validation-only placeholders here; real key IDs and
+          # public maps are supplied only to the later deploy step, while
+          # private keys remain on the target VM's 0600 authority file.
+          BRIDGE_SIGNING_PRIVATE_KEY=authority-validation-only \
+          BRIDGE_SIGNING_KEY_ID=authority-validation-only \
+          BRIDGE_SIGNING_PUBLIC_KEYS_JSON='{"authority-validation-only":"AA"}' \
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY=authority-validation-only \
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID=authority-validation-only \
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON='{"authority-validation-only":"AA"}' \
           docker compose -f docker-compose.yml config --quiet
           if [[ "${RUN_LOOP_PROD_TEL_002_PROBE}" == "true" && ( "${TARGET_COMPONENT}" != "root" || "${DEV_AUTH_PROFILE}" != "strict" ) ]]; then
             echo "LOOP-PROD-TEL-002 hosted proof requires dev/root with strict auth." >&2
@@ -259,26 +271,79 @@ jobs:
           deployment_json="${EVIDENCE_DIR}/frontend-deployment-before.json"
           curl --fail-with-body --silent --show-error \
             --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
-            "${DEV_BFF_URL%/}/bff/version" > "${version_json}"
-          curl --fail-with-body --silent --show-error \
-            --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
             "${DEV_FE_URL%/}/deployment.json" > "${deployment_json}"
-          previous="$(
-            python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("source_commit_sha") or "")' \
-              "${version_json}"
-          )"
-          previous_frontend="$(
-            python3 -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")); print(value.get("frontendSha") or value.get("commit") or "")' \
-              "${deployment_json}"
-          )"
-          [[ "${previous}" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "Hosted BFF did not report an exact rollback commit." >&2
-            exit 1
-          }
-          [[ "${previous_frontend}" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "Hosted frontend did not report an exact rollback commit." >&2
-            exit 1
-          }
+          read -r previous previous_frontend < <(
+            python3 - "${deployment_json}" "${DEV_BFF_URL}" <<'PY'
+          import json
+          import re
+          import sys
+
+          manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected_bff_url = sys.argv[2].rstrip("/")
+          sha = re.compile(r"^[0-9a-f]{40}$")
+
+          def exact_sha(*values):
+              if not values or any(not isinstance(value, str) or not sha.fullmatch(value) for value in values):
+                  raise SystemExit("accepted frontend deployment manifest lacks an exact release identity")
+              if len(set(values)) != 1:
+                  raise SystemExit("accepted frontend deployment manifest has conflicting release identities")
+              return values[0]
+
+          if (
+              manifest.get("schemaVersion") != 1
+              or manifest.get("app") != "execute-plans"
+              or manifest.get("repository") != "ajoe734/execute-plans"
+              or manifest.get("sourceBranch") != "dev"
+              or manifest.get("deploymentState") != "accepted"
+              or manifest.get("bffCommitEvidence") is not True
+          ):
+              raise SystemExit("frontend deployment manifest is not an accepted Pantheon dev release")
+          bff = manifest.get("bff") or {}
+          if not isinstance(bff, dict) or bff.get("baseUrl", "").rstrip("/") != expected_bff_url:
+              raise SystemExit("frontend deployment manifest is not bound to the expected BFF endpoint")
+          frontend = manifest.get("frontend") or {}
+          if not isinstance(frontend, dict):
+              raise SystemExit("frontend deployment manifest has no frontend release identity")
+          backend_sha = exact_sha(
+              manifest.get("bffCommit"),
+              manifest.get("bffSourceCommitSha"),
+              bff.get("sourceCommitSha"),
+          )
+          frontend_sha = exact_sha(
+              manifest.get("commit"),
+              manifest.get("frontendSha"),
+              frontend.get("commitSha"),
+          )
+          print(backend_sha, frontend_sha)
+          PY
+          )
+          baseline_source="accepted_frontend_pair_manifest"
+          observed_previous=""
+          if curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
+            "${DEV_BFF_URL%/}/bff/version" > "${version_json}"; then
+            observed_previous="$(
+              python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("source_commit_sha") or "")' \
+                "${version_json}"
+            )"
+            if [[ "${observed_previous}" == "${previous}" ]]; then
+              baseline_source="accepted_frontend_pair_manifest+live_bff_match"
+            else
+              [[ "${observed_previous}" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "Hosted BFF drift identity is not an exact commit SHA." >&2
+                exit 1
+              }
+              git -C .agora-gate-controller merge-base --is-ancestor \
+                "${observed_previous}" refs/remotes/origin/dev || {
+                  echo "Hosted BFF drift identity is not contained in Pantheon dev." >&2
+                  exit 1
+                }
+              echo "Hosted BFF differs from the accepted frontend pair; retaining the accepted pair as rollback authority." >&2
+              baseline_source="accepted_frontend_pair_manifest+live_bff_drift_recovery"
+            fi
+          else
+            echo "Hosted BFF version endpoint is unavailable; recovering from the accepted frontend pair manifest." >&2
+          fi
           git -C .agora-gate-controller merge-base --is-ancestor \
             "${previous}" refs/remotes/origin/dev || {
               echo "Hosted rollback commit ${previous} is not contained in Pantheon dev." >&2
@@ -291,7 +356,7 @@ jobs:
             }
           python3 - "${EVIDENCE_DIR}/rollback-baseline.json" "${previous}" "${previous_frontend}" \
             "${{ steps.target.outputs.sha }}" "${{ steps.frontend.outputs.sha }}" \
-            "${{ steps.release_admission.outputs.release_candidate_id }}" <<'PY'
+            "${{ steps.release_admission.outputs.release_candidate_id }}" "${baseline_source}" "${observed_previous}" <<'PY'
           import json
           import pathlib
           import sys
@@ -305,6 +370,8 @@ jobs:
                       "candidate_backend_sha": sys.argv[4],
                       "candidate_frontend_sha": sys.argv[5],
                       "release_candidate_id": sys.argv[6],
+                      "baseline_source": sys.argv[7],
+                      "observed_live_bff_sha": sys.argv[8] or None,
                   },
                   indent=2,
                   sort_keys=True,
@@ -330,6 +397,10 @@ jobs:
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         env:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          BRIDGE_SIGNING_KEY_ID: ${{ vars.BRIDGE_SIGNING_KEY_ID || 'pantheon-dev-bridge-v1' }}
+          BRIDGE_SIGNING_PUBLIC_KEYS_JSON: ${{ secrets.BRIDGE_SIGNING_PUBLIC_KEYS_JSON }}
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID: ${{ vars.PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID || 'pantheon-dev-operator-v1' }}
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON: ${{ secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
@@ -366,7 +437,7 @@ jobs:
         run: |
           case "${DEV_AUTH_PROFILE}" in
             strict)
-              if [[ -z "${DEV_BFF_JWT_SECRET}" || -z "${DEV_BFF_OIDC_CLIENT_ID}" || -z "${DEV_BFF_OIDC_CLIENT_SECRET}" || -z "${DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH}" ]]; then
+              if [[ -z "${DEV_BFF_JWT_SECRET}" || -z "${DEV_BFF_OIDC_CLIENT_ID}" || -z "${DEV_BFF_OIDC_CLIENT_SECRET}" || -z "${DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH}" || -z "${BRIDGE_SIGNING_PUBLIC_KEYS_JSON}" || -z "${PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON}" ]]; then
                 echo "::error::Dev BFF deploy credentials are not provisioned; refusing to run any target ref before strict auth can be verified."
                 exit 1
               fi
@@ -641,6 +712,10 @@ jobs:
           # Must be provisioned as repo/environment secrets by a human; deploy_nonprod_vm.sh
           # refuses to deploy dev with DEV_BFF_AUTH_MODE=strict if these are empty.
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          BRIDGE_SIGNING_KEY_ID: ${{ vars.BRIDGE_SIGNING_KEY_ID || 'pantheon-dev-bridge-v1' }}
+          BRIDGE_SIGNING_PUBLIC_KEYS_JSON: ${{ secrets.BRIDGE_SIGNING_PUBLIC_KEYS_JSON }}
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID: ${{ vars.PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID || 'pantheon-dev-operator-v1' }}
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON: ${{ secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           # External browser IdP verification uses only public identity
@@ -1439,6 +1514,10 @@ jobs:
           DEV_BFF_AUTH_STUB: "false"
           DEV_BFF_AUTH_MODE: strict
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          BRIDGE_SIGNING_KEY_ID: ${{ vars.BRIDGE_SIGNING_KEY_ID || 'pantheon-dev-bridge-v1' }}
+          BRIDGE_SIGNING_PUBLIC_KEYS_JSON: ${{ secrets.BRIDGE_SIGNING_PUBLIC_KEYS_JSON }}
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID: ${{ vars.PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID || 'pantheon-dev-operator-v1' }}
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON: ${{ secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
@@ -1591,6 +1670,11 @@ jobs:
           STAGING_EXEC_ZONE: ${{ vars.STAGING_EXEC_ZONE || 'asia-east1-b' }}
           STAGING_EXEC_REMOTE_DIR: ${{ vars.STAGING_EXEC_REMOTE_DIR || '/home/lupin/code/pantheon' }}
           STAGING_EXEC_HEALTH_URL: ${{ vars.STAGING_EXEC_HEALTH_URL || 'http://10.50.0.21:28081' }}
+          BRIDGE_SIGNING_KEY_ID: ${{ vars.BRIDGE_SIGNING_KEY_ID || 'pantheon-staging-bridge-v1' }}
+          BRIDGE_SIGNING_PUBLIC_KEYS_JSON: ${{ secrets.BRIDGE_SIGNING_PUBLIC_KEYS_JSON }}
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID: ${{ vars.PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID || 'pantheon-staging-operator-v1' }}
+          PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON: ${{ secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON }}
+          STAGING_AUTHORITY_SIGNING_ENV_FILE: ${{ vars.STAGING_AUTHORITY_SIGNING_ENV_FILE || '/home/lupin/pantheon-ci-deploy/runtime/staging-authority-signing.env' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           args=(

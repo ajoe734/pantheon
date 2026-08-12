@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 import unittest
 from pathlib import Path
@@ -89,23 +88,7 @@ class ClassifyHealthTests(unittest.TestCase):
         self.assertIsNone(provider_health.classify_probe_failure_kind(True, status="ready"))
 
 
-class IncumbentParityTests(unittest.TestCase):
-    """The cut-over predicate must equal the legacy ladder for every kind."""
-
-    def test_should_pause_matches_incumbent(self) -> None:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        import supervisor
-
-        kinds = ["auth", "tool_auth", "capacity", "capacity_retryable", "quota_terminal",
-                 "terminal", "transient", "unknown_critical", "", "bogus", None]
-        # legacy path (flag on) vs rewrite path (flag off, the default)
-        for kind in kinds:
-            os.environ["PANTHEON_LEGACY_FAILURE_RESPONSE"] = "1"
-            legacy = supervisor.should_pause_dispatch_for_failure_kind(kind)
-            os.environ.pop("PANTHEON_LEGACY_FAILURE_RESPONSE", None)
-            rewrite = supervisor.should_pause_dispatch_for_failure_kind(kind)
-            self.assertEqual(legacy, rewrite, msg=f"kind={kind!r}: legacy={legacy} rewrite={rewrite}")
-
+class SupervisorIntegrationTests(unittest.TestCase):
     def test_full_decision_routes_through_single_authority(self) -> None:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         import supervisor

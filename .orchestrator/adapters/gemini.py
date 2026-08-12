@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from adapters.file_inbox import FileInboxAdapter
 from common import (
     agent_config_for,
     command_exists,
@@ -71,11 +70,6 @@ def _configured_gemini_cli(config: dict | None = None, provider_id: str | None =
     return command_exists(runtime.get("cli") or "gemini")
 
 
-def _allow_inbox_fallback(config: dict | None = None, provider_id: str | None = None) -> bool:
-    provider = _provider_settings(config, provider_id)
-    return bool(provider.get("allow_inbox_fallback", True))
-
-
 def _truthy_env(name: str, env: dict[str, str] | None = None) -> bool:
     source = env if env is not None else os.environ
     return source.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
@@ -127,7 +121,6 @@ class GeminiAdapter(BaseAdapter):
 
     def capability(self, agent_id: str) -> DeliveryCapability:
         provider_id = _provider_key(self.config, agent_id=agent_id)
-        allow_inbox_fallback = _allow_inbox_fallback(self.config, provider_id)
         cli = _configured_gemini_cli(self.config, provider_id)
         auth_ready = _gemini_auth_ready(self.config, provider_id)
         supported = bool(cli and auth_ready)
@@ -137,17 +130,15 @@ class GeminiAdapter(BaseAdapter):
             notes = "Gemini CLI is installed but not authenticated for non-interactive use."
         else:
             notes = "Gemini CLI is not installed."
-        if not supported and not allow_inbox_fallback:
-            notes = f"{notes} Inbox fallback is disabled for this provider."
         return DeliveryCapability(
             adapter=self.name,
             supported=bool(cli),
-            requires_manual_confirmation=bool(not supported and allow_inbox_fallback),
+            requires_manual_confirmation=False,
             can_auto_deliver=supported,
             can_auto_approve_edits=supported,
-            delivery_mode="gemini" if (supported or not allow_inbox_fallback) else "file_inbox",
+            delivery_mode="gemini",
             verified="verified" if supported else ("partial" if cli else "unavailable"),
-            host="Gemini CLI" if (cli or not allow_inbox_fallback) else "Gemini CLI + inbox fallback",
+            host="Gemini CLI",
             notes=notes,
         )
 
@@ -155,40 +146,16 @@ class GeminiAdapter(BaseAdapter):
         provider_id = _provider_key(self.config, agent_id=request.agent_id, provider_id=request.provider)
         capability = self.capability(request.agent_id)
         if not capability.supported or not capability.can_auto_deliver:
-            if not _allow_inbox_fallback(self.config, provider_id):
-                reason = capability.notes or "Gemini auto-delivery is unavailable and inbox fallback is disabled."
-                return DeliveryResult(
-                    ok=False,
-                    adapter=self.name,
-                    mode="gemini",
-                    target=agent_config_for(self.config, request.agent_id).get("display_name", request.agent_id),
-                    auto_delivered=False,
-                    manual_confirmation_required=False,
-                    error=reason,
-                    notes=reason,
-                )
-            fallback = FileInboxAdapter(config=self.config, provider_capabilities=self.provider_capabilities)
-            result = fallback.deliver(request)
-            result.adapter = self.name
-            result.mode = "file_inbox"
-            result.notes = f"{result.notes}. {capability.notes}"
-            if not capability.supported:
-                result.error = capability.notes
+            reason = capability.notes or "Gemini auto-delivery is unavailable."
             return DeliveryResult(
-                ok=result.ok,
-                adapter=result.adapter,
-                mode=result.mode,
-                target=result.target,
-                auto_delivered=result.auto_delivered,
-                manual_confirmation_required=result.manual_confirmation_required,
-                error=result.error,
-                notes=result.notes,
-                command=result.command,
-                log_path=result.log_path,
-                payload_path=result.payload_path,
-                pid=result.pid,
-                run_id=result.run_id,
-                metadata=result.metadata,
+                ok=False,
+                adapter=self.name,
+                mode="gemini",
+                target=agent_config_for(self.config, request.agent_id).get("display_name", request.agent_id),
+                auto_delivered=False,
+                manual_confirmation_required=False,
+                error=reason,
+                notes=reason,
             )
 
         provider = _provider_settings(self.config, provider_id)

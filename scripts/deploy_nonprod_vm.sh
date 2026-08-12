@@ -80,6 +80,16 @@ DEV_BFF_ROLE_CLAIMS="${DEV_BFF_ROLE_CLAIMS:-roles,role}"
 DEV_BFF_ROLE_MAP="${DEV_BFF_ROLE_MAP:-}"
 DEV_BFF_ROLE_MAP_MODE="${DEV_BFF_ROLE_MAP_MODE:-passthrough}"
 DEV_BFF_DEFAULT_ROLE="${DEV_BFF_DEFAULT_ROLE:-viewer}"
+# Two distinct Ed25519 capabilities: source packet materialization and
+# Human/Ops runtime mutation.  Private keys are delivered only to operator-bff;
+# the supervisor/ai-status path receives the corresponding public maps.
+BRIDGE_SIGNING_KEY_ID="${BRIDGE_SIGNING_KEY_ID:-}"
+BRIDGE_SIGNING_PUBLIC_KEYS_JSON="${BRIDGE_SIGNING_PUBLIC_KEYS_JSON:-}"
+PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID="${PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID:-}"
+PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON="${PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON:-}"
+DEV_AUTHORITY_SIGNING_ENV_FILE="${DEV_AUTHORITY_SIGNING_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/authority-signing.env}"
+STAGING_AUTHORITY_SIGNING_ENV_FILE="${STAGING_AUTHORITY_SIGNING_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/staging-authority-signing.env}"
+SUPERVISOR_VERIFIER_ENV_FILE="${SUPERVISOR_VERIFIER_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/supervisor-authority-public.env}"
 # Human-provisioned service credential shared only by operator-bff and the
 # OpenClaw adapter. There is intentionally no generated/local fallback.
 DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN="${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"
@@ -194,8 +204,8 @@ Options:
   --environment <name>   Required. dev or staging-live.
   --component <name>     auto, root, bff, control, exec, or all. Default: auto.
                          auto maps to root for dev and all for staging-live.
-                         bff (dev only): rebuild only operator-bff; paper fleet
-                         and all other services are left running untouched.
+                         bff (dev only): rebuild operator-bff and its lifecycle
+                         projector; paper fleet and all other services stay running.
   --sha <commit>         Required unless GITHUB_SHA is set. Commit to deploy.
   --project-id <id>      GCP project. Default: pantheon-lupin-dev-20260719.
   --allow-dirty          Emergency only: stash dirty managed deploy worktree
@@ -230,6 +240,10 @@ Environment overrides:
   DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED
   DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED
   DEV_BFF_ROLE_CLAIMS DEV_BFF_ROLE_MAP DEV_BFF_ROLE_MAP_MODE DEV_BFF_DEFAULT_ROLE
+  BRIDGE_SIGNING_KEY_ID BRIDGE_SIGNING_PUBLIC_KEYS_JSON
+  PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID
+  PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON
+  DEV_AUTHORITY_SIGNING_ENV_FILE STAGING_AUTHORITY_SIGNING_ENV_FILE
   DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
@@ -453,6 +467,10 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_role_map_configured=$([[ -n "$DEV_BFF_ROLE_MAP" ]] && echo true || echo false)"
   info "dev_bff_role_map_mode=${DEV_BFF_ROLE_MAP_MODE}"
   info "dev_bff_default_role=${DEV_BFF_DEFAULT_ROLE}"
+  info "bridge_signing_public_policy_configured=$([[ -n "$BRIDGE_SIGNING_KEY_ID" && -n "$BRIDGE_SIGNING_PUBLIC_KEYS_JSON" ]] && echo true || echo false)"
+  info "canonical_mutation_public_policy_configured=$([[ -n "$PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID" && -n "$PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON" ]] && echo true || echo false)"
+  info "dev_authority_signing_env_file=${DEV_AUTHORITY_SIGNING_ENV_FILE}"
+  info "staging_authority_signing_env_file=${STAGING_AUTHORITY_SIGNING_ENV_FILE}"
   info "dev_openclaw_adapter_service_auth_required=${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}"
   info "dev_openclaw_adapter_service_token_configured=$([[ -n "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] && echo true || echo false)"
   info "dev_assistant_kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
@@ -491,6 +509,18 @@ fi
 # compose, or smoke mutation.  Staging-live is an independent environment and must not
 # depend on the shared dev lease.
 verify_dev_environment_lease_contract
+
+if [[ "$DEPLOY_ENV" == "dev" || ( "$DEPLOY_ENV" == "staging-live" && "$COMPONENT" != "exec" ) ]]; then
+  for authority_name in \
+    BRIDGE_SIGNING_KEY_ID \
+    BRIDGE_SIGNING_PUBLIC_KEYS_JSON \
+    PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID \
+    PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON; do
+    if [[ -z "${!authority_name}" ]]; then
+      error "${authority_name} is required for operator-bff and supervisor authority cutover"
+    fi
+  done
+fi
 
 if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
   if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
@@ -550,6 +580,10 @@ ssh_bash() {
   local remote_dir="$3"
   local remote_component="$4"
   local command_prefix
+  local authority_signing_env_file="$DEV_AUTHORITY_SIGNING_ENV_FILE"
+  if [[ "$DEPLOY_ENV" == "staging-live" ]]; then
+    authority_signing_env_file="$STAGING_AUTHORITY_SIGNING_ENV_FILE"
+  fi
 
   command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
   command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
@@ -602,6 +636,12 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_ROLE_MAP=$(shell_quote "$DEV_BFF_ROLE_MAP")"
   command_prefix+=" PANTHEON_DEV_BFF_ROLE_MAP_MODE=$(shell_quote "$DEV_BFF_ROLE_MAP_MODE")"
   command_prefix+=" PANTHEON_DEV_BFF_DEFAULT_ROLE=$(shell_quote "$DEV_BFF_DEFAULT_ROLE")"
+  command_prefix+=" BRIDGE_SIGNING_KEY_ID=$(shell_quote "$BRIDGE_SIGNING_KEY_ID")"
+  command_prefix+=" BRIDGE_SIGNING_PUBLIC_KEYS_JSON=$(shell_quote "$BRIDGE_SIGNING_PUBLIC_KEYS_JSON")"
+  command_prefix+=" PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID=$(shell_quote "$PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID")"
+  command_prefix+=" PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON=$(shell_quote "$PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON")"
+  command_prefix+=" PANTHEON_AUTHORITY_SIGNING_ENV_FILE=$(shell_quote "$authority_signing_env_file")"
+  command_prefix+=" PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE=$(shell_quote "$SUPERVISOR_VERIFIER_ENV_FILE")"
   command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
   command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
@@ -657,6 +697,64 @@ error() {
   echo "[remote-deploy] ERROR: $*" >&2
   exit 1
 }
+
+configure_authority_compose_environment() {
+  case "${PANTHEON_DEPLOY_COMPONENT}" in
+    root|bff|control) ;;
+    *) return 0 ;;
+  esac
+  local authority_file="${PANTHEON_AUTHORITY_SIGNING_ENV_FILE}"
+  [[ "$authority_file" == /* ]] \
+    || error "authority signing env file must be absolute"
+  [[ -f "$authority_file" && ! -L "$authority_file" ]] \
+    || error "authority signing env file must be a regular non-symlink file: ${authority_file}"
+  local mode
+  mode="$(stat -c '%a' "$authority_file")"
+  [[ "$mode" == "600" ]] \
+    || error "authority signing env file must have mode 600: ${authority_file} is ${mode}"
+  python3 - "$authority_file" <<'PY'
+import pathlib
+import sys
+
+required = {
+    "BRIDGE_SIGNING_PRIVATE_KEY",
+    "BRIDGE_SIGNING_KEY_ID",
+    "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
+}
+values = {}
+for raw in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        continue
+    if "=" not in line:
+        raise SystemExit("authority signing env contains a malformed row")
+    key, value = line.split("=", 1)
+    if key in required:
+        values[key] = value.strip()
+missing = sorted(key for key in required if not values.get(key))
+if missing:
+    raise SystemExit("authority signing env is missing: " + ",".join(missing))
+PY
+  local base_env="${PANTHEON_REMOTE_DIR}/.env"
+  if [[ -f "$base_env" && ! -L "$base_env" ]]; then
+    export COMPOSE_ENV_FILES="${base_env},${authority_file}"
+  else
+    export COMPOSE_ENV_FILES="$authority_file"
+  fi
+}
+
+verify_operator_bff_authority_key_pairs() {
+  local project="$1"
+  local compose_file="$2"
+  shift 2
+  docker compose "$@" -p "$project" -f "$compose_file" exec -T operator-bff \
+    python -c 'import sys; sys.path.insert(0, "/workspace/.orchestrator"); from assistant.dev_bridge_signer import validate_signing_key_pair as v1; from canonical_mutation_assertion import validate_signing_key_pair as v2; v1(); v2()'
+}
+
+configure_authority_compose_environment
 
 validate_source_refresh_profile() {
   local selected="false"
@@ -2104,6 +2202,58 @@ provision_dev_supervisor_watchdog() {
     || error "supervisor watchdog provisioning is dev-only"
   [[ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]] \
     || error "supervisor watchdog provisioning requires PANTHEON_STATUS_ROOT_HOST"
+  [[ "${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE:-}" == /home/lupin/pantheon-ci-deploy/runtime/*.env ]] \
+    || error "supervisor verifier env file must be a fixed runtime .env path"
+
+  python3 - "${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE}" <<'PY'
+import json
+import os
+import pathlib
+import shlex
+import tempfile
+import sys
+
+names = (
+    "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
+    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
+)
+values = {}
+for name in names:
+    raw = os.environ.get(name, "").strip()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{name} must be valid JSON") from exc
+    if not isinstance(payload, dict) or not payload or any(
+        not isinstance(key, str) or not key.strip()
+        or not isinstance(value, str) or not value.strip()
+        for key, value in payload.items()
+    ):
+        raise SystemExit(f"{name} must be a non-empty public-key map")
+    values[name] = raw
+
+target = pathlib.Path(sys.argv[1])
+target.parent.mkdir(parents=True, exist_ok=True)
+if target.exists() and (target.is_symlink() or not target.is_file()):
+    raise SystemExit("supervisor verifier env target is not a regular file")
+content = "".join(f"{name}={shlex.quote(values[name])}\n" for name in names)
+fd, temporary_name = tempfile.mkstemp(prefix=target.name + ".", dir=target.parent)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary_name, target)
+    directory_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+finally:
+    if os.path.exists(temporary_name):
+        os.unlink(temporary_name)
+PY
 
   source_root="$(pwd -P)"
   command_root="$(materialize_dev_supervisor_command_runtime "$source_root")"
@@ -2130,9 +2280,6 @@ provision_dev_supervisor_watchdog() {
         --status-root "${PANTHEON_STATUS_ROOT_HOST}"
     else
       promotion_args=(--promote --repo "$command_root")
-      if [[ ! "$configured_root" =~ ^${DEV_SUPERVISOR_COMMAND_RUNTIME_PARENT}/[0-9a-f]{40}$ ]]; then
-        promotion_args+=(--bootstrap-mutable-incumbent)
-      fi
       info "requesting governed supervisor promotion configured=${configured_root} candidate=${command_root}"
       "${command_root}/scripts/promote-supervisor-runtime.sh" "${promotion_args[@]}" \
         || error "governed supervisor promotion handoff failed"
@@ -2157,6 +2304,7 @@ provision_dev_supervisor_watchdog() {
   python3 "${command_root}/scripts/supervisor_watchdog_install.py" \
     --repo "$command_root" \
     --config "$live_config" \
+    --authority-env-file "${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE}" \
     --method auto \
     --start-now
 
@@ -2401,6 +2549,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     wait_for_exact_bff_lifecycle_readiness \
       http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    verify_operator_bff_authority_key_pairs pantheon docker-compose.yml \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_auth_gate http://127.0.0.1:18001 \
@@ -2422,8 +2572,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ;;
 
   bff)
-    # Rebuild and restart only operator-bff.  All other compose services —
-    # including the paper fleet and runtime-manager — are left running.
+    # Rebuild operator-bff and the lifecycle projector that owns the readiness
+    # evidence it serves. All other compose services — including the paper
+    # fleet and runtime-manager — are left running.
     # Use this component when deploying a BFF-only fix to avoid the OOM
     # pressure that a full root-stack rebuild causes on the dev VM.
     snapshot_remote_state pantheon docker-compose.yml
@@ -2506,12 +2657,14 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
     PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
     PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build --no-deps operator-bff \
+      docker compose -p pantheon -f docker-compose.yml up -d --build --no-deps operator-bff loop-run-projector-scheduler \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     wait_for_exact_bff_lifecycle_readiness \
       http://127.0.0.1:18001/readyz \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    verify_operator_bff_authority_key_pairs pantheon docker-compose.yml \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -2542,14 +2695,16 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     snapshot_remote_state pantheon-control docker-compose.control.yml
     prepare_deploy_worktree
     env_file="$(real_env_or_example env/prod-control.env env/prod-control.env.example)"
-    docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml config --quiet
+    docker compose --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE" -p pantheon-control -f docker-compose.control.yml config --quiet
     COMPOSE_BAKE=false \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     PANTHEON_ENV=staging-live \
     PANTHEON_LIVE_BROKER_ENABLED=true \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_STAGING_BFF_CORS_ORIGINS}" \
-      docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml up -d --build
+      docker compose --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE" -p pantheon-control -f docker-compose.control.yml up -d --build
     curl_with_retry http://127.0.0.1:38001/health
+    verify_operator_bff_authority_key_pairs pantheon-control docker-compose.control.yml \
+      --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE"
     assert_bff_source_sha http://127.0.0.1:38001/bff/version
     curl_with_retry "${PANTHEON_STAGING_EXEC_HEALTH_URL%/}/__health__"
     ;;
