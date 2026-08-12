@@ -249,6 +249,7 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
             "activity_log": "ai-activity-log.jsonl",
         },
         "watchdog": {"enabled": True, "supervisor_command": ["stale"]},
+        "github_bus": {"enabled": True},
         "supervisor": {"lease_requires_work_progress": True},
         "worker_runtime": {"worker_lease_seconds": 600},
         "task_state_store": {
@@ -281,7 +282,7 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         "state_file": str(status_root / ".orchestrator" / "state.json"),
         "activity_log": str(status_root / "ai-activity-log.jsonl"),
     }
-    assert rendered["github_bus"]["enabled"] is False
+    assert rendered["github_bus"]["enabled"] is True
     assert rendered["supervisor"]["lease_requires_work_progress"] is True
     assert rendered["worker_runtime"]["worker_lease_seconds"] == 600
     assert rendered["task_state_store"] == {
@@ -309,6 +310,57 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         / "metrics"
         / "supervisor-watchdog-contention.jsonl"
     )
+
+
+def test_build_live_config_drops_retired_incumbent_policy_topology(tmp_path: Path) -> None:
+    """A candidate config is the only source of scheduler policy."""
+    status_root = tmp_path / "canonical-root"
+    command_root = tmp_path / "command-root"
+    live_config = tmp_path / "runtime" / "live.json"
+    repo = {
+        "paths": {
+            "status_file": "ai-status.json",
+            "state_file": ".orchestrator/state.json",
+            "activity_log": "ai-activity-log.jsonl",
+        },
+        "agents": {"codex": {"max_parallel": 2}},
+        "providers": {"codex": {"account": "codex-account"}},
+        "ready_dispatcher": {
+            "enabled": True,
+            "max_concurrent_per_account": {"codex-account": 2},
+        },
+        "task_state_store": {"mode": "authoritative", "event_log": "v2.jsonl"},
+    }
+    incumbent = {
+        "agents": {
+            "codex": {"max_parallel": 0, "file_inbox_path": ".llm-inbox/codex.md"},
+            "grok": {"max_parallel": 1},
+        },
+        "providers": {
+            "codex": {
+                "account": "old-account",
+                "file_inbox": {"path": ".llm-inbox/codex.md"},
+                "allow_inbox_fallback": True,
+            },
+            "grok": {"account": "old-account"},
+        },
+        "chair_review": {"enabled": True},
+        "github_bus": {"enabled": False},
+    }
+
+    rendered = build_live_config(
+        repo,
+        existing_live_config=incumbent,
+        command_root=command_root,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=tmp_path / "bin" / "python3",
+    )
+
+    assert rendered["agents"] == repo["agents"]
+    assert rendered["providers"] == repo["providers"]
+    assert "chair_review" not in rendered
+    assert "github_bus" not in rendered
 
 
 def test_task_state_store_rejects_runtime_path_inside_git_roots(tmp_path: Path) -> None:
