@@ -23,6 +23,14 @@ true:
 - the chatbox does not expand the repair into adjacent systems without new
   operator direction.
 
+A bounded development-control-plane repair may also use this lane when the
+operator explicitly authorizes the current chatbox and the supervisor, bridge,
+or canonical command path cannot dispatch the repair without depending on the
+same failing mechanism. This exception permits only the changes needed to
+remove that dependency. It does not authorize unrelated product, scheduling,
+fleet-policy, or deployment changes, and the chatbox must not both queue and
+implement the same repair.
+
 A request such as a specifically authorized dashboard failure repair may use
 this lane. Direct repair permission for one component does not grant permission
 to modify the supervisor, auto-worker routing, canonical task state, or another
@@ -34,7 +42,7 @@ System-wide inspection, development-progress synthesis, cross-component
 integration, multi-task gap closure, supervisor or fleet evolution, release
 coordination, and architecture planning are coordination work. A chatbox
 handling this lane must not implement the resulting product or control-plane
-changes itself.
+changes itself, except for the bounded development-control-plane repair above.
 
 The chatbox must instead:
 
@@ -66,7 +74,8 @@ Chatboxes must not create a parallel scheduling path, invent unregistered task
 IDs, implement first and register later, or both queue and implement the same
 scope. They must not directly patch `/home/lupin/pantheon-ci-deploy/dev-root`,
 force live rescue refs, edit canonical runtime state, or start/stop services as
-part of ordinary coordination work.
+part of ordinary coordination work. The bounded development-control-plane
+repair exception above does not create a second routine dispatcher.
 
 The existing Live Repair Rule below is the only exception for an urgent runtime
 incident. A live rescue must remain minimal and temporary; permanent source or
