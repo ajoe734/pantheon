@@ -4037,20 +4037,24 @@ def test_process_identity_rejects_executable_mismatch(tmp_path: Path) -> None:
         _discover_injected(candidate, reader)
 
 
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"kernel_lock_id": "72"},
-        {"mtime_ns": 34},
-    ],
-)
-def test_process_identity_rejects_admission_lock_generation_drift(
+def test_process_identity_allows_admission_lock_row_ordinal_drift(
     tmp_path: Path,
-    changes: dict[str, Any],
 ) -> None:
     candidate, reader, _argv = _injected_process_fixture(tmp_path)
     original = reader.locks[0]
-    reader.locks[1] = replace(original, **changes)
+    reader.locks[1] = replace(original, kernel_lock_id="72")
+
+    discovered = _discover_injected(candidate, reader)
+
+    assert discovered.admission_lock.kernel_lock_id == "72"
+
+
+def test_process_identity_rejects_admission_lock_generation_drift(
+    tmp_path: Path,
+) -> None:
+    candidate, reader, _argv = _injected_process_fixture(tmp_path)
+    original = reader.locks[0]
+    reader.locks[1] = replace(original, mtime_ns=34)
 
     with pytest.raises(ValueError, match="admission lock generation mismatch"):
         _discover_injected(candidate, reader)
