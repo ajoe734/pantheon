@@ -55,6 +55,7 @@ DEFAULT_HEALTH_MAX_AGE_SECONDS = 120.0
 DEFAULT_HEALTH_MAX_BACKLOG = 5000
 DEFAULT_HEALTH_MIN_FREE_BYTES = 128 * 1024 * 1024
 DEFAULT_HEALTH_MIN_FREE_PERCENT = 5.0
+DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS = 10.0
 
 LIFECYCLE_EVENT_TYPES = frozenset(
     {
@@ -80,8 +81,6 @@ LIFECYCLE_EVENT_TYPES = frozenset(
         "reconciliation_failed",
     }
 )
-LIFECYCLE_EVENT_TYPE_QUERY = tuple(sorted(LIFECYCLE_EVENT_TYPES))
-
 FIXTURE_EVENT_TYPE = "trade_journey_fixture"
 FIXTURE_SCHEMA_VERSION = "pantheon.trade-journey-fixture.v1"
 FIXTURE_SOURCE = "tj_e2e_012_hosted_seed_v3"
@@ -656,6 +655,8 @@ def projector_readiness(
     controller_status = str(controller.get("status") or "unavailable")
     mode = str(controller.get("mode") or "unknown")
     accepted_live = bool(controller.get("accepted_live"))
+    checkpoint = int(payload.get("checkpoint") or 0)
+    source_high_watermark = int(controller.get("source_high_watermark") or 0)
     backlog = int(controller.get("backlog") or 0)
     controller_generation = int(
         controller.get("generation")
@@ -666,6 +667,10 @@ def projector_readiness(
         reasons.append(f"last_error:{controller.get('last_error')}")
     if backlog > configured_max_backlog:
         reasons.append(f"backlog_exceeds_policy:{backlog}>{configured_max_backlog}")
+    if checkpoint != source_high_watermark:
+        reasons.append(
+            f"cursor_not_caught_up:{checkpoint}!={source_high_watermark}"
+        )
     if controller_status != "ready":
         reasons.append(f"controller_not_ready:{controller_status}")
     if mode != "live" or not accepted_live:
@@ -731,8 +736,8 @@ def projector_readiness(
             "controller_status": controller_status,
             "mode": mode,
             "accepted_live": accepted_live,
-            "checkpoint": int(payload.get("checkpoint") or 0),
-            "source_high_watermark": int(controller.get("source_high_watermark") or 0),
+            "checkpoint": checkpoint,
+            "source_high_watermark": source_high_watermark,
             "backlog": backlog,
             "current_generation": current_generation,
             "controller_generation": controller_generation,
@@ -1065,9 +1070,17 @@ class LifecycleProjector:
             0,
             int(controller["source_high_watermark"]) - int(candidate.get("checkpoint", 0)),
         )
-        if mode == "live" and accepted:
+        # The ingestion cursor spans every committed telemetry row, while only
+        # some rows materialize a lifecycle aggregate.  A live batch that has
+        # caught up to that global cursor is therefore a successful live
+        # admission even when it contains only irrelevant telemetry.  Requiring
+        # an empty poll here would deadlock readiness on a continuously busy
+        # telemetry stream.
+        live_admissible = self._live_admissible(controller, mode=mode)
+        if live_admissible:
             controller["last_live_success_at"] = now
-            controller["last_live_event_at"] = inc_mat.last_live_event_at(staged)
+            if accepted:
+                controller["last_live_event_at"] = inc_mat.last_live_event_at(staged)
         elif mode == "recovery":
             controller["last_recovery_at"] = now
         elif mode == "backfill":
@@ -1075,7 +1088,7 @@ class LifecycleProjector:
         elif mode == "replay":
             controller["last_replay_at"] = now
         historic_live = bool(controller.get("last_live_success_at"))
-        controller["accepted_live"] = mode == "live" and historic_live
+        controller["accepted_live"] = live_admissible
         controller["truth_level"] = (
             "canonical_live"
             if controller["accepted_live"]
@@ -1087,7 +1100,7 @@ class LifecycleProjector:
             "degraded"
             if controller["quarantine_count"]
             else "ready"
-            if mode == "live" and controller["accepted_live"] and controller["backlog"] == 0
+            if controller["accepted_live"]
             else "recovering"
             if mode == "recovery" or controller["backlog"]
             else "repair_only"
@@ -1161,13 +1174,14 @@ class LifecycleProjector:
                 "error_publication_failure": None,
             }
         )
+        live_admissible = self._live_admissible(controller, mode=mode)
         historic_live = bool(controller.get("last_live_success_at"))
-        if mode == "live" and int(backlog) == 0:
+        if live_admissible:
             # A successful zero-backlog read is the controller's authoritative
             # live admission boundary after startup/recovery, even when no new
             # trade arrived during that poll.
             controller["last_live_success_at"] = now
-            controller["accepted_live"] = True
+            controller["accepted_live"] = live_admissible
             controller["truth_level"] = "canonical_live"
         else:
             controller["accepted_live"] = False
@@ -1178,7 +1192,7 @@ class LifecycleProjector:
             "degraded"
             if int(controller.get("quarantine_count") or 0) > 0
             else "ready"
-            if mode == "live" and int(backlog) == 0
+            if controller["accepted_live"]
             else "recovering"
             if mode == "recovery" or int(backlog) > 0
             else "repair_only"
@@ -1201,6 +1215,21 @@ class LifecycleProjector:
             # serializing the full canonical event history every poll.
             self._persist_health_only(candidate)
         self.state = candidate
+
+    @staticmethod
+    def _live_admissible(controller: Mapping[str, Any], *, mode: str) -> bool:
+        """Return current live truth, never inferred from historic success.
+
+        Historical success is useful audit evidence, but cannot allow a
+        controller with backlog or quarantined records to advertise canonical
+        live readiness.
+        """
+        return (
+            mode == "live"
+            and int(controller.get("checkpoint") or 0)
+            == int(controller.get("source_high_watermark") or 0)
+            and int(controller.get("quarantine_count") or 0) == 0
+        )
 
     def record_source_failure(self, error: str, *, backlog: int | None = None) -> None:
         """Record source failure while preserving the last-good read-model bundle."""
@@ -1492,35 +1521,52 @@ class PostgresLifecycleSource:
         self._listener: Any = None
         self._wake = asyncio.Event()
 
-    async def ensure_schema(self) -> None:
+    async def verify_read_contract(self) -> None:
+        """Bounded read-only check for the cursor columns this worker consumes.
+
+        Database schema changes belong to ``scripts/db_migrate.sh``.  Running
+        DDL or a historic-row backfill in this long-lived read worker makes a
+        routine deploy wait indefinitely behind a database lock and prevents
+        the new deployment identity from reaching readiness.
+        """
         import asyncpg  # type: ignore[import]
 
-        conn = await asyncpg.connect(self.dsn)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS
+        conn: Any | None = None
+
+        def remaining() -> float:
+            return max(0.0, deadline - loop.time())
+
         try:
-            await conn.execute(
-                """
-                CREATE SEQUENCE IF NOT EXISTS telemetry_events_ingested_seq_seq AS BIGINT;
-                ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS ingested_seq BIGINT;
-                ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS
-                    ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp();
-                ALTER TABLE telemetry_events ALTER COLUMN ingested_seq
-                    SET DEFAULT nextval('telemetry_events_ingested_seq_seq');
-                UPDATE telemetry_events
-                    SET ingested_seq = nextval('telemetry_events_ingested_seq_seq')
-                    WHERE ingested_seq IS NULL;
-                ALTER TABLE telemetry_events ALTER COLUMN ingested_seq SET NOT NULL;
-                ALTER SEQUENCE telemetry_events_ingested_seq_seq
-                    OWNED BY telemetry_events.ingested_seq;
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_events_ingested_seq
-                    ON telemetry_events (ingested_seq);
-                CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type_ingested_seq
-                    ON telemetry_events (event_type, ingested_seq);
-                CREATE INDEX IF NOT EXISTS idx_telemetry_events_ingested_at
-                    ON telemetry_events (ingested_at DESC);
-                """
+            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=remaining())
+            await asyncio.wait_for(
+                conn.fetchrow(
+                    "SELECT ingested_seq, ingested_at FROM telemetry_events LIMIT 1"
+                ),
+                timeout=remaining(),
             )
         finally:
-            await conn.close()
+            if conn is not None:
+                close_timeout = remaining()
+                if close_timeout <= 0:
+                    self._terminate_connection(conn)
+                    raise TimeoutError("telemetry startup read-contract deadline exhausted before close")
+                try:
+                    await asyncio.wait_for(conn.close(), timeout=close_timeout)
+                except BaseException:
+                    self._terminate_connection(conn)
+                    raise
+
+    @staticmethod
+    def _terminate_connection(conn: Any) -> None:
+        """Release a timed-out asyncpg connection without extending startup."""
+        terminate = getattr(conn, "terminate", None)
+        if callable(terminate):
+            try:
+                terminate()
+            except Exception:  # noqa: BLE001 - preserve the source failure
+                pass
 
     async def high_watermark(self) -> int:
         import asyncpg  # type: ignore[import]
@@ -1529,9 +1575,7 @@ class PostgresLifecycleSource:
         try:
             return int(
                 await conn.fetchval(
-                    "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
-                    "WHERE event_type = ANY($1::text[])",
-                    list(LIFECYCLE_EVENT_TYPE_QUERY),
+                    "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
                 )
                 or 0
             )
@@ -1546,10 +1590,8 @@ class PostgresLifecycleSource:
             rows = await conn.fetch(
                 "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
                 "FROM telemetry_events WHERE ingested_seq > $1 "
-                "AND event_type = ANY($2::text[]) "
-                "ORDER BY ingested_seq ASC LIMIT $3",
+                "ORDER BY ingested_seq ASC LIMIT $2",
                 int(checkpoint),
-                list(LIFECYCLE_EVENT_TYPE_QUERY),
                 int(limit),
             )
         finally:
@@ -1649,13 +1691,16 @@ async def run_worker() -> int:
     max_ticks = max(0, int(os.getenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "0")))
     tick = 0
     recovery_target = 0
+    source_ready = False
     try:
-        await source.ensure_schema()
-        recovery_target = await source.high_watermark()
-        await source.start_listener()
         while True:
             tick += 1
             try:
+                if not source_ready:
+                    await source.verify_read_contract()
+                    recovery_target = await source.high_watermark()
+                    await source.start_listener()
+                    source_ready = True
                 high = await source.high_watermark()
                 rows = await source.fetch_after(projector.checkpoint, limit=batch_size)
                 mode = "recovery" if projector.checkpoint < recovery_target else "live"
@@ -1671,6 +1716,8 @@ async def run_worker() -> int:
                     recovery_target = projector.checkpoint
             except Exception as exc:  # noqa: BLE001 - durable controller records failure
                 _record_worker_failure(projector, exc)
+                if not source_ready:
+                    await source.close()
             if max_ticks and tick >= max_ticks:
                 return 0
             await source.wait(interval)

@@ -318,6 +318,7 @@ jobs:
           PY
           )
           baseline_source="accepted_frontend_pair_manifest"
+          observed_previous=""
           if curl --fail-with-body --silent --show-error \
             --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
             "${DEV_BFF_URL%/}/bff/version" > "${version_json}"; then
@@ -325,11 +326,21 @@ jobs:
               python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("source_commit_sha") or "")' \
                 "${version_json}"
             )"
-            [[ "${observed_previous}" == "${previous}" ]] || {
-              echo "Hosted BFF identity does not match the accepted frontend pair manifest." >&2
-              exit 1
-            }
-            baseline_source="accepted_frontend_pair_manifest+live_bff_match"
+            if [[ "${observed_previous}" == "${previous}" ]]; then
+              baseline_source="accepted_frontend_pair_manifest+live_bff_match"
+            else
+              [[ "${observed_previous}" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "Hosted BFF drift identity is not an exact commit SHA." >&2
+                exit 1
+              }
+              git -C .agora-gate-controller merge-base --is-ancestor \
+                "${observed_previous}" refs/remotes/origin/dev || {
+                  echo "Hosted BFF drift identity is not contained in Pantheon dev." >&2
+                  exit 1
+                }
+              echo "Hosted BFF differs from the accepted frontend pair; retaining the accepted pair as rollback authority." >&2
+              baseline_source="accepted_frontend_pair_manifest+live_bff_drift_recovery"
+            fi
           else
             echo "Hosted BFF version endpoint is unavailable; recovering from the accepted frontend pair manifest." >&2
           fi
@@ -345,7 +356,7 @@ jobs:
             }
           python3 - "${EVIDENCE_DIR}/rollback-baseline.json" "${previous}" "${previous_frontend}" \
             "${{ steps.target.outputs.sha }}" "${{ steps.frontend.outputs.sha }}" \
-            "${{ steps.release_admission.outputs.release_candidate_id }}" "${baseline_source}" <<'PY'
+            "${{ steps.release_admission.outputs.release_candidate_id }}" "${baseline_source}" "${observed_previous}" <<'PY'
           import json
           import pathlib
           import sys
@@ -360,6 +371,7 @@ jobs:
                       "candidate_frontend_sha": sys.argv[5],
                       "release_candidate_id": sys.argv[6],
                       "baseline_source": sys.argv[7],
+                      "observed_live_bff_sha": sys.argv[8] or None,
                   },
                   indent=2,
                   sort_keys=True,
