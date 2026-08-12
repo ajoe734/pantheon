@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
@@ -12,6 +13,14 @@ from fastapi import APIRouter, Body, Header, HTTPException
 from pydantic import ValidationError
 
 from models import ErrorCode
+
+_ORCHESTRATOR_DIR = Path(__file__).resolve().parents[4] / ".orchestrator"
+if str(_ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(_ORCHESTRATOR_DIR))
+from canonical_mutation_assertion import (
+    OPERATOR_ACTIONS as CANONICAL_MUTATION_OPERATOR_ACTIONS,
+    issue_assertion as issue_mutation_assertion,
+)
 
 from .context_composer import AssistantContextPolicyError
 from .command_idempotency import (
@@ -42,7 +51,13 @@ from .mode_policy import (
     PRODUCT_DEFAULT_MODE,
 )
 from .dev_bridge_inbox import queue_task_packet
-from .dev_bridge_models import BridgeActor, BridgeDocument, BridgeTask, DevTaskPacket
+from .dev_bridge_models import (
+    BridgeActor,
+    BridgeDocument,
+    BridgeOperatorAuthorization,
+    BridgeTask,
+    DevTaskPacket,
+)
 from .dev_bridge_signer import sign_packet
 from .dev_docs_archiver import archive_packet, infer_repo_root
 from .dev_docs_generator import generate_dev_doc_packet
@@ -93,6 +108,7 @@ ProviderReauthStatus = Callable[[str, str, str], Dict[str, Any]]
 ProviderReauthCode = Callable[[str, str, str, str, Optional[str]], Dict[str, Any]]
 
 ASSISTANT_SA_SD_GENERATE_SKILL_ID = "assistant.sa_sd.generate"
+CANONICAL_MUTATION_CAPABILITY = "assistant.canonical.mutate"
 
 DEFAULT_DEV_DOC_CONTEXT_SOURCES = [
     "ui",
@@ -993,9 +1009,15 @@ def create_assistant_router(
             should_emit_task_packet = _should_emit_task_packet(payload)
             should_queue_task_packet = _should_queue_task_packet(payload)
             if should_emit_task_packet or should_queue_task_packet:
+                _require_canonical_mutation_capability(identity, bff_error=bff_error)
                 task_packet = _signed_dev_task_packet(
                     packet,
                     identity,
+                    control_activation_id=str(
+                        control_status.get("activation_id")
+                        or control_status.get("activationId")
+                        or ""
+                    ),
                     mode=str(control_status.get("mode") or AssistantMode.KERNEL_DEBUG.value),
                     key_store=bridge_key_store,
                 )
@@ -1063,6 +1085,7 @@ def create_assistant_router(
             _control_mode_store,
             bff_error=bff_error,
         )
+        _require_canonical_mutation_capability(identity, bff_error=bff_error)
         actor_id = str(getattr(identity, "operator_id", None) or "management-ai")
         activation_id = control_status.get("activation_id") or control_status.get("activationId")
         tenant_id = _resolve_identity_tenant(
@@ -1094,6 +1117,7 @@ def create_assistant_router(
             task_packet = _signed_dev_task_packet(
                 packet,
                 identity,
+                control_activation_id=str(activation_id or ""),
                 mode=str(
                     payload.get("mode")
                     or control_status.get("mode")
@@ -1118,6 +1142,79 @@ def create_assistant_router(
             if transaction is not None:
                 transaction.complete(response)
             return response
+
+    @router.post("/canonical-mutations/assert", status_code=201)
+    async def issue_canonical_mutation_operator_assertion(
+        payload: dict = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, Any]:
+        """Issue one short-lived, exact task mutation assertion."""
+
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        control_status = _require_active_control_mode(
+            identity, _control_mode_store, bff_error=bff_error
+        )
+        _require_canonical_mutation_capability(identity, bff_error=bff_error)
+        task_id = str(payload.get("taskId") or "").strip()
+        action = str(payload.get("action") or "").strip()
+        reason = str(payload.get("reason") or "").strip()
+        args = payload.get("args")
+        old_assignment = payload.get("oldAssignment")
+        new_assignment = payload.get("newAssignment")
+        if (
+            not task_id
+            or not action
+            or not reason
+            or not isinstance(args, list)
+            or not all(isinstance(item, str) for item in args)
+            or not isinstance(old_assignment, dict)
+            or not isinstance(new_assignment, dict)
+        ):
+            _raise_error(
+                bff_error,
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Canonical mutation assertion request is invalid",
+                "taskId, action, string args, oldAssignment, newAssignment and reason are required",
+                field="payload",
+            )
+        if action not in CANONICAL_MUTATION_OPERATOR_ACTIONS:
+            _raise_error(
+                bff_error,
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Canonical mutation action is not Human/Ops authority",
+                "Only assignment, reopen, and audited note actions may use an operator assertion",
+                field="action",
+            )
+        activation_id = str(
+            control_status.get("activation_id")
+            or control_status.get("activationId")
+            or ""
+        )
+        try:
+            assertion = issue_mutation_assertion(
+                operator_id=str(getattr(identity, "operator_id", None) or ""),
+                control_activation_id=activation_id,
+                task_id=task_id,
+                action=action,
+                args=list(args),
+                old_assignment=old_assignment,
+                new_assignment=new_assignment,
+                reason=reason,
+                ttl_seconds=min(int(payload.get("ttlSeconds") or 120), 300),
+            )
+        except (TypeError, ValueError) as exc:
+            _raise_error(
+                bff_error,
+                503,
+                ErrorCode.PRECONDITION_FAILED,
+                "Canonical mutation assertion signer is unavailable",
+                str(exc),
+                field="signing_key",
+            )
+        return {"data": assertion}
 
     # ------------------------------------------------------------------
     # Governed tool contract routes (ASST-INTEG-004)
@@ -1487,6 +1584,21 @@ def _require_active_control_mode(
             reason=status.get("reason") or status.get("state") or "inactive",
         )
     return status
+
+
+def _require_canonical_mutation_capability(
+    identity: Any, *, bff_error: Optional[BffErrorFactory]
+) -> None:
+    if CANONICAL_MUTATION_CAPABILITY in set(actor_capabilities(identity)):
+        return
+    _raise_error(
+        bff_error,
+        403,
+        ErrorCode.FORBIDDEN,
+        "Canonical task mutation capability is required",
+        "The authenticated operator lacks assistant.canonical.mutate",
+        field="capability",
+    )
 
 
 def _require_assistant_skill_authorized(
@@ -1982,15 +2094,26 @@ def _signed_dev_task_packet(
     identity: Any,
     *,
     mode: str,
+    control_activation_id: str,
     key_store: Optional[Dict[str, bytes]],
 ) -> DevTaskPacket:
+    now = datetime.now(timezone.utc)
     task_packet = DevTaskPacket(
         packetId=f"bridge_{packet.packet_id}",
         emittedAt=_utc_now_z(),
         actor=BridgeActor(
-            id=str(getattr(identity, "operator_id", None) or packet.actor_id or "unknown"),
-            roles=[str(role) for role in (getattr(identity, "roles", []) or [])],
-            capabilities=actor_capabilities(identity),
+            id=str(packet.actor_id or "management-ai"),
+            roles=["source"],
+            capabilities=["assistant.dev.source"],
+        ),
+        operatorAuthorization=BridgeOperatorAuthorization(
+            operatorId=str(getattr(identity, "operator_id", None) or ""),
+            controlActivationId=control_activation_id,
+            capability=CANONICAL_MUTATION_CAPABILITY,
+            mfaVerified=bool(getattr(identity, "mfa_verified", False)),
+            issuedAt=now.isoformat().replace("+00:00", "Z"),
+            expiresAt=(now + timedelta(seconds=300)).isoformat().replace("+00:00", "Z"),
+            nonce=uuid.uuid4().hex,
         ),
         mode=mode,
         sourceConversationId=packet.conversation_id,

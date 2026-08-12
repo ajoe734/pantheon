@@ -5,10 +5,13 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import approval_queue
+import permission_broker
 
 
 class ApprovalQueuePruneTests(unittest.TestCase):
@@ -125,6 +128,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                         "created_at": self._fresh_created_at(),
                         "provider": "claude",
                         "task_id": "LP-004",
+                        "task_generation": 3,
                         "worker_run_id": "claude-resume",
                         "tool_name": "ToolSearch",
                     }
@@ -142,7 +146,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                         "provider": "claude",
                         "status": "waiting_approval",
                         "pid": 999999,
-                        "session_id": "sess-123",
+                        "queue_event_id": "evt-lp-004",
                     }
                 },
                 "queue": {"events": {}},
@@ -169,6 +173,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                         "created_at": self._fresh_created_at(),
                         "provider": "claude2",
                         "task_id": "LP-005",
+                        "task_generation": 4,
                         "worker_run_id": "claude2-resume",
                         "tool_name": "ToolSearch",
                     }
@@ -186,7 +191,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                         "provider": "claude2",
                         "status": "waiting_approval",
                         "pid": 999999,
-                        "session_id": "sess-456",
+                        "queue_event_id": "evt-lp-005",
                     }
                 },
                 "queue": {"events": {}},
@@ -281,7 +286,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                         "provider": "claude",
                         "status": "suspended_approval",
                         "pid": 999999,
-                        "session_id": "sess-789",
+                        "queue_event_id": "evt-lp-006",
                     }
                 },
                 "queue": {"events": {}},
@@ -303,6 +308,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
             {
                 "provider": "codex",
                 "task_id": "BG-006",
+                "task_generation": 1,
                 "worker_run_id": "codex-001",
                 "agent_id": "Codex",
                 "tool_name": "Bash",
@@ -336,25 +342,65 @@ class ApprovalQueuePruneTests(unittest.TestCase):
             delta=1,
         )
 
-    def test_can_recover_tool_input_from_request_evidence(self) -> None:
-        approval_queue.create_approval(
-            self.config,
+    def test_create_approval_rejects_missing_or_invalid_task_epoch(self) -> None:
+        base = {
+            "provider": "claude2",
+            "task_id": "APPROVAL-EPOCH",
+            "worker_run_id": "claude2-run",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git status"},
+        }
+        for override in (
+            {"task_id": "", "task_generation": 1},
+            {"task_generation": None},
+            {"task_generation": 0},
+            {"task_generation": "invalid"},
+            {"task_generation": 1, "worker_run_id": ""},
+        ):
+            with self.subTest(override=override):
+                with self.assertRaises(ValueError):
+                    approval_queue.create_approval(
+                        self.config,
+                        {**base, **override},
+                    )
+        self.assertFalse((self.root / "approval-queue.json").exists())
+
+    def test_resume_override_never_matches_missing_task_epoch(self) -> None:
+        self._write_json(
+            self.root / "approval-queue.json",
             {
-                "provider": "claude",
-                "task_id": "BG-001",
-                "worker_run_id": "claude-001",
-                "tool_name": "Bash",
-                "tool_input": {"command": "git status"},
-                "risk_class": "needs_review",
-                "suggested_rule": "Bash(git status)",
+                "pending": [],
+                "history": [
+                    {
+                        "approval_id": "legacy-unbound",
+                        "decision": "allow",
+                        "resume_override_active": True,
+                        "task_id": "",
+                        "task_generation": None,
+                        "tool_name": "Bash",
+                        "tool_input_signature": approval_queue.approval_tool_input_signature(
+                            {"command": "git status"}
+                        ),
+                    }
+                ],
             },
         )
-
-        saved = json.loads((self.root / "approval-queue.json").read_text(encoding="utf-8"))
-        pending = saved["pending"][0]
-        self.assertNotIn("tool_input", pending)
-        recovered = approval_queue._approval_tool_input(pending)
-        self.assertEqual(recovered, {"command": "git status"})
+        self.assertIsNone(
+            approval_queue.find_resume_override(
+                self.config,
+                task_id=None,
+                task_generation=None,
+                tool_name="Bash",
+                tool_input={"command": "git status"},
+            )
+        )
+        self.assertIsNone(
+            approval_queue.consume_resume_override(
+                self.config,
+                approval_id="legacy-unbound",
+                reason="must not consume",
+            )
+        )
 
     def test_resolve_approval_writes_resolution_evidence(self) -> None:
         approval = approval_queue.create_approval(
@@ -362,6 +408,7 @@ class ApprovalQueuePruneTests(unittest.TestCase):
             {
                 "provider": "codex",
                 "task_id": "BG-004",
+                "task_generation": 1,
                 "worker_run_id": "codex-002",
                 "agent_id": "Codex",
                 "tool_name": "WebFetch",
@@ -391,6 +438,62 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         self.assertEqual(saved["pending"], [])
         self.assertEqual(saved["history"][0]["approval_id"], approval["approval_id"])
         self.assertNotIn("tool_input", saved["history"][0])
+
+    def test_claude2_relaunch_consumes_exact_approval_once_without_global_rule(self) -> None:
+        self.config["providers"] = {"claude2": {"delivery_mode": "claude_cli"}}
+        approval = approval_queue.create_approval(
+            self.config,
+            {
+                "provider": "claude2",
+                "task_id": "LP-ONE-SHOT",
+                "task_generation": 7,
+                "worker_run_id": "claude2-old-run",
+                "session_id": "old-session",
+                "tool_name": "Bash",
+                "tool_input": {"command": "git status"},
+                "risk_class": "needs_review",
+                "suggested_rule": "Bash(git status)",
+            },
+        )
+        approval_queue.resolve_approval(
+            self.config,
+            approval["approval_id"],
+            decision="allow",
+            remember=False,
+        )
+        responses: list[dict[str, object]] = []
+        deferred = {
+            "decision": "defer",
+            "reason": "operator approval required",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git status"},
+            "risk_class": "needs_review",
+            "suggested_rule": "Bash(git status)",
+        }
+        payload = {
+            "session_id": "new-session",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git status"},
+        }
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, {
+                "ORCH_TASK_ID": "LP-ONE-SHOT",
+                "ORCH_TASK_GENERATION": "7",
+            }, clear=False))
+            stack.enter_context(patch.object(permission_broker, "evaluate_tool_request", return_value=deferred))
+            stack.enter_context(patch.object(permission_broker, "emit_hook_response", side_effect=responses.append))
+            stack.enter_context(patch.object(permission_broker, "log_event"))
+            self.assertEqual(permission_broker.hook_mode(self.config, "PermissionRequest", payload), 0)
+            self.assertEqual(permission_broker.hook_mode(self.config, "PermissionRequest", payload), 0)
+
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(responses[0]["hookSpecificOutput"]["decision"]["behavior"], "allow")
+        state = approval_queue.load_approval_state(self.config)
+        original = next(item for item in state["history"] if item["approval_id"] == approval["approval_id"])
+        self.assertTrue(original["resume_override_consumed_at"])
+        self.assertEqual(len(state["pending"]), 0)
+        self.assertNotIn("resume_override_rule", original)
+        self.assertFalse((self.root / ".claude" / "settings.local.json").exists())
 
 
 if __name__ == "__main__":

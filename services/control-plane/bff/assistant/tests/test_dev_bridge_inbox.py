@@ -24,7 +24,12 @@ from ..dev_bridge_models import (
     DevTaskPacket,
     TaskDispatchRecord,
 )
-from ..dev_bridge_signer import mark_packet_seen, packet_digest, sign_packet
+from ..dev_bridge_signer import (
+    mark_packet_seen,
+    packet_digest,
+    public_key_environment,
+    sign_packet,
+)
 from .dev_bridge_test_support import write_materializing_ai_status
 
 
@@ -40,6 +45,10 @@ def _isolated_bridge_status_paths(
     status_root = tmp_path / "ambient-status-root"
     status_root.mkdir()
     (status_root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
+    monkeypatch.setenv(
+        "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
+        public_key_environment({"assistant-bridge-dev": TEST_KEY}),
+    )
     (status_root / "ai-activity-log.jsonl").write_text("", encoding="utf-8")
     monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
     monkeypatch.setenv(
@@ -175,16 +184,14 @@ def test_queue_and_drain_packet_inbox_materializes_tasks(tmp_path: Path, monkeyp
 
     calls = (repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()
     record = json.loads(calls[0])
-    assert record["argv"] == [
-        "assign",
-        "INBOX-TASK-001",
-        "Codex",
-        "Claude",
-        "Materialize queued assistant task",
-    ]
-    assert record["ai_name"] == "Human/Ops"
+    assert record["argv"][0] == "dev-bridge-materialize-batch"
+    assert len(record["argv"]) == 2
+    assert record["ai_name"] == "assistant.dev.source"
     assert record["auto_worker_markers"] == {}
-    bridge = record["metadata"]["dev_bridge"]
+    assert record["packet_id"] == "pkt_inbox_live"
+    assert len(record["tasks"]) == 1
+    assert record["tasks"][0]["task_id"] == "INBOX-TASK-001"
+    bridge = record["tasks"][0]["task_metadata"]["dev_bridge"]
     assert bridge["packet_id"] == "pkt_inbox_live"
     assert bridge["conversation_id"] == "mgmt-nl-inbox"
     assert bridge["source_turn_ids"] == ["turn-user", "turn-assistant"]

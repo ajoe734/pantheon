@@ -14,10 +14,8 @@ from typing import Any
 
 from common import (
     ROOT,
-    agent_config_for,
     command_exists,
     config_path,
-    execution_context_files,
     load_config,
     load_json,
     load_jsonl,
@@ -29,7 +27,6 @@ from common import (
     write_activity_log,
     write_json,
 )
-from coordination_file_watcher import queue_coordination_dispatch
 from cross_repo_issue_mapper import coordination_issue_body, coordination_issue_labels, coordination_issue_title
 from github_cloud_relay import pull_commands, push_status_digest
 from github_command_parser import GitHubCommand, parse_command
@@ -38,10 +35,7 @@ from multi_repo_registry import (
     matching_repo_id,
     repository_slug,
     resolve_repository,
-    resolve_worker_kind,
 )
-from runtime_state import enqueue_event
-from watch_events import render_wakeup_message
 
 COMMENT_MARKER = "<!-- pantheon-bus -->"
 MAX_PROCESSED_IDS = 2000
@@ -1282,12 +1276,8 @@ def apply_bus_command(
             f"GitHub retry requested via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}.",
             actor="Human/Ops",
         )
-        queue_resume_for_task(config, target_task)
-        reply = f"Queued retry for `{task_id}`."
+        reply = f"Reopened `{task_id}`; the canonical planner will redispatch it."
         changed = True
-    elif command.verb == "resume" and command.target:
-        changed = queue_resume_for_agent(config, status, command.target)
-        reply = f"Queued resume for `{command.target}`." if changed else f"No resumable task found for `{command.target}`."
     elif command.verb == "recheck" and target_task:
         entry = task_bus_entry(bus_state, task_id)
         entry["last_issue_hash"] = None
@@ -1304,54 +1294,6 @@ def apply_bus_command(
             )
         else:
             reply = task_summary_line(target_task or task or {"id": task_id or "-", "status": "unknown", "owner": "-", "reviewer": "-", "next": "-"})
-    elif command.verb == "dispatch" and len(command.args) >= 2:
-        worker_kind = resolve_worker_kind(command.args[0])
-        feature_id = command.args[1]
-        if not worker_kind:
-            reply = f"Unknown worker alias `{command.args[0]}`."
-        else:
-            changed = queue_coordination_command(
-                config,
-                feature_id=feature_id,
-                payload_type="dispatch-request",
-                worker_kind=worker_kind,
-                actor=actor,
-                issue_number=issue_number,
-            )
-            reply = f"Queued `{worker_kind}` for `{feature_id}`." if changed else f"Did not queue `{worker_kind}` for `{feature_id}`."
-    elif command.verb == "needs-runtime" and command.args:
-        feature_id = command.args[0]
-        changed = queue_coordination_command(
-            config,
-            feature_id=feature_id,
-            payload_type="needs-runtime",
-            worker_kind="runtime-worker",
-            actor=actor,
-            issue_number=issue_number,
-        )
-        reply = f"Queued runtime escalation for `{feature_id}`." if changed else f"Did not queue runtime escalation for `{feature_id}`."
-    elif command.verb == "contract-ready" and command.args:
-        feature_id = command.args[0]
-        changed = queue_coordination_command(
-            config,
-            feature_id=feature_id,
-            payload_type="contract-ready",
-            worker_kind="front-sync-worker",
-            actor=actor,
-            issue_number=issue_number,
-        )
-        reply = f"Queued contract-ready replay for `{feature_id}`." if changed else f"Did not queue contract-ready replay for `{feature_id}`."
-    elif command.verb == "approve-engine" and command.args:
-        feature_id = command.args[0]
-        changed = queue_coordination_command(
-            config,
-            feature_id=feature_id,
-            payload_type="dispatch-request",
-            worker_kind="engine-worker",
-            actor=actor,
-            issue_number=issue_number,
-        )
-        reply = f"Queued engine worker for `{feature_id}`." if changed else f"Did not queue engine worker for `{feature_id}`."
     else:
         reply = f"Unsupported or incomplete command `{command.raw}`."
 
@@ -1431,121 +1373,6 @@ def task_summary_line(task: dict[str, Any]) -> str:
 
 def coordination_feature_summary(runtime_state: dict[str, Any], feature_id: str) -> dict[str, Any] | None:
     return (((runtime_state.get("coordination") or {}).get("features") or {}).get(feature_id) if runtime_state else None)
-
-
-def coordination_command_payload(feature_id: str, payload_type: str, worker_kind: str | None, actor: str, issue_number: int | None) -> dict[str, Any]:
-    return {
-        "feature_id": feature_id,
-        "type": payload_type,
-        "worker_kind": worker_kind,
-        "source_repo": "pantheon",
-        "summary": f"GitHub coordination command from @{actor}",
-        "requested_by": actor,
-        "human_approved": payload_type == "dispatch-request" and worker_kind == "engine-worker",
-        "dispatch_nonce": f"{actor}:{issue_number or 'relay'}:{utc_now()}",
-    }
-
-
-def queue_coordination_command(
-    config: dict[str, Any],
-    *,
-    feature_id: str,
-    payload_type: str,
-    worker_kind: str | None,
-    actor: str,
-    issue_number: int | None,
-) -> bool:
-    payload = coordination_command_payload(feature_id, payload_type, worker_kind, actor, issue_number)
-    effective_worker_kind = worker_kind
-    if payload_type == "needs-runtime":
-        effective_worker_kind = "runtime-worker"
-    if payload_type == "dispatch-request" and effective_worker_kind is None:
-        return False
-    if payload_type == "needs-engine":
-        effective_worker_kind = "engine-worker"
-    if payload_type == "contract-ready":
-        effective_worker_kind = "front-sync-worker"
-        payload["type"] = "dispatch-request"
-        payload["worker_kind"] = effective_worker_kind
-    if payload_type == "needs-runtime":
-        payload["worker_kind"] = effective_worker_kind
-    if payload_type == "needs-engine":
-        payload["worker_kind"] = effective_worker_kind
-        payload["human_approved"] = False
-    if payload_type == "dispatch-request" and effective_worker_kind == "engine-worker":
-        payload["human_approved"] = True
-
-    return queue_coordination_dispatch(
-        config,
-        worker_kind=effective_worker_kind or "",
-        feature_id=feature_id,
-        payload=payload,
-        source_path=None,
-        reason=payload.get("type") or "dispatch-request",
-    )
-
-
-def queue_resume_for_task(config: dict[str, Any], task: dict[str, Any]) -> bool:
-    target_agent = task.get("owner")
-    task_id = str(task.get("id") or "").strip()
-    if not target_agent or not task_id:
-        return False
-    event = {
-        "key": f"github-resume:{task_id}:{target_agent}:{utc_now()}",
-        "task_id": task_id,
-        "target_agent": target_agent,
-        "reason": "github_retry",
-        "task": {
-            "id": task_id,
-            "artifacts": task.get("artifacts") or [],
-            "next": task.get("next"),
-        },
-    }
-    message = render_wakeup_message(config, event, target_agent)
-    payload = {
-        "event_id": f"github-{task_id}-{_iso_now_dt().strftime('%Y%m%dT%H%M%SZ')}",
-        "created_at": utc_now(),
-        "event_key": event["key"],
-        "task_id": task_id,
-        "target_agent": agent_config_for(config, target_agent)["id"],
-        "target_display_name": target_agent,
-        "provider": agent_config_for(config, target_agent).get("provider", target_agent),
-        "reason": "github_retry",
-        "message": message,
-        "context_files": execution_context_files(config, task.get("id")),
-        "target_files": task.get("artifacts") or [],
-        "metadata": {
-            "task": {"id": task_id},
-            "workspace_task_id": task_id,
-            "require_isolated_worktree": True,
-            "explicit_retry_source": "github_bus",
-        },
-    }
-    enqueue_event(config, payload)
-    write_activity_log(
-        config,
-        {
-            "type": "github_resume_queued",
-            "task_id": task_id,
-            "target_agent": target_agent,
-            "message": "Queued resume wake-up from GitHub approval bus.",
-            "queue_event_id": payload["event_id"],
-        },
-    )
-    return True
-
-
-def queue_resume_for_agent(config: dict[str, Any], status: dict[str, Any], agent_name: str) -> bool:
-    target = agent_name.strip().title()
-    candidates = [
-        task
-        for task in status.get("tasks", [])
-        if task.get("owner") == target and task.get("status") in {"todo", "in_progress", "review", "blocked"}
-    ]
-    if not candidates:
-        return False
-    prioritized = sorted(candidates, key=lambda task: (task.get("status") != "in_progress", task.get("last_update") or ""), reverse=False)
-    return queue_resume_for_task(config, prioritized[0])
 
 
 def poll_issue_comments(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], repo: str) -> bool:

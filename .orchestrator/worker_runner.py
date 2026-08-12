@@ -243,7 +243,6 @@ def validate_coordination_root(
         root / "docs-site" / "dashboard-bundle.json",
         root / "docs-site" / "orchestrator-state.json",
         root / "docs-site" / "approval-queue.json",
-        root / "docs-site" / "planning-state.json",
         root / "docs-site" / "ai-activity-log.jsonl",
         root / "ai-task-archive",
         root / "ai-task-archive" / "index.json",
@@ -251,7 +250,6 @@ def validate_coordination_root(
         root / ".orchestrator" / "state.json",
         root / ".orchestrator" / "approval-queue.json",
         root / ".orchestrator" / "config.json",
-        root / ".orchestrator" / "planning-state.json",
         root / ".orchestrator" / "task-state.lock",
         root / ".orchestrator" / "activity-audit.lock",
     ):

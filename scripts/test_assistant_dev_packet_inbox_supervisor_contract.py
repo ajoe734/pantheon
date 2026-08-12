@@ -8,7 +8,7 @@ SUPERVISOR = ROOT / ".orchestrator" / "supervisor.py"
 RUNTIME_STATE = ROOT / ".orchestrator" / "runtime_state.py"
 
 
-def test_supervisor_drains_assistant_dev_inbox_before_watch_scan() -> None:
+def test_supervisor_drains_assistant_dev_inbox_after_hot_dispatch() -> None:
     source = SUPERVISOR.read_text(encoding="utf-8")
 
     assert "def drain_assistant_dev_packet_inbox" in source
@@ -20,15 +20,10 @@ def test_supervisor_drains_assistant_dev_inbox_before_watch_scan() -> None:
     assert "dispatch_env=bridge_runtime_env" in source
     assert '"canonical_readbacks": canonical_readbacks' in source
 
-    drain_pos = source.index(
-        'changed = _safe_phase("drain_assistant_dev_packet_inbox", '
-        "drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed"
-    )
-    scan_pos = source.index(
-        'changed = _safe_phase("run_scan", _run_scan_locked, config, state, '
-        "replay=replay, provider_capabilities=provider_report, quiet=quiet) or changed"
-    )
-    assert drain_pos < scan_pos
+    dispatch_pos = source.index('"process_queue_reserved"')
+    drain_pos = source.index('"drain_assistant_dev_packet_inbox"')
+    assert dispatch_pos < drain_pos
+    assert "_run_scan_locked" not in source
 
 
 def test_supervisor_bridge_import_searches_code_root_before_status_root() -> None:

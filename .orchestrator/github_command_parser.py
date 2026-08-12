@@ -16,13 +16,8 @@ SUPPORTED_COMMANDS = {
     "approve",
     "deny",
     "retry",
-    "resume",
     "recheck",
     "status",
-    "dispatch",
-    "needs-runtime",
-    "contract-ready",
-    "approve-engine",
 }
 
 

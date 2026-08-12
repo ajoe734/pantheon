@@ -65,10 +65,22 @@ class BridgeConstraints(BridgeBaseModel):
 
 
 class PacketSignature(BridgeBaseModel):
-    """HMAC-SHA256 signature over the canonical packet payload."""
+    """Ed25519 signature over the canonical packet payload."""
     key_id: str = Field(alias="keyId")
-    algorithm: str = "HMAC-SHA256"
+    algorithm: str = "Ed25519"
     value: str
+
+
+class BridgeOperatorAuthorization(BridgeBaseModel):
+    """BFF-authenticated operator authority, distinct from packet source."""
+
+    operator_id: str = Field(alias="operatorId")
+    control_activation_id: str = Field(alias="controlActivationId")
+    capability: str
+    mfa_verified: bool = Field(alias="mfaVerified")
+    issued_at: str = Field(alias="issuedAt")
+    expires_at: str = Field(alias="expiresAt")
+    nonce: str
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +101,9 @@ class DevTaskPacket(BridgeBaseModel):
     emitted_at: str = Field(alias="emittedAt")
 
     actor: BridgeActor
+    operator_authorization: Optional[BridgeOperatorAuthorization] = Field(
+        default=None, alias="operatorAuthorization"
+    )
     mode: str
 
     source_conversation_id: str = Field(alias="sourceConversationId")

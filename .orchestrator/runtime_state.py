@@ -46,10 +46,8 @@ RUNTIME_ADMISSION_CONFLICT_STATUSES = {
     "running",
     "waiting_approval",
     "suspended_approval",
-    "manual_pending",
     "retry_backoff",
     "stalled",
-    "fallback",
     "admitted",
 }
 RUNTIME_ADMISSION_TERMINAL_WORKER_STATUSES = {
@@ -65,11 +63,9 @@ RUNTIME_LOCK_REQUIRED_WRITER_PATHS = (
     ".orchestrator/supervisor.py",
     ".orchestrator/common.py",
     ".orchestrator/approval_queue.py",
-    ".orchestrator/adapters/file_inbox.py",
     ".orchestrator/watch_events.py",
     ".orchestrator/supervisor_watchdog.py",
     "scripts/ai_status.py",
-    "scripts/dispatch_loop_product_level_remediation_2026-07-13.py",
 )
 RUNTIME_LOCK_REQUIRED_API = (
     "tasks_runtime_admission_guard",
@@ -144,26 +140,8 @@ def default_state() -> dict[str, Any]:
         "approvals": {
             "last_reconciled_at": None,
         },
-        "underutilization": {
-            "below_threshold_since": None,
-            "last_sidecar_wave_at": None,
-            "last_sidecar_wave_reason": None,
-            "last_ratio": None,
-        },
-        "chair_rotation": {
-            "current_index": 0,
-            "last_chair_run_at": None,
-            "last_chair_agent": None,
-            "last_chair_reason": None,
-            "last_review_path": None,
-            "last_review_summary": None,
-            "pending_review_path": None,
-            "pending_review_agent": None,
-            "sidecar_approved_until": None,
-        },
         "provider_guardrails": {
             "dispatch_pauses": {},
-            "task_failure_streaks": {},
         },
         "worker_runtime_metrics": {
             "version": 1,
@@ -177,11 +155,6 @@ def default_state() -> dict[str, Any]:
             "safe_mode_started_at": None,
             "last_decision": None,
             "last_safe_mode_observed_until": None,
-        },
-        "coordination": {
-            "last_scan_at": None,
-            "files": {},
-            "features": {},
         },
         "assistant_dev_bridge": {
             "last_drain_at": None,
@@ -202,10 +175,7 @@ def default_state() -> dict[str, Any]:
             "mode_switch_requested": None,
             "last_mode_switch_at": None,
             "mode_occupancy": {
-                "planning": {"running": 0, "pending": 0, "queued": 0},
                 "execution": {"running": 0, "pending": 0, "queued": 0},
-                "coordination": {"running": 0, "pending": 0, "queued": 0},
-                "chair_review": {"running": 0, "pending": 0, "queued": 0},
             },
         },
     }
@@ -215,7 +185,12 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state = deepcopy(default_state())
     if not raw:
         return state
-    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination", "watchdog", "assistant_dev_bridge"}})
+    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "watchdog", "assistant_dev_bridge"}})
+    # V2 does not preserve obsolete control-plane buckets as dormant state.
+    # Their presence previously allowed dashboard/recovery code to revive a
+    # retired authority after a restart.
+    for retired_key in ("underutilization", "chair_rotation", "coordination"):
+        state.pop(retired_key, None)
     state.setdefault("tasks", {})
     recent_terminal_tasks = state.get("recent_terminal_tasks")
     state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
@@ -235,24 +210,9 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["auto_commit_archive"].setdefault("last_error", None)
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
-    state.setdefault("underutilization", {})
-    state["underutilization"].setdefault("below_threshold_since", None)
-    state["underutilization"].setdefault("last_sidecar_wave_at", None)
-    state["underutilization"].setdefault("last_sidecar_wave_reason", None)
-    state["underutilization"].setdefault("last_ratio", None)
-    state.setdefault("chair_rotation", {})
-    state["chair_rotation"].setdefault("current_index", 0)
-    state["chair_rotation"].setdefault("last_chair_run_at", None)
-    state["chair_rotation"].setdefault("last_chair_agent", None)
-    state["chair_rotation"].setdefault("last_chair_reason", None)
-    state["chair_rotation"].setdefault("last_review_path", None)
-    state["chair_rotation"].setdefault("last_review_summary", None)
-    state["chair_rotation"].setdefault("pending_review_path", None)
-    state["chair_rotation"].setdefault("pending_review_agent", None)
-    state["chair_rotation"].setdefault("sidecar_approved_until", None)
     state.setdefault("provider_guardrails", {})
     state["provider_guardrails"].setdefault("dispatch_pauses", {})
-    state["provider_guardrails"].setdefault("task_failure_streaks", {})
+    state["provider_guardrails"].pop("task_failure_streaks", None)
     state.setdefault("worker_runtime_metrics", {})
     state["worker_runtime_metrics"].setdefault("version", 1)
     state["worker_runtime_metrics"].setdefault("updated_at", None)
@@ -264,10 +224,6 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["watchdog"].setdefault("safe_mode_started_at", None)
     state["watchdog"].setdefault("last_decision", None)
     state["watchdog"].setdefault("last_safe_mode_observed_until", None)
-    state.setdefault("coordination", {})
-    state["coordination"].setdefault("last_scan_at", None)
-    state["coordination"].setdefault("files", {})
-    state["coordination"].setdefault("features", {})
     state.setdefault("assistant_dev_bridge", {})
     state["assistant_dev_bridge"].setdefault("last_drain_at", None)
     state["assistant_dev_bridge"].setdefault("last_result", None)
@@ -285,12 +241,22 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("mode_status", "idle")
     state["supervisor"].setdefault("mode_switch_requested", None)
     state["supervisor"].setdefault("last_mode_switch_at", None)
-    state["supervisor"].setdefault("mode_occupancy", {})
-    for mode_name in ("planning", "execution", "coordination", "chair_review"):
-        bucket = state["supervisor"]["mode_occupancy"].setdefault(mode_name, {})
-        bucket.setdefault("running", 0)
-        bucket.setdefault("pending", 0)
-        bucket.setdefault("queued", 0)
+    raw_occupancy = state["supervisor"].get("mode_occupancy")
+    raw_execution = (
+        raw_occupancy.get("execution")
+        if isinstance(raw_occupancy, dict)
+        and isinstance(raw_occupancy.get("execution"), dict)
+        else {}
+    )
+    execution_occupancy: dict[str, int] = {}
+    for key in ("running", "pending", "queued"):
+        try:
+            execution_occupancy[key] = max(0, int(raw_execution.get(key) or 0))
+        except (TypeError, ValueError):
+            execution_occupancy[key] = 0
+    state["supervisor"]["mode_occupancy"] = {
+        "execution": execution_occupancy
+    }
     pauses = state.get("provider_guardrails", {}).get("dispatch_pauses", {}) or {}
     normalized_pauses: dict[str, Any] = {}
     for provider, entry in pauses.items():
@@ -308,7 +274,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     return state
 
 
-ACTIVE_QUEUE_STATUSES = {"running", "waiting_approval", "suspended_approval", "retry_backoff", "manual_pending", "stalled", "started", "fallback"}
+ACTIVE_QUEUE_STATUSES = {"running", "waiting_approval", "suspended_approval", "retry_backoff", "stalled", "started"}
 
 
 def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, Any]]) -> None:
@@ -327,7 +293,7 @@ def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, 
             continue
         latest = sorted(related, key=lambda item: item.get("last_event_at") or "", reverse=True)[0]
         if any(worker.get("status") in ACTIVE_QUEUE_STATUSES for worker in related):
-            record["status"] = "manual_pending" if any(worker.get("status") in {"manual_pending", "waiting_approval"} for worker in related) else "started"
+            record["status"] = "waiting_approval" if any(worker.get("status") == "waiting_approval" for worker in related) else "started"
             continue
         if any(worker.get("status") == "failed" for worker in related):
             record["status"] = "failed"
@@ -351,7 +317,7 @@ def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | No
         task_id = str(worker.get("task_id") or "")
         event_id = worker.get("queue_event_id")
         task_status = str(tasks_by_id.get(task_id) or "")
-        if status in {"running", "started", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "fallback", "stalled"}:
+        if status in {"running", "started", "waiting_approval", "suspended_approval", "retry_backoff", "stalled"}:
             keep[run_id] = worker
             continue
         if event_id and event_id in queue_events and queue_events[event_id].get("status") not in {"completed", "failed", "done"}:
@@ -580,16 +546,10 @@ def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     queued_events = load_jsonl(config_path(config, "event_queue"))
     _rebuild_queue_records(state, queued_events)
 
-    valid_pending_event_ids = set(state.setdefault("queue", {}).setdefault("events", {}))
+    valid_pending_event_ids = set(
+        state.setdefault("queue", {}).setdefault("events", {})
+    )
     workers = state.setdefault("workers", {})
-    stale_manual_workers = [
-        run_id
-        for run_id, worker in workers.items()
-        if worker.get("status") == "manual_pending" and worker.get("queue_event_id") not in valid_pending_event_ids
-    ]
-    for run_id in stale_manual_workers:
-        workers.pop(run_id, None)
-
     try:
         pending_approval_runs = {
             str(item.get("worker_run_id") or "")
@@ -599,7 +559,7 @@ def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     except KeyError:
         pending_approval_runs = set()
     # Approval-gated workers without a surviving queue event or pending approval
-    # are stale runtime leftovers. Once both coordination anchors are gone,
+    # are stale runtime leftovers. Once both queue/approval anchors are gone,
     # keeping them around only causes dashboards and health checks to report
     # ghost workers.
     stale_approval_workers = [
@@ -647,15 +607,6 @@ def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
 def load_event_queue(config: dict[str, Any]) -> list[dict[str, Any]]:
     with runtime_state_lock(config, shared=True):
         return load_jsonl(config_path(config, "event_queue"))
-
-
-def enqueue_event(config: dict[str, Any], event: dict[str, Any]) -> None:
-    with runtime_state_lock(config, shared=False):
-        _append_runtime_jsonl_unlocked(
-            config_path(config, "event_queue"),
-            event,
-            source_id="event_queue",
-        )
 
 
 def replace_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
@@ -1709,7 +1660,6 @@ def verify_runtime_lock_capability(
             "writers",
             "writer_registry_path",
             "writer_registry_sha256",
-            "dispatcher_sha256",
             "bootstrap_task_id",
             "bootstrap_task_contract_sha256",
             "bootstrap_completion_evidence_path",
@@ -1772,14 +1722,6 @@ def verify_runtime_lock_capability(
                 != expected_digest
             ):
                 raise ValueError("runtime lock writer binding mismatch")
-        if (
-            manifest.get("dispatcher_sha256")
-            != writers[
-                "scripts/dispatch_loop_product_level_remediation_2026-07-13.py"
-            ]
-        ):
-            raise ValueError("dispatcher binding mismatch")
-
         registry_path = _capability_repo_path(
             root,
             manifest["writer_registry_path"],

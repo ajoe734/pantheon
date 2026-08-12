@@ -2,7 +2,7 @@
 
 Covers:
 - Packet model construction and validation
-- HMAC-SHA256 signing and verification
+- Ed25519 signing and verification
 - Replay protection (duplicate packet rejected)
 - Dispatcher dry-run materialises no subprocess calls
 - Dispatcher live-run calls one atomic ai_status.py materialization batch
@@ -12,10 +12,15 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
+import base64
 from pathlib import Path
 from unittest.mock import patch
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from ..dev_bridge_models import (
     BridgeActor,
@@ -33,6 +38,7 @@ from ..dev_bridge_signer import (
     sign_packet,
     verify_packet,
 )
+from .. import dev_bridge_dispatcher
 from ..dev_bridge_dispatcher import dispatch_task_packet
 from .dev_bridge_test_support import write_materializing_ai_status
 
@@ -119,11 +125,53 @@ class TestDevTaskPacketModel(unittest.TestCase):
 
 class TestDevBridgeSigner(unittest.TestCase):
 
+    def test_production_signer_uses_configured_active_key_id(self):
+        pkt = _make_packet()
+        private_key = b"p" * 32
+        public_key = Ed25519PrivateKey.from_private_bytes(private_key).public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "BRIDGE_SIGNING_KEY_ID": "bridge-prod-2026-08",
+                "BRIDGE_SIGNING_PRIVATE_KEY": private_key.hex(),
+                "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": json.dumps({
+                    "bridge-prod-2026-08": base64.urlsafe_b64encode(public_key).decode().rstrip("=")
+                }),
+            },
+            clear=True,
+        ):
+            signed = sign_packet(pkt)
+        self.assertEqual(signed.signature.key_id, "bridge-prod-2026-08")
+
+    def test_production_signer_rejects_private_public_mismatch(self):
+        with patch.dict(
+            os.environ,
+            {
+                "BRIDGE_SIGNING_KEY_ID": "bridge-prod-2026-08",
+                "BRIDGE_SIGNING_PRIVATE_KEY": (b"p" * 32).hex(),
+                "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": json.dumps({
+                    "bridge-prod-2026-08": base64.urlsafe_b64encode(b"q" * 32).decode().rstrip("=")
+                }),
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                sign_packet(_make_packet())
+
+    def test_missing_key_has_no_development_fallback_authority(self):
+        pkt = _make_packet()
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "BRIDGE_SIGNING_KEY_ID"):
+                sign_packet(pkt)
+
     def test_sign_adds_signature(self):
         pkt = _make_packet()
         signed = sign_packet(pkt, key_store=_TEST_KEY_STORE)
         self.assertIsNotNone(signed.signature)
-        self.assertEqual(signed.signature.algorithm, "HMAC-SHA256")
+        self.assertEqual(signed.signature.algorithm, "Ed25519")
         self.assertEqual(signed.signature.key_id, "assistant-bridge-dev")
 
     def test_verify_valid_signature_passes(self):
@@ -142,7 +190,7 @@ class TestDevBridgeSigner(unittest.TestCase):
         tampered = signed.model_copy(
             update={"signature": PacketSignature(
                 keyId="assistant-bridge-dev",
-                algorithm="HMAC-SHA256",
+                algorithm="Ed25519",
                 value="deadbeef" * 8,
             )}
         )
@@ -157,7 +205,7 @@ class TestDevBridgeSigner(unittest.TestCase):
             verify_packet(signed, key_store=wrong_store)
 
     def test_sign_excludes_signature_from_payload(self):
-        """Signing the same content twice must produce the same MAC."""
+        """Signing the same content twice must produce the same Ed25519 signature."""
         pkt = _make_packet()
         s1 = sign_packet(pkt, key_store=_TEST_KEY_STORE)
         s2 = sign_packet(pkt, key_store=_TEST_KEY_STORE)
@@ -253,6 +301,49 @@ class TestDispatcher(unittest.TestCase):
         req = self._signed_request(packet_id="pkt_live001")
         dispatch_task_packet(req, key_store=_TEST_KEY_STORE)
         self.assertTrue(has_seen_packet("pkt_live001", repo_root=self.repo_root))
+
+    def test_ai_status_subprocess_receives_no_signing_authority(self):
+        req = self._signed_request(packet_id="pkt_env_boundary")
+        secrets = {
+            "BRIDGE_SIGNING_PRIVATE_KEY": "private",
+            "BRIDGE_SIGNING_KEY": "legacy-symmetric",
+            "BRIDGE_SIGNING_KEY_ID": "active-id",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY": "assertion-private",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY": "assertion-ed25519-private",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID": "assertion-active-id",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_JSON": "{}",
+        }
+        dispatch_task_packet(
+            req,
+            key_store=_TEST_KEY_STORE,
+            runtime_env=secrets,
+        )
+        calls = [
+            json.loads(line)
+            for line in Path(self.repo_root, "calls.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        self.assertTrue(calls)
+        self.assertTrue(all(call["signing_authority_markers"] == {} for call in calls))
+
+    def test_git_subprocess_receives_no_signing_authority(self):
+        completed = __import__("subprocess").CompletedProcess(
+            args=["git"], returncode=0, stdout="abc\n", stderr=""
+        )
+        with patch.dict(os.environ, {
+            "BRIDGE_SIGNING_PRIVATE_KEY": "bridge-private",
+            "BRIDGE_SIGNING_KEY_ID": "bridge-id",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY": "operator-private",
+            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID": "operator-id",
+        }, clear=False), patch.object(
+            dev_bridge_dispatcher.subprocess, "run", return_value=completed
+        ) as run:
+            self.assertEqual(dev_bridge_dispatcher._git_stdout(Path(self.repo_root), "rev-parse", "HEAD"), "abc")
+        child_env = run.call_args.kwargs["env"]
+        self.assertNotIn("BRIDGE_SIGNING_PRIVATE_KEY", child_env)
+        self.assertNotIn("BRIDGE_SIGNING_KEY_ID", child_env)
+        self.assertNotIn("PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY", child_env)
+        self.assertNotIn("PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID", child_env)
 
     def test_replay_rejected_on_second_dispatch(self):
         req = self._signed_request(packet_id="pkt_replay001")

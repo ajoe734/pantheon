@@ -15,7 +15,12 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from approval_queue import consume_resume_override, create_approval, find_resume_override
+from approval_queue import (
+    consume_resume_override,
+    create_approval,
+    find_resume_override,
+    validated_approval_binding,
+)
 from common import (
     ROOT,
     approval_tool_input_signature,
@@ -1548,6 +1553,7 @@ def _approval_context(payload: dict[str, Any], config: dict[str, Any]) -> dict[s
     return {
         "provider": provider_id,
         "task_id": os.environ.get("ORCH_TASK_ID") or payload.get("task_id") or payload.get("taskId"),
+        "task_generation": os.environ.get("ORCH_TASK_GENERATION"),
         "worker_run_id": os.environ.get("ORCH_RUN_ID"),
         "agent_id": os.environ.get("ORCH_AGENT_ID"),
         "session_id": payload.get("session_id") or payload.get("sessionId") or os.environ.get("ORCH_SESSION_ID"),
@@ -1594,13 +1600,15 @@ def _permission_request_response(
 
 
 def _approval_signature(
-    session_id: str | None,
+    task_id: str | None,
+    task_generation: str | int | None,
     tool_name: str,
     tool_input: dict[str, Any] | None = None,
     tool_input_signature: str | None = None,
-) -> tuple[str | None, str, str]:
+) -> tuple[str, str, str, str]:
     return (
-        session_id,
+        str(task_id or ""),
+        str(task_generation or ""),
         tool_name,
         str(tool_input_signature or approval_tool_input_signature(tool_input if tool_input is not None else {})),
     )
@@ -1633,25 +1641,33 @@ def _session_allow_updates(tool_name: str, tool_input: dict[str, Any]) -> list[d
 def _matching_approval(
     config: dict[str, Any],
     *,
-    session_id: str | None,
+    task_id: str | None,
+    task_generation: str | int | None,
     tool_name: str,
     tool_input: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     state = load_approval_state(config)
-    signature = _approval_signature(session_id, tool_name, tool_input)
+    signature = _approval_signature(task_id, task_generation, tool_name, tool_input)
     pending_match = None
     history_match = None
     for item in state.get("pending", []):
         item_signature = _approval_signature(
-            item.get("session_id"),
+            item.get("task_id"),
+            item.get("task_generation"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),
         )
         if item_signature == signature:
             pending_match = item
     for item in reversed(state.get("history", [])):
+        if item.get("resume_override_active"):
+            # A non-remembered Claude approval is an exact one-shot grant.
+            # It is decided only by find_resume_override + atomic consume,
+            # never by generic resolved-history replay.
+            continue
         item_signature = _approval_signature(
-            item.get("session_id"),
+            item.get("task_id"),
+            item.get("task_generation"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),
         )
@@ -1665,10 +1681,12 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
     if event_name in {"PostToolUse", "PostToolUseFailure"}:
         tool_name = payload.get("tool_name") or payload.get("toolName") or ""
         tool_input = payload.get("tool_input") or payload.get("toolInput") or {}
-        session_id = payload.get("session_id") or payload.get("sessionId")
+        task_id = os.environ.get("ORCH_TASK_ID") or payload.get("task_id") or payload.get("taskId")
+        task_generation = os.environ.get("ORCH_TASK_GENERATION") or payload.get("task_generation") or payload.get("taskGeneration")
         active_override = find_resume_override(
             config,
-            session_id=session_id,
+            task_id=task_id,
+            task_generation=task_generation,
             tool_name=tool_name,
             tool_input=tool_input,
         )
@@ -1697,16 +1715,19 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
     if event_name in {"PreToolUse", "PermissionRequest"}:
         tool_name = payload.get("tool_name") or payload.get("toolName") or ""
         tool_input = payload.get("tool_input") or payload.get("toolInput") or {}
-        session_id = payload.get("session_id") or payload.get("sessionId")
+        task_id = os.environ.get("ORCH_TASK_ID") or payload.get("task_id") or payload.get("taskId")
+        task_generation = os.environ.get("ORCH_TASK_GENERATION") or payload.get("task_generation") or payload.get("taskGeneration")
         active_override = find_resume_override(
             config,
-            session_id=session_id,
+            task_id=task_id,
+            task_generation=task_generation,
             tool_name=tool_name,
             tool_input=tool_input,
         )
         pending_match, history_match = _matching_approval(
             config,
-            session_id=session_id,
+            task_id=task_id,
+            task_generation=task_generation,
             tool_name=tool_name,
             tool_input=tool_input,
         )
@@ -1721,29 +1742,36 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
 
         if event_name == "PermissionRequest":
             if active_override:
-                effective_decision = "allow"
-                effective_reason = active_override.get("note") or f"Resuming approved {tool_name} request."
-                matched_approval_id = active_override.get("approval_id")
-                log_event(
+                consumed = consume_resume_override(
                     config,
-                    event_name,
-                    {
-                        **payload,
-                        "broker_decision": decision,
-                        "effective_decision": effective_decision,
-                        "effective_reason": effective_reason,
-                        "matched_approval_id": matched_approval_id,
-                        "updated_permissions": _session_allow_updates(tool_name, tool_input),
-                    },
+                    approval_id=active_override["approval_id"],
+                    reason=f"PermissionRequest:{tool_name}",
                 )
-                emit_hook_response(
-                    _permission_request_response(
-                        "allow",
-                        updated_input=tool_input,
-                        updated_permissions=_session_allow_updates(tool_name, tool_input),
+                if consumed is not None:
+                    effective_decision = "allow"
+                    effective_reason = active_override.get("note") or f"Resuming approved {tool_name} request."
+                    matched_approval_id = active_override.get("approval_id")
+                    log_event(
+                        config,
+                        event_name,
+                        {
+                            **payload,
+                            "broker_decision": decision,
+                            "effective_decision": effective_decision,
+                            "effective_reason": effective_reason,
+                            "matched_approval_id": matched_approval_id,
+                            "updated_permissions": _session_allow_updates(tool_name, tool_input),
+                            "resume_override_consumed_at": consumed.get("resume_override_consumed_at"),
+                        },
                     )
-                )
-                return 0
+                    emit_hook_response(
+                        _permission_request_response(
+                            "allow",
+                            updated_input=tool_input,
+                            updated_permissions=_session_allow_updates(tool_name, tool_input),
+                        )
+                    )
+                    return 0
             if history_match:
                 behavior = "allow" if history_match.get("decision") == "allow" else "deny"
                 message = history_match.get("note") or decision["reason"]
@@ -1798,22 +1826,29 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
             return 0
 
         if active_override:
-            effective_decision = "allow"
-            effective_reason = active_override.get("note") or f"Resuming approved {tool_name} request."
-            matched_approval_id = active_override.get("approval_id")
-            log_event(
+            consumed = consume_resume_override(
                 config,
-                event_name,
-                {
-                    **payload,
-                    "broker_decision": decision,
-                    "effective_decision": effective_decision,
-                    "effective_reason": effective_reason,
-                    "matched_approval_id": matched_approval_id,
-                },
+                approval_id=active_override["approval_id"],
+                reason=f"PreToolUse:{tool_name}",
             )
-            emit_hook_response(_decision_response(event_name, "allow", effective_reason))
-            return 0
+            if consumed is not None:
+                effective_decision = "allow"
+                effective_reason = active_override.get("note") or f"Resuming approved {tool_name} request."
+                matched_approval_id = active_override.get("approval_id")
+                log_event(
+                    config,
+                    event_name,
+                    {
+                        **payload,
+                        "broker_decision": decision,
+                        "effective_decision": effective_decision,
+                        "effective_reason": effective_reason,
+                        "matched_approval_id": matched_approval_id,
+                        "resume_override_consumed_at": consumed.get("resume_override_consumed_at"),
+                    },
+                )
+                emit_hook_response(_decision_response(event_name, "allow", effective_reason))
+                return 0
 
         if decision["decision"] in {"allow", "deny"}:
             effective_decision = decision["decision"]
@@ -1832,18 +1867,24 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
             return 0
 
         if pending_match is None:
-            create_approval(
-                config,
-                {
-                    **_approval_context(payload, config),
-                    "tool_name": decision["tool_name"],
-                    "tool_input": decision["tool_input"],
-                    "risk_class": decision["risk_class"],
-                    "suggested_rule": decision.get("suggested_rule"),
-                    "request_payload": payload,
-                    "broker_decision": decision,
-                },
-            )
+            approval_context = _approval_context(payload, config)
+            try:
+                validated_approval_binding(approval_context)
+            except ValueError:
+                approval_context = None
+            if approval_context is not None:
+                create_approval(
+                    config,
+                    {
+                        **approval_context,
+                        "tool_name": decision["tool_name"],
+                        "tool_input": decision["tool_input"],
+                        "risk_class": decision["risk_class"],
+                        "suggested_rule": decision.get("suggested_rule"),
+                        "request_payload": payload,
+                        "broker_decision": decision,
+                    },
+                )
         effective_decision = "defer"
         effective_reason = decision["reason"]
         log_event(

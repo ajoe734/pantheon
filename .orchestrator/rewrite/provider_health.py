@@ -1,4 +1,4 @@
-"""Provider failure-response + account health — Phase 5 (SUPERVISOR_REWRITE_PLAN.md,
+"""Provider failure-response and account health for Supervisor Authority V2.
 anti-pattern G).
 
 The incumbent scatters the "what do we do when a worker fails on this account"
