@@ -11,7 +11,7 @@
     "base_branch": "dev",
     "task_branch": "task/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
-    "evidence_cut_at": "2026-08-12T10:54:18Z"
+    "evidence_cut_at": "2026-08-12T11:08:46Z"
   },
   "scope": {
     "owned_layer": "Supervisor Authority V2 assignment ordering and dispatch regression coverage for stale L12 missing_process residue.",
@@ -45,17 +45,20 @@
     "reason_not_to_restore_old_reaper": "Authority V2 explicitly rejects retired failure-streak control-plane symbols; restoring the old policy would create a second scheduling authority."
   },
   "implementation": {
-    "merge_base": "ea8766efdc0cfd7658d6413bf69826bfef6dceda",
+    "merge_base": "1ca51300e6502f297244eae2ef7ce2e1b30891f2",
     "preimplementation_merge_commit": "a7c635d778dab3f98cb811e96a7217f942eb0717",
+    "latest_dev_merge_commit": "89e72ee035eb42e1a6c33f9e6997bb850962cfd3",
     "policy_functions": [
       "task_is_l12_recovery_work",
       "bounded_fallback_candidates",
-      "plan_task_assignment_pair"
+      "plan_task_assignment_pair",
+      "reconcile_unavailable_assignments"
     ],
     "behavior": [
       "L12 recovery work is identified only by L12- or SUP-L12- task ids.",
       "For L12 recovery work, declared preferred_lane_order candidates are enqueued before direct generic reassignment fallbacks.",
       "The finite, cycle-safe fallback traversal remains bounded by the configured agent roster.",
+      "The sole durable assignment reconciler applies the same L12-first order to owner and reviewer recovery and keeps the pair independent.",
       "Non-L12 work keeps direct configured fallbacks ahead of task-preferred lanes.",
       "The sole dispatch planner remains driven by canonical owner/reviewer truth and ignores a raw legacy task_failure_streaks bucket."
     ]
@@ -77,7 +80,7 @@
       "id": "AC3",
       "criterion": "Prove Claude2/Antigravity dispatch before Codex-family fallback.",
       "status": "pass",
-      "proof": "The planner dispatches the assigned Claude2 and Antigravity lanes when Codex2 is evaluated first. Assignment recovery selects declared Antigravity before configured Codex/Codex2 fallbacks for L12 work, while a non-L12 control still selects Codex."
+      "proof": "The planner dispatches the assigned Claude2 and Antigravity lanes when Codex2 is evaluated first. Direct assignment planning selects declared Antigravity before Codex, and the sole durable recovery path persists Claude2 or Antigravity owner/reviewer assignments ahead of Codex-family fallbacks."
     },
     {
       "id": "AC4",
@@ -89,26 +92,26 @@
       "id": "AC5",
       "criterion": "Full supervisor regression passes.",
       "status": "pass",
-      "proof": "All 43 Supervisor Authority V2 contract tests passed after the focused L12 regressions."
+      "proof": "All 44 Supervisor Authority V2 contract tests passed after the focused L12 regressions."
     }
   ],
   "verification": {
     "checkout_python": ".venv-pantheon/bin/python3 provisioned by scripts/dev/provision_python_distribution.py",
     "commands": [
       {
-        "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; cd .orchestrator; \"$PANTHEON_TASK_PY\" -m unittest -v test_supervisor.SharedPlannerContractTests.test_legacy_l12_missing_process_streak_cannot_suppress_assigned_lane test_supervisor.SharedPlannerContractTests.test_l12_assignment_prefers_declared_provider_before_codex_fallback",
+        "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; cd .orchestrator; \"$PANTHEON_TASK_PY\" -m unittest -v test_supervisor.SharedPlannerContractTests.test_legacy_l12_missing_process_streak_cannot_suppress_assigned_lane test_supervisor.SharedPlannerContractTests.test_l12_assignment_prefers_declared_provider_before_codex_fallback test_supervisor.AccountHealthAndRecoveryContractTests.test_l12_recovery_prefers_declared_provider_lanes",
         "result": "pass",
-        "conclusion": "2 focused tests passed in 0.003 seconds, including Claude2 and Antigravity subtests."
+        "conclusion": "3 focused tests passed in 0.007 seconds, including direct dispatch, helper ordering, and durable owner/reviewer recovery scenarios."
       },
       {
         "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_TASK_PY\" .orchestrator/test_supervisor.py",
         "result": "pass",
-        "conclusion": "43 tests passed in 0.605 seconds."
+        "conclusion": "44 tests passed in 0.628 seconds."
       },
       {
         "command": "PANTHEON_TASK_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; cd .orchestrator; \"$PANTHEON_TASK_PY\" -m unittest -v test_runtime_state.LoadRuntimeStateTests.test_load_runtime_state_drops_retired_control_plane_buckets",
         "result": "pass",
-        "conclusion": "The Authority V2 retired-bucket migration regression passed in 0.002 seconds."
+        "conclusion": "The Authority V2 retired-bucket migration regression passed in 0.003 seconds."
       },
       {
         "command": "git diff --check",
@@ -121,14 +124,14 @@
         "conclusion": "No supervisor configuration change."
       }
     ],
-    "validated_at": "2026-08-12T10:54:18Z",
-    "command_runtime_sha": "ea8766efdc0cfd7658d6413bf69826bfef6dceda",
-    "base_sha": "ea8766efdc0cfd7658d6413bf69826bfef6dceda"
+    "validated_at": "2026-08-12T11:08:46Z",
+    "command_runtime_sha": "1ca51300e6502f297244eae2ef7ce2e1b30891f2",
+    "base_sha": "1ca51300e6502f297244eae2ef7ce2e1b30891f2"
   },
   "delivery": {
     "historical_pull_request": 4590,
     "historical_merge_commit": "23ae23c2185d31d2aeacafaa9b051127a6d53136",
-    "current_pull_request": null,
+    "current_pull_request": 4795,
     "current_head_sha": null,
     "deployment": "not_applicable_repository_supervisor_policy"
   },

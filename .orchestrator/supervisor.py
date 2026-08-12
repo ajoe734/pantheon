@@ -10228,6 +10228,10 @@ def reconcile_unavailable_assignments(
             continue
         owner = canonical_agent_name(config, str(task.get("owner") or ""))
         reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+        l12_recovery = task_is_l12_recovery_work(task)
+        preferred_recovery_lanes = (
+            task_preferred_lane_order(config, task) if l12_recovery else []
+        )
 
         role = ""
         unavailable_actor = ""
@@ -10254,6 +10258,12 @@ def reconcile_unavailable_assignments(
                 config,
                 settings.get("reviewer_fallbacks", {}) or {},
                 roots=[reviewer],
+                preferred=[
+                    lane
+                    for lane in preferred_recovery_lanes
+                    if lane not in {owner, reviewer}
+                ],
+                preferred_first=l12_recovery,
             ) or default_reassignment_candidates(config, exclude={owner, reviewer})
             pair = plan_task_assignment_pair(
                 config,
@@ -10270,13 +10280,15 @@ def reconcile_unavailable_assignments(
                 config,
                 settings.get("owner_fallbacks", {}) or {},
                 roots=[owner],
+                preferred=[lane for lane in preferred_recovery_lanes if lane != owner],
+                preferred_first=l12_recovery,
             ) or default_reassignment_candidates(config, exclude={owner, reviewer})
             pair = plan_task_assignment_pair(
                 config,
                 task,
                 state=state,
                 owner_candidates=candidates,
-                preferred_reviewers=[reviewer],
+                preferred_reviewers=None if l12_recovery else [reviewer],
             )
         if pair is None:
             continue

@@ -138,6 +138,38 @@ def task_fixture(
     }
 
 
+def add_l12_provider_lanes_fixture(config: dict[str, object]) -> None:
+    for agent_id, display_name in (
+        ("claude2", "Claude2"),
+        ("antigravity", "Antigravity"),
+    ):
+        account = f"{agent_id}-account"
+        config["agents"][agent_id] = {
+            "id": agent_id,
+            "display_name": display_name,
+            "provider": agent_id,
+            "adapter": agent_id,
+            "max_parallel": 1,
+        }
+        config["providers"][agent_id] = {
+            "delivery_mode": agent_id,
+            "account": account,
+        }
+        config["ready_dispatcher"]["max_concurrent_per_account"][account] = 1
+    config["worker_reassignment"]["owner_fallbacks"].update(
+        {
+            "Claude2": ["Codex", "Codex2"],
+            "Antigravity": ["Codex", "Codex2"],
+        }
+    )
+    config["worker_reassignment"]["reviewer_fallbacks"].update(
+        {
+            "Claude2": ["Codex", "Codex2"],
+            "Antigravity": ["Codex", "Codex2"],
+        }
+    )
+
+
 def provider_report_fixture(*, ready: bool = True, checked_at: str | None = None) -> dict[str, object]:
     checked = checked_at or supervisor.utc_now()
     providers: dict[str, object] = {}
@@ -276,35 +308,7 @@ class SharedPlannerContractTests(unittest.TestCase):
         self.config = config_fixture()
 
     def _add_l12_provider_lanes(self) -> None:
-        for agent_id, display_name in (
-            ("claude2", "Claude2"),
-            ("antigravity", "Antigravity"),
-        ):
-            account = f"{agent_id}-account"
-            self.config["agents"][agent_id] = {
-                "id": agent_id,
-                "display_name": display_name,
-                "provider": agent_id,
-                "adapter": agent_id,
-                "max_parallel": 1,
-            }
-            self.config["providers"][agent_id] = {
-                "delivery_mode": agent_id,
-                "account": account,
-            }
-            self.config["ready_dispatcher"]["max_concurrent_per_account"][account] = 1
-        self.config["worker_reassignment"]["owner_fallbacks"].update(
-            {
-                "Claude2": ["Codex", "Codex2"],
-                "Antigravity": ["Codex", "Codex2"],
-            }
-        )
-        self.config["worker_reassignment"]["reviewer_fallbacks"].update(
-            {
-                "Claude2": ["Codex", "Codex2"],
-                "Antigravity": ["Codex", "Codex2"],
-            }
-        )
+        add_l12_provider_lanes_fixture(self.config)
 
     def test_owner_todo_is_dispatchable(self) -> None:
         decision = planner_decision(self.config, task_fixture())
@@ -1032,6 +1036,74 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex2")
         self.assertEqual(persist.call_args.kwargs["expected_owner"], "Codex")
+
+    def test_l12_recovery_prefers_declared_provider_lanes(self) -> None:
+        add_l12_provider_lanes_fixture(self.config)
+        scenarios = (
+            ("owner", ["codex2_account"], "Claude2", "Antigravity"),
+            (
+                "owner",
+                ["codex2_account", "claude2_account"],
+                "Antigravity",
+                "Codex",
+            ),
+            ("reviewer", ["codex2_account"], "Codex", "Claude2"),
+        )
+        for role, paused_accounts, expected_owner, expected_reviewer in scenarios:
+            with self.subTest(role=role, paused_accounts=paused_accounts):
+                task = task_fixture(
+                    "SUP-L12-PREFERRED-RECOVERY-20260729",
+                    status="review" if role == "reviewer" else "in_progress",
+                    owner="Codex" if role == "reviewer" else "Codex2",
+                    reviewer="Codex2" if role == "reviewer" else "Antigravity",
+                )
+                task["preferred_lane_order"] = ["Claude2", "Antigravity"]
+                state = {
+                    "account_runtime_schema_version": supervisor.ACCOUNT_RUNTIME_SCHEMA_VERSION,
+                    "workers": {},
+                    "queue": {"events": {}},
+                    "provider_guardrails": {
+                        "dispatch_pauses": {
+                            account: {
+                                "provider": account,
+                                "pause_kind": "quota_terminal",
+                                "blocked_until": "9999-12-31T23:59:59Z",
+                            }
+                            for account in paused_accounts
+                        }
+                    },
+                }
+                with (
+                    mock.patch.object(
+                        supervisor,
+                        "load_status",
+                        return_value={"tasks": [task]},
+                    ),
+                    mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                    mock.patch.object(
+                        supervisor,
+                        "agent_provider_auth_blocked",
+                        return_value=False,
+                    ),
+                    mock.patch.object(
+                        supervisor,
+                        "persist_task_reassignment",
+                        return_value=True,
+                    ) as persist,
+                ):
+                    changed = supervisor.reconcile_unavailable_assignments(
+                        self.config,
+                        state,
+                    )
+                self.assertTrue(changed)
+                self.assertEqual(
+                    persist.call_args.kwargs["new_owner"],
+                    expected_owner,
+                )
+                self.assertEqual(
+                    persist.call_args.kwargs["new_reviewer"],
+                    expected_reviewer,
+                )
 
     def test_terminal_pause_reopens_stale_blocked_assignment_for_normal_dispatch(self) -> None:
         task = task_fixture(status="blocked", reviewer="Human/Ops")
