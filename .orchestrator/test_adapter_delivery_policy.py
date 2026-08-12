@@ -20,6 +20,22 @@ from adapters.gemini import GeminiAdapter
 
 
 class AdapterDeliveryPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # These are adapter command-shape tests.  The authoritative binding
+        # itself is covered by test_status_command_runtime_pin; avoid copying a
+        # full live runtime fixture into every provider-specific case.
+        self._task_state_env = mock.patch(
+            "common.task_state_store_runtime_env",
+            return_value={
+                "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                "PANTHEON_TASK_STATE_EVENT_LOG": "/tmp/task-state-events-v2.jsonl",
+            },
+        )
+        self._task_state_env.start()
+
+    def tearDown(self) -> None:
+        self._task_state_env.stop()
+
     def test_codex_alias_sets_agent_identity_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

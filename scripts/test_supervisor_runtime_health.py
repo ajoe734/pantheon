@@ -75,7 +75,7 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
                 "cycle_elapsed_seconds": 10.0,
                 "queue_to_start": {"count": 1, "average_seconds": 2.0, "max_seconds": 2.0},
             },
-            "task_state_shadow": {
+            "task_state_projection": {
                 "mode": "authoritative",
                 "ok": True,
                 "caught_up": True,

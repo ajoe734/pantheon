@@ -33,7 +33,6 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
-from urllib.parse import quote
 
 from .dev_bridge_admission import load_admission_record, persist_admission_record
 from .dev_bridge_models import (
@@ -62,15 +61,6 @@ COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
 COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
 TASK_STATE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
-REQUIRE_TASK_STATE_READBACK_ENV = (
-    "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK"
-)
-LEGACY_COMMAND_ENV_NAMES = (
-    "PANTHEON_STATUS_COMMAND_ROOT",
-    "PANTHEON_STATUS_COMMAND_SHA",
-    "PANTHEON_STATUS_COMMAND_REMOTE",
-    "PANTHEON_STATUS_COMMAND_BASE_REF",
-)
 AUTO_WORKER_ENV_NAMES = (
     "ORCH_RUN_ID",
     "ORCH_TASK_ID",
@@ -527,63 +517,34 @@ def _runtime_task_state_env(
     *,
     environment: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, str]:
-    """Resolve the live journal binding without trusting a repo template path."""
+    """Resolve the explicit authoritative V2 journal binding.
+
+    The bridge intentionally does not infer authority from supervisor runtime
+    state.  That used a derived status alias as a second control plane and
+    allowed a stale process to select a retired journal.  A live status root
+    must instead receive its exact binding from the provisioned environment.
+    """
 
     source = environment if environment is not None else os.environ
     if _environment_targets_status_root(repo_root, environment=source):
         mode = str(source.get(TASK_STATE_MODE_ENV) or "").strip().lower()
         event_log = str(source.get(TASK_STATE_EVENT_LOG_ENV) or "").strip()
-        if mode or event_log:
-            if mode not in {"shadow", "authoritative"}:
-                raise RuntimeError(
-                    f"{TASK_STATE_MODE_ENV} must be shadow or authoritative"
-                )
-            if not event_log:
-                raise RuntimeError(
-                    f"{TASK_STATE_EVENT_LOG_ENV} is required in {mode} mode"
-                )
-            return {
-                TASK_STATE_MODE_ENV: mode,
-                TASK_STATE_EVENT_LOG_ENV: _absolute_runtime_path(
-                    event_log,
-                    label=TASK_STATE_EVENT_LOG_ENV,
-                ),
-            }
-
-    runtime_state_path = Path(repo_root) / ".orchestrator" / "state.json"
-    if not runtime_state_path.is_file():
-        return {}
-    try:
-        runtime_state = json.loads(runtime_state_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError(
-            f"could not read supervisor runtime state: {runtime_state_path}"
-        ) from exc
-    if not isinstance(runtime_state, dict):
-        raise RuntimeError("supervisor runtime state must be a JSON object")
-    supervisor = runtime_state.get("supervisor")
-    shadow = (
-        supervisor.get("task_state_shadow")
-        if isinstance(supervisor, dict)
-        else None
-    )
-    if not isinstance(shadow, dict):
-        return {}
-    mode = str(shadow.get("mode") or "").strip().lower()
-    event_log = str(shadow.get("event_log") or "").strip()
-    if mode not in {"shadow", "authoritative"}:
-        return {}
-    if not event_log:
-        raise RuntimeError(
-            "supervisor task-state runtime binding requires an absolute event log"
-        )
-    return {
-        TASK_STATE_MODE_ENV: mode,
-        TASK_STATE_EVENT_LOG_ENV: _absolute_runtime_path(
-            event_log,
-            label="supervisor task-state event log",
-        ),
-    }
+        if mode != "authoritative":
+            raise RuntimeError(
+                f"{TASK_STATE_MODE_ENV}=authoritative is required for dev bridge dispatch"
+            )
+        if not event_log:
+            raise RuntimeError(
+                f"{TASK_STATE_EVENT_LOG_ENV} is required in authoritative mode"
+            )
+        return {
+            TASK_STATE_MODE_ENV: "authoritative",
+            TASK_STATE_EVENT_LOG_ENV: _absolute_runtime_path(
+                event_log,
+                label=TASK_STATE_EVENT_LOG_ENV,
+            ),
+        }
+    return {}
 
 
 def _governed_command_root(
@@ -617,7 +578,7 @@ def _status_command_context(
     *,
     environment: Optional[Mapping[str, str]] = None,
 ) -> Tuple[str, Dict[str, str], bool]:
-    """Return executable/env for either a governed runtime or legacy fixture."""
+    """Return the governed command runtime bound to the V2 task journal."""
 
     source = environment if environment is not None else os.environ
     task_state_env = _runtime_task_state_env(
@@ -864,94 +825,6 @@ def _admission_provenance(packet: DevTaskPacket) -> Dict[str, object]:
     }
 
 
-def _materialized_task_candidates(*, repo_root: str, task_id: str) -> List[Dict[str, object]]:
-    candidates: List[Dict[str, object]] = []
-    status_path = Path(repo_root) / "ai-status.json"
-    try:
-        status_payload = json.loads(status_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError) as exc:
-        raise OSError(f"could not read active ai-status state: {status_path}") from exc
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"active ai-status state is invalid JSON: {status_path}") from exc
-    if not isinstance(status_payload, dict):
-        raise ValueError("active ai-status state must be an object")
-    tasks = status_payload.get("tasks", [])
-    if tasks is not None and not isinstance(tasks, list):
-        raise ValueError("active ai-status tasks must be a list")
-    for item in tasks or []:
-        if isinstance(item, dict) and str(item.get("id") or "") == task_id:
-            candidates.append(item)
-
-    archive_name = quote(task_id, safe="-_.") + ".json"
-    archive_path = Path(repo_root) / "ai-task-archive" / "tasks" / archive_name
-    if archive_path.exists():
-        try:
-            archive = json.loads(archive_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError) as exc:
-            raise OSError(f"could not read terminal task snapshot: {archive_path}") from exc
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"terminal task snapshot is invalid JSON: {archive_path}") from exc
-        task = archive.get("task") if isinstance(archive, dict) else None
-        if not isinstance(task, dict):
-            raise ValueError(f"terminal task snapshot is invalid: {archive_path}")
-        candidates.append(task)
-    return candidates
-
-
-# Fields that stay bound to the packet's originally signed task spec forever.
-# Owner/reviewer are deliberately excluded: they are live routing state that a
-# later Human/Ops or supervisor-governed reassignment may change, and replay
-# must validate immutable declared scope/provenance, not the current routing
-# choice. The original signed owner/reviewer are still checked below as part
-# of the frozen `dev_bridge.task_spec` provenance envelope, so a forged
-# original assignment is still rejected -- only a *subsequent* routing change
-# is now admissible.
-_IMMUTABLE_TASK_SPEC_FIELDS = (
-    "id",
-    "title",
-    "phase",
-    "depends_on",
-    "artifacts",
-    "acceptance",
-    "summary",
-)
-
-
-def _validate_materialized_task_candidate(
-    packet: DevTaskPacket,
-    task: BridgeTask,
-    candidate: Mapping[str, object],
-) -> None:
-    for field in ("depends_on", "artifacts", "acceptance"):
-        value = candidate.get(field)
-        if not isinstance(value, list) or any(
-            not isinstance(item, str) for item in value
-        ):
-            raise ValueError(
-                f"materialized task {task.id!r} has invalid {field} provenance"
-            )
-    observed_spec = {
-        "id": candidate.get("id"),
-        "title": candidate.get("title"),
-        "phase": candidate.get("phase"),
-        "depends_on": list(candidate["depends_on"]),
-        "artifacts": list(candidate["artifacts"]),
-        "acceptance": list(candidate["acceptance"]),
-        "summary": candidate.get("summary_zh"),
-    }
-    signed_spec = _task_spec(task)
-    if observed_spec != {
-        field: signed_spec[field] for field in _IMMUTABLE_TASK_SPEC_FIELDS
-    }:
-        raise ValueError(
-            f"materialized task {task.id!r} does not match the signed task spec"
-        )
-    if candidate.get("dev_bridge") != _task_metadata(packet, task)["dev_bridge"]:
-        raise ValueError(
-            f"materialized task {task.id!r} does not match signed bridge provenance"
-        )
-
-
 def _run_readback_command(
     command: List[str],
     *,
@@ -1000,23 +873,15 @@ def _canonical_task_state_readback(
         repo_root,
         environment=environment,
     )
-    required = str(
-        environment.get(REQUIRE_TASK_STATE_READBACK_ENV) or ""
-    ).strip().lower() in {"1", "true", "yes", "on"}
     ai_status, status_env, governed = _status_command_context(
         repo_root,
         environment=environment,
     )
     if not task_state_env:
-        if required or governed:
-            raise ValueError(
-                "canonical task-state runtime binding is missing; "
-                "file/activity-only bridge dispatch is not admissible"
-            )
-        return {
-            "status": "legacy_projection_only",
-            "taskIds": [task.id for task in packet.tasks],
-        }
+        raise ValueError(
+            "canonical task-state runtime binding is required; "
+            "projection-only bridge dispatch is not admissible"
+        )
 
     if not governed:
         raise ValueError(
@@ -1099,26 +964,6 @@ def _validate_materialized_tasks(
         repo_root,
         environment=command_environment,
     )
-    if task_state_env or governed:
-        # Governed mode has exactly one read authority. Repository-local status,
-        # archive, admission and receipt files are derived audit outputs and
-        # must never be a fallback when the authoritative batch read is
-        # unavailable.
-        return _canonical_task_state_readback(
-            packet,
-            repo_root=repo_root,
-            environment=command_environment,
-        )
-
-    for task in packet.tasks:
-        candidates = _materialized_task_candidates(
-            repo_root=repo_root,
-            task_id=task.id,
-        )
-        if not candidates:
-            raise ValueError(f"materialized task {task.id!r} is missing")
-        for candidate in candidates:
-            _validate_materialized_task_candidate(packet, task, candidate)
     return _canonical_task_state_readback(
         packet,
         repo_root=repo_root,
@@ -1161,6 +1006,15 @@ def _dispatch_task_batch(
         for record in records:
             record.status = "error"
         return records, None, str(exc), False
+    if not governed:
+        for record in records:
+            record.status = "error"
+        return (
+            records,
+            None,
+            "canonical task-state runtime binding is required before materialization",
+            False,
+        )
     if not Path(ai_status).exists():
         for record in records:
             record.status = "error"
@@ -1172,26 +1026,6 @@ def _dispatch_task_batch(
         )
 
     env = _merged_environment(environment)
-    if not governed:
-        for name in (
-            COMMAND_ROOT_ENV,
-            COMMAND_SHA_ENV,
-            COMMAND_REMOTE_ENV,
-            COMMAND_BASE_REF_ENV,
-            TASK_STATE_MODE_ENV,
-            TASK_STATE_EVENT_LOG_ENV,
-            *LEGACY_COMMAND_ENV_NAMES,
-        ):
-            env.pop(name, None)
-        if not _environment_targets_status_root(
-            repo_root,
-            environment=environment,
-        ):
-            # Do not let an ambient supervisor requirement from an unrelated
-            # central root turn an intentionally local compatibility fixture
-            # into a falsely governed dispatch. An explicit requirement bound
-            # to this repo_root remains fail-closed below.
-            env.pop(REQUIRE_TASK_STATE_READBACK_ENV, None)
     env.update(status_env)
     env = _verification_subprocess_environment(env)
     # Signature verification and constraint checks happen before this private
