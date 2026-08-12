@@ -24,7 +24,6 @@ ASSISTANT_COMMAND_TOOL = "assistant.command"
 FAILURE_CHECK_STATES = {"ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE", "FAILED", "STALE", "TIMED_OUT"}
 PENDING_CHECK_STATES = {"EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "REQUESTED", "WAITING"}
 SUCCESS_CHECK_STATES = {"COMPLETED", "NEUTRAL", "SKIPPED", "SUCCESS"}
-TERMINAL_TASK_STATUSES = {"done", "superseded", "cancelled"}
 DEPLOY_CHECK_MARKERS = (
     "deploy",
     "deployment",
@@ -138,88 +137,7 @@ def _first_mapping(*values: Any) -> Mapping[str, Any]:
     return {}
 
 
-def _iso_at_or_after(value: Any, baseline: Any) -> bool:
-    if not baseline:
-        return True
-    if not value:
-        return False
-    try:
-        value_dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        baseline_dt = datetime.fromisoformat(str(baseline).replace("Z", "+00:00"))
-    except ValueError:
-        return str(value) >= str(baseline)
-    return value_dt >= baseline_dt
-
-
-def _failure_summary_text(value: Any) -> Optional[str]:
-    if value in (None, ""):
-        return None
-    raw = str(value)
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return _safe_text(raw)
-
-    parts: List[str] = []
-    error = payload.get("error") if isinstance(payload, Mapping) else None
-    if error:
-        parts.append(str(error))
-    message = _as_mapping(payload.get("message")) if isinstance(payload, Mapping) else {}
-    for content in message.get("content") or []:
-        item = _as_mapping(content)
-        text = item.get("text")
-        if text:
-            parts.append(str(text))
-            break
-    if not parts and message.get("stop_reason"):
-        parts.append(str(message.get("stop_reason")))
-    if not parts:
-        return _safe_text(raw)
-    return _safe_text(": ".join(parts))
-
-
-def _task_failure_streaks(state: Mapping[str, Any], task: Mapping[str, Any]) -> List[Dict[str, Any]]:
-    task_id = str(task.get("id") or "")
-    if not task_id:
-        return []
-    task_status = str(task.get("status") or "").lower()
-    if task_status in TERMINAL_TASK_STATUSES:
-        return []
-
-    guardrails = _as_mapping(state.get("provider_guardrails"))
-    failure_streaks = _as_mapping(guardrails.get("task_failure_streaks"))
-    task_failures: List[Dict[str, Any]] = []
-    for key, raw_streak in sorted(failure_streaks.items()):
-        streak = _as_mapping(raw_streak)
-        streak_task_id = str(streak.get("task_id") or streak.get("taskId") or key).split(":", 1)[0]
-        if streak_task_id != task_id:
-            continue
-        if not _iso_at_or_after(streak.get("last_failure_at") or streak.get("lastFailureAt"), task.get("last_update")):
-            continue
-        count = streak.get("count")
-        try:
-            count_value = int(count)
-        except (TypeError, ValueError):
-            count_value = 1
-        task_failures.append(
-            _safe(
-                {
-                    "type": "worker_failure_streak",
-                    "status": "attention",
-                    "source": "provider_guardrails.task_failure_streaks",
-                    "waitingFor": streak.get("provider"),
-                    "provider": streak.get("provider"),
-                    "count": count_value,
-                    "failureKind": streak.get("last_failure_kind") or streak.get("lastFailureKind"),
-                    "lastFailureAt": streak.get("last_failure_at") or streak.get("lastFailureAt"),
-                    "message": _failure_summary_text(streak.get("last_reason") or streak.get("message") or streak.get("reason")),
-                }
-            )
-        )
-    return task_failures[:5]
-
-
-def _task_blockers(blockers: Iterable[Any], task_id: str, *, state: Mapping[str, Any], task: Mapping[str, Any]) -> List[Dict[str, Any]]:
+def _task_blockers(blockers: Iterable[Any], task_id: str) -> List[Dict[str, Any]]:
     task_blockers: List[Dict[str, Any]] = []
     for blocker in blockers:
         item = _as_mapping(blocker)
@@ -245,7 +163,6 @@ def _task_blockers(blockers: Iterable[Any], task_id: str, *, state: Mapping[str,
                 }
             )
         )
-    task_blockers.extend(_task_failure_streaks(state, task))
     return task_blockers
 
 
@@ -525,14 +442,11 @@ def _normalize_supervisor(state: Mapping[str, Any]) -> Dict[str, Any]:
             "startedAt": supervisor.get("started_at"),
             "lastHeartbeatAt": supervisor.get("last_heartbeat_at"),
             "lifecycle": supervisor.get("lifecycle"),
-            "modeStatus": supervisor.get("mode_status"),
-            "focusMode": supervisor.get("focus_mode"),
             "lastSuccessfulLoopAt": supervisor.get("last_successful_loop_at"),
             "lastLoopStartedAt": supervisor.get("last_loop_started_at"),
             "lastLoopFinishedAt": supervisor.get("last_loop_finished_at"),
             "lastLoopDurationMs": supervisor.get("last_loop_duration_ms"),
             "lastLoopError": supervisor.get("last_loop_error"),
-            "modeOccupancy": supervisor.get("mode_occupancy") if isinstance(supervisor.get("mode_occupancy"), Mapping) else {},
         }
     )
 
@@ -551,48 +465,43 @@ def _normalize_coordination(state: Mapping[str, Any]) -> Dict[str, Any]:
     )
 
 
-def _normalize_provider_guardrails(state: Mapping[str, Any]) -> Dict[str, Any]:
-    guardrails = _as_mapping(state.get("provider_guardrails"))
-    pauses = _as_mapping(guardrails.get("dispatch_pauses"))
-    normalized_pauses = []
-    for provider, pause in sorted(pauses.items()):
-        item = _as_mapping(pause)
-        normalized_pauses.append(
-            _safe(
-                {
-                    "provider": provider,
-                    "triggerProvider": item.get("trigger_provider"),
-                    "blockedUntil": item.get("blocked_until"),
-                    "reason": item.get("reason") or item.get("summary"),
-                    "summary": item.get("summary"),
-                    "failureKind": item.get("failure_kind"),
-                    "detail": item.get("detail"),
-                }
+def _normalize_delivery_health(state: Mapping[str, Any]) -> Dict[str, Any]:
+    """Expose only the V2 runtime health authority's safe, stable fields."""
+
+    health = _as_mapping(state.get("delivery_health"))
+
+    def entries(bucket_name: str, identifier_key: str) -> List[Dict[str, Any]]:
+        bucket = _as_mapping(health.get(bucket_name))
+        normalized: List[Dict[str, Any]] = []
+        for identifier, raw in sorted(bucket.items(), key=lambda item: str(item[0])):
+            item = _as_mapping(raw)
+            normalized.append(
+                _safe(
+                    {
+                        identifier_key: identifier,
+                        "state": item.get("state") or "unknown",
+                        "observedAt": item.get("observed_at"),
+                        "validUntil": item.get("valid_until"),
+                        "retryAt": item.get("retry_at"),
+                        "reasonKind": item.get("reason_kind"),
+                        "source": item.get("source"),
+                        "evidenceEndpoint": item.get("evidence_endpoint"),
+                    }
+                )
             )
-        )
-    failure_streaks = _as_mapping(guardrails.get("task_failure_streaks"))
-    normalized_streaks = []
-    for key, raw_streak in sorted(failure_streaks.items()):
-        streak = _as_mapping(raw_streak)
-        normalized_streaks.append(
-            _safe(
-                {
-                    "key": key,
-                    "taskId": streak.get("task_id") or streak.get("taskId") or str(key).split(":", 1)[0],
-                    "provider": streak.get("provider"),
-                    "count": streak.get("count"),
-                    "lastFailureAt": streak.get("last_failure_at") or streak.get("lastFailureAt"),
-                    "failureKind": streak.get("last_failure_kind") or streak.get("lastFailureKind"),
-                    "reason": _failure_summary_text(streak.get("last_reason") or streak.get("reason")),
-                }
-            )
-        )
-    normalized_streaks.sort(key=lambda item: str(item.get("lastFailureAt") or ""), reverse=True)
-    return {
-        "dispatchPauses": normalized_pauses,
-        "taskFailureStreakCount": len(failure_streaks),
-        "taskFailureStreaks": normalized_streaks[:20],
-    }
+        return normalized
+
+    endpoints = entries("endpoints", "endpointId")
+    accounts = entries("accounts", "accountId")
+    return _safe(
+        {
+            "version": health.get("version"),
+            "endpointCount": len(endpoints),
+            "accountCount": len(accounts),
+            "endpoints": endpoints,
+            "accounts": accounts,
+        }
+    )
 
 
 def _assistant_inbox_root(root: Path) -> Path:
@@ -932,7 +841,7 @@ def read_orchestrator_status(
             waiting_for=t.get("waiting_for"),
             failure_streak=t.get("failure_streak", 0),
             brief_path=brief_path,
-            blockers=_task_blockers(blockers, task_id, state=state, task=t),
+            blockers=_task_blockers(blockers, task_id),
             github=github_status,
             deployment=deployment_status,
             delivery=delivery,
@@ -950,7 +859,7 @@ def read_orchestrator_status(
         handoffs=_safe(ai_status.get("handoffs", [])),
         blockers=_safe(blockers),
         supervisor=_normalize_supervisor(state),
-        providerGuardrails=_normalize_provider_guardrails(state),
+        deliveryHealth=_normalize_delivery_health(state),
         providerReadiness=_normalize_provider_readiness(provider_readiness, snapshot_at),
         openclawToolPolicy=_normalize_openclaw_tool_policy(
             openclaw_tool_policy,

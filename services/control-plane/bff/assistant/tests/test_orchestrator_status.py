@@ -77,6 +77,9 @@ class TestOrchestratorStatus(unittest.TestCase):
             "supervisor": {
                 "lifecycle": "idle",
                 "last_loop_error": "token=super-secret",
+                "mode_status": "active",
+                "focus_mode": "execution",
+                "mode_occupancy": {"execution": {"running": 1}},
             },
             "provider_guardrails": {
                 "dispatch_pauses": {
@@ -94,6 +97,30 @@ class TestOrchestratorStatus(unittest.TestCase):
                         "last_reason": "You've hit your weekly limit token=hidden",
                         "last_failure_at": "2026-06-03T12:10:00Z",
                         "last_failure_kind": "terminal",
+                    }
+                },
+            },
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex1-1": {
+                        "state": "healthy",
+                        "observed_at": "2026-06-03T12:10:00Z",
+                        "valid_until": "2026-06-03T12:15:00Z",
+                        "source": "live_probe",
+                        "evidence_endpoint": "codex1-1",
+                        "detail": "OPENAI_API_KEY=secret-must-not-be-exposed",
+                    }
+                },
+                "accounts": {
+                    "codex-account": {
+                        "state": "retry_after",
+                        "observed_at": "2026-06-03T12:10:00Z",
+                        "retry_at": "2026-06-03T13:10:00Z",
+                        "reason_kind": "quota_terminal",
+                        "source": "worker_failure",
+                        "evidence_endpoint": "codex1-1",
+                        "detail": "token=must-not-be-exposed",
                     }
                 },
             },
@@ -253,10 +280,7 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertEqual(status.tasks[0].failure_streak, 2)
         self.assertEqual(status.tasks[0].waiting_for, "CI")
         self.assertEqual(status.tasks[0].blockers[0]["waitingFor"], "CI")
-        self.assertEqual(status.tasks[0].blockers[1]["type"], "worker_failure_streak")
-        self.assertEqual(status.tasks[0].blockers[1]["provider"], "claude")
-        self.assertEqual(status.tasks[0].blockers[1]["count"], 2)
-        self.assertNotIn("hidden", json.dumps(status.tasks[0].blockers[1]))
+        self.assertEqual(len(status.tasks[0].blockers), 1)
 
         # Verify GitHub bus info is preserved and normalized for assistant readback.
         self.assertIsNotNone(status.tasks[0].delivery)
@@ -279,11 +303,18 @@ class TestOrchestratorStatus(unittest.TestCase):
         self.assertNotIn("sk-test123", status.queue[0]["lastError"])
         self.assertEqual(status.supervisor["lifecycle"], "idle")
         self.assertNotIn("super-secret", status.supervisor["lastLoopError"])
-        self.assertNotIn("secret", status.provider_guardrails["dispatchPauses"][0]["detail"])
-        self.assertEqual(status.provider_guardrails["taskFailureStreakCount"], 1)
-        self.assertEqual(status.provider_guardrails["taskFailureStreaks"][0]["taskId"], "TASK-1")
-        self.assertEqual(status.provider_guardrails["taskFailureStreaks"][0]["provider"], "claude")
-        self.assertNotIn("hidden", json.dumps(status.provider_guardrails["taskFailureStreaks"][0]))
+        self.assertNotIn("modeStatus", status.supervisor)
+        self.assertNotIn("focusMode", status.supervisor)
+        self.assertNotIn("modeOccupancy", status.supervisor)
+        payload = status.model_dump(mode="json", by_alias=True)
+        self.assertNotIn("providerGuardrails", payload)
+        self.assertEqual(status.delivery_health["version"], 1)
+        self.assertEqual(status.delivery_health["endpointCount"], 1)
+        self.assertEqual(status.delivery_health["accountCount"], 1)
+        self.assertEqual(status.delivery_health["endpoints"][0]["endpointId"], "codex1-1")
+        self.assertEqual(status.delivery_health["accounts"][0]["accountId"], "[REDACTED_ACCOUNT]")
+        self.assertEqual(status.delivery_health["accounts"][0]["reasonKind"], "quota_terminal")
+        self.assertNotIn("must-not-be-exposed", json.dumps(status.delivery_health))
         self.assertEqual(status.provider_readiness["status"], "ready")
         self.assertTrue(status.provider_readiness["ready"])
         self.assertEqual(status.provider_readiness["authStatus"], "ready")
