@@ -55,6 +55,7 @@ DEFAULT_HEALTH_MAX_AGE_SECONDS = 120.0
 DEFAULT_HEALTH_MAX_BACKLOG = 5000
 DEFAULT_HEALTH_MIN_FREE_BYTES = 128 * 1024 * 1024
 DEFAULT_HEALTH_MIN_FREE_PERCENT = 5.0
+DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS = 10.0
 
 LIFECYCLE_EVENT_TYPES = frozenset(
     {
@@ -1492,35 +1493,52 @@ class PostgresLifecycleSource:
         self._listener: Any = None
         self._wake = asyncio.Event()
 
-    async def ensure_schema(self) -> None:
+    async def verify_read_contract(self) -> None:
+        """Bounded read-only check for the cursor columns this worker consumes.
+
+        Database schema changes belong to ``scripts/db_migrate.sh``.  Running
+        DDL or a historic-row backfill in this long-lived read worker makes a
+        routine deploy wait indefinitely behind a database lock and prevents
+        the new deployment identity from reaching readiness.
+        """
         import asyncpg  # type: ignore[import]
 
-        conn = await asyncpg.connect(self.dsn)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS
+        conn: Any | None = None
+
+        def remaining() -> float:
+            return max(0.0, deadline - loop.time())
+
         try:
-            await conn.execute(
-                """
-                CREATE SEQUENCE IF NOT EXISTS telemetry_events_ingested_seq_seq AS BIGINT;
-                ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS ingested_seq BIGINT;
-                ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS
-                    ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp();
-                ALTER TABLE telemetry_events ALTER COLUMN ingested_seq
-                    SET DEFAULT nextval('telemetry_events_ingested_seq_seq');
-                UPDATE telemetry_events
-                    SET ingested_seq = nextval('telemetry_events_ingested_seq_seq')
-                    WHERE ingested_seq IS NULL;
-                ALTER TABLE telemetry_events ALTER COLUMN ingested_seq SET NOT NULL;
-                ALTER SEQUENCE telemetry_events_ingested_seq_seq
-                    OWNED BY telemetry_events.ingested_seq;
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_events_ingested_seq
-                    ON telemetry_events (ingested_seq);
-                CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type_ingested_seq
-                    ON telemetry_events (event_type, ingested_seq);
-                CREATE INDEX IF NOT EXISTS idx_telemetry_events_ingested_at
-                    ON telemetry_events (ingested_at DESC);
-                """
+            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=remaining())
+            await asyncio.wait_for(
+                conn.fetchrow(
+                    "SELECT ingested_seq, ingested_at FROM telemetry_events LIMIT 1"
+                ),
+                timeout=remaining(),
             )
         finally:
-            await conn.close()
+            if conn is not None:
+                close_timeout = remaining()
+                if close_timeout <= 0:
+                    self._terminate_connection(conn)
+                    raise TimeoutError("telemetry startup read-contract deadline exhausted before close")
+                try:
+                    await asyncio.wait_for(conn.close(), timeout=close_timeout)
+                except BaseException:
+                    self._terminate_connection(conn)
+                    raise
+
+    @staticmethod
+    def _terminate_connection(conn: Any) -> None:
+        """Release a timed-out asyncpg connection without extending startup."""
+        terminate = getattr(conn, "terminate", None)
+        if callable(terminate):
+            try:
+                terminate()
+            except Exception:  # noqa: BLE001 - preserve the source failure
+                pass
 
     async def high_watermark(self) -> int:
         import asyncpg  # type: ignore[import]
@@ -1649,13 +1667,16 @@ async def run_worker() -> int:
     max_ticks = max(0, int(os.getenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "0")))
     tick = 0
     recovery_target = 0
+    source_ready = False
     try:
-        await source.ensure_schema()
-        recovery_target = await source.high_watermark()
-        await source.start_listener()
         while True:
             tick += 1
             try:
+                if not source_ready:
+                    await source.verify_read_contract()
+                    recovery_target = await source.high_watermark()
+                    await source.start_listener()
+                    source_ready = True
                 high = await source.high_watermark()
                 rows = await source.fetch_after(projector.checkpoint, limit=batch_size)
                 mode = "recovery" if projector.checkpoint < recovery_target else "live"
@@ -1671,6 +1692,8 @@ async def run_worker() -> int:
                     recovery_target = projector.checkpoint
             except Exception as exc:  # noqa: BLE001 - durable controller records failure
                 _record_worker_failure(projector, exc)
+                if not source_ready:
+                    await source.close()
             if max_ticks and tick >= max_ticks:
                 return 0
             await source.wait(interval)

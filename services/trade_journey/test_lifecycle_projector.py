@@ -195,6 +195,138 @@ def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):
     assert "heartbeat" not in fetchval[2]
 
 
+def test_postgres_lifecycle_source_startup_check_is_read_only_and_bounded(monkeypatch):
+    calls: list[tuple] = []
+
+    class Connection:
+        async def fetchrow(self, query: str) -> None:
+            calls.append(("fetchrow", query))
+            return None
+
+        async def close(self) -> None:
+            calls.append(("close",))
+
+    async def connect(dsn: str) -> Connection:
+        calls.append(("connect", dsn))
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+
+    asyncio.run(PostgresLifecycleSource("postgresql://unit").verify_read_contract())
+
+    assert calls[0] == ("connect", "postgresql://unit")
+    assert calls[1] == (
+        "fetchrow",
+        "SELECT ingested_seq, ingested_at FROM telemetry_events LIMIT 1",
+    )
+    assert calls[2] == ("close",)
+    assert all("ALTER TABLE" not in str(call) and "UPDATE telemetry_events" not in str(call) for call in calls)
+
+
+def test_postgres_lifecycle_source_startup_close_cannot_extend_deadline(monkeypatch):
+    calls: list[str] = []
+
+    class Connection:
+        async def fetchrow(self, query: str) -> None:
+            calls.append("fetchrow")
+            return None
+
+        async def close(self) -> None:
+            calls.append("close")
+            await asyncio.Event().wait()
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+    async def connect(dsn: str) -> Connection:
+        calls.append("connect")
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    monkeypatch.setattr(lifecycle_projector_module, "DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS", 0.01)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(PostgresLifecycleSource("postgresql://unit").verify_read_contract())
+
+    assert calls == ["connect", "fetchrow", "close", "terminate"]
+
+
+def test_worker_startup_verifies_read_contract_before_publishing_identity(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    class Source:
+        async def verify_read_contract(self) -> None:
+            calls.append("verify")
+
+        async def high_watermark(self) -> int:
+            calls.append("high")
+            return 0
+
+        async def start_listener(self) -> None:
+            calls.append("listen")
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            calls.append("fetch")
+            return []
+
+        async def wait(self, timeout: float) -> None:
+            calls.append("wait")
+
+        async def close(self) -> None:
+            calls.append("close")
+
+    source = Source()
+    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda _: source)
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "1")
+    monkeypatch.setenv("GIT_SHA", "cafebabecafebabecafebabecafebabecafebabe")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    assert calls == ["verify", "high", "listen", "high", "fetch", "close"]
+    assert _current_json(tmp_path, "loop_runs.json")["controller"]["deployment_sha"] == (
+        "cafebabecafebabecafebabecafebabecafebabe"
+    )
+
+
+def test_worker_startup_contract_failure_publishes_degraded_health(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    class Source:
+        async def verify_read_contract(self) -> None:
+            calls.append("verify")
+            raise TimeoutError("telemetry schema check timed out")
+
+        async def high_watermark(self) -> int:
+            raise AssertionError("worker must not read after startup contract failure")
+
+        async def start_listener(self) -> None:
+            raise AssertionError("worker must not listen after startup contract failure")
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            raise AssertionError("worker must not fetch after startup contract failure")
+
+        async def wait(self, timeout: float) -> None:
+            calls.append("wait")
+
+        async def close(self) -> None:
+            calls.append("close")
+
+    source = Source()
+    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda _: source)
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "1")
+    monkeypatch.setenv("GIT_SHA", "cafebabecafebabecafebabecafebabecafebabe")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    controller = _current_json(tmp_path, "loop_runs.json")["controller"]
+    assert calls == ["verify", "close", "close"]
+    assert controller["status"] == "degraded"
+    assert controller["deployment_sha"] == "cafebabecafebabecafebabecafebabecafebabe"
+    assert "TimeoutError: telemetry schema check timed out" == controller["last_error"]
+
+
 def test_full_canonical_lifecycle_projects_one_identity_consistent_journey_and_loop(tmp_path):
     projector = _projector(tmp_path)
     result = projector.project_records(
