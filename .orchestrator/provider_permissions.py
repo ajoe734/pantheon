@@ -119,12 +119,6 @@ def _find_extension(prefix: str) -> tuple[Path | None, str | None]:
     return path, version
 
 
-def _load_package_json(path: Path | None) -> dict[str, Any]:
-    if not path:
-        return {}
-    return load_json(path / "package.json", default={}) or {}
-
-
 def _workspace_settings() -> dict[str, Any]:
     return load_json(WORKSPACE_SETTINGS_PATH, default={}) or {}
 
@@ -270,23 +264,6 @@ def _auth_probe_settings(config: dict[str, Any] | None = None, provider_id: str 
     settings.setdefault("probe_prompt", AUTH_PROBE_PROMPT)
     settings.setdefault("enabled", True)
     return settings
-
-
-def provider_auth_probe_due(
-    config: dict[str, Any],
-    provider_id: str,
-    previous: dict[str, Any] | None = None,
-) -> bool:
-    """Compatibility shim for callers not yet migrated to delivery health.
-
-    It intentionally never reads cached capability evidence or applies a
-    probe interval.  The unified supervisor replaces this call with its
-    demand-derived refresh set; until then ``True`` preserves the safe side of
-    the old contract (a caller may observe, but may not reuse stale auth).
-    """
-
-    _ = (config, provider_id, previous)
-    return True
 
 
 def _auth_probe_record(
@@ -835,23 +812,6 @@ def _codex_auth_probe(
     return record
 
 
-def codex_auth_ready(
-    provider_id: str = "codex",
-    env: dict[str, str] | None = None,
-    *,
-    config: dict[str, Any] | None = None,
-    binary: str | None = None,
-) -> bool:
-    config = config or load_config()
-    provider_binary = (
-        binary
-        or _configured_provider_binary(config, provider_id, "codex", "codex")
-        or command_exists("codex")
-    )
-    probe = _codex_auth_probe(config, provider_id, provider_binary, env=env, force=True)
-    return probe.get("ready") is True
-
-
 def _claude_auth_probe(
     config: dict[str, Any],
     provider_id: str,
@@ -1216,12 +1176,6 @@ def _code_cli_info() -> dict[str, Any]:
     }
 
 
-def _command_help_contains(command: list[str], needle: str) -> bool:
-    result = run_command(command)
-    output = (result.stdout or "") + (result.stderr or "")
-    return needle in output
-
-
 def _gh_version(binary: str | None) -> tuple[int, int, int] | None:
     if not binary:
         return None
@@ -1232,16 +1186,6 @@ def _gh_version(binary: str | None) -> tuple[int, int, int] | None:
     if not match:
         return None
     return tuple(int(part) for part in match.groups())
-
-
-def _json_command(command: list[str]) -> dict[str, Any]:
-    result = run_command(command)
-    if result.returncode != 0 or not result.stdout:
-        return {}
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {}
 
 
 def _provider_runtime_env(config: dict[str, Any], provider_id: str) -> dict[str, str]:

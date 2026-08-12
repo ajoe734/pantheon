@@ -21,7 +21,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from common import config_path, durable_write_bytes, load_config, repo_root_for_config, utc_now, write_activity_log, LockContentionError, resolved_coordinator_status_root
-from runtime_state import runtime_state_lock, save_runtime_state
+from runtime_state import default_state, runtime_state_lock, save_runtime_state
 
 
 ACTIVE_WORKER_STATUSES = {
@@ -675,14 +675,23 @@ def load_runtime_state_file(config: dict[str, Any]) -> tuple[dict[str, Any], str
     path = config_path(config, "state_file")
     try:
         if not path.is_file():
-            return {}, "runtime_state_missing"
+            # A missing cache is the one normal first-start shape.  Return the
+            # complete V2 envelope so the watchdog can stamp safe mode without
+            # attempting to persist an invalid partial object.
+            return default_state(), "runtime_state_missing"
         text = path.read_text(encoding="utf-8", errors="strict")
         if not text.strip():
             return {}, "runtime_state_empty"
         raw = json.loads(text)
     except Exception as exc:  # noqa: BLE001 - watchdog must report state I/O failures without crashing.
         return {}, f"{type(exc).__name__}: {exc}"
-    if not isinstance(raw, dict):
+    if (
+        not isinstance(raw, dict)
+        or raw.get("version") != 2
+        or not isinstance(raw.get("workers"), dict)
+        or not isinstance(raw.get("queue"), dict)
+        or not isinstance((raw.get("queue") or {}).get("events"), dict)
+    ):
         return {}, "runtime_state_schema_invalid"
     return raw, None
 

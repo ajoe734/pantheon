@@ -954,7 +954,7 @@ EOF
         self.assertNotIn("CODEX2_TEST_API_KEY", json.dumps(probe["metadata"], sort_keys=True))
         run_command.assert_not_called()
 
-    def test_codex_auth_ready_false_on_revoked_refresh_token(self) -> None:
+    def test_codex_probe_rejects_revoked_refresh_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir) / "codex2"
             home.mkdir()
@@ -969,14 +969,6 @@ EOF
             with (
                 mock.patch.object(provider_permissions, "run_command", side_effect=[revoked, revoked]),
             ):
-                self.assertFalse(
-                    provider_permissions.codex_auth_ready(
-                        "codex2",
-                        {},
-                        config=config,
-                        binary="/usr/bin/codex",
-                    )
-                )
                 probe = provider_permissions._codex_auth_probe(
                     config,
                     "codex2",

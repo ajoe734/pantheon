@@ -21,16 +21,13 @@ if str(THIS_DIR) not in sys.path:
 from common import (
     approval_tool_input_preview,
     approval_tool_input_signature,
-    config_path,
     load_config,
     new_runtime_id,
     utc_now,
     write_activity_log,
     write_approval_evidence,
-    write_json,
 )
 from runtime_state import (
-    default_approval_state,
     load_approval_state,
     load_runtime_state,
     runtime_state_lock,

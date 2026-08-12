@@ -17,30 +17,6 @@ def normalize_agent_id(value: Any) -> str:
     return str(value or "").strip().lower().replace("-", "_")
 
 
-def worker_slot_count(config: dict[str, Any], agent_id: str) -> int:
-    """Number of distinct worker slots for an agent.
-
-    Equivalent to `len(logical_worker_slot_ids(...))`: explicit `worker_slots`
-    entries that are themselves real agents, unioned with any agent whose
-    `dispatch_slot_for` points back at this one. Deduplicated.
-    """
-    agent = normalize_agent_id(agent_id)
-    if not agent:
-        return 0
-    agents = config.get("agents", {}) or {}
-    slots: set[str] = set()
-    for raw in (agents.get(agent) or {}).get("worker_slots", []) or []:
-        sid = normalize_agent_id(raw)
-        if sid and sid in agents:
-            slots.add(sid)
-    for sid, slot_agent in agents.items():
-        if normalize_agent_id((slot_agent or {}).get("dispatch_slot_for")) == agent:
-            nid = normalize_agent_id(sid)
-            if nid:
-                slots.add(nid)
-    return len(slots)
-
-
 def max_parallel(
     config: dict[str, Any],
     agent_id: str,

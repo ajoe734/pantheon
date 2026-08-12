@@ -20,7 +20,6 @@ from common import (
     load_json,
     load_jsonl,
     load_status,
-    relpath,
     render_template,
     run_command,
     utc_now,
@@ -267,10 +266,6 @@ def branch_has_diff(base: str, branch: str) -> bool:
         return False
 
 
-def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
-    return remote_branch_head_sha(branch, remote) is not None
-
-
 def run_bounded_process(
     command: list[str],
     *,
@@ -391,11 +386,6 @@ def coordination_bus_entry(bus_state: dict[str, Any], repo: str, feature_id: str
             "last_hash": None,
         },
     )
-
-
-def task_signature(task: dict[str, Any], fields: list[str]) -> str:
-    payload = {field: task.get(field) for field in fields}
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
 def build_template_body(config: dict[str, Any], template_key: str, variables: dict[str, Any]) -> str:
