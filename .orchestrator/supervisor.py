@@ -3955,29 +3955,18 @@ def terminate_worker_pid(
             return False
         deferred.append((pid, start_ticks))
         return False
-    # SUPERVISOR-REWRITE Phase 4 (anti-pattern E): confirm-kill instead of
-    # SIGTERM-and-assume-dead. A worker that ignores SIGTERM used to be reported
-    # terminated while still alive (and still mutating state); now we escalate to
-    # SIGKILL and verify, returning True only when the process is confirmed gone.
-    # Legacy one flag away via PANTHEON_LEGACY_TERMINATE=1.
-    if str(os.environ.get("PANTHEON_LEGACY_TERMINATE") or "").strip().lower() not in {
-        "1", "true", "yes", "on",
-    }:
-        try:
-            return rewrite_worker_lifecycle.confirm_kill(
-                pid,
-                is_alive=identity_bound_is_alive,
-                send_signal=os.kill,
-                sleep=time.sleep,
-                monotonic=time.monotonic,
-            )
-        except Exception:
-            pass  # fall back to the legacy single-signal path below
+    # Confirmed termination is the sole lifecycle operation.  Do not publish a
+    # terminal worker record until the exact PID generation is gone.
     try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
+        return rewrite_worker_lifecycle.confirm_kill(
+            pid,
+            is_alive=identity_bound_is_alive,
+            send_signal=os.kill,
+            sleep=time.sleep,
+            monotonic=time.monotonic,
+        )
+    except Exception:
         return False
-    return True
 
 
 def terminate_worker_process_generation(worker: Mapping[str, Any]) -> bool:
