@@ -869,53 +869,11 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()
 
-    def test_runtime_reset_discards_retired_guardrail_state(self) -> None:
-        state = {
-            "provider_guardrails": {
-                "dispatch_pauses": {
-                    "codex": {
-                        "provider": "codex",
-                        "pause_kind": "quota_terminal",
-                        "blocked_until": "9999-12-31T23:59:59Z",
-                    }
-                }
-            },
-            "workers": {
-                "run": {
-                    "provider": "codex",
-                    "quota_group": "legacy",
-                    "status": "running",
-                }
-            },
-        }
+    def test_runtime_health_normalizes_once(self) -> None:
+        state = {"delivery_health": {"endpoints": [], "accounts": []}}
         self.assertTrue(supervisor.normalize_runtime_delivery_health(state))
-        health = state["delivery_health"]
-        self.assertEqual(health, {"version": 1, "endpoints": {}, "accounts": {}})
-        self.assertNotIn("provider_guardrails", state)
-        self.assertNotIn("account", state["workers"]["run"])
-        self.assertNotIn("quota_group", state["workers"]["run"])
-        self.assertFalse(supervisor.normalize_runtime_delivery_health(state))
-
-    def test_runtime_reset_does_not_carry_account_topology_aliases(self) -> None:
-        state = {
-            "provider_guardrails": {
-                "dispatch_pauses": {
-                    "codex_account": {
-                        "provider": "codex_account",
-                        "trigger_provider": "codex",
-                        "pause_kind": "quota_terminal",
-                        "blocked_until": "9999-12-31T23:59:59Z",
-                    }
-                }
-            },
-            "workers": {"run": {"provider": "codex", "account": "codex_account"}},
-        }
-        self.assertTrue(supervisor.normalize_runtime_delivery_health(state))
-        self.config["providers"]["codex"]["account"] = "codex-primary"
-        self.config["ready_dispatcher"]["max_concurrent_per_account"]["codex_primary"] = 2
-        self.assertFalse(supervisor.normalize_runtime_delivery_health(state))
         self.assertEqual(state["delivery_health"], {"version": 1, "endpoints": {}, "accounts": {}})
-        self.assertNotIn("account", state["workers"]["run"])
+        self.assertFalse(supervisor.normalize_runtime_delivery_health(state))
 
     def test_terminal_pause_reassigns_once_without_launching(self) -> None:
         task = task_fixture(reviewer="Human/Ops")
@@ -1009,19 +967,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
     def test_terminal_pause_never_reopens_explicit_human_ops_hold(self) -> None:
         task = task_fixture(status="blocked", reviewer="Human/Ops")
         task["waiting_for"] = "Human/Ops"
-        state = {
-            "workers": {},
-            "queue": {"events": {}},
-            "provider_guardrails": {
-                "dispatch_pauses": {
-                    "codex_account": {
-                        "provider": "codex_account",
-                        "pause_kind": "quota_terminal",
-                        "blocked_until": "9999-12-31T23:59:59Z",
-                    }
-                }
-            },
-        }
+        state = {"workers": {}, "queue": {"events": {}}}
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
@@ -1033,7 +979,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
 
     def test_unknown_or_missing_probe_does_not_reassign_known_lane(self) -> None:
         task = task_fixture()
-        state = {"workers": {}, "queue": {"events": {}}, "provider_guardrails": {}}
+        state = {"workers": {}, "queue": {"events": {}}}
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
@@ -1045,7 +991,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
 
     def test_explicit_human_reviewer_is_preserved(self) -> None:
         task = task_fixture(status="review", reviewer="Human/Ops")
-        state = {"workers": {}, "queue": {"events": {}}, "provider_guardrails": {}}
+        state = {"workers": {}, "queue": {"events": {}}}
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),

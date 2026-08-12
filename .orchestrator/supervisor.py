@@ -4807,35 +4807,13 @@ def parse_quota_retry_hint(reason: str | None, *, now: datetime | None = None) -
 
 
 def normalize_runtime_delivery_health(state: dict[str, Any]) -> bool:
-    """Keep only V2 runtime health; a stopped fleet has no legacy carry-over.
-
-    The supervisor is deliberately allowed to be stopped for this replacement.
-    Old pause/recovery/failure-streak data is neither migrated nor interpreted:
-    it belonged to the retired scheduler and would be a second policy source.
-    A cold V2 health document is fail-closed and gets live evidence through the
-    ordinary bounded demand probe path.
-    """
+    """Ensure the V2 delivery-health snapshot has its canonical shape."""
 
     changed = False
     normalized = runtime_delivery_health(state)
     if state.get("delivery_health") != normalized:
         state["delivery_health"] = normalized
         changed = True
-    for retired in (
-        "provider_guardrails",
-        "account_runtime_schema_version",
-        "account_runtime_topology_digest",
-    ):
-        if retired in state:
-            state.pop(retired, None)
-            changed = True
-    for worker in (state.get("workers") or {}).values():
-        if not isinstance(worker, dict):
-            continue
-        for retired in ("account", "quota_group"):
-            if retired in worker:
-                worker.pop(retired, None)
-                changed = True
     return changed
 
 

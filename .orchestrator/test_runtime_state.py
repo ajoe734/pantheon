@@ -187,21 +187,16 @@ class LoadRuntimeStateTests(unittest.TestCase):
 
         self.assertIn("claude-live", state["workers"])
 
-    def test_load_runtime_state_drops_retired_control_plane_buckets(self) -> None:
+    def test_load_runtime_state_keeps_only_v2_schema_fields(self) -> None:
         self._write_json(
             self.root / "state.json",
             {
                 "workers": {},
                 "queue": {"events": {}},
-                "chair_rotation": {"current_index": 3},
-                "underutilization": {"last_sidecar_wave_at": "2026-01-01T00:00:00Z"},
-                "coordination": {"features": {"F-1": {}}},
-                "provider_guardrails": {"task_failure_streaks": {"TASK-1": {}}},
+                "unrecognized_control_plane": {"value": 1},
                 "supervisor": {
-                    "mode_occupancy": {
-                        "execution": {"running": 1},
-                        "chair_review": {"running": 2},
-                    }
+                    "pid": 42,
+                    "unrecognized_field": "ignored",
                 },
             },
         )
@@ -209,11 +204,9 @@ class LoadRuntimeStateTests(unittest.TestCase):
 
         state = runtime_state.load_runtime_state(self.config)
 
-        self.assertNotIn("chair_rotation", state)
-        self.assertNotIn("underutilization", state)
-        self.assertNotIn("coordination", state)
-        self.assertNotIn("provider_guardrails", state)
-        self.assertNotIn("mode_occupancy", state["supervisor"])
+        self.assertNotIn("unrecognized_control_plane", state)
+        self.assertEqual(state["supervisor"]["pid"], 42)
+        self.assertNotIn("unrecognized_field", state["supervisor"])
 
     def test_load_runtime_state_preserves_watchdog_safe_mode(self) -> None:
         self._write_json(

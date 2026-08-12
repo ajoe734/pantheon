@@ -180,18 +180,6 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     if not raw:
         return state
     state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "watchdog", "assistant_dev_bridge"}})
-    # V2 does not preserve obsolete control-plane buckets as dormant state.
-    # Their presence previously allowed dashboard/recovery code to revive a
-    # retired authority after a restart.
-    for retired_key in (
-        "underutilization",
-        "chair_rotation",
-        "coordination",
-        "provider_guardrails",
-        "account_runtime_schema_version",
-        "account_runtime_topology_digest",
-    ):
-        state.pop(retired_key, None)
     state.setdefault("tasks", {})
     recent_terminal_tasks = state.get("recent_terminal_tasks")
     state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
@@ -231,15 +219,13 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state.setdefault("assistant_dev_bridge", {})
     state["assistant_dev_bridge"].setdefault("last_drain_at", None)
     state["assistant_dev_bridge"].setdefault("last_result", None)
-    state.setdefault("supervisor", {})
-    for retired_supervisor_key in (
-        "focus_mode",
-        "mode_status",
-        "mode_switch_requested",
-        "last_mode_switch_at",
-        "mode_occupancy",
-    ):
-        state["supervisor"].pop(retired_supervisor_key, None)
+    raw_supervisor = state.get("supervisor")
+    allowed_supervisor_keys = set(default_state()["supervisor"])
+    state["supervisor"] = {
+        key: value
+        for key, value in (raw_supervisor.items() if isinstance(raw_supervisor, dict) else ())
+        if key in allowed_supervisor_keys
+    }
     state["supervisor"].setdefault("pid", None)
     state["supervisor"].setdefault("started_at", None)
     state["supervisor"].setdefault("last_heartbeat_at", None)

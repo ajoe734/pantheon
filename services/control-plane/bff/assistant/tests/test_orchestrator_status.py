@@ -77,28 +77,6 @@ class TestOrchestratorStatus(unittest.TestCase):
             "supervisor": {
                 "lifecycle": "idle",
                 "last_loop_error": "token=super-secret",
-                "mode_status": "active",
-                "focus_mode": "execution",
-                "mode_occupancy": {"execution": {"running": 1}},
-            },
-            "provider_guardrails": {
-                "dispatch_pauses": {
-                    "codex": {
-                        "reason": "capacity",
-                        "detail": "ANTHROPIC_API_KEY=secret",
-                        "blocked_until": "2026-06-03T12:30:00Z",
-                    }
-                },
-                "task_failure_streaks": {
-                    "TASK-1:claude": {
-                        "task_id": "TASK-1",
-                        "provider": "claude",
-                        "count": 2,
-                        "last_reason": "You've hit your weekly limit token=hidden",
-                        "last_failure_at": "2026-06-03T12:10:00Z",
-                        "last_failure_kind": "terminal",
-                    }
-                },
             },
             "delivery_health": {
                 "version": 1,
