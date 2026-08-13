@@ -784,9 +784,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
         authority_env = {
             "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": '{"bridge":"public"}',
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": '{"operator":"public"}',
             "BRIDGE_SIGNING_PRIVATE_KEY": "must-not-leak",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY": "must-not-leak",
         }
         with (
             mock.patch.dict(os.environ, authority_env, clear=False),
@@ -805,16 +803,11 @@ class SupervisorWatchdogTests(unittest.TestCase):
             authority_env["BRIDGE_SIGNING_PUBLIC_KEYS_JSON"],
         )
         self.assertNotIn("BRIDGE_SIGNING_PRIVATE_KEY", captured["env"])
-        self.assertNotIn(
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
-            captured["env"],
-        )
 
     def test_start_supervisor_rejects_missing_public_verifier_environment(self) -> None:
         now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
         missing = {
             "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": "",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": "",
         }
         with (
             mock.patch.dict(os.environ, missing, clear=False),

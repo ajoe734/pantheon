@@ -32,6 +32,35 @@ import task_archive
 from common import rotate_activity_log_unlocked
 
 
+class HumanOpsStatusWrapperTests(unittest.TestCase):
+    def test_wrapper_selects_explicit_local_human_ops_mode(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scripts_dir = Path(tmpdir) / "scripts"
+            scripts_dir.mkdir()
+            wrapper = scripts_dir / "human-ops-status.sh"
+            shutil.copy2(repo_root / "scripts" / "human-ops-status.sh", wrapper)
+            target = scripts_dir / "ai-status.sh"
+            target.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s|%s|%s\\n' \"$AI_NAME\" \"$PANTHEON_LOCAL_HUMAN_OPS\" \"$*\"\n",
+                encoding="utf-8",
+            )
+            target.chmod(0o755)
+
+            completed = subprocess.run(
+                [str(wrapper), "note", "TASK-1", "explicit maintenance"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(
+            completed.stdout.strip(),
+            "Human/Ops|1|note TASK-1 explicit maintenance",
+        )
+
+
 def _rotate_activity_log_for_test(log_path: Path) -> Path | None:
     with ai_status.activity_audit_lock_file(
         log_path,
@@ -751,7 +780,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 RuntimeError,
-                "exact active worker lease or a BFF-issued operator assertion",
+                "exact active worker lease or explicit local Human/Ops mode",
             ):
                 ai_status.validate_active_status_command_lease(
                     "progress", [self.task_id, "missing lease"]
@@ -770,50 +799,37 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                         command, [self.task_id, "spoofed mutation"]
                     )
 
-    def test_operator_assertion_cannot_impersonate_reviewer_or_owner_actions(self) -> None:
+    def test_local_human_ops_cannot_impersonate_reviewer_or_owner_actions(self) -> None:
         with mock.patch.dict(
             os.environ,
             {
                 "AI_NAME": "Claude",
-                ai_status.OPERATOR_ASSERTION_ENV: "{}",
+                ai_status.LOCAL_HUMAN_OPS_ENV: "1",
             },
             clear=True,
         ):
             self.assertEqual(ai_status.current_actor(), "Human/Ops")
             for command in ("approve", "done", "handoff", "progress"):
                 with self.subTest(command=command), self.assertRaisesRegex(
-                    RuntimeError, "operator assertions cannot authorize"
+                    RuntimeError, "local Human/Ops cannot authorize"
                 ):
                     ai_status.validate_active_status_command_lease(
                         command, [self.task_id, "attempted role impersonation"]
                     )
 
-    def test_operator_assertion_allows_only_verified_merge_reconciliation_lane(self) -> None:
-        """The lease gate admits the bounded closeout command, whose separate
-        external preflight still verifies merged delivery and protected review
-        evidence before it can write a terminal task state."""
-
+    def test_local_human_ops_allows_explicit_board_maintenance_actions(self) -> None:
         with mock.patch.dict(
             os.environ,
-            {ai_status.OPERATOR_ASSERTION_ENV: "{}"},
+            {ai_status.LOCAL_HUMAN_OPS_ENV: "1"},
             clear=True,
         ):
-            ai_status.validate_active_status_command_lease(
-                "reconcile_merged_done",
-                [self.task_id, "verified merged delivery closeout"],
-            )
-
-    def test_operator_assertion_cannot_create_a_source_task(self) -> None:
-        with mock.patch.dict(
-            os.environ,
-            {ai_status.OPERATOR_ASSERTION_ENV: "{}"},
-            clear=True,
-        ), self.assertRaisesRegex(RuntimeError, "cannot create source tasks"):
-            ai_status.authorize_operator_assertion_if_needed(
-                {"tasks": []},
-                "assign",
-                ["NEW-SOURCE-TASK", "Codex", "Claude"],
-            )
+            for command in ai_status.LOCAL_HUMAN_OPS_ACTIONS:
+                with self.subTest(command=command):
+                    ai_status.validate_active_status_command_lease(
+                        command,
+                        [self.task_id, "explicit local maintenance"],
+                    )
+            self.assertEqual(ai_status.current_actor(), "Human/Ops")
 
     def test_rejects_expired_run_lease(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "status command lease .* is expired"):
@@ -1325,7 +1341,7 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             )
         return json.loads(output.getvalue())
 
-    def test_bridge_consume_does_not_evict_operator_assertion_receipts(self) -> None:
+    def test_bridge_consume_retires_obsolete_operator_assertion_ledger(self) -> None:
         packet_id = "pkt-ledger-isolation-20260811T000000Z"
         row = self._task_row("LEDGER-ISOLATION", packet_id=packet_id)
         payload = self._payload_path([row], packet_id=packet_id, packet_digest="unused")
@@ -1341,7 +1357,7 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
 
         ai_status.verify_signed_dev_bridge_packet(batch, state=state)
 
-        self.assertIn("op_keep", state["consumed_canonical_mutation_assertions"])
+        self.assertNotIn("consumed_canonical_mutation_assertions", state)
         self.assertEqual(len(state["consumed_dev_bridge_packets"]), 1)
 
     def test_batch_commits_every_task_in_exactly_one_journal_event(self) -> None:
@@ -1704,9 +1720,9 @@ class StatusRootRoutingTests(unittest.TestCase):
         for rel in (
             "scripts/ai_status.py",
             "scripts/ai-status.sh",
+            "scripts/human-ops-status.sh",
             "scripts/loop_done_guardrail.py",
             ".orchestrator/common.py",
-            ".orchestrator/canonical_mutation_assertion.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",
