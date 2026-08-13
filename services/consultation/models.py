@@ -405,3 +405,21 @@ class PostTranscriptEventRequest(BaseModel):
     content: Dict[str, Any]
     evidence_refs: List[str] = Field(default_factory=list)
     idempotency_key: Optional[str] = Field(default=None, min_length=1)
+
+
+class CreatePolicyLearningCandidateIntakeRequest(BaseModel):
+    candidate_id: str = Field(min_length=1)
+    tenant_id: Optional[str] = Field(default=None, min_length=1)
+    status: str = Field(default="processed", min_length=1)
+    dataset_version_id: str = Field(min_length=1)
+    dataset_lineage: Dict[str, Any] = Field(default_factory=dict)
+    evaluation_summary: Dict[str, Any] = Field(default_factory=dict)
+    artifact_checksum: Optional[str] = None
+    from_persona_id: Optional[str] = "persona-policy-learner"
+    priority: ConsultPriority = ConsultPriority.NORMAL
+    trace_id: Optional[str] = None
+    auto_decision: Optional[str] = "approved"
+    auto_rationale: Optional[str] = None
+    requested_by: Optional[ActorRef] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+

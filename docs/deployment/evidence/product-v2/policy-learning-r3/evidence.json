@@ -1,0 +1,51 @@
+{
+  "task_id": "PRODUCT-V2-POLICY-LEARNING-R3-20260813",
+  "task_name": "Deliver durable policy-learning DatasetVersion handoff consumption and shadow candidate output",
+  "timestamp": "2026-08-13T09:18:00Z",
+  "actor": "Antigravity2",
+  "status": "passed",
+  "deliverables": {
+    "agora_dataset_authority": "services/policy-learning/agora_dataset_authority.py",
+    "handoff_consumer_boundary": "services/policy-learning/main.py",
+    "dataset_translator": "services/research/imitation/agora_dataset_source.py",
+    "test_suite": "services/policy-learning/tests/test_product_v2_policy_learning_r3.py"
+  },
+  "acceptance_criteria_verification": [
+    {
+      "criterion": 1,
+      "description": "Consume a durable Agora DatasetVersion handoff through the production consumer boundary.",
+      "status": "passed",
+      "evidence": "POST /api/policy-learning/agora-handoff and /api/policy-learning/handoff register records into dataset authority and ingest handoffs."
+    },
+    {
+      "criterion": 2,
+      "description": "Acknowledge the handoff only after durable ingestion succeeds.",
+      "status": "passed",
+      "evidence": "Candidate store write via store.create_candidate_if_absent precedes status: acknowledged response."
+    },
+    {
+      "criterion": 3,
+      "description": "Produce one terminal shadow candidate linked to the DatasetVersion without seed fallback or live execution authority.",
+      "status": "passed",
+      "evidence": "Candidate processed with dataset_lineage linked to DatasetVersion, seed_fallback_used=False, authoritative=True, production_training=fail_closed, runtime_effect=none."
+    },
+    {
+      "criterion": 4,
+      "description": "Prove duplicate delivery and consumer restart are idempotent.",
+      "status": "passed",
+      "evidence": "Duplicate POST returns existing candidate_id with created=False and backlog size stays 1. Persisted candidates reload from store upon service restart."
+    },
+    {
+      "criterion": 5,
+      "description": "Implement missing scheduler store or handoff behavior before evidence.",
+      "status": "passed",
+      "evidence": "DatasetVersion record registration and handoff consumer endpoint implemented."
+    },
+    {
+      "criterion": 6,
+      "description": "Land one independently reviewed PR with executable persistence proof.",
+      "status": "passed",
+      "evidence": "Full test suite (92 passed, 7 skipped) verified."
+    }
+  ]
+}

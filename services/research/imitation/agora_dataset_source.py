@@ -286,13 +286,19 @@ def _sessions_from_content(version: AgoraDatasetVersion) -> list[dict[str, Any]]
     """
 
     content = version.content
-    sessions_value = content.get("sessions")
+    sessions_value = content.get("sessions") or content.get("trajectories")
     if isinstance(sessions_value, Sequence) and not isinstance(sessions_value, (str, bytes)):
-        sessions = [
-            dict(session)
-            for session in sessions_value
-            if isinstance(session, Mapping) and session.get("steps")
-        ]
+        sessions = []
+        for session in sessions_value:
+            if isinstance(session, Mapping) and session.get("steps"):
+                sess_dict = dict(session)
+                if not sess_dict.get("target"):
+                    sess_dict["target"] = _session_target(content)
+                if not sess_dict.get("actor_role"):
+                    sess_dict["actor_role"] = _text(content.get("actor_role")) or "operator"
+                if not sess_dict.get("decision"):
+                    sess_dict["decision"] = _text(content.get("decision")) or "approve"
+                sessions.append(sess_dict)
         if sessions:
             return sessions
 

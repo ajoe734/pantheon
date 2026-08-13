@@ -90,6 +90,9 @@ class ConsultationServiceClient:
     def create_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request_json("POST", "/api/consult/requests", payload)
 
+    def intake_policy_learning_candidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._request_json("POST", "/api/consult/intake/policy-learning-candidate", payload)
+
     def submit_request(self, request_id: str) -> Dict[str, Any]:
         return self._request_json("POST", f"/api/consult/requests/{request_id}/submit")
 

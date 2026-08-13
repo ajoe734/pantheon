@@ -15,6 +15,7 @@ APPROVAL_TARGET_TYPES = {
     "registry_entry",
     "strategy_spec",
     "model_artifact",
+    "candidate_artifact",
     "allocation_policy",
     "persona_capital_binding",
     "evolution_proposal",
