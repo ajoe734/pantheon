@@ -17,6 +17,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Mapping
 
+from services.research.alpha_replication.admission import ReplicationAdmissionStore
 from services.research.alpha_replication.controller_state import ControllerState, ControllerStateStore
 from services.research.alpha_replication.queue import AlphaReplicationQueue
 from services.research.alpha_replication.revalidation_worker import AlphaRevalidationWorker
@@ -36,6 +37,7 @@ class ReplicationControllerConfig:
         data_dir: Path | None = None,
         seed_store_path: Path | None = None,
         authority: ExperimentAuthority | None = None,
+        admission_store: ReplicationAdmissionStore | None = None,
     ) -> None:
         self.database_url = database_url or os.getenv("DATABASE_URL") or "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon"
         self.registry_url = registry_url or os.getenv("PANTHEON_REGISTRY_URL") or "http://registry:8087"
@@ -48,6 +50,7 @@ class ReplicationControllerConfig:
         self.state_path = state_path or Path(os.getenv("ALPHA_REPLICATION_CONTROLLER_STATE_PATH") or self.data_dir / "controller_state.json")
         self.seed_store_path = seed_store_path or Path(os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or "data/source-ingest/distill_seeds.jsonl")
         self.authority = authority
+        self.admission_store = admission_store or ReplicationAdmissionStore(self.data_dir)
 
 
 def _get_approved_specs_for_strategy(registry_url: str, strategy_id: str) -> list[dict]:
@@ -141,9 +144,12 @@ def run_controller_tick(
     actual_meta: dict[str, Any] = {}
     
     try:
-        # 1. Read desired state: list of approved strategy specs in the registry
-        # We find them by reading the distillation seeds file if it exists, or querying known IDs
-        source_ids: list[str] = []
+        # 1. Read admissions from ReplicationAdmissionStore for current tenant
+        admissions = config.admission_store.list_admissions(tenant_id=state.tenant_id)
+
+        # Legacy seed file read: seed store is retained for lineage tracking,
+        # but seed source_ids do NOT directly grant admission without an approved ReplicationAdmission.
+        seed_lineage_sources: list[str] = []
         if config.seed_store_path.exists():
             try:
                 for line in config.seed_store_path.read_text(encoding="utf-8").splitlines():
@@ -153,26 +159,31 @@ def run_controller_tick(
                     payload = json.loads(line)
                     if isinstance(payload, dict) and "source_id" in payload:
                         source_id = str(payload["source_id"] or "").strip()
-                        if source_id and source_id not in source_ids:
-                            source_ids.append(source_id)
+                        if source_id and source_id not in seed_lineage_sources:
+                            seed_lineage_sources.append(source_id)
             except Exception as exc:
                 raise RuntimeError(
-                    f"Failed to read StrategySpec discovery trigger store: {exc}"
+                    f"Failed to read StrategySpec discovery trigger store for lineage: {exc}"
                 ) from exc
         
-        # Always look up registry entries
+        # Look up registry entries ONLY for admitted strategy specs
         approved_specs = []
-        for sid in source_ids:
+        for adm in admissions:
+            strategy_id = adm["strategy_id"]
+            strategy_spec_id = adm["strategy_spec_id"]
             try:
-                entries = _get_approved_specs_for_strategy(config.registry_url, sid)
-                approved_specs.extend(entries)
+                entries = _get_approved_specs_for_strategy(config.registry_url, strategy_id)
+                # Filter registry entries to the exact admitted strategy_spec_id
+                matched_entries = [e for e in entries if e.get("registry_id") == strategy_spec_id]
+                approved_specs.extend(matched_entries)
             except Exception as exc:
-                raise RuntimeError(f"Registry lookup failed for strategy {sid}: {exc}") from exc
+                raise RuntimeError(f"Registry lookup failed for strategy {strategy_id}: {exc}") from exc
         
         desired_meta = {
             "approved_spec_count": len(approved_specs),
             "strategy_spec_ids": [entry.get("registry_id") for entry in approved_specs],
             "tenant_id": state.tenant_id,
+            "seed_lineage_count": len(seed_lineage_sources),
         }
         
         # 2. Enqueue into AlphaReplicationQueue
