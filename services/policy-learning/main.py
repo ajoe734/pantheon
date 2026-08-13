@@ -53,6 +53,10 @@ from services.research.imitation.agora_dataset_source import (
 )
 from services.research.imitation.bc_trainer import train as train_bc
 from services.research.imitation.eval_metrics import evaluate as evaluate_policy
+from candidate_experiment_handoff import (
+    CandidateHandoffError,
+    handoff_candidate_to_experiment_authority,
+)
 
 
 PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
@@ -837,6 +841,8 @@ def process_claimed_candidate(claim: Dict[str, Any]) -> Dict[str, Any]:
             candidate["updated_at"] = timestamp
         else:
             _apply_processed_result(candidate, result, lineage, timestamp)
+            with contextlib.suppress(Exception):
+                handoff_candidate_to_experiment_authority(candidate, timestamp=timestamp)
 
     try:
         return store.settle_candidate(candidate, lease_token=lease_token)
@@ -1375,6 +1381,21 @@ def candidate_governance(
 ) -> Dict[str, Any]:
     """Report the gates standing between a candidate and any runtime effect."""
     return _gate_evaluation(_tenant_candidate(candidate_id, authority))
+
+
+@app.post("/api/policy-learning/candidates/{candidate_id}/handoff", status_code=200)
+def handoff_candidate_endpoint(
+    candidate_id: str,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Hand off a processed imitation candidate to Research experiment authority."""
+    candidate = _tenant_candidate(candidate_id, authority)
+    try:
+        result = handoff_candidate_to_experiment_authority(candidate)
+        store.put_candidate(candidate)
+        return result.to_dict()
+    except CandidateHandoffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/api/policy-learning/candidates/{candidate_id}/promote", status_code=409)

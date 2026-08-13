@@ -20,7 +20,11 @@ from services.research.experiments import (
     registry_entry_view_to_dict,
     write_experiment_run_artifact_to_registry,
 )
-from store import ResearchOrchestratorStore, build_research_orchestrator_store
+from services.research.experiment_candidate_intake import (
+    ExperimentCandidateIntakeError,
+    intake_imitation_candidate,
+)
+from services.research.store import ResearchOrchestratorStore, build_research_orchestrator_store
 
 
 PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
@@ -637,6 +641,16 @@ def capabilities() -> Dict[str, Any]:
             for adapter, metadata in sorted(CAPABILITY_REGISTRY.items())
         ],
     }
+
+
+@app.post("/api/research-orchestrator/intake/imitation-candidate", status_code=201)
+def intake_imitation_candidate_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Intake an imitation candidate from policy-learning into Research as ExperimentTask and ExperimentRun."""
+    try:
+        receipt = intake_imitation_candidate(payload, store=store)
+        return receipt.to_dict()
+    except ExperimentCandidateIntakeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/research-orchestrator/tasks")
