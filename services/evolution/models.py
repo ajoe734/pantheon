@@ -123,6 +123,32 @@ class ProposeFromPostmortemPublishedRequest(BaseModel):
     created_by_role: str = "evolution_controller"
 
 
+class LearnFeedbackWritebackRequest(BaseModel):
+    sponsor_persona_id: str
+    contributing_persona_ids: List[str] = Field(default_factory=list)
+    summary: Optional[str] = None
+    contributor_feedback: List[Dict[str, Any]] = Field(default_factory=list)
+    proposal_ids: List[str] = Field(default_factory=list)
+    proposal_ids_by_persona: Dict[str, List[str]] = Field(default_factory=dict)
+
+
+class LearnFeedbackWritebackResponse(BaseModel):
+    source_event_type: str
+    source_event_id: str
+    write_authority: str
+    sponsor_persona_id: str
+    contributing_persona_ids: List[str]
+    summary: str
+    headline: str
+    body: str
+    evidence_refs: List[Dict[str, Any]]
+    contributor_feedback: List[Dict[str, Any]]
+    proposal_ids: List[str]
+    proposal_ids_by_persona: Dict[str, List[str]]
+    tags: List[str]
+
+
+
 # ---------------------------------------------------------------------------
 # Review / Approve / Reject / Execute / Cancel
 # ---------------------------------------------------------------------------

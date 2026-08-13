@@ -116,6 +116,8 @@ from models import (  # type: ignore
     DispatchOutboxRecordResponse,
     DispatchReplayRequest,
     ExecuteRequest,
+    LearnFeedbackWritebackRequest,
+    LearnFeedbackWritebackResponse,
     ObservationWindowReportResponse,
     ProposeFromIncidentRequest,
     ProposeFromPostmortemPublishedRequest,
@@ -130,6 +132,7 @@ from models import (  # type: ignore
 from sweep import run_daily_sweep  # type: ignore
 from postmortem_bridge import (  # type: ignore
     PostmortemBridgeError,
+    build_evolution_learn_feedback_writeback,
     build_published_postmortem_proposal_request,
 )
 from services.evolution.dispatch_outbox import (
@@ -1778,7 +1781,47 @@ def get_observation_report(
     )
 
 
+@app.post(
+    "/api/evolution/proposals/{decision_id}/learn-feedback",
+    response_model=LearnFeedbackWritebackResponse,
+)
+def get_learn_feedback_writeback(
+    decision_id: str,
+    body: LearnFeedbackWritebackRequest,
+):
+    """
+    Produce the memory-service Learn feedback writeback payload for an executed or approved decision.
+    """
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    _guard_read_tenant(decision)
+    allowed_states = {
+        EvolutionDecisionState.APPROVED,
+        EvolutionDecisionState.EXECUTED,
+    }
+    if EvolutionDecisionState(decision.decision_state) not in allowed_states:
+        raise HTTPException(
+            status_code=422,
+            detail="Learn feedback writeback requires an approved or executed EvolutionDecision.",
+        )
+    try:
+        payload = build_evolution_learn_feedback_writeback(
+            decision.to_dict(),
+            sponsor_persona_id=body.sponsor_persona_id,
+            contributing_persona_ids=body.contributing_persona_ids,
+            summary=body.summary,
+            contributor_feedback=body.contributor_feedback,
+            proposal_ids=body.proposal_ids,
+            proposal_ids_by_persona=body.proposal_ids_by_persona,
+        )
+    except PostmortemBridgeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return LearnFeedbackWritebackResponse(**payload)
+
+
 # --- Review ------------------------------------------------------------------
+
 
 @app.post("/api/evolution/proposals/{decision_id}/review", response_model=DecisionResponse)
 def review_proposal(decision_id: str, body: ReviewRequest):

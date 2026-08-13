@@ -2253,3 +2253,55 @@ def test_health_metrics_include_sweep_fields():
     assert metrics["sweep_last_success_at"] is not None
     assert "sweep_total_proposals_created" in metrics
     assert metrics["sweep_total_proposals_created"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Learn feedback writeback endpoint tests
+# ---------------------------------------------------------------------------
+
+def test_learn_feedback_writeback_requires_approved_or_executed():
+    """Proposed decision cannot generate learn feedback writeback."""
+    d_id = uid()
+    r = client.post("/api/evolution/proposals", json=dict(LOW_RISK_BODY, decision_id=d_id))
+    assert r.status_code == 201
+
+    fb_resp = client.post(
+        f"/api/evolution/proposals/{d_id}/learn-feedback",
+        json={"sponsor_persona_id": "persona-a"},
+    )
+    assert fb_resp.status_code == 422
+    assert "requires an approved or executed EvolutionDecision" in fb_resp.json()["detail"]
+
+
+def test_learn_feedback_writeback_success():
+    """Approved or executed decision produces a valid Learn feedback payload."""
+    d_id = uid()
+    app_id = uid()
+    client.post("/api/evolution/proposals", json=dict(LOW_RISK_BODY, decision_id=d_id)).raise_for_status()
+    client.post(
+        f"/api/evolution/proposals/{d_id}/review",
+        json={"actor_role": "reviewer_on_duty", "actor_id": "rev-01", "approval_decision_id": app_id},
+    ).raise_for_status()
+    client.post(
+        f"/api/evolution/proposals/{d_id}/approve",
+        json={"actor_role": "reviewer_on_duty", "actor_id": "app-01"},
+    ).raise_for_status()
+
+    fb_resp = client.post(
+        f"/api/evolution/proposals/{d_id}/learn-feedback",
+        json={
+            "sponsor_persona_id": "persona-sponsor-01",
+            "contributing_persona_ids": ["persona-b", "persona-c"],
+            "summary": "Sharpe degraded; retrain requested.",
+        },
+    )
+    assert fb_resp.status_code == 200, fb_resp.text
+    data = fb_resp.json()
+    assert data["source_event_type"] == "evolution_decision_approved"
+    assert data["source_event_id"] == d_id
+    assert data["write_authority"] == "evolution-svc"
+    assert data["sponsor_persona_id"] == "persona-sponsor-01"
+    assert data["contributing_persona_ids"] == ["persona-b", "persona-c"]
+    assert data["summary"] == "Sharpe degraded; retrain requested."
+    assert any(ref["ref_id"] == d_id for ref in data["evidence_refs"])
+
