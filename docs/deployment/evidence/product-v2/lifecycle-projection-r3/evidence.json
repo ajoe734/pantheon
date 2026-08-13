@@ -1,0 +1,69 @@
+{
+  "schema_version": "pantheon.product-v2-lifecycle-projection-r3.v1",
+  "task": {
+    "id": "PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+    "title": "Deliver lifecycle projection through current BFF truth",
+    "owner": "Antigravity",
+    "reviewer": "Antigravity2",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "task_branch": "task/PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+    "code_head_sha": "e69681e19",
+    "review_decision": "ready_for_review"
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/",
+      "services/control-plane/bff/trade_journeys.py",
+      "services/control-plane/bff/trade_journey_projection_store.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "docs/deployment/evidence/product-v2/lifecycle-projection-r3/evidence.json"
+    ],
+    "not_changing": [
+      "services/trade_journey core projection materializer logic",
+      "database migration schemas",
+      "external deployment configuration"
+    ],
+    "composes_with": [
+      "PRODUCT-V2-LIFECYCLE-CLOSURE-R2-20260813",
+      "PRODUCT-V2-RESEARCH-LOOP-CLOSURE-R2-20260813"
+    ]
+  },
+  "verification_summary": {
+    "current_dev_alignment": "Verified against current origin/dev (HEAD e69681e19). All lifecycle projector, Postgres read model, and BFF readiness components are intact and passing tests.",
+    "suite_results": [
+      {
+        "suite": "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+        "passed": 3,
+        "failed": 0,
+        "status": "pass"
+      },
+      {
+        "suite": "services/trade_journey/test_lifecycle_projector.py",
+        "passed": 34,
+        "failed": 0,
+        "status": "pass"
+      },
+      {
+        "suite": "services/trade_journey/test_hosted_lifecycle_probe.py",
+        "passed": 18,
+        "failed": 0,
+        "status": "pass"
+      },
+      {
+        "suite": "services/trade_journey/ (full test suite)",
+        "passed": 134,
+        "skipped": 19,
+        "failed": 0,
+        "status": "pass"
+      }
+    ],
+    "file_checksums": {
+      "services/control-plane/bff/trade_journeys.py": "b0c93e85b298ce0f24394432af596b2aed6b0634198e9ef92e08dce4a4703394",
+      "services/control-plane/bff/trade_journey_projection_store.py": "e96c9baf3ec6ae85bdc90d7ecf0b016fef4c830326cb48815ec72ffc106717ce",
+      "services/control-plane/bff/test_lifecycle_projector_readiness.py": "8414a4194b4a8d18e21648d19497f7866530c96739b47f443c93d0c15c21cc58",
+      "services/control-plane/bff/read_store.py": "33b28b7fe17ecdbfeadfaecdbb15743bf8dbd2cbb54d241eb05aa1cfa068aa80"
+    }
+  }
+}
