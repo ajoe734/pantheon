@@ -20,7 +20,6 @@ from read_store import ReadSurfaceStore  # noqa: E402
 import assistant.control_mode as control_mode_module  # noqa: E402
 from assistant.control_mode import ControlModeStore  # noqa: E402
 from assistant.command_idempotency import CommandIdempotencyStore  # noqa: E402
-from assistant.development_routes import create_development_router  # noqa: E402
 from assistant.routes import create_assistant_router  # noqa: E402
 from assistant.tool_contracts import (  # noqa: E402
     ASSISTANT_TOOL_ALLOWLIST,
@@ -62,7 +61,6 @@ def _control_mode_client(
     capabilities: list[str] | None = None,
     mfa_verified: bool = False,
     tenant_ids: list[str] | None = None,
-    prepare_repair_worktree=None,
     provider_list=None,
     provider_register=None,
     provider_reauth=None,
@@ -91,16 +89,6 @@ def _control_mode_client(
     app = FastAPI()
     app.add_exception_handler(bff_main.StarletteHTTPException, bff_main._bff_http_exception_handler)
     app.include_router(product_router)
-    app.include_router(
-        create_development_router(
-            build_context_pack=lambda *args, **kwargs: (_ for _ in ()).throw(NotImplementedError),
-            extract_identity=lambda _authorization: identity,
-            require_read_role=lambda _identity: None,
-            bff_error=bff_main._bff_error,
-            control_mode_store=store,
-            prepare_repair_worktree=prepare_repair_worktree,
-        )
-    )
     return TestClient(app, raise_server_exceptions=True)
 
 
@@ -263,33 +251,6 @@ def test_control_mode_activation_requires_kernel_capability(monkeypatch) -> None
 
     assert resp.status_code == 422
     assert resp.json()["error"]["details"]["field"] == "capabilities"
-    assert store.status_for_actor("op-security")["active"] is False
-
-
-def test_control_mode_activation_requires_exact_requested_mode_capability(monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
-    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
-    client = _control_mode_client(
-        store,
-        roles=["operator"],
-        capabilities=["assistant.kernel.debug"],
-        mfa_verified=True,
-    )
-
-    response = client.post(
-        "/bff/assistant/control-mode/activate",
-        json={
-            "mode": "kernel_repair",
-            "passphrase": "control phrase ok",
-            "reason": "wrong capability negative",
-        },
-        headers=OPERATOR_TOOL_HEADERS,
-    )
-
-    assert response.status_code == 403
-    details = response.json()["error"]["details"]
-    assert details["reason"] == "mode_capability_missing"
-    assert details["required_capability"] == "assistant.kernel.repair"
     assert store.status_for_actor("op-security")["active"] is False
 
 
@@ -586,242 +547,6 @@ def test_control_mode_passphrase_change_requires_admin_plus_mfa() -> None:
     assert mfa_resp.status_code == 403
     assert mfa_resp.json()["error"]["details"]["field"] == "mfa"
     assert store.configured() is False
-
-
-def test_repair_worktree_prepare_requires_active_kernel_repair(monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
-    calls = []
-
-    def prepare(payload, operator_id, trace_id):
-        calls.append((payload, operator_id, trace_id))
-        return {"status": "ok"}
-
-    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
-    client = _control_mode_client(
-        store,
-        roles=["operator"],
-        capabilities=["assistant.kernel.debug", "assistant.kernel.repair"],
-        mfa_verified=True,
-        prepare_repair_worktree=prepare,
-    )
-
-    resp = client.post(
-        "/bff/assistant/repair-worktrees/prepare",
-        json={"declaredScope": ["services/control-plane/bff"]},
-        headers=OPERATOR_TOOL_HEADERS,
-    )
-
-    assert resp.status_code == 409
-    assert resp.json()["error"]["details"]["reason"] == "not_active"
-    assert calls == []
-
-    activate_resp = client.post(
-        "/bff/assistant/control-mode/activate",
-        json={
-            "passphrase": "control phrase ok",
-            "mode": "kernel_debug",
-            "reason": "debug only",
-        },
-        headers=OPERATOR_TOOL_HEADERS,
-    )
-    assert activate_resp.status_code == 202, activate_resp.text
-
-    debug_resp = client.post(
-        "/bff/assistant/repair-worktrees/prepare",
-        json={"declaredScope": ["services/control-plane/bff"]},
-        headers=OPERATOR_TOOL_HEADERS,
-    )
-
-    assert debug_resp.status_code == 409
-    assert debug_resp.json()["error"]["details"]["reason"] == "kernel_repair_required"
-    assert calls == []
-
-
-def test_repair_worktree_prepare_delegates_to_openclaw_adapter(monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
-    monkeypatch.setenv("PANTHEON_ASSISTANT_REPAIR_RECEIPT_KEY", "repair-receipt-test-secret")
-    calls = []
-
-    def prepare(payload, operator_id, trace_id):
-        calls.append((payload, operator_id, trace_id))
-        return {
-            "status": "ok",
-            "data": {
-                "repair": {
-                    "task_id": payload["task_id"],
-                    "task_worktree": "/srv/pantheon-assistant/worktrees/test",
-                    "declared_scope": payload["declared_scope"],
-                    "expected_branch": payload["expected_branch"],
-                    "remote": "origin",
-                    "merge_target": "dev",
-                    "repo_key": payload["repo_key"],
-                    "require_clean": True,
-                }
-            },
-        }
-
-    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
-    client = _control_mode_client(
-        store,
-        roles=["operator"],
-        capabilities=["assistant.kernel.repair"],
-        mfa_verified=True,
-        prepare_repair_worktree=prepare,
-    )
-    activate_resp = client.post(
-        "/bff/assistant/control-mode/activate",
-        json={
-            "passphrase": "control phrase ok",
-            "mode": "kernel_repair",
-            "reason": "prepare repair worktree",
-        },
-        headers=OPERATOR_TOOL_HEADERS,
-    )
-    assert activate_resp.status_code == 202, activate_resp.text
-
-    resp = client.post(
-        "/bff/assistant/repair-worktrees/prepare",
-        json={
-            "taskId": "MGMT-AI-REPAIR-TEST",
-            "repoKey": "execute-plans",
-            "declaredScope": "services/control-plane/bff,services/openclaw-gateway-adapter",
-            "expectedBranch": "task/MGMT-AI-REPAIR-TEST",
-            "traceId": "trace-repair-1",
-        },
-        headers=OPERATOR_TOOL_HEADERS,
-    )
-
-    assert resp.status_code == 201, resp.text
-    assert len(calls) == 1
-    payload, operator_id, trace_id = calls[0]
-    assert operator_id == "op-security"
-    assert trace_id == "trace-repair-1"
-    assert payload["task_id"] == "MGMT-AI-REPAIR-TEST"
-    assert payload["repo_key"] == "execute-plans"
-    assert payload["declared_scope"] == [
-        "services/control-plane/bff",
-        "services/openclaw-gateway-adapter",
-    ]
-    assert payload["expected_branch"] == "task/MGMT-AI-REPAIR-TEST"
-    assert payload["control_mode"]["mode"] == "kernel_repair"
-    assert resp.json()["data"]["repair"]["task_id"] == "MGMT-AI-REPAIR-TEST"
-    assert resp.json()["data"]["repair"]["receipt"].count(".") == 1
-    assert resp.json()["meta"]["openclawAdapterStatus"] == "ok"
-
-
-def test_repair_worktree_prepare_replays_across_router_reload(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
-    monkeypatch.setenv("PANTHEON_ASSISTANT_REPAIR_RECEIPT_KEY", "repair-receipt-test-secret")
-    monkeypatch.setenv("PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED", "true")
-    monkeypatch.setenv(
-        "PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH",
-        str(tmp_path / "assistant-command-idempotency.json"),
-    )
-    calls = []
-
-    def prepare(payload, operator_id, trace_id):
-        calls.append((payload, operator_id, trace_id))
-        return {
-            "status": "ok",
-            "data": {
-                "repair": {
-                    "task_id": payload["task_id"],
-                    "task_worktree": "/srv/pantheon-assistant/worktrees/idempotent",
-                    "declared_scope": payload["declared_scope"],
-                    "expected_branch": payload["expected_branch"],
-                    "remote": "origin",
-                    "merge_target": "dev",
-                    "repo_key": payload["repo_key"],
-                    "require_clean": True,
-                }
-            },
-        }
-
-    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
-    client = _control_mode_client(
-        store,
-        roles=["operator"],
-        capabilities=["assistant.kernel.repair"],
-        mfa_verified=True,
-        prepare_repair_worktree=prepare,
-    )
-    activate = client.post(
-        "/bff/assistant/control-mode/activate",
-        json={
-            "passphrase": "control phrase ok",
-            "mode": "kernel_repair",
-            "reason": "prepare idempotency",
-        },
-        headers={**OPERATOR_TOOL_HEADERS, "Idempotency-Key": "activate-repair-idem"},
-    )
-    assert activate.status_code == 202, activate.text
-
-    payload = {
-        "taskId": "MGMT-AI-IDEMPOTENT",
-        "repoKey": "pantheon",
-        "declaredScope": ["services/control-plane/bff"],
-        "expectedBranch": "task/MGMT-AI-IDEMPOTENT",
-    }
-    headers = {**OPERATOR_TOOL_HEADERS, "Idempotency-Key": "prepare-stable"}
-    missing = client.post(
-        "/bff/assistant/repair-worktrees/prepare",
-        json=payload,
-        headers=OPERATOR_TOOL_HEADERS,
-    )
-    assert missing.status_code == 400
-    assert missing.json()["error"]["details"]["reason"] == "idempotency_key_required"
-    assert calls == []
-
-    wrong_tenant = client.post(
-        "/bff/assistant/repair-worktrees/prepare",
-        json=payload,
-        headers={
-            **OPERATOR_TOOL_HEADERS,
-            "Idempotency-Key": "prepare-wrong-tenant",
-            "X-Tenant-Id": "tenant-other",
-        },
-    )
-    assert wrong_tenant.status_code == 403
-    assert wrong_tenant.json()["error"]["details"]["reason"] == "tenant_mismatch"
-    assert calls == []
-
-    first = client.post(
-        "/bff/assistant/repair-worktrees/prepare",
-        json=payload,
-        headers=headers,
-    )
-    replay = client.post(
-        "/bff/assistant/repair-worktrees/prepare",
-        json=payload,
-        headers=headers,
-    )
-    assert first.status_code == replay.status_code == 201
-    assert replay.json() == first.json()
-    assert len(calls) == 1
-
-    reloaded_client = _control_mode_client(
-        store,
-        roles=["operator"],
-        capabilities=["assistant.kernel.repair"],
-        mfa_verified=True,
-        prepare_repair_worktree=prepare,
-    )
-    replay_after_reload = reloaded_client.post(
-        "/bff/assistant/repair-worktrees/prepare",
-        json=payload,
-        headers=headers,
-    )
-    assert replay_after_reload.status_code == 201
-    assert replay_after_reload.json() == first.json()
-    assert len(calls) == 1
-
-    conflict = reloaded_client.post(
-        "/bff/assistant/repair-worktrees/prepare",
-        json={**payload, "declaredScope": ["services/openclaw-gateway-adapter"]},
-        headers=headers,
-    )
-    assert conflict.status_code == 409
-    assert conflict.json()["error"]["details"]["reason"] == "idempotency_payload_conflict"
 
 
 def test_provider_reauth_does_not_require_active_control_mode(monkeypatch) -> None:

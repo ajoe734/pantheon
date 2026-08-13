@@ -35,7 +35,6 @@ KERNEL_CAPABILITY_PREFIX = "assistant.kernel"
 KERNEL_MODES = frozenset({
     AssistantMode.KERNEL_OBSERVE,
     AssistantMode.KERNEL_DEBUG,
-    AssistantMode.KERNEL_REPAIR,
 })
 
 COMMAND_CLASS_HEALTH_PROBE = "health_probe"
@@ -52,16 +51,6 @@ COMMAND_CLASSES_BY_MODE = {
         COMMAND_CLASS_REPO_STATUS,
     ),
     AssistantMode.KERNEL_DEBUG: (
-        COMMAND_CLASS_HEALTH_PROBE,
-        COMMAND_CLASS_REPO_STATUS,
-        COMMAND_CLASS_CODE_SEARCH,
-        COMMAND_CLASS_FILE_SLICE,
-        COMMAND_CLASS_TEST_RUN,
-        COMMAND_CLASS_LOG_READ,
-    ),
-    # Repair write/restart commands are intentionally outside ASST-KERNEL-006;
-    # ASST-KERNEL-007 owns task worktree and repo mutation guardrails.
-    AssistantMode.KERNEL_REPAIR: (
         COMMAND_CLASS_HEALTH_PROBE,
         COMMAND_CLASS_REPO_STATUS,
         COMMAND_CLASS_CODE_SEARCH,

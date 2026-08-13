@@ -1,7 +1,7 @@
 # Assistant Capability Skill Catalog Ownership
 
-Status: draft-canonical
-Last updated: 2026-06-08
+Status: superseded for development tooling
+Last updated: 2026-08-13
 Tier: L2 Planning & Execution
 Scope: Management AI assistant-skill descriptors, OpenClaw tool/workflow discovery, and BFF projection ownership
 Task-ID: ASST-SKILL-001
@@ -51,7 +51,7 @@ Every effective assistant-skill descriptor must include:
   allowlisted by a descriptor mode gate.
 - Viewer-only callers can read the surface but receive no operator-only
   effective descriptors.
-- Workflow descriptors are repair-mode gated and require confirmation metadata.
+- Workflow descriptors are `kernel_debug` gated and require confirmation metadata.
 
 ## Compatibility
 
@@ -61,20 +61,13 @@ callers. ASST-SKILL-001 adds `schema_version`, `mode`, `operator_role`,
 
 No new registry, gateway, or BFF command route is introduced.
 
-## ASST-SKILL-002 Pilot
+## Retired development descriptors
 
-`assistant.sa_sd.generate` is the first catalog-driven assistant command skill.
-The OpenClaw gateway adapter owns its descriptor and exposes it only when the
-operator, mode, and `OPENCLAW_ALLOWED_TOOLS` policy make it effective.
-
-The descriptor's `handler_ref` is
-`bff.route:POST /bff/assistant/dev-docs/generate`. This points at the existing
-BFF dev-docs generate handler; the pilot does not add a second handler or alter
-SA/SD generation logic.
-
-The Management AI frontend renders the SA/SD action from the effective
-descriptor, not from a hard-coded toolbar button. The BFF still only projects
-adapter-provided `effective_skills` and does not recompute catalog truth.
+`assistant.sa_sd.generate` and `assistant.orchestrator.status` were retired
+when development tooling moved to `.orchestrator/`. They are permanently
+blocked by the product adapter even if an obsolete allowlist still names them.
+SA/SD generation, canonical task transport, and supervisor status are local
+development-tooling concerns, not product BFF capabilities.
 
 ## ASST-SKILL-004 Toolbar Capability Migration
 
@@ -88,7 +81,6 @@ gates pass:
 | `assistant.openclaw.ask` | `bff.route:POST /bff/management/nl/ask` | `assistant_management_answer` |
 | `assistant.control_mode.status` | `bff.route:GET /bff/assistant/control-mode` | `assistant_control_mode_status` |
 | `assistant.transcript.resync` | `bff.route:GET /bff/assistant/sessions/{sessionId}/transcript` | `assistant_transcript_resync` |
-| `assistant.orchestrator.status` | `bff.route:GET /bff/assistant/orchestrator/status` | `assistant_orchestrator_status` |
 
 These descriptors point at existing BFF routes and handlers. ASST-SKILL-004
 does not add a new BFF command router, OpenClaw registry, or frontend
@@ -102,8 +94,7 @@ hard-coded capability ids.
 `assistant.provider.reauth` is an adapter-owned `assistant_command` descriptor
 for Codex service-user device-flow reauthentication. It is effective only when
 the OpenClaw adapter allowlist includes `assistant.provider.reauth`, the
-operator role passes the `operator` gate, and the active mode is `kernel_debug`
-or `kernel_repair`.
+operator role passes the `operator` gate, and the active mode is `kernel_debug`.
 
 The descriptor's `handler_ref` is
 `bff.route:POST /bff/assistant/provider/reauth`. The BFF must require active

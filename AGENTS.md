@@ -168,78 +168,42 @@ Keep these authority domains separate:
   evidence. It does not become task authority or product truth.
 
 Do not require a product BFF login, product control mode, or product readiness
-to maintain local canonical development tasks. Assistant dev-bridge routes may
-transport a request into development tooling, but they are adapters rather than
-canonical authority and are not product-completion evidence. Conversely,
+to maintain local canonical development tasks. The local development bridge is
+under `.orchestrator/development_bridge/`; it is not a product route or product
+image dependency. Conversely,
 supervisor or auto-worker health proves only that development tooling can
 dispatch work; it does not prove that the product is deployed, ready, or usable.
 
 The authoritative component map and acceptance boundaries are in
 `docs/02-architecture/development-tooling-product-boundary.md`.
 
-Management AI frontend work must start from `execute-plans` and call Pantheon
-BFF assistant routes. Do not route new Management AI development through
+Management AI frontend work must start from `execute-plans`. Product UI may use
+Pantheon BFF routes for product conversations and read-only diagnostics, but
+must not create SA/SD packets, alter canonical tasks, prepare worktrees, or
+write repository files. Do not route new Management AI development through
 Lovable, and do not use `front-ai-trading-system` as a source checkout.
 
-For SA/SD generation and downstream agent work, the expected route family is:
+Development work uses a clean repository worktree plus local tooling:
 
-- `POST /bff/assistant/dev-docs/generate`
-- `GET /bff/assistant/dev-docs/{packetId}`
-- `POST /bff/assistant/dev-bridge/task-packet`
-- `POST /bff/assistant/repair-worktrees/prepare`
-- `GET /bff/assistant/orchestrator/status`
-- `GET|POST /bff/assistant/tools/*` for governed UI/ops action
-  preview/validation/execute only
+- `.orchestrator/development_bridge/` for signed local task-packet transport;
+- `scripts/human-ops-status.sh` and `scripts/ai_status.py` for local canonical
+  task maintenance; and
+- the repository task branch/PR workflow for source changes.
 
-Do not confuse `GET|POST /bff/assistant/tools/*` with VM file-system access.
-Those routes expose Pantheon-governed action contracts such as preview,
-validation, and execute for BFF-owned operations. They are not shell, repo file
-read, or repo file write tools.
+There are no product BFF routes for dev-doc generation, task-packet transport,
+worktree preparation, or supervisor status. Do not add those routes back as
+compatibility endpoints. Do not confuse `GET|POST /bff/assistant/tools/*` with
+VM file-system access: product BFF actions are not shell, repository-read, or
+repository-write capabilities.
 
-OpenClaw-backed VM inspection and debugging is reached through Management AI
-conversation routes, primarily `POST /bff/management/nl/ask`, with Pantheon BFF
-calling the OpenClaw gateway adapter. In active `kernel_debug` mode, provider
-work must remain read-only. In active `kernel_repair` mode, provider write work
-must run in a clean repair task worktree; never point repair at the shared live
-checkout.
+OpenClaw-backed product diagnostics are reached through
+`POST /bff/management/nl/ask`. `kernel_debug` is read-only. Product BFF and its
+adapter never run source-writing repair work; implement code through the local
+task worktree flow instead.
 
-Any frontend or BFF change that claims Management AI can write VM files must
-first call `POST /bff/assistant/repair-worktrees/prepare` while control mode is
-active in `kernel_repair`, then send the OpenClaw repair metadata returned by
-that route to `POST /bff/management/nl/ask`:
-
-- `repo_key` (`execute-plans` for frontend work, `pantheon` for backend/BFF
-  work)
-- `task_id`
-- `task_worktree`
-- `declared_scope`
-- `expected_branch`
-- `remote`
-- `merge_target`
-
-The BFF prepare route delegates to the OpenClaw adapter route
-`POST /api/openclaw-adapter/assistant/repair-worktrees/prepare`. The adapter
-must clone or reuse a clean task worktree under
-`PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT`, make that directory the git repo
-root, check out `expected_branch`, and validate that `declared_scope` contains
-only repo-relative paths. Do not use `.` as a blanket write scope.
-
-Provider readiness is necessary but not sufficient. Before claiming that
-Management AI can read/write VM files or collaborate on debugging through
-OpenClaw, verify `GET /bff/assistant/mode` reports `kernel_enabled: true` and
-that control mode can be activated by an authorized operator/admin session. If
-`providerReadiness.ready` is true but `kernel_enabled` is false, the blocker is
-dev BFF configuration, not frontend hosting.
-
-As of 2026-06-08, if the frontend can activate control mode but cannot prepare
-a repair worktree through `POST /bff/assistant/repair-worktrees/prepare`, treat
-VM write capability as not complete. Do not ask other agents to implement code
-through Management AI until that prepare call succeeds and its
-`openclaw.repair` metadata is forwarded with the conversation request.
-
-The supervisor handoff path is the assistant dev bridge inbox under
-`.orchestrator/assistant-dev-packets/`. The supervisor must drain pending task
-packets into `ai-task-archive/tasks/` before a SA/SD packet is considered
+The local supervisor handoff path is
+`.orchestrator/assistant-dev-packets/`. The supervisor must drain pending local
+packets into `ai-task-archive/tasks/` before a task packet is considered
 accepted by downstream workers. See
-`docs/operations/management-ai-openclaw-dev-bridge.md` for the full validation
+`docs/operations/management-ai-openclaw-dev-bridge.md` for the local-tooling
 runbook.

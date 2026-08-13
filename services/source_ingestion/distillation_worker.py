@@ -195,6 +195,9 @@ class DistillationJob:
     source_digest: str = ""
     event_version: str = "source_record.normalized.v1"
     registry_id: str | None = None
+    strategy_id: str | None = None
+    version: str | None = None
+    checksum: str | None = None
     lease_owner: str | None = None
     lease_token: str | None = None
     lease_epoch: int = 0
@@ -218,6 +221,9 @@ class DistillationJob:
             "source_digest": self.source_digest,
             "event_version": self.event_version,
             "registry_id": self.registry_id,
+            "strategy_id": self.strategy_id,
+            "version": self.version,
+            "checksum": self.checksum,
             "lease_owner": self.lease_owner,
             "lease_token": self.lease_token,
             "lease_epoch": self.lease_epoch,
@@ -247,6 +253,9 @@ class DistillationJob:
             source_digest=str(data.get("source_digest") or ""),
             event_version=str(data.get("event_version") or "source_record.normalized.v1"),
             registry_id=data.get("registry_id") or None,
+            strategy_id=data.get("strategy_id") or None,
+            version=data.get("version") or None,
+            checksum=data.get("checksum") or None,
             lease_owner=data.get("lease_owner") or None,
             lease_token=data.get("lease_token") or None,
             lease_epoch=int(data.get("lease_epoch") or 0),
@@ -381,6 +390,9 @@ class DistillationJobQueue:
                     available_at        REAL NOT NULL,
                     seed_id             TEXT,
                     registry_id         TEXT,
+                    strategy_id         TEXT,
+                    version             TEXT,
+                    checksum            TEXT,
                     last_error          TEXT,
                     skip_reason         TEXT,
                     attempts            INTEGER NOT NULL DEFAULT 0,
@@ -413,6 +425,9 @@ class DistillationJobQueue:
                     lease_expires_at    REAL,
                     result_ref          TEXT,
                     registry_id         TEXT,
+                    strategy_id         TEXT,
+                    version             TEXT,
+                    checksum            TEXT,
                     last_error          TEXT,
                     applied_at          REAL,
                     updated_at          REAL NOT NULL,
@@ -438,9 +453,21 @@ class DistillationJobQueue:
                 );
                 """
             )
+            self._migrate_schema(connection)
+
+    def _migrate_schema(self, connection: sqlite3.Connection) -> None:
+        for table in ("distillation_outbox", "distillation_inbox"):
+            cols = {
+                row["name"]
+                for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            for col in ("strategy_id", "version", "checksum"):
+                if col not in cols:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
 
     @staticmethod
     def _job_from_row(row: sqlite3.Row) -> DistillationJob:
+        row_keys = row.keys()
         return DistillationJob(
             job_id=str(row["job_id"]),
             source_id=str(row["source_id"]),
@@ -452,6 +479,9 @@ class DistillationJobQueue:
             processed_at=_timestamp_text(row["processed_at"]),
             seed_id=row["seed_id"],
             registry_id=row["registry_id"],
+            strategy_id=row["strategy_id"] if "strategy_id" in row_keys else None,
+            version=row["version"] if "version" in row_keys else None,
+            checksum=row["checksum"] if "checksum" in row_keys else None,
             error=row["last_error"],
             skip_reason=row["skip_reason"],
             attempts=int(row["attempts"]),
@@ -824,6 +854,9 @@ class DistillationJobQueue:
         processed_at: str | datetime | float | None,
         seed_id: str | None = None,
         registry_id: str | None = None,
+        strategy_id: str | None = None,
+        version: str | None = None,
+        checksum: str | None = None,
         error: str | None = None,
         skip_reason: str | None = None,
         claim_token: str | None = None,
@@ -853,16 +886,20 @@ class DistillationJobQueue:
                     """
                     UPDATE distillation_outbox
                        SET status = ?, processed_at = ?, seed_id = ?,
-                           registry_id = ?, last_error = ?, skip_reason = ?,
+                           registry_id = ?, strategy_id = ?, version = ?, checksum = ?,
+                           last_error = ?, skip_reason = ?,
                            attempts = ?, lease_owner = NULL, lease_token = NULL,
                            lease_expires_at = NULL, updated_at = ?
-                     WHERE job_id = ?
+                      WHERE job_id = ?
                     """,
                     (
                         status.value,
                         now,
                         seed_id,
                         registry_id,
+                        strategy_id,
+                        version,
+                        checksum,
                         error,
                         skip_reason,
                         attempts,
@@ -879,8 +916,9 @@ class DistillationJobQueue:
                     """
                     INSERT INTO distillation_inbox (
                         event_id, job_id, payload_digest, status, attempts,
-                        result_ref, registry_id, last_error, applied_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        result_ref, registry_id, strategy_id, version, checksum,
+                        last_error, applied_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (event_id) DO UPDATE SET
                         status = excluded.status,
                         attempts = excluded.attempts,
@@ -889,6 +927,9 @@ class DistillationJobQueue:
                         lease_expires_at = NULL,
                         result_ref = excluded.result_ref,
                         registry_id = excluded.registry_id,
+                        strategy_id = excluded.strategy_id,
+                        version = excluded.version,
+                        checksum = excluded.checksum,
                         last_error = excluded.last_error,
                         applied_at = excluded.applied_at,
                         updated_at = excluded.updated_at
@@ -901,6 +942,9 @@ class DistillationJobQueue:
                         attempts,
                         seed_id,
                         registry_id,
+                        strategy_id,
+                        version,
+                        checksum,
                         error or skip_reason,
                         now,
                         now,
@@ -917,6 +961,9 @@ class DistillationJobQueue:
         *,
         seed_id: str,
         registry_id: str | None = None,
+        strategy_id: str | None = None,
+        version: str | None = None,
+        checksum: str | None = None,
         processed_at: str | datetime | float | None = None,
         claim_token: str | None = None,
     ) -> None:
@@ -926,6 +973,9 @@ class DistillationJobQueue:
             processed_at=processed_at,
             seed_id=seed_id,
             registry_id=registry_id,
+            strategy_id=strategy_id,
+            version=version,
+            checksum=checksum,
             claim_token=claim_token,
         )
 
@@ -952,6 +1002,9 @@ class DistillationJobQueue:
         reason: str,
         seed_id: str | None = None,
         registry_id: str | None = None,
+        strategy_id: str | None = None,
+        version: str | None = None,
+        checksum: str | None = None,
         processed_at: str | datetime | float | None = None,
         claim_token: str | None = None,
     ) -> None:
@@ -961,6 +1014,9 @@ class DistillationJobQueue:
             processed_at=processed_at,
             seed_id=seed_id,
             registry_id=registry_id,
+            strategy_id=strategy_id,
+            version=version,
+            checksum=checksum,
             skip_reason=reason,
             claim_token=claim_token,
         )
@@ -1087,10 +1143,11 @@ class DistillationJobQueue:
                     UPDATE distillation_outbox
                        SET status = 'pending', available_at = ?,
                            processed_at = NULL, seed_id = NULL,
-                           registry_id = NULL, last_error = NULL,
-                           skip_reason = NULL, lease_owner = NULL,
-                           lease_token = NULL, lease_expires_at = NULL,
-                           updated_at = ?
+                           registry_id = NULL, strategy_id = NULL,
+                           version = NULL, checksum = NULL,
+                           last_error = NULL, skip_reason = NULL,
+                           lease_owner = NULL, lease_token = NULL,
+                           lease_expires_at = NULL, updated_at = ?
                      WHERE job_id = ?
                     """,
                     (now, now, existing.job_id),
@@ -1226,6 +1283,9 @@ class RegistrySyncResult:
 
     registry_id: str
     status: str
+    strategy_id: str | None = None
+    version: str | None = None
+    checksum: str | None = None
     reason: str | None = None
 
 
@@ -1534,6 +1594,9 @@ class DistillationWorker:
                     reason=registry_result.reason or "Registry artifact is immutable",
                     seed_id=result.seed.seed_id,
                     registry_id=registry_result.registry_id,
+                    strategy_id=registry_result.strategy_id,
+                    version=registry_result.version,
+                    checksum=registry_result.checksum,
                     processed_at=now,
                     claim_token=job.lease_token,
                 )
@@ -1550,15 +1613,24 @@ class DistillationWorker:
                 )
                 return "failed", failure_status.value
             registry_id = registry_result.registry_id
+            strategy_id = registry_result.strategy_id
+            version = registry_result.version
+            checksum = registry_result.checksum
             delivery = "registry_synced"
         else:
             registry_id = None
+            strategy_id = None
+            version = None
+            checksum = None
             delivery = None
 
         self._queue.mark_done(
             job.job_id,
             seed_id=result.seed.seed_id,
             registry_id=registry_id,
+            strategy_id=strategy_id,
+            version=version,
+            checksum=checksum,
             processed_at=now,
             claim_token=job.lease_token,
         )

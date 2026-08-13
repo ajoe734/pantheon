@@ -1,252 +1,51 @@
-# Management AI OpenClaw Dev Bridge Runbook
+# Local Development Tooling Runbook
 
-Date: 2026-06-11
+## Scope
 
-This is the canonical runbook for Management AI development that needs
-OpenClaw-backed VM file access, SA/SD generation, and downstream supervisor or
-auto-worker execution.
+Development tooling is local to the repository. It owns engineering tasks,
+supervisor dispatch, worker leases, and task-packet materialization. Product
+BFF, the hosted frontend, and product deployment do not host or operate this
+control plane.
 
-## Source Of Truth
+## Local entry points
 
-- Backend/BFF repo: `ajoe734/pantheon`
-- Frontend repo: `ajoe734/execute-plans`
-- Active dev FE: `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io`
-- Active dev BFF: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`
+- `scripts/human-ops-status.sh` and `scripts/ai_status.py` maintain canonical
+  tasks.
+- `.orchestrator/development_bridge/` verifies and materializes local task
+  packets.
+- `.orchestrator/assistant-dev-packets/` is the local packet inbox.
+- The V2 supervisor drains the inbox and records accepted tasks under
+  `ai-task-archive/tasks/`.
 
-The URLs above are the 2026-07-19 replacement dev target. The runtime proof
-below is historical evidence from the retired `35.201.239.38` host and must not
-be reused as proof for the replacement VM.
+Use a clean task worktree and the ordinary branch/PR flow for source changes.
+Do not use product BFF routes to generate development documents, create task
+packets, prepare a worktree, mutate canonical tasks, or inspect supervisor
+state; those routes do not exist.
 
-Do not use `front-ai-trading-system` for current frontend development. Do not
-use Lovable publish state as the dev frontend host or acceptance source. Lovable
-may only be historical evidence or an external reference.
+## Product diagnostics boundary
 
-Do not ask the operator to press Lovable publish or reconnect Lovable before
-working on Management AI dev capability. The active frontend is
-`execute-plans`, and the active host is Pantheon-owned.
+`POST /bff/management/nl/ask` may provide product conversation and read-only
+diagnostics through `kernel_debug`. It does not write source files, create a
+development worktree, or dispatch workers. Product BFF health is not evidence
+of supervisor health, and supervisor health is not evidence of product
+readiness.
 
-Current verified dev deployment, 2026-06-11:
+## Local packet acceptance
 
-- `pantheon@0d9fe5864a9b39b1775dcc94da91a54357cdeb9d` on `dev` for BFF,
-  OpenClaw adapter repair-worktree preparation, assistant dev bridge readback,
-  and the self-hosted dev FE CORS allowlist. GitHub Actions run `27357842338`
-  completed the `Nonprod deploy` job in `10m17s` with `Deploy requested VM
-  stack` and `Public BFF smoke` successful.
-- `execute-plans@721bc3c4fe22648c242c6e39c353939575a33637` on `dev` for the
-  Management AI frontend control dialog, SA/SD skill-gated action, and
-  `openclaw.repair` forwarding. The dev FE deployment manifest reports this
-  commit, `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`, and
-  `VITE_BFF_REAL_WRITES=false`.
-- Dev FE document root: `/var/www/pantheon-dev-fe/`.
-- Runtime smoke against
-  `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io` returned
-  `providerStatus.used=true`, `providerStatus.status=completed`,
-  `runtime=openclaw_gateway_cli_mount`, and `sandbox=read-only` for a
-  read-only Management AI ask (`traceId=mnl-trace-e8f380a488e4`).
-- Authenticated live probe
-  `/tmp/BFF-LUV-AUTHED-LIVE-001-live-smoke-20260611T1536Z.json` passed `35/35`
-  read/provider checks with no write probes enabled.
-- While control mode was inactive, `POST /bff/assistant/repair-worktrees/prepare`
-  and `POST /bff/assistant/dev-docs/generate` returned HTTP `409`
-  `PRECONDITION_FAILED` with `details.field=control_mode` and
-  `details.reason=not_active`. A wrong-passphrase activation probe returned
-  HTTP `403` with `details.reason=invalid_passphrase`, confirming the passphrase
-  gate is configured and enforced.
+For a local task packet, verify all of the following:
 
-Current known gate: provider readiness and route availability can be healthy
-while control mode is configured but inactive. A positive VM-write claim still
-requires an authorized operator/admin activation in `kernel_repair`, a
-successful `POST /bff/assistant/repair-worktrees/prepare`, and forwarding the
-returned `openclaw.repair` metadata to the Management AI ask request.
+1. The packet is placed in the local pending inbox.
+2. The supervisor records a processed receipt.
+3. The canonical task record appears under `ai-task-archive/tasks/`.
+4. The resulting task is eligible under the V2 dispatch evaluator.
 
-## Expected Route Family
+If a task needs a direct Human/Ops change, use the local status command with a
+specific task identifier and reason. Do not edit task JSON, queue JSONL, or
+runtime state files by hand.
 
-Management AI should use Pantheon BFF assistant routes:
+## Removing development tooling
 
-- `GET /bff/assistant/mode`
-- `GET /bff/assistant/orchestrator/status`
-- `POST /bff/assistant/dev-docs/generate`
-- `GET /bff/assistant/dev-docs/{packetId}`
-- `POST /bff/assistant/dev-bridge/task-packet`
-- `POST /bff/assistant/repair-worktrees/prepare`
-- `GET /bff/assistant/tools`
-- `POST /bff/assistant/tools/preview`
-- `POST /bff/assistant/tools/validate`
-- `POST /bff/assistant/tools/execute`
-
-The frontend SA/SD action should call `/bff/assistant/dev-docs/generate` with
-archive enabled and task-packet emission enabled when the operator asks for a
-downstream implementation packet.
-
-All operator-command POST requests to these routes must include a stable
-`Idempotency-Key` header. The BFF rejects missing keys with
-`VALIDATION_FAILED` and `precondition_failed=idempotency_key`.
-`X-Idempotency-Key` remains a temporary compatibility alias; do not send
-idempotency keys in the JSON body.
-
-The `/bff/assistant/tools/*` route family is not the OpenClaw VM file-system
-tool surface. It is the governed Pantheon action surface for BFF-owned preview,
-validation, and execution contracts. Do not use it as proof that Management AI
-can read, write, search, or debug VM files.
-
-## OpenClaw File Access Boundary
-
-Management AI reaches OpenClaw through Pantheon BFF conversation routes,
-primarily `POST /bff/management/nl/ask`. The BFF forwards the request to the
-OpenClaw gateway adapter/Codex provider when the assistant provider is healthy.
-This route is also an operator-command route for final-contract purposes and
-therefore requires `Idempotency-Key` on POST requests.
-
-The two control-mode behaviors are intentionally different:
-
-- `kernel_debug`: read-only provider execution for status, logs, repository
-  context, and debugging assistance.
-- `kernel_repair`: write-capable provider execution, but only inside a clean
-  repair task worktree.
-
-Do not expose direct browser-to-OpenClaw calls. Do not mount or write to the
-shared live checkout for repair work. Do not treat the status-root read mount as
-a repair workspace.
-
-For `kernel_repair`, the frontend must first call
-`POST /bff/assistant/repair-worktrees/prepare`. The BFF verifies active
-`kernel_repair` control mode and delegates to
-`POST /api/openclaw-adapter/assistant/repair-worktrees/prepare`. The adapter
-clones or reuses a clean task worktree from the configured repo source, checks
-out the requested task branch, validates scope, and returns `openclaw.repair`
-metadata that matches the provider contract:
-
-- `repo_key`
-- `task_id`
-- `task_worktree`
-- `declared_scope`
-- `expected_branch`
-- `remote`
-- `merge_target`
-
-The worktree must exist under `PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT` and
-must be the git repo root. Before provider execution it must be clean, on
-`expected_branch`, and limited to repo-relative `declared_scope` entries.
-`declared_scope` must not be empty and must not be `.`. Use `repoKey:
-execute-plans` with merge target `dev` for frontend work and `repoKey:
-pantheon` with merge target `dev` for backend/BFF work. `execute-plans/main` is
-not the active dev integration or deploy source.
-
-As of 2026-06-10, dev BFF control mode can be configured independently from
-repair-worktree provisioning. If Management AI chat does not first prepare the
-worktree through the governed BFF route and then send the returned
-`openclaw.repair` metadata to `/bff/management/nl/ask`, VM write capability is
-not complete. Do not tell downstream agents to implement code through
-Management AI until that preparation path succeeds.
-
-## Readiness Criteria
-
-A route returning `200` or provider readiness alone does not prove the system is
-ready. Check all of these before telling another agent or operator it is done:
-
-- `GET /bff/assistant/orchestrator/status` reports provider readiness available
-  and ready for the configured provider/runtime.
-- `GET /bff/assistant/mode` reports `kernel_enabled: true`.
-- `GET /bff/assistant/mode` reports control mode configured and activatable for
-  an authorized operator/admin session.
-- The frontend build targets the dev BFF with `VITE_BFF_MODE=live`,
-  `VITE_BFF_FALLBACK=strict`, and safe write defaults unless explicitly
-  approved.
-- The browser-loaded bundle contains the current dev BFF URL and does not
-  contain obsolete BFF URLs.
-- `/bff/assistant/tools/*` is understood as governed BFF action tooling, not VM
-  file tooling.
-- `POST /bff/assistant/repair-worktrees/prepare` is not `404`; unauthenticated
-  or inactive-control probes should fail closed with `401`, `403`, or `409`.
-- `POST /bff/assistant/dev-docs/generate` is not `404`; unauthenticated probes
-  should fail closed with `401` or `403`.
-- Any Management AI or assistant POST smoke includes `Idempotency-Key`; a
-  missing-key `400` proves the final-route guardrail is active, not that
-  OpenClaw is unavailable.
-- For repair/write claims, the prepare route returns a clean task worktree
-  under the configured repair root and Management AI sends that valid
-  `openclaw.repair` metadata to `/bff/management/nl/ask`.
-- A generated task packet reaches `.orchestrator/assistant-dev-packets/pending/`
-  or is otherwise handed to the configured bridge inbox.
-- The supervisor drains the packet into
-  `.orchestrator/assistant-dev-packets/processed/` and writes a receipt.
-- The downstream task record exists under `ai-task-archive/tasks/`.
-
-## Current Work Order For Agents
-
-When the user asks for Management AI frontend or OpenClaw repair changes:
-
-1. For frontend code, work in `ajoe734/execute-plans` from `dev`, merge by PR,
-   build with the dev BFF URL, and deploy to the Pantheon-owned dev FE host.
-2. For backend/BFF code, work in `ajoe734/pantheon` from `dev`, merge by PR,
-   rebuild/restart the relevant dev VM services, then re-smoke the FE host.
-3. For write-capable Management AI work, use `repoKey: execute-plans` with
-   merge target `dev` for frontend changes and `repoKey: pantheon` with merge
-   target `dev` for backend/BFF changes.
-4. Do not dispatch downstream implementation agents from a SA/SD packet until
-   the packet has reached the assistant dev bridge inbox and the supervisor has
-   produced an archive task record.
-5. Do not switch to Lovable or `front-ai-trading-system` when any of the above
-   steps fails. Diagnose the failing Pantheon-owned route, build, control mode,
-   or supervisor bridge instead.
-
-## Kernel/Control-Mode Failure Pattern
-
-If `GET /bff/assistant/orchestrator/status` shows `providerReadiness.ready:
-true` but `GET /bff/assistant/mode` shows `kernel_enabled: false`, do not patch
-the frontend and do not fall back to Lovable. The blocker is the running dev BFF
-configuration.
-
-The expected fix path is:
-
-1. Perform the smallest live repair only if the operator needs immediate dev
-   recovery.
-2. Put the exact config/code change through a clean branch, commit, PR, checks,
-   merge, and redeploy.
-3. Recheck `/bff/assistant/mode` and `/bff/assistant/orchestrator/status` after
-   the restart.
-4. Only then rerun browser and SA/SD bridge smoke.
-
-The relevant env gate is `PANTHEON_ASSISTANT_KERNEL_ENABLED`. Keep auth,
-passphrase, MFA, and capability requirements governed; do not bypass them in
-frontend code.
-
-## Supervisor Bridge
-
-The supervisor owns packet draining. The configured dev inbox should point at:
-
-```text
-/home/lupin/pantheon/.orchestrator/assistant-dev-packets
-```
-
-Expected directories:
-
-- `pending/` for packets waiting to be drained.
-- `processed/` for accepted packets.
-- `failed/` for rejected packets.
-- `receipts/` for drain receipts.
-
-The supervisor loop should call the assistant dev bridge drain function and
-record processed task ids. A completed bridge smoke must have both a receipt and
-an `ai-task-archive/tasks/*.json` task record.
-
-The legacy `.orchestrator` coordination publisher is not part of this path. For
-current Pantheon-owned dev delivery it must remain disabled in repo-owned
-supervisor config; do not route Management AI/OpenClaw implementation packets
-through `lovable-ui-task` issue publishing or historical coordination bus flows.
-
-## Agent Guardrails
-
-- Do not claim completion from a local-only frontend build.
-- Do not claim completion from a Lovable publish.
-- Do not ask the user to press Lovable publish for Pantheon dev delivery.
-- Do not use Lovable connector state as proof that the dev FE is deployed.
-- Do not claim completion from provider readiness if kernel/control mode is
-  disabled.
-- Do not claim VM write capability from `/bff/assistant/tools/*`.
-- Do not claim repair capability unless
-  `POST /bff/assistant/repair-worktrees/prepare` succeeds, the request includes
-  the returned `openclaw.repair` metadata, and the repair worktree is clean.
-- Do not commit runtime state from the live worktree.
-- Do not change broker, paper, canary, live, or capital-binding behavior while
-  repairing Management AI dev file access.
+After product release, archive tasks and verify that no worker, lease, or queue
+intent remains. Then disable the supervisor/watchdog and remove
+`.orchestrator/`, `ai-task-archive/`, and the local status/packet scripts. The
+product image and product deployment are already independent of those paths.

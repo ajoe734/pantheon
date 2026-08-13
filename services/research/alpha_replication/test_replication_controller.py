@@ -9,6 +9,9 @@ from unittest import mock
 import pytest
 from fastapi.testclient import TestClient
 
+from services.research.alpha_replication.admission import (
+    ReplicationAdmissionStore,
+)
 from services.research.alpha_replication.controller_state import (
     ControllerState,
     ControllerStateStore,
@@ -64,7 +67,9 @@ def _config(
     *,
     seed_store_path: Path,
     authority: FakeAuthority,
+    admission_store: ReplicationAdmissionStore | None = None,
 ) -> ReplicationControllerConfig:
+    store = admission_store or ReplicationAdmissionStore(tmp_path)
     return ReplicationControllerConfig(
         database_url="postgresql://test",
         registry_url="http://registry.test",
@@ -74,6 +79,7 @@ def _config(
         data_dir=tmp_path,
         seed_store_path=seed_store_path,
         authority=authority,
+        admission_store=store,
     )
 
 
@@ -117,9 +123,21 @@ def test_controller_discovers_canonical_id_and_reads_authority_before_success(
     )
     authority = FakeAuthority()
     state, state_store = _state(tmp_path / "state.json")
-    config = _config(tmp_path, seed_store_path=seed_path, authority=authority)
     payload = _queue_payload()
     entry = _registry_entry(payload)
+    admission_store = ReplicationAdmissionStore(tmp_path)
+    admission_store.create_admission(
+        {
+            "tenant_id": "tenant-a",
+            "strategy_spec_id": payload["strategy_spec_id"],
+            "strategy_id": payload["strategy_id"],
+            "spec_version": payload["spec_version"],
+            "checksum": payload["checksum"],
+            "approval_decision_id": payload["approval_decision_id"],
+            "approver": payload["approver"],
+        }
+    )
+    config = _config(tmp_path, seed_store_path=seed_path, authority=authority, admission_store=admission_store)
     writer = CaptureLoopWriter()
     stale_local_run_path = tmp_path / "alpha_revalidation_runs.jsonl"
     stale_local_run_path.write_text('{"legacy": true}\n', encoding="utf-8")
@@ -146,6 +164,7 @@ def test_controller_discovers_canonical_id_and_reads_authority_before_success(
         "approved_spec_count": 1,
         "strategy_spec_ids": [payload["strategy_spec_id"]],
         "tenant_id": "tenant-a",
+        "seed_lineage_count": 1,
     }
     assert result["reconcile"]["enqueued_new"] == 1
     assert len(result["reconcile"]["created_run_ids"]) == 1
@@ -196,9 +215,21 @@ def test_controller_evidence_refs_dereference_real_fastapi_authority(
         encoding="utf-8",
     )
     state, state_store = _state(tmp_path / "state.json")
-    config = _config(tmp_path, seed_store_path=seed_path, authority=authority)
     payload = _queue_payload()
     entry = _registry_entry(payload)
+    admission_store = ReplicationAdmissionStore(tmp_path)
+    admission_store.create_admission(
+        {
+            "tenant_id": "tenant-a",
+            "strategy_spec_id": payload["strategy_spec_id"],
+            "strategy_id": payload["strategy_id"],
+            "spec_version": payload["spec_version"],
+            "checksum": payload["checksum"],
+            "approval_decision_id": payload["approval_decision_id"],
+            "approver": payload["approver"],
+        }
+    )
+    config = _config(tmp_path, seed_store_path=seed_path, authority=authority, admission_store=admission_store)
     writer = CaptureLoopWriter()
 
     with mock.patch(
@@ -268,8 +299,20 @@ def test_controller_duplicate_discovery_and_restart_converge_once(tmp_path) -> N
     )
     authority = FakeAuthority()
     state, state_store = _state(tmp_path / "state.json")
-    config = _config(tmp_path, seed_store_path=seed_path, authority=authority)
     entry = _registry_entry()
+    admission_store = ReplicationAdmissionStore(tmp_path)
+    admission_store.create_admission(
+        {
+            "tenant_id": "tenant-a",
+            "strategy_spec_id": entry["registry_id"],
+            "strategy_id": entry["strategy_id"],
+            "spec_version": entry["version"],
+            "checksum": entry["checksum"],
+            "approval_decision_id": entry["approval_decision_id"],
+            "approver": entry["approver"],
+        }
+    )
+    config = _config(tmp_path, seed_store_path=seed_path, authority=authority, admission_store=admission_store)
 
     with mock.patch(
         "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy",
@@ -312,7 +355,19 @@ def test_controller_registry_failure_is_durable_and_fail_closed(tmp_path) -> Non
     )
     authority = FakeAuthority()
     state, state_store = _state(tmp_path / "state.json")
-    config = _config(tmp_path, seed_store_path=seed_path, authority=authority)
+    admission_store = ReplicationAdmissionStore(tmp_path)
+    admission_store.create_admission(
+        {
+            "tenant_id": "tenant-a",
+            "strategy_spec_id": "spec-fail-001",
+            "strategy_id": "strat-alpha",
+            "spec_version": "1.0.0",
+            "checksum": "sha256:fail",
+            "approval_decision_id": "app-fail",
+            "approver": "approver-fail",
+        }
+    )
+    config = _config(tmp_path, seed_store_path=seed_path, authority=authority, admission_store=admission_store)
 
     with mock.patch(
         "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy",

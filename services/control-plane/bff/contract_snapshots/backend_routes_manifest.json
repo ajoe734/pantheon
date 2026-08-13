@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-07-24",
+    "snapshot_date": "2026-08-13",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 670,
+    "total_routes": 667,
     "status_values": [
       "implemented",
       "alias",
@@ -621,6 +621,12 @@
     {
       "method": "POST",
       "path": "/bff/agora/dataset-worker/dlq/{param}/replay",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/dataset-worker/handoffs/{param}/ack",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -2111,6 +2117,12 @@
     },
     {
       "method": "POST",
+      "path": "/bff/v5/downstream-health/dlq/replay",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/v5/sentinel/findings/{param}/status",
       "family": "execute-plans-cutover-smoke",
       "status": "implemented"
@@ -3332,19 +3344,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/assistant/dev-docs/{param}",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
       "path": "/bff/assistant/mode",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/assistant/orchestrator/status",
       "family": "unknown",
       "status": "implemented"
     },
@@ -3849,18 +3849,6 @@
     },
     {
       "method": "POST",
-      "path": "/bff/assistant/dev-bridge/task-packet",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/assistant/dev-docs/generate",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
       "path": "/bff/assistant/provider/reauth",
       "family": "unknown",
       "status": "implemented"
@@ -3874,12 +3862,6 @@
     {
       "method": "POST",
       "path": "/bff/assistant/providers",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/assistant/repair-worktrees/prepare",
       "family": "unknown",
       "status": "implemented"
     },

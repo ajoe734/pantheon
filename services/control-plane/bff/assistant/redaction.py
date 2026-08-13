@@ -16,7 +16,7 @@ from typing import Any
 JsonValue = Any
 
 USER_MODES = frozenset({"user"})
-KERNEL_MODES = frozenset({"kernel_observe", "kernel_debug", "kernel_repair"})
+KERNEL_MODES = frozenset({"kernel_observe", "kernel_debug"})
 
 
 class RedactionError(RuntimeError):
