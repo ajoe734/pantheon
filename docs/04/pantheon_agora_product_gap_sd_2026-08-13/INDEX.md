@@ -1,6 +1,6 @@
 # Agora Product GAP and System Design Re-baseline — 2026-08-13
 
-Status: **planning baseline; not dispatched; not an implementation closeout**
+Status: **planning baseline with governed execution catalog; not an implementation closeout**
 
 ## Executive verdict
 
@@ -43,7 +43,7 @@ and stub writes disabled), but its declared BFF SHA does not match the running
 BFF. Historical exact-pair evidence remains valid history; it is not current
 acceptance evidence.
 
-## What was and was not done in this planning pass
+## What was and was not done in the audit pass
 
 Done:
 
@@ -52,20 +52,26 @@ Done:
 - separate implemented endpoints from reachable product behavior;
 - identify incorrect design that must be removed or replaced;
 - define the target system design and dependency order;
-- prepare work-package boundaries for a later execution-task generation pass.
+- prepare work-package boundaries for execution-task generation.
 
 Not done:
 
 - no Agora product code was changed;
 - no supervisor, supervisor V2, worker, or runtime control code was changed;
-- no execution task was created or queued;
-- no task was sent to the supervisor;
+- during the audit pass, no execution task was created or queued;
+- during the audit pass, no task was sent to the supervisor;
 - no live write, deployment, service restart, or data mutation was performed;
 - no Lovable path was used or proposed.
 
 `execute-plans` is the active frontend repository and Pantheon-owned hosting is
 the delivery target. Supervisor behavior is delivery machinery, not an Agora
 product dependency, and is outside this product design.
+
+The operator subsequently authorized materialization. The canonical task
+catalog and dispatch topology are now recorded in document 6 and
+`execution-tasks.json`. This addendum changes only planning and dispatch
+metadata; it does not implement Agora product code or modify supervisor,
+worker, runtime, or deployment code.
 
 ## Document set
 
@@ -81,6 +87,10 @@ product dependency, and is outside this product design.
    These are planning work packages, not canonical task IDs or dispatch packets.
 5. [Frozen evidence and deduplication record](05_FROZEN_EVIDENCE_AND_DEDUP.md) —
    source/runtime observations and how earlier completed work is interpreted.
+6. [Governed execution tasks](06_EXECUTION_TASKS.md) and
+   [machine-readable catalog](execution-tasks.json) — the canonical task IDs,
+   maximum-parallel DAG, repository scopes, acceptance, rollout, and rollback
+   prepared for signed assistant dev-bridge materialization.
 
 ## Relation to prior Agora documents
 

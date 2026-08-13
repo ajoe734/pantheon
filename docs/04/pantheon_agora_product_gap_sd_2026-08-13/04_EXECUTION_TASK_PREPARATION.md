@@ -9,12 +9,12 @@ work-package references only:
 - they are not canonical task IDs;
 - they are not supervisor inbox packets;
 - they do not authorize implementation;
-- nothing in this packet has been dispatched.
+- they are not themselves dispatchable records.
 
-When the operator requests task generation, each implementation/review item
-must receive a registered canonical task ID through the governed task command
-or assistant dev bridge. Do not copy a `WP-*` label into task state as though it
-were a task ID.
+The operator later requested task generation. Document 6 and
+`execution-tasks.json` fulfill that request with registered task IDs for signed
+assistant dev-bridge materialization. The `WP-*` labels below remain
+noncanonical planning references and must not be copied into task state.
 
 ## 2. Dependency and merge order
 

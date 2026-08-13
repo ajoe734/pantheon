@@ -1,0 +1,785 @@
+{
+  "schema": "pantheon.execution-task-catalog.v1",
+  "program_id": "agora-product-correction-20260813",
+  "packet_id": "pkt-agora-product-gap-sd-20260813-v1",
+  "source": {
+    "pull_request": 4834,
+    "planning_branch": "task/OPS-DOC-AGORA-GAP-SD-20260813",
+    "planning_path": "docs/04/pantheon_agora_product_gap_sd_2026-08-13",
+    "pantheon_baseline": "3307552b55af75850dab1d50e58cef9f86e10b53",
+    "execute_plans_baseline": "3ee9f962a36626f085e2ca1c088b3ce4b4d08e6f"
+  },
+  "dispatch_policy": {
+    "dispatcher": "pantheon-supervisor-only",
+    "materialization": "signed-assistant-dev-bridge",
+    "allowed_repositories": [
+      "pantheon",
+      "execute-plans"
+    ],
+    "merge_targets": {
+      "pantheon": "dev",
+      "execute-plans": "dev"
+    },
+    "maximum_parallelism": "one plan-review gate, then independent file-scope fan-out",
+    "no_product_implementation_by_planner": true,
+    "no_lovable": true,
+    "no_live_capital": true
+  },
+  "reused_external_tasks": [
+    {
+      "id": "L12-MFC-R4-AGORA-001",
+      "reason": "Already owns the durable Agora handoff to policy-learning readback and ACK path and declares the whole services/control-plane/bff/agora parent scope; new BFF tasks wait for it instead of duplicating it."
+    },
+    {
+      "id": "L12-MFC-R4-IMITATION-001",
+      "reason": "Already owns processed policy candidate handoff into the existing Research experiment authority."
+    },
+    {
+      "id": "L12-MFC-R4-CONSULT-001",
+      "reason": "Already owns submitted-only special intake and the real Consultation workflow/provider path; no duplicate Consultation implementation task is created."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "AGORA-PROD-PLAN-FREEZE-20260813",
+      "title": "Review and merge the Agora product GAP and SD baseline",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-PROD-PLAN-FREEZE-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/agora-prod-plan-freeze-20260813",
+      "phase": "A0-plan-freeze",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "owner_capability": "independent architecture and code-audit review",
+      "reviewer_capability": "scope, dependency, and materialization evidence review",
+      "depends_on": [],
+      "scope": [
+        "docs/04/pantheon_agora_product_gap_sd_2026-08-13/"
+      ],
+      "artifacts": [
+        "docs/04/pantheon_agora_product_gap_sd_2026-08-13/",
+        "docs/deployment/evidence/agora/AGORA-PROD-PLAN-FREEZE-20260813/"
+      ],
+      "out_of_scope": [
+        "Agora product code",
+        "execute-plans source",
+        "supervisor or task-state implementation",
+        "runtime or deployment mutation"
+      ],
+      "acceptance": [
+        "Independently review the exact PR #4834 head referenced by the signed bridge packet and verify the GAP findings against representative frontend and backend source evidence.",
+        "Validate all execution task IDs are unique, the DAG is acyclic, frontend and backend scopes remain in their own repositories, and declared parent/child path overlaps are ordered.",
+        "Confirm L12-MFC-R4-AGORA-001, L12-MFC-R4-IMITATION-001, and L12-MFC-R4-CONSULT-001 are reused rather than duplicated and record their canonical state at review time.",
+        "Publish an independent review-proof tag for the exact head, require all PR checks to pass, merge PR #4834 to dev, and record the merge SHA.",
+        "Do not implement any product gap or dispatch a repair from findings during this plan-review task."
+      ],
+      "validation": [
+        "JSON parse and unique-ID check",
+        "dependency and artifact-overlap validation",
+        "relative Markdown link validation",
+        "git diff --check",
+        "exact-head review and required checks"
+      ],
+      "rollout": "Documentation and execution-catalog merge only; its completion releases independent implementation tasks.",
+      "rollback": "Revert the documentation merge; leave product, runtime, and canonical task rows unchanged."
+    },
+    {
+      "id": "AGORA-WORKSHOP-CORE-20260813",
+      "title": "Replace Persona-first Workshop with durable strategy reconstruction",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-WORKSHOP-CORE-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/agora-workshop-core-20260813",
+      "phase": "A1-parallel-backend",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "owner_capability": "backend workflow, privacy, and durable worker implementation",
+      "reviewer_capability": "StrategySpec authority and failure-recovery review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813",
+        "L12-MFC-R4-AGORA-001"
+      ],
+      "scope": [
+        "services/control-plane/bff/agora/strategy_workshop/",
+        "services/control-plane/bff/agora/interaction/router.py",
+        "services/control-plane/bff/agora/interaction/runner.py"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/agora/strategy_workshop/",
+        "services/control-plane/bff/agora/interaction/router.py",
+        "services/control-plane/bff/agora/interaction/runner.py",
+        "docs/deployment/evidence/agora/AGORA-WORKSHOP-CORE-20260813/"
+      ],
+      "out_of_scope": [
+        "Research implementation",
+        "Trading Room implementation",
+        "Persona service redesign outside Agora intake",
+        "frontend source"
+      ],
+      "acceptance": [
+        "Workshop create/message persists a scoped command, receipt, private payload reference, and reconstruction outbox before returning; HTTP 202 performs no provider work inline.",
+        "A leased worker produces a validated StrategyReconstructionResult with the twelve strategy blocks, explicit/inferred/assumption/conflict sets, evidence, server-derived completeness, and exactly one next-best question.",
+        "Remove or fail-close the public completeness writer, synthetic unbound identities, permissive readiness fallback, and same-key conflict-only idempotency.",
+        "Create or adopt an immutable Registry draft through authenticated service context and canonical readback while keeping StrategySpec truth out of Workshop storage.",
+        "Prove same-key replay, stale-result supersession, worker crash recovery, BFF/worker restart readback, private-content redaction, and two-user/two-tenant isolation."
+      ],
+      "validation": [
+        "Workshop unit and contract tests",
+        "Postgres transaction/restart tests",
+        "provider timeout/malformed/stale-result tests",
+        "SSE replay and tenant-negative tests",
+        "OpenAPI compatibility checks"
+      ],
+      "rollout": "Ship behind the existing Workshop capability in read-only-safe dev; activate reconstruction only after worker readiness is healthy.",
+      "rollback": "Disable reconstruction and keep Workshop history readable; never restore client-written completeness or synthetic readiness."
+    },
+    {
+      "id": "AGORA-RESEARCH-CANDIDATE-20260813",
+      "title": "Scope Research and generate candidates only from real lineage",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-RESEARCH-CANDIDATE-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/agora-research-candidate-20260813",
+      "phase": "A1-parallel-backend",
+      "owner": "Codex2",
+      "reviewer": "Claude2",
+      "owner_capability": "research orchestration, API security, and lineage persistence",
+      "reviewer_capability": "tenant isolation and research-artifact truth review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813",
+        "L12-MFC-R4-AGORA-001"
+      ],
+      "scope": [
+        "services/control-plane/bff/agora/research/"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/agora/research/",
+        "docs/deployment/evidence/agora/AGORA-RESEARCH-CANDIDATE-20260813/"
+      ],
+      "out_of_scope": [
+        "new quantitative algorithms",
+        "Trading Room workspace code",
+        "frontend source",
+        "live execution"
+      ],
+      "acceptance": [
+        "Every Research/candidate mutation requires write authority, owner lookup, idempotent receipt semantics, CAS where state is mutable, and audit.",
+        "Plans, runs, stages, artifacts, discussions, pools, and member actions persist tenant/user scope and foreign IDs return non-enumerating not-found responses.",
+        "Replace facade-only dispatch with durable outbox/lease/backend job adoption and ordered progress/artifact projection with explicit real, simulation, fixture, or unavailable provenance.",
+        "Remove _default_registry_candidates from production behavior; empty authoritative input returns an empty pool with exclusion reasons.",
+        "Expose owner-scoped strategy/version-to-current-pool lookup and prove backend-create crash recovery, duplicate delivery, restart readback, and cross-tenant denial."
+      ],
+      "validation": [
+        "Research route and store tests",
+        "write-role and two-tenant negative matrix",
+        "adapter lease/partial-effect failure injection",
+        "no-production-default-candidate test",
+        "Postgres restart and artifact checksum readback"
+      ],
+      "rollout": "Enable adapters individually; unavailable adapters return explicit empty/degraded state.",
+      "rollback": "Disable dispatch/pool generation without restoring hard-coded candidates or unscoped access."
+    },
+    {
+      "id": "AGORA-TRADING-AUTH-20260813",
+      "title": "Correct Trading Room authority, identity, compiler, and transactions",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-TRADING-AUTH-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/agora-trading-auth-20260813",
+      "phase": "A1-parallel-backend",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "owner_capability": "backend domain, authorization, and transaction design",
+      "reviewer_capability": "no-order boundary and concurrency review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813",
+        "L12-MFC-R4-AGORA-001"
+      ],
+      "scope": [
+        "services/control-plane/bff/agora/trading_room/"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/agora/trading_room/",
+        "docs/deployment/evidence/agora/AGORA-TRADING-AUTH-20260813/"
+      ],
+      "out_of_scope": [
+        "widget source-adapter implementation",
+        "decision-event producer implementation",
+        "frontend source",
+        "broker orders or capital binding"
+      ],
+      "acceptance": [
+        "All Trading Room writes require write role, owner scope, request-hash idempotent replay, CAS, audit, and canonical readback; decision events, intents, handoffs, and SSE are tenant/user scoped.",
+        "Workspace proposal accepts typed user intent and strategy/version identity only; server resolves readiness, evidence, freshness, and candidate pool from authoritative owners.",
+        "Rename/extract deterministic generation as WorkspaceCompiler and reject client readiness/freshness truth, local agent claims, unavailable required sources, and synthetic identity.",
+        "Workspace snapshot, immutable version, current pointer, event, receipt, and outbox commit atomically; failure injection leaves no partial version state.",
+        "Missing position/risk sources project unavailable or degraded, never empty-position plus normal-risk success; approval creates a no-order TradingIntent only."
+      ],
+      "validation": [
+        "Trading Room route/store tests",
+        "atomic transaction failure injection",
+        "two-user/two-tenant decision/SSE tests",
+        "read-role mutation denial",
+        "no-order authority contract"
+      ],
+      "rollout": "Keep workspace writes capability-gated until authoritative readiness and scoped data readback pass.",
+      "rollback": "Return Trading Room to scoped read-only mode; do not restore caller-provided readiness or normal-risk defaults."
+    },
+    {
+      "id": "AGORA-TRADING-DATA-EVENTS-20260813",
+      "title": "Add live widget data adapters and a real decision-event producer",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-TRADING-DATA-EVENTS-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/agora-trading-data-events-20260813",
+      "phase": "A1-parallel-backend",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "owner_capability": "read-model integration and event projection",
+      "reviewer_capability": "freshness, lineage, and no-order review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813",
+        "L12-MFC-R4-AGORA-001"
+      ],
+      "scope": [
+        "services/control-plane/bff/agora/trading_data/",
+        "services/control-plane/bff/agora/decision_projection/"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/agora/trading_data/",
+        "services/control-plane/bff/agora/decision_projection/",
+        "docs/deployment/evidence/agora/AGORA-TRADING-DATA-EVENTS-20260813/"
+      ],
+      "out_of_scope": [
+        "Trading Room router/store authority changes",
+        "frontend widgets",
+        "order submission",
+        "fixture data in live profile"
+      ],
+      "acceptance": [
+        "Implement an allowlisted query contract whose every widget response carries status, source, as_of, cutoff, lineage, data, and explicit unavailable reason.",
+        "Implement only sources with authoritative adapters; unwired widget types remain unavailable and cannot enter the live registry.",
+        "Project owner-scoped signal/risk/runtime evidence into decision events containing probability, EV, risk, invalidation, freshness, and evidence references.",
+        "Missing or stale risk/data fails closed and no adapter substitutes sample rows, default metrics, or normal status.",
+        "Prove adapter tenant isolation, point-in-time cutoffs, producer idempotency, restart recovery, and absence of any broker/order authority."
+      ],
+      "validation": [
+        "adapter contract and freshness tests",
+        "decision-projection idempotency tests",
+        "two-tenant negative tests",
+        "stale/unavailable source tests",
+        "live-profile fixture guard"
+      ],
+      "rollout": "Register each source only after its readiness/freshness contract passes; keep the producer no-order and feature-gated.",
+      "rollback": "Unregister the affected source/projector and expose unavailable state while preserving durable events."
+    },
+    {
+      "id": "AGORA-PERFORMANCE-INDEX-20260813",
+      "title": "Build owner-scoped Strategy Performance and suggestion production",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-PERFORMANCE-INDEX-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/agora-performance-index-20260813",
+      "phase": "A1-parallel-backend",
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "owner_capability": "telemetry projection and governed action production",
+      "reviewer_capability": "attribution privacy and receipt review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813",
+        "L12-MFC-R4-AGORA-001"
+      ],
+      "scope": [
+        "services/control-plane/bff/agora/performance/"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/agora/performance/",
+        "docs/deployment/evidence/agora/AGORA-PERFORMANCE-INDEX-20260813/"
+      ],
+      "out_of_scope": [
+        "Management performance routes",
+        "direct runtime mutation",
+        "frontend source",
+        "capital allocation"
+      ],
+      "acceptance": [
+        "Add an Agora-owned StrategyPerformanceIndex scoped by tenant/user/strategy/version and separate observed, simulated, shadow, stale, and unavailable facts.",
+        "Remove the need for Agora clients to consume the global Management performance-attribution projection.",
+        "Add a governed producer that upserts suggestions from named evidence/policy/model versions with cutoff, lineage, expiry, proposed change, and safety rationale.",
+        "Reuse existing suggestion CAS, action receipt, audit, and restart-safe store; apply creates a Workshop/Registry proposal and never silently mutates runtime.",
+        "Prove zero seeded suggestions are required, cross-tenant access is denied, source lag is visible, and action state survives restart."
+      ],
+      "validation": [
+        "performance projection tests",
+        "suggestion producer and receipt tests",
+        "observed-versus-simulated contract tests",
+        "tenant-negative tests",
+        "Postgres restart readback"
+      ],
+      "rollout": "Enable the index read-only first, then enable governed suggestion actions after producer lineage is accepted.",
+      "rollback": "Disable suggestion production/actions while retaining owner-scoped performance reads and audit history."
+    },
+    {
+      "id": "AGORA-DATASET-ADMIT-ONLY-20260813",
+      "title": "Separate dataset acceptance from extraction and delivery workers",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-DATASET-ADMIT-ONLY-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/agora-dataset-admit-only-20260813",
+      "phase": "A1-parallel-backend-followup",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "owner_capability": "durable outbox, privacy, and worker recovery",
+      "reviewer_capability": "data eligibility and delivery ordering review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813",
+        "L12-MFC-R4-AGORA-001"
+      ],
+      "scope": [
+        "services/control-plane/bff/agora/dataset_extraction/"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/agora/dataset_extraction/",
+        "docs/deployment/evidence/agora/AGORA-DATASET-ADMIT-ONLY-20260813/"
+      ],
+      "out_of_scope": [
+        "policy training implementation",
+        "Consultation implementation",
+        "raw private Workshop retention expansion",
+        "live policy promotion"
+      ],
+      "acceptance": [
+        "Interaction-evidence API returns only after atomically persisting eligible evidence, inbox/outbox, receipt, and scope; it does not invoke process_inbox or wait for worker completion.",
+        "A separately leased worker validates consent/purpose/retention/redaction, creates immutable DatasetVersion, and publishes the existing durable handoff path.",
+        "ACK remains ordered after durable policy-learning admission/readback from L12-MFC-R4-AGORA-001; failures retry with backoff and DLQ without bulk-acking historical rows.",
+        "Raw private conversation remains excluded without explicit consent and minimization; logs/traces/audit contain no private payload.",
+        "Prove crash recovery before/after dataset creation and delivery, duplicate replay, tenant isolation, and restart readback."
+      ],
+      "validation": [
+        "dataset eligibility/redaction tests",
+        "outbox lease and crash matrix",
+        "handoff/ACK ordering tests",
+        "tenant-negative tests",
+        "Postgres restart readback"
+      ],
+      "rollout": "Start workers with existing pending rows preserved and bounded rate; monitor age, retry, ACK, and DLQ metrics.",
+      "rollback": "Pause workers with outbox rows intact; never acknowledge undelivered data or broaden retention."
+    },
+    {
+      "id": "AGORA-POLICY-ADMIT-WORKER-20260813",
+      "title": "Make policy handoff admit-only and worker-leased",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-POLICY-ADMIT-WORKER-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/agora-policy-admit-worker-20260813",
+      "phase": "A1-parallel-policy",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "owner_capability": "policy-learning worker and ML lineage",
+      "reviewer_capability": "fail-closed runtime and lease recovery review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813"
+      ],
+      "scope": [
+        "services/policy-learning/main.py",
+        "services/policy-learning/scheduler_worker.py",
+        "services/policy-learning/test_agora_admit_only_worker.py"
+      ],
+      "artifacts": [
+        "services/policy-learning/main.py",
+        "services/policy-learning/scheduler_worker.py",
+        "services/policy-learning/test_agora_admit_only_worker.py",
+        "docs/deployment/evidence/agora/AGORA-POLICY-ADMIT-WORKER-20260813/"
+      ],
+      "out_of_scope": [
+        "agora_handoff_drainer.py",
+        "agora_dataset_authority.py",
+        "candidate_experiment_handoff.py",
+        "Consultation service",
+        "runtime policy promotion"
+      ],
+      "acceptance": [
+        "Agora handoff endpoint validates scope and lineage, durably creates/adopts a proposed candidate, and acknowledges admission without claiming or processing it inline.",
+        "Remove process_immediately from production semantics; scheduler/worker alone leases, renews, processes, recovers, and terminally records candidates.",
+        "Product mode reads only tenant-scoped DatasetVersion authority and never substitutes seed data when authority is missing or degraded.",
+        "Behavior-cloning/evaluation output stores checksum, metrics, limitations, dataset lineage, and explicit runtime_effect=none.",
+        "Prove duplicate admission, worker crash/lease expiry/recovery, degraded/DLQ/replay, restart readback, and no promotion route opening."
+      ],
+      "validation": [
+        "handoff admit-only route tests",
+        "scheduler lease/recovery tests",
+        "dataset authority fail-closed tests",
+        "artifact checksum/lineage tests",
+        "runtime-effect negative tests"
+      ],
+      "rollout": "Deploy admit-only behavior before enabling the worker; observe proposed backlog and process in bounded batches.",
+      "rollback": "Pause worker processing while retaining proposed candidates; never restore inline processing or seed fallback."
+    },
+    {
+      "id": "AGORA-FE-WORKSHOP-20260813",
+      "title": "Deliver the create-to-draft Workshop user journey",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-FE-WORKSHOP-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/execute-plans/agora-fe-workshop-20260813",
+      "phase": "A1-parallel-frontend",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "owner_capability": "React, TypeScript, accessibility, and BFF integration",
+      "reviewer_capability": "Workshop truth and user-journey review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813"
+      ],
+      "scope": [
+        "execute-plans:src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx",
+        "execute-plans:src/agora/pages/strategy-workshop/StrategyWorkshopPage.test.tsx",
+        "execute-plans:src/agora/components/WorkshopCardRenderer.tsx",
+        "execute-plans:src/agora/components/WorkshopCardRenderer.test.tsx",
+        "execute-plans:src/lib/bff-v1/agora/workshops.ts",
+        "execute-plans:src/lib/bff-v1/agora/workshops.test.ts"
+      ],
+      "artifacts": [
+        "execute-plans:src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx",
+        "execute-plans:src/agora/components/WorkshopCardRenderer.tsx",
+        "execute-plans:src/lib/bff-v1/agora/workshops.ts"
+      ],
+      "out_of_scope": [
+        "Pantheon source",
+        "Persona daily interaction outside Agora Workshop",
+        "Trading Room UI",
+        "mock fallback in live mode"
+      ],
+      "acceptance": [
+        "A new user can create a Workshop, post messages through Workshop commands, and see accepted/processing/succeeded/degraded receipt states without direct API seeding.",
+        "Use one canonical WorkshopCardRenderer for reconstruction, completeness, NBQ, draft/version, Research, Consultation, and conclusion cards; remove Persona daily interaction as the core composer target.",
+        "Expose governed card actions only when server capabilities permit and refresh canonical state after every write; local toast/state is never terminal success.",
+        "Reconnect and Last-Event-ID replay preserve ordered cards and do not expose foreign-user cache entries.",
+        "Implement desktop/mobile/accessibility coverage and keep writes hidden or disabled until the matching backend capability is live."
+      ],
+      "validation": [
+        "frontend typecheck and focused tests",
+        "Workshop client contract tests",
+        "SSE reconnect/dedupe tests",
+        "desktop/mobile Playwright",
+        "accessibility checks"
+      ],
+      "rollout": "Merge to execute-plans dev behind backend capability/readiness gates; safe read-only behavior remains available.",
+      "rollback": "Disable create/write controls and retain canonical read-only Workshop history."
+    },
+    {
+      "id": "AGORA-FE-CANDIDATE-20260813",
+      "title": "Replace local candidate actions with one canonical review flow",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-FE-CANDIDATE-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/execute-plans/agora-fe-candidate-20260813",
+      "phase": "A1-parallel-frontend",
+      "owner": "Codex",
+      "reviewer": "Claude2",
+      "owner_capability": "React state and governed BFF action integration",
+      "reviewer_capability": "candidate lineage and false-success review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813"
+      ],
+      "scope": [
+        "execute-plans:src/agora/components/CandidateReviewDrawer.tsx",
+        "execute-plans:src/agora/components/CandidateReviewDrawer.test.tsx",
+        "execute-plans:src/lib/bff-v1/agora/candidatePool.ts",
+        "execute-plans:src/lib/bff-v1/agora/candidatePool.test.ts"
+      ],
+      "artifacts": [
+        "execute-plans:src/agora/components/CandidateReviewDrawer.tsx",
+        "execute-plans:src/lib/bff-v1/agora/candidatePool.ts"
+      ],
+      "out_of_scope": [
+        "TradingRoomPage assembly",
+        "workspace widget code",
+        "Pantheon source",
+        "sample candidates in production"
+      ],
+      "acceptance": [
+        "One reusable drawer implements review, park, research, shadow, select, reject, and discussion through canonical commands with receipts and readback.",
+        "The component takes a real candidate_pool_id/candidate_id and never treats a lens ID as a pool ID.",
+        "Pending, conflict, forbidden, degraded, empty, and replayed states are explicit; successful local state without server readback is impossible.",
+        "No hard-coded candidate reason, concerns, evidence, metrics, or next event is merged into live rows.",
+        "Reload tests prove durable member state and tenant-aware query/cache keys."
+      ],
+      "validation": [
+        "candidate client and component tests",
+        "receipt/readback tests",
+        "empty/degraded/error tests",
+        "fixture-source guard",
+        "accessibility checks"
+      ],
+      "rollout": "Ship the component unused or capability-gated until Trading Room assembly binds the authoritative pool lookup.",
+      "rollback": "Retain read-only candidate display and disable actions; do not restore the page-local fake drawer."
+    },
+    {
+      "id": "AGORA-FE-WORKSPACE-CLEANUP-20260813",
+      "title": "Build honest workspace components and remove dead Agora UI islands",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-FE-WORKSPACE-CLEANUP-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/execute-plans/agora-fe-workspace-cleanup-20260813",
+      "phase": "A1-parallel-frontend",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "owner_capability": "senior React architecture and dead-code consolidation",
+      "reviewer_capability": "workspace contract, bundle, and UX review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813"
+      ],
+      "scope": [
+        "execute-plans:src/agora/trading-room/",
+        "execute-plans:src/agora/widgets/",
+        "execute-plans:src/agora/dashboard/",
+        "execute-plans:src/agora/AgoraApp.tsx"
+      ],
+      "artifacts": [
+        "execute-plans:src/agora/trading-room/",
+        "execute-plans:src/agora/widgets/",
+        "execute-plans:src/agora/dashboard/",
+        "execute-plans:src/agora/AgoraApp.tsx"
+      ],
+      "out_of_scope": [
+        "TradingRoomPage assembly",
+        "candidate drawer/client",
+        "Pantheon source",
+        "Management frontend"
+      ],
+      "acceptance": [
+        "Use one ChartSpec/widget renderer and one revision component that consume typed WorkspaceIntent/proposal/data contracts and display source status/as_of/cutoff/lineage.",
+        "Remove live keyword/regex servant simulation, client-authored proposedSpec authority, Mock Mode success, local-only usefulness/evidence actions, and sample widget data.",
+        "Migrate unique tests/validation before deleting the obsolete AgoraApp M0 shell, dashboard island, old WidgetRenderer, and old WidgetRevisionDrawer.",
+        "Unavailable widgets are hidden or explicitly unavailable in live mode; no absent data is presented as a functional dashboard.",
+        "Import graph and production bundle tests prove the obsolete islands and fixtures are gone."
+      ],
+      "validation": [
+        "typecheck and focused component tests",
+        "import/dead-code graph test",
+        "production fixture/bundle guard",
+        "workspace empty/degraded rendering tests",
+        "accessibility checks"
+      ],
+      "rollout": "Merge reusable components and cleanup without changing active TradingRoomPage until the assembly task.",
+      "rollback": "Restore only canonical read-only components if necessary; never restore mock success or duplicate production islands."
+    },
+    {
+      "id": "AGORA-FE-PERFORMANCE-20260813",
+      "title": "Use only owner-scoped Agora performance truth in the UI",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-FE-PERFORMANCE-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/execute-plans/agora-fe-performance-20260813",
+      "phase": "A1-parallel-frontend",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "owner_capability": "React data-state and governed action integration",
+      "reviewer_capability": "performance attribution and privacy review",
+      "depends_on": [
+        "AGORA-PROD-PLAN-FREEZE-20260813"
+      ],
+      "scope": [
+        "execute-plans:src/agora/pages/strategy-performance/StrategyPerformancePage.tsx",
+        "execute-plans:src/agora/pages/strategy-performance/StrategyPerformancePage.test.tsx",
+        "execute-plans:src/lib/bff-v1/agora/performance.ts",
+        "execute-plans:src/lib/bff-v1/agora/performance.test.ts"
+      ],
+      "artifacts": [
+        "execute-plans:src/agora/pages/strategy-performance/StrategyPerformancePage.tsx",
+        "execute-plans:src/lib/bff-v1/agora/performance.ts"
+      ],
+      "out_of_scope": [
+        "Management performance UI/routes",
+        "Pantheon source",
+        "Trading Room page",
+        "local suggestion generation"
+      ],
+      "acceptance": [
+        "All Strategy Performance panels consume Agora-scoped StrategyPerformanceIndex and suggestion endpoints; direct Management attribution calls are removed.",
+        "Observed, simulated, shadow, stale, empty, degraded, and unavailable states remain visually and semantically distinct.",
+        "Apply/reject/defer actions display durable receipt state and reload canonical suggestion status; no local toast is terminal success.",
+        "Source as-of/cutoff/lineage and action provenance are accessible without exposing another user's data.",
+        "Component and browser tests cover no-suggestion, producer-lag, conflict, forbidden, and restart/reload behavior."
+      ],
+      "validation": [
+        "performance client/component tests",
+        "no-Management-route source guard",
+        "receipt/readback tests",
+        "desktop/mobile browser tests",
+        "accessibility checks"
+      ],
+      "rollout": "Merge behind Agora performance capability detection; retain explicit unavailable state until backend index is live.",
+      "rollback": "Return to Agora-scoped read-only state and disable actions; never reconnect the unscoped Management projection."
+    },
+    {
+      "id": "AGORA-BE-INTEGRATION-20260813",
+      "title": "Integrate and verify the corrected Agora backend journey",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-BE-INTEGRATION-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/agora-be-integration-20260813",
+      "phase": "A2-parallel-integration",
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "owner_capability": "cross-service integration and non-self-attesting verification",
+      "reviewer_capability": "tenant, receipt, lineage, and verifier integrity review",
+      "depends_on": [
+        "AGORA-WORKSHOP-CORE-20260813",
+        "AGORA-RESEARCH-CANDIDATE-20260813",
+        "AGORA-TRADING-AUTH-20260813",
+        "AGORA-TRADING-DATA-EVENTS-20260813",
+        "AGORA-PERFORMANCE-INDEX-20260813",
+        "AGORA-DATASET-ADMIT-ONLY-20260813",
+        "AGORA-POLICY-ADMIT-WORKER-20260813",
+        "L12-MFC-R4-IMITATION-001",
+        "L12-MFC-R4-CONSULT-001"
+      ],
+      "scope": [
+        "tests/agora_product_journey/",
+        "scripts/verify_agora_product_journey.py",
+        "scripts/test_verify_agora_product_journey.py",
+        "docs/contracts/agora-product-v2/"
+      ],
+      "artifacts": [
+        "tests/agora_product_journey/",
+        "scripts/verify_agora_product_journey.py",
+        "scripts/test_verify_agora_product_journey.py",
+        "docs/contracts/agora-product-v2/",
+        "docs/deployment/evidence/agora/AGORA-BE-INTEGRATION-20260813/"
+      ],
+      "out_of_scope": [
+        "repairing component product code from verifier failures",
+        "frontend source",
+        "deployment mutation",
+        "live capital or order authority"
+      ],
+      "acceptance": [
+        "Build a non-repairing service-bound verifier for Workshop hypothesis through reconstruction, Registry draft, Research, real/empty candidate truth, Trading workspace, decision intent, Performance, DatasetVersion, policy candidate, independent Consultation, and sponsor decision.",
+        "Correlate exact tenant/user, strategy, Registry, Workshop, run/artifact, pool, workspace/version, decision/intent, performance, dataset, candidate, ConsultRequest/memo, receipt, event, and trace identities.",
+        "Validate command replay/CAS, two-user/two-tenant isolation, worker crash/recovery, DLQ/replay, service restart readback, and no broker/order/runtime-policy promotion.",
+        "Publish additive authoritative contract/OpenAPI/capability deltas and fail if any component retains client-derived truth, production fixture fallback, inline async processing, or auto-approved Consultation.",
+        "Verifier returns nonzero for missing service, missing producer, seeded-only truth, stale/unscoped data, mismatched lineage, missing ACK, self-attested memo, or absent canonical readback."
+      ],
+      "validation": [
+        "service-bound integration suite",
+        "negative-control verifier tests",
+        "two-tenant isolation matrix",
+        "restart and failure-injection run",
+        "OpenAPI/capability compatibility validation"
+      ],
+      "rollout": "Verifier and additive contracts only; failures return to the owning task rather than creating implementation here.",
+      "rollback": "Revert verifier/contracts if necessary; do not mutate product/runtime as rollback."
+    },
+    {
+      "id": "AGORA-FE-INTEGRATION-20260813",
+      "title": "Assemble the complete Agora frontend on canonical contracts",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-FE-INTEGRATION-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/execute-plans/agora-fe-integration-20260813",
+      "phase": "A2-parallel-integration",
+      "owner": "Codex2",
+      "reviewer": "Antigravity",
+      "owner_capability": "cross-page frontend integration and browser E2E",
+      "reviewer_capability": "product journey, contract, and accessibility review",
+      "depends_on": [
+        "AGORA-FE-WORKSHOP-20260813",
+        "AGORA-FE-CANDIDATE-20260813",
+        "AGORA-FE-WORKSPACE-CLEANUP-20260813",
+        "AGORA-FE-PERFORMANCE-20260813",
+        "AGORA-WORKSHOP-CORE-20260813",
+        "AGORA-RESEARCH-CANDIDATE-20260813",
+        "AGORA-TRADING-AUTH-20260813",
+        "AGORA-TRADING-DATA-EVENTS-20260813",
+        "AGORA-PERFORMANCE-INDEX-20260813"
+      ],
+      "scope": [
+        "execute-plans:src/agora/pages/trading-room/TradingRoomPage.tsx",
+        "execute-plans:src/agora/pages/trading-room/TradingRoomPage.test.tsx",
+        "execute-plans:src/agora/TradingDeskLayout.tsx",
+        "execute-plans:src/routes/agora.tsx",
+        "execute-plans:src/lib/bff-v1/__tests__/agora-dtos-binding.test.ts",
+        "execute-plans:e2e/agora-product-journey.spec.ts"
+      ],
+      "artifacts": [
+        "execute-plans:src/agora/pages/trading-room/TradingRoomPage.tsx",
+        "execute-plans:src/agora/TradingDeskLayout.tsx",
+        "execute-plans:src/routes/agora.tsx",
+        "execute-plans:e2e/agora-product-journey.spec.ts"
+      ],
+      "out_of_scope": [
+        "Pantheon product implementation",
+        "Management UI",
+        "Lovable or legacy frontend repository",
+        "deployment switch"
+      ],
+      "acceptance": [
+        "Assemble one Trading Room page using authoritative strategy-to-pool lookup, canonical candidate drawer, typed WorkspaceIntent/compiler proposal, live widget data states, decision-event commands, and durable readback.",
+        "Remove fixed lens IDs, page-local candidate drawer/state transitions, sample candidates/metrics, client readiness/freshness, and all remaining local-only success paths.",
+        "Wire TradingDeskLayout jobs/shadow/journal controls to real panels/routes or remove disabled controls; no button may only toggle invisible local state.",
+        "Regenerate TypeScript from the accepted backend contract and pass exact capability/schema hash binding with no direct non-BFF API calls.",
+        "Authenticated desktop/mobile Playwright completes create Workshop through governed intent and owner-scoped Performance, including empty/degraded/error and cross-user cache isolation."
+      ],
+      "validation": [
+        "typecheck and full Agora focused tests",
+        "generated contract/hash gate",
+        "no-fixture/no-local-success guards",
+        "desktop/mobile authenticated Playwright",
+        "accessibility and responsive checks"
+      ],
+      "rollout": "Merge to execute-plans dev after backend contracts are additive and accepted; deployment remains a separate task.",
+      "rollback": "Revert to the last accepted read-only frontend commit; do not restore Lovable, fixtures, or local-only actions."
+    },
+    {
+      "id": "AGORA-HOSTED-ACCEPTANCE-20260813",
+      "title": "Deploy and accept the corrected Agora exact pair",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "expected_branch": "task/AGORA-HOSTED-ACCEPTANCE-20260813",
+      "expected_worktree": "/tmp/pantheon-worker-worktrees/pantheon/agora-hosted-acceptance-20260813",
+      "phase": "A3-hosted-closeout",
+      "owner": "Claude2",
+      "reviewer": "Antigravity2",
+      "owner_capability": "cross-repo release and hosted exact-pair acceptance",
+      "reviewer_capability": "independent deployment, security, and evidence audit",
+      "depends_on": [
+        "AGORA-BE-INTEGRATION-20260813",
+        "AGORA-FE-INTEGRATION-20260813"
+      ],
+      "scope": [
+        "scripts/verify_agora_current_hosted_acceptance.py",
+        "scripts/test_verify_agora_current_hosted_acceptance.py",
+        "docs/deployment/evidence/agora/AGORA-HOSTED-ACCEPTANCE-20260813/"
+      ],
+      "artifacts": [
+        "scripts/verify_agora_current_hosted_acceptance.py",
+        "scripts/test_verify_agora_current_hosted_acceptance.py",
+        "docs/deployment/evidence/agora/AGORA-HOSTED-ACCEPTANCE-20260813/"
+      ],
+      "out_of_scope": [
+        "product implementation",
+        "Supervisor V2 changes",
+        "Lovable or legacy host",
+        "production/live capital activation",
+        "repair dispatch from verifier failures"
+      ],
+      "acceptance": [
+        "Use gate-before-switch and rollback-safe Pantheon-owned dev delivery; served FE/BFF identities, manifest, compatibility hashes, reviewed source commits, and deployed symlinks must match exactly.",
+        "Require /readyz healthy with active worker/controller state and cursor agreement; manifest/runtime SHA drift, repair_only workers, stale watermarks, or failed candidate checks reject the switch.",
+        "Run the real backend verifier plus authenticated desktop/mobile frontend journey, two-user/two-tenant negatives, BFF/worker restart, and durable receipt/artifact/dataset/candidate/memo readback on the same pair.",
+        "Prove live BFF mode, strict fallback, safe write defaults, no embedded token, no fixture fallback, no order/capital authority, and explicit governed dev-write windows where required.",
+        "Publish an independently reviewed gap-by-gap evidence matrix; on any failure keep or restore the last accepted exact pair and leave the candidate unaccepted."
+      ],
+      "validation": [
+        "exact manifest/runtime identity",
+        "healthy readiness and cursor agreement",
+        "service-bound and browser E2E",
+        "restart and tenant/auth negative controls",
+        "rollback drill and evidence checksums"
+      ],
+      "rollout": "One bounded dev exact-pair candidate through the existing deployment workflow after both integration tasks merge.",
+      "rollback": "Reselect the last accepted exact pair and safe read-only profile; never edit a manifest to match a drifted runtime."
+    }
+  ]
+}
