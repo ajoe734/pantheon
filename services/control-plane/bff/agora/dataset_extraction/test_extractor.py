@@ -20,8 +20,14 @@ import pytest
 from .extractor import (
     AgoraDatasetStore,
     ClaimConflictError,
+    HandoffConflictError,
+    IdempotencyConflictError,
+    PrivacyConsentError,
+    acknowledgement_request_digest,
+    admit_evidence,
     evidence_request_digest,
     extract_evidence,
+    sanitize_content_payload,
 )
 from .models import (
     AgoraInteractionEvidenceRequest,
@@ -42,6 +48,11 @@ def _make_evidence(
     session_id: str | None = "sess-001",
     content: dict | None = None,
     captured_at: str = "2026-06-27T10:00:00Z",
+    consent_granted: bool = True,
+    purpose: str = "policy_learning",
+    retention_days: int = 30,
+    is_raw_conversation: bool = False,
+    explicit_conversation_consent: bool = False,
 ) -> AgoraInteractionEvidenceRequest:
     return AgoraInteractionEvidenceRequest(
         evidence_id=evidence_id,
@@ -51,6 +62,11 @@ def _make_evidence(
         content=content or {"text": "question text"},
         source_refs=["session://sess-001"],
         captured_at=captured_at,
+        consent_granted=consent_granted,
+        purpose=purpose,
+        retention_days=retention_days,
+        is_raw_conversation=is_raw_conversation,
+        explicit_conversation_consent=explicit_conversation_consent,
     )
 
 
@@ -793,3 +809,244 @@ class TestPostgresScopeMigration:
         finally:
             with store._connect() as conn:
                 conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+
+
+class TestPrivacyAndConsentRules:
+    def test_consent_revoked_rejected_at_admission(self) -> None:
+        store = AgoraDatasetStore(backend="memory")
+        evidence = _make_evidence(evidence_id="ev-no-consent", consent_granted=False)
+        with pytest.raises(PrivacyConsentError, match="consent not granted"):
+            admit_evidence(
+                evidence,
+                tenant_id="tenant-p",
+                user_id="user-p",
+                idempotency_key="key-no-consent",
+                request_digest=evidence_request_digest(evidence),
+                admitted_at="2026-08-13T10:00:00Z",
+                store=store,
+            )
+
+    def test_raw_conversation_without_explicit_consent_fails_to_dlq(self) -> None:
+        store = AgoraDatasetStore(backend="memory")
+        evidence = _make_evidence(
+            evidence_id="ev-raw-conv",
+            is_raw_conversation=True,
+            explicit_conversation_consent=False,
+        )
+        entry, _ = admit_evidence(
+            evidence,
+            tenant_id="tenant-p",
+            user_id="user-p",
+            idempotency_key="key-raw-conv",
+            request_digest=evidence_request_digest(evidence),
+            admitted_at="2026-08-13T10:00:00Z",
+            store=store,
+        )
+        result = store.process_inbox(tenant_id="tenant-p", user_id="user-p")
+        assert result["processed"] == 0
+        assert result["failed"] == 1
+
+        dlq = store.get_dlq("tenant-p", "user-p")
+        assert len(dlq) == 1
+        assert "Raw private conversation excluded" in (dlq[0]["error_message"] or "")
+
+    def test_raw_conversation_with_explicit_consent_succeeds_and_redacts(self) -> None:
+        store = AgoraDatasetStore(backend="memory")
+        evidence = _make_evidence(
+            evidence_id="ev-raw-ok",
+            is_raw_conversation=True,
+            explicit_conversation_consent=True,
+            content={
+                "raw_transcript": "User asked about portfolio",
+                "api_key": "secret-live-key",
+                "nested": {"password": "admin-password", "symbol": "BTC-USD"},
+            },
+        )
+        admit_evidence(
+            evidence,
+            tenant_id="tenant-p",
+            user_id="user-p",
+            idempotency_key="key-raw-ok",
+            request_digest=evidence_request_digest(evidence),
+            admitted_at="2026-08-13T10:00:00Z",
+            store=store,
+        )
+        result = store.process_inbox(tenant_id="tenant-p", user_id="user-p")
+        assert result["processed"] == 1
+        assert result["failed"] == 0
+
+        rec = store.get("ev-raw-ok", tenant_id="tenant-p", user_id="user-p")
+        assert rec is not None
+        assert rec.redaction_applied is True
+        assert rec.content["api_key"] == "[REDACTED]"
+        assert rec.content["nested"]["password"] == "[REDACTED]"
+        assert rec.content["nested"]["symbol"] == "BTC-USD"
+
+    def test_redaction_sanitizes_credentials_and_tokens(self) -> None:
+        raw_content = {
+            "auth_token": "bearer-12345",
+            "db_secret": "my-secret",
+            "credit_card": "4111-2222-3333-4444",
+            "persona_text": "Observational signal",
+        }
+        sanitized, applied = sanitize_content_payload(raw_content)
+        assert applied is True
+        assert sanitized["auth_token"] == "[REDACTED]"
+        assert sanitized["db_secret"] == "[REDACTED]"
+        assert sanitized["credit_card"] == "[REDACTED]"
+        assert sanitized["persona_text"] == "Observational signal"
+
+
+class TestCrashRecoveryMatrix:
+    def test_crash_recovery_before_dataset_creation(self) -> None:
+        """Item claimed by worker A that crashes before completion is safely picked up by worker B."""
+        store = AgoraDatasetStore(backend="memory")
+        evidence = _make_evidence(evidence_id="ev-crash-before")
+        admit_evidence(
+            evidence,
+            tenant_id="tenant-cr",
+            user_id="user-cr",
+            idempotency_key="key-cr-1",
+            request_digest=evidence_request_digest(evidence),
+            admitted_at="2026-08-13T10:00:00Z",
+            store=store,
+        )
+
+        t0 = datetime(2026, 8, 13, 10, 0, 0, tzinfo=timezone.utc)
+        claims = store.claim_inbox(
+            tenant_id="tenant-cr",
+            user_id="user-cr",
+            worker_id="worker-crash",
+            lease_seconds=5,
+            now=t0,
+        )
+        assert len(claims) == 1
+
+        # Worker crashes without completing claim.
+        # Worker B runs after lease expiration.
+        t1 = t0 + timedelta(seconds=10)
+        res = store.process_inbox(
+            tenant_id="tenant-cr",
+            user_id="user-cr",
+            worker_id="worker-recovery",
+            now=t1,
+        )
+        assert res["processed"] == 1
+        assert res["handoffs_created"] == 1
+
+        # Crashed worker tries to complete stale claim -> rejected
+        with pytest.raises(ClaimConflictError):
+            store._complete_claim(claims[0], now=t1 + timedelta(seconds=1))
+
+    def test_duplicate_replay_and_readback(self) -> None:
+        """Duplicate submissions produce exact idempotent readback."""
+        store = AgoraDatasetStore(backend="memory")
+        evidence = _make_evidence(evidence_id="ev-dup-replay")
+        e1, is_new1 = admit_evidence(
+            evidence,
+            tenant_id="tenant-cr",
+            user_id="user-cr",
+            idempotency_key="key-dup-replay",
+            request_digest=evidence_request_digest(evidence),
+            admitted_at="2026-08-13T10:00:00Z",
+            store=store,
+        )
+        assert is_new1 is True
+
+        e2, is_new2 = admit_evidence(
+            evidence,
+            tenant_id="tenant-cr",
+            user_id="user-cr",
+            idempotency_key="key-dup-replay",
+            request_digest=evidence_request_digest(evidence),
+            admitted_at="2026-08-13T10:00:00Z",
+            store=store,
+        )
+        assert is_new2 is False
+        assert e1["evidence_id"] == e2["evidence_id"]
+        assert e1["admission_receipt_id"] == e2["admission_receipt_id"]
+
+
+class TestSingleItemOrderedHandoffAck:
+    def test_ack_ordered_single_item_exact_match(self) -> None:
+        store = AgoraDatasetStore(backend="memory")
+        evidence1 = _make_evidence(evidence_id="ev-ack-1")
+        evidence2 = _make_evidence(evidence_id="ev-ack-2")
+
+        extract_evidence(
+            evidence1,
+            tenant_id="tenant-ack",
+            user_id="user-ack",
+            idempotency_key="key-ack-1",
+            request_digest=evidence_request_digest(evidence1),
+            extracted_at="2026-08-13T10:00:00Z",
+            store=store,
+        )
+        extract_evidence(
+            evidence2,
+            tenant_id="tenant-ack",
+            user_id="user-ack",
+            idempotency_key="key-ack-2",
+            request_digest=evidence_request_digest(evidence2),
+            extracted_at="2026-08-13T10:00:00Z",
+            store=store,
+        )
+
+        handoffs = store.list_handoffs(tenant_id="tenant-ack", user_id="user-ack")
+        assert len(handoffs) == 2
+
+        h1 = next(h for h in handoffs if "ev-ack-1" in h["evidence_ids"])
+        h2 = next(h for h in handoffs if "ev-ack-2" in h["evidence_ids"])
+
+        # Acknowledge handoff 1 with structured dictionary downstream_ref (from drainer)
+        digest1 = acknowledgement_request_digest(
+            handoff_id=h1["handoff_id"],
+            acknowledgement_id="ack-policy-001",
+            dataset_version_id=h1["dataset_version_id"],
+            downstream_ref={"drainer": "L12-MFC-R4-AGORA-001", "partition": 1},
+        )
+        ack_res, acknowledged = store.acknowledge_handoff(
+            h1["handoff_id"],
+            tenant_id="tenant-ack",
+            user_id="user-ack",
+            acknowledgement_id="ack-policy-001",
+            dataset_version_id=h1["dataset_version_id"],
+            downstream_ref={"drainer": "L12-MFC-R4-AGORA-001", "partition": 1},
+            acknowledged_by="policy_drainer",
+            request_digest=digest1,
+            acknowledged_at="2026-08-13T10:05:00Z",
+        )
+        assert acknowledged is True
+        assert ack_res["ack_status"] == "acknowledged"
+
+        # Verify handoff 2 is NOT bulk-acked
+        updated_handoffs = store.list_handoffs(tenant_id="tenant-ack", user_id="user-ack")
+        h2_current = next(h for h in updated_handoffs if h["handoff_id"] == h2["handoff_id"])
+        assert h2_current["ack_status"] == "pending"
+
+    def test_ack_mismatched_version_fails(self) -> None:
+        store = AgoraDatasetStore(backend="memory")
+        evidence = _make_evidence(evidence_id="ev-ack-mismatch")
+        extract_evidence(
+            evidence,
+            tenant_id="tenant-ack",
+            user_id="user-ack",
+            idempotency_key="key-ack-mismatch",
+            request_digest=evidence_request_digest(evidence),
+            extracted_at="2026-08-13T10:00:00Z",
+            store=store,
+        )
+        h = store.list_handoffs(tenant_id="tenant-ack", user_id="user-ack")[0]
+        with pytest.raises(HandoffConflictError):
+            store.acknowledge_handoff(
+                h["handoff_id"],
+                tenant_id="tenant-ack",
+                user_id="user-ack",
+                acknowledgement_id="ack-wrong",
+                dataset_version_id="dsv-invalid-version",
+                downstream_ref="test-ref",
+                acknowledged_by="test-op",
+                request_digest="digest-test",
+                acknowledged_at="2026-08-13T10:05:00Z",
+            )
+

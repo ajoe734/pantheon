@@ -21,6 +21,13 @@ __all__ = [
     "DSN_ENV",
     "SCHEMA_ENV",
     "DEFAULT_SCHEMA",
+    "StrategyReconstructionResult",
+    "reconstruct_strategy_from_events",
 ]
+
+from .reconstruction import (  # noqa: F401
+    StrategyReconstructionResult,
+    reconstruct_strategy_from_events,
+)
 
 VERSION = "1.0"

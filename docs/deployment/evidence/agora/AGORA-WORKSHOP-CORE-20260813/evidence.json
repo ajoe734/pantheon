@@ -1,0 +1,16 @@
+{
+  "task_id": "AGORA-WORKSHOP-CORE-20260813",
+  "title": "Replace Persona-first Workshop with durable strategy reconstruction",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "review_approved",
+  "verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/agora/strategy_workshop/",
+    "result": "7 passed, 2 skipped in 3.54s"
+  },
+  "deliverables": [
+    "services/control-plane/bff/agora/strategy_workshop/reconstruction.py",
+    "services/control-plane/bff/agora/strategy_workshop/router.py",
+    "services/control-plane/bff/agora/strategy_workshop/test_reconstruction.py"
+  ]
+}

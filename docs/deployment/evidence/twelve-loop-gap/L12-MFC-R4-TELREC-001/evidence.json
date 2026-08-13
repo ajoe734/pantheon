@@ -1,0 +1,140 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "L12-MFC-R4-TELREC-001",
+    "title": "Prove real paper runtime telemetry through reconciliation terminal readback",
+    "phase": "L12-MFC-R4-W1",
+    "owner": "Antigravity2",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-MFC-R4-TELREC-001",
+    "merge_target": "dev",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MFC-R4-TELREC-001/evidence.json",
+    "overall_admission": "ready_for_independent_review"
+  },
+  "scope": {
+    "owned_layer": "Validation-first contract test proving real paper RuntimeTelemetryEmitter event ingestion through reconciliation-drift DriftReport persistence and terminal IncidentCase/OperatorPayload readback via official service endpoints.",
+    "not_changing": [
+      "incidents service persistence implementation or ownership",
+      "telemetry transport or infrastructure hardening",
+      "live-capital activation, broker credentials, or RuntimeBinding authority",
+      "shared compose or catalog",
+      "new event bus"
+    ],
+    "composes_with": {
+      "upstream": "RuntimeTelemetryEmitter (services/execution/lean_runtime/paper_runtime.py) emits the real paper pnl_snapshot event.",
+      "downstream": "Evolution service consumes terminal incident identity (incident_id, binding_id, runtime_id) from IncidentCase OperatorPayload readback."
+    },
+    "implementation_changed_files": [
+      "services/reconciliation-drift/tests/test_l12_mfc_r4_telrec_001_contract.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MFC-R4-TELREC-001/evidence.json"
+    ]
+  },
+  "normal_path_proof": {
+    "mode": "deterministic, isolated in-process telemetry and reconciliation integration",
+    "trigger": "One real paper pnl_snapshot event with avg_slippage_bps=12.5 (critical relative delta breach vs baseline 2.0).",
+    "event": {
+      "event_id": "evt-l12-telrec-001",
+      "event_type": "pnl_snapshot",
+      "binding_id": "binding-l12-telrec-001",
+      "runtime_id": "runtime-l12-telrec-001",
+      "tenant_id": "tenant-telrec",
+      "deployment_stage": "paper",
+      "is_real_order": false,
+      "is_real_capital": false
+    },
+    "event_sequence": [
+      "RuntimeTelemetryEmitter.build_event() constructs a real paper-runtime pnl_snapshot event from RuntimeIdentity and binding resolver.",
+      "Reconciliation-drift consume endpoint accepts the event, evaluates avg_slippage_bps breach (12.5 vs baseline 2.0, critical threshold 1.0x relative delta), and persists DriftReport drift-evt-l12-telrec-001.",
+      "GET /api/reconciliation-drift/drift-reports?scope_ref=binding-l12-telrec-001 returns the DriftReport with correct binding_id, runtime_id, severity=critical, status=open, telemetry_event_ids=[evt-l12-telrec-001].",
+      "GET /api/reconciliation-drift/drift-reports/{id} returns full DriftReport detail including recommended_action and correlation_envelope.",
+      "POST /api/incidents/consume-drift-report consumes the DriftReport into IncidentCase with incident_id, binding_id, runtime_id.",
+      "GET /api/incidents/{id} returns IncidentCase with incident_id, binding_id, runtime_id, telemetry_event_ids.",
+      "GET /api/incidents/{id}/operator-payload returns OperatorIncidentPayload with incident_id, status=open, binding_id, runtime_id, is_open=true, postmortem_id=null, telemetry_event_ids.",
+      "Idempotent re-consume returns duplicate_event_ids=[evt-l12-telrec-001] and the same drift_report_id."
+    ],
+    "terminal_readback": {
+      "telemetry_event_id": "evt-l12-telrec-001",
+      "drift_report_id": "drift-evt-l12-telrec-001",
+      "terminal_incident_id": "inc-l12-telrec-001 (via consume-drift-report)",
+      "operator_payload_fields": ["incident_id", "status", "binding_id", "runtime_id", "is_open", "postmortem_id", "telemetry_event_ids"]
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Real paper event emitted by RuntimeTelemetryEmitter is ingested via reconciliation consumer.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_l12_mfc_r4_telrec_001_contract.py::test_real_paper_runtime_telemetry_ingest_and_terminal_readback"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "DriftReport is created and read back via official reconciliation endpoint GET /api/reconciliation-drift/drift-reports/{id}.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_l12_mfc_r4_telrec_001_contract.py::test_real_paper_runtime_telemetry_ingest_and_terminal_readback (steps 2-3)"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "DriftReport is consumed into IncidentCase and read back via official incidents endpoints GET /api/incidents/{id} and GET /api/incidents/{id}/operator-payload.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_l12_mfc_r4_telrec_001_contract.py::test_real_paper_runtime_telemetry_ingest_and_terminal_readback (steps 4-6)"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Incident identity (incident_id, binding_id, runtime_id, telemetry_event_ids, severity, status, correlation_envelope, postmortem_id) is consumable for downstream evolution.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_l12_mfc_r4_telrec_001_contract.py::test_real_paper_runtime_telemetry_ingest_and_terminal_readback (step 6 operator-payload assertions)"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "Validation-first: no patched HTTP, no direct downstream store writes, runs in parallel.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_l12_mfc_r4_telrec_001_contract.py - uses TestClient against real service FastAPI apps with in-process stores; no HTTP patching; parallelism-safe tempdir isolation"
+      ]
+    },
+    {
+      "id": "AC6",
+      "statement": "Idempotent re-consumption does not create duplicate DriftReports or IncidentCases.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/reconciliation-drift/tests/test_l12_mfc_r4_telrec_001_contract.py::test_real_paper_runtime_telemetry_ingest_and_terminal_readback (step 7 re-consume)"
+      ]
+    }
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -xvs services/reconciliation-drift/tests/test_l12_mfc_r4_telrec_001_contract.py",
+        "result": "pass",
+        "conclusion": "1 passed, 3 warnings (Starlette TestClient deprecation, FastAPI on_event deprecation — pre-existing)"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/reconciliation-drift/tests/test_l12_mfc_r4_telrec_001_contract.py services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py services/incidents/tests/ --ignore=services/incidents/tests/test_incident_replay_suite.py",
+        "result": "pass",
+        "conclusion": "12 passed, 3 warnings; test_incident_replay_suite.py excluded (pre-existing PANTHEON_RUNTIME_MANAGER_URL env collection error unrelated to this task)"
+      }
+    ]
+  },
+  "safety": {
+    "no_live_capital": "pass; the test event uses PANTHEON_RUNTIME_ROLE=paper, PANTHEON_RUNTIME_MODE=paper, is_real_capital=False, is_real_order=False.",
+    "incident_ownership": "unchanged; test monkeypatches incidents store and reference_validator in-process only; no incidents service files modified.",
+    "infrastructure": "unchanged; no telemetry transport, ingest service, or infrastructure hardening files modified."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer": "Antigravity",
+    "required_review": "Verify: (1) RuntimeTelemetryEmitter builds a real paper event without patched HTTP; (2) reconciliation consume endpoint correctly classifies drift severity=critical from avg_slippage_bps breach and persists DriftReport; (3) DriftReport and IncidentCase readback via official endpoints include all required identity fields for Evolution; (4) idempotent re-consume returns duplicate_event_ids without new DriftReport; (5) no unrelated service or infrastructure files were modified; (6) test isolation is adequate for parallel execution. Approve through governed status command: AI_NAME=Antigravity REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-MFC-R4-TELREC-001/evidence.json $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh approve L12-MFC-R4-TELREC-001 \"<review decision>\"."
+  }
+}
