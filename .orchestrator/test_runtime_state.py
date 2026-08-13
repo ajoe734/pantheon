@@ -232,6 +232,24 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertEqual(state["watchdog"]["safe_mode_reason"], "stale_heartbeat")
         self.assertIn("last_safe_mode_observed_until", state["watchdog"])
 
+    def test_runtime_phase_reservation_survives_save_and_reload(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        state = runtime_state.default_state()
+        state["supervisor"]["runtime_phase_reservations"] = {
+            "process_queue": {
+                "token": "phase-process-queue-test",
+                "reserved_at": "2026-08-13T03:05:38Z",
+            }
+        }
+
+        runtime_state.save_runtime_state(self.config, state)
+        reloaded = runtime_state.load_runtime_state(self.config)
+
+        self.assertEqual(
+            reloaded["supervisor"]["runtime_phase_reservations"],
+            state["supervisor"]["runtime_phase_reservations"],
+        )
+
     def test_load_runtime_state_preserves_worker_worktree_cleanup_summary(self) -> None:
         last_run = {
             "at": "2026-06-20T06:59:40Z",
