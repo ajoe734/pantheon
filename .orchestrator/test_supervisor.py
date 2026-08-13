@@ -406,6 +406,19 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
             supervisor.validate_provider_accounts(config)
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 0)
 
+    def test_repo_codex_slots_inherit_logical_lane_capacity(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text())
+        for agent_id in ("codex", "codex2"):
+            with self.subTest(agent_id=agent_id):
+                lane = supervisor.delivery_lane_for_agent(config, agent_id)
+                self.assertTrue(lane.endpoints)
+                self.assertTrue(all(endpoint.enabled for endpoint in lane.endpoints))
+                self.assertTrue(
+                    all(endpoint.account_id for endpoint in lane.endpoints)
+                )
+                for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
+                    self.assertNotIn("max_parallel", config["agents"][slot_id])
+
     def test_retired_capacity_fields_fail_closed(self) -> None:
         for retired in (
             "disabled_agents",
@@ -1150,6 +1163,144 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex2")
         self.assertEqual(persist.call_args.kwargs["expected_owner"], "Codex")
+
+    def test_terminal_static_endpoint_reassigns_without_waiting_forever(self) -> None:
+        task = task_fixture(reviewer="Human/Ops")
+        self.config["agents"]["codex"]["provider"] = "missing-provider"
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex2": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    }
+                },
+                "accounts": {
+                    "codex2_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    }
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor, "persist_task_reassignment", return_value=True
+            ) as persist,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex2")
+        self.assertIn(
+            "configured_no_delivery_endpoint",
+            persist.call_args.kwargs["message"],
+        )
+
+    def test_configured_fallback_cycle_exhausts_remaining_healthy_roster(self) -> None:
+        task = task_fixture(reviewer="Human/Ops")
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "codex",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "codex",
+            "account": "claude-account",
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"][
+            "claude-account"
+        ] = 1
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                    "claude": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "claude_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor, "persist_task_reassignment", return_value=True
+            ) as persist,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Claude")
+
+    def test_terminal_assignment_demands_health_for_unknown_fallback(self) -> None:
+        task = task_fixture(reviewer="Human/Ops")
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "codex",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "codex",
+            "account": "claude-account",
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"][
+            "claude-account"
+        ] = 1
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    }
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    }
+                },
+            },
+        }
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            state,
+            {"tasks": [task]},
+            [],
+            live_total=0,
+        )
+        self.assertIn(
+            {"scope": "endpoint", "id": "claude"},
+            plan["health_refresh_targets"],
+        )
 
     def test_terminal_pause_reopens_stale_blocked_assignment_for_normal_dispatch(self) -> None:
         task = task_fixture(status="blocked", reviewer="Human/Ops")

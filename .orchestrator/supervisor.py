@@ -1148,8 +1148,11 @@ def agent_provider_key(config: dict[str, Any], agent_id: str | None) -> str:
 
 
 def agent_account_id(config: dict[str, Any], agent_id: str | None) -> str:
-    provider_id = agent_provider_id(config, agent_id)
-    return provider_account_id(config, provider_id)
+    # Provider keys retain punctuation (for example ``codex1-1``), while
+    # account identities normalize it.  Resolve the exact provider key before
+    # asking for its account or slotted lanes silently lose their account.
+    provider_key = agent_provider_key(config, agent_id)
+    return provider_account_id(config, provider_key)
 
 
 def active_account_counts(
@@ -1370,10 +1373,18 @@ def _delivery_endpoint_for_agent(
     provider = agent_provider_key(config, endpoint_id)
     provider_config = provider_config_for(config, provider)
     configured = bool(agent and provider and provider_config)
+    # Physical worker slots describe delivery topology, not independent
+    # scheduling policy.  Their capacity is governed by the logical parent;
+    # requiring agents.<slot>.max_parallel would disable every correctly
+    # configured slot because startup validation intentionally requires that
+    # field only on logical agents.
+    capacity_agent_id = normalize_agent_id(
+        str(agent.get("dispatch_slot_for") or endpoint_id)
+    )
     # Config validation establishes that every live agent has a supported
     # adapter and provider.  This remaining static gate protects a stale
     # runtime event whose endpoint was removed after it was queued.
-    enabled = configured and agent_dispatch_capacity(config, endpoint_id) > 0
+    enabled = configured and agent_dispatch_capacity(config, capacity_agent_id) > 0
     return rewrite_dispatch_admission.DeliveryEndpoint(
         endpoint_id=normalize_agent_id(endpoint_id),
         provider_id=provider,
@@ -4734,6 +4745,40 @@ def default_reassignment_candidates(config: dict[str, Any], exclude: set[str] | 
     return out
 
 
+def reassignment_candidate_order(
+    config: dict[str, Any],
+    mapping: dict[str, Any],
+    *,
+    roots: list[str],
+    exclude: set[str] | None = None,
+) -> list[str]:
+    """Return configured fallbacks followed by the remaining live roster.
+
+    A configured fallback graph is a preference, not a closed allow-list.
+    Treating any non-empty graph as exhaustive lets a cycle such as
+    Codex -> Codex2 -> Codex strand a task even while another independent
+    lane is healthy.  Keep the declared order, then exhaust the bounded roster.
+    """
+
+    excluded = {
+        canonical_agent_name(config, name).casefold()
+        for name in (exclude or set())
+        if canonical_agent_name(config, name)
+    }
+    ordered: list[str] = []
+    seen: set[str] = set(excluded)
+    configured = bounded_fallback_candidates(config, mapping, roots=roots)
+    defaults = default_reassignment_candidates(config, exclude=exclude)
+    for raw_name in configured + defaults:
+        name = canonical_agent_name(config, raw_name)
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(name)
+    return ordered
+
+
 EXPLICIT_HUMAN_REVIEWER = "Human/Ops"
 
 
@@ -4867,16 +4912,12 @@ def plan_task_assignment_pair(
     elif owner_candidates is not None:
         owner_order = [canonical_agent_name(config, name) for name in owner_candidates]
     else:
-        owner_fallbacks = bounded_fallback_candidates(
+        owner_fallbacks = reassignment_candidate_order(
             config,
             owner_mapping,
             roots=[owner] if owner else [],
+            exclude={owner} if owner else set(),
         )
-        if not owner_fallbacks:
-            owner_fallbacks = default_reassignment_candidates(
-                config,
-                exclude={owner} if owner else set(),
-            )
         owner_order = ([owner] if owner else []) + owner_fallbacks
 
     seen_owners: set[str] = set()
@@ -4918,6 +4959,12 @@ def plan_task_assignment_pair(
                     config,
                     owner_mapping,
                     roots=[name for name in (owner, candidate_owner) if name],
+                )
+            )
+            reviewer_order.extend(
+                default_reassignment_candidates(
+                    config,
+                    exclude={candidate_owner},
                 )
             )
 
@@ -8276,22 +8323,127 @@ def assignment_terminal_unavailability(
         return "unknown_agent"
     if agent_dispatch_capacity(config, agent_id) == 0:
         return "configured_zero_capacity"
-    endpoint_id = normalize_agent_id(agent_id)
-    provider = agent_provider_key(config, endpoint_id)
-    account = agent_account_id(config, endpoint_id)
+    lane = delivery_lane_for_agent(config, agent_id)
+    endpoints = [
+        endpoint
+        for endpoint in lane.endpoints
+        if endpoint.endpoint_id
+        and endpoint.provider_id
+        and endpoint.account_id
+        and endpoint.enabled
+        and endpoint.can_auto_deliver
+    ]
+    if not endpoints:
+        return "configured_no_delivery_endpoint"
     health = runtime_delivery_health(state)
-    endpoint = rewrite_provider_health.endpoint_health_entry(health, endpoint_id)
-    if endpoint.get("state") == rewrite_provider_health.DeliveryHealthState.UNAVAILABLE.value:
-        if str(endpoint.get("reason_kind") or "") == "auth":
-            return f"terminal_auth:{provider}"
-    account_entry = rewrite_provider_health.account_health_entry(health, account)
-    if (
-        account_entry.get("state")
-        == rewrite_provider_health.DeliveryHealthState.RETRY_AFTER.value
-        and str(account_entry.get("reason_kind") or "") == "quota_terminal"
-    ):
-        return f"terminal_quota:{provider}"
-    return None
+    terminal_reasons: list[str] = []
+    for delivery_endpoint in endpoints:
+        endpoint = rewrite_provider_health.endpoint_health_entry(
+            health, delivery_endpoint.endpoint_id
+        )
+        account_entry = rewrite_provider_health.account_health_entry(
+            health, delivery_endpoint.account_id
+        )
+        if (
+            account_entry.get("state")
+            == rewrite_provider_health.DeliveryHealthState.RETRY_AFTER.value
+            and str(account_entry.get("reason_kind") or "") == "quota_terminal"
+        ):
+            terminal_reasons.append(
+                f"terminal_quota:{delivery_endpoint.provider_id}"
+            )
+            continue
+        if (
+            endpoint.get("state")
+            == rewrite_provider_health.DeliveryHealthState.UNAVAILABLE.value
+            and str(endpoint.get("reason_kind") or "") == "auth"
+        ):
+            terminal_reasons.append(
+                f"terminal_auth:{delivery_endpoint.provider_id}"
+            )
+            continue
+        # One physical endpoint that is healthy, stale, or retryable keeps the
+        # logical lane recoverable in place.  Reassign only when every exact
+        # endpoint is durably terminal.
+        return None
+    return terminal_reasons[0] if terminal_reasons else None
+
+
+def unavailable_assignment_fallback_refresh_targets(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    """Request bounded live evidence for possible reassignment targets.
+
+    Recovery cannot safely bind a task to a fallback whose credential health
+    is stale or unknown.  Without this demand path, however, only the broken
+    incumbent is probed and every alternative can remain unknown forever.
+    The normal observer applies the configured per-cycle bound.
+    """
+
+    settings = worker_reassignment_settings(config)
+    if not settings.get("enabled", True):
+        return []
+    review_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("review_statuses"), ["review"]
+    )
+    eligible_owner_statuses = {"todo", "in_progress", "review_approved", "blocked"}
+    health = runtime_delivery_health(state)
+    targets: list[dict[str, str]] = []
+
+    for task in status.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        task_status = str(task.get("status") or "").strip().lower()
+        owner = canonical_agent_name(config, str(task.get("owner") or ""))
+        reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+        role = ""
+        unavailable_actor = ""
+        mapping: dict[str, Any] = {}
+        excluded: set[str] = set()
+        if task_status in review_statuses and not reviewer_is_explicit_human_gate(reviewer):
+            if assignment_terminal_unavailability(config, state, reviewer):
+                role = "reviewer"
+                unavailable_actor = reviewer
+                mapping = settings.get("reviewer_fallbacks", {}) or {}
+                excluded = {owner, reviewer}
+        elif task_status in eligible_owner_statuses:
+            if assignment_terminal_unavailability(config, state, owner):
+                role = "owner"
+                unavailable_actor = owner
+                mapping = settings.get("owner_fallbacks", {}) or {}
+                excluded = {owner, reviewer}
+        if not role:
+            continue
+
+        for candidate in reassignment_candidate_order(
+            config,
+            mapping,
+            roots=[unavailable_actor],
+            exclude=excluded,
+        ):
+            if role == "reviewer" and candidate.casefold() == owner.casefold():
+                continue
+            lane = delivery_lane_for_agent(config, normalize_agent_id(candidate))
+            for endpoint in lane.endpoints:
+                if (
+                    not endpoint.endpoint_id
+                    or not endpoint.provider_id
+                    or not endpoint.account_id
+                    or not endpoint.enabled
+                    or not endpoint.can_auto_deliver
+                ):
+                    continue
+                _reason, needs_refresh = rewrite_provider_health.delivery_health_block_reason(
+                    health,
+                    endpoint_id=endpoint.endpoint_id,
+                    account_id=endpoint.account_id,
+                )
+                target = {"scope": "endpoint", "id": endpoint.endpoint_id}
+                if needs_refresh and target not in targets:
+                    targets.append(target)
+    return targets
 
 
 def task_has_explicit_recovery_hold(
@@ -8395,11 +8547,12 @@ def reconcile_unavailable_assignments(
             continue
 
         if role == "reviewer":
-            candidates = bounded_fallback_candidates(
+            candidates = reassignment_candidate_order(
                 config,
                 settings.get("reviewer_fallbacks", {}) or {},
                 roots=[reviewer],
-            ) or default_reassignment_candidates(config, exclude={owner, reviewer})
+                exclude={owner, reviewer},
+            )
             pair = plan_task_assignment_pair(
                 config,
                 task,
@@ -8411,11 +8564,12 @@ def reconcile_unavailable_assignments(
                 require_owner_ready=False,
             )
         else:
-            candidates = bounded_fallback_candidates(
+            candidates = reassignment_candidate_order(
                 config,
                 settings.get("owner_fallbacks", {}) or {},
                 roots=[owner],
-            ) or default_reassignment_candidates(config, exclude={owner, reviewer})
+                exclude={owner, reviewer},
+            )
             pair = plan_task_assignment_pair(
                 config,
                 task,
@@ -11946,6 +12100,12 @@ def build_dispatch_plan(
         live_total_snapshot=live_total,
         event_sink=capture,
     )
+    refresh_targets = list(scratch.get("delivery_health_refresh_demands") or [])
+    for target in unavailable_assignment_fallback_refresh_targets(
+        config, scratch, status_snapshot
+    ):
+        if target not in refresh_targets:
+            refresh_targets.append(target)
     dispatcher_state = scratch.get("ready_dispatcher")
     cursor = (
         dispatcher_state.get("weighted_cursor")
@@ -11957,7 +12117,7 @@ def build_dispatch_plan(
         "events": events,
         "weighted_cursor": cursor,
         "live_total": max(0, int(live_total)),
-        "health_refresh_targets": list(scratch.get("delivery_health_refresh_demands") or []),
+        "health_refresh_targets": refresh_targets,
     }
 
 
