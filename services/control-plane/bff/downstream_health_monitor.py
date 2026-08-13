@@ -66,6 +66,16 @@ class DownstreamTarget:
     component_kind: str = "http_service"
     source_env: str = "explicit"
 
+    def __post_init__(self) -> None:
+        if not self.name or not _TARGET_NAME_RE.fullmatch(self.name):
+            raise ValueError(f"invalid health target name: {self.name!r}")
+        if not self.base_url or not self.base_url.startswith(("http://", "https://")):
+            raise ValueError(f"health target {self.name!r} base_url must use http(s): {self.base_url!r}")
+        if not self.health_path or not self.health_path.startswith("/") or " " in self.health_path:
+            raise ValueError(f"health target {self.name!r} health_path must start with '/': {self.health_path!r}")
+        if not self.component_kind:
+            raise ValueError(f"health target {self.name!r} component_kind cannot be empty")
+
     @property
     def health_url(self) -> str:
         return f"{self.base_url.rstrip('/')}/{self.health_path.lstrip('/')}"
@@ -1520,10 +1530,16 @@ class DownstreamHealthMonitor:
                     continue
                 if base_url in urls_seen:
                     break
+                health_path = self._health_path
+                for path_env in (f"{env_name}_HEALTH_PATH", f"{env_name.removesuffix('_URL')}_HEALTH_PATH"):
+                    override = os.getenv(path_env, "").strip()
+                    if override:
+                        health_path = override
+                        break
                 targets[name] = DownstreamTarget(
                     name=name,
                     base_url=base_url,
-                    health_path=self._health_path,
+                    health_path=health_path,
                     source_env=env_name,
                 )
                 urls_seen.add(base_url)
@@ -1548,10 +1564,16 @@ class DownstreamHealthMonitor:
             name = name.lower().replace("_", "-")
             if not _TARGET_NAME_RE.fullmatch(name) or name in targets:
                 continue
+            health_path = self._health_path
+            for path_env in (f"{env_name}_HEALTH_PATH", f"{env_name.removesuffix('_URL')}_HEALTH_PATH"):
+                override = os.getenv(path_env, "").strip()
+                if override:
+                    health_path = override
+                    break
             targets[name] = DownstreamTarget(
                 name=name,
                 base_url=base_url,
-                health_path=self._health_path,
+                health_path=health_path,
                 source_env=env_name,
             )
             urls_seen.add(base_url)
