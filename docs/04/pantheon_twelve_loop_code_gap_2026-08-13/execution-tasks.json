@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "program_id": "pantheon-l12-minimum-functional-closure-r4-20260813",
+  "generated_at": "2026-08-13T00:00:00Z",
+  "source_documents": [
+    "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/GAP_REPORT.md",
+    "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/SYSTEM_DESIGN.md",
+    "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/EXECUTION_TASKS.md"
+  ],
+  "common": {
+    "base": "latest remote dev at worker start",
+    "clean_worktree": true,
+    "merge_target": "dev",
+    "implementation_authority": "Pantheon supervisor dispatched auto-worker",
+    "owner_pool": ["Antigravity", "Antigravity2"],
+    "reviewer_must_differ": true,
+    "codex_fallback_allowed": false,
+    "failure_policy": "E2E failure writes a GAP report only; it must not create a repair task or mutate product/task state",
+    "global_out_of_scope": ["security hardening", "HA/load/chaos/compliance", "live capital", "Supervisor V2 or fleet redesign", "broad Agora redesign"]
+  },
+  "tasks": [
+    {
+      "id": "L12-MFC-R4-PLAN-FREEZE-001",
+      "title": "Freeze and merge the code-derived L12 GAP, SD, and execution catalog",
+      "summary_zh": "獨立審查 PR #4832，重查 active task/PR/branch/worktree 與 #4834 overlap，合併唯一 execution catalog。",
+      "design": ["Wave 0"], "wave": 0, "repo": "pantheon", "owner": "Antigravity", "reviewer": "Antigravity2", "depends_on": [],
+      "scope": ["docs/04/pantheon_twelve_loop_code_gap_2026-08-13"],
+      "root_cause": "Workers cannot safely execute an unmerged plan or replay historical L12 catalogs.",
+      "out_of_scope": ["product code", "runtime mutation", "old task-row edits"],
+      "acceptance": ["PR #4832 independently reviewed and merged", "18 unique IDs and acyclic DAG validated", "#4834 overlap documented without duplicate tasks", "merge SHA recorded"],
+      "validation": ["JSON parse", "dependency/reference validation", "active PR/task/worktree dedupe"],
+      "rollout": "documentation merge only", "rollback": "revert documentation merge", "required_artifacts": ["PR", "checks", "review", "merge SHA"]
+    },
+    {
+      "id": "L12-MFC-R4-SOURCE-001", "title": "Make the existing source controller the durable scheduled owner",
+      "summary_zh": "正式長駐 source controller 與 bounded smoke 分離；不建立第二 scheduler。", "design": ["D01"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity", "reviewer": "Antigravity2", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/source_ingestion/controller_worker.py", "services/source_ingestion/scheduler_worker.py", "services/source_ingestion/tests"],
+      "root_cause": "The same opt-in, restart=no, one-tick service is used as both production scheduler and smoke.",
+      "out_of_scope": ["docker-compose.yml", "second scheduler", "shared catalog"],
+      "acceptance": ["existing controller supports durable unbounded reconcile", "bounded smoke is explicit", "SourceRecord readback preserves identity", "compose delta documented"],
+      "validation": ["focused controller tests", "restart/idempotency", "SourceRecord-to-Distillation contract"],
+      "rollout": "merge compatible domain code before integration activation", "rollback": "disable activation without adding a second owner", "required_artifacts": ["PR", "checks", "review", "merge SHA", "readback", "compose_delta"]
+    },
+    {
+      "id": "L12-MFC-R4-DISTILL-001", "title": "Persist canonical distillation terminal identity and Registry readback",
+      "summary_zh": "保存 strategy_id、registry_id、version/checksum；Registry readback 後才 terminal。", "design": ["D02"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity2", "reviewer": "Antigravity", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/source_ingestion/distillation_controller.py", "services/source_ingestion/tests"],
+      "root_cause": "The terminal receipt does not explicitly carry all canonical Registry identity fields.",
+      "out_of_scope": ["new orchestrator", "automatic Alpha work", "shared catalog"],
+      "acceptance": ["terminal persists canonical IDs/version/checksum", "succeeded requires Registry readback", "same-source retry has stable identity"],
+      "validation": ["real SourceRecord-to-Registry draft integration", "no patched Registry client"],
+      "rollout": "backward-compatible receipt enrichment", "rollback": "stop enriched receipt without deleting drafts", "required_artifacts": ["PR", "checks", "review", "merge SHA", "Registry readback"]
+    },
+    {
+      "id": "L12-MFC-R4-ALPHA-001", "title": "Replace Alpha seed discovery with reviewed durable replication admission",
+      "summary_zh": "建立 ReplicationAdmission；未 review 不執行，seed 只保留 lineage。", "design": ["D03"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity", "reviewer": "Antigravity2", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/research/alpha_replication", "services/research/alpha_replication/tests"],
+      "root_cause": "source_id is passed to a strategy_id route and seed discovery bypasses review admission.",
+      "out_of_scope": ["auto-admit old seeds", "deployment", "shared catalog"],
+      "acceptance": ["unreviewed spec does not run", "reviewed admission creates one terminal ExperimentRun", "retry idempotent", "revalidation only covers admitted strategies"],
+      "validation": ["real Registry lookup", "negative no-admission case", "terminal lineage readback"],
+      "rollout": "land admission before disabling discovery", "rollback": "pause admission; never restore automatic seed discovery", "required_artifacts": ["PR", "checks", "review", "merge SHA", "admission/run readback"]
+    },
+    {
+      "id": "L12-MFC-R4-TEACH-001", "title": "Add Teaching terminal evaluation and conditional Consultation handoff",
+      "summary_zh": "Teaching 保存 eval identity；需要 advisory 才建 ConsultRequest，不能寫 ConsultMemo。", "design": ["D04"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity2", "reviewer": "Antigravity", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/training-session", "services/training-session/consultation_client.py"],
+      "root_cause": "Teaching has no governed optional downstream receipt and must not become a memo authority.",
+      "out_of_scope": ["Teaching-authored memo", "mandatory consultation", "shared compose/catalog"],
+      "acceptance": ["ordinary Teaching terminals without memo", "review-required case creates one request", "Teaching stores receipt", "adapter follows frozen Consultation contract"],
+      "validation": ["terminal eval readback", "required/not-required cases", "contract test against Consultation request schema"],
+      "rollout": "adapter remains retryable until Consultation is active", "rollback": "pause optional handoff and retain eval", "required_artifacts": ["PR", "checks", "review", "merge SHA", "eval/request receipts"]
+    },
+    {
+      "id": "L12-MFC-R4-AGORA-001", "title": "Make Agora handoff and ack the single policy-learning intake path",
+      "summary_zh": "pending handoff→policy readback→Agora ack；direct DB scanner 退出 production enqueue。", "design": ["D05", "PR4834-WP09-minimal"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity", "reviewer": "Antigravity2", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/agora", "services/control-plane/bff/agora", "services/policy-learning/agora_handoff_drainer.py", "services/policy-learning/agora_dataset_authority.py"],
+      "root_cause": "Durable handoff/ack and cross-schema scanning are competing enqueue authorities.",
+      "out_of_scope": ["Agora UI/workspace redesign", "third sync", "dataset mirror", "shared compose/catalog"],
+      "acceptance": ["DatasetVersion reaches policy backlog/candidate", "same handoff is acked", "retry does not duplicate", "direct scanner cannot enqueue in production"],
+      "validation": ["service-bound handoff", "duplicate retry", "scanner-disabled positive case"],
+      "rollout": "land drainer before integration cutover", "rollback": "select one path only; never enable both", "required_artifacts": ["PR", "checks", "review", "merge SHA", "handoff/candidate/ack readback", "compose_delta"]
+    },
+    {
+      "id": "L12-MFC-R4-IMITATION-001", "title": "Handoff imitation candidates to the existing Research experiment authority",
+      "summary_zh": "processed candidate durable handoff 到 ExperimentTask/Run；Policy-learning 維持 promote=409。", "design": ["D06"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity2", "reviewer": "Antigravity", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/policy-learning/candidate_experiment_handoff.py", "services/policy-learning/tests", "services/research/experiment_candidate_intake.py"],
+      "root_cause": "A terminal candidate has no production ExperimentTask producer or receipt.",
+      "out_of_scope": ["policy-learning promotion", "Registry approval", "RuntimeBinding", "shared compose/catalog"],
+      "acceptance": ["candidate creates one ExperimentTask", "ExperimentRun keeps candidate/dataset/checksum lineage", "runtime effect remains none before approval"],
+      "validation": ["producer/consumer contract", "idempotent retry", "negative promotion assertion"],
+      "rollout": "outbox can wait safely for Research activation", "rollback": "pause consumer and retain outbox", "required_artifacts": ["PR", "checks", "review", "merge SHA", "candidate/task/run receipts"]
+    },
+    {
+      "id": "L12-MFC-R4-CONSULT-001", "title": "Use one Consultation workflow with a real in-stack contribution provider",
+      "summary_zh": "special intake 只建 request；generic workflow 經 Consultation 專用 adapter 產 qualified memo。", "design": ["D07", "PR4834-WP10-minimal"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity", "reviewer": "Antigravity2", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/consultation", "services/openclaw-gateway-adapter/consultation_provider.py"],
+      "root_cause": "The real workflow is unconfigured while a special intake fabricates an approved memo.",
+      "out_of_scope": ["Management NL route", "fake deterministic recommendation", "shared compose/catalog", "broad redesign"],
+      "acceptance": ["special intake creates request only", "provider success creates validated memo", "provider failure never approves", "manual authority remains explicit"],
+      "validation": ["real Consultation-adapter integration", "invalid contribution rejection", "provider unavailable case"],
+      "rollout": "merge provider route before integration env wiring", "rollback": "leave requests blocked; never restore fake approval", "required_artifacts": ["PR", "checks", "review", "merge SHA", "request/provider/memo readback", "compose_delta"]
+    },
+    {
+      "id": "L12-MFC-R4-DEPLOY-001", "title": "Validate and align Consultation approval through RuntimeBinding identity",
+      "summary_zh": "validation-first 證明 approved artifact→explicit paper deploy→Plan/Binding；只修真 mismatch。", "design": ["D08"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity2", "reviewer": "Antigravity", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/promotion", "services/deployment", "services/runtime-manager", "services/approval"],
+      "root_cause": "The path exists but has no real proof against the frozen Consultation/Approval identity contract.",
+      "out_of_scope": ["new orchestrator", "imitation-specific deployment", "gratuitous code diff", "shared compose/catalog"],
+      "acceptance": ["approved immutable artifact creates Plan and active paper Binding", "id/version/checksum remain exact", "Capital receipt visible"],
+      "validation": ["service-bound contract test first", "paper-only", "validation-only outcome allowed"],
+      "rollout": "merge only observed compatibility fixes", "rollback": "revert compatibility fix", "required_artifacts": ["PR or validation report", "checks", "review", "Plan/Binding readback"]
+    },
+    {
+      "id": "L12-MFC-R4-CAPITAL-001", "title": "Execute the active RuntimeBinding artifact in the default paper signal producer",
+      "summary_zh": "default paper decision 執行 pinned artifact；固定 AAPL BUY 只留 explicit smoke。", "design": ["D09"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity", "reviewer": "Antigravity2", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/execution/lean_runtime/paper_signal_producer.py", "services/execution/artifact_loader.py", "services/registry/strategy_artifact.py", "services/execution/tests"],
+      "root_cause": "The producer carries artifact identity but always executes BoundedPaperStrategy.",
+      "out_of_scope": ["live capital", "host-specific docker exec", "new engine", "shared compose/catalog"],
+      "acceptance": ["binding loads verified paper artifact", "different artifacts can yield different decisions", "signal reaches paper fill/position", "smoke is not default"],
+      "validation": ["checksum/stage negatives", "paper order/fill/position", "all live flags false"],
+      "rollout": "land adapter before integration default switch", "rollback": "explicit smoke diagnostic only; no hosted silent fallback", "required_artifacts": ["PR", "checks", "review", "merge SHA", "binding/signal/fill readback", "compose_delta"]
+    },
+    {
+      "id": "L12-MFC-R4-TELREC-001", "title": "Prove real paper runtime telemetry through reconciliation terminal readback",
+      "summary_zh": "validation-first 接真 paper event 到 DriftReport/IncidentCase；相容就不加無用 code。", "design": ["D10"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity2", "reviewer": "Antigravity", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/telemetry", "services/reconciliation", "services/incidents", "services/reconciliation/tests"],
+      "root_cause": "Existing tests do not prove the production paper-runtime event/correlation contract.",
+      "out_of_scope": ["new bus", "synthetic evidence", "gratuitous code diff", "shared compose/catalog"],
+      "acceptance": ["real paper event ingested", "DriftReport or IncidentCase read back", "incident/postmortem identity is consumable"],
+      "validation": ["frozen event contract test can run in parallel", "no patched HTTP", "no direct downstream store write"],
+      "rollout": "merge only observed compatibility fixes", "rollback": "revert fix and retain replayable events", "required_artifacts": ["PR or validation report", "checks", "review", "telemetry/terminal readback"]
+    },
+    {
+      "id": "L12-MFC-R4-EVOLUTION-001", "title": "Deliver Postmortems through one authenticated Evolution client",
+      "summary_zh": "共用 EvolutionClient 補 bearer、tenant、idempotency、target readback；不重做 auth。", "design": ["D11"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity", "reviewer": "Antigravity2", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/evolution/client.py", "services/postmortems", "services/evolution/tests"],
+      "root_cause": "Postmortem outbox omits bearer and tenant required by Evolution token mode.",
+      "out_of_scope": ["auth redesign", "new outbox", "shared compose/catalog"],
+      "acceptance": ["token-mode delivery accepted", "retry idempotent", "decision readback matches backlink", "outbox completes after readback"],
+      "validation": ["real HTTP integration", "401 negative", "duplicate delivery"],
+      "rollout": "merge client before integration env wiring", "rollback": "pause outbox and retain replay", "required_artifacts": ["PR", "checks", "review", "merge SHA", "postmortem/decision readback", "compose_delta"]
+    },
+    {
+      "id": "L12-MFC-R4-BFF-HEALTH-001", "title": "Use typed exact BFF health targets and durable incident receipts",
+      "summary_zh": "每 target 明示 exact health path；驗 fail→telemetry receipt→incident→recovery。", "design": ["D12"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity2", "reviewer": "Antigravity", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["services/control-plane/bff/downstream_health_monitor.py", "services/control-plane/bff/test_downstream_health_monitor.py"],
+      "root_cause": "Universal /__health__ guessing and missing delivery identity create false degradation and blocked outboxes.",
+      "out_of_scope": ["path fallback probing", "new health service", "shared compose/catalog", "security hardening"],
+      "acceptance": ["invalid target config fails fast", "exact path used", "failure creates telemetry then incident", "recovery read back"],
+      "validation": ["real /health and /__health__ targets", "wrong-path config", "missing credential readiness"],
+      "rollout": "merge typed parser before integration registry/env", "rollback": "restore prior target registry document", "required_artifacts": ["PR", "checks", "review", "merge SHA", "telemetry/incident/recovery readback", "compose_delta"]
+    },
+    {
+      "id": "L12-MFC-R4-BACKEND-TRUTH-001", "title": "Integrate compose activation, twelve owner observations, catalog, and BFF truth",
+      "summary_zh": "唯一 shared owner 一次收斂 compose delta、12 natural-owner observations、catalog 與 fixed 12-row BFF truth。", "design": ["D13", "D14-backend"], "wave": 2,
+      "repo": "pantheon", "owner": "Antigravity", "reviewer": "Antigravity2",
+      "depends_on": ["L12-MFC-R4-SOURCE-001", "L12-MFC-R4-DISTILL-001", "L12-MFC-R4-ALPHA-001", "L12-MFC-R4-TEACH-001", "L12-MFC-R4-AGORA-001", "L12-MFC-R4-IMITATION-001", "L12-MFC-R4-CONSULT-001", "L12-MFC-R4-DEPLOY-001", "L12-MFC-R4-CAPITAL-001", "L12-MFC-R4-TELREC-001", "L12-MFC-R4-EVOLUTION-001", "L12-MFC-R4-BFF-HEALTH-001"],
+      "scope": ["docker-compose.yml", "services/loop-control", "docs/deployment/loop-catalog.registry.json", "services/control-plane/bff/loop_inventory.py", "services/control-plane/bff/tests"],
+      "root_cause": "Shared activation and truth files would conflict if all domain workers edited them in parallel.",
+      "out_of_scope": ["nine new controllers", "process-alive success", "catalog-only green", "Supervisor V2"],
+      "acceptance": ["reviewed compose deltas applied once", "12 natural owners write terminal/readback/receipt observations", "BFF returns exactly 12 rows", "missing observation is unobserved/degraded"],
+      "validation": ["compose config", "12-row contract", "component matrix", "no duplicate authority"],
+      "rollout": "single shared integration PR", "rollback": "revert activation/catalog while retaining domain code", "required_artifacts": ["PR", "checks", "review", "merge SHA", "compose ledger", "12-row readback"]
+    },
+    {
+      "id": "L12-MFC-R4-FE-TRUTH-001", "title": "Show strict-live twelve-loop truth and explicit errors in execute-plans",
+      "summary_zh": "LoopsPage 不再 catch 成 []；成功固定 12 rows，失敗明確 error/degraded。", "design": ["D14-frontend"], "wave": 1,
+      "repo": "execute-plans", "owner": "Antigravity2", "reviewer": "Antigravity", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["execute-plans/src/management/pages/v5/V5Pages.tsx", "execute-plans/src/management/pages/v5/LoopTruthView.tsx", "execute-plans/src/management/pages/v5/LoopTruthView.test.tsx"],
+      "root_cause": "Frontend converts BFF failure into a false zero-loop truth.",
+      "out_of_scope": ["Pantheon source", "Lovable", "broad transport rewrite", "seed fallback"],
+      "acceptance": ["BFF failure renders error/retry", "success renders 12 rows", "strict-live has no seed fallback", "PR targets execute-plans dev"],
+      "validation": ["loader failure", "12-row success", "strict-live build", "component browser test"],
+      "rollout": "merge to execute-plans dev; no hosted switch yet", "rollback": "serve prior FE without seed truth", "required_artifacts": ["execute-plans PR", "checks", "review", "merge SHA", "UI tests"]
+    },
+    {
+      "id": "L12-MFC-R4-VERIFIER-001", "title": "Build a non-repairing compose-bound twelve-loop verifier harness",
+      "summary_zh": "平行建立 12 case + correlated-chain harness；不得 mock product HTTP、不得 dispatch repair。", "design": ["D15-harness"], "wave": 1,
+      "repo": "pantheon", "owner": "Antigravity", "reviewer": "Antigravity2", "depends_on": ["L12-MFC-R4-PLAN-FREEZE-001"],
+      "scope": ["scripts/verify_l12_minimum_functional_closure.py", "tests/integration/l12", "scripts/verify_product_v2_current_closure.py"],
+      "root_cause": "The old verifier audits evidence directories and can write passed without executing loops.",
+      "out_of_scope": ["product repair", "canonical task mutation", "mock HTTP", "direct downstream store writes"],
+      "acceptance": ["12 cases capture trigger/terminal/readback/receipt", "correlated-chain case exists", "failure writes JSON/Markdown only", "old verifier cannot claim product closure"],
+      "validation": ["anti-mock/static guard", "isolated tenant", "paper-only", "task journal unchanged"],
+      "rollout": "merge harness before product integration completes", "rollback": "remove invocation only; never hide failures", "required_artifacts": ["PR", "checks", "review", "merge SHA", "harness contract tests"]
+    },
+    {
+      "id": "L12-MFC-R4-E2E-ACCEPT-001", "title": "Run the real twelve-loop and Management acceptance matrix",
+      "summary_zh": "對整合後 stack 執行 12 loop cases、correlated chain、Management success/error；失敗只出 GAP。", "design": ["D15-acceptance"], "wave": 3,
+      "repo": "pantheon", "owner": "Antigravity2", "reviewer": "Antigravity", "depends_on": ["L12-MFC-R4-BACKEND-TRUTH-001", "L12-MFC-R4-FE-TRUTH-001", "L12-MFC-R4-VERIFIER-001"],
+      "scope": ["docs/04/pantheon_twelve_loop_code_gap_2026-08-13/evidence/e2e-acceptance"],
+      "root_cause": "Component tests cannot prove integrated closure.",
+      "out_of_scope": ["product edits", "repair dispatch", "deployment", "live capital"],
+      "acceptance": ["12/12 trigger-terminal-readback-receipt pass", "one correlated chain passes", "Management 12-row and error state pass", "failure report is non-zero and non-mutating"],
+      "validation": ["compose-bound", "no monkeypatch/mock", "bounded timeout", "exact merged SHAs recorded"],
+      "rollout": "acceptance run only", "rollback": "stop stack and retain report", "required_artifacts": ["12-case JSON", "Markdown report", "correlated trace", "review verdict"]
+    },
+    {
+      "id": "L12-MFC-R4-HOSTED-CLOSE-001", "title": "Perform one bounded dev rollout and hosted twelve-loop closeout",
+      "summary_zh": "E2E 通過後一次部署，驗 exact FE/BFF commits 與 12 loops + Management 13-row matrix。", "design": ["Wave 6"], "wave": 4,
+      "repo": "pantheon", "owner": "Antigravity2", "reviewer": "Antigravity", "depends_on": ["L12-MFC-R4-E2E-ACCEPT-001"],
+      "scope": ["docs/04/pantheon_twelve_loop_code_gap_2026-08-13/evidence/hosted-closeout", "docs/frontend/execute-plans-dev-hosting.md"],
+      "root_cause": "Merged commits and builds do not prove the hosted symlink serves the accepted FE/BFF pair.",
+      "out_of_scope": ["product repair", "live capital", "old GCP/Lovable", "temporary hosted patch"],
+      "acceptance": ["manifest has exact Pantheon/execute-plans SHAs", "hosted BFF has 12 rows", "hosted FE shows 12 rows/error state", "13-row matrix passes", "rollback candidate available"],
+      "validation": ["served manifest/symlink", "hosted browser", "paper-only", "reviewed closeout"],
+      "rollout": "one bounded current Pantheon-owned dev deployment", "rollback": "switch to previous accepted release and publish gap", "required_artifacts": ["deployment run", "manifest", "exact SHAs", "browser evidence", "13-row report"]
+    }
+  ]
+}

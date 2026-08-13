@@ -2,7 +2,8 @@
 
 日期：2026-08-13
 
-狀態：設計基線，尚未建立或派送 execution tasks
+狀態：設計基線與 governed execution catalog 已建立；materialization evidence 另由
+canonical task state 與 supervisor receipt 保存
 
 ## 本次結論
 
@@ -23,6 +24,10 @@
   缺失驗證、廢棄／誤導內容與舊計畫適用性。
 - [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)：替代錯誤設計的最小可用系統設計、資料與
   權威邊界、相依順序、檔案範圍、驗收與回復策略，供下一階段轉成 execution tasks。
+- [EXECUTION_TASKS.md](EXECUTION_TASKS.md)：18-task 最大平行 DAG、各 task scope、驗收、
+  rollout/rollback 與舊計畫去重。
+- [execution-tasks.json](execution-tasks.json)：供 supervisor materialization 的機器可讀
+  execution catalog。
 
 ## 基線與邊界
 
@@ -37,8 +42,8 @@
   也不以它們的狀態代表產品閉環。
 - 目標是最小可用閉環；不納入資安強化、HA、壓測、合規、live capital 或軍規商規
   級額外工作。
-- 本輪不改產品程式、不產生 execution task catalog、不派給 supervisor/auto-worker、
-  不修改 canonical task state。
+- 本輪不改產品程式；execution task 只能由 governed command materialize，再由 supervisor
+  派給 auto-worker，不能由此規劃工作直接實作。
 
 ## 閉環判定
 
@@ -57,7 +62,5 @@ catalog `implemented`、PR merged 或 hosted bundle 存在，均不能單獨代�
 
 ## 後續使用規則
 
-下一階段可依 `SYSTEM_DESIGN.md` 的設計切片建立新的 governed execution tasks。
-舊 28-task DAG 與 2026-08-08 minimum closure task IDs 不得直接重送、原地改寫或當成
-本文件已授權執行；必須先依 `GAP_REPORT.md` 的適用性表重新產生工作範圍並做衝突
-檢查。
+後續以 `execution-tasks.json` 為唯一新工作 catalog。舊 28-task DAG 與 2026-08-08
+minimum closure task IDs 不得直接重送或原地改寫；它們只作 historical input。
