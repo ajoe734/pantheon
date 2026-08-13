@@ -8,7 +8,10 @@ from pathlib import Path
 
 from ..dev_bridge_models import BridgeActor, BridgeTask, DevTaskPacket
 from ..dev_bridge_signer import public_key_environment, sign_packet
-from .dev_bridge_test_support import write_materializing_ai_status
+from .dev_bridge_test_support import (
+    authoritative_test_runtime_env,
+    write_materializing_ai_status,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -54,6 +57,7 @@ def _write_fake_repo(tmp_path: Path) -> Path:
 
 def _run_cli(packet_path: Path, repo_root: Path, *, dry_run: bool = False) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": PUBLIC_KEYS_JSON}
+    env.update(authoritative_test_runtime_env(repo_root))
     cmd = [
         sys.executable,
         str(SCRIPT),
@@ -156,6 +160,7 @@ def test_concurrent_cli_dispatches_materialize_once(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     env = {**os.environ, "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": PUBLIC_KEYS_JSON}
+    env.update(authoritative_test_runtime_env(repo_root))
     cmd = [
         sys.executable,
         str(SCRIPT),

@@ -1,11 +1,6 @@
 .git
 .github
-# The BFF signs canonical-mutation assertions with its private key, and its
-# writer verifies them through this one shared module.  Keep every runtime
-# artifact out of images, but retain this source-only module so the BFF image
-# can import it at startup.
 .orchestrator/*
-!.orchestrator/canonical_mutation_assertion.py
 .venv*
 __pycache__
 **/__pycache__

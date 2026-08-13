@@ -37,21 +37,13 @@ class WorkerSpawnAuthorityBoundaryTests(unittest.TestCase):
                     log_path=log_path,
                     env={
                         "BRIDGE_SIGNING_KEY": "bridge-secret",
-                        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY": "private-secret",
-                        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": "{}",
+                        "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": "{}",
                     },
                     runner_enabled=False,
                 )
             spawned_env = popen.call_args.kwargs["env"]
             self.assertNotIn("BRIDGE_SIGNING_KEY", spawned_env)
-            self.assertNotIn(
-                "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
-                spawned_env,
-            )
-            self.assertIn(
-                "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
-                spawned_env,
-            )
+            self.assertIn("BRIDGE_SIGNING_PUBLIC_KEYS_JSON", spawned_env)
 
 
 def _sigkill_during_activity_rotation(log_path: str, point: str) -> None:

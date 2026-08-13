@@ -96,9 +96,6 @@ compose_json "$ROOT_JSON" -f docker-compose.yml
 export BRIDGE_SIGNING_PRIVATE_KEY="split-topology-validation-only"
 export BRIDGE_SIGNING_KEY_ID="split-topology-validation"
 export BRIDGE_SIGNING_PUBLIC_KEYS_JSON='{"split-topology-validation":"AA"}'
-export PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY="split-topology-validation-only"
-export PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID="split-topology-validation"
-export PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON='{"split-topology-validation":"AA"}'
 
 compose_json "$CONTROL_JSON" --env-file env/prod-control.env.example -f docker-compose.control.yml
 compose_json "$EXEC_JSON" --env-file env/prod-exec.env.example -f docker-compose.exec.yml
