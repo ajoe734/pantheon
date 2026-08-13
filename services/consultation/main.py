@@ -1384,7 +1384,7 @@ def intake_policy_learning_candidate(
                     "replayed": True,
                 }
 
-        # No existing request -> Create request and terminal memo
+        # No existing request -> Create request only (do NOT fabricate terminal memo)
         request_id = f"cr-cand-{candidate_id}"
         committee_id = f"committee-cand-{candidate_id}"
         from_persona = req.from_persona_id or "persona-policy-learner"
@@ -1402,6 +1402,8 @@ def intake_policy_learning_candidate(
             "evaluation_summary": req.evaluation_summary,
             "artifact_checksum": req.artifact_checksum,
             "policy_learning_intake": True,
+            "auto_decision": req.auto_decision or "approved",
+            "auto_rationale": req.auto_rationale,
             "consultation": {
                 "committee_ref": committee_id,
                 "sponsor_persona_id": from_persona,
@@ -1437,96 +1439,6 @@ def intake_policy_learning_candidate(
             after_state=ConsultRequestStatus.SUBMITTED.value,
         )
 
-        # Build and publish terminal memo
-        memo_id = f"memo-cand-{candidate_id}"
-        auto_dec = (req.auto_decision or "approved").strip().lower()
-        if auto_dec == "rejected":
-            rec = Recommendation.REJECT
-        elif auto_dec == "approved_with_conditions":
-            rec = Recommendation.APPROVE_WITH_CONDITIONS
-        else:
-            rec = Recommendation.APPROVE
-
-        action_match_rate = req.evaluation_summary.get("action_match_rate", "N/A")
-        return_gap = req.evaluation_summary.get("return_gap", "N/A")
-
-        memo = ConsultMemo(
-            memo_id=memo_id,
-            request_id=request_id,
-            memo_type=MemoType.COMMITTEE_SUMMARY,
-            author_type=AuthorType.COMMITTEE,
-            author_ref=committee_id,
-            target_type="policy_learning_candidate",
-            target_id=candidate_id,
-            summary=req.auto_rationale or f"Terminal consultation memo for policy-learning candidate {candidate_id} on DatasetVersion {dataset_version_id}",
-            findings=[
-                ConsultFinding(
-                    severity=FindingSeverity.INFO,
-                    category="dataset_lineage",
-                    claim=f"Governed DatasetVersion {dataset_version_id} verified",
-                    evidence_refs=[f"ds-ref-{dataset_version_id}"],
-                    recommendation="lineage_verified",
-                ),
-                ConsultFinding(
-                    severity=FindingSeverity.INFO,
-                    category="model_evaluation",
-                    claim=f"Evaluation metrics: action_match_rate={action_match_rate}, return_gap={return_gap}",
-                    evidence_refs=[f"checksum-{req.artifact_checksum or 'none'}"],
-                    recommendation="evaluation_verified",
-                ),
-            ],
-            recommendation=rec,
-            confidence=0.95,
-            status=MemoStatus.PUBLISHED,
-            trace_id=trace_id,
-            published_at=utc_now(),
-        )
-
-        errors = validate_consult_memo_against_request(memo, consult_request)
-        if errors:
-            raise HTTPException(status_code=400, detail=f"Memo lineage validation failed: {errors}")
-
-        store.put_memo(memo)
-        _emit_audit(
-            action="memo_published",
-            request_id=request_id,
-            actor_ref=requested_by,
-            service_actor_ref=CONSULTATION_SERVICE_ACTOR,
-            trace_id=trace_id,
-            after_state=MemoStatus.PUBLISHED.value,
-        )
-
-        # Update request status to PUBLISHED
-        consult_request.status = ConsultRequestStatus.PUBLISHED
-        consult_request.completed_at = utc_now()
-        store.put_request(consult_request)
-
-        # Map to sponsor decision bridge proposal
-        from .sponsor_decision_bridge import bridge
-
-        evidence_payload = [
-            {"ref_type": "committee_memo", "ref_id": memo.memo_id},
-            {"ref_type": "manual_review_ticket", "ref_id": f"dataset-{dataset_version_id}"},
-        ]
-
-        bridge_payload = {
-            "decision_id": committee_id,
-            "type": "approval",
-            "sponsor_persona_id": from_persona,
-            "target_type": "candidate_artifact",
-            "target_id": candidate_id,
-            "target_version": dataset_version_id,
-            "sponsor_decision": "approved" if rec in (Recommendation.APPROVE, Recommendation.APPROVE_WITH_CONDITIONS) else "rejected",
-            "rationale": memo.summary,
-            "rationale_ref": f"memo-{memo_id}",
-            "conditions": ["Deploy to paper stage only"] if rec == Recommendation.APPROVE_WITH_CONDITIONS else [],
-            "committee_id": committee_id,
-            "trace_id": trace_id,
-            "evidence_refs": evidence_payload,
-        }
-
-        proposal = bridge(bridge_payload)
-
         return {
             "status": "created",
             "request_id": request_id,
@@ -1534,8 +1446,8 @@ def intake_policy_learning_candidate(
             "dataset_version_id": dataset_version_id,
             "dataset_lineage": dataset_lineage,
             "request": _request_dict(consult_request),
-            "memo": _request_dict(memo),
-            "proposal": proposal.to_dict(),
+            "memo": None,
+            "proposal": None,
             "replayed": False,
         }
 
