@@ -15,6 +15,7 @@ if BFF_DIR not in sys.path:
     sys.path.insert(0, BFF_DIR)
 
 from assistant.control_mode import ControlModeStore  # noqa: E402
+from assistant.development_routes import create_development_router  # noqa: E402
 from assistant.models import AssistantMode  # noqa: E402
 from assistant.routes import create_assistant_router  # noqa: E402
 from assistant.transcript_store import (  # noqa: E402
@@ -95,11 +96,18 @@ def _make_client(
     control_store = ControlModeStore(storage_path="off", initial_passphrase=CONTROL_PHRASE)
     transcript_store = InMemoryTranscriptStore()
 
-    router = create_assistant_router(
+    product_router = create_assistant_router(
         build_context_pack=_context_pack,
         extract_identity=lambda _authorization: identity,
         require_read_role=lambda _identity: None,
         session_store=InMemorySessionStore(),
+        transcript_store=transcript_store,
+        control_mode_store=control_store,
+    )
+    development_router = create_development_router(
+        build_context_pack=_context_pack,
+        extract_identity=lambda _authorization: identity,
+        require_read_role=lambda _identity: None,
         transcript_store=transcript_store,
         control_mode_store=control_store,
         dev_docs_repo_root=str(tmp_path),
@@ -107,7 +115,8 @@ def _make_client(
         authorize_assistant_skill=skill_authorizer,
     )
     app = FastAPI()
-    app.include_router(router)
+    app.include_router(product_router)
+    app.include_router(development_router)
     client = TestClient(app, raise_server_exceptions=True)
 
     if active_control:
@@ -161,10 +170,10 @@ def test_dev_docs_generate_requires_active_control_mode(tmp_path, monkeypatch) -
     )
 
     assert response.status_code == 409
-    assert response.json()["error"]["details"]["field"] == "control_mode"
+    assert response.json()["detail"]["error"]["details"]["field"] == "control_mode"
 
 
-def test_dev_docs_generate_requires_openclaw_skill_authorizer(tmp_path, monkeypatch) -> None:
+def test_dev_docs_generate_uses_built_in_openclaw_skill_authorizer(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
     client, transcript_store = _make_client(tmp_path, active_control=True, skill_authorizer=None)
     _seed_turns(transcript_store, "conv-dev-docs-no-skill")
@@ -180,9 +189,8 @@ def test_dev_docs_generate_requires_openclaw_skill_authorizer(tmp_path, monkeypa
     )
 
     assert response.status_code == 503
-    details = response.json()["error"]["details"]
-    assert details["field"] == "openclaw_skill_authorizer"
-    assert details["required_skill"] == "assistant.sa_sd.generate"
+    details = response.json()["detail"]["error"]["details"]
+    assert details["precondition_failed"] == "openclaw_adapter"
 
 
 def test_dev_docs_generate_archives_and_emits_signed_task_packet(tmp_path, monkeypatch) -> None:
@@ -220,7 +228,7 @@ def test_dev_docs_generate_archives_and_emits_signed_task_packet(tmp_path, monke
 
     task_packet = meta["taskPacket"]
     assert task_packet["packetId"] == f"bridge_{packet['packetId']}"
-    assert task_packet["signature"]["algorithm"] == "HMAC-SHA256"
+    assert task_packet["signature"]["algorithm"] == "Ed25519"
     assert task_packet["constraints"]["noDirectShellFromWeb"] is True
     assert task_packet["tasks"][0]["owner"] == "Codex"
     assert task_packet["documents"]
@@ -376,7 +384,7 @@ def test_dev_docs_generate_can_queue_signed_task_packet_for_supervisor_inbox(tmp
     receipt = meta["taskPacketQueueReceipt"]
 
     assert task_packet["packetId"] == f"bridge_{packet['packetId']}"
-    assert task_packet["signature"]["algorithm"] == "HMAC-SHA256"
+    assert task_packet["signature"]["algorithm"] == "Ed25519"
     assert meta["taskPacketQueued"] is True
     assert receipt["status"] == "queued"
     assert receipt["packetId"] == task_packet["packetId"]

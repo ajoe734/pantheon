@@ -353,3 +353,94 @@ def test_config_drift_on_current_runtime_fails_without_mutation_or_handoff(
     assert "CONFIG_DRIFT_REQUIRES_PROMOTION" in result.stdout
     assert live_config.read_bytes() == before
     assert not promotion_args.exists()
+
+
+def test_sync_cleans_only_scoped_dev_tool_residue(tmp_path: Path) -> None:
+    remote, seed, _first = _seed_remote(tmp_path)
+    _install_runtime_stubs(seed)
+    tracked_briefs = seed / ".orchestrator" / "task-briefs"
+    tracked_briefs.mkdir()
+    (tracked_briefs / "tracked.md").write_text("keep tracked\n", encoding="utf-8")
+    _git(seed, "add", ".orchestrator/task-briefs/tracked.md")
+    _git(seed, "commit", "-m", "add tracked task brief")
+    _git(seed, "push", "origin", "dev")
+    current = _git(seed, "rev-parse", "HEAD")
+
+    dev_root = tmp_path / "dev-root"
+    runtime_parent = tmp_path / "command-runtimes"
+    active_root = runtime_parent / current
+    runtime_parent.mkdir()
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    _git(runtime_parent, "clone", "--branch", "dev", str(remote), str(active_root))
+
+    stale_paths = [
+        dev_root / ".orchestrator" / "assistant-dev-packets" / "pending.json",
+        dev_root / ".orchestrator" / "evidence" / "stale.json",
+        dev_root / ".orchestrator" / "task-briefs" / "stale.md",
+        dev_root / ".orchestrator" / "status-derived-views.lock",
+        dev_root / ".orchestrator" / "supervisor.lock",
+    ]
+    for path in stale_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("obsolete\n", encoding="utf-8")
+
+    preserved_paths = [
+        dev_root / ".env",
+        dev_root / "local-notes.txt",
+        dev_root / ".orchestrator" / "local-secret.env",
+    ]
+    for path in preserved_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("preserve\n", encoding="utf-8")
+
+    script = _patched_sync_script(tmp_path, runtime_parent)
+    pid_file = tmp_path / "supervisor.pid"
+    promotion_args = tmp_path / "promotion-args.txt"
+    process = subprocess.Popen(["sleep", "60"], cwd=active_root)
+    pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
+    try:
+        result = _run_sync(
+            script,
+            dev_root,
+            tmp_path / "live.json",
+            pid_file=pid_file,
+            promotion_args=promotion_args,
+        )
+        assert process.poll() is None
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+    assert result.returncode == 0, result.stderr
+    assert "removed scoped development-tool residue" in result.stdout
+    assert all(not path.exists() for path in stale_paths)
+    assert all(path.exists() for path in preserved_paths)
+    tracked_brief = dev_root / ".orchestrator" / "task-briefs" / "tracked.md"
+    assert tracked_brief.exists()
+    assert tracked_brief.read_text(encoding="utf-8") == "keep tracked\n"
+    assert not promotion_args.exists()
+
+
+def test_sync_preserves_residue_when_immutable_incumbent_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    remote, _seed, _first = _seed_remote(tmp_path)
+    dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    stale_lock = dev_root / ".orchestrator" / "supervisor.lock"
+    stale_lock.parent.mkdir()
+    stale_lock.write_text("unverified\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["PANTHEON_SUPERVISOR_PID"] = str(tmp_path / "no-supervisor.pid")
+    result = subprocess.run(
+        ["bash", str(SYNC_SCRIPT), str(dev_root), str(tmp_path / "no-live.json")],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "immutable incumbent is not independently bound" in result.stdout
+    assert stale_lock.read_text(encoding="utf-8") == "unverified\n"

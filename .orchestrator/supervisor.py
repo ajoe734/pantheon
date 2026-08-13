@@ -12688,6 +12688,7 @@ def sync_task_state_projection(config: dict[str, Any], state: dict[str, Any]) ->
                 )
 
         supervisor_state["task_state_projection"] = {
+            "mode": "authoritative",
             "ok": True,
             "event_log": str(event_log),
             "last_checked_at": checked_at,
@@ -12701,6 +12702,7 @@ def sync_task_state_projection(config: dict[str, Any], state: dict[str, Any]) ->
         return repaired
     except Exception as exc:  # per-phase isolation keeps the incumbent loop observable
         failure = {
+            "mode": "authoritative",
             "ok": False,
             "event_log": str(event_log),
             "last_checked_at": checked_at,

@@ -196,9 +196,26 @@ class LoadRuntimeStateTests(unittest.TestCase):
                 "version": 2,
                 "workers": {},
                 "queue": {"events": {}},
+                "tasks": {
+                    "STALE-CACHE-ROW": {
+                        "status": "todo",
+                        "owner": "Codex",
+                    }
+                },
                 "unrecognized_control_plane": {"value": 1},
                 "supervisor": {
                     "pid": 42,
+                    "task_state_projection": {
+                        "mode": "authoritative",
+                        "ok": True,
+                        "caught_up": True,
+                    },
+                    "last_cycle_metrics": {
+                        "cycle_elapsed_seconds": 4.25,
+                        "queue_to_start": {"max_seconds": 0.5},
+                    },
+                    "cycle_elapsed_seconds": 4.25,
+                    "queue_to_start_latency_seconds": 0.5,
                     "unrecognized_field": "ignored",
                 },
             },
@@ -208,7 +225,24 @@ class LoadRuntimeStateTests(unittest.TestCase):
         state = runtime_state.load_runtime_state(self.config)
 
         self.assertNotIn("unrecognized_control_plane", state)
+        self.assertNotIn("tasks", state)
         self.assertEqual(state["supervisor"]["pid"], 42)
+        self.assertEqual(
+            state["supervisor"]["task_state_projection"],
+            {
+                "mode": "authoritative",
+                "ok": True,
+                "caught_up": True,
+            },
+        )
+        self.assertEqual(
+            state["supervisor"]["last_cycle_metrics"]["cycle_elapsed_seconds"],
+            4.25,
+        )
+        self.assertEqual(state["supervisor"]["cycle_elapsed_seconds"], 4.25)
+        self.assertEqual(
+            state["supervisor"]["queue_to_start_latency_seconds"], 0.5
+        )
         self.assertNotIn("unrecognized_field", state["supervisor"])
 
     def test_load_runtime_state_preserves_watchdog_safe_mode(self) -> None:

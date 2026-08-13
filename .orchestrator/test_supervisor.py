@@ -51,6 +51,56 @@ def tearDownModule() -> None:
 
 
 class V2StartupCacheTests(unittest.TestCase):
+    def test_task_projection_report_declares_authoritative_mode(self) -> None:
+        state = runtime_state.default_state()
+        snapshot = {
+            "event_count": 1,
+            "state": {"tasks": []},
+            "state_sha256": "state-sha",
+        }
+        verification = {
+            "ok": True,
+            "projected_state_sha256": "state-sha",
+            "expected_state_sha256": "state-sha",
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "task_state_store_runtime_env",
+                return_value={"PANTHEON_TASK_STATE_EVENT_LOG": "/runtime/tasks-v2.jsonl"},
+            ),
+            mock.patch.object(
+                supervisor,
+                "config_path",
+                return_value=Path("/runtime/ai-status.json"),
+            ),
+            mock.patch.object(supervisor, "canonical_task_state_lock_file") as lock,
+            mock.patch.object(supervisor, "load_json", return_value={"tasks": []}),
+            mock.patch.object(
+                supervisor.rewrite_task_state_store,
+                "load_snapshot",
+                return_value=snapshot,
+            ),
+            mock.patch.object(
+                supervisor.rewrite_task_state_store,
+                "sha256_json",
+                return_value="state-sha",
+            ),
+            mock.patch.object(
+                supervisor.rewrite_task_state_store,
+                "verify_snapshot",
+                return_value=verification,
+            ),
+        ):
+            lock.return_value.__enter__.return_value = None
+            self.assertFalse(supervisor.sync_task_state_projection({}, state))
+
+        report = state["supervisor"]["task_state_projection"]
+        self.assertEqual(report["mode"], "authoritative")
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["caught_up"])
+
     def test_ordinary_bootstrap_restores_existing_v2_cache(self) -> None:
         config = {"paths": {}}
         existing = runtime_state.default_state()

@@ -658,32 +658,11 @@ def _run_effective_at(run: Any) -> datetime:
     )
 
 
-def _latest_run_for_connector(connector_id: str) -> Any | None:
-    runs = [run for run in store.list_runs() if getattr(run, "connector_id", None) == connector_id]
-    if not runs:
-        return None
-    return max(runs, key=_run_effective_at)
-
-
-def _latest_receipt_for_connector(connector_id: str, *, status: str | None = None) -> IngestReceipt | None:
-    receipts = store.list_receipts(connector_id=connector_id)
-    if status is not None:
-        receipts = [receipt for receipt in receipts if receipt.status == status]
-    return receipts[-1] if receipts else None
-
-
-def _last_failed_receipt_for_connector(connector_id: str) -> IngestReceipt | None:
-    receipts = [
-        receipt
-        for receipt in store.list_receipts(connector_id=connector_id)
-        if receipt.typed_failure is not None
-    ]
-    return receipts[-1] if receipts else None
-
-
-def _connector_stale_threshold_seconds(connector_id: str, schedule: Any | None) -> int:
-    config = connector_store.get_config(connector_id)
-    metadata = dict(config.connector.metadata) if config is not None else {}
+def _connector_stale_threshold_seconds(
+    connector_metadata: Mapping[str, Any],
+    schedule: Any | None,
+) -> int:
+    metadata = dict(connector_metadata)
     configured = metadata.get("stale_threshold_seconds") or metadata.get("freshness_sla_seconds")
     if configured not in (None, ""):
         try:
@@ -694,20 +673,32 @@ def _connector_stale_threshold_seconds(connector_id: str, schedule: Any | None) 
     return max(DEFAULT_STALE_THRESHOLD_SECONDS, cadence * 2)
 
 
-def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
-    schedule = schedule_config_store.get_schedule(connector_id)
-    watermark = store.get_watermark(connector_id)
-    latest_run = _latest_run_for_connector(connector_id)
-    latest_receipt = _latest_receipt_for_connector(connector_id)
-    latest_success_receipt = _latest_receipt_for_connector(connector_id, status="completed")
-    last_failed_receipt = _last_failed_receipt_for_connector(connector_id)
-    now = datetime.now(timezone.utc)
+def _connector_freshness_summary_from_snapshot(
+    connector_id: str,
+    *,
+    connector_metadata: Mapping[str, Any],
+    schedule: Any | None,
+    watermark: Any | None,
+    runs: list[Any] | tuple[Any, ...],
+    receipts: list[IngestReceipt] | tuple[IngestReceipt, ...],
+    now: datetime,
+) -> dict[str, Any]:
+    latest_run = max(runs, key=_run_effective_at) if runs else None
+    latest_receipt = receipts[-1] if receipts else None
+    latest_success_receipt = next(
+        (receipt for receipt in reversed(receipts) if receipt.status == "completed"),
+        None,
+    )
+    last_failed_receipt = next(
+        (receipt for receipt in reversed(receipts) if receipt.typed_failure is not None),
+        None,
+    )
 
     schedule_enabled = bool(schedule and schedule.enabled and schedule.interval_seconds > 0)
     last_success_at = (
         latest_success_receipt.finished_at
         if latest_success_receipt is not None
-        else (watermark.updated_at if watermark is not None and not store.list_receipts(connector_id=connector_id) else None)
+        else (watermark.updated_at if watermark is not None and not receipts else None)
     )
     last_success_dt = _parse_utc_datetime(last_success_at)
     source_timestamp = latest_success_receipt.source_timestamp if latest_success_receipt is not None else None
@@ -734,7 +725,10 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
         if source_timestamp_dt is not None and source_timestamp_status == "valid"
         else None
     )
-    stale_threshold_seconds = _connector_stale_threshold_seconds(connector_id, schedule)
+    stale_threshold_seconds = _connector_stale_threshold_seconds(
+        connector_metadata,
+        schedule,
+    )
     stale = source_timestamp_status != "valid" or (
         age_seconds is not None and age_seconds > stale_threshold_seconds
     )
@@ -816,6 +810,31 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
     }
 
 
+def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
+    config = connector_store.get_config(connector_id)
+    schedule = schedule_config_store.get_schedule(connector_id)
+    snapshot = store.read_freshness_snapshot()
+    runs = tuple(
+        run
+        for run in snapshot["runs"]
+        if getattr(run, "connector_id", None) == connector_id
+    )
+    receipts = tuple(
+        receipt
+        for receipt in snapshot["receipts"]
+        if receipt.connector_id == connector_id
+    )
+    return _connector_freshness_summary_from_snapshot(
+        connector_id,
+        connector_metadata=(config.connector.metadata if config is not None else {}),
+        schedule=schedule,
+        watermark=snapshot["watermarks"].get(connector_id),
+        runs=runs,
+        receipts=receipts,
+        now=datetime.now(timezone.utc),
+    )
+
+
 _SOURCE_FRESHNESS_CACHE_TTL_SECONDS = max(
     1, int(os.getenv("SOURCE_INGEST_FRESHNESS_CACHE_TTL_SECONDS", "30"))
 )
@@ -824,13 +843,10 @@ _source_freshness_cache_lock = threading.Lock()
 
 
 def _source_freshness_readiness() -> dict[str, Any]:
-    # _connector_freshness_summary re-reads and re-parses several JSONL stores
-    # per connector with no caching of its own; at current connector counts
-    # (hundreds) that is tens of minutes of wall-clock time per call, which
-    # made every /healthz, /livez, /readyz, and /metrics request hang far past
-    # any client or container healthcheck timeout. Health probes must be O(1)
-    # from the caller's perspective, so cache the result for a short TTL
-    # instead of recomputing it inline on every probe.
+    # Read each durable store once. Point lookups intentionally replay their
+    # JSONL source for cross-process consistency, so using them inside this
+    # fleet-wide loop multiplies connector count by journal size and can pin
+    # the service before the first cache entry exists.
     now = time.monotonic()
     with _source_freshness_cache_lock:
         cached_payload = _source_freshness_cache["payload"]
@@ -838,10 +854,35 @@ def _source_freshness_readiness() -> dict[str, Any]:
         if cached_payload is not None and cache_age < _SOURCE_FRESHNESS_CACHE_TTL_SECONDS:
             return cached_payload
 
-    summaries = [
-        _connector_freshness_summary(config.connector.connector_id)
-        for config in connector_store.list_configs()
-    ]
+    configs = connector_store.list_configs()
+    schedules = {
+        schedule.connector_id: schedule
+        for schedule in schedule_config_store.list_schedules()
+    }
+    snapshot = store.read_freshness_snapshot()
+    runs_by_connector: dict[str, list[Any]] = {}
+    for run in snapshot["runs"]:
+        connector_id = str(getattr(run, "connector_id", ""))
+        runs_by_connector.setdefault(connector_id, []).append(run)
+    receipts_by_connector: dict[str, list[IngestReceipt]] = {}
+    for receipt in snapshot["receipts"]:
+        receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
+    observed_at = datetime.now(timezone.utc)
+    summaries = []
+    for config in configs:
+        connector = config.connector
+        connector_id = connector.connector_id
+        summaries.append(
+            _connector_freshness_summary_from_snapshot(
+                connector_id,
+                connector_metadata=connector.metadata,
+                schedule=schedules.get(connector_id),
+                watermark=snapshot["watermarks"].get(connector_id),
+                runs=runs_by_connector.get(connector_id, ()),
+                receipts=receipts_by_connector.get(connector_id, ()),
+                now=observed_at,
+            )
+        )
     scheduled = [summary for summary in summaries if summary["schedule_enabled"]]
     stale = [summary for summary in scheduled if summary["status"] == "stale"]
     degraded = [summary for summary in scheduled if summary["status"] in {"degraded", "never_ingested"}]

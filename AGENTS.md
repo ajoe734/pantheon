@@ -153,6 +153,30 @@ browser smoke tests. See `docs/frontend/execute-plans-dev-hosting.md`.
 
 ## Management AI / OpenClaw Dev Work
 
+### Development Tooling Is Not Product Runtime
+
+Keep these authority domains separate:
+
+- Development tooling owns canonical development tasks, supervisor scheduling,
+  worker leases, and local Human/Ops task maintenance. Its entry points are the
+  V2 TaskStore, supervisor, auto-workers, `scripts/ai_status.py`, and
+  `scripts/human-ops-status.sh`.
+- Product runtime owns business APIs and product data/readiness. This includes
+  the operator BFF business routes, source ingestion, lifecycle projection, and
+  the hosted `execute-plans` frontend.
+- Delivery infrastructure owns exact-version deployment and hosted identity
+  evidence. It does not become task authority or product truth.
+
+Do not require a product BFF login, product control mode, or product readiness
+to maintain local canonical development tasks. Assistant dev-bridge routes may
+transport a request into development tooling, but they are adapters rather than
+canonical authority and are not product-completion evidence. Conversely,
+supervisor or auto-worker health proves only that development tooling can
+dispatch work; it does not prove that the product is deployed, ready, or usable.
+
+The authoritative component map and acceptance boundaries are in
+`docs/02-architecture/development-tooling-product-boundary.md`.
+
 Management AI frontend work must start from `execute-plans` and call Pantheon
 BFF assistant routes. Do not route new Management AI development through
 Lovable, and do not use `front-ai-trading-system` as a source checkout.
