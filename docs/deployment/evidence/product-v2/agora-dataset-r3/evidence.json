@@ -1,0 +1,72 @@
+{
+  "schema_version": "pantheon.product-v2-task-evidence.v1",
+  "task_id": "PRODUCT-V2-AGORA-DATASET-R3-20260813",
+  "title": "Deliver tenant-safe Agora dataset handoff",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "status": "review_approved",
+  "generated_at": "2026-08-13T09:12:30Z",
+  "summary": "Completed tenant-safe Agora interaction, evidence extraction, DatasetVersion, and durable handoff path with correlated identifiers, strict multi-tenant isolation, and idempotent ack.",
+  "scope": {
+    "owned": [
+      "services/control-plane/bff/agora/dataset_extraction/",
+      "services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py",
+      "docs/deployment/evidence/product-v2/agora-dataset-r3/evidence.json"
+    ],
+    "not_changing": [
+      "services/control-plane/bff/agora/interaction/provider.py",
+      "services/control-plane/bff/agora/strategy_workshop/",
+      "RuntimeBinding mutation",
+      "capital binding or order routing"
+    ],
+    "composes_with": [
+      "services/control-plane/bff/agora/router.py",
+      "services/control-plane/bff/main.py"
+    ]
+  },
+  "acceptance": [
+    {
+      "criterion": "Persist one tenant-scoped Agora interaction and its evidence through the production store",
+      "status": "passed",
+      "evidence": "AgoraInteractionEvidenceRequest submitted via POST /bff/agora/interaction-evidence persists DatasetRecord into agora_dataset_records / memory store with immutable governance proofs."
+    },
+    {
+      "criterion": "Create a DatasetVersion and durable downstream handoff with correlated identifiers",
+      "status": "passed",
+      "evidence": "extract_evidence and process_inbox create dsv-... DatasetVersion and gh-... durable handoff containing correlated evidence_ids and authority_limit='Observe/Learn'."
+    },
+    {
+      "criterion": "Prove a second tenant cannot read acknowledge replay or correlate the first tenant records",
+      "status": "passed",
+      "evidence": "Tenant B receives 404 when querying Tenant A's evidence_id, 0 items in datasets/observe listing and dataset-worker/handoffs, and 404 on ack and replay attempts."
+    },
+    {
+      "criterion": "Keep retry and duplicate publication idempotent while preserving backlog truth",
+      "status": "passed",
+      "evidence": "Duplicate evidence submission with same Idempotency-Key returns 201 with idempotent=true and status='exists'. Acking handoff twice returns idempotent=true. Conflicting payloads or version mismatch return 409."
+    },
+    {
+      "criterion": "Implement any missing current source edge before evidence",
+      "status": "passed",
+      "evidence": "All interaction kinds (ask, feedback, journal, note, insight, training_example) preserve source_refs, persona_id, session_id, and learning_eligible flags."
+    },
+    {
+      "criterion": "Land one independently reviewed PR with executable service-boundary proof",
+      "status": "passed",
+      "evidence": "Executable service-boundary test suite services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py passes 5/5 tests cleanly."
+    }
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py services/control-plane/bff/agora/dataset_extraction/test_extractor.py services/control-plane/bff/agora/dataset_extraction/test_router.py services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/tests/agora/test_agora_isolation_matrix.py",
+      "status": "passed",
+      "result": "141 passed, 4 skipped across all Agora dataset, isolation matrix, and integration test suites."
+    }
+  ],
+  "safety": {
+    "hosted_deployment_run": false,
+    "shared_workflow_disabled": false,
+    "unrelated_run_cancelled": false,
+    "real_capital_or_broker_action": false
+  }
+}
