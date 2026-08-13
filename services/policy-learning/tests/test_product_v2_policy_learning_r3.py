@@ -132,7 +132,6 @@ def test_durable_agora_dataset_version_handoff_consumption_and_acknowledgment(
         "dataset_version": record,
         "eval_type": "shadow",
         "actor_id": "agora-pipeline-worker",
-        "process_immediately": True,
     }
 
     response = test_app_client.post(
@@ -149,15 +148,19 @@ def test_durable_agora_dataset_version_handoff_consumption_and_acknowledgment(
     assert data["dataset_version_id"] == "dsv-r3-001"
     assert data["tenant_id"] == TEST_TENANT
     assert data["created"] is True
-    assert data["candidate_status"] == STATUS_PROCESSED
+    assert data["candidate_status"] == STATUS_PROPOSED
     assert data["seed_fallback_used"] is False
     assert data["authoritative"] is True
     assert data["production_training"] == "fail_closed"
 
-    lineage = data["dataset_lineage"]
-    assert "dsv-r3-001" in lineage.get("dataset_version_ids", [])
-    assert lineage.get("tenant_id") == TEST_TENANT
-    assert lineage.get("seed_fallback_used") is False
+    # Worker claims and processes the admitted candidate
+    proc_res = test_app_client.post(
+        "/api/policy-learning/worker/process",
+        json={"worker_id": "test-worker", "batch_size": 10},
+        headers=auth_headers,
+    )
+    assert proc_res.status_code == 200
+    assert proc_res.json()["processed_count"] == 1
 
 
 def test_terminal_shadow_candidate_properties(
@@ -169,7 +172,6 @@ def test_terminal_shadow_candidate_properties(
     payload = {
         "handoff_id": "handoff-r3-002",
         "dataset_version": record,
-        "process_immediately": True,
     }
 
     res_ack = test_app_client.post(
@@ -178,6 +180,14 @@ def test_terminal_shadow_candidate_properties(
         headers=auth_headers,
     )
     candidate_id = res_ack.json()["candidate_id"]
+    assert res_ack.json()["candidate_status"] == STATUS_PROPOSED
+
+    # Process candidate with background worker
+    test_app_client.post(
+        "/api/policy-learning/worker/process",
+        json={"worker_id": "test-worker", "batch_size": 10},
+        headers=auth_headers,
+    )
 
     res_cand = test_app_client.get(
         f"/api/policy-learning/candidates/{candidate_id}",
@@ -216,7 +226,6 @@ def test_duplicate_delivery_idempotency(
     payload = {
         "handoff_id": "handoff-r3-003",
         "dataset_version": record,
-        "process_immediately": True,
     }
 
     # First delivery
@@ -229,8 +238,9 @@ def test_duplicate_delivery_idempotency(
     d1 = res1.json()
     assert d1["created"] is True
     candidate_id = d1["candidate_id"]
+    assert d1["candidate_status"] == STATUS_PROPOSED
 
-    # Duplicate delivery
+    # Duplicate delivery before processing
     res2 = test_app_client.post(
         "/api/policy-learning/agora-handoff",
         json=payload,
@@ -241,7 +251,7 @@ def test_duplicate_delivery_idempotency(
     assert d2["created"] is False
     assert d2["candidate_id"] == candidate_id
     assert d2["status"] == "acknowledged"
-    assert d2["candidate_status"] == STATUS_PROCESSED
+    assert d2["candidate_status"] == STATUS_PROPOSED
 
     # Verify candidate count in backlog is still 1
     res_list = test_app_client.get(
@@ -285,6 +295,15 @@ def test_consumer_restart_and_persistence_reload(
     )
     assert res1.status_code == 201
     candidate_id = res1.json()["candidate_id"]
+
+    # Process candidate with background worker
+    proc_res = client1.post(
+        "/api/policy-learning/worker/process",
+        json={"worker_id": "test-worker"},
+        headers=headers,
+    )
+    assert proc_res.status_code == 200
+    assert proc_res.json()["processed_count"] == 1
 
     # Store instance 2: simulate service restart by reading from the same data_dir
     store2 = PolicyLearningStore(data_dir=data_dir)
