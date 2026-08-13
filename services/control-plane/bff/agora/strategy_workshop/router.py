@@ -48,6 +48,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .operations import CanonicalOperationError, WorkshopCanonicalOperations
+from .reconstruction import StrategyReconstructionResult, reconstruct_strategy_from_events
 from .store import WorkshopVersionProjectionConflict, make_workshop_store
 
 _CONTROL_PLANE_DIR = Path(__file__).resolve().parents[3]
@@ -2566,6 +2567,40 @@ def create_strategy_workshop_router(
                 "capability": "agora.workshop.v1",
                 "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
                 "etag": new_etag,
+            },
+        }
+
+    # ------------------------------------------------------------------ #
+    # POST /bff/agora/workshops/{workshop_id}/reconstruct
+    # ------------------------------------------------------------------ #
+    @router.post("/bff/agora/workshops/{workshop_id}/reconstruct")
+    def reconstruct_workshop_strategy(
+        workshop_id: str,
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    ) -> Dict[str, Any]:
+        scope = _scope(authorization, x_tenant_id)
+        session = _scoped_session(workshop_id, scope)
+        events = store.list_events(workshop_id)
+        sequence_no = max((int(e.get("sequence_no", 0)) for e in events), default=0)
+        messages_content: List[str] = []
+        for e in events:
+            if e.get("event_type") == "message":
+                msg = e.get("redacted_summary") or e.get("content") or ""
+                if msg:
+                    messages_content.append(str(msg))
+        result = reconstruct_strategy_from_events(
+            workshop_id=workshop_id,
+            sequence_no=sequence_no,
+            events=events,
+            messages_content=messages_content,
+        )
+        return {
+            "data": result.model_dump(),
+            "meta": {
+                "snapshot_at": utc_now(),
+                "capability": "agora.workshop.v1",
+                "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
             },
         }
 

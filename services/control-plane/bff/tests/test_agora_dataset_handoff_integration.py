@@ -165,6 +165,14 @@ def test_ac2_create_dataset_version_and_durable_handoff() -> None:
     dsv_id = sub_resp.json()["data"]["dataset_version_id"]
     assert dsv_id.startswith("dsv-"), f"Expected dsv- prefix, got {dsv_id}"
 
+    # Run leased worker to process inbox into DatasetVersion and handoff
+    proc_resp = client.post(
+        "/bff/agora/dataset-worker/process",
+        headers={"X-Tenant-Id": "tenant-alpha"},
+    )
+    assert proc_resp.status_code == 200
+    assert proc_resp.json()["data"]["processed"] == 1
+
     # Get handoffs
     h_resp = client.get(
         "/bff/agora/dataset-worker/handoffs",
@@ -212,6 +220,14 @@ def test_ac3_tenant_isolation_prevents_read_acknowledge_and_replay() -> None:
     assert sub_resp.status_code == 201
     dsv_id = sub_resp.json()["data"]["dataset_version_id"]
 
+    # Run worker for Tenant A
+    proc_resp = tenant_a_client.post(
+        "/bff/agora/dataset-worker/process",
+        headers={"X-Tenant-Id": "tenant-alpha"},
+    )
+    assert proc_resp.status_code == 200
+    assert proc_resp.json()["data"]["processed"] == 1
+
     handoffs_a = tenant_a_client.get(
         "/bff/agora/dataset-worker/handoffs",
         headers={"X-Tenant-Id": "tenant-alpha"},
@@ -256,7 +272,6 @@ def test_ac3_tenant_isolation_prevents_read_acknowledge_and_replay() -> None:
     assert ack_b.status_code == 404, "Tenant B must get 404 attempting to ack Tenant A handoff"
 
     # 5. Tenant B cannot replay DLQ item of Tenant A
-    # Manually insert failed item for Tenant A
     store._inbox[("tenant-alpha", "user-a", "ev-dlq-a")] = {
         "evidence_id": "ev-dlq-a", "tenant_id": "tenant-alpha", "user_id": "user-a",
         "idempotency_key": "fail-key-a", "request_digest": "fail-dig-a",
@@ -321,6 +336,14 @@ def test_ac4_idempotent_retry_duplicate_publication_and_ack() -> None:
         headers={"Idempotency-Key": ikey, "X-Tenant-Id": "tenant-alpha"},
     )
     assert conflict_resp.status_code == 409, "Different payload with same Idempotency-Key must return 409"
+
+    # Process inbox with leased worker
+    proc_resp = client.post(
+        "/bff/agora/dataset-worker/process",
+        headers={"X-Tenant-Id": "tenant-alpha"},
+    )
+    assert proc_resp.status_code == 200
+    assert proc_resp.json()["data"]["processed"] == 1
 
     # Acknowledge handoff
     handoff = client.get(
@@ -398,3 +421,11 @@ def test_ac5_source_edge_and_context_preserved() -> None:
     assert rec["persona_id"] == "persona-researcher"
     assert rec["session_id"] == "session-edge-999"
     assert rec["learning_eligible"] is True
+    assert rec["status"] == "pending"
+
+    # Process and verify record in dataset
+    client.post("/bff/agora/dataset-worker/process", headers={"X-Tenant-Id": "tenant-alpha"})
+    obs_resp = client.get("/bff/agora/datasets/observe", headers={"X-Tenant-Id": "tenant-alpha"})
+    assert obs_resp.status_code == 200
+    assert obs_resp.json()["total"] == 1
+

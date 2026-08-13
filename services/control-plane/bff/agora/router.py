@@ -48,6 +48,8 @@ from .candidate_decisions.adapters import (
 from .candidate_decisions.router import create_candidate_decision_router
 from .candidate_decisions.service import CandidateDecisionService
 from .candidate_decisions.store import CandidateDecisionStore
+from .trading_data.router import create_trading_data_router
+from .decision_projection.router import create_decision_projection_router
 
 
 _CAPABILITY_MANIFEST_PATH = os.path.join(
@@ -210,7 +212,11 @@ def create_agora_router(
         canonical_operations=workshop_canonical_operations,
     ))
     router.include_router(create_research_router(**_kw))
-    router.include_router(create_trading_room_router(**_kw, workshop_store=workshop_store))
+    router.include_router(create_trading_room_router(
+        **_kw,
+        require_write_role=require_write_role,
+        workshop_store=workshop_store,
+    ))
     router.include_router(create_performance_router(
         **_kw,
         require_write_role=require_write_role,
@@ -247,5 +253,7 @@ def create_agora_router(
         list_approval_decisions=lambda: get_read_store().list_approval_decisions(),
         store=proposal_store,
     ))
+    router.include_router(create_trading_data_router(**_kw))
+    router.include_router(create_decision_projection_router(**_kw, require_write_role=require_write_role))
 
     return router

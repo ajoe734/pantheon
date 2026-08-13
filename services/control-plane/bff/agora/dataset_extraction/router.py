@@ -6,9 +6,15 @@ Governance boundary: evidence-only surface.
   - No order routing, no broker calls, no live-capital writes
 
 Routes:
-  POST /bff/agora/interaction-evidence                  — submit evidence (idempotent)
+  POST /bff/agora/interaction-evidence                  — admit evidence (idempotent, admit-only)
   GET  /bff/agora/interaction-evidence/{evidence_id}    — get a specific record
   GET  /bff/agora/datasets/{dataset_kind}               — list dataset records
+  POST /bff/agora/dataset-worker/process                — trigger worker claim & extraction
+  GET  /bff/agora/dataset-worker/backlog                — list pending inbox items
+  GET  /bff/agora/dataset-worker/dlq                    — list failed DLQ items
+  POST /bff/agora/dataset-worker/dlq/{evidence_id}/replay — replay a failed DLQ item
+  GET  /bff/agora/dataset-worker/handoffs               — list dataset handoffs
+  POST /bff/agora/dataset-worker/handoffs/{handoff_id}/ack — acknowledge handoff
 """
 from __future__ import annotations
 
@@ -19,16 +25,20 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 from .models import (
     AgoraInteractionEvidenceRequest,
+    DatasetAdmissionReceipt,
     DatasetKind,
     HandoffAcknowledgementRequest,
+    route_to_dataset,
 )
 from .extractor import (
     AgoraDatasetStore,
     HandoffConflictError,
     IdempotencyConflictError,
+    PrivacyConsentError,
     acknowledgement_request_digest,
+    admit_evidence,
     evidence_request_digest,
-    extract_evidence,
+    _dataset_version_id,
 )
 
 
@@ -57,7 +67,7 @@ def create_dataset_extraction_router(
 ) -> APIRouter:
     """Build and return the Agora dataset extraction APIRouter.
 
-    ``dataset_store`` may be injected for tests.  When omitted the module-level
+    ``dataset_store`` may be injected for tests. When omitted the module-level
     singleton is used.
     """
     store = dataset_store if dataset_store is not None else _default_store()
@@ -75,10 +85,21 @@ def create_dataset_extraction_router(
 
     def _error_code() -> Any:
         try:
-            from models import ErrorCode  # production: bff/models.py in sys.path
-        except (ImportError, ModuleNotFoundError):
-            from bff.models import ErrorCode  # test: bff is a sub-package
-        return ErrorCode
+            from ...models import ErrorCode
+            return ErrorCode
+        except Exception:
+            try:
+                from models import ErrorCode  # type: ignore[import]
+                return ErrorCode
+            except Exception:
+                class FallbackErrorCode:
+                    VALIDATION_FAILED = "VALIDATION_FAILED"
+                    IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
+                    AUTH_REQUIRED = "AUTH_REQUIRED"
+                    FORBIDDEN = "FORBIDDEN"
+                    RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+                    RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
+                return FallbackErrorCode
 
     def _require_idempotency_key(key: Optional[str]) -> str:
         resolved = (key or "").strip()
@@ -124,7 +145,7 @@ def create_dataset_extraction_router(
         )
 
     # ------------------------------------------------------------------
-    # POST /bff/agora/interaction-evidence
+    # POST /bff/agora/interaction-evidence (admit-only)
     # ------------------------------------------------------------------
 
     @router.post("/bff/agora/interaction-evidence", status_code=201)
@@ -135,14 +156,18 @@ def create_dataset_extraction_router(
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> Dict[str, Any]:
-        """Submit an Agora interaction evidence record for dataset extraction.
+        """Submit an Agora interaction evidence record for dataset extraction (admit-only).
+
+        Atomically persists eligible evidence into the durable inbox and returns
+        an admission receipt immediately without invoking process_inbox or waiting
+        for worker completion.
 
         Routes evidence to the governed learning dataset:
           observe — ask, journal, note, insight (passive observation)
           learn   — feedback, training_example (supervised signal)
 
         Idempotent by evidence_id: a second call with the same evidence_id
-        returns the existing record with idempotent=true and does not modify state.
+        returns the existing admission record with idempotent=true and does not modify state.
 
         Governance proof:
           no_promote_proof         = agora_observe_learn_only
@@ -154,23 +179,69 @@ def create_dataset_extraction_router(
         resolved_key = _require_idempotency_key(idempotency_key)
         digest = evidence_request_digest(body)
         try:
-            record, is_new = extract_evidence(
+            entry, is_new = admit_evidence(
                 body,
                 tenant_id=scope.tenant_id,
                 user_id=scope.user_id,
                 idempotency_key=resolved_key,
                 request_digest=digest,
-                extracted_at=utc_now(),
+                admitted_at=utc_now(),
                 store=store,
             )
         except IdempotencyConflictError as exc:
             _raise_idempotency_conflict(exc)
+        except PrivacyConsentError as exc:
+            ErrorCode = _error_code()
+            raise bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                str(exc),
+                "AGORA_DATASET_CONSENT_REQUIRED",
+                precondition_failed="dataset_consent",
+            )
+
+        kind = route_to_dataset(entry["interaction_kind"])
+        version_id = _dataset_version_id(
+            tenant_id=entry["tenant_id"],
+            user_id=entry["user_id"],
+            evidence_id=entry["evidence_id"],
+            request_digest=entry["request_digest"],
+        )
+        receipt_data = {
+            "evidence_id": entry["evidence_id"],
+            "dataset_version_id": version_id,
+            "dataset_kind": kind.value,
+            "interaction_kind": entry["interaction_kind"],
+            "persona_id": entry["persona_id"],
+            "session_id": entry.get("session_id"),
+            "tenant_id": entry["tenant_id"],
+            "user_id": entry["user_id"],
+            "content": entry["content"],
+            "source_refs": entry["source_refs"],
+            "learning_eligible": entry["learning_eligible"],
+            "governance_boundary": "observe_or_learn_only",
+            "no_promote_proof": "agora_observe_learn_only",
+            "no_runtime_mutation_proof": "agora_evidence_extract_only",
+            "captured_at": entry["captured_at"],
+            "extracted_at": entry["extracted_at"],
+            "status": entry.get("status", "pending"),
+            "idempotent": not is_new,
+            "version": 1,
+            "admission_receipt_id": entry.get("admission_receipt_id") or f"rcpt-adm-{entry['evidence_id']}",
+            "consent_granted": entry.get("consent_granted", True),
+            "purpose": entry.get("purpose", "policy_learning"),
+            "retention_days": entry.get("retention_days", 30),
+            "is_raw_conversation": entry.get("is_raw_conversation", False),
+            "explicit_conversation_consent": entry.get("explicit_conversation_consent", False),
+        }
         return {
             "status": "created" if is_new else "exists",
-            "idempotent": record.idempotent,
-            "data": record.model_dump(),
+            "idempotent": not is_new,
+            "data": receipt_data,
             "meta": _meta(
-                audience=f"tenant:{record.tenant_id}:user:{record.user_id}",
+                audience=f"tenant:{entry['tenant_id']}:user:{entry['user_id']}",
+                evidence_id=entry["evidence_id"],
+                status=entry.get("status", "pending"),
             ),
         }
 
@@ -196,6 +267,43 @@ def create_dataset_extraction_router(
             user_id=scope.user_id,
         )
         if record is None:
+            inbox_entry = store.get_inbox_entry(
+                evidence_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+            )
+            if inbox_entry is not None:
+                from .models import DatasetRecord, InteractionKind
+                kind = route_to_dataset(inbox_entry["interaction_kind"])
+                version_id = _dataset_version_id(
+                    tenant_id=inbox_entry["tenant_id"],
+                    user_id=inbox_entry["user_id"],
+                    evidence_id=inbox_entry["evidence_id"],
+                    request_digest=inbox_entry["request_digest"],
+                )
+                record = DatasetRecord(
+                    evidence_id=inbox_entry["evidence_id"],
+                    dataset_version_id=version_id,
+                    dataset_kind=kind,
+                    interaction_kind=InteractionKind(inbox_entry["interaction_kind"]),
+                    persona_id=inbox_entry["persona_id"],
+                    session_id=inbox_entry.get("session_id"),
+                    tenant_id=inbox_entry["tenant_id"],
+                    user_id=inbox_entry["user_id"],
+                    content=inbox_entry["content"],
+                    source_refs=inbox_entry["source_refs"],
+                    learning_eligible=inbox_entry["learning_eligible"],
+                    captured_at=inbox_entry["captured_at"],
+                    extracted_at=inbox_entry["extracted_at"],
+                    version=1,
+                    status=inbox_entry.get("status", "pending"),
+                    consent_verified=bool(inbox_entry.get("consent_granted", True)),
+                    redaction_applied=False,
+                    purpose=inbox_entry.get("purpose"),
+                    retention_days=inbox_entry.get("retention_days"),
+                    admission_receipt_id=inbox_entry.get("admission_receipt_id") or f"rcpt-adm-{inbox_entry['evidence_id']}",
+                )
+        if record is None:
             ErrorCode = _error_code()
             raise bff_error(
                 404,
@@ -206,7 +314,10 @@ def create_dataset_extraction_router(
         return {
             "status": "found",
             "data": record.model_dump(),
-            "meta": _meta(audience=f"tenant:{record.tenant_id}:user:{record.user_id}"),
+            "meta": _meta(
+                audience=f"tenant:{record.tenant_id}:user:{record.user_id}",
+                status=record.status,
+            ),
         }
 
     # ------------------------------------------------------------------

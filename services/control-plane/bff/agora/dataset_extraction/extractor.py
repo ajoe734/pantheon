@@ -1,9 +1,12 @@
 """Governed, tenant-scoped Agora dataset extraction.
 
-The durable inbox is the write owner for Observe/Learn extraction.  Work is
-claimed in bounded leases, dataset versions and handoffs are committed
-atomically, and downstream acknowledgement can only close that handoff.  This
-module has no RuntimeBinding, deployment, capital, broker, or order authority.
+The durable inbox is the write owner for Observe/Learn extraction.
+Evidence admission is admit-only: requests are atomically persisted into the
+inbox without running extraction workers inline.
+A separately leased worker validates consent, purpose, retention, and redaction,
+creates immutable DatasetVersion records, and publishes durable handoffs.
+Downstream acknowledgement can only close that specific handoff.
+This module has no RuntimeBinding, deployment, capital, broker, or order authority.
 """
 from __future__ import annotations
 
@@ -14,11 +17,12 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from .models import (
     AgoraInteractionEvidenceRequest,
+    DatasetAdmissionReceipt,
     DatasetKind,
     DatasetRecord,
     InteractionKind,
@@ -33,6 +37,7 @@ DEFAULT_BATCH_SIZE = 25
 MAX_BATCH_SIZE = 100
 DEFAULT_LEASE_SECONDS = 30
 MAX_LEASE_SECONDS = 300
+MAX_ATTEMPTS = 5
 
 _logger = logging.getLogger(__name__)
 
@@ -47,6 +52,42 @@ class ClaimConflictError(RuntimeError):
 
 class HandoffConflictError(ValueError):
     """A handoff acknowledgement does not match its durable dataset version."""
+
+
+class PrivacyConsentError(ValueError):
+    """Evidence fails privacy, consent, purpose, or redaction requirements."""
+
+
+class DatasetEligibilityError(ValueError):
+    """Evidence is ineligible for dataset extraction."""
+
+
+_SENSITIVE_KEY_SUBSTRINGS = {
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "access_token",
+    "refresh_token",
+    "api_key",
+    "apikey",
+    "auth",
+    "authorization",
+    "bearer",
+    "cookie",
+    "credit_card",
+    "ssn",
+    "private_key",
+}
+
+_RAW_CONVERSATION_KEYS = {
+    "raw_transcript",
+    "raw_conversation",
+    "raw_messages",
+    "private_messages",
+    "transcript_full",
+    "chat_history_raw",
+}
 
 
 def _canonical_json(value: Any) -> str:
@@ -68,7 +109,7 @@ def acknowledgement_request_digest(
     handoff_id: str,
     acknowledgement_id: str,
     dataset_version_id: str,
-    downstream_ref: str,
+    downstream_ref: Any,
 ) -> str:
     payload = {
         "route": f"POST /bff/agora/dataset-worker/handoffs/{handoff_id}/ack",
@@ -110,6 +151,48 @@ def _handoff_id(*, tenant_id: str, user_id: str, dataset_version_id: str) -> str
 
 def _scope_key(tenant_id: str, user_id: str, resource_id: str) -> Tuple[str, str, str]:
     return (str(tenant_id), str(user_id), str(resource_id))
+
+
+def sanitize_content_payload(
+    content: Any,
+    *,
+    is_raw_conversation: bool = False,
+    explicit_conversation_consent: bool = False,
+) -> Tuple[Any, bool]:
+    """Recursively redact sensitive tokens and enforce raw conversation exclusion.
+
+    Returns (sanitized_content, redaction_applied).
+    Raises PrivacyConsentError if raw conversation is included without explicit consent.
+    """
+    redaction_applied = False
+
+    def _sanitize(item: Any) -> Any:
+        nonlocal redaction_applied
+        if isinstance(item, dict):
+            new_dict = {}
+            for k, v in item.items():
+                k_lower = str(k).lower()
+                if k_lower in _RAW_CONVERSATION_KEYS and not explicit_conversation_consent:
+                    raise PrivacyConsentError(
+                        "Raw private conversation excluded without explicit consent and minimization"
+                    )
+                if any(sub in k_lower for sub in _SENSITIVE_KEY_SUBSTRINGS):
+                    redaction_applied = True
+                    new_dict[k] = "[REDACTED]"
+                else:
+                    new_dict[k] = _sanitize(v)
+            return new_dict
+        elif isinstance(item, list):
+            return [_sanitize(x) for x in item]
+        return item
+
+    if is_raw_conversation and not explicit_conversation_consent:
+        raise PrivacyConsentError(
+            "Raw private conversation excluded without explicit consent and minimization"
+        )
+
+    sanitized = _sanitize(content)
+    return sanitized, redaction_applied
 
 
 class AgoraDatasetStore:
@@ -159,7 +242,7 @@ class AgoraDatasetStore:
         return psycopg.connect(self.dsn)
 
     def _bootstrap(self) -> None:
-        """Create the v2 scoped schema and migrate prior single-key tables."""
+        """Create the v2 scoped schema and migrate prior tables."""
 
         with self._connect() as conn:
             conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("agora_dataset_extraction_v2",))
@@ -196,6 +279,12 @@ class AgoraDatasetStore:
                     lease_token TEXT,
                     lease_expires_at TIMESTAMPTZ,
                     attempt_count INTEGER NOT NULL DEFAULT 0,
+                    consent_granted BOOLEAN NOT NULL DEFAULT true,
+                    purpose TEXT NOT NULL DEFAULT 'policy_learning',
+                    retention_days INTEGER NOT NULL DEFAULT 30,
+                    is_raw_conversation BOOLEAN NOT NULL DEFAULT false,
+                    explicit_conversation_consent BOOLEAN NOT NULL DEFAULT false,
+                    admission_receipt_id TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                     processed_at TIMESTAMPTZ,
                     PRIMARY KEY (tenant_id, user_id, evidence_id),
@@ -211,6 +300,12 @@ class AgoraDatasetStore:
                 "ADD COLUMN IF NOT EXISTS lease_token TEXT",
                 "ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ",
                 "ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
+                "ADD COLUMN IF NOT EXISTS consent_granted BOOLEAN NOT NULL DEFAULT true",
+                "ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'policy_learning'",
+                "ADD COLUMN IF NOT EXISTS retention_days INTEGER NOT NULL DEFAULT 30",
+                "ADD COLUMN IF NOT EXISTS is_raw_conversation BOOLEAN NOT NULL DEFAULT false",
+                "ADD COLUMN IF NOT EXISTS explicit_conversation_consent BOOLEAN NOT NULL DEFAULT false",
+                "ADD COLUMN IF NOT EXISTS admission_receipt_id TEXT",
             ):
                 conn.execute(f"ALTER TABLE {self._inbox_table} {ddl}")
             conn.execute(
@@ -244,15 +339,25 @@ class AgoraDatasetStore:
                     captured_at TEXT NOT NULL,
                     extracted_at TEXT NOT NULL,
                     version INTEGER NOT NULL DEFAULT 1,
+                    consent_verified BOOLEAN NOT NULL DEFAULT true,
+                    redaction_applied BOOLEAN NOT NULL DEFAULT false,
+                    purpose TEXT,
+                    retention_days INTEGER,
+                    admission_receipt_id TEXT,
                     PRIMARY KEY (tenant_id, user_id, evidence_id),
                     UNIQUE (tenant_id, user_id, dataset_version_id)
                 )
                 """
             )
-            conn.execute(
-                f"ALTER TABLE {self._records_table} "
-                "ADD COLUMN IF NOT EXISTS dataset_version_id TEXT"
-            )
+            for ddl in (
+                "ADD COLUMN IF NOT EXISTS dataset_version_id TEXT",
+                "ADD COLUMN IF NOT EXISTS consent_verified BOOLEAN NOT NULL DEFAULT true",
+                "ADD COLUMN IF NOT EXISTS redaction_applied BOOLEAN NOT NULL DEFAULT false",
+                "ADD COLUMN IF NOT EXISTS purpose TEXT",
+                "ADD COLUMN IF NOT EXISTS retention_days INTEGER",
+                "ADD COLUMN IF NOT EXISTS admission_receipt_id TEXT",
+            ):
+                conn.execute(f"ALTER TABLE {self._records_table} {ddl}")
             conn.execute(
                 f"UPDATE {self._records_table} SET dataset_version_id = "
                 "COALESCE(NULLIF(dataset_version_id, ''), "
@@ -279,7 +384,7 @@ class AgoraDatasetStore:
                     ack_status TEXT NOT NULL DEFAULT 'pending',
                     acknowledgement_id TEXT,
                     ack_request_digest TEXT,
-                    downstream_ref TEXT,
+                    downstream_ref JSONB,
                     acknowledged_by TEXT,
                     acknowledged_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -293,7 +398,7 @@ class AgoraDatasetStore:
                 "ADD COLUMN IF NOT EXISTS ack_status TEXT NOT NULL DEFAULT 'pending'",
                 "ADD COLUMN IF NOT EXISTS acknowledgement_id TEXT",
                 "ADD COLUMN IF NOT EXISTS ack_request_digest TEXT",
-                "ADD COLUMN IF NOT EXISTS downstream_ref TEXT",
+                "ADD COLUMN IF NOT EXISTS downstream_ref JSONB",
                 "ADD COLUMN IF NOT EXISTS acknowledged_by TEXT",
                 "ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ",
             ):
@@ -366,8 +471,6 @@ class AgoraDatasetStore:
         if records_pk == desired and inbox_pk == desired:
             return
 
-        # Old records referenced the old global evidence_id primary key.  Drop
-        # those foreign keys before replacing both primary keys.
         for name in self._constraint_names(conn, self._records_table, "f"):
             self._drop_constraint(conn, self._records_table, name)
         for table, columns in (
@@ -409,6 +512,7 @@ class AgoraDatasetStore:
         idempotency_key: str,
         request_digest: str,
     ) -> Dict[str, Any]:
+        receipt_id = f"rcpt-adm-{evidence.evidence_id}"
         return {
             "evidence_id": evidence.evidence_id,
             "tenant_id": tenant_id,
@@ -421,6 +525,12 @@ class AgoraDatasetStore:
             "content": dict(evidence.content),
             "source_refs": list(evidence.source_refs),
             "learning_eligible": evidence.learning_eligible,
+            "consent_granted": evidence.consent_granted,
+            "purpose": evidence.purpose or "policy_learning",
+            "retention_days": evidence.retention_days if evidence.retention_days is not None else 30,
+            "is_raw_conversation": evidence.is_raw_conversation,
+            "explicit_conversation_consent": evidence.explicit_conversation_consent,
+            "admission_receipt_id": receipt_id,
             "captured_at": evidence.captured_at,
             "extracted_at": extracted_at,
             "status": "pending",
@@ -513,9 +623,12 @@ class AgoraDatasetStore:
                     INSERT INTO {self._inbox_table} (
                         evidence_id, tenant_id, user_id, idempotency_key, request_digest,
                         interaction_kind, persona_id, session_id, content, source_refs,
-                        learning_eligible, captured_at, extracted_at, status
+                        learning_eligible, captured_at, extracted_at, status,
+                        consent_granted, purpose, retention_days, is_raw_conversation,
+                        explicit_conversation_consent, admission_receipt_id
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending'
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending',
+                        %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT DO NOTHING
                     RETURNING created_at
@@ -534,6 +647,12 @@ class AgoraDatasetStore:
                         evidence.learning_eligible,
                         evidence.captured_at,
                         extracted_at,
+                        evidence.consent_granted,
+                        evidence.purpose or "policy_learning",
+                        evidence.retention_days if evidence.retention_days is not None else 30,
+                        evidence.is_raw_conversation,
+                        evidence.explicit_conversation_consent,
+                        f"rcpt-adm-{evidence.evidence_id}",
                     ),
                 )
                 inserted = cur.fetchone()
@@ -555,6 +674,8 @@ class AgoraDatasetStore:
                            interaction_kind, persona_id, session_id, content, source_refs,
                            learning_eligible, captured_at, extracted_at, status, error_message,
                            lease_owner, lease_token, lease_expires_at, attempt_count,
+                           consent_granted, purpose, retention_days, is_raw_conversation,
+                           explicit_conversation_consent, admission_receipt_id,
                            created_at, processed_at
                     FROM {self._inbox_table}
                     WHERE tenant_id = %s AND user_id = %s
@@ -598,8 +719,14 @@ class AgoraDatasetStore:
             "lease_token": row[16],
             "lease_expires_at": row[17].isoformat() if row[17] else None,
             "attempt_count": row[18],
-            "created_at": row[19].isoformat() if row[19] else None,
-            "processed_at": row[20].isoformat() if row[20] else None,
+            "consent_granted": row[19] if len(row) > 19 and row[19] is not None else True,
+            "purpose": row[20] if len(row) > 20 and row[20] is not None else "policy_learning",
+            "retention_days": row[21] if len(row) > 21 and row[21] is not None else 30,
+            "is_raw_conversation": row[22] if len(row) > 22 and row[22] is not None else False,
+            "explicit_conversation_consent": row[23] if len(row) > 23 and row[23] is not None else False,
+            "admission_receipt_id": row[24] if len(row) > 24 and row[24] else f"rcpt-adm-{row[0]}",
+            "created_at": row[25].isoformat() if len(row) > 25 and row[25] else None,
+            "processed_at": row[26].isoformat() if len(row) > 26 and row[26] else None,
         }
 
     def claim_inbox(
@@ -689,8 +816,10 @@ class AgoraDatasetStore:
                                   request_digest, interaction_kind, persona_id, session_id,
                                   content, source_refs, learning_eligible, captured_at,
                                   extracted_at, status, error_message, lease_owner,
-                                  lease_token, lease_expires_at, attempt_count, created_at,
-                                  processed_at
+                                  lease_token, lease_expires_at, attempt_count,
+                                  consent_granted, purpose, retention_days, is_raw_conversation,
+                                  explicit_conversation_consent, admission_receipt_id,
+                                  created_at, processed_at
                         """,
                         (
                             worker_id,
@@ -707,7 +836,12 @@ class AgoraDatasetStore:
                 return claims
 
     @staticmethod
-    def _record_from_entry(entry: Dict[str, Any]) -> DatasetRecord:
+    def _record_from_entry(
+        entry: Dict[str, Any],
+        *,
+        sanitized_content: Dict[str, Any],
+        redaction_applied: bool,
+    ) -> DatasetRecord:
         kind = route_to_dataset(entry["interaction_kind"])
         interaction_kind = InteractionKind(entry["interaction_kind"])
         version_id = _dataset_version_id(
@@ -722,15 +856,21 @@ class AgoraDatasetStore:
             dataset_kind=kind,
             interaction_kind=interaction_kind,
             persona_id=entry["persona_id"],
-            session_id=entry["session_id"],
+            session_id=entry.get("session_id"),
             tenant_id=entry["tenant_id"],
             user_id=entry["user_id"],
-            content=entry["content"],
+            content=sanitized_content,
             source_refs=entry["source_refs"],
             learning_eligible=entry["learning_eligible"],
             captured_at=entry["captured_at"],
             extracted_at=entry["extracted_at"],
             version=1,
+            status="processed",
+            consent_verified=True,
+            redaction_applied=redaction_applied,
+            purpose=entry.get("purpose"),
+            retention_days=entry.get("retention_days"),
+            admission_receipt_id=entry.get("admission_receipt_id") or f"rcpt-adm-{entry['evidence_id']}",
         )
 
     @staticmethod
@@ -758,7 +898,27 @@ class AgoraDatasetStore:
         }
 
     def _complete_claim(self, entry: Dict[str, Any], *, now: Optional[datetime] = None) -> Tuple[DatasetRecord, bool]:
-        record = self._record_from_entry(entry)
+        # Validate consent & retention
+        if not entry.get("consent_granted", True):
+            raise PrivacyConsentError("Evidence excluded: consent not granted or revoked")
+        retention_days = int(entry.get("retention_days", 30) or 30)
+        if retention_days <= 0 or retention_days > 365:
+            raise PrivacyConsentError(f"Invalid retention_days: {retention_days}")
+
+        # Validate raw conversation & redact sensitive fields
+        is_raw_conv = bool(entry.get("is_raw_conversation", False))
+        explicit_conv_consent = bool(entry.get("explicit_conversation_consent", False))
+        sanitized_content, redaction_applied = sanitize_content_payload(
+            entry.get("content", {}),
+            is_raw_conversation=is_raw_conv,
+            explicit_conversation_consent=explicit_conv_consent,
+        )
+
+        record = self._record_from_entry(
+            entry,
+            sanitized_content=sanitized_content,
+            redaction_applied=redaction_applied,
+        )
         processed_at = _utc_datetime(now)
         handoff = self._new_handoff(record, created_at=_iso(processed_at))
         scope_key = _scope_key(record.tenant_id, record.user_id, record.evidence_id)
@@ -812,8 +972,10 @@ class AgoraDatasetStore:
                     INSERT INTO {self._records_table} (
                         evidence_id, dataset_version_id, dataset_kind, interaction_kind,
                         persona_id, session_id, tenant_id, user_id, content, source_refs,
-                        learning_eligible, captured_at, extracted_at, version
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
+                        learning_eligible, captured_at, extracted_at, version,
+                        consent_verified, redaction_applied, purpose, retention_days,
+                        admission_receipt_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s)
                     ON CONFLICT (tenant_id, user_id, evidence_id) DO NOTHING
                     """,
                     (
@@ -830,6 +992,11 @@ class AgoraDatasetStore:
                         record.learning_eligible,
                         record.captured_at,
                         record.extracted_at,
+                        record.consent_verified,
+                        record.redaction_applied,
+                        record.purpose,
+                        record.retention_days,
+                        record.admission_receipt_id,
                     ),
                 )
                 cur.execute(
@@ -874,6 +1041,12 @@ class AgoraDatasetStore:
     def _fail_claim(self, entry: Dict[str, Any], error: Exception, *, now: Optional[datetime] = None) -> bool:
         failed_at = _utc_datetime(now)
         key = _scope_key(entry["tenant_id"], entry["user_id"], entry["evidence_id"])
+        _logger.warning(
+            "Agora inbox item %s failed processing in tenant %s: %s",
+            entry.get("evidence_id"),
+            entry.get("tenant_id"),
+            str(error),
+        )
         if self.backend == "memory":
             with self._lock:
                 current = self._inbox.get(key)
@@ -963,24 +1136,52 @@ class AgoraDatasetStore:
         }
 
     def get(self, evidence_id: str, *, tenant_id: str, user_id: str) -> Optional[DatasetRecord]:
-        """Return one record only when it matches the caller's full scope."""
+        """Return one record only when it matches the caller's full scope from dataset records."""
 
         key = _scope_key(tenant_id, user_id, evidence_id)
         if self.backend == "memory":
             with self._lock:
                 return self._records.get(key)
+
         with self._connect() as conn:
             row = conn.execute(
                 f"""
                 SELECT evidence_id, dataset_version_id, dataset_kind, interaction_kind,
                        persona_id, session_id, tenant_id, user_id, content, source_refs,
-                       learning_eligible, captured_at, extracted_at, version
+                       learning_eligible, captured_at, extracted_at, version,
+                       consent_verified, redaction_applied, purpose, retention_days,
+                       admission_receipt_id
                 FROM {self._records_table}
                 WHERE tenant_id = %s AND user_id = %s AND evidence_id = %s
                 """,
                 (tenant_id, user_id, evidence_id),
             ).fetchone()
             return self._dataset_row(row) if row else None
+
+    def get_inbox_entry(self, evidence_id: str, *, tenant_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+        """Return one raw inbox entry by scoped evidence_id."""
+        key = _scope_key(tenant_id, user_id, evidence_id)
+        if self.backend == "memory":
+            with self._lock:
+                entry = self._inbox.get(key)
+                return dict(entry) if entry is not None else None
+
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT evidence_id, tenant_id, user_id, idempotency_key, request_digest,
+                       interaction_kind, persona_id, session_id, content, source_refs,
+                       learning_eligible, captured_at, extracted_at, status, error_message,
+                       lease_owner, lease_token, lease_expires_at, attempt_count,
+                       consent_granted, purpose, retention_days, is_raw_conversation,
+                       explicit_conversation_consent, admission_receipt_id,
+                       created_at, processed_at
+                FROM {self._inbox_table}
+                WHERE tenant_id = %s AND user_id = %s AND evidence_id = %s
+                """,
+                (tenant_id, user_id, evidence_id),
+            ).fetchone()
+            return self._inbox_row(row) if row else None
 
     @staticmethod
     def _dataset_row(row: Any) -> DatasetRecord:
@@ -999,6 +1200,12 @@ class AgoraDatasetStore:
             captured_at=row[11],
             extracted_at=row[12],
             version=row[13],
+            status="processed",
+            consent_verified=row[14] if len(row) > 14 and row[14] is not None else True,
+            redaction_applied=row[15] if len(row) > 15 and row[15] is not None else False,
+            purpose=row[16] if len(row) > 16 else None,
+            retention_days=row[17] if len(row) > 17 else None,
+            admission_receipt_id=row[18] if len(row) > 18 else None,
         )
 
     def list_by_dataset(
@@ -1026,7 +1233,9 @@ class AgoraDatasetStore:
                 f"""
                 SELECT evidence_id, dataset_version_id, dataset_kind, interaction_kind,
                        persona_id, session_id, tenant_id, user_id, content, source_refs,
-                       learning_eligible, captured_at, extracted_at, version
+                       learning_eligible, captured_at, extracted_at, version,
+                       consent_verified, redaction_applied, purpose, retention_days,
+                       admission_receipt_id
                 FROM {self._records_table}
                 WHERE tenant_id = %s AND user_id = %s AND dataset_kind = %s
                 ORDER BY extracted_at DESC
@@ -1081,6 +1290,8 @@ class AgoraDatasetStore:
                        interaction_kind, persona_id, session_id, content, source_refs,
                        learning_eligible, captured_at, extracted_at, status, error_message,
                        lease_owner, lease_token, lease_expires_at, attempt_count,
+                       consent_granted, purpose, retention_days, is_raw_conversation,
+                       explicit_conversation_consent, admission_receipt_id,
                        created_at, processed_at
                 FROM {self._inbox_table}
                 WHERE tenant_id = %s AND user_id = %s AND status = %s
@@ -1113,6 +1324,7 @@ class AgoraDatasetStore:
                         "lease_owner": None,
                         "lease_token": None,
                         "lease_expires_at": None,
+                        "attempt_count": 0,
                     }
                 )
                 return True
@@ -1121,7 +1333,8 @@ class AgoraDatasetStore:
                 f"""
                 UPDATE {self._inbox_table}
                 SET status = 'pending', error_message = NULL, processed_at = NULL,
-                    lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL
+                    lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+                    attempt_count = 0
                 WHERE tenant_id = %s AND user_id = %s AND evidence_id = %s
                   AND status = 'failed'
                 """,
@@ -1131,6 +1344,12 @@ class AgoraDatasetStore:
 
     @staticmethod
     def _handoff_row(row: Any) -> Dict[str, Any]:
+        downstream = row[11]
+        if isinstance(downstream, str):
+            try:
+                downstream = json.loads(downstream)
+            except Exception:
+                pass
         return {
             "handoff_id": row[0],
             "tenant_id": row[1],
@@ -1143,7 +1362,7 @@ class AgoraDatasetStore:
             "ack_status": row[8],
             "acknowledgement_id": row[9],
             "ack_request_digest": row[10],
-            "downstream_ref": row[11],
+            "downstream_ref": downstream,
             "acknowledged_by": row[12],
             "acknowledged_at": row[13].isoformat() if row[13] else None,
             "created_at": row[14].isoformat() if row[14] else None,
@@ -1180,7 +1399,7 @@ class AgoraDatasetStore:
         user_id: str,
         acknowledgement_id: str,
         dataset_version_id: str,
-        downstream_ref: str,
+        downstream_ref: Any,
         acknowledged_by: str,
         request_digest: str,
         acknowledged_at: str,
@@ -1256,7 +1475,7 @@ class AgoraDatasetStore:
                     (
                         acknowledgement_id,
                         request_digest,
-                        downstream_ref,
+                        json.dumps(downstream_ref) if not isinstance(downstream_ref, str) else downstream_ref,
                         acknowledged_by,
                         acknowledged_at,
                         tenant_id,
@@ -1277,6 +1496,32 @@ class AgoraDatasetStore:
                 return handoff, True
 
 
+def admit_evidence(
+    evidence: AgoraInteractionEvidenceRequest,
+    *,
+    tenant_id: str,
+    user_id: str,
+    idempotency_key: str,
+    request_digest: str,
+    admitted_at: str,
+    store: AgoraDatasetStore,
+) -> Tuple[Dict[str, Any], bool]:
+    """Atomically persist eligible evidence into inbox/outbox without running worker."""
+
+    if evidence.consent_granted is False:
+        raise PrivacyConsentError("Evidence admission rejected: consent not granted or revoked")
+
+    entry, is_new = store.add_to_inbox(
+        evidence,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        extracted_at=admitted_at,
+        idempotency_key=idempotency_key,
+        request_digest=request_digest,
+    )
+    return entry, is_new
+
+
 def extract_evidence(
     evidence: AgoraInteractionEvidenceRequest,
     *,
@@ -1286,16 +1531,17 @@ def extract_evidence(
     request_digest: str,
     extracted_at: str,
     store: AgoraDatasetStore,
-) -> tuple[DatasetRecord, bool]:
-    """Insert and process exactly one caller-scoped evidence item."""
+) -> Tuple[DatasetRecord, bool]:
+    """Admit and immediately process single item (synchronous helper / test boundary)."""
 
-    _, is_new = store.add_to_inbox(
+    entry, is_new = admit_evidence(
         evidence,
-        tenant_id,
-        user_id,
-        extracted_at,
+        tenant_id=tenant_id,
+        user_id=user_id,
         idempotency_key=idempotency_key,
         request_digest=request_digest,
+        admitted_at=extracted_at,
+        store=store,
     )
     store.process_inbox(
         tenant_id=tenant_id,
@@ -1304,10 +1550,6 @@ def extract_evidence(
         batch_size=1,
     )
     record = store.get(evidence.evidence_id, tenant_id=tenant_id, user_id=user_id)
-    # A duplicate request may arrive after another worker claimed the row but
-    # before its atomic record/handoff commit.  Preserve synchronous response
-    # compatibility with a short bounded readback wait; never steal an active
-    # lease or drain unrelated work.
     deadline = time.monotonic() + 0.5
     while record is None and time.monotonic() < deadline:
         status = store.get_inbox_status(
@@ -1341,9 +1583,13 @@ def extract_evidence(
 __all__ = [
     "AgoraDatasetStore",
     "ClaimConflictError",
+    "DatasetEligibilityError",
     "HandoffConflictError",
     "IdempotencyConflictError",
+    "PrivacyConsentError",
     "acknowledgement_request_digest",
+    "admit_evidence",
     "evidence_request_digest",
     "extract_evidence",
+    "sanitize_content_payload",
 ]

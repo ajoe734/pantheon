@@ -180,6 +180,7 @@ def _client(
     user_id: str = "user-001",
     tenant_id: str = "tenant-001",
     workshop_store: MemoryWorkshopStore | None = None,
+    allow_write: bool = True,
 ) -> TestClient:
     def _bff_error(status_code: int, code: object, message: str, reason: str, **kw) -> HTTPException:
         code_value = getattr(code, "value", code)
@@ -196,6 +197,10 @@ def _client(
     def _require_read_role(_identity: dict) -> None:
         pass
 
+    def _require_write_role(_identity: dict) -> None:
+        if not allow_write:
+            raise _bff_error(403, "FORBIDDEN", "Write role required", "write_role_required")
+
     def _utc_now() -> str:
         return "2026-06-22T10:00:00Z"
 
@@ -204,6 +209,7 @@ def _client(
         create_trading_room_router(
             extract_identity=_extract_identity,
             require_read_role=_require_read_role,
+            require_write_role=_require_write_role,
             bff_error=_bff_error,
             utc_now=_utc_now,
             trading_room_store=store,
@@ -696,15 +702,32 @@ def _workspace_schema_validate(payload: dict) -> None:
     chart_schema_path = agora_dir / "v2" / "chart_spec_v1.schema.json"
     with chart_schema_path.open() as f:
         chart_schema = json.load(f)
-    resolver = jsonschema.RefResolver(
-        base_uri=schema_path.parent.as_uri() + "/",
-        referrer=schema,
-        store={
-            chart_schema_path.as_uri(): chart_schema,
-            chart_schema.get("$id"): chart_schema,
-        },
-    )
-    jsonschema.Draft7Validator(schema, resolver=resolver).validate(payload)
+    import copy
+    schema_copy = copy.deepcopy(schema)
+    chart_defs = chart_schema.get("definitions", {})
+    schema_copy.setdefault("definitions", {}).update(chart_defs)
+
+    def _inline_refs(obj):
+        if isinstance(obj, dict):
+            res = {}
+            for k, v in obj.items():
+                if k == "$ref" and isinstance(v, str):
+                    if v == "../v2/chart_spec_v1.schema.json":
+                        # replace with inline chart_schema
+                        res.update(_inline_refs(chart_schema))
+                        continue
+                    elif v.startswith("../v2/chart_spec_v1.schema.json#/definitions/"):
+                        def_name = v.split("/")[-1]
+                        res["$ref"] = f"#/definitions/{def_name}"
+                        continue
+                res[k] = _inline_refs(v)
+            return res
+        elif isinstance(obj, list):
+            return [_inline_refs(x) for x in obj]
+        return obj
+
+    inlined_schema = _inline_refs(schema_copy)
+    jsonschema.Draft7Validator(inlined_schema).validate(payload)
 
 
 def _create_proposal_response(client: TestClient, body: dict | None = None):
@@ -2306,4 +2329,37 @@ if __name__ == "__main__":
     test_ready_workshop_projection_is_user_scoped()
     test_get_trading_room_returns_200_for_object_identity_not_just_dict()
     test_decide_trading_event_returns_201_for_object_identity_not_just_dict()
+    test_trading_room_write_role_denies_read_only_user()
     print("\n✅ All trading room tests passed.")
+
+
+def test_trading_room_write_role_denies_read_only_user():
+    store = make_trading_room_store()
+    client_ro = _client(store, allow_write=False)
+    headers = _write_headers("idem-write-deny")
+
+    # Read endpoint should succeed
+    resp_get = client_ro.get("/bff/agora/trading-room", headers={"Authorization": "Bearer test"})
+    assert resp_get.status_code == 200
+
+    # Write endpoints must be rejected with 403
+    resp_prop = client_ro.post(
+        "/bff/agora/strategies/strat-001/trading-room/proposals",
+        json={"strategyVersion": "V1"},
+        headers=headers,
+    )
+    assert resp_prop.status_code == 403
+    assert resp_prop.json()["detail"]["reason"] == "write_role_required"
+
+    resp_accept = client_ro.post(
+        "/bff/agora/strategies/strat-001/trading-room/proposals/prop-1/accept",
+        headers=headers,
+    )
+    assert resp_accept.status_code == 403
+
+    resp_decide = client_ro.post(
+        "/bff/agora/trading-room/decision-events/evt-001/decisions",
+        json={"decision": "approve"},
+        headers=headers,
+    )
+    assert resp_decide.status_code == 403

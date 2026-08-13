@@ -57,26 +57,13 @@ def test_intake_terminal_policy_learning_candidate_success(
     assert req["request_id"] == f"cr-cand-{candidate_id}"
     assert req["target_type"] == "policy_learning_candidate"
     assert req["target_id"] == candidate_id
-    assert req["status"] == ConsultRequestStatus.PUBLISHED.value
+    assert req["status"] == ConsultRequestStatus.SUBMITTED.value
     assert req["metadata"]["dataset_version_id"] == dataset_version_id
     assert req["metadata"]["dataset_lineage"]["dataset_version_ids"] == [dataset_version_id]
 
-    # Check published memo
-    memo = data["memo"]
-    assert memo["memo_id"] == f"memo-cand-{candidate_id}"
-    assert memo["request_id"] == f"cr-cand-{candidate_id}"
-    assert memo["status"] == MemoStatus.PUBLISHED.value
-    assert memo["recommendation"] == "approve"
-    assert len(memo["findings"]) == 2
-    assert memo["target_id"] == candidate_id
-
-    # Check sponsor decision proposal
-    proposal = data["proposal"]
-    assert proposal["proposal_type"] == "approval_decision"
-    assert proposal["metadata"]["sponsor_persona_id"] == "persona-policy-learner"
-    assert proposal["target_version"] == dataset_version_id
-    assert proposal["target_id"] == candidate_id
-    assert proposal["decision_state"] == "proposed"
+    # Special intake creates request only; memo and proposal are None
+    assert data["memo"] is None
+    assert data["proposal"] is None
 
 
 def test_intake_replay_returns_existing_terminal_decision(
@@ -100,7 +87,7 @@ def test_intake_replay_returns_existing_terminal_decision(
         "trace_id": "tr-replay-test-002",
     }
 
-    # First call creates request and memo
+    # First call creates request only
     resp1 = client.post("/api/consult/intake/policy-learning-candidate", json=payload)
     assert resp1.status_code == 201
     data1 = resp1.json()
@@ -114,7 +101,6 @@ def test_intake_replay_returns_existing_terminal_decision(
     assert data2["status"] == "existing"
     assert data2["replayed"] is True
     assert data2["request_id"] == data1["request_id"]
-    assert data2["memo"]["memo_id"] == data1["memo"]["memo_id"]
 
 
 def test_intake_rejects_non_terminal_candidate_status(
