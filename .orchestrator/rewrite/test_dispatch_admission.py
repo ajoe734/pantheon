@@ -30,12 +30,14 @@ def endpoint(
     *,
     account: str = "codex-account",
     enabled: bool = True,
+    exclusive: bool = True,
 ) -> DeliveryEndpoint:
     return DeliveryEndpoint(
         endpoint_id=endpoint_id,
         provider_id=endpoint_id,
         account_id=account,
         enabled=enabled,
+        exclusive=exclusive,
     )
 
 
@@ -211,6 +213,22 @@ class DispatchAdmissionTests(unittest.TestCase):
         self.assertFalse(decision.eligible)
         self.assertEqual(decision.reason, DispatchBlockReason.ENDPOINT_BUSY)
         self.assertIsNone(decision.endpoint_id)
+
+    def test_parallel_lane_endpoint_uses_lane_and_account_capacity(self) -> None:
+        shared_endpoint = endpoint(exclusive=False)
+        decision = evaluate_dispatch_intent(
+            intent(),
+            lane(shared_endpoint, max_parallel=4),
+            healthy_snapshot(
+                lane_reserved={"codex": 1},
+                account_reserved={"codex-account": 1},
+                account_limits={"codex-account": 4},
+                reserved_endpoint_ids=frozenset({"codex-1"}),
+            ),
+        )
+
+        self.assertTrue(decision.eligible)
+        self.assertEqual(decision.endpoint_id, "codex-1")
 
 
 if __name__ == "__main__":
