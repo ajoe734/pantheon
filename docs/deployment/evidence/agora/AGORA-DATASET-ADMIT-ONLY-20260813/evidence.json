@@ -1,0 +1,27 @@
+{
+  "task_id": "AGORA-DATASET-ADMIT-ONLY-20260813",
+  "title": "Separate dataset acceptance from extraction and delivery workers",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "status": "in_progress",
+  "timestamp": "2026-08-13T18:24:00Z",
+  "summary": "Separated Agora interaction evidence acceptance into strict admit-only persistence from leased background extraction and delivery workers. Enforced privacy consent, raw conversation minimization, credential redaction, crash recovery, and single-item ordered downstream handoff acknowledgement.",
+  "acceptance_verification": {
+    "ac1_admit_only_atomic_persistence": "POST /bff/agora/interaction-evidence returns immediately after persisting to durable inbox/outbox and returning an admission receipt without invoking process_inbox or waiting for worker completion.",
+    "ac2_leased_worker_extraction_and_delivery": "Separately leased background workers claim batches, validate consent, purpose, retention, and redaction, create immutable DatasetVersion records, and publish durable handoffs to the existing handoff path.",
+    "ac3_ordered_single_item_ack": "POST /bff/agora/dataset-worker/handoffs/{handoff_id}/ack performs single-item ordered acknowledgement with exact dataset_version_id verification without bulk-acking historical rows, supporting both string and dictionary downstream refs from policy-learning drainer L12-MFC-R4-AGORA-001.",
+    "ac4_privacy_consent_and_redaction": "Enforces explicit consent and raw conversation minimization; sensitive tokens (passwords, tokens, api keys, secrets, credit cards) are automatically sanitized to [REDACTED]; zero private user payload leaks into logs, traces, or audit records.",
+    "ac5_crash_recovery_and_isolation": "Proves crash recovery before and after dataset creation, lease expiration reclamation, duplicate replay idempotency, DLQ replay, and complete multi-tenant isolation.",
+    "test_suite": "80 passed, 4 skipped in dataset extraction and integration pytest suite; 106 passed in policy-learning suite."
+  },
+  "artifacts_produced": [
+    "services/control-plane/bff/agora/dataset_extraction/extractor.py",
+    "services/control-plane/bff/agora/dataset_extraction/models.py",
+    "services/control-plane/bff/agora/dataset_extraction/router.py",
+    "services/control-plane/bff/agora/dataset_extraction/test_extractor.py",
+    "services/control-plane/bff/agora/dataset_extraction/test_router.py",
+    "services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py",
+    "docs/deployment/evidence/agora/AGORA-DATASET-ADMIT-ONLY-20260813/evidence.json",
+    "docs/deployment/evidence/agora/AGORA-DATASET-ADMIT-ONLY-20260813/README.md"
+  ]
+}
