@@ -30,7 +30,10 @@ from ..dev_bridge_signer import (
     public_key_environment,
     sign_packet,
 )
-from .dev_bridge_test_support import write_materializing_ai_status
+from .dev_bridge_test_support import (
+    authoritative_test_runtime_env,
+    write_materializing_ai_status,
+)
 
 
 TEST_KEY = b"test-key-for-dev-bridge-inbox"
@@ -94,10 +97,16 @@ def _make_packet(packet_id: str) -> DevTaskPacket:
     )
 
 
-def _write_fake_repo(tmp_path: Path) -> Path:
+def _write_fake_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch | None = None,
+) -> Path:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     write_materializing_ai_status(repo_root)
+    if monkeypatch is not None:
+        for name, value in authoritative_test_runtime_env(repo_root).items():
+            monkeypatch.setenv(name, value)
     return repo_root
 
 
@@ -162,7 +171,7 @@ def _drain_as_failed(
 
 def test_queue_and_drain_packet_inbox_materializes_tasks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BRIDGE_SIGNING_KEY", TEST_KEY.hex())
-    repo_root = _write_fake_repo(tmp_path)
+    repo_root = _write_fake_repo(tmp_path, monkeypatch)
     signed = sign_packet(_make_packet("pkt_inbox_live"), key_store={"assistant-bridge-dev": TEST_KEY})
 
     queued = queue_task_packet(signed, repo_root=str(repo_root))
@@ -209,7 +218,7 @@ def test_queue_accepts_dev_docs_response_envelope_and_rejects_duplicates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("BRIDGE_SIGNING_KEY", TEST_KEY.hex())
-    repo_root = _write_fake_repo(tmp_path)
+    repo_root = _write_fake_repo(tmp_path, monkeypatch)
     signed = sign_packet(_make_packet("pkt_inbox_envelope"), key_store={"assistant-bridge-dev": TEST_KEY})
     payload = {
         "data": {"packetId": "dev-doc-packet"},
@@ -236,7 +245,7 @@ def test_exact_failed_packet_recovery_is_lock_safe_and_idempotent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("BRIDGE_SIGNING_KEY", TEST_KEY.hex())
-    repo_root = _write_fake_repo(tmp_path)
+    repo_root = _write_fake_repo(tmp_path, monkeypatch)
     packet = sign_packet(
         _make_packet("pkt_exact_failed_recovery"),
         key_store={"assistant-bridge-dev": TEST_KEY},
@@ -281,7 +290,7 @@ def test_recovered_packet_can_be_rearmed_after_a_new_failed_drain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("BRIDGE_SIGNING_KEY", TEST_KEY.hex())
-    repo_root = _write_fake_repo(tmp_path)
+    repo_root = _write_fake_repo(tmp_path, monkeypatch)
     packet = sign_packet(
         _make_packet("pkt_failed_recovery_rearm"),
         key_store={"assistant-bridge-dev": TEST_KEY},
@@ -796,7 +805,7 @@ def test_recovered_packet_dispatches_after_exact_claim_expiry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("BRIDGE_SIGNING_KEY", TEST_KEY.hex())
-    repo_root = _write_fake_repo(tmp_path)
+    repo_root = _write_fake_repo(tmp_path, monkeypatch)
     packet = sign_packet(
         _make_packet("pkt_recovery_expired_claim"),
         key_store={"assistant-bridge-dev": TEST_KEY},

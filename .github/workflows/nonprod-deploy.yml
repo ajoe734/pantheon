@@ -168,9 +168,6 @@ jobs:
           BRIDGE_SIGNING_PRIVATE_KEY=authority-validation-only \
           BRIDGE_SIGNING_KEY_ID=authority-validation-only \
           BRIDGE_SIGNING_PUBLIC_KEYS_JSON='{"authority-validation-only":"AA"}' \
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY=authority-validation-only \
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID=authority-validation-only \
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON='{"authority-validation-only":"AA"}' \
           docker compose -f docker-compose.yml config --quiet
           if [[ "${RUN_LOOP_PROD_TEL_002_PROBE}" == "true" && ( "${TARGET_COMPONENT}" != "root" || "${DEV_AUTH_PROFILE}" != "strict" ) ]]; then
             echo "LOOP-PROD-TEL-002 hosted proof requires dev/root with strict auth." >&2
@@ -399,8 +396,6 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           BRIDGE_SIGNING_KEY_ID: ${{ vars.BRIDGE_SIGNING_KEY_ID || 'pantheon-dev-bridge-v1' }}
           BRIDGE_SIGNING_PUBLIC_KEYS_JSON: ${{ secrets.BRIDGE_SIGNING_PUBLIC_KEYS_JSON }}
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID: ${{ vars.PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID || 'pantheon-dev-operator-v1' }}
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON: ${{ secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
@@ -437,7 +432,7 @@ jobs:
         run: |
           case "${DEV_AUTH_PROFILE}" in
             strict)
-              if [[ -z "${DEV_BFF_JWT_SECRET}" || -z "${DEV_BFF_OIDC_CLIENT_ID}" || -z "${DEV_BFF_OIDC_CLIENT_SECRET}" || -z "${DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH}" || -z "${BRIDGE_SIGNING_PUBLIC_KEYS_JSON}" || -z "${PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON}" ]]; then
+              if [[ -z "${DEV_BFF_JWT_SECRET}" || -z "${DEV_BFF_OIDC_CLIENT_ID}" || -z "${DEV_BFF_OIDC_CLIENT_SECRET}" || -z "${DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH}" || -z "${BRIDGE_SIGNING_PUBLIC_KEYS_JSON}" ]]; then
                 echo "::error::Dev BFF deploy credentials are not provisioned; refusing to run any target ref before strict auth can be verified."
                 exit 1
               fi
@@ -714,8 +709,6 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           BRIDGE_SIGNING_KEY_ID: ${{ vars.BRIDGE_SIGNING_KEY_ID || 'pantheon-dev-bridge-v1' }}
           BRIDGE_SIGNING_PUBLIC_KEYS_JSON: ${{ secrets.BRIDGE_SIGNING_PUBLIC_KEYS_JSON }}
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID: ${{ vars.PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID || 'pantheon-dev-operator-v1' }}
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON: ${{ secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           # External browser IdP verification uses only public identity
@@ -1516,8 +1509,6 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           BRIDGE_SIGNING_KEY_ID: ${{ vars.BRIDGE_SIGNING_KEY_ID || 'pantheon-dev-bridge-v1' }}
           BRIDGE_SIGNING_PUBLIC_KEYS_JSON: ${{ secrets.BRIDGE_SIGNING_PUBLIC_KEYS_JSON }}
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID: ${{ vars.PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID || 'pantheon-dev-operator-v1' }}
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON: ${{ secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
@@ -1672,8 +1663,6 @@ jobs:
           STAGING_EXEC_HEALTH_URL: ${{ vars.STAGING_EXEC_HEALTH_URL || 'http://10.50.0.21:28081' }}
           BRIDGE_SIGNING_KEY_ID: ${{ vars.BRIDGE_SIGNING_KEY_ID || 'pantheon-staging-bridge-v1' }}
           BRIDGE_SIGNING_PUBLIC_KEYS_JSON: ${{ secrets.BRIDGE_SIGNING_PUBLIC_KEYS_JSON }}
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID: ${{ vars.PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID || 'pantheon-staging-operator-v1' }}
-          PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON: ${{ secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON }}
           STAGING_AUTHORITY_SIGNING_ENV_FILE: ${{ vars.STAGING_AUTHORITY_SIGNING_ENV_FILE || '/home/lupin/pantheon-ci-deploy/runtime/staging-authority-signing.env' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |

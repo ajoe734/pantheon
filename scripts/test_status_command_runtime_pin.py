@@ -48,9 +48,9 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
         for rel in (
             "scripts/ai_status.py",
             "scripts/ai-status.sh",
+            "scripts/human-ops-status.sh",
             "scripts/loop_done_guardrail.py",
             ".orchestrator/common.py",
-            ".orchestrator/canonical_mutation_assertion.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",

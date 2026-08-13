@@ -80,13 +80,10 @@ DEV_BFF_ROLE_CLAIMS="${DEV_BFF_ROLE_CLAIMS:-roles,role}"
 DEV_BFF_ROLE_MAP="${DEV_BFF_ROLE_MAP:-}"
 DEV_BFF_ROLE_MAP_MODE="${DEV_BFF_ROLE_MAP_MODE:-passthrough}"
 DEV_BFF_DEFAULT_ROLE="${DEV_BFF_DEFAULT_ROLE:-viewer}"
-# Two distinct Ed25519 capabilities: source packet materialization and
-# Human/Ops runtime mutation.  Private keys are delivered only to operator-bff;
-# the supervisor/ai-status path receives the corresponding public maps.
+# Ed25519 authority is limited to product-originated source packets. Human/Ops
+# canonical maintenance is a local repository CLI and needs no BFF key.
 BRIDGE_SIGNING_KEY_ID="${BRIDGE_SIGNING_KEY_ID:-}"
 BRIDGE_SIGNING_PUBLIC_KEYS_JSON="${BRIDGE_SIGNING_PUBLIC_KEYS_JSON:-}"
-PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID="${PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID:-}"
-PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON="${PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON:-}"
 DEV_AUTHORITY_SIGNING_ENV_FILE="${DEV_AUTHORITY_SIGNING_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/authority-signing.env}"
 STAGING_AUTHORITY_SIGNING_ENV_FILE="${STAGING_AUTHORITY_SIGNING_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/staging-authority-signing.env}"
 SUPERVISOR_VERIFIER_ENV_FILE="${SUPERVISOR_VERIFIER_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/supervisor-authority-public.env}"
@@ -241,8 +238,6 @@ Environment overrides:
   DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED
   DEV_BFF_ROLE_CLAIMS DEV_BFF_ROLE_MAP DEV_BFF_ROLE_MAP_MODE DEV_BFF_DEFAULT_ROLE
   BRIDGE_SIGNING_KEY_ID BRIDGE_SIGNING_PUBLIC_KEYS_JSON
-  PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID
-  PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON
   DEV_AUTHORITY_SIGNING_ENV_FILE STAGING_AUTHORITY_SIGNING_ENV_FILE
   DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
@@ -468,7 +463,6 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_role_map_mode=${DEV_BFF_ROLE_MAP_MODE}"
   info "dev_bff_default_role=${DEV_BFF_DEFAULT_ROLE}"
   info "bridge_signing_public_policy_configured=$([[ -n "$BRIDGE_SIGNING_KEY_ID" && -n "$BRIDGE_SIGNING_PUBLIC_KEYS_JSON" ]] && echo true || echo false)"
-  info "canonical_mutation_public_policy_configured=$([[ -n "$PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID" && -n "$PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON" ]] && echo true || echo false)"
   info "dev_authority_signing_env_file=${DEV_AUTHORITY_SIGNING_ENV_FILE}"
   info "staging_authority_signing_env_file=${STAGING_AUTHORITY_SIGNING_ENV_FILE}"
   info "dev_openclaw_adapter_service_auth_required=${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}"
@@ -513,9 +507,7 @@ verify_dev_environment_lease_contract
 if [[ "$DEPLOY_ENV" == "dev" || ( "$DEPLOY_ENV" == "staging-live" && "$COMPONENT" != "exec" ) ]]; then
   for authority_name in \
     BRIDGE_SIGNING_KEY_ID \
-    BRIDGE_SIGNING_PUBLIC_KEYS_JSON \
-    PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID \
-    PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON; do
+    BRIDGE_SIGNING_PUBLIC_KEYS_JSON; do
     if [[ -z "${!authority_name}" ]]; then
       error "${authority_name} is required for operator-bff and supervisor authority cutover"
     fi
@@ -638,8 +630,6 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_DEFAULT_ROLE=$(shell_quote "$DEV_BFF_DEFAULT_ROLE")"
   command_prefix+=" BRIDGE_SIGNING_KEY_ID=$(shell_quote "$BRIDGE_SIGNING_KEY_ID")"
   command_prefix+=" BRIDGE_SIGNING_PUBLIC_KEYS_JSON=$(shell_quote "$BRIDGE_SIGNING_PUBLIC_KEYS_JSON")"
-  command_prefix+=" PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID=$(shell_quote "$PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID")"
-  command_prefix+=" PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON=$(shell_quote "$PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON")"
   command_prefix+=" PANTHEON_AUTHORITY_SIGNING_ENV_FILE=$(shell_quote "$authority_signing_env_file")"
   command_prefix+=" PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE=$(shell_quote "$SUPERVISOR_VERIFIER_ENV_FILE")"
   command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
@@ -720,9 +710,6 @@ required = {
     "BRIDGE_SIGNING_PRIVATE_KEY",
     "BRIDGE_SIGNING_KEY_ID",
     "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
-    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
-    "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID",
-    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
 }
 values = {}
 for raw in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
@@ -746,12 +733,12 @@ PY
   fi
 }
 
-verify_operator_bff_authority_key_pairs() {
+verify_operator_bff_bridge_key_pair() {
   local project="$1"
   local compose_file="$2"
   shift 2
   docker compose "$@" -p "$project" -f "$compose_file" exec -T operator-bff \
-    python -c 'import sys; sys.path.insert(0, "/workspace/.orchestrator"); from assistant.dev_bridge_signer import validate_signing_key_pair as v1; from canonical_mutation_assertion import validate_signing_key_pair as v2; v1(); v2()'
+    python -c 'from assistant.dev_bridge_signer import validate_signing_key_pair; validate_signing_key_pair()'
 }
 
 configure_authority_compose_environment
@@ -2215,7 +2202,6 @@ import sys
 
 names = (
     "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
-    "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
 )
 values = {}
 for name in names:
@@ -2549,7 +2535,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     wait_for_exact_bff_lifecycle_readiness \
       http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
-    verify_operator_bff_authority_key_pairs pantheon docker-compose.yml \
+    verify_operator_bff_bridge_key_pair pantheon docker-compose.yml \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -2664,7 +2650,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     wait_for_exact_bff_lifecycle_readiness \
       http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
-    verify_operator_bff_authority_key_pairs pantheon docker-compose.yml \
+    verify_operator_bff_bridge_key_pair pantheon docker-compose.yml \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -2703,7 +2689,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_STAGING_BFF_CORS_ORIGINS}" \
       docker compose --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE" -p pantheon-control -f docker-compose.control.yml up -d --build
     curl_with_retry http://127.0.0.1:38001/health
-    verify_operator_bff_authority_key_pairs pantheon-control docker-compose.control.yml \
+    verify_operator_bff_bridge_key_pair pantheon-control docker-compose.control.yml \
       --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE"
     assert_bff_source_sha http://127.0.0.1:38001/bff/version
     curl_with_retry "${PANTHEON_STAGING_EXEC_HEALTH_URL%/}/__health__"

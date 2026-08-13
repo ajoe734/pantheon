@@ -17,7 +17,10 @@ from ..dev_bridge_inbox import (
 from ..dev_bridge_models import BridgeActor, BridgeTask, DevTaskPacket
 from ..dev_bridge_models import BridgeDispatchResult, TaskDispatchRecord
 from ..dev_bridge_signer import packet_digest, public_key_environment, sign_packet
-from .dev_bridge_test_support import write_materializing_ai_status
+from .dev_bridge_test_support import (
+    authoritative_test_runtime_env,
+    write_materializing_ai_status,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -54,6 +57,12 @@ def _write_fake_repo(tmp_path: Path) -> Path:
     repo_root.mkdir()
     write_materializing_ai_status(repo_root)
     return repo_root
+
+
+def _cli_env(repo_root: Path) -> dict[str, str]:
+    env = {**os.environ, "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": PUBLIC_KEYS_JSON}
+    env.update(authoritative_test_runtime_env(repo_root))
+    return env
 
 
 def _assert_single_batch_materialization(repo_root: Path, *, packet_id: str) -> None:
@@ -125,27 +134,10 @@ def _copy_cli_to_isolated_worktree(tmp_path: Path, script: Path) -> tuple[Path, 
 def _isolated_worktree_env(repo_root: Path) -> dict[str, str]:
     bff_dir = REPO_ROOT / "services" / "control-plane" / "bff"
     inherited_pythonpath = os.environ.get("PYTHONPATH")
-    env = {
-        **os.environ,
-        "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": PUBLIC_KEYS_JSON,
-        "PANTHEON_STATUS_ROOT": str(repo_root),
-        "PYTHONPATH": os.pathsep.join(
-            part for part in (str(bff_dir), inherited_pythonpath) if part
-        ),
-    }
-    for name in (
-        "PANTHEON_COMMAND_ROOT",
-        "PANTHEON_COMMAND_RUNTIME_SHA",
-        "PANTHEON_COMMAND_REMOTE",
-        "PANTHEON_COMMAND_BASE_REF",
-        "PANTHEON_STATUS_COMMAND_ROOT",
-        "PANTHEON_STATUS_COMMAND_SHA",
-        "PANTHEON_STATUS_COMMAND_REMOTE",
-        "PANTHEON_STATUS_COMMAND_BASE_REF",
-        "PANTHEON_TASK_STATE_STORE_MODE",
-        "PANTHEON_TASK_STATE_EVENT_LOG",
-    ):
-        env.pop(name, None)
+    env = _cli_env(repo_root)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(bff_dir), inherited_pythonpath) if part
+    )
     return env
 
 
@@ -158,7 +150,7 @@ def test_queue_cli_accepts_dev_docs_generate_envelope(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    env = {**os.environ, "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": PUBLIC_KEYS_JSON}
+    env = _cli_env(repo_root)
     result = subprocess.run(
         [
             sys.executable,
@@ -186,7 +178,7 @@ def test_drain_cli_materializes_queued_packet(tmp_path: Path) -> None:
     signed = sign_packet(_make_packet("pkt_inbox_cli_drain"), key_store={"assistant-bridge-dev": TEST_KEY})
     packet_path = tmp_path / "packet.json"
     packet_path.write_text(json.dumps({"taskPacket": signed.model_dump(mode="json", by_alias=True)}), encoding="utf-8")
-    env = {**os.environ, "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": PUBLIC_KEYS_JSON}
+    env = _cli_env(repo_root)
 
     queue_result = subprocess.run(
         [
@@ -299,7 +291,7 @@ def test_queue_cli_serializes_concurrent_writers(tmp_path: Path) -> None:
         json.dumps({"taskPacket": signed.model_dump(mode="json", by_alias=True)}),
         encoding="utf-8",
     )
-    env = {**os.environ, "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": PUBLIC_KEYS_JSON}
+    env = _cli_env(repo_root)
     cmd = [
         sys.executable,
         str(QUEUE_SCRIPT),
@@ -337,7 +329,7 @@ def test_drain_cli_serializes_concurrent_drainers(tmp_path: Path) -> None:
         json.dumps({"taskPacket": signed.model_dump(mode="json", by_alias=True)}),
         encoding="utf-8",
     )
-    env = {**os.environ, "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": PUBLIC_KEYS_JSON}
+    env = _cli_env(repo_root)
     queue_result = subprocess.run(
         [
             sys.executable,

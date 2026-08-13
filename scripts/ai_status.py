@@ -102,13 +102,6 @@ from rewrite.task_state_store import (
     snapshot_transaction,
 )
 from rewrite import task_machine
-from canonical_mutation_assertion import (
-    ASSERTION_ENV as OPERATOR_ASSERTION_ENV,
-    DEV_BRIDGE_CONSUMED_KEY,
-    migrate_legacy_consumed_ledgers,
-    verify_and_consume as verify_and_consume_operator_assertion,
-    OPERATOR_ACTIONS as OPERATOR_ASSERTION_ACTIONS,
-)
 from common import (
     ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
@@ -155,9 +148,26 @@ GLOBAL_STATUS_LOCK_ORDER = (
 _ACTIVITY_TRANSACTION_LOCAL = local()
 _TASK_STATE_TRANSACTION_LOCAL = local()
 _STATUS_COMMAND_LEASE_LOCAL = local()
-_OPERATOR_ASSERTION_LOCAL = local()
 _DEV_BRIDGE_MATERIALIZATION_LOCAL = local()
 _EXTERNAL_MUTATION_PREFLIGHT_LOCAL = local()
+LOCAL_HUMAN_OPS_ENV = "PANTHEON_LOCAL_HUMAN_OPS"
+LOCAL_HUMAN_OPS_ACTIONS = frozenset(
+    {
+        "assign",
+        "reopen",
+        "note",
+        "reconcile_merged_done",
+        "supersede",
+        "sync",
+        "archive_migrate",
+        "archive_correct_review_file",
+    }
+)
+DEV_BRIDGE_CONSUMED_KEY = "consumed_dev_bridge_packets"
+LEGACY_OPERATOR_ASSERTION_KEYS = (
+    "consumed_operator_assertions",
+    "consumed_canonical_mutation_assertions",
+)
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -439,23 +449,25 @@ def _clear_status_command_lease_binding() -> None:
         pass
 
 
-def _clear_operator_assertion_binding() -> None:
-    try:
-        delattr(_OPERATOR_ASSERTION_LOCAL, "binding")
-    except AttributeError:
-        pass
-
-
-def operator_assertion_audit_fields() -> dict[str, Any]:
-    binding = getattr(_OPERATOR_ASSERTION_LOCAL, "binding", None)
-    if not isinstance(binding, Mapping):
-        return {}
-    return {
-        "operator_id": binding["operator_id"],
-        "control_activation_id": binding["control_activation_id"],
-        "operator_assertion_id": binding["assertion_id"],
-        "operator_reason": binding["reason"],
+def local_human_ops_requested() -> bool:
+    if str(os.environ.get("ORCH_RUN_ID") or "").strip():
+        return False
+    return str(os.environ.get(LOCAL_HUMAN_OPS_ENV) or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
     }
+
+
+def local_human_ops_audit_fields() -> dict[str, Any]:
+    if not local_human_ops_requested():
+        return {}
+    fields: dict[str, Any] = {"operator_mode": "local_human_ops"}
+    reason = str(os.environ.get("HUMAN_OPS_REASON") or "").strip()
+    if reason:
+        fields["operator_reason"] = reason
+    return fields
 
 
 def _validated_status_command_worker_lease(
@@ -783,16 +795,16 @@ def validate_active_status_command_lease(
     actor = current_actor()
 
     if not run_id:
-        if str(os.environ.get(OPERATOR_ASSERTION_ENV) or "").strip():
-            if command not in OPERATOR_ASSERTION_ACTIONS:
+        if local_human_ops_requested():
+            if command not in LOCAL_HUMAN_OPS_ACTIONS:
                 raise RuntimeError(
-                    f"operator assertions cannot authorize {command}; "
-                    "allowed actions are assign, reopen, note, and reconcile_merged_done"
+                    f"local Human/Ops cannot authorize {command}; allowed actions are "
+                    + ", ".join(sorted(LOCAL_HUMAN_OPS_ACTIONS))
                 )
             return
         raise RuntimeError(
-            "canonical mutation requires an exact active worker lease or a "
-            "BFF-issued operator assertion"
+            "canonical mutation requires an exact active worker lease or explicit "
+            f"local Human/Ops mode ({LOCAL_HUMAN_OPS_ENV}=1)"
         )
 
     config = config_snapshot if isinstance(config_snapshot, dict) else load_config()
@@ -1463,10 +1475,7 @@ def active_agent_name(name: str | None) -> str:
 
 
 def current_actor(default: str = "Codex") -> str:
-    if (
-        not str(os.environ.get("ORCH_RUN_ID") or "").strip()
-        and str(os.environ.get(OPERATOR_ASSERTION_ENV) or "").strip()
-    ):
+    if local_human_ops_requested():
         return "Human/Ops"
     return canonical_agent_name(os.environ.get("AI_NAME", default))
 
@@ -3172,7 +3181,15 @@ def validate_state(state: dict[str, Any]) -> None:
         if task["owner"] == task["reviewer"]:
             raise SystemExit(f"Task {task['id']} has identical owner and reviewer")
         if task["status"] == "blocked" and not task.get("waiting_for"):
-            raise SystemExit(f"Blocked task {task['id']} is missing waiting_for")
+            block_reason = task.get("block_reason")
+            if not (
+                isinstance(block_reason, dict)
+                and str(block_reason.get("kind") or "").strip()
+                and str(block_reason.get("required_action") or "").strip()
+            ):
+                raise SystemExit(
+                    f"Blocked task {task['id']} is missing waiting_for or a structured block_reason"
+                )
     for blocker in state.get("blockers", []):
         ensure_agent(blocker["owner"])
         ensure_agent(blocker["waiting_for"])
@@ -5625,13 +5642,9 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             raise SystemExit(
                 "Only Human/Ops may change an existing task assignment."
             )
-        operator_binding = getattr(_OPERATOR_ASSERTION_LOCAL, "binding", None)
         assignment_reason = (
-            str(operator_binding.get("reason") or "").strip()
-            if isinstance(operator_binding, Mapping)
-            else ""
-        ) or (
             os.environ.get("TASK_ASSIGN_REASON", "").strip()
+            or os.environ.get("HUMAN_OPS_REASON", "").strip()
             or assignment_next
             or "Human/Ops updated the current runtime assignment."
         )
@@ -5688,7 +5701,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
                 "generation": task["generation"],
             }
         )
-    event.update(operator_assertion_audit_fields())
+    event.update(local_human_ops_audit_fields())
     append_log(event)
 
 
@@ -5764,7 +5777,7 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
             "type": "note",
             "task_id": task_id,
             "message": message,
-            **operator_assertion_audit_fields(),
+            **local_human_ops_audit_fields(),
         }
     )
 
@@ -5817,7 +5830,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             "type": "reopen",
             "task_id": task_id,
             "message": message,
-            **operator_assertion_audit_fields(),
+            **local_human_ops_audit_fields(),
             **(
                 {GITHUB_REVIEW_BRIDGE_KEY: dict(github_review_bridge)}
                 if github_review_bridge
@@ -6702,8 +6715,11 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     owner = canonical_agent_name(task.get("owner"))
     reviewer = canonical_agent_name(task.get("reviewer"))
-    if actor not in {owner, reviewer}:
-        raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can supersede {task_id}")
+    if actor not in {owner, reviewer, "Human/Ops"}:
+        raise SystemExit(
+            f"Only the owner ({owner}), reviewer ({reviewer}), or Human/Ops "
+            f"can supersede {task_id}"
+        )
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "supersede")
     task["terminal_outcome"] = TASK_TERMINAL_SUPERSEDED
@@ -6722,6 +6738,7 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
             "type": "superseded",
             "task_id": task_id,
             "message": message,
+            **local_human_ops_audit_fields(),
             **({"replacement_task_id": replacement_task_id} if replacement_task_id else {}),
         }
     )
@@ -8053,6 +8070,27 @@ def load_dev_bridge_materialize_batch(path_value: str) -> dict[str, Any]:
     }
 
 
+def dev_bridge_replay_ledger(state: dict[str, Any]) -> dict[str, Any]:
+    """Return the sole dev-bridge replay ledger and retire operator ledgers."""
+
+    current = state.get(DEV_BRIDGE_CONSUMED_KEY)
+    if current is None:
+        current = {}
+        state[DEV_BRIDGE_CONSUMED_KEY] = current
+    if not isinstance(current, dict):
+        raise ValueError("Dev bridge replay ledger must be a JSON object")
+
+    legacy = state.pop(LEGACY_OPERATOR_ASSERTION_KEYS[0], None)
+    if legacy is not None:
+        if not isinstance(legacy, Mapping):
+            raise ValueError("Legacy operator replay ledger must be a JSON object")
+        for receipt_id, receipt in legacy.items():
+            if str(receipt_id).startswith("bridge:"):
+                current.setdefault(str(receipt_id), deepcopy(receipt))
+    state.pop(LEGACY_OPERATOR_ASSERTION_KEYS[1], None)
+    return current
+
+
 def verify_signed_dev_bridge_packet(
     batch: Mapping[str, Any], *, state: dict[str, Any] | None = None
 ) -> None:
@@ -8140,7 +8178,7 @@ def verify_signed_dev_bridge_packet(
                 )
     if state is not None:
         try:
-            _operator_consumed, consumed = migrate_legacy_consumed_ledgers(state)
+            consumed = dev_bridge_replay_ledger(state)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
         if state.get(DEV_BRIDGE_CONSUMED_KEY) is not consumed:
@@ -8373,90 +8411,6 @@ def canonical_external_mutation_preflight(
 
     # No runtime, task-state, or audit lock is held beyond this point.
     return prepare_external_mutation_preflight(command, task_snapshot, args)
-
-
-def _operator_assignment_binding(
-    task: Mapping[str, Any] | None,
-    command: str,
-    args: list[str],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    old = (
-        {
-            "owner": str(task.get("owner") or ""),
-            "reviewer": str(task.get("reviewer") or ""),
-            "status": str(task.get("status") or ""),
-            "generation": task_assignment_generation(task),
-        }
-        if isinstance(task, Mapping)
-        else {}
-    )
-    new = dict(old)
-    if command == "assign":
-        next_generation = task_assignment_generation(task) + 1 if task is not None else 1
-        new = {
-            "owner": canonical_agent_name(args[1]) if len(args) > 1 else "",
-            "reviewer": canonical_agent_name(args[2]) if len(args) > 2 else "",
-            "status": old.get("status") or "todo",
-            "generation": next_generation,
-        }
-    elif task is not None and command in {
-        "start", "progress", "reopen", "handoff", "blocker", "done",
-        "reconcile_merged_done", "supersede", "approve",
-    }:
-        action = {"blocker": "block"}.get(command, command)
-        try:
-            new["status"] = task_machine.transition(task.get("status"), action).value
-        except task_machine.TransitionError:
-            # The lifecycle command remains the source of the user-facing
-            # transition failure; auth still binds to the submitted request.
-            new["status"] = old["status"]
-    return old, new
-
-
-def authorize_operator_assertion_if_needed(
-    state: dict[str, Any], command: str, args: list[str]
-) -> None:
-    """Consume an operator assertion inside the canonical task transaction."""
-
-    if str(os.environ.get("ORCH_RUN_ID") or "").strip():
-        return
-    raw = str(os.environ.get(OPERATOR_ASSERTION_ENV) or "").strip()
-    if not raw:
-        raise RuntimeError("BFF-issued operator assertion is required")
-    try:
-        assertion = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("BFF-issued operator assertion is invalid JSON") from exc
-    task_id = _command_task_id(command, args)
-    if not task_id:
-        raise RuntimeError(
-            f"operator assertion cannot authorize unscoped mutation command: {command}"
-        )
-    task = get_task(state, task_id)
-    if command == "assign" and task is None:
-        raise RuntimeError(
-            "operator assertions may reassign existing tasks but cannot create source tasks; "
-            "new tasks require a signed dev-bridge packet"
-        )
-    old_assignment, new_assignment = _operator_assignment_binding(task, command, args)
-    try:
-        verify_and_consume_operator_assertion(
-            assertion,
-            state=state,
-            task_id=task_id,
-            action=command,
-            args=args,
-            old_assignment=old_assignment,
-            new_assignment=new_assignment,
-        )
-    except ValueError as exc:
-        raise RuntimeError(f"operator assertion rejected: {exc}") from exc
-    _OPERATOR_ASSERTION_LOCAL.binding = {
-        "assertion_id": str(assertion["assertion_id"]),
-        "operator_id": str(assertion["operator_id"]),
-        "control_activation_id": str(assertion["control_activation_id"]),
-        "reason": str(assertion["reason"]),
-    }
 
 
 def main(argv: list[str]) -> int:
@@ -8784,22 +8738,19 @@ def main(argv: list[str]) -> int:
     )
 
     def run_mutation() -> dict[str, Any] | None:
-        _clear_operator_assertion_binding()
-        try:
-            state = load_state()
-            authorize_operator_assertion_if_needed(state, command, args)
-            validate_bound_status_command_task_authority(state, command, args)
-            recover_status_archive_outbox(state)
-            recover_status_activity_outbox(state)
-            with bound_external_mutation_preflight(external_preflight):
-                with buffer_activity_events():
-                    command_result = commands[command](state, args)
-                    if command_result is False:
-                        return None
-                    sync_all(state, refresh_views=False)
-            return deepcopy(state)
-        finally:
-            _clear_operator_assertion_binding()
+        state = load_state()
+        if local_human_ops_requested():
+            dev_bridge_replay_ledger(state)
+        validate_bound_status_command_task_authority(state, command, args)
+        recover_status_archive_outbox(state)
+        recover_status_activity_outbox(state)
+        with bound_external_mutation_preflight(external_preflight):
+            with buffer_activity_events():
+                command_result = commands[command](state, args)
+                if command_result is False:
+                    return None
+                sync_all(state, refresh_views=False)
+        return deepcopy(state)
 
     committed_state: dict[str, Any] | None
     config = load_config()

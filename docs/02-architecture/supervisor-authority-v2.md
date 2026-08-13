@@ -62,34 +62,26 @@ The following ownership rules are normative:
 
 ### 2.1 Human/Ops authority
 
-An authenticated Human/Ops actor may revoke or replace the current owner or
-reviewer through the same TaskStore assignment-transition API used by governed
-recovery. This is a control-plane operation, not an implementation dispatch and
-not a source-code bypass.
+An explicitly invoked local Human/Ops actor may create a task, revoke or replace
+the current owner or reviewer, reopen or supersede a task, and record an audited
+note through the canonical TaskStore command API. The repository entry point is
+`scripts/human-ops-status.sh`; it is independent of product BFF login, bearer
+tokens, control mode, and the supervisor dispatch loop.
 
-The transition must be compare-and-swap bound to the current task generation
-and assignment. It records the actor, reason, old assignment, new assignment,
-and the disposition of any matching delivery intent or execution lease. A
-revoke never edits JSON directly, never kills a process by an unverified PID,
-and never makes an unrelated generation terminal. If an exact-generation
-worker is active, the assignment commit revokes its authority immediately; its
-exact lease still blocks new delivery until Worker Manager drains or
-terminates that process generation.
+The transition runs inside the same TaskStore transaction as worker and
+recovery mutations. Assignment changes increment the task generation and
+record the actor, reason, old assignment, and new assignment. A revoke never
+edits JSON directly, never kills a process by an unverified PID, and never
+makes an unrelated generation terminal. If an exact-generation worker is
+active, the assignment commit revokes its authority immediately; its exact
+lease still blocks new delivery until Worker Manager drains or terminates that
+process generation.
 
-Repository policy may require authentication and audit for this API. It must
-not reject the operation merely because the actor is outside the supervisor or
-because the task was originally materialized by a governed packet. Protecting
-Pantheon development means protecting source delivery and deployment; it does
-not mean trapping an erroneous runtime assignment forever.
-
-Authentication is a short-lived Ed25519 assertion issued only after BFF
-control-mode, operator-role, and MFA checks. The BFF alone holds the private
-key; TaskStore writers receive the trusted public map and workers receive
-neither signing key. The assertion is bound to action, arguments, task
-generation, old/new assignment, operator, control activation, reason, expiry,
-and a one-shot nonce. Source task materialization uses a distinct key and a
-distinct replay ledger; the two capabilities cannot evict or replay each
-other's receipts.
+The explicit local CLI selection is the Human/Ops authorization boundary. It
+does not grant owner/reviewer-only implementation actions such as progress,
+handoff, approval, or completion. Product-originated Management AI packets may
+still enter through the signed dev bridge, but that optional product ingress
+does not control or block local canonical maintenance.
 
 ## 3. Task lifecycle
 
@@ -154,18 +146,18 @@ Claude allow rule and cannot authorize a second matching invocation.
     ownership or lease authority.
 15. Retry never launches a worker. It returns the existing intent to the one
     delivery queue, where all current eligibility and capacity gates run again.
-16. Private source/operator signing keys exist only in the BFF secret boundary;
+16. Private source-packet signing keys exist only in the BFF secret boundary;
     supervisor, worker, git, and canonical-writer subprocesses cannot inherit
     them.
-17. Source-packet and Human/Ops assertion replay ledgers are independent and
-    bounded within their own capability domains.
+17. The source-packet replay ledger is bounded and belongs only to the optional
+    dev-bridge ingress; local Human/Ops maintenance needs no signing ledger.
 18. A non-remembered tool approval permits exactly one matching invocation in
     the exact task generation and never mutates global provider settings.
 19. A cycle refreshes `last_successful_loop_at` only if poll, plan, reserve,
     delivery, and finalization all completed; a critical phase exception stamps
     the cycle degraded and cannot satisfy promotion freshness.
-20. Persistent watchdog restart loads the two public verifier maps from one
-    mode-600 public-only environment file. Its final spawn boundary rejects
+20. Persistent watchdog restart loads the dev-bridge public verifier map from
+    one mode-600 public-only environment file. Its final spawn boundary rejects
     missing maps and strips every source/operator private key and key id.
 
 ## 5. Authoritative runtime call path

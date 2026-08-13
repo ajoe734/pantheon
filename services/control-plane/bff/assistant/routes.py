@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -13,14 +12,6 @@ from fastapi import APIRouter, Body, Header, HTTPException
 from pydantic import ValidationError
 
 from models import ErrorCode
-
-_ORCHESTRATOR_DIR = Path(__file__).resolve().parents[4] / ".orchestrator"
-if str(_ORCHESTRATOR_DIR) not in sys.path:
-    sys.path.insert(0, str(_ORCHESTRATOR_DIR))
-from canonical_mutation_assertion import (
-    OPERATOR_ACTIONS as CANONICAL_MUTATION_OPERATOR_ACTIONS,
-    issue_assertion as issue_mutation_assertion,
-)
 
 from .context_composer import AssistantContextPolicyError
 from .command_idempotency import (
@@ -1142,79 +1133,6 @@ def create_assistant_router(
             if transaction is not None:
                 transaction.complete(response)
             return response
-
-    @router.post("/canonical-mutations/assert", status_code=201)
-    async def issue_canonical_mutation_operator_assertion(
-        payload: dict = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-    ) -> dict[str, Any]:
-        """Issue one short-lived, exact task mutation assertion."""
-
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        control_status = _require_active_control_mode(
-            identity, _control_mode_store, bff_error=bff_error
-        )
-        _require_canonical_mutation_capability(identity, bff_error=bff_error)
-        task_id = str(payload.get("taskId") or "").strip()
-        action = str(payload.get("action") or "").strip()
-        reason = str(payload.get("reason") or "").strip()
-        args = payload.get("args")
-        old_assignment = payload.get("oldAssignment")
-        new_assignment = payload.get("newAssignment")
-        if (
-            not task_id
-            or not action
-            or not reason
-            or not isinstance(args, list)
-            or not all(isinstance(item, str) for item in args)
-            or not isinstance(old_assignment, dict)
-            or not isinstance(new_assignment, dict)
-        ):
-            _raise_error(
-                bff_error,
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Canonical mutation assertion request is invalid",
-                "taskId, action, string args, oldAssignment, newAssignment and reason are required",
-                field="payload",
-            )
-        if action not in CANONICAL_MUTATION_OPERATOR_ACTIONS:
-            _raise_error(
-                bff_error,
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Canonical mutation action is not Human/Ops authority",
-                "Only assignment, reopen, audited note, and verified merged-delivery reconciliation actions may use an operator assertion",
-                field="action",
-            )
-        activation_id = str(
-            control_status.get("activation_id")
-            or control_status.get("activationId")
-            or ""
-        )
-        try:
-            assertion = issue_mutation_assertion(
-                operator_id=str(getattr(identity, "operator_id", None) or ""),
-                control_activation_id=activation_id,
-                task_id=task_id,
-                action=action,
-                args=list(args),
-                old_assignment=old_assignment,
-                new_assignment=new_assignment,
-                reason=reason,
-                ttl_seconds=min(int(payload.get("ttlSeconds") or 120), 300),
-            )
-        except (TypeError, ValueError) as exc:
-            _raise_error(
-                bff_error,
-                503,
-                ErrorCode.PRECONDITION_FAILED,
-                "Canonical mutation assertion signer is unavailable",
-                str(exc),
-                field="signing_key",
-            )
-        return {"data": assertion}
 
     # ------------------------------------------------------------------
     # Governed tool contract routes (ASST-INTEG-004)

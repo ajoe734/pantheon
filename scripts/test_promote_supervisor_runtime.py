@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -110,6 +111,40 @@ def test_stop_refuses_a_stale_pid_file_for_an_unrelated_process(
 
     with pytest.raises(ValueError, match="does not identify a supervisor"):
         promotion.stop_existing_supervisor(pid_path, timeout_seconds=1)
+
+
+def test_launch_detaches_supervisor_output_from_the_calling_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def popen(argv: list[str], **kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        output = kwargs["stdout"]
+        assert hasattr(output, "write")
+        output.write(b"launched\n")
+        output.flush()
+        return SimpleNamespace(pid=42)
+
+    monkeypatch.setattr(promotion.subprocess, "Popen", popen)
+    identity = {
+        "root": str(tmp_path),
+        "head": "a" * 40,
+        "repository": "https://github.com/ajoe734/pantheon.git",
+    }
+
+    pid = promotion.launch_v2_supervisor(
+        {"watchdog": {"supervisor_command": ["python3", "supervisor.py"]}},
+        identity=identity,
+        status_root=tmp_path,
+    )
+
+    log_path = tmp_path / ".orchestrator" / "logs" / "supervisor.log"
+    assert pid == 42
+    assert captured["stderr"] == subprocess.STDOUT
+    assert log_path.read_bytes() == b"launched\n"
+    assert log_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_replace_has_only_stop_install_launch_and_never_rolls_back(
