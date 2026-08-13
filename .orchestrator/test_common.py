@@ -501,58 +501,6 @@ class ClaudeAuthTests(unittest.TestCase):
             self.assertIsNone(refreshed)
 
 
-class RecentTaskActivityTests(unittest.TestCase):
-    def test_automatic_task_brief_never_scans_global_activity_history(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            status_file = root / "ai-status.json"
-            status_file.write_text(
-                json.dumps(
-                    {
-                        "tasks": [
-                            {
-                                "id": "TASK-1",
-                                "title": "Bounded dispatch context",
-                                "status": "in_progress",
-                                "owner": "Codex",
-                                "reviewer": "Claude",
-                                "depends_on": [],
-                                "artifacts": [],
-                                "next": "Finish without global history scan",
-                            }
-                        ]
-                    }
-                ),
-                encoding="utf-8",
-            )
-            from rewrite import task_state_store
-
-            event_log = root / "task-state-events.jsonl"
-            task_state_store.append_state_commit(
-                event_log,
-                json.loads(status_file.read_text(encoding="utf-8")),
-                source="test",
-            )
-            brief_path = root / "task-brief.md"
-            config = {
-                "paths": {
-                    "status_file": str(status_file),
-                    "activity_log": str(root / "huge-activity-log.jsonl"),
-                },
-                "task_state_store": {
-                    "mode": "authoritative",
-                    "event_log": str(event_log),
-                },
-            }
-
-            with mock.patch.object(common, "task_brief_path", return_value=brief_path):
-                result = common.write_task_brief(config, "TASK-1")
-
-            self.assertEqual(result, brief_path)
-            rendered = brief_path.read_text(encoding="utf-8")
-            self.assertIn("Finish without global history scan", rendered)
-            self.assertIn("Omitted from automatic dispatch context", rendered)
-
 class StableCanonicalLockPathTests(unittest.TestCase):
     def test_data_leaf_symlinks_are_rejected_before_lock_acquisition(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

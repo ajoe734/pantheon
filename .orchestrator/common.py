@@ -30,11 +30,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
-STATUS_OUTBOX_VISIBILITY_ENABLED_ENV = "PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED"
-TASK_BRIEFS_DIR = ORCHESTRATOR_DIR / "task-briefs"
-EVIDENCE_DIR = ORCHESTRATOR_DIR / "evidence"
-CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.md"
-WORKER_ANCHOR_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "worker-anchor-commit.md"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
@@ -1133,7 +1128,6 @@ ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED = "superseded-by-legacy-rotation"
 ACTIVITY_ROTATION_RESOLUTION_TYPE_LEGACY_SUPERSEDED = (
     "legacy-rotation-superseded-by-content-rotation"
 )
-ACTIVITY_ROTATION_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 ACTIVITY_ROTATION_WRITER_GUARD_ENV = "PANTHEON_ACTIVITY_ROTATION_PAUSE"
 ACTIVITY_LOG_STRANDED_V1_INTENT_ERROR = (
     "stranded schema-v1 activity rotation intent requires the reviewed "
@@ -4478,32 +4472,6 @@ def spawn_background_process(
     return process, log_path
 
 
-def snapshot_task(task: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
-    payload = {
-        "id": task.get(schema["task_id_field"]),
-        "status": task.get(schema["status_field"]),
-        "owner": task.get(schema["assignee_field"]),
-        "reviewer": task.get(schema["reviewer_field"]),
-        "artifacts": list(task.get(schema.get("artifacts_field", "artifacts"), []) or []),
-        "next": task.get(schema.get("next_field", "next")),
-        "last_update": task.get(schema.get("last_update_field", "last_update")),
-    }
-    for key in (
-        "task_class",
-        "auto_generated",
-        "helper_parent",
-        "helper_kind",
-        "mutates_canonical",
-        "auto_created_by",
-        "source_plane",
-        "source_ref",
-        "materialization_ref",
-    ):
-        if key in task:
-            payload[key] = task.get(key)
-    return payload
-
-
 def load_status(config: dict[str, Any]) -> dict[str, Any]:
     runtime_env = task_state_store_runtime_env(config)
     from rewrite import task_state_store
@@ -4537,15 +4505,6 @@ def write_status(config: dict[str, Any], payload: dict[str, Any], *, source: str
     write_json(config_path(config, "status_file"), payload)
 
 
-def selected_shared_files(config: dict[str, Any]) -> list[Path]:
-    files: list[Path] = []
-    for key in ("status_file", "current_work", "activity_log", "dashboard"):
-        path = config.get("paths", {}).get(key)
-        if path:
-            files.append(config_path(config, key))
-    return files
-
-
 def compact_whitespace(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
@@ -4574,18 +4533,6 @@ def approval_tool_input_preview(tool_input: Any, *, limit: int = 220) -> str:
         preview = compact_whitespace(stable_json(tool_input))
         return preview[:limit]
     return compact_whitespace(tool_input)[:limit]
-
-
-def unique_strings(items: list[str]) -> list[str]:
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        value = str(item or "").strip()
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 def summarize_failure_reason(reason: str | None, provider: str | None = None, *, limit: int = 180) -> dict[str, str]:
@@ -4630,118 +4577,6 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
     if "an unexpected critical error occurred" in lowered:
         return {"kind": "unknown_critical", "summary": "Unexpected critical provider failure", "detail": raw[: max(420, limit)]}
     return {"kind": "terminal", "summary": raw[:limit], "detail": raw[: max(420, limit)]}
-
-
-def task_brief_path(task_id: str | None) -> Path:
-    slug = normalize_agent_id(task_id or "unknown-task") or "unknown-task"
-    return TASK_BRIEFS_DIR / f"{slug}.md"
-
-
-def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:
-    from task_archive import TaskResolver
-
-    if not task_id:
-        return None
-    status_path = config_path(config, "status_file", "ai-status.json")
-    with canonical_task_state_lock_file(
-        status_path,
-        shared=True,
-        nonblocking=False,
-    ):
-        status = load_status(config)
-        tasks = status.get("tasks", []) or []
-        task = next(
-            (
-                item
-                for item in tasks
-                if str(item.get("id") or "").strip() == task_id
-            ),
-            None,
-        )
-        if task is None:
-            return None
-        # Bind archive lookup to the same status root and task-state lock as the
-        # active snapshot. The supervisor may already hold this exact lock while
-        # building a dispatch event; falling back to task_archive's import-time
-        # root would acquire a peer task_state plane and violate canonical order.
-        resolver = TaskResolver(tasks, status_root=status_path.parent)
-        deps = [resolver.get(dep_id) for dep_id in (task.get("depends_on") or [])]
-        deps = [item for item in deps if item]
-        dependency_lines = [
-            (
-                f"- {dep.get('id')}: {resolver.dependency_status(dep.get('id'))} · "
-                f"{compact_whitespace(dep.get('title') or dep.get('summary_zh') or '-')}"
-            )
-            for dep in deps
-        ]
-    source_ref = task.get("source_ref") if isinstance(task.get("source_ref"), dict) else {}
-    source_plane = str(task.get("source_plane") or "").strip()
-    path = task_brief_path(task_id)
-    ensure_parent(path)
-    body = [
-        f"# Task Brief: {task_id}",
-        "",
-        "This file is generated by the orchestrator for task-scoped execution context.",
-        "Treat `ai-status.json` as the durable execution source of truth only when you need to verify or update state.",
-        "Do not read `current-work.md` by default for implementation context.",
-        "",
-        "## Task",
-        f"- Title: {task.get('title') or '-'}",
-        f"- Status: {task.get('status') or '-'}",
-        f"- Owner: {task.get('owner') or '-'}",
-        f"- Reviewer: {task.get('reviewer') or '-'}",
-        f"- Phase: {task.get('phase') or '-'}",
-        f"- Last update: {task.get('last_update') or '-'}",
-        f"- Next: {compact_whitespace(task.get('next') or '-')}",
-        "",
-        "## Summary",
-        f"{task.get('summary_zh') or '-'}",
-        "",
-        "## Dependencies",
-    ]
-    if dependency_lines:
-        body.extend(dependency_lines)
-    else:
-        body.append("- none")
-    body.extend(["", "## Artifacts"])
-    artifacts = [str(item).strip() for item in (task.get("artifacts") or []) if str(item).strip()]
-    body.extend([f"- {item}" for item in artifacts] or ["- none"])
-    body.extend(["", "## Recent Task Activity"])
-    body.append(
-        "- Omitted from automatic dispatch context. The canonical task row above "
-        "is the bounded handoff context; query validated activity history only for "
-        "targeted forensic work."
-    )
-    body.extend(["", "## Relevant Canonical Files", "- AI_COLLABORATION_GUIDE.md", "- ai-status.json"])
-    if source_plane or source_ref:
-        body.extend(["", "## Planning Origin"])
-        body.append(f"- Source plane: {source_plane or '-'}")
-        if source_ref:
-            for label, key in (
-                ("Session", "session_id"),
-                ("Phase", "phase"),
-                ("Profile", "profile"),
-                ("Planning dir", "planning_dir"),
-                ("Session file", "session_file"),
-                ("Consensus packet", "consensus_packet"),
-                ("Execution materialization", "execution_materialization"),
-            ):
-                value = str(source_ref.get(key) or "").strip()
-                if value:
-                    body.append(f"- {label}: {value}")
-    body.extend([f"- {item}" for item in artifacts[:6] if item not in {"AI_COLLABORATION_GUIDE.md", "ai-status.json"}])
-    body.extend(
-        [
-            "",
-            "## Working Rules",
-            "- Use scripts/ai-status.sh or python3 scripts/ai_status.py for status changes.",
-            "- Keep execution updates short and structured.",
-            "- If you need raw provider/debug details, ask for the relevant runtime log or evidence ref instead of scanning global summaries.",
-            "",
-        ]
-    )
-    path.write_text("\n".join(body), encoding="utf-8")
-    return path
 
 
 def write_failure_evidence(
