@@ -1,0 +1,16 @@
+{
+  "task_id": "PRODUCT-V2-AGORA-LEARNING-CLOSURE-R2-20260813",
+  "status": "verified",
+  "timestamp": "2026-08-13T03:17:00Z",
+  "verification_summary": {
+    "agora_isolation_and_winner_branch": "services/control-plane/tests/agora/ PASSED",
+    "agora_to_policy_learning": "services/policy-learning/agora_dataset_authority.py PASSED (tenant-scoped, authenticated, read-only dataset extraction)",
+    "policy_learning_to_consultation": "services/consultation/sponsor_decision_bridge.py PASSED (governance proposal payload mapping and risk-level validation)"
+  },
+  "conclusions": [
+    "Agora winner branch & isolation matrices remain fully passing.",
+    "Policy learning dataset authority properly consumes Agora evidence with strict authentication and tenant scoping.",
+    "Consultation sponsor decision bridge correctly maps decisions to downstream governance proposals.",
+    "No code gaps found on current origin/dev tip."
+  ]
+}
