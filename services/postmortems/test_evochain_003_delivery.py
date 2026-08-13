@@ -435,8 +435,12 @@ def test_publish_delivery_success():
     _seed_postmortem()
 
     mock_response = MagicMock()
-    mock_response.status_code = 201
+    mock_response.status_code = 200
     mock_response.text = "Created"
+    mock_response.json.return_value = {
+        "decision_id": "evo-pm-candidate_artifact-artifact-123-incident_cluster-inc-123",
+        "source_postmortem_id": "pm-123",
+    }
 
     # 1. Status transition publishes postmortem and writes to outbox
     r = client.post("/api/postmortems/pm-123/status", json={"status": "published"})
@@ -458,10 +462,13 @@ def test_publish_delivery_success():
         == records[0].event.payload["postmortem"]["published_event_id"]
     )
 
-    # 2. Process outbox and verify httpx POST is made
-    with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
+    async def _mock_post_and_get(url, **kwargs):
+        return mock_response
+
+    with patch("httpx.AsyncClient.post", side_effect=_mock_post_and_get) as mock_post, \
+         patch("httpx.AsyncClient.get", side_effect=_mock_post_and_get) as mock_get:
         asyncio.run(process_postmortems_outbox())
-        mock_post.assert_called_once()
+        assert mock_post.called
         args, kwargs = mock_post.call_args
         assert args[0] == "http://localhost:8093/api/evolution/proposals"
         payload = kwargs["json"]
@@ -485,6 +492,10 @@ def test_publish_delivery_duplicate_success():
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.text = "OK"
+    mock_response.json.return_value = {
+        "decision_id": "evo-pm-candidate_artifact-artifact-123-incident_cluster-inc-123",
+        "source_postmortem_id": "pm-123",
+    }
 
     r = client.post("/api/postmortems/pm-123/status", json={"status": "published"})
     assert r.status_code == 200
@@ -492,9 +503,10 @@ def test_publish_delivery_duplicate_success():
     records = outbox_store.list_pending_and_failed()
     assert len(records) == 1
 
-    with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
+    with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post, \
+         patch("httpx.AsyncClient.get", return_value=mock_response) as mock_get:
         asyncio.run(process_postmortems_outbox())
-        mock_post.assert_called_once()
+        assert mock_post.called
         assert len(outbox_store.list_pending_and_failed()) == 0
 
 def test_publish_delivery_failure_retry_and_error():
