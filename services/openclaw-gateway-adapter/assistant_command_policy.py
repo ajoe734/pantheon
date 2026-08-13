@@ -25,7 +25,6 @@ ASSISTANT_COMMAND_TOOL_NAME = "assistant.command"
 USER_MODE = "user"
 KERNEL_OBSERVE_MODE = "kernel_observe"
 KERNEL_DEBUG_MODE = "kernel_debug"
-KERNEL_REPAIR_MODE = "kernel_repair"
 
 HEALTH_PROBE = "health_probe"
 REPO_STATUS = "repo_status"
@@ -38,9 +37,6 @@ _MODE_COMMAND_CLASSES: Mapping[str, frozenset[str]] = {
     USER_MODE: frozenset(),
     KERNEL_OBSERVE_MODE: frozenset({HEALTH_PROBE, REPO_STATUS}),
     KERNEL_DEBUG_MODE: frozenset({HEALTH_PROBE, REPO_STATUS, CODE_SEARCH, FILE_SLICE, TEST_RUN, LOG_READ}),
-    # Repair-specific write/restart classes are owned by ASST-KERNEL-007.  This
-    # observe/debug policy only permits the diagnostic subset in repair mode.
-    KERNEL_REPAIR_MODE: frozenset({HEALTH_PROBE, REPO_STATUS, CODE_SEARCH, FILE_SLICE, TEST_RUN, LOG_READ}),
 }
 
 _COMMAND_CLASS_ALIASES = {

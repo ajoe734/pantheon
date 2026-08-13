@@ -160,11 +160,6 @@ class TestKernelEnabledGate:
         with pytest.raises(ModePolicyViolation):
             assert_kernel_allowed(AssistantMode.KERNEL_DEBUG)
 
-    def test_assert_kernel_allowed_rejects_kernel_repair_when_disabled(self, monkeypatch):
-        monkeypatch.delenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", raising=False)
-        with pytest.raises(ModePolicyViolation):
-            assert_kernel_allowed(AssistantMode.KERNEL_REPAIR)
-
     def test_assert_kernel_allowed_passes_kernel_debug_when_enabled(self, monkeypatch):
         monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
         # should not raise (capability/reason/ttl checks happen later)

@@ -103,34 +103,6 @@ class FakeDeviceAuthProcess:
         self.returncode = -9
 
 
-def _git(cwd: Path, *args: str) -> str:
-    completed = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return completed.stdout.strip()
-
-
-def _init_task_worktree(tmp_path: Path, task_id: str) -> tuple[Path, Path]:
-    remote = tmp_path / "origin.git"
-    worktree_root = tmp_path / "worktrees"
-    worktree = worktree_root / f"task-{task_id}"
-    _git(tmp_path, "init", "--bare", remote.as_posix())
-    worktree.mkdir(parents=True)
-    _git(worktree, "init")
-    _git(worktree, "config", "user.email", "assistant@example.invalid")
-    _git(worktree, "config", "user.name", "Assistant Test")
-    (worktree / "README.md").write_text("# test\n", encoding="utf-8")
-    _git(worktree, "add", "README.md")
-    _git(worktree, "commit", "-m", "initial")
-    _git(worktree, "branch", "-M", f"task/{task_id}")
-    _git(worktree, "remote", "add", "origin", remote.as_posix())
-    return worktree_root, worktree
-
-
 def test_readiness_ready_with_auth_probe(tmp_path: Path) -> None:
     calls = []
 
@@ -140,24 +112,13 @@ def test_readiness_ready_with_auth_probe(tmp_path: Path) -> None:
             return subprocess.CompletedProcess(cmd, 0, stdout="codex 1.2.3\n", stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout='{"type":"message","content":"ok"}\n', stderr="")
 
-    worktree_root = tmp_path / "worktrees"
-    worktree_root.mkdir()
-    (worktree_root / "task-demo").mkdir()
-    provider = _provider(
-        tmp_path,
-        fake_run,
-        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": worktree_root.as_posix()},
-    )
+    provider = _provider(tmp_path, fake_run)
     result = provider.readiness(auth_probe=True)
 
     assert result["ready"] is True
     assert result["status"] == "ready"
     assert result["capabilities"]["read"] is True
-    assert result["capabilities"]["repairWrite"] is True
-    assert result["repair_workspace"]["ready"] is True
-    assert result["repair_workspace"]["status"] == "ready"
-    assert result["repair_workspace"]["root"] == worktree_root.as_posix()
-    assert result["repair_workspace"]["worktreeCount"] == 1
+    assert result["capabilities"]["repairWrite"] is False
     assert result["auth_status"] == "ready"
     assert result["binary_path"] == "/usr/bin/codex"
     assert result["version"] == "codex 1.2.3"
@@ -177,27 +138,6 @@ def test_readiness_ready_with_auth_probe(tmp_path: Path) -> None:
     assert auth_cmd[-1] == "-"
     assert calls[1][1]["input"] == "Reply with exactly: ok"
     assert calls[1][1]["env"]["CODEX_HOME"] == "/home/pantheon-assistant/.codex"
-
-
-def test_readiness_reports_repair_workspace_missing_without_degrading_read_provider(tmp_path: Path) -> None:
-    def fake_run(cmd, **kwargs):
-        return subprocess.CompletedProcess(cmd, 0, stdout="codex 1.2.3\n", stderr="")
-
-    missing_root = tmp_path / "missing-worktrees"
-    provider = _provider(
-        tmp_path,
-        fake_run,
-        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": missing_root.as_posix()},
-    )
-    result = provider.readiness()
-
-    assert result["ready"] is True
-    assert result["status"] == "ready"
-    assert result["capabilities"]["read"] is True
-    assert result["capabilities"]["repairWrite"] is False
-    assert result["repair_workspace"]["ready"] is False
-    assert result["repair_workspace"]["status"] == "missing"
-    assert result["repair_workspace"]["root"] == missing_root.as_posix()
 
 
 def test_readiness_degraded_when_mount_fails(tmp_path: Path) -> None:
@@ -421,7 +361,7 @@ def test_invoke_requires_operator_id_metadata_before_exec(tmp_path: Path) -> Non
     assert calls == []
 
 
-def test_repair_mode_requires_task_worktree_metadata(tmp_path: Path) -> None:
+def test_repair_mode_is_not_available_in_the_product_adapter(tmp_path: Path) -> None:
     def fake_run(cmd, **kwargs):
         return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
 
@@ -436,133 +376,11 @@ def test_repair_mode_requires_task_worktree_metadata(tmp_path: Path) -> None:
             }
         )
 
-    assert exc_info.value.code == "CODEX_REPAIR_METADATA_REQUIRED"
+    assert exc_info.value.code == "CODEX_MODE_UNSUPPORTED"
     assert exc_info.value.status_code == 400
 
 
-def test_repair_mode_uses_workspace_write_for_task_worktree(tmp_path: Path) -> None:
-    calls = []
-    task_id = "ASST-OCGW-003"
-    root, worktree = _init_task_worktree(tmp_path, task_id)
-
-    def fake_run(cmd, **kwargs):
-        calls.append((cmd, kwargs))
-        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
-
-    provider = _provider(
-        tmp_path,
-        fake_run,
-        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": str(root)},
-    )
-    result = provider.invoke(
-        {
-            "mode": "kernel_repair",
-            "prompt": "fix it",
-            "metadata": {
-                "operator_id": "op-1",
-                "task_id": task_id,
-                "task_worktree": str(worktree),
-                "declared_scope": ["services/openclaw-gateway-adapter"],
-            },
-        }
-    )
-    cmd, kwargs = calls[0]
-    assert cmd[cmd.index("-C") + 1] == str(worktree)
-    assert "--skip-git-repo-check" in cmd
-    assert cmd[cmd.index("-s") + 1] == "workspace-write"
-    assert kwargs["cwd"] == str(worktree)
-    assert result["sandbox"] == "workspace-write"
-    assert result["workspace_class"] == "task_worktree"
-    assert result["pre_run_repair_workflow"]["clean"] is True
-    assert result["post_run_repair_workflow"]["clean"] is True
-    assert result["repair_workflow"] == result["post_run_repair_workflow"]
-    assert result["repair_workflow"]["branch"] == f"task/{task_id}"
-    assert result["repair_workflow"]["merge_target"] == "dev"
-
-
-def test_repair_mode_returns_post_run_readback_for_scoped_write(tmp_path: Path) -> None:
-    task_id = "ASST-OCGW-POST-READBACK"
-    root, worktree = _init_task_worktree(tmp_path, task_id)
-    scoped_dir = worktree / "services" / "openclaw-gateway-adapter"
-
-    def fake_run(cmd, **kwargs):
-        scoped_dir.mkdir(parents=True, exist_ok=True)
-        (scoped_dir / "sentinel.txt").write_text("scoped\n", encoding="utf-8")
-        return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"ok"}\n', stderr="")
-
-    provider = _provider(
-        tmp_path,
-        fake_run,
-        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": str(root)},
-    )
-    result = provider.invoke(
-        {
-            "mode": "kernel_repair",
-            "prompt": "write the scoped sentinel",
-            "metadata": {
-                "operator_id": "op-1",
-                "task_id": task_id,
-                "task_worktree": str(worktree),
-                "declared_scope": ["services/openclaw-gateway-adapter"],
-            },
-        }
-    )
-
-    assert result["status"] == "completed"
-    assert result["pre_run_repair_workflow"]["clean"] is True
-    post_run = result["post_run_repair_workflow"]
-    assert post_run["clean"] is False
-    assert post_run["dirty_entries"] == [
-        {
-            "index": "?",
-            "worktree": "?",
-            "path": "services/openclaw-gateway-adapter/sentinel.txt",
-        }
-    ]
-    assert result["repair_workflow"] == post_run
-
-
-def test_repair_mode_fails_closed_when_provider_writes_outside_scope(tmp_path: Path) -> None:
-    task_id = "ASST-OCGW-SCOPE-ESCAPE"
-    root, worktree = _init_task_worktree(tmp_path, task_id)
-
-    def fake_run(cmd, **kwargs):
-        (Path(kwargs["cwd"]) / "outside.txt").write_text("escaped\n", encoding="utf-8")
-        return subprocess.CompletedProcess(cmd, 0, stdout='{"final":"done"}\n', stderr="")
-
-    provider = _provider(
-        tmp_path,
-        fake_run,
-        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": str(root)},
-    )
-
-    with pytest.raises(CodexProviderError) as exc_info:
-        provider.invoke(
-            {
-                "mode": "kernel_repair",
-                "prompt": "attempt an out-of-scope write",
-                "metadata": {
-                    "operator_id": "op-1",
-                    "task_id": task_id,
-                    "task_worktree": str(worktree),
-                    "declared_scope": ["services/openclaw-gateway-adapter"],
-                },
-            }
-        )
-
-    assert exc_info.value.code == "REPAIR_DIRTY_UNRELATED"
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.retryable is False
-    assert exc_info.value.details["failure_stage"] == "post_run_repair_validation"
-    audit_text = (tmp_path / "provider-audit.jsonl").read_text(encoding="utf-8")
-    assert "post_run_repair_validation" in audit_text
-    assert "REPAIR_DIRTY_UNRELATED" in audit_text
-    assert "assistant.provider.completed" not in audit_text
-
-
 def test_successful_returncode_with_bwrap_namespace_error_fails_closed(tmp_path: Path) -> None:
-    task_id = "ASST-OCGW-004"
-    root, worktree = _init_task_worktree(tmp_path, task_id)
     stdout = "\n".join(
         [
             '{"type":"thread.started","thread_id":"thread-1"}',
@@ -579,23 +397,14 @@ def test_successful_returncode_with_bwrap_namespace_error_fails_closed(tmp_path:
     def fake_run(cmd, **kwargs):
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
-    provider = _provider(
-        tmp_path,
-        fake_run,
-        env={"PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT": str(root)},
-    )
+    provider = _provider(tmp_path, fake_run)
 
     with pytest.raises(CodexProviderError) as exc_info:
         provider.invoke(
             {
-                "mode": "kernel_repair",
+                "mode": "kernel_debug",
                 "prompt": "fix it",
-                "metadata": {
-                    "operator_id": "op-1",
-                    "task_id": task_id,
-                    "task_worktree": str(worktree),
-                    "declared_scope": ["services/openclaw-gateway-adapter"],
-                },
+                "metadata": {"operator_id": "op-1"},
             }
         )
 

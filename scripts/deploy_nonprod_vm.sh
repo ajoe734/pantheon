@@ -80,13 +80,6 @@ DEV_BFF_ROLE_CLAIMS="${DEV_BFF_ROLE_CLAIMS:-roles,role}"
 DEV_BFF_ROLE_MAP="${DEV_BFF_ROLE_MAP:-}"
 DEV_BFF_ROLE_MAP_MODE="${DEV_BFF_ROLE_MAP_MODE:-passthrough}"
 DEV_BFF_DEFAULT_ROLE="${DEV_BFF_DEFAULT_ROLE:-viewer}"
-# Ed25519 authority is limited to product-originated source packets. Human/Ops
-# canonical maintenance is a local repository CLI and needs no BFF key.
-BRIDGE_SIGNING_KEY_ID="${BRIDGE_SIGNING_KEY_ID:-}"
-BRIDGE_SIGNING_PUBLIC_KEYS_JSON="${BRIDGE_SIGNING_PUBLIC_KEYS_JSON:-}"
-DEV_AUTHORITY_SIGNING_ENV_FILE="${DEV_AUTHORITY_SIGNING_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/authority-signing.env}"
-STAGING_AUTHORITY_SIGNING_ENV_FILE="${STAGING_AUTHORITY_SIGNING_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/staging-authority-signing.env}"
-SUPERVISOR_VERIFIER_ENV_FILE="${SUPERVISOR_VERIFIER_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/supervisor-authority-public.env}"
 # Human-provisioned service credential shared only by operator-bff and the
 # OpenClaw adapter. There is intentionally no generated/local fallback.
 DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN="${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"
@@ -97,17 +90,7 @@ DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"
 DEV_ASSISTANT_CONTROL_MODE_STORE_PATH="${DEV_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"
 DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH="${DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}"
 DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"
-DEV_ASSISTANT_REPAIR_REPO_URL="${DEV_ASSISTANT_REPAIR_REPO_URL:-/workspace/status-root}"
-DEV_ASSISTANT_REPAIR_REMOTE_URL="${DEV_ASSISTANT_REPAIR_REMOTE_URL:-https://github.com/ajoe734/pantheon.git}"
-DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}"
-DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}"
 DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"
-DEV_STATUS_ROOT_HOST="${DEV_STATUS_ROOT_HOST:-}"
-DEV_STATUS_ROOT_CONTAINER="${DEV_STATUS_ROOT_CONTAINER:-/workspace/status-root}"
-# This legacy variable remains the mutable staging/tool checkout used by deploy
-# transport and dashboard recovery.  It is not supervisor command authority.
-DEV_SUPERVISOR_COMMAND_ROOT="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
-DEV_SUPERVISOR_COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
 DEV_MANAGEMENT_AI_STORE_BACKEND="${DEV_MANAGEMENT_AI_STORE_BACKEND:-postgres}"
 DEV_MANAGEMENT_AI_STORE_SCHEMA="${DEV_MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
 DEV_MANAGEMENT_AI_DB_USER="${DEV_MANAGEMENT_AI_DB_USER:-pantheon_management_ai}"
@@ -214,7 +197,7 @@ Options:
 
 Environment overrides:
   REMOTE_USER
-  PANTHEON_DEPLOY_WORKTREE_ROOT PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT
+  PANTHEON_DEPLOY_WORKTREE_ROOT
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT
@@ -237,17 +220,12 @@ Environment overrides:
   DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED
   DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED
   DEV_BFF_ROLE_CLAIMS DEV_BFF_ROLE_MAP DEV_BFF_ROLE_MAP_MODE DEV_BFF_DEFAULT_ROLE
-  BRIDGE_SIGNING_KEY_ID BRIDGE_SIGNING_PUBLIC_KEYS_JSON
-  DEV_AUTHORITY_SIGNING_ENV_FILE STAGING_AUTHORITY_SIGNING_ENV_FILE
   DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
   DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH
   DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS
-  DEV_ASSISTANT_REPAIR_REPO_URL DEV_ASSISTANT_REPAIR_REMOTE_URL
-  DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS
   DEV_BFF_STUB_CAPABILITIES
-  DEV_STATUS_ROOT_HOST DEV_STATUS_ROOT_CONTAINER
   DEV_MANAGEMENT_AI_STORE_BACKEND DEV_MANAGEMENT_AI_STORE_SCHEMA
   DEV_MANAGEMENT_AI_DB_USER DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DB_NAME
   DEV_MANAGEMENT_AI_DATABASE_URL
@@ -335,15 +313,9 @@ configure_management_ai_dev_kernel_env() {
   PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-$DEV_ASSISTANT_CONTROL_MODE_STORE_PATH}"
   PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-$DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH}"
   PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-$DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}"
-  PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-$DEV_ASSISTANT_REPAIR_REPO_URL}"
-  PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-$DEV_ASSISTANT_REPAIR_REMOTE_URL}"
-  PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-$DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}"
-  PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-$DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}"
   PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES:-$DEV_BFF_STUB_CAPABILITIES}"
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-$DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-$DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}"
-  PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER:-$DEV_STATUS_ROOT_CONTAINER}"
-  PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"
 }
 
 DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_CANONICAL_CORS_ORIGIN")"
@@ -462,24 +434,13 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_role_map_configured=$([[ -n "$DEV_BFF_ROLE_MAP" ]] && echo true || echo false)"
   info "dev_bff_role_map_mode=${DEV_BFF_ROLE_MAP_MODE}"
   info "dev_bff_default_role=${DEV_BFF_DEFAULT_ROLE}"
-  info "bridge_signing_public_policy_configured=$([[ -n "$BRIDGE_SIGNING_KEY_ID" && -n "$BRIDGE_SIGNING_PUBLIC_KEYS_JSON" ]] && echo true || echo false)"
-  info "dev_authority_signing_env_file=${DEV_AUTHORITY_SIGNING_ENV_FILE}"
-  info "staging_authority_signing_env_file=${STAGING_AUTHORITY_SIGNING_ENV_FILE}"
   info "dev_openclaw_adapter_service_auth_required=${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}"
   info "dev_openclaw_adapter_service_token_configured=$([[ -n "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] && echo true || echo false)"
   info "dev_assistant_kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
   info "dev_assistant_control_mode_store_path=${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}"
   info "dev_assistant_control_passphrase_hash_configured=$([[ -n "${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}" ]] && echo true || echo false)"
   info "dev_assistant_control_idle_ttl_seconds=${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}"
-  info "dev_assistant_repair_repo_url=${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-}"
-  info "dev_assistant_repair_remote_url=${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-}"
-  info "dev_assistant_repair_repo_url_execute_plans=${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-}"
-  info "dev_assistant_repair_remote_url_execute_plans=${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-}"
   info "dev_bff_stub_capabilities_configured=$([[ -n "${PANTHEON_BFF_STUB_CAPABILITIES:-}" ]] && echo true || echo false)"
-  info "dev_status_root_host=${PANTHEON_STATUS_ROOT_HOST:-}"
-  info "dev_status_root_container=${PANTHEON_STATUS_ROOT_CONTAINER:-}"
-  info "dev_supervisor_staging_root=${DEV_SUPERVISOR_COMMAND_ROOT}"
-  info "dev_supervisor_command_runtime_parent=${DEV_SUPERVISOR_COMMAND_RUNTIME_PARENT}"
   info "dev_docker_prune=${PANTHEON_DEV_DOCKER_PRUNE}"
   info "dev_compose_profiles=${DEV_COMPOSE_PROFILES:-<default-safe>}"
   info "source_refresh_egress_mode=${SOURCE_REFRESH_EGRESS_MODE}"
@@ -503,16 +464,6 @@ fi
 # compose, or smoke mutation.  Staging-live is an independent environment and must not
 # depend on the shared dev lease.
 verify_dev_environment_lease_contract
-
-if [[ "$DEPLOY_ENV" == "dev" || ( "$DEPLOY_ENV" == "staging-live" && "$COMPONENT" != "exec" ) ]]; then
-  for authority_name in \
-    BRIDGE_SIGNING_KEY_ID \
-    BRIDGE_SIGNING_PUBLIC_KEYS_JSON; do
-    if [[ -z "${!authority_name}" ]]; then
-      error "${authority_name} is required for operator-bff and supervisor authority cutover"
-    fi
-  done
-fi
 
 if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
   if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
@@ -572,18 +523,12 @@ ssh_bash() {
   local remote_dir="$3"
   local remote_component="$4"
   local command_prefix
-  local authority_signing_env_file="$DEV_AUTHORITY_SIGNING_ENV_FILE"
-  if [[ "$DEPLOY_ENV" == "staging-live" ]]; then
-    authority_signing_env_file="$STAGING_AUTHORITY_SIGNING_ENV_FILE"
-  fi
-
   command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
   command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
   command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
   command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
-  command_prefix+=" PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT=$(shell_quote "${DEV_SUPERVISOR_COMMAND_ROOT}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
@@ -628,25 +573,15 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_ROLE_MAP=$(shell_quote "$DEV_BFF_ROLE_MAP")"
   command_prefix+=" PANTHEON_DEV_BFF_ROLE_MAP_MODE=$(shell_quote "$DEV_BFF_ROLE_MAP_MODE")"
   command_prefix+=" PANTHEON_DEV_BFF_DEFAULT_ROLE=$(shell_quote "$DEV_BFF_DEFAULT_ROLE")"
-  command_prefix+=" BRIDGE_SIGNING_KEY_ID=$(shell_quote "$BRIDGE_SIGNING_KEY_ID")"
-  command_prefix+=" BRIDGE_SIGNING_PUBLIC_KEYS_JSON=$(shell_quote "$BRIDGE_SIGNING_PUBLIC_KEYS_JSON")"
-  command_prefix+=" PANTHEON_AUTHORITY_SIGNING_ENV_FILE=$(shell_quote "$authority_signing_env_file")"
-  command_prefix+=" PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE=$(shell_quote "$SUPERVISOR_VERIFIER_ENV_FILE")"
   command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
   command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}")"
-  command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-}")"
-  command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-}")"
-  command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-}")"
-  command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-}")"
   command_prefix+=" PANTHEON_BFF_STUB_CAPABILITIES=$(shell_quote "${PANTHEON_BFF_STUB_CAPABILITIES:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}")"
-  command_prefix+=" PANTHEON_STATUS_ROOT_HOST=$(shell_quote "${PANTHEON_STATUS_ROOT_HOST:-}")"
-  command_prefix+=" PANTHEON_STATUS_ROOT_CONTAINER=$(shell_quote "${PANTHEON_STATUS_ROOT_CONTAINER:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
@@ -662,7 +597,6 @@ ssh_bash() {
   command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
   command_prefix+=" MANAGEMENT_AI_DATABASE_URL=$(shell_quote "${MANAGEMENT_AI_DATABASE_URL:-}")"
   command_prefix+=" PANTHEON_MGMT_AI_ATTACH_BUCKET=$(shell_quote "${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}")"
-  command_prefix+=" PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED=$(shell_quote "${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true}")"
   command_prefix+=" PANTHEON_MGMT_AI_ATTACH_LOCATION=$(shell_quote "${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_USER=$(shell_quote "${DEV_MANAGEMENT_AI_DB_USER:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_PASSWORD=$(shell_quote "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}")"
@@ -688,69 +622,6 @@ error() {
   echo "[remote-deploy] ERROR: $*" >&2
   exit 1
 }
-
-configure_authority_compose_environment() {
-  case "${PANTHEON_DEPLOY_COMPONENT}" in
-    root|bff|control) ;;
-    *) return 0 ;;
-  esac
-  case "${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true}" in
-    1|true|TRUE|yes|YES|on|ON) ;;
-    *) return 0 ;;
-  esac
-  local authority_file="${PANTHEON_AUTHORITY_SIGNING_ENV_FILE}"
-  [[ "$authority_file" == /* ]] \
-    || error "authority signing env file must be absolute"
-  [[ -f "$authority_file" && ! -L "$authority_file" ]] \
-    || error "authority signing env file must be a regular non-symlink file: ${authority_file}"
-  local mode
-  mode="$(stat -c '%a' "$authority_file")"
-  [[ "$mode" == "600" ]] \
-    || error "authority signing env file must have mode 600: ${authority_file} is ${mode}"
-  python3 - "$authority_file" <<'PY'
-import pathlib
-import sys
-
-required = {
-    "BRIDGE_SIGNING_PRIVATE_KEY",
-    "BRIDGE_SIGNING_KEY_ID",
-    "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
-}
-values = {}
-for raw in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
-    line = raw.strip()
-    if not line or line.startswith("#"):
-        continue
-    if "=" not in line:
-        raise SystemExit("authority signing env contains a malformed row")
-    key, value = line.split("=", 1)
-    if key in required:
-        values[key] = value.strip()
-missing = sorted(key for key in required if not values.get(key))
-if missing:
-    raise SystemExit("authority signing env is missing: " + ",".join(missing))
-PY
-  local base_env="${PANTHEON_REMOTE_DIR}/.env"
-  if [[ -f "$base_env" && ! -L "$base_env" ]]; then
-    export COMPOSE_ENV_FILES="${base_env},${authority_file}"
-  else
-    export COMPOSE_ENV_FILES="$authority_file"
-  fi
-}
-
-verify_operator_bff_bridge_key_pair() {
-  case "${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true}" in
-    1|true|TRUE|yes|YES|on|ON) ;;
-    *) return 0 ;;
-  esac
-  local project="$1"
-  local compose_file="$2"
-  shift 2
-  docker compose "$@" -p "$project" -f "$compose_file" exec -T operator-bff \
-    python -c 'from assistant.dev_bridge_signer import validate_signing_key_pair; validate_signing_key_pair()'
-}
-
-configure_authority_compose_environment
 
 validate_source_refresh_profile() {
   local selected="false"
@@ -1480,14 +1351,12 @@ prepare_deploy_worktree() {
   local sha="${PANTHEON_DEPLOY_SHA}"
   local source_dir="${PANTHEON_REMOTE_DIR}"
   local root
-  local command_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
   if [[ -n "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}" ]]; then
     root="${PANTHEON_DEPLOY_WORKTREE_ROOT}"
   elif [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]]; then
     root="${HOME}/pantheon-ci-deploy/managed-deploy-worktrees"
   else
-    # Preserve the established staging-live layout.  Dev alone needs the
-    # supervisor/deployment split because only dev hosts the task fleet.
+    # Preserve the established staging-live layout.
     root="${HOME}/pantheon-ci-deploy"
   fi
   local deploy_dir="${root}/${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}"
@@ -1495,7 +1364,7 @@ prepare_deploy_worktree() {
 
   if [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]]; then
     # BEGIN_DEV_DEPLOY_PATH_ISOLATION_PY
-    python3 - "$root" "$deploy_dir" "$command_root" <<'PY'
+    python3 - "$root" "$deploy_dir" <<'PY'
 from pathlib import Path
 import sys
 
@@ -1516,14 +1385,6 @@ def lexical_absolute_path(value: str, label: str, *, must_exist: bool) -> Path:
     return raw.resolve(strict=must_exist)
 
 
-def contains(parent: Path, child: Path) -> bool:
-    try:
-        child.relative_to(parent)
-    except ValueError:
-        return False
-    return True
-
-
 deploy_root = lexical_absolute_path(
     sys.argv[1],
     "deploy worktree root",
@@ -1534,16 +1395,6 @@ deploy_dir = lexical_absolute_path(
     "deploy worktree",
     must_exist=False,
 )
-command_root = lexical_absolute_path(
-    sys.argv[3],
-    "supervisor command root",
-    must_exist=True,
-)
-if contains(deploy_dir, command_root) or contains(command_root, deploy_dir):
-    raise SystemExit(
-        "deploy worktree and supervisor command root must be disjoint: "
-        f"deploy={deploy_dir} command={command_root}"
-    )
 deploy_root.mkdir(parents=True, exist_ok=True)
 created_deploy_root = lexical_absolute_path(
     str(deploy_root),
@@ -2045,323 +1896,6 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   return 1
 }
 
-materialize_dev_supervisor_command_runtime() {
-  local source_root="$1"
-  local sha="${PANTHEON_DEPLOY_SHA}"
-  local parent="${DEV_SUPERVISOR_COMMAND_RUNTIME_PARENT}"
-  local destination="${parent}/${sha}"
-  local temporary_parent runtime origin_url accepted_dev
-
-  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] \
-    || error "supervisor command runtime requires a lowercase full deploy SHA"
-  python3 - "$parent" <<'PY'
-import os
-import stat
-import sys
-from pathlib import Path
-
-parent = Path(sys.argv[1])
-if not parent.is_absolute() or any(part in {".", ".."} for part in parent.parts):
-    raise SystemExit(f"command runtime parent must be canonical absolute path: {parent}")
-for component in (parent, *parent.parents):
-    if component.is_symlink():
-        raise SystemExit(f"command runtime parent contains symlink component: {component}")
-parent.mkdir(parents=True, exist_ok=True)
-if not parent.is_dir() or stat.S_ISLNK(parent.lstat().st_mode):
-    raise SystemExit(f"command runtime parent is not a direct directory: {parent}")
-PY
-
-  [[ ! -L "$destination" ]] \
-    || error "immutable supervisor command runtime destination is a symlink: ${destination}"
-  if [[ ! -e "$destination" ]]; then
-    temporary_parent="$(mktemp -d "${parent}/.runtime-materialize-${sha}.XXXXXX")"
-    runtime="${temporary_parent}/runtime"
-    if ! git clone --quiet --no-local --no-checkout "$source_root" "$runtime"; then
-      rm -rf -- "$temporary_parent"
-      error "failed to clone immutable supervisor command runtime"
-    fi
-    origin_url="$(git -C "$source_root" config --get remote.origin.url)"
-    accepted_dev="$(git -C "$source_root" rev-parse origin/dev)"
-    git -C "$runtime" remote set-url origin "$origin_url" \
-      && git -C "$runtime" fetch --quiet --no-tags "$source_root" "$sha" \
-      && git -C "$runtime" update-ref refs/remotes/origin/dev "$accepted_dev" \
-      && git -C "$runtime" checkout --quiet --detach "$sha" \
-      || { rm -rf -- "$temporary_parent"; error "failed to bind immutable supervisor command runtime"; }
-    if ! python3 - "$runtime" "$destination" "$parent" <<'PY'
-import ctypes
-import errno
-import os
-import sys
-from pathlib import Path
-
-source, destination, parent = map(Path, sys.argv[1:])
-libc = ctypes.CDLL(None, use_errno=True)
-renameat2 = libc.renameat2
-renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-renameat2.restype = ctypes.c_int
-if renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
-    error = ctypes.get_errno()
-    if error != errno.EEXIST:
-        raise OSError(error, os.strerror(error), destination)
-fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-try:
-    os.fsync(fd)
-finally:
-    os.close(fd)
-PY
-    then
-      rm -rf -- "$temporary_parent"
-      error "failed to atomically install immutable supervisor command runtime"
-    fi
-    rm -rf -- "$temporary_parent"
-  fi
-
-  python3 -B "$destination/scripts/provision_live_supervisor_config.py" \
-    --command-root "$destination" \
-    --validate-command-root-only >/dev/null \
-    || error "immutable supervisor command runtime validation failed: ${destination}"
-  printf '%s\n' "$destination"
-}
-
-configured_supervisor_command_root() {
-  local live_config="$1"
-  python3 - "$live_config" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-payload = json.loads(path.read_text(encoding="utf-8"))
-watchdog = payload.get("watchdog")
-command = watchdog.get("supervisor_command") if isinstance(watchdog, dict) else None
-if not isinstance(command, list):
-    raise SystemExit("live config watchdog.supervisor_command is missing")
-entrypoints = [Path(arg) for arg in command if isinstance(arg, str) and Path(arg).name == "supervisor.py"]
-if len(entrypoints) != 1 or entrypoints[0].parent.name != ".orchestrator":
-    raise SystemExit("live config must bind exactly one canonical supervisor entrypoint")
-print(entrypoints[0].parent.parent)
-PY
-}
-
-assert_no_live_supervisor_incumbent() {
-  local status_root="$1"
-  local pid_file="${PANTHEON_SUPERVISOR_PID:-${status_root}/.orchestrator/supervisor.pid}"
-  python3 - "$pid_file" <<'PY'
-import os
-import sys
-from pathlib import Path, PurePosixPath
-
-pid_file = Path(sys.argv[1])
-if pid_file.exists() or pid_file.is_symlink():
-    if pid_file.is_symlink() or not pid_file.is_file():
-        raise SystemExit(f"supervisor PID marker must be regular and non-symlink: {pid_file}")
-    raw_pid = pid_file.read_text(encoding="utf-8").strip()
-    if raw_pid:
-        try:
-            os.kill(int(raw_pid), 0)
-        except (ProcessLookupError, ValueError):
-            pass
-        except PermissionError:
-            raise SystemExit(f"cannot disprove live incumbent PID {raw_pid}")
-        else:
-            raise SystemExit(f"live supervisor incumbent PID {raw_pid} exists")
-
-for cmdline_path in Path("/proc").glob("[0-9]*/cmdline"):
-    try:
-        arguments = tuple(
-            item.decode("utf-8", errors="surrogateescape")
-            for item in cmdline_path.read_bytes().split(b"\0")
-            if item
-        )
-    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
-        continue
-    if any(
-        PurePosixPath(argument).name == "supervisor.py"
-        and PurePosixPath(argument).parent.name == ".orchestrator"
-        for argument in arguments
-    ):
-        raise SystemExit(
-            f"live supervisor incumbent discovered at PID {cmdline_path.parent.name}"
-        )
-PY
-}
-
-provision_dev_supervisor_watchdog() {
-  local live_config="${PANTHEON_DEV_SUPERVISOR_CONFIG:-${HOME}/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
-  local staging_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
-  local source_root command_root configured_root
-  local promotion_args=()
-  local attempt
-  local linger_state=""
-
-  [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]] \
-    || error "supervisor watchdog provisioning is dev-only"
-  [[ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]] \
-    || error "supervisor watchdog provisioning requires PANTHEON_STATUS_ROOT_HOST"
-  [[ "${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE:-}" == /home/lupin/pantheon-ci-deploy/runtime/*.env ]] \
-    || error "supervisor verifier env file must be a fixed runtime .env path"
-
-  python3 - "${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE}" <<'PY'
-import json
-import os
-import pathlib
-import shlex
-import tempfile
-import sys
-
-names = (
-    "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
-)
-values = {}
-for name in names:
-    raw = os.environ.get(name, "").strip()
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"{name} must be valid JSON") from exc
-    if not isinstance(payload, dict) or not payload or any(
-        not isinstance(key, str) or not key.strip()
-        or not isinstance(value, str) or not value.strip()
-        for key, value in payload.items()
-    ):
-        raise SystemExit(f"{name} must be a non-empty public-key map")
-    values[name] = raw
-
-target = pathlib.Path(sys.argv[1])
-target.parent.mkdir(parents=True, exist_ok=True)
-if target.exists() and (target.is_symlink() or not target.is_file()):
-    raise SystemExit("supervisor verifier env target is not a regular file")
-content = "".join(f"{name}={shlex.quote(values[name])}\n" for name in names)
-fd, temporary_name = tempfile.mkstemp(prefix=target.name + ".", dir=target.parent)
-try:
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(content)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary_name, target)
-    directory_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
-finally:
-    if os.path.exists(temporary_name):
-        os.unlink(temporary_name)
-PY
-
-  source_root="$(pwd -P)"
-  command_root="$(materialize_dev_supervisor_command_runtime "$source_root")"
-  info "admitted immutable dev supervisor command runtime ${command_root}; staging root remains ${staging_root}"
-
-  if [[ ! -e "$live_config" ]]; then
-    info "performing first-install supervisor config provisioning with no incumbent"
-    assert_no_live_supervisor_incumbent "${PANTHEON_STATUS_ROOT_HOST}"
-    python3 -B "${command_root}/scripts/provision_live_supervisor_config.py" \
-      --repo-config "${command_root}/.orchestrator/config.json" \
-      --live-config "$live_config" \
-      --command-root "$command_root" \
-      --status-root "${PANTHEON_STATUS_ROOT_HOST}"
-  else
-    [[ -f "$live_config" && ! -L "$live_config" ]] \
-      || error "existing supervisor config must be a regular non-symlink file"
-    configured_root="$(configured_supervisor_command_root "$live_config")"
-    if [[ "$configured_root" == "$command_root" ]]; then
-      info "supervisor command runtime already current; provisioning is a config no-op"
-      python3 -B "${command_root}/scripts/provision_live_supervisor_config.py" \
-        --repo-config "${command_root}/.orchestrator/config.json" \
-        --live-config "$live_config" \
-        --command-root "$command_root" \
-        --status-root "${PANTHEON_STATUS_ROOT_HOST}"
-    else
-      promotion_args=(--promote --repo "$command_root")
-      info "requesting governed supervisor promotion configured=${configured_root} candidate=${command_root}"
-      "${command_root}/scripts/promote-supervisor-runtime.sh" "${promotion_args[@]}" \
-        || error "governed supervisor promotion handoff failed"
-    fi
-  fi
-
-  python3 "${command_root}/scripts/check_config_drift.py" \
-    --repo-config "${command_root}/.orchestrator/config.json" \
-    --live-config "$live_config" \
-    || error "live supervisor config drift remains; refusing direct config mutation"
-
-  if systemctl --user show-environment >/dev/null 2>&1; then
-    linger_state="$(loginctl show-user "${USER}" -p Linger --value)"
-    if [[ "$linger_state" != "yes" ]]; then
-      info "enabling systemd user linger for reboot-persistent watchdog"
-      sudo -n loginctl enable-linger "${USER}"
-      linger_state="$(loginctl show-user "${USER}" -p Linger --value)"
-    fi
-    [[ "$linger_state" == "yes" ]] \
-      || error "systemd user linger is not enabled for ${USER}"
-  fi
-  python3 "${command_root}/scripts/supervisor_watchdog_install.py" \
-    --repo "$command_root" \
-    --config "$live_config" \
-    --authority-env-file "${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE}" \
-    --method auto \
-    --start-now
-
-  for attempt in $(seq 1 12); do
-    if python3 "${command_root}/scripts/supervisor_runtime_health.py" \
-      --repo "$command_root" \
-      --config-path "$live_config" \
-      --require-watchdog; then
-      info "persistent dev supervisor watchdog is healthy"
-      return 0
-    fi
-    sleep 5
-  done
-
-  systemctl --user status pantheon-supervisor-watchdog.timer --no-pager || true
-  systemctl --user status pantheon-supervisor-watchdog.service --no-pager || true
-  error "persistent dev supervisor watchdog did not become healthy"
-}
-
-provision_dev_dashboard_autostart() {
-  local command_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
-  local probe_file
-  local attempt
-
-  [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]] \
-    || error "dashboard autostart provisioning is dev-only"
-  [[ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]] \
-    || error "dashboard autostart provisioning requires PANTHEON_STATUS_ROOT_HOST"
-
-  info "provisioning persistent dashboard recovery for ${PANTHEON_STATUS_ROOT_HOST}"
-  python3 "${command_root}/scripts/dashboard_autostart_install.py" \
-    --repo "${PANTHEON_STATUS_ROOT_HOST}" \
-    --method auto \
-    --start-now
-
-  if systemctl --user show-environment >/dev/null 2>&1; then
-    systemctl --user is-enabled --quiet pantheon-dashboard-autostart.timer \
-      || error "dashboard autostart systemd timer is not enabled"
-    systemctl --user is-active --quiet pantheon-dashboard-autostart.timer \
-      || error "dashboard autostart systemd timer is not active"
-  else
-    crontab -l 2>/dev/null | grep -Fq '# pantheon-dashboard-autostart' \
-      || error "dashboard autostart cron fallback is not installed"
-  fi
-
-  probe_file="$(mktemp)"
-  for attempt in $(seq 1 10); do
-    if curl -fsS --max-time 5 http://127.0.0.1:4180/index.html >"$probe_file" \
-      && grep -Fq '協作看板' "$probe_file"; then
-      rm -f "$probe_file"
-      info "persistent dashboard recovery is healthy"
-      return 0
-    fi
-    sleep 2
-  done
-
-  rm -f "$probe_file"
-  systemctl --user status pantheon-dashboard-autostart.timer --no-pager || true
-  systemctl --user status pantheon-dashboard-autostart.service --no-pager || true
-  error "persistent dashboard recovery did not become healthy"
-}
-
 docker_storage_diagnostics() {
   local label="$1"
 
@@ -2514,15 +2048,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
     PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
     PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
-    PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \
-    PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \
-    PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \
-    PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}" \
     PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
     PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
     PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
-    PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \
-    PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
       docker compose -p pantheon -f docker-compose.yml up -d --build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}" \
@@ -2544,8 +2072,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     wait_for_exact_bff_lifecycle_readiness \
       http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
-    verify_operator_bff_bridge_key_pair pantheon docker-compose.yml \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_auth_gate http://127.0.0.1:18001 \
@@ -2562,8 +2088,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # receipt replay before the workflow's public smokes run.
     PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
       || { dump_dev_root_failure_diagnostics; exit 1; }
-    provision_dev_supervisor_watchdog
-    provision_dev_dashboard_autostart
     ;;
 
   bff)
@@ -2638,15 +2162,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
     PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
     PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
-    PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \
-    PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \
-    PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \
-    PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}" \
     PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
     PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
     PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
-    PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \
-    PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
     MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
     MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
@@ -2658,8 +2176,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     wait_for_exact_bff_lifecycle_readiness \
       http://127.0.0.1:18001/readyz \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
-    verify_operator_bff_bridge_key_pair pantheon docker-compose.yml \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -2690,22 +2206,14 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     snapshot_remote_state pantheon-control docker-compose.control.yml
     prepare_deploy_worktree
     env_file="$(real_env_or_example env/prod-control.env env/prod-control.env.example)"
-    authority_compose_args=()
-    case "${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true}" in
-      1|true|TRUE|yes|YES|on|ON)
-        authority_compose_args=(--env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE")
-        ;;
-    esac
-    docker compose --env-file "$env_file" "${authority_compose_args[@]}" -p pantheon-control -f docker-compose.control.yml config --quiet
+    docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml config --quiet
     COMPOSE_BAKE=false \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     PANTHEON_ENV=staging-live \
     PANTHEON_LIVE_BROKER_ENABLED=true \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_STAGING_BFF_CORS_ORIGINS}" \
-      docker compose --env-file "$env_file" "${authority_compose_args[@]}" -p pantheon-control -f docker-compose.control.yml up -d --build
+      docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml up -d --build
     curl_with_retry http://127.0.0.1:38001/health
-    verify_operator_bff_bridge_key_pair pantheon-control docker-compose.control.yml \
-      --env-file "$env_file" "${authority_compose_args[@]}"
     assert_bff_source_sha http://127.0.0.1:38001/bff/version
     curl_with_retry "${PANTHEON_STAGING_EXEC_HEALTH_URL%/}/__health__"
     ;;

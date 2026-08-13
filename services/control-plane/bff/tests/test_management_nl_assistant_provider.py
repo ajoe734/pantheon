@@ -19,7 +19,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main as bff_main
 from assistant.control_mode import ControlModeStore
 from assistant.models import AssistantMode
-from assistant.repair_receipts import issue_repair_receipt
 from management_nl_command_idempotency import (
     ManagementNlCommandIdempotencyStore,
     ManagementNlCommandPayloadConflict,
@@ -724,14 +723,11 @@ def test_management_nl_concurrent_conflict_returns_409_before_second_side_effect
         bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
 
 
-def test_management_nl_repair_waits_through_provider_timeout_before_return(monkeypatch) -> None:
+def test_management_nl_provider_inline_wait_is_mode_independent(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS", "0.2")
     monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "12")
     monkeypatch.delenv("PANTHEON_MANAGEMENT_NL_REPAIR_INLINE_TIMEOUT_SECONDS", raising=False)
 
-    assert bff_main._mgmt_nl_provider_inline_wait_seconds(
-        {"active": True, "mode": "kernel_repair"}
-    ) == 17.0
     assert bff_main._mgmt_nl_provider_inline_wait_seconds(
         {"active": True, "mode": "kernel_debug"}
     ) == 0.2
@@ -1546,180 +1542,6 @@ def test_management_nl_provider_uses_active_kernel_debug_mode(tmp_path, monkeypa
         assert "You are operating in kernel_debug mode through OpenClaw/Codex." in call["prompt"]
         assert "read-only workspace" in call["prompt"]
         assert "You are operating in user mode." not in call["prompt"]
-    finally:
-        bff_main.read_store = original_store
-        bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
-        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
-        bff_main._sse_buffers["ask"].clear()
-
-
-def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, monkeypatch) -> None:
-    original_store = bff_main.read_store
-    original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
-    control_store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
-    control_store.activate(
-        actor_id="asst-bff-002",
-        mode=AssistantMode.KERNEL_REPAIR,
-        capabilities=["assistant.kernel.repair"],
-        reason="repair management AI through OpenClaw task worktree",
-        passphrase="control phrase ok",
-        ttl_seconds=900,
-        idle_ttl_seconds=120,
-    )
-    fake = FakeProviderClient(
-        result={
-            "status": "ok",
-            "data": {
-                "provider": "codex_cli",
-                "status": "completed",
-                "output": {
-                    "json_events": [{"final": "Repair worktree is ready for scoped file edits."}],
-                    "sandbox": "workspace-write",
-                    "workspace_class": "task_worktree",
-                    "repair_workflow": {
-                        "task_id": "ASST-REPAIR-123",
-                        "branch": "task/ASST-REPAIR-123",
-                        "merge_target": "dev",
-                    },
-                },
-            },
-        }
-    )
-    try:
-        _clear_provider_env(monkeypatch)
-        monkeypatch.setenv("PANTHEON_ASSISTANT_REPAIR_RECEIPT_KEY", "repair-receipt-test-secret")
-        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
-        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
-        monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
-        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
-        monkeypatch.setattr(
-            bff_main,
-            "_extract_identity",
-            lambda authorization=None, **_kwargs: _kernel_operator_identity(capabilities=["assistant.kernel.repair"]),
-        )
-        client = _seeded_client(tmp_path, monkeypatch)
-        repair = {
-            "task_id": "ASST-REPAIR-123",
-            "task_worktree": "/srv/pantheon-assistant/worktrees/asst-repair-123",
-            "declared_scope": [
-                "services/control-plane/bff/main.py",
-                "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
-            ],
-            "expected_branch": "task/ASST-REPAIR-123",
-            "remote": "origin",
-            "merge_target": "dev",
-            "require_clean": True,
-            "repo_key": "pantheon",
-        }
-        repair["receipt"] = issue_repair_receipt(
-            repair,
-            actor_id="asst-bff-002",
-            tenant_id="tenant-alpha",
-            control_status=control_store.status_for_actor("asst-bff-002"),
-        )
-
-        resp = client.post(
-            "/bff/management/nl/ask",
-            json={
-                "question": "Update the assistant integration files according to this repair task.",
-                "sessionId": "mgmt-kernel-repair-provider",
-                "openclaw": {
-                    "repair": repair
-                },
-                "ui": {"currentRoute": "/management/cockpit", "availableUiActions": []},
-            },
-            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-provider-kernel-repair"},
-        )
-
-        assert resp.status_code == 202, resp.text
-        body = resp.json()
-        provider_status = body["data"]["provider_status"]
-        assert provider_status["mode"] == "kernel_repair"
-        assert provider_status["sandbox"] == "workspace-write"
-        assert provider_status["workspace_class"] == "task_worktree"
-        assert provider_status["repair_workflow"]["task_id"] == "ASST-REPAIR-123"
-        assert "workspaceClass" not in provider_status
-        assert "repairWorkflow" not in provider_status
-        call = fake.calls[0]
-        assert call["mode"] == "kernel_repair"
-        assert call["metadata"]["task_id"] == "ASST-REPAIR-123"
-        assert call["metadata"]["task_worktree"] == "/srv/pantheon-assistant/worktrees/asst-repair-123"
-        assert call["metadata"]["declared_scope"] == [
-            "services/control-plane/bff/main.py",
-            "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
-        ]
-        assert call["metadata"]["expected_branch"] == "task/ASST-REPAIR-123"
-        assert call["metadata"]["merge_target"] == "dev"
-        assert call["metadata"]["repo_key"] == "pantheon"
-        assert call["metadata"]["require_clean"] is True
-        assert call["metadata"]["repair_metadata_source"] == "bff_prepared_repair_receipt"
-        assert "receipt" not in call["metadata"]
-        assert "You are operating in kernel_repair mode through OpenClaw/Codex." in call["prompt"]
-        assert "workspace-write" in call["prompt"]
-    finally:
-        bff_main.read_store = original_store
-        bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
-        bff_main._MGMT_NL_IDEMPOTENCY.clear()
-        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
-        bff_main._sse_buffers["ask"].clear()
-
-
-def test_management_nl_kernel_repair_rejects_browser_metadata_without_prepare_receipt(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    original_store = bff_main.read_store
-    original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
-    control_store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
-    control_store.activate(
-        actor_id="asst-bff-002",
-        mode=AssistantMode.KERNEL_REPAIR,
-        capabilities=["assistant.kernel.repair"],
-        reason="repair receipt negative test",
-        passphrase="control phrase ok",
-        ttl_seconds=900,
-        idle_ttl_seconds=120,
-    )
-    fake = FakeProviderClient()
-    try:
-        _clear_provider_env(monkeypatch)
-        monkeypatch.setenv("PANTHEON_ASSISTANT_REPAIR_RECEIPT_KEY", "repair-receipt-test-secret")
-        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
-        monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
-        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
-        monkeypatch.setattr(
-            bff_main,
-            "_extract_identity",
-            lambda authorization=None, **_kwargs: _kernel_operator_identity(
-                capabilities=["assistant.kernel.repair"]
-            ),
-        )
-        client = _seeded_client(tmp_path, monkeypatch)
-
-        response = client.post(
-            "/bff/management/nl/ask",
-            json={
-                "question": "Attempt a repair with unsigned browser metadata.",
-                "sessionId": "mgmt-kernel-repair-no-receipt",
-                "openclaw": {
-                    "repair": {
-                        "taskId": "ASST-REPAIR-UNSIGNED",
-                        "taskWorktree": "/srv/shared/live-checkout",
-                        "declaredScope": ["services/control-plane/bff"],
-                        "expectedBranch": "task/ASST-REPAIR-UNSIGNED",
-                        "remote": "origin",
-                        "mergeTarget": "dev",
-                        "repoKey": "pantheon",
-                    }
-                },
-            },
-            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-repair-no-receipt"},
-        )
-
-        assert response.status_code == 403, response.text
-        assert response.json()["error"]["details"]["reason"] == "repair_receipt_missing"
-        assert fake.calls == []
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store

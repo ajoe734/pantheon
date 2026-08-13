@@ -32,7 +32,7 @@ def test_header_resolution_rejects_conflicts_and_required_missing() -> None:
 
 def test_exact_replay_survives_reload_without_persisting_request_secrets(tmp_path: Path) -> None:
     path = tmp_path / "idempotency.json"
-    payload = {"passphrase": "never-persist-this", "mode": "kernel_repair"}
+    payload = {"passphrase": "never-persist-this", "mode": "kernel_debug"}
     store = CommandIdempotencyStore(str(path))
 
     with store.transaction(

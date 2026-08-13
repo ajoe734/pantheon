@@ -14,7 +14,7 @@ from .dev_bridge_test_support import (
 )
 
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "dispatch_assistant_dev_task_packet.py"
 TEST_KEY = b"test-key-for-dev-bridge-cli"
 PUBLIC_KEYS_JSON = public_key_environment({"assistant-bridge-dev": TEST_KEY})
@@ -39,7 +39,7 @@ def _make_packet(packet_id: str) -> DevTaskPacket:
                 owner="Codex",
                 reviewer="Claude",
                 phase="Sprint CLI / Dev bridge",
-                artifacts=["services/control-plane/bff/assistant/dev_bridge_dispatcher.py"],
+                artifacts=[".orchestrator/development_bridge/dev_bridge_dispatcher.py"],
                 acceptance=["Task is assigned through ai_status.py"],
                 summary="Verify CLI dispatch path.",
             )
@@ -71,16 +71,13 @@ def _run_cli(packet_path: Path, repo_root: Path, *, dry_run: bool = False) -> su
     return subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(REPO_ROOT))
 
 
-def test_cli_accepts_dev_docs_generate_envelope_in_dry_run(tmp_path: Path) -> None:
+def test_cli_accepts_local_task_packet_envelope_in_dry_run(tmp_path: Path) -> None:
     repo_root = _write_fake_repo(tmp_path)
     signed = sign_packet(_make_packet("pkt_cli_dry"), key_store={"assistant-bridge-dev": TEST_KEY})
-    packet_path = tmp_path / "dev-docs-response.json"
+    packet_path = tmp_path / "local-task-packet.json"
     packet_path.write_text(
         json.dumps(
-            {
-                "data": {"packetId": "pkt_doc_archive"},
-                "meta": {"taskPacket": signed.model_dump(mode="json", by_alias=True)},
-            }
+            {"taskPacket": signed.model_dump(mode="json", by_alias=True)}
         ),
         encoding="utf-8",
     )
@@ -130,7 +127,7 @@ def test_cli_materializes_raw_signed_packet_through_ai_status(tmp_path: Path) ->
     assert bridge["source_turn_ids"] == ["turn-user", "turn-assistant"]
     assert bridge["task_spec"]["phase"] == "Sprint CLI / Dev bridge"
     assert bridge["task_spec"]["artifacts"] == [
-        "services/control-plane/bff/assistant/dev_bridge_dispatcher.py"
+        ".orchestrator/development_bridge/dev_bridge_dispatcher.py"
     ]
     assert bridge["task_spec"]["acceptance"] == ["Task is assigned through ai_status.py"]
 

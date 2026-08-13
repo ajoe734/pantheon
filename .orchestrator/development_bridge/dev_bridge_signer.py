@@ -1,13 +1,12 @@
-"""Ed25519 signing, verification, and replay protection for dev task packets.
+"""Ed25519 signing, verification, and replay protection for local dev packets.
 
 ASST-INTEG-006 — owned by Claude2.
 
 Security guarantees:
 - Canonical payload is computed from the packet with the signature field
   stripped, keys sorted, no indentation (deterministic JSON).
-- The BFF alone reads the private signing key. Dispatch and canonical writers
-  receive only trusted public keys; same-UID workers therefore cannot mint
-  source authority by reading the supervisor environment.
+- Only local development tooling reads the private signing key. Product BFF
+  processes receive neither this key nor this module.
 - Replay protection is file-backed: each verified packet_id is appended to
   a newline-delimited seen-ids file.  Duplicate packet_ids are rejected
   before task materialisation.
@@ -122,7 +121,7 @@ def _verification_keys(
 
 
 def validate_signing_key_pair() -> None:
-    """Fail closed unless the active BFF private key matches its public map."""
+    """Fail closed unless the active local private key matches its public map."""
 
     key_id = str(os.environ.get(PRIVATE_KEY_ID_ENV) or "").strip()
     private_key = _signing_key(None, key_id)

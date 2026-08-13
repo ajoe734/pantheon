@@ -24,7 +24,6 @@ from typing import Any
 
 from assistant_credential_mounts import AssistantCredentialMounts, DEFAULT_CODEX_CONTAINER_HOME
 from assistant_provider_usage import provider_usage_snapshot
-from assistant_repair_workflow import AssistantRepairWorkflow, AssistantRepairWorkflowError
 
 try:
     from assistant.redaction import RedactionError, redact_assistant_payload
@@ -42,7 +41,6 @@ CODEX_PROVIDER_ID = "codex_cli"
 PROVIDER_RUNTIME = "openclaw_gateway_cli_mount"
 DEFAULT_CODEX_BIN = "codex"
 DEFAULT_CODEX_WORKSPACE = "/srv/pantheon-assistant/workspaces/read-only"
-DEFAULT_REPAIR_WORKTREE_ROOT = "/srv/pantheon-assistant/worktrees"
 DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_AUDIT_PATH = "/tmp/openclaw-gateway-adapter/assistant_provider_audit.jsonl"
 DEFAULT_REAUTH_CAPTURE_TIMEOUT_SECONDS = 20
@@ -113,7 +111,6 @@ class _CommandContext:
     workspace: str
     sandbox: str
     workspace_class: str
-    repair_workflow: Mapping[str, Any] | None = None
 
 
 class AssistantProviderAuditLog:
@@ -182,7 +179,6 @@ class AssistantCodexProvider:
         popen_func: PopenFunc | None = None,
         which_func: WhichFunc | None = None,
         audit_log: AssistantProviderAuditLog | None = None,
-        repair_workflow: AssistantRepairWorkflow | None = None,
         clock: ClockFunc | None = None,
     ) -> None:
         self._environ = dict(environ if environ is not None else os.environ)
@@ -193,7 +189,6 @@ class AssistantCodexProvider:
         self._audit = audit_log or AssistantProviderAuditLog(
             redaction_enabled=_truthy(self._environ.get("PANTHEON_ASSISTANT_REDACTION_ENABLED", "true")),
         )
-        self._repair_workflow = repair_workflow or AssistantRepairWorkflow(self._environ)
         self._clock = clock or _utc_now
         self._reauth_lock = threading.Lock()
         self._reauth_sessions: dict[str, dict[str, Any]] = {}
@@ -202,9 +197,6 @@ class AssistantCodexProvider:
         checked_at = self._clock().isoformat().replace("+00:00", "Z")
         binary = self._resolve_binary()
         mount_validation = self._mounts.validate_mounts().get(CODEX_PROVIDER)
-        repair_workspace = _repair_workspace_metadata(
-            self._environ.get("PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT", DEFAULT_REPAIR_WORKTREE_ROOT)
-        )
         usage = provider_usage_snapshot(
             CODEX_PROVIDER_ID,
             CODEX_PROVIDER,
@@ -224,12 +216,10 @@ class AssistantCodexProvider:
             "mount_mode": getattr(mount_validation, "mount_mode", "unknown"),
             "usage": usage,
             "quota": usage,
-            "repair_workspace": repair_workspace,
-            "repairWorkspace": repair_workspace,
             "capabilities": {
                 "read": True,
-                "repairWrite": bool(repair_workspace.get("ready")),
-                "repair_write": bool(repair_workspace.get("ready")),
+                "repairWrite": False,
+                "repair_write": False,
             },
             "last_refresh_check_time": None,
             "ready": False,
@@ -273,6 +263,13 @@ class AssistantCodexProvider:
 
     def invoke(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         mode = str(payload.get("mode") or "user")
+        if mode not in {"user", "kernel_observe", "kernel_debug"}:
+            raise CodexProviderError(
+                "CODEX_MODE_UNSUPPORTED",
+                "The product adapter only supports user, kernel_observe, and kernel_debug modes.",
+                status_code=400,
+                retryable=False,
+            )
         prompt = payload.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
             raise CodexProviderError(
@@ -308,7 +305,6 @@ class AssistantCodexProvider:
                 "mode": mode,
                 "sandbox": context.sandbox,
                 "workspace_class": context.workspace_class,
-                **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
                 "prompt_bytes": len(prompt.encode("utf-8")),
                 "image_count": len(image_paths),
                 "image_bytes": image_bytes,
@@ -337,7 +333,6 @@ class AssistantCodexProvider:
                     "mode": mode,
                     "sandbox": context.sandbox,
                     "workspace_class": context.workspace_class,
-                    **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
                     "duration_ms": duration_ms,
                     "timeout_seconds": timeout,
                     "partial_stdout": _coerce_output(exc.output),
@@ -369,7 +364,6 @@ class AssistantCodexProvider:
                     "mode": mode,
                     "sandbox": context.sandbox,
                     "workspace_class": context.workspace_class,
-                    **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
                     "duration_ms": duration_ms,
                     "error_code": "CODEX_PROCESS_START_FAILED",
                     "error_type": type(exc).__name__,
@@ -392,47 +386,6 @@ class AssistantCodexProvider:
                 shutil.rmtree(image_tmpdir, ignore_errors=True)
 
         duration_ms = _duration_ms(started)
-        post_run_repair_workflow: Mapping[str, Any] | None = None
-        if mode == "kernel_repair":
-            try:
-                post_run_repair_workflow = self._repair_workflow.validate(
-                    metadata,
-                    require_clean=False,
-                ).to_dict()
-            except AssistantRepairWorkflowError as exc:
-                self._audit.record(
-                    {
-                        "event_type": "assistant.provider.failed",
-                        "provider": CODEX_PROVIDER_ID,
-                        "runtime": PROVIDER_RUNTIME,
-                        **audit_context,
-                        "mode": mode,
-                        "sandbox": context.sandbox,
-                        "workspace_class": context.workspace_class,
-                        **({"repair_workflow": context.repair_workflow} if context.repair_workflow else {}),
-                        "duration_ms": duration_ms,
-                        "returncode": completed.returncode,
-                        "error_code": exc.code,
-                        "failure_stage": "post_run_repair_validation",
-                        "error_details": exc.details,
-                    }
-                )
-                raise CodexProviderError(
-                    exc.code,
-                    f"Codex repair post-run validation failed: {exc}",
-                    status_code=exc.status_code,
-                    retryable=False,
-                    details={**exc.details, "failure_stage": "post_run_repair_validation"},
-                ) from exc
-
-        repair_readback: dict[str, Any] = {}
-        if context.repair_workflow:
-            repair_readback = {
-                "pre_run_repair_workflow": context.repair_workflow,
-                "post_run_repair_workflow": post_run_repair_workflow,
-                # Keep the established field as the authoritative latest readback.
-                "repair_workflow": post_run_repair_workflow or context.repair_workflow,
-            }
         if completed.returncode != 0:
             code, status_code, retryable = _classify_failure(completed.stdout, completed.stderr)
             self._audit.record(
@@ -444,7 +397,6 @@ class AssistantCodexProvider:
                     "mode": mode,
                     "sandbox": context.sandbox,
                     "workspace_class": context.workspace_class,
-                    **repair_readback,
                     "duration_ms": duration_ms,
                     "returncode": completed.returncode,
                     "stdout": completed.stdout,
@@ -472,7 +424,6 @@ class AssistantCodexProvider:
                     "mode": mode,
                     "sandbox": context.sandbox,
                     "workspace_class": context.workspace_class,
-                    **repair_readback,
                     "duration_ms": duration_ms,
                     "returncode": completed.returncode,
                     "stdout": completed.stdout,
@@ -497,7 +448,6 @@ class AssistantCodexProvider:
                 "mode": mode,
                 "sandbox": context.sandbox,
                 "workspace_class": context.workspace_class,
-                **repair_readback,
                 "duration_ms": duration_ms,
                 "returncode": completed.returncode,
                 "output_summary": _codex_output_summary(completed.stdout),
@@ -510,7 +460,6 @@ class AssistantCodexProvider:
             "mode": mode,
             "sandbox": context.sandbox,
             "workspace_class": context.workspace_class,
-            **repair_readback,
             "returncode": completed.returncode,
             "duration_ms": duration_ms,
             "stdout": completed.stdout,
@@ -626,52 +575,11 @@ class AssistantCodexProvider:
         return cmd
 
     def _command_context(self, mode: str, metadata: Mapping[str, Any]) -> _CommandContext:
-        if mode == "kernel_repair":
-            return self._repair_context(metadata)
         return _CommandContext(
             mode=mode,
             workspace=_norm_path(self._environ.get("PANTHEON_ASSISTANT_CODEX_WORKSPACE", DEFAULT_CODEX_WORKSPACE)),
             sandbox="read-only",
             workspace_class="read_only",
-        )
-
-    def _repair_context(self, metadata: Mapping[str, Any]) -> _CommandContext:
-        task_id = str(metadata.get("task_id") or metadata.get("taskId") or "").strip()
-        worktree = str(metadata.get("task_worktree") or metadata.get("taskWorktree") or "").strip()
-        if not task_id or not worktree:
-            raise CodexProviderError(
-                "CODEX_REPAIR_METADATA_REQUIRED",
-                "kernel_repair mode requires task_id and task_worktree metadata.",
-                status_code=400,
-                retryable=False,
-            )
-        root = Path(_norm_path(self._environ.get("PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT", DEFAULT_REPAIR_WORKTREE_ROOT)))
-        worktree_path = Path(_norm_path(worktree))
-        try:
-            worktree_path.relative_to(root)
-        except ValueError as exc:
-            raise CodexProviderError(
-                "CODEX_REPAIR_WORKTREE_OUTSIDE_ROOT",
-                "kernel_repair task_worktree must be inside PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT.",
-                status_code=400,
-                retryable=False,
-            ) from exc
-        try:
-            workflow = self._repair_workflow.validate(metadata, require_clean=True)
-        except AssistantRepairWorkflowError as exc:
-            raise CodexProviderError(
-                exc.code,
-                str(exc),
-                status_code=exc.status_code,
-                retryable=False,
-                details=exc.details,
-            ) from exc
-        return _CommandContext(
-            mode="kernel_repair",
-            workspace=worktree_path.as_posix(),
-            sandbox="workspace-write",
-            workspace_class="task_worktree",
-            repair_workflow=workflow.to_dict(),
         )
 
     def _build_env(self) -> dict[str, str]:
@@ -1281,7 +1189,7 @@ def _failure_message(code: str) -> str:
     if code == "CODEX_AUTH_UNAVAILABLE":
         return "Codex service-user account session is unavailable or expired."
     if code == "CODEX_SANDBOX_UNAVAILABLE":
-        return "Codex workspace-write sandbox is unavailable in the OpenClaw adapter container."
+        return "Codex diagnostic sandbox is unavailable in the OpenClaw adapter container."
     return "Codex provider invocation failed."
 
 
@@ -1289,87 +1197,11 @@ def _sandbox_namespace_failure(stdout: str, stderr: str) -> bool:
     return bool(_SANDBOX_NAMESPACE_FAILURE_RE.search(f"{stdout}\n{stderr}"))
 
 
-def _repair_workspace_metadata(root_value: str) -> dict[str, Any]:
-    root = Path(_norm_path(root_value or DEFAULT_REPAIR_WORKTREE_ROOT))
-    exists = _path_exists(root)
-    is_dir = _path_is_dir(root)
-    base: dict[str, Any] = {
-        "root": root.as_posix(),
-        "exists": exists,
-        "isDir": is_dir,
-        "is_dir": is_dir,
-        "writable": os.access(root, os.W_OK) if exists else False,
-        "ready": False,
-        "status": "missing",
-        "worktreeCount": 0,
-        "worktree_count": 0,
-        "recentWorktrees": [],
-        "recent_worktrees": [],
-    }
-    if not exists:
-        return base
-    if not is_dir:
-        return {**base, "status": "not_directory"}
-    if not os.access(root, os.W_OK):
-        return {**base, "status": "not_writable"}
-
-    worktrees = _recent_worktree_dirs(root)
-    recent = [
-        {
-            "name": item.name,
-            "path": item.as_posix(),
-            "lastModifiedAt": _mtime_z(item),
-            "last_modified_at": _mtime_z(item),
-            "gitRepo": (item / ".git").exists(),
-            "git_repo": (item / ".git").exists(),
-        }
-        for item in worktrees[:8]
-    ]
-    return {
-        **base,
-        "ready": True,
-        "status": "ready",
-        "worktreeCount": len(worktrees),
-        "worktree_count": len(worktrees),
-        "recentWorktrees": recent,
-        "recent_worktrees": recent,
-    }
-
-
-def _recent_worktree_dirs(root: Path) -> list[Path]:
-    try:
-        dirs = [item for item in root.iterdir() if _path_is_dir(item)]
-    except OSError:
-        return []
-    return sorted(dirs, key=lambda item: _safe_mtime(item), reverse=True)
-
-
-def _path_exists(path: Path) -> bool:
-    try:
-        return path.exists()
-    except OSError:
-        return False
-
-
 def _path_is_dir(path: Path) -> bool:
     try:
         return path.is_dir()
     except OSError:
         return False
-
-
-def _safe_mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
-
-
-def _mtime_z(path: Path) -> str | None:
-    try:
-        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
-    except OSError:
-        return None
 
 
 def _mount_metadata(validation: Any) -> dict[str, Any]:

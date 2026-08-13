@@ -14,7 +14,6 @@ class AssistantMode(str, Enum):
     USER = "user"
     KERNEL_OBSERVE = "kernel_observe"
     KERNEL_DEBUG = "kernel_debug"
-    KERNEL_REPAIR = "kernel_repair"
 
 
 class AssistantFocus(AssistantBaseModel):
