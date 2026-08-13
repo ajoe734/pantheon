@@ -694,7 +694,6 @@ services:
       PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
       PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}
-      PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT: ${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}
       PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
     depends_on:
       openclaw-data-init:
@@ -716,7 +715,6 @@ services:
       - openclaw-data:/home/node/.openclaw
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
-      - ${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:rw
     ports:
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
     healthcheck:
@@ -772,7 +770,7 @@ services:
       OPENCLAW_LIVE_ADAPTER_ENABLED: "false"
       OPENCLAW_CANARY_ADAPTER_ENABLED: "false"
       OPENCLAW_CAPITAL_BINDING_ENABLED: "false"
-      OPENCLAW_ALLOWED_TOOLS: ${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate,assistant.provider.reauth,assistant.provider.register,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync,assistant.orchestrator.status}
+      OPENCLAW_ALLOWED_TOOLS: ${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.provider.reauth,assistant.provider.register,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync}
       OPENCLAW_BROKER_SIDECAR_URL: http://broker:8102
       OPENCLAW_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
@@ -781,12 +779,6 @@ services:
       PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
       PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}
-      PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT: ${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}
-      PANTHEON_STATUS_ROOT_CONTAINER: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}
-      PANTHEON_ASSISTANT_REPAIR_REPO_URL: ${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-/workspace/status-root}
-      PANTHEON_ASSISTANT_REPAIR_REMOTE_URL: ${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-https://github.com/ajoe734/pantheon.git}
-      PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS: ${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}
-      PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS: ${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}
       PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       # BFF-to-adapter assistant routes are an authenticated service boundary.
       # The token has no compose default and must be provisioned by the deploy
@@ -796,8 +788,6 @@ services:
     volumes:
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
-      - ${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro
-      - ${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:rw
       # Persist the adapter's OpenClaw device identity + pairing approval so the
       # one-time `openclaw devices approve` survives container recreate (the CLI
       # connects to the gateway as a paired device; a fresh state dir re-pairs).
@@ -1079,10 +1069,6 @@ services:
     restart: unless-stopped
     environment:
       BFF_DATA_DIR: /data/bff
-      BRIDGE_SIGNING_PRIVATE_KEY: ${BRIDGE_SIGNING_PRIVATE_KEY:-}
-      BRIDGE_SIGNING_KEY_ID: ${BRIDGE_SIGNING_KEY_ID:-}
-      BRIDGE_SIGNING_PUBLIC_KEYS_JSON: ${BRIDGE_SIGNING_PUBLIC_KEYS_JSON:-}
-      PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED: ${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true}
       AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
       AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_WORKSHOP_STORE_SCHEMA: ${AGORA_WORKSHOP_STORE_SCHEMA:-agora}
@@ -1153,7 +1139,6 @@ services:
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND:-postgres}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS: ${PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS:-5}
-      PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}
       BFF_READ_SURFACE_STATE: fresh
       PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
       PANTHEON_BFF_CAPABILITY_SNAPSHOT_STORE: /data/bff/capability_snapshots.json
@@ -1288,7 +1273,6 @@ services:
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - bff-data:/data/bff
-      - ${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:rw
       - governance-data:/data/governance:ro
       - runtime-data:/data/runtime:ro
       - incident-data:/data/incidents:ro

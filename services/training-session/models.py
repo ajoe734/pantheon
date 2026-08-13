@@ -430,8 +430,86 @@ def validate_teaching_event_against_session(event: TeachingEvent, session: Teach
     return errors
 
 
+@dataclass(frozen=True)
+class TeachingEvaluationResult:
+    eval_id: str
+    session_id: str
+    tenant_id: str
+    persona_id: str
+    validation_status: str
+    validation_errors: Sequence[str]
+    metrics: Mapping[str, Any]
+    eval_identity: str
+    evaluated_at: str
+    consultation_required: bool = False
+    consult_request_id: str | None = None
+    consultation_receipt: Mapping[str, Any] | None = None
+    evaluation_proof_ref: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "eval_id", _require_text(self.eval_id, "eval_id"))
+        object.__setattr__(self, "session_id", _require_text(self.session_id, "session_id"))
+        object.__setattr__(self, "tenant_id", _require_text(self.tenant_id, "tenant_id"))
+        object.__setattr__(self, "persona_id", _require_text(self.persona_id, "persona_id"))
+        object.__setattr__(self, "validation_status", _require_text(self.validation_status, "validation_status"))
+        object.__setattr__(self, "validation_errors", _text_sequence(self.validation_errors, "validation_errors"))
+        object.__setattr__(self, "metrics", dict(_as_mapping(self.metrics, "metrics")))
+        object.__setattr__(self, "eval_identity", _require_text(self.eval_identity, "eval_identity"))
+        object.__setattr__(self, "evaluated_at", _require_text(self.evaluated_at, "evaluated_at"))
+        object.__setattr__(self, "consult_request_id", _optional_text(self.consult_request_id, "consult_request_id"))
+        if self.consultation_receipt is not None:
+            object.__setattr__(self, "consultation_receipt", dict(_as_mapping(self.consultation_receipt, "consultation_receipt")))
+        object.__setattr__(self, "evaluation_proof_ref", _optional_text(self.evaluation_proof_ref, "evaluation_proof_ref"))
+        object.__setattr__(self, "metadata", dict(_as_mapping(self.metadata, "metadata")))
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "eval_id": self.eval_id,
+            "session_id": self.session_id,
+            "tenant_id": self.tenant_id,
+            "persona_id": self.persona_id,
+            "validation_status": self.validation_status,
+            "validation_errors": list(self.validation_errors),
+            "metrics": dict(self.metrics),
+            "eval_identity": self.eval_identity,
+            "evaluated_at": self.evaluated_at,
+            "consultation_required": self.consultation_required,
+        }
+        if self.consult_request_id is not None:
+            payload["consult_request_id"] = self.consult_request_id
+        if self.consultation_receipt is not None:
+            payload["consultation_receipt"] = dict(self.consultation_receipt)
+        if self.evaluation_proof_ref is not None:
+            payload["evaluation_proof_ref"] = self.evaluation_proof_ref
+        if self.metadata:
+            payload["metadata"] = dict(self.metadata)
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> TeachingEvaluationResult:
+        mapping = _as_mapping(data, "TeachingEvaluationResult")
+        return cls(
+            eval_id=mapping.get("eval_id", ""),
+            session_id=mapping.get("session_id", ""),
+            tenant_id=mapping.get("tenant_id", ""),
+            persona_id=mapping.get("persona_id", ""),
+            validation_status=mapping.get("validation_status", ""),
+            validation_errors=mapping.get("validation_errors", ()),
+            metrics=mapping.get("metrics", {}),
+            eval_identity=mapping.get("eval_identity", ""),
+            evaluated_at=mapping.get("evaluated_at", ""),
+            consultation_required=bool(mapping.get("consultation_required", False)),
+            consult_request_id=mapping.get("consult_request_id"),
+            consultation_receipt=mapping.get("consultation_receipt"),
+            evaluation_proof_ref=mapping.get("evaluation_proof_ref"),
+            metadata=mapping.get("metadata", {}),
+        )
+
+
 __all__ = [
     "TeachingActorType",
+    "TeachingEvaluationResult",
     "TeachingEvent",
     "TeachingEventType",
     "TeachingSession",
@@ -448,3 +526,4 @@ __all__ = [
     "validate_teaching_session",
     "validate_teaching_session_payload",
 ]
+

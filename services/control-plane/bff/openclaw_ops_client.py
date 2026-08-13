@@ -81,14 +81,6 @@ def _assistant_provider_timeout_seconds() -> float:
         return 75.0
 
 
-def _assistant_repair_prepare_timeout_seconds() -> float:
-    raw = os.getenv("PANTHEON_ASSISTANT_REPAIR_PREPARE_TIMEOUT_SECONDS", "45.0").strip()
-    try:
-        return max(float(raw), 0.1)
-    except ValueError:
-        return 45.0
-
-
 def _assistant_reauth_timeout_seconds() -> float:
     raw = os.getenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "30.0").strip()
     try:
@@ -571,25 +563,6 @@ class OpenClawOpsClient:
                 response.close()
             except Exception:  # noqa: BLE001
                 pass
-
-    def prepare_assistant_repair_worktree(
-        self,
-        *,
-        payload: Dict[str, Any],
-        operator_id: str,
-        trace_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        headers: Dict[str, str] = {"X-Operator-Id": operator_id}
-        if trace_id:
-            headers["X-Trace-Id"] = trace_id
-        return self._request(
-            "POST",
-            "/api/openclaw-adapter/assistant/repair-worktrees/prepare",
-            body=payload,
-            headers=headers,
-            expected_status={201},
-            timeout_seconds=_assistant_repair_prepare_timeout_seconds(),
-        )
 
     def start_assistant_provider_reauth(
         self,

@@ -240,7 +240,7 @@ The adapter response preserves `effective_tools` for compatibility and adds
   "mode_gate": {
     "type": "allowlist",
     "default": "deny",
-    "allowed_modes": ["kernel_observe", "kernel_debug", "kernel_repair"]
+    "allowed_modes": ["kernel_observe", "kernel_debug"]
   },
   "role": "operator",
   "confirm_policy": {"required": false},

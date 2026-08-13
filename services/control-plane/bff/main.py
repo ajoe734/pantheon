@@ -43727,7 +43727,7 @@ def _mgmt_nl_build_context_pack(
 
 def _mgmt_nl_provider_mode_from_context(context_pack: Dict[str, Any]) -> str:
     mode = str(context_pack.get("mode") or "user").strip()
-    if mode in {"user", "kernel_observe", "kernel_debug", "kernel_repair"}:
+    if mode in {"user", "kernel_observe", "kernel_debug"}:
         return mode
     return "user"
 
@@ -43749,50 +43749,29 @@ def _mgmt_nl_provider_control_metadata(context_pack: Dict[str, Any]) -> Dict[str
     }
 
 
-def _mgmt_nl_authorize_openclaw_repair_metadata(
+def _mgmt_nl_reject_development_payload(
     payload: Dict[str, Any],
     *,
     identity: OperatorIdentity,
     caller_tenant_id: str,
     control_mode: Dict[str, Any],
-) -> Dict[str, Any]:
-    mode = str(control_mode.get("mode") or "") if control_mode.get("active") else "user"
+) -> None:
     has_repair_payload = bool(payload.get("repair")) or any(
         isinstance(payload.get(key), dict)
         and bool(payload[key].get("repair") or payload[key].get("task"))
         for key in ("openclaw", "openClaw")
     )
-    if not _development_tooling_routes_enabled():
-        if mode == "kernel_repair" or has_repair_payload:
-            raise _bff_error(
-                409,
-                ErrorCode.PRECONDITION_FAILED,
-                "Development tooling is disabled",
-                "Kernel repair requires the removable development-tooling adapter.",
-                precondition_failed="development_tooling",
-            )
-        return {}
-    from assistant.development_repair import authorize_repair_metadata
-
-    return authorize_repair_metadata(
-        payload,
-        identity=identity,
-        caller_tenant_id=caller_tenant_id,
-        control_mode=control_mode,
-        bff_error=_bff_error,
-        raise_actor_error=_mgmt_nl_raise_control_mode_actor_error,
-        require_mode_capability=_mgmt_nl_require_mode_capability,
-    )
+    if has_repair_payload:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "Development tooling is not a product BFF capability",
+            "Use the local development-tooling worktree and task commands; product BFF does not prepare or authorize source writes.",
+            precondition_failed="development_tooling",
+        )
 
 
 def _mgmt_nl_provider_mode_prompt_lines(provider_mode: str) -> List[str]:
-    if provider_mode == "kernel_repair":
-        return [
-            "You are operating in kernel_repair mode through OpenClaw/Codex.",
-            "You may use the task worktree with workspace-write only within the declared repair scope.",
-            "Keep repository changes on the provided task branch/worktree and preserve branch, PR, checks, and merge workflow.",
-            "Do not mutate trading, broker, capital, deployment, or runtime-control state unless a separate governed BFF action explicitly authorizes it.",
-        ]
     if provider_mode in {"kernel_debug", "kernel_observe"}:
         return [
             f"You are operating in {provider_mode} mode through OpenClaw/Codex.",
@@ -43917,7 +43896,6 @@ def _mgmt_nl_maybe_provider_answer(
     audit_id: Optional[str],
     allowed_action_kinds: Set[str],
     current_user_attachments: Optional[List[Dict[str, Any]]] = None,
-    openclaw_repair_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[str], Dict[str, Any], List[Dict[str, Any]]]:
     enabled = _mgmt_nl_provider_feature_enabled()
     if provider in {"none", "off", "disabled", "deterministic"}:
@@ -44037,10 +44015,6 @@ def _mgmt_nl_maybe_provider_answer(
         "multimodal": multimodal_summary,
         "control_mode": _mgmt_nl_provider_control_metadata(context_pack),
     }
-    if provider_mode == "kernel_repair" and openclaw_repair_metadata:
-        metadata.update(openclaw_repair_metadata)
-        metadata["repair_metadata_source"] = "bff_prepared_repair_receipt"
-
     def _provider_failure(error: OpenClawOpsClientError) -> Tuple[None, Dict[str, Any], List[Dict[str, Any]]]:
         duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
         _management_ai_record_event(
@@ -44178,8 +44152,6 @@ def _mgmt_nl_maybe_provider_answer(
             status["sandbox"] = output.get("sandbox")
         if output.get("workspace_class") is not None:
             status["workspace_class"] = output.get("workspace_class")
-        if output.get("repair_workflow") is not None:
-            status["repair_workflow"] = output.get("repair_workflow")
     if multimodal_summary:
         status["multimodal"] = multimodal_summary
     if multimodal_unsupported:
@@ -44211,32 +44183,10 @@ def _mgmt_nl_provider_inline_grace_seconds() -> float:
     return value if value > 0 else _MGMT_NL_PROVIDER_INLINE_GRACE_DEFAULT_SECONDS
 
 
-def _mgmt_nl_provider_inline_wait_seconds(control_mode: Dict[str, Any]) -> float:
-    """Keep admitted repair writes synchronous through durable result storage.
+def _mgmt_nl_provider_inline_wait_seconds(_control_mode: Dict[str, Any]) -> float:
+    """Product assistant turns never hold a development worktree lease."""
 
-    User/debug turns may finish asynchronously for UI responsiveness. A repair
-    turn can mutate its prepared worktree, so returning while only an in-memory
-    finalizer owns the terminal response would lose bounded recovery on BFF
-    restart. Wait through the adapter's provider timeout, then persist the
-    terminal result before returning the 202 response.
-    """
-
-    if not control_mode.get("active") or str(control_mode.get("mode") or "") != "kernel_repair":
-        return _mgmt_nl_provider_inline_grace_seconds()
-    raw = os.getenv("PANTHEON_MANAGEMENT_NL_REPAIR_INLINE_TIMEOUT_SECONDS", "").strip()
-    if raw:
-        try:
-            configured = float(raw)
-        except (TypeError, ValueError):
-            configured = 0.0
-        if configured > 0:
-            return configured
-    provider_raw = os.getenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "180.0").strip()
-    try:
-        provider_timeout = max(float(provider_raw), 0.1)
-    except (TypeError, ValueError):
-        provider_timeout = 180.0
-    return provider_timeout + 5.0
+    return _mgmt_nl_provider_inline_grace_seconds()
 
 
 def _mgmt_nl_stream_read_timeout_seconds() -> float:
@@ -44556,7 +44506,7 @@ async def bff_management_nl_ask(
         management_session_id=session_id,
         touch=True,
     )
-    openclaw_repair_metadata = _mgmt_nl_authorize_openclaw_repair_metadata(
+    _mgmt_nl_reject_development_payload(
         payload,
         identity=identity,
         caller_tenant_id=caller_tenant_id,
@@ -44750,7 +44700,6 @@ async def bff_management_nl_ask(
             audit_id=audit_ref.get("audit_id"),
             allowed_action_kinds=allowed_action_kinds,
             current_user_attachments=current_user_attachments,
-            openclaw_repair_metadata=openclaw_repair_metadata,
         )
     )
     done, _ = await asyncio.wait(
@@ -68626,12 +68575,6 @@ def _assistant_ask_enabled() -> bool:
     return os.getenv("PANTHEON_ASSISTANT_ENABLED", "").strip().lower() in {"1", "true", "yes"}
 
 
-def _development_tooling_routes_enabled() -> bool:
-    return str(
-        os.environ.get("PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED", "true")
-    ).strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _agora_ask_deterministic_fallback(prompt: str) -> str:
     return (
         "The assistant provider is currently unavailable. "
@@ -68800,21 +68743,6 @@ def _include_assistant_routes() -> None:
             provider_reauth_code=_assistant_provider_reauth_code,
         )
     )
-
-    if _development_tooling_routes_enabled():
-        from assistant.development_routes import create_development_router
-
-        app.include_router(
-            create_development_router(
-                build_context_pack=_assistant_build_context_pack,
-                extract_identity=_extract_identity,
-                require_read_role=_require_read_role,
-                bff_error=_bff_error,
-                transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
-                control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
-            )
-        )
-
 
 from console_gap.workflows_hooks import create_workflows_hooks_router
 

@@ -5,6 +5,7 @@ only after authoritative ExperimentTask/ExperimentRun service readback.
 Production activation remains fail-closed.
 """
 
+from .admission import ReplicationAdmissionStore
 from .queue import AlphaReplicationQueue
 from .revalidation_worker import AlphaRevalidationWorker, RevalidationWorkerMetrics
 
@@ -12,4 +13,5 @@ __all__ = [
     "AlphaReplicationQueue",
     "AlphaRevalidationWorker",
     "RevalidationWorkerMetrics",
+    "ReplicationAdmissionStore",
 ]

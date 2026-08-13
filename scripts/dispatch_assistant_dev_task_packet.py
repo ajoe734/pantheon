@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Dispatch a signed assistant dev task packet through repo-local automation.
 
-This command is the trusted local bridge between the Management AI/BFF signed
-packet response and the existing supervisor/auto-worker queue. It never calls a
-web route and never bypasses the packet verifier.
+This command is the trusted local bridge between a local signed task packet and
+the existing supervisor/auto-worker queue. It never calls a web route and never
+bypasses the packet verifier.
 """
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ from pydantic import ValidationError
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BFF_DIR = REPO_ROOT / "services" / "control-plane" / "bff"
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
+TOOLING_DIR = REPO_ROOT / ".orchestrator"
+if str(TOOLING_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLING_DIR))
 
-from assistant.dev_bridge_dispatcher import dispatch_task_packet  # noqa: E402
-from assistant.dev_bridge_models import BridgeDispatchRequest, DevTaskPacket  # noqa: E402
+from development_bridge.dev_bridge_dispatcher import dispatch_task_packet  # noqa: E402
+from development_bridge.dev_bridge_models import BridgeDispatchRequest, DevTaskPacket  # noqa: E402
 
 
 def _read_payload(packet_file: str | None) -> Any:
@@ -38,27 +38,19 @@ def _as_mapping(value: Any, *, label: str) -> Mapping[str, Any]:
 
 
 def _extract_packet_payload(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
-    """Return (packet_payload, dispatch_defaults) from supported BFF envelopes."""
+    """Return a local packet payload and optional dispatch defaults."""
     if isinstance(payload.get("packet"), Mapping):
         return payload["packet"], payload
 
     if isinstance(payload.get("taskPacket"), Mapping):
         return payload["taskPacket"], payload
 
-    meta = payload.get("meta")
-    if isinstance(meta, Mapping) and isinstance(meta.get("taskPacket"), Mapping):
-        return meta["taskPacket"], payload
-
-    data = payload.get("data")
-    if isinstance(data, Mapping) and ("packetId" in data or "packet_id" in data):
-        return data, payload
-
     if "packetId" in payload or "packet_id" in payload:
         return payload, {}
 
     raise ValueError(
-        "Could not find DevTaskPacket payload. Expected raw packet, {packet}, "
-        "{taskPacket}, /dev-bridge {data}, or /dev-docs {meta.taskPacket}."
+        "Could not find DevTaskPacket payload. Expected a raw packet, {packet}, "
+        "or {taskPacket}."
     )
 
 

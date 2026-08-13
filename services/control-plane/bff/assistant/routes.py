@@ -1095,16 +1095,16 @@ def _require_provider_registration_control(
 ) -> None:
     mode = str(control_status.get("mode") or "")
     capabilities = {str(value) for value in (control_status.get("capabilities") or [])}
-    allowed_modes = {AssistantMode.KERNEL_DEBUG.value, AssistantMode.KERNEL_REPAIR.value}
+    allowed_modes = {AssistantMode.KERNEL_DEBUG.value}
     if mode not in allowed_modes:
         _raise_error(
             bff_error,
             409,
             ErrorCode.PRECONDITION_FAILED,
-            "Assistant provider registration requires active kernel_debug or kernel_repair control mode",
-            "Activate assistant control mode in kernel_debug or kernel_repair before registering provider metadata",
+            "Assistant provider registration requires active kernel_debug control mode",
+            "Activate assistant control mode in kernel_debug before registering provider metadata",
             field="control_mode",
-            reason="kernel_debug_or_repair_required",
+            reason="kernel_debug_required",
             mode=mode or None,
         )
     if not capabilities.intersection({"assistant.kernel.debug", "assistant.kernel.repair"}):

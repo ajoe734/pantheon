@@ -43,7 +43,7 @@ PROVIDER_RUNTIME = "openclaw_gateway_agent_cli"
 DEFAULT_AGENT_ID = "main"
 DEFAULT_TIMEOUT_SECONDS = 90
 DEFAULT_OPENCLAW_BIN = "openclaw"
-CODEX_DELEGATED_KERNEL_MODES = frozenset({"kernel_debug", "kernel_repair"})
+CODEX_DELEGATED_KERNEL_MODES = frozenset({"kernel_debug"})
 # `openclaw agent` accepts the prompt ONLY as an argv string (`-m/--message
 # <text>`); it has NO stdin support and `--message -` is taken LITERALLY — the
 # agent then receives a bare "-" heartbeat tick and replies "HEARTBEAT_OK"

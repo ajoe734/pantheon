@@ -145,6 +145,86 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertFalse(sig["metadata"]["is_real_order"])
         self.assertFalse(sig["metadata"]["is_real_capital"])
 
+    def test_bounded_paper_strategy_evaluates_strategy_artifact(self) -> None:
+        stores = {}
+
+        def store_for(binding: Any) -> InMemoryPendingSignalStore:
+            bid = binding if isinstance(binding, str) else binding.get("binding_id")
+            if not bid:
+                bid = getattr(binding, "binding_id", "")
+            return stores.setdefault(bid, InMemoryPendingSignalStore())
+
+        binding = {
+            "binding_id": "rb-artifact-eval-test",
+            "runtime_id": "rt-eval-test",
+            "capital_pool_id": "pool-eval-test",
+            "artifact_id": "art-eval-test",
+            "artifact_version": "1.0.0",
+            "persona_capital_binding_id": "pcb-eval-001",
+            "symbol": "2330.TW",
+            "metadata": {
+                "strategy_id": "tw_momentum_v1",
+                "recent_closes": [100.0, 95.0],
+                "strategy_artifact": {
+                    "artifact_schema_version": "1.0",
+                    "artifact_id": "art-eval-test",
+                    "strategy_id": "tw_momentum_v1",
+                    "version": "1.0.0",
+                    "algorithm_ref": {
+                        "engine": "lean",
+                        "repository": "ajoe734/pantheon-lean",
+                        "commit": "5ad0249432459c119f26718007e083808ef7995d",
+                        "path": "pantheon_algo/base.py",
+                        "entrypoint": "pantheon_algo.base:PantheonAlgoBase",
+                        "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+                        "signal_schema_version": "1.0",
+                        "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action"
+                    },
+                    "strategy_logic": {
+                        "kind": "close_to_close_momentum",
+                        "lookback_parameter": "lookback_bars",
+                        "threshold_parameter": "momentum_threshold",
+                        "positive_action": "BUY",
+                        "non_positive_action": "SELL"
+                    },
+                    "parameters": {
+                        "lookback_bars": 2,
+                        "momentum_threshold": 0.0
+                    },
+                    "mutation_surface": {
+                        "controls": [
+                            {
+                                "parameter_key": "lookback_bars",
+                                "value_type": "integer",
+                                "current_value": 2,
+                                "allowed_range": {"min": 2, "max": 60},
+                                "step": 1
+                            },
+                            {
+                                "parameter_key": "momentum_threshold",
+                                "value_type": "number",
+                                "current_value": 0.0,
+                                "allowed_range": {"min": 0.0, "max": 0.05},
+                                "step": 0.001
+                            }
+                        ],
+                        "immutable_parameters": []
+                    },
+                    "lineage": {"source_run_ids": ["EVO-001"]}
+                }
+            }
+        }
+
+        producer = PaperSignalProducer(store_for=store_for, strategy=BoundedPaperStrategy())
+        producer.produce(binding, _NOW)
+
+        store = stores["rb-artifact-eval-test"]
+        [sig] = store.get_pending()
+
+        # momentum is (95 - 100) / 100 = -0.05 <= 0.0 -> SELL / SHORT
+        self.assertEqual(sig["action"], "SELL")
+        self.assertEqual(sig["direction"], "SHORT")
+
     @patch("urllib.request.urlopen")
     def test_fetch_eligible_paper_bindings(self, mock_urlopen) -> None:
         mock_response = MagicMock()
