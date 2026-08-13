@@ -420,6 +420,13 @@ class AlphaReplicationQueue:
         with self._lock_context():
             return list(self._read())
 
+    def get_entry(self, tenant_id: str, strategy_spec_id: str) -> dict[str, Any] | None:
+        """Retrieve one queue entry by tenant and strategy spec id."""
+        with self._lock_context():
+            entry = self._find(self._read(), tenant_id, strategy_spec_id)
+            return dict(entry) if entry is not None else None
+
+
     def get_metrics(self) -> dict[str, Any]:
         with self._lock_context():
             entries = self._read()

@@ -313,3 +313,19 @@ def test_queue_state_survives_process_restart(tmp_path) -> None:
     assert entry["strategy_spec_id"] == "reg-strategy-spec-alpha-1.0.0"
     assert entry["attempt_count"] == 1
     assert entry["status"] == "pending"
+
+
+def test_get_entry_retrieves_entry_by_tenant_and_spec_id(tmp_path) -> None:
+    queue = AlphaReplicationQueue(tmp_path)
+    spec = _approved_spec(tenant_id="tenant-a", strategy_spec_id="spec-001")
+    queue.enqueue(spec, now=NOW)
+
+    fetched = queue.get_entry("tenant-a", "spec-001")
+    assert fetched is not None
+    assert fetched["tenant_id"] == "tenant-a"
+    assert fetched["strategy_spec_id"] == "spec-001"
+    assert fetched["status"] == "pending"
+
+    assert queue.get_entry("tenant-a", "non-existent") is None
+    assert queue.get_entry("tenant-b", "spec-001") is None
+
