@@ -40,7 +40,8 @@ from services.research.vectorbt.adapter.vectorbt_adapter import (
     VectorbtWorkflowError,
     run_vectorbt_workflow,
 )
-from models import TeachingEvent, TeachingSession
+from models import TeachingEvent, TeachingEvaluationResult, TeachingSession
+from consultation_client import TrainingConsultationClient
 from persona_target import (
     PersonaTargetError,
     commit_persona_target,
@@ -608,7 +609,42 @@ def get_session(session_id: str) -> Dict[str, Any]:
     session = store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="training session not found")
-    return _require_tenant_record(session, "training session not found")
+    record = _require_tenant_record(session, "training session not found")
+    bundle = store.get_preview_bundle(session_id) or {}
+    preview = bundle.get("preview") if isinstance(bundle.get("preview"), dict) else {}
+    eval_result = preview.get("evaluation_result") if isinstance(preview, dict) else None
+    if eval_result:
+        record["evaluation_result"] = eval_result
+        record["eval_identity"] = eval_result.get("eval_identity")
+    return record
+
+
+@app.get("/api/training/sessions/{session_id}/readback")
+@app.get("/api/training/sessions/{session_id}/terminal-readback")
+def get_session_terminal_readback(session_id: str) -> Dict[str, Any]:
+    session = store.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="training session not found")
+    record = _require_tenant_record(session, "training session not found")
+    bundle = store.get_preview_bundle(session_id) or {}
+    preview = bundle.get("preview") if isinstance(bundle.get("preview"), dict) else {}
+    eval_result = preview.get("evaluation_result") if isinstance(preview, dict) else None
+    return {
+        "session_id": session_id,
+        "tenant_id": _tenant_id_for(record),
+        "persona_id": record.get("persona_id"),
+        "status": record.get("status"),
+        "mode": record.get("mode"),
+        "started_at": record.get("started_at"),
+        "ended_at": record.get("ended_at"),
+        "eval_identity": (eval_result or {}).get("eval_identity"),
+        "evaluation_result": eval_result,
+        "consultation_required": (eval_result or {}).get("consultation_required", False),
+        "consult_request_id": (eval_result or {}).get("consult_request_id"),
+        "consultation_receipt": (eval_result or {}).get("consultation_receipt"),
+        "preview": preview,
+        "events": record.get("events") or [],
+    }
 
 
 @app.post("/api/training/sessions/{session_id}/events", status_code=201)
@@ -1321,12 +1357,67 @@ def _run_preview_evaluation(
         },
         recorded_at=timestamp,
     )
+    # Conditional Consultation Handoff:
+    # Teaching policy determines whether advisory consultation is required (e.g. evaluation failed thresholds or explicit review mode).
+    # When consultation_required=True, Teaching creates a ConsultRequest via TrainingConsultationClient and stores the receipt.
+    # Teaching MUST NOT write a ConsultMemo (memo authority belongs to Consultation domain).
+    consultation_required = (
+        validation_status == "failed"
+        or mode in ("consultation_required", "review_required")
+        or bool(session.get("consultation_required"))
+    )
+    consult_request_id: Optional[str] = None
+    consultation_receipt: Optional[Dict[str, Any]] = None
+
+    if consultation_required:
+        consult_client = TrainingConsultationClient()
+        receipt = consult_client.create_teaching_consult_request(
+            session_id=session_id,
+            tenant_id=_tenant_id_for(session),
+            persona_id=str(session.get("persona_id") or ""),
+            eval_id=eval_id,
+            validation_errors=validation_errors,
+            metrics=metrics,
+            trace_id=str(session.get("trace_id") or f"trace-{uuid.uuid4().hex[:12]}"),
+            requested_by=requested_by,
+            created_at=timestamp,
+        )
+        consultation_receipt = receipt.to_dict()
+        consult_request_id = receipt.consult_request_id
+
+    eval_identity_payload = {
+        "eval_id": eval_id,
+        "session_id": session_id,
+        "validation_status": validation_status,
+        "metrics": metrics,
+        "proof_digest": proof.get("proof_digest"),
+    }
+    eval_identity = f"teval-identity-{sha256(json.dumps(eval_identity_payload, sort_keys=True).encode('utf-8')).hexdigest()[:16]}"
+
+    eval_result = TeachingEvaluationResult(
+        eval_id=eval_id,
+        session_id=session_id,
+        tenant_id=_tenant_id_for(session),
+        persona_id=str(session.get("persona_id") or ""),
+        validation_status=validation_status,
+        validation_errors=validation_errors,
+        metrics=metrics,
+        eval_identity=eval_identity,
+        evaluated_at=timestamp,
+        consultation_required=consultation_required,
+        consult_request_id=consult_request_id,
+        consultation_receipt=consultation_receipt,
+        evaluation_proof_ref=proof.get("proof_ref"),
+    )
+
     proof["runtime_evidence"] = {
         "schema_version": evidence["schema_version"],
         "sequence": evidence["sequence"],
         "checksum": evidence["checksum"],
     }
     preview["evaluation_proof"] = proof
+    preview["evaluation_result"] = eval_result.to_dict()
+    preview["eval_identity"] = eval_identity
     preview["governance_gate"] = {
         "gate_id": proof["governance_gate_id"],
         "state": proof["governance_gate_state"],
@@ -1335,6 +1426,13 @@ def _run_preview_evaluation(
     evaluations[eval_id] = preview
     bundle["preview"] = preview
     store.put_preview_bundle(session_id, bundle)
+
+    artifact_refs: Dict[str, Any] = {
+        "preview_ref": f"trainer-preview:{session_id}:{eval_id}",
+        "evaluation_proof_ref": proof["proof_ref"],
+    }
+    if consult_request_id:
+        artifact_refs["consult_request_ref"] = f"consult-request:{consult_request_id}"
 
     _append_training_event(
         session,
@@ -1348,15 +1446,23 @@ def _run_preview_evaluation(
         eval_ref={
             "eval_id": eval_id,
             "job_id": job_id,
+            "eval_identity": eval_identity,
             "candidate_snapshot_at": timestamp,
             "evaluation_proof_ref": proof["proof_ref"],
             "governance_gate_state": proof["governance_gate_state"],
+            "consultation_required": consultation_required,
+            "consult_request_id": consult_request_id,
+            "consultation_receipt": consultation_receipt,
         },
-        artifact_refs={
-            "preview_ref": f"trainer-preview:{session_id}:{eval_id}",
-            "evaluation_proof_ref": proof["proof_ref"],
+        artifact_refs=artifact_refs,
+        payload={
+            "mode": mode,
+            "requested_by": requested_by,
+            "job_id": job_id,
+            "eval_identity": eval_identity,
+            "consultation_required": consultation_required,
+            "consult_request_id": consult_request_id,
         },
-        payload={"mode": mode, "requested_by": requested_by, "job_id": job_id},
     )
 
     return preview
