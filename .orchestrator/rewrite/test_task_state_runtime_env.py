@@ -38,6 +38,24 @@ def test_authoritative_store_env_is_added_to_issued_runtime_metadata(
     assert env[common.TASK_STATE_EVENT_LOG_ENV] == str(event_log)
 
 
+def test_incomplete_issued_runtime_metadata_is_rejected(tmp_path: Path) -> None:
+    config = {
+        "task_state_store": {
+            "mode": "authoritative",
+            "event_log": str(tmp_path / "runtime" / "task-state-events.jsonl"),
+        }
+    }
+
+    with pytest.raises(
+        RuntimeError,
+        match="requires command_root and source_sha",
+    ):
+        common.status_command_runtime_env(
+            config,
+            {"status_command_runtime": {"source_sha": "issued"}},
+        )
+
+
 def test_relative_repo_template_is_rejected_for_status_commands() -> None:
     with pytest.raises(RuntimeError, match="provisioned absolute event_log"):
         common.task_state_store_runtime_env(

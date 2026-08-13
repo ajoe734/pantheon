@@ -56,14 +56,33 @@ class ExplainDispatchV2Tests(unittest.TestCase):
             "schema": {"tasks_path": "tasks", "task_id_field": "id"},
         }
 
-    def decide(self, task, state=None, report=None):
+    def decide(self, task, state=None):
+        runtime_state = state or {
+            "seen_event_keys": {},
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    }
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    }
+                },
+            },
+        }
         with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
             return supervisor.explain_dispatch_for_task(
                 self.config,
-                state or {"seen_event_keys": {}},
+                runtime_state,
                 task["id"],
                 target_agent_filter=task.get("owner") or task.get("reviewer"),
-                provider_report=report or {},
                 status={"tasks": [task]},
                 live_total=0,
             )
@@ -85,12 +104,15 @@ class ExplainDispatchV2Tests(unittest.TestCase):
         result = self.decide(task)
         self.assertEqual(
             result["agents"]["Codex"]["first_blocking_gate"],
-            "lifecycle_assignment_dependencies",
+            "task_not_dispatchable",
         )
         self.config["agents"]["codex"]["max_parallel"] = 0
         task.pop("depends_on")
         result = self.decide(task)
-        self.assertEqual(result["agents"]["Codex"]["first_blocking_gate"], "agent_capacity")
+        self.assertEqual(
+            result["agents"]["Codex"]["first_blocking_gate"],
+            "lane_capacity_reached",
+        )
 
     def test_script_is_only_a_snapshot_adapter(self) -> None:
         task = {"id": "T3", "status": "todo", "owner": "Codex", "reviewer": "Claude2"}
@@ -101,7 +123,6 @@ class ExplainDispatchV2Tests(unittest.TestCase):
                 self.config,
                 {},
                 "T3",
-                provider_report={},
             )
         self.assertEqual(result, expected)
         shared.assert_called_once()

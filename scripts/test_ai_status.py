@@ -5692,8 +5692,6 @@ class ArchiveWorkflowTests(unittest.TestCase):
                 "ORCH_HEARTBEAT_PATH",
                 "PANTHEON_COMMAND_ROOT",
                 "PANTHEON_COMMAND_RUNTIME_SHA",
-                "PANTHEON_STATUS_COMMAND_ROOT",
-                "PANTHEON_STATUS_COMMAND_SHA",
             ):
                 env.pop(name, None)
             env.update(
@@ -5766,8 +5764,6 @@ class ArchiveWorkflowTests(unittest.TestCase):
                 "ORCH_HEARTBEAT_PATH",
                 "PANTHEON_COMMAND_ROOT",
                 "PANTHEON_COMMAND_RUNTIME_SHA",
-                "PANTHEON_STATUS_COMMAND_ROOT",
-                "PANTHEON_STATUS_COMMAND_SHA",
             ):
                 env.pop(name, None)
             env.update(
