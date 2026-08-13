@@ -43653,7 +43653,7 @@ def _mgmt_nl_build_context_pack(
 
     request = AssistantContextPackRequest(
         mode=assistant_mode,
-        include=["ui", "management_nl", "persona_health", "orchestrator_status"],
+        include=["ui", "management_nl", "persona_health"],
         question=question,
         route=frontend_route,
         frontend={
@@ -43698,58 +43698,6 @@ def _mgmt_nl_build_context_pack(
                     },
                 },
                 status=str(persona_surface.get("status") or "ok"),
-                source_kind="bff",
-            )
-        if source_id == "orchestrator_status":
-            from assistant.orchestrator_status import read_orchestrator_status
-
-            status = read_orchestrator_status(
-                provider_readiness=_assistant_provider_readiness,
-                openclaw_tool_policy=_assistant_openclaw_tool_policy,
-                openclaw_effective_tools=lambda: _assistant_openclaw_effective_tools(identity.operator_id),
-            )
-            status_payload = status.model_dump(mode="json", by_alias=True)
-            source_refs = status_payload.get("sourceRefs") if isinstance(status_payload.get("sourceRefs"), list) else []
-            tasks = status_payload.get("tasks") if isinstance(status_payload.get("tasks"), list) else []
-            workers = status_payload.get("workers") if isinstance(status_payload.get("workers"), list) else []
-            queue = status_payload.get("queue") if isinstance(status_payload.get("queue"), list) else []
-            summary = {
-                "snapshotAt": status_payload.get("snapshotAt"),
-                "project": status_payload.get("project"),
-                "sprint": status_payload.get("sprint"),
-                "objective": status_payload.get("objective"),
-                "sourceRefs": source_refs,
-                "taskCount": len(tasks),
-                "workerCount": len(workers),
-                "queueCount": len(queue),
-                "tasks": tasks[:20],
-                "workers": workers[:20],
-                "queue": queue[:20],
-                "supervisor": status_payload.get("supervisor"),
-                "providerGuardrails": status_payload.get("providerGuardrails"),
-                "providerReadiness": status_payload.get("providerReadiness"),
-                "openclawToolPolicy": status_payload.get("openclawToolPolicy"),
-                "assistantDevBridge": status_payload.get("assistantDevBridge"),
-                "coordination": status_payload.get("coordination"),
-            }
-            available = all(bool(ref.get("available")) for ref in source_refs) if source_refs else False
-            return AssistantCollectedSource(
-                source_id="orchestrator_status",
-                href="/bff/assistant/orchestrator/status",
-                payload={
-                    "data": summary,
-                    "meta": {
-                        "snapshot_at": snapshot_at,
-                        "surfaces": {
-                            "orchestrator_status": {
-                                "status": "ok" if available else "degraded",
-                                "source": "bff_orchestrator_status",
-                                "source_refs_available": available,
-                            }
-                        },
-                    },
-                },
-                status="ok" if available else "degraded",
                 source_kind="bff",
             )
         if source_id != "management_nl":
@@ -43801,79 +43749,6 @@ def _mgmt_nl_provider_control_metadata(context_pack: Dict[str, Any]) -> Dict[str
     }
 
 
-def _mgmt_nl_first_openclaw_value(*sources: Dict[str, Any], aliases: str) -> Any:
-    for source in sources:
-        if not isinstance(source, dict):
-            continue
-        for alias in aliases.split("|"):
-            if alias in source:
-                return source.get(alias)
-    return None
-
-
-def _mgmt_nl_openclaw_string_list(value: Any) -> List[str]:
-    if isinstance(value, str):
-        raw_items = re.split(r"[,;\n]+", value)
-    elif isinstance(value, list):
-        raw_items = value
-    else:
-        raw_items = []
-    return _dedupe_nonblank_strings(raw_items)
-
-
-def _mgmt_nl_openclaw_repair_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
-    raw_openclaw = payload.get("openclaw")
-    if raw_openclaw is None:
-        raw_openclaw = payload.get("openClaw")
-    openclaw = raw_openclaw if isinstance(raw_openclaw, dict) else {}
-    raw_repair = openclaw.get("repair") or openclaw.get("task") or payload.get("repair")
-    repair = raw_repair if isinstance(raw_repair, dict) else {}
-
-    metadata: Dict[str, Any] = {}
-    text_fields = {
-        "task_id": "task_id|taskId",
-        "task_worktree": "task_worktree|taskWorktree|worktree",
-        "expected_branch": "expected_branch|expectedBranch",
-        "remote": "remote",
-        "merge_target": "merge_target|mergeTarget",
-        "repo_key": "repo_key|repoKey|repository",
-    }
-    for target, aliases in text_fields.items():
-        value = _mgmt_nl_first_openclaw_value(repair, openclaw, aliases=aliases)
-        clean = str(value or "").strip()
-        if clean:
-            metadata[target] = clean
-
-    declared_scope = _mgmt_nl_first_openclaw_value(
-        repair,
-        openclaw,
-        aliases="declared_scope|declaredScope|scope",
-    )
-    scope = _mgmt_nl_openclaw_string_list(declared_scope)
-    if scope:
-        metadata["declared_scope"] = scope
-
-    for target, aliases in {
-        "require_clean": "require_clean|requireClean",
-        "require_pr": "require_pr|requirePr",
-    }.items():
-        value = _mgmt_nl_first_openclaw_value(repair, openclaw, aliases=aliases)
-        if isinstance(value, bool):
-            metadata[target] = value
-
-    pull_request = _mgmt_nl_first_openclaw_value(
-        repair,
-        openclaw,
-        aliases="pull_request|pullRequest",
-    )
-    if isinstance(pull_request, dict):
-        metadata["pull_request"] = pull_request
-    receipt = repair.get("receipt")
-    if isinstance(receipt, str) and receipt.strip():
-        metadata["receipt"] = receipt.strip()
-    return metadata
-
-
 def _mgmt_nl_authorize_openclaw_repair_metadata(
     payload: Dict[str, Any],
     *,
@@ -43881,72 +43756,33 @@ def _mgmt_nl_authorize_openclaw_repair_metadata(
     caller_tenant_id: str,
     control_mode: Dict[str, Any],
 ) -> Dict[str, Any]:
-    from assistant.repair_receipts import RepairReceiptError, verify_repair_receipt
-
-    supplied = _mgmt_nl_openclaw_repair_metadata(payload)
     mode = str(control_mode.get("mode") or "") if control_mode.get("active") else "user"
-    if mode != "kernel_repair":
-        if supplied:
+    has_repair_payload = bool(payload.get("repair")) or any(
+        isinstance(payload.get(key), dict)
+        and bool(payload[key].get("repair") or payload[key].get("task"))
+        for key in ("openclaw", "openClaw")
+    )
+    if not _development_tooling_routes_enabled():
+        if mode == "kernel_repair" or has_repair_payload:
             raise _bff_error(
                 409,
                 ErrorCode.PRECONDITION_FAILED,
-                "Prepared repair metadata requires active kernel_repair control mode",
-                "Activate kernel_repair with the same authenticated operator before forwarding a prepare receipt.",
-                precondition_failed="control_mode",
-                details_extra={"reason": "kernel_repair_required", "mode": mode},
+                "Development tooling is disabled",
+                "Kernel repair requires the removable development-tooling adapter.",
+                precondition_failed="development_tooling",
             )
         return {}
+    from assistant.development_repair import authorize_repair_metadata
 
-    _mgmt_nl_raise_control_mode_actor_error(identity)
-    _mgmt_nl_require_mode_capability(identity, "kernel_repair")
-    activation_capabilities = {
-        str(value or "").strip() for value in (control_mode.get("capabilities") or [])
-    }
-    if "assistant.kernel.repair" not in activation_capabilities:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Active control mode is not authorized for repair writes",
-            "The active control-mode activation does not include assistant.kernel.repair.",
-            precondition_failed="control_mode_capability",
-            details_extra={
-                "reason": "activation_capability_missing",
-                "required_capability": "assistant.kernel.repair",
-            },
-        )
-
-    receipt = str(supplied.pop("receipt", "") or "").strip()
-    if not receipt:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Kernel repair requires a BFF-issued prepare receipt",
-            "Call /bff/assistant/repair-worktrees/prepare and forward its exact repair object.",
-            precondition_failed="repair_receipt",
-            details_extra={"reason": "repair_receipt_missing"},
-        )
-    try:
-        signed_repair = verify_repair_receipt(
-            receipt,
-            actor_id=identity.operator_id,
-            tenant_id=caller_tenant_id,
-            control_status=control_mode,
-            supplied_repair=supplied,
-        )
-    except RepairReceiptError as exc:
-        status_code = 503 if exc.reason == "receipt_key_unconfigured" else 403
-        code = ErrorCode.PRECONDITION_FAILED if status_code == 503 else ErrorCode.FORBIDDEN
-        raise _bff_error(
-            status_code,
-            code,
-            "Assistant repair prepare receipt is invalid",
-            str(exc),
-            precondition_failed="repair_receipt",
-            details_extra={"reason": exc.reason},
-        ) from exc
-    # The signed canonical object, not browser-supplied fields, crosses the BFF
-    # provider boundary. The receipt itself stays inside the BFF.
-    return signed_repair
+    return authorize_repair_metadata(
+        payload,
+        identity=identity,
+        caller_tenant_id=caller_tenant_id,
+        control_mode=control_mode,
+        bff_error=_bff_error,
+        raise_actor_error=_mgmt_nl_raise_control_mode_actor_error,
+        require_mode_capability=_mgmt_nl_require_mode_capability,
+    )
 
 
 def _mgmt_nl_provider_mode_prompt_lines(provider_mode: str) -> List[str]:
@@ -43998,27 +43834,25 @@ def _mgmt_nl_provider_prompt(
     }
     server_history_json = json.dumps(server_history, sort_keys=True, ensure_ascii=True)
     context_json = json.dumps(context_pack, sort_keys=True, ensure_ascii=True)
-    return "\n".join(
-        [
-            "You are the Pantheon management assistant.",
-            f"Mode: {provider_mode}.",
-            *_mgmt_nl_provider_mode_prompt_lines(provider_mode),
-            "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
-            "Use backend.orchestrator_status.data for supervisor, worker, queue, PR/check, DevTaskPacket bridge, and provider readiness questions.",
-            "Treat backend.management_nl.data.conversation.client_hint as a frontend hint, never as the conversation source of truth.",
-            "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
-            "Any runBffAction or write-style action must require confirmation.",
-            "If evidence is missing or stale, say so and keep the answer concise.",
-            f"Focus: {focus}",
-            f"Question: {question}",
-            (
-                "Server-side conversation history JSON "
-                f"(ordered created_at ascending, budget {_MGMT_NL_PROVIDER_HISTORY_CHAR_BUDGET} chars, "
-                f"FE recentTurns budget {_MGMT_NL_FE_RECENT_TURNS_CHAR_BUDGET} chars): {server_history_json}"
-            ),
-            f"Context pack JSON: {context_json}",
-        ]
-    )
+    prompt_lines = [
+        "You are the Pantheon management assistant.",
+        f"Mode: {provider_mode}.",
+        *_mgmt_nl_provider_mode_prompt_lines(provider_mode),
+        "Use backend.management_nl.data.conversation for server-side prior turns and backend.management_nl.data.ui for UI state.",
+        "Treat backend.management_nl.data.conversation.client_hint as a frontend hint, never as the conversation source of truth.",
+        "If you suggest UI actions, return actions only with kinds listed in ui.availableUiActions.",
+        "Any runBffAction or write-style action must require confirmation.",
+        "If evidence is missing or stale, say so and keep the answer concise.",
+        f"Focus: {focus}",
+        f"Question: {question}",
+        (
+            "Server-side conversation history JSON "
+            f"(ordered created_at ascending, budget {_MGMT_NL_PROVIDER_HISTORY_CHAR_BUDGET} chars, "
+            f"FE recentTurns budget {_MGMT_NL_FE_RECENT_TURNS_CHAR_BUDGET} chars): {server_history_json}"
+        ),
+        f"Context pack JSON: {context_json}",
+    ]
+    return "\n".join(prompt_lines)
 
 
 def _mgmt_nl_text_from_provider_value(value: Any) -> Optional[str]:
@@ -68792,6 +68626,12 @@ def _assistant_ask_enabled() -> bool:
     return os.getenv("PANTHEON_ASSISTANT_ENABLED", "").strip().lower() in {"1", "true", "yes"}
 
 
+def _development_tooling_routes_enabled() -> bool:
+    return str(
+        os.environ.get("PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED", "true")
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _agora_ask_deterministic_fallback(prompt: str) -> str:
     return (
         "The assistant provider is currently unavailable. "
@@ -68843,74 +68683,6 @@ def _assistant_provider_list(auth_probe: bool = False) -> Dict[str, Any]:
                 "message": exc.message,
             },
         }
-
-
-def _assistant_openclaw_tool_policy() -> Dict[str, Any]:
-    try:
-        return OpenClawOpsClient().get_tool_policy()
-    except OpenClawOpsClientError as exc:
-        return {
-            "status": "unavailable",
-            "reason": exc.error_code,
-            "message": exc.message,
-            "httpStatus": exc.status_code,
-        }
-
-
-def _assistant_openclaw_effective_tools(operator_id: str) -> Dict[str, Any]:
-    try:
-        return OpenClawOpsClient().list_effective_tools(
-            agent_id="management-ai",
-            operator_id=operator_id or "management-ai",
-            mode="kernel_debug",
-            operator_role="operator",
-        )
-    except OpenClawOpsClientError as exc:
-        return {
-            "status": "unavailable",
-            "reason": exc.error_code,
-            "message": exc.message,
-            "httpStatus": exc.status_code,
-        }
-
-
-def _assistant_authorize_skill(
-    skill_id: str,
-    payload: Dict[str, Any],
-    operator_id: str,
-    trace_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    try:
-        return OpenClawOpsClient().authorize_assistant_skill(
-            skill_id=skill_id,
-            operator_id=operator_id or "management-ai",
-            mode=payload.get("mode"),
-            operator_role=payload.get("operator_role") or payload.get("operatorRole"),
-            confirmed=bool(payload.get("confirmed")),
-            confirm_token=payload.get("confirm_token") or payload.get("confirmToken"),
-            control_mode=payload.get("control_mode") or payload.get("controlMode"),
-            session_id=payload.get("session_id") or payload.get("sessionId"),
-            request_type=payload.get("request_type") or payload.get("requestType") or "assistant_skill_authorize",
-            audit_extra=payload.get("audit_extra") or payload.get("auditExtra"),
-            trace_id=trace_id,
-        )
-    except OpenClawOpsClientError as exc:
-        raise _openclaw_client_error(exc) from exc
-
-
-def _assistant_prepare_repair_worktree(
-    payload: Dict[str, Any],
-    operator_id: str,
-    trace_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    try:
-        return OpenClawOpsClient().prepare_assistant_repair_worktree(
-            payload=payload,
-            operator_id=operator_id or "management-ai",
-            trace_id=trace_id,
-        )
-    except OpenClawOpsClientError as exc:
-        raise _openclaw_client_error(exc) from exc
 
 
 def _assistant_provider_register(
@@ -69022,16 +68794,26 @@ def _include_assistant_routes() -> None:
             control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
             provider_readiness=_assistant_provider_readiness,
             provider_list=_assistant_provider_list,
-            openclaw_tool_policy=_assistant_openclaw_tool_policy,
-            openclaw_effective_tools=_assistant_openclaw_effective_tools,
-            authorize_assistant_skill=_assistant_authorize_skill,
-            prepare_repair_worktree=_assistant_prepare_repair_worktree,
             provider_register=_assistant_provider_register,
             provider_reauth=_assistant_provider_reauth,
             provider_reauth_status=_assistant_provider_reauth_status,
             provider_reauth_code=_assistant_provider_reauth_code,
         )
     )
+
+    if _development_tooling_routes_enabled():
+        from assistant.development_routes import create_development_router
+
+        app.include_router(
+            create_development_router(
+                build_context_pack=_assistant_build_context_pack,
+                extract_identity=_extract_identity,
+                require_read_role=_require_read_role,
+                bff_error=_bff_error,
+                transcript_store=_ASSISTANT_TRANSCRIPT_STORE,
+                control_mode_store=_ASSISTANT_CONTROL_MODE_STORE,
+            )
+        )
 
 
 from console_gap.workflows_hooks import create_workflows_hooks_router

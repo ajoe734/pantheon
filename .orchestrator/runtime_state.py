@@ -65,7 +65,6 @@ def default_state() -> dict[str, Any]:
         "version": 2,
         "initialized_at": None,
         "last_scan_at": None,
-        "tasks": {},
         "recent_terminal_tasks": [],
         "pending_handoff_keys": [],
         "seen_event_keys": {},
@@ -120,6 +119,21 @@ def default_state() -> dict[str, Any]:
             "last_loop_finished_at": None,
             "last_loop_duration_ms": None,
             "last_loop_error": None,
+            "task_state_projection": {},
+            "last_cycle_metrics": {},
+            "cycle_elapsed_seconds": None,
+            "cycle_elapsed_peak_seconds": 0.0,
+            "queue_to_start_latency_seconds": None,
+            "queue_to_start_latency_peak_seconds": 0.0,
+            "runtime_lock_hold_seconds": None,
+            "runtime_lock_hold_peak_seconds": 0.0,
+            "runtime_lock_hold_exceeded": False,
+            "cadence_next_deadline_monotonic": None,
+            "cadence_overshoot_seconds": None,
+            "cadence_overshoot_peak_seconds": 0.0,
+            "cadence_skipped_deadlines": 0,
+            "scheduler_cycle_elapsed_seconds": None,
+            "scheduler_cycle_elapsed_peak_seconds": 0.0,
             "runtime_phase_reservations": {},
         },
     }
@@ -155,7 +169,6 @@ def normalize_v2_runtime_cache(raw: Any) -> dict[str, Any]:
         if isinstance(expected, list) and not isinstance(value, list):
             continue
         state[key] = deepcopy(value)
-    state.setdefault("tasks", {})
     recent_terminal_tasks = state.get("recent_terminal_tasks")
     state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
     state.setdefault("pending_handoff_keys", [])

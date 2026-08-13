@@ -74,7 +74,8 @@ def test_authority_private_keys_use_per_environment_protected_files() -> None:
     assert "DEV_AUTHORITY_SIGNING_ENV_FILE" in script
     assert "STAGING_AUTHORITY_SIGNING_ENV_FILE" in script
     assert '[[ "$mode" == "600" ]]' in script
-    assert 'docker compose --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE"' in script
+    assert 'authority_compose_args=(--env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE")' in script
+    assert 'PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true' in script
     assert "STAGING_AUTHORITY_SIGNING_ENV_FILE" in workflow
     assert "BRIDGE_SIGNING_PRIVATE_KEY" not in command_prefix
     assert "secrets.BRIDGE_SIGNING_PRIVATE_KEY" not in workflow

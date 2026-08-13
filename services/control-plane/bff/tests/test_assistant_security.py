@@ -20,6 +20,7 @@ from read_store import ReadSurfaceStore  # noqa: E402
 import assistant.control_mode as control_mode_module  # noqa: E402
 from assistant.control_mode import ControlModeStore  # noqa: E402
 from assistant.command_idempotency import CommandIdempotencyStore  # noqa: E402
+from assistant.development_routes import create_development_router  # noqa: E402
 from assistant.routes import create_assistant_router  # noqa: E402
 from assistant.tool_contracts import (  # noqa: E402
     ASSISTANT_TOOL_ALLOWLIST,
@@ -75,7 +76,7 @@ def _control_mode_client(
         tenant_ids=tenant_ids,
     )
 
-    router = create_assistant_router(
+    product_router = create_assistant_router(
         build_context_pack=lambda *args, **kwargs: (_ for _ in ()).throw(NotImplementedError),
         extract_identity=lambda _authorization: identity,
         require_read_role=lambda _identity: None,
@@ -83,14 +84,23 @@ def _control_mode_client(
         control_mode_store=store,
         provider_list=provider_list,
         provider_register=provider_register,
-        prepare_repair_worktree=prepare_repair_worktree,
         provider_reauth=provider_reauth,
         provider_reauth_status=provider_reauth_status,
         provider_reauth_code=provider_reauth_code,
     )
     app = FastAPI()
     app.add_exception_handler(bff_main.StarletteHTTPException, bff_main._bff_http_exception_handler)
-    app.include_router(router)
+    app.include_router(product_router)
+    app.include_router(
+        create_development_router(
+            build_context_pack=lambda *args, **kwargs: (_ for _ in ()).throw(NotImplementedError),
+            extract_identity=lambda _authorization: identity,
+            require_read_role=lambda _identity: None,
+            bff_error=bff_main._bff_error,
+            control_mode_store=store,
+            prepare_repair_worktree=prepare_repair_worktree,
+        )
+    )
     return TestClient(app, raise_server_exceptions=True)
 
 

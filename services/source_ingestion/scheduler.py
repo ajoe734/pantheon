@@ -424,6 +424,31 @@ class JsonlIngestScheduleStore:
                 key=lambda receipt: (receipt.finished_at or receipt.started_at, receipt.ingest_run_id),
             )
 
+    def read_freshness_snapshot(self) -> dict[str, Any]:
+        """Read all freshness inputs from one replay of the durable journal.
+
+        Health aggregation is fleet-wide. Calling the point lookup methods for
+        every connector replays the same JSONL file once per lookup and turns a
+        linear read into connector-count multiplied by journal-size work. This
+        snapshot keeps the existing cross-process refresh semantics while
+        giving callers one immutable-by-convention view to aggregate.
+        """
+
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            receipts = sorted(
+                self._receipts.values(),
+                key=lambda receipt: (
+                    receipt.finished_at or receipt.started_at,
+                    receipt.ingest_run_id,
+                ),
+            )
+            return {
+                "runs": tuple(self._runs.values()),
+                "receipts": tuple(receipts),
+                "watermarks": dict(self._watermarks),
+            }
+
     def get_watermark(self, connector_id: str) -> SourceWatermark | None:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked(recover_incomplete=False)

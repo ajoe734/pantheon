@@ -662,6 +662,7 @@ ssh_bash() {
   command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
   command_prefix+=" MANAGEMENT_AI_DATABASE_URL=$(shell_quote "${MANAGEMENT_AI_DATABASE_URL:-}")"
   command_prefix+=" PANTHEON_MGMT_AI_ATTACH_BUCKET=$(shell_quote "${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}")"
+  command_prefix+=" PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED=$(shell_quote "${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true}")"
   command_prefix+=" PANTHEON_MGMT_AI_ATTACH_LOCATION=$(shell_quote "${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_USER=$(shell_quote "${DEV_MANAGEMENT_AI_DB_USER:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_PASSWORD=$(shell_quote "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}")"
@@ -691,6 +692,10 @@ error() {
 configure_authority_compose_environment() {
   case "${PANTHEON_DEPLOY_COMPONENT}" in
     root|bff|control) ;;
+    *) return 0 ;;
+  esac
+  case "${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
     *) return 0 ;;
   esac
   local authority_file="${PANTHEON_AUTHORITY_SIGNING_ENV_FILE}"
@@ -734,6 +739,10 @@ PY
 }
 
 verify_operator_bff_bridge_key_pair() {
+  case "${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) return 0 ;;
+  esac
   local project="$1"
   local compose_file="$2"
   shift 2
@@ -2681,16 +2690,22 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     snapshot_remote_state pantheon-control docker-compose.control.yml
     prepare_deploy_worktree
     env_file="$(real_env_or_example env/prod-control.env env/prod-control.env.example)"
-    docker compose --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE" -p pantheon-control -f docker-compose.control.yml config --quiet
+    authority_compose_args=()
+    case "${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true}" in
+      1|true|TRUE|yes|YES|on|ON)
+        authority_compose_args=(--env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE")
+        ;;
+    esac
+    docker compose --env-file "$env_file" "${authority_compose_args[@]}" -p pantheon-control -f docker-compose.control.yml config --quiet
     COMPOSE_BAKE=false \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     PANTHEON_ENV=staging-live \
     PANTHEON_LIVE_BROKER_ENABLED=true \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_STAGING_BFF_CORS_ORIGINS}" \
-      docker compose --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE" -p pantheon-control -f docker-compose.control.yml up -d --build
+      docker compose --env-file "$env_file" "${authority_compose_args[@]}" -p pantheon-control -f docker-compose.control.yml up -d --build
     curl_with_retry http://127.0.0.1:38001/health
     verify_operator_bff_bridge_key_pair pantheon-control docker-compose.control.yml \
-      --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE"
+      --env-file "$env_file" "${authority_compose_args[@]}"
     assert_bff_source_sha http://127.0.0.1:38001/bff/version
     curl_with_retry "${PANTHEON_STAGING_EXEC_HEALTH_URL%/}/__health__"
     ;;

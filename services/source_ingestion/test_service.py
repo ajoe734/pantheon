@@ -8,6 +8,7 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -112,6 +113,69 @@ def test_health_exposes_storage_contract(client) -> None:
     assert body["source_evidence_path"] == str(data_dir / "source_evidence.jsonl")
     assert body["dlq_path"] == str(data_dir / "source_ingest_dlq.jsonl")
     assert body["audit_path"] == str(data_dir / "source_ingest_audit.jsonl")
+
+
+def test_fleet_freshness_reads_each_store_once_at_production_scale(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, module = client
+    connector_count = 1_591
+    calls = {"configs": 0, "schedules": 0, "snapshot": 0}
+
+    class ConnectorStore:
+        def list_configs(self):
+            calls["configs"] += 1
+            return [
+                SimpleNamespace(
+                    connector=SimpleNamespace(
+                        connector_id=f"connector-{index}",
+                        metadata={},
+                    )
+                )
+                for index in range(connector_count)
+            ]
+
+        def get_config(self, _connector_id):
+            raise AssertionError("fleet freshness must not perform point config reads")
+
+    class ScheduleStore:
+        def list_schedules(self):
+            calls["schedules"] += 1
+            return []
+
+        def get_schedule(self, _connector_id):
+            raise AssertionError("fleet freshness must not perform point schedule reads")
+
+    class IngestStore:
+        def read_freshness_snapshot(self):
+            calls["snapshot"] += 1
+            return {"runs": (), "receipts": (), "watermarks": {}}
+
+        def list_runs(self):
+            raise AssertionError("fleet freshness must not replay runs per connector")
+
+        def list_receipts(self, **_kwargs):
+            raise AssertionError("fleet freshness must not replay receipts per connector")
+
+        def get_watermark(self, _connector_id):
+            raise AssertionError("fleet freshness must not replay watermarks per connector")
+
+    monkeypatch.setattr(module, "connector_store", ConnectorStore())
+    monkeypatch.setattr(module, "schedule_config_store", ScheduleStore())
+    monkeypatch.setattr(module, "store", IngestStore())
+    module._source_freshness_cache = {"computed_at": 0.0, "payload": None}
+
+    result = module._source_freshness_readiness()
+
+    assert calls == {"configs": 1, "schedules": 1, "snapshot": 1}
+    assert result == {
+        "status": "ok",
+        "data_ready": True,
+        "scheduled_connector_count": 0,
+        "stale_connector_count": 0,
+        "degraded_connector_count": 0,
+    }
 
 
 def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
