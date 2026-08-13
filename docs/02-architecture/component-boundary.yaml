@@ -1,0 +1,90 @@
+schema_version: 1
+purpose: "Human-readable ownership and removal contract for Pantheon components"
+
+domains:
+  development_tooling:
+    authority: "canonical engineering tasks, dispatch intents, worker leases"
+    product_runtime_required: false
+    removable_after_product_release: true
+    acceptance: "supervisor runtime health and task/lease evidence"
+  product_runtime:
+    authority: "business behavior, product data, and user-facing readiness"
+    product_runtime_required: true
+    removable_after_product_release: false
+    acceptance: "live service readiness, product scenarios, and exact hosted identities"
+  delivery:
+    authority: "build, install, hosted identity, and deployment probes"
+    product_runtime_required: false
+    removable_after_product_release: false
+    acceptance: "deployment manifest plus post-deploy probes"
+
+components:
+  - id: supervisor-and-taskstore
+    domain: development_tooling
+    paths:
+      - .orchestrator/
+      - scripts/ai_status.py
+      - scripts/human-ops-status.sh
+      - ai-task-archive/
+    runtime_required: false
+    removal_condition: "all engineering tasks archived and no worker/lease remains"
+
+  - id: assistant-dev-bridge
+    domain: development_tooling
+    hosted_in: product-bff
+    paths:
+      - services/control-plane/bff/assistant/dev_bridge_dispatcher.py
+      - services/control-plane/bff/assistant/dev_bridge_signer.py
+    symbols:
+      - "services/control-plane/bff/assistant/routes.py:dev-bridge routes"
+    runtime_required: false
+    removal_condition: "no external development-task ingress is required"
+    boundary: "transport adapter only; never product authority or product readiness"
+
+  - id: business-bff-and-services
+    domain: product_runtime
+    paths:
+      - services/control-plane/bff/
+      - services/consultation/
+      - services/evolution/
+      - services/policy-learning/
+      - services/research/
+      - services/source_ingestion/
+      - services/trade_journey/
+    exclusions:
+      - "assistant/dev_bridge_dispatcher.py"
+      - "assistant/dev_bridge_signer.py"
+      - "assistant/routes.py:dev-bridge routes"
+    runtime_required: true
+    removal_condition: never
+
+  - id: hosted-frontend
+    domain: product_runtime
+    repository: ajoe734/execute-plans
+    branch: dev
+    runtime_required: true
+    removal_condition: never
+
+  - id: deployment-and-acceptance
+    domain: delivery
+    paths:
+      - .github/workflows/
+      - scripts/deploy_nonprod_vm.sh
+      - scripts/wait_for_bff_lifecycle_readiness.py
+      - scripts/verify_hosted_scenarios.py
+      - scripts/verify_e2e_fe_serving.py
+    runtime_required: false
+    removal_condition: "only after the product has a replacement delivery system"
+
+cross_domain_contracts:
+  - "development_tooling -> product_runtime: no runtime dependency"
+  - "assistant-dev-bridge -> supervisor-and-taskstore: signed task transport only"
+  - "delivery -> product_runtime: exact source identity and live probes"
+  - "product_runtime -> development_tooling: forbidden"
+
+removal_order:
+  - "archive/close development tasks and verify zero workers, leases, and queue intents"
+  - "disable supervisor/watchdog and remove dev-only compose/workflow references"
+  - "remove assistant-dev-bridge ingress and development-tooling files"
+  - "build and deploy product runtime without development-tooling paths"
+  - "run product readiness and hosted identity acceptance again"

@@ -6,6 +6,10 @@ Pantheon has three operational domains. They may exchange evidence, but they do
 not share authority. This document records the existing boundary; it does not
 add a service, state machine, gate, credential, or compatibility path.
 
+The machine-readable, human-auditable ownership contract is
+`docs/02-architecture/component-boundary.yaml`. It records each component's
+domain, runtime requirement, removal condition, and cross-domain direction.
+
 ## 1. Development tooling control plane
 
 Development tooling turns engineering tasks into reviewed source changes.
@@ -97,3 +101,23 @@ two domains but does not become their authority.
 
 Generated evidence manifests are audit artifacts. Their existence, status
 text, or task metadata must never be used as the product readiness evaluator.
+
+## Removing development tooling after product release
+
+Development tooling is intentionally optional at product runtime. Product
+completion does not require deleting it from the same commit. When the team is
+ready to remove it, use the `removal_order` in the boundary manifest:
+
+1. archive/close engineering tasks and confirm there are no workers, leases, or
+   queued intents;
+2. disable the supervisor/watchdog and remove development-only compose and
+   workflow references;
+3. remove the assistant dev-bridge ingress and the development-tooling paths;
+4. build and deploy the product runtime without those paths; and
+5. rerun live product readiness, hosted scenarios, and exact identity checks.
+
+The BFF business APIs, source ingestion, lifecycle projector, product services,
+frontend, and delivery acceptance remain. The dev bridge is removed with
+development tooling because it transports engineering work; it is not a
+product API. Historical task/review evidence may be retained as an archive,
+but it is not loaded by the product runtime.
