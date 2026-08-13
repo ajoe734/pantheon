@@ -12,7 +12,7 @@ Verified the shortest actual product path from a normalized `SourceRecord`, thro
 
 ## Verification Commands & Output
 ```bash
-/tmp/pantheon-worker-worktrees/pantheon/product-v2-research-loop-closure-r2-20260813/.venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_product_v2_research_loop_closure_r2.py -v
+/home/lupin/pantheon/.venv/bin/pytest services/source_ingestion/tests/test_product_v2_research_loop_closure_r2.py -v
 ```
 
 Result: `1 passed in 1.08s`
