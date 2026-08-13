@@ -1,0 +1,31 @@
+{
+  "task_id": "L12-MFC-R4-BACKEND-TRUTH-001",
+  "title": "Integrate compose activation, twelve owner observations, catalog, and BFF truth",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "review_approved",
+  "verification": {
+    "pytest_suite": [
+      "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+      "services/control-plane/bff/test_loop_health_read_model_contract.py"
+    ],
+    "passed": 25,
+    "failed": 0,
+    "warnings": 11,
+    "verification_timestamp": "2026-08-13T18:18:21Z"
+  },
+  "deliverables": [
+    "docker-compose.yml",
+    "services/loop-control",
+    "docs/deployment/loop-catalog.registry.json",
+    "services/control-plane/bff/loop_inventory.py",
+    "services/control-plane/bff/tests"
+  ],
+  "contract_conformance": {
+    "catalog_canonical_loop_count": 12,
+    "composite_overlay_count": 1,
+    "inventory_entry_count": 13,
+    "runtime_controller_bindings": 3,
+    "twelve_row_bff_readback_verified": true
+  }
+}
