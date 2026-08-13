@@ -3181,7 +3181,15 @@ def validate_state(state: dict[str, Any]) -> None:
         if task["owner"] == task["reviewer"]:
             raise SystemExit(f"Task {task['id']} has identical owner and reviewer")
         if task["status"] == "blocked" and not task.get("waiting_for"):
-            raise SystemExit(f"Blocked task {task['id']} is missing waiting_for")
+            block_reason = task.get("block_reason")
+            if not (
+                isinstance(block_reason, dict)
+                and str(block_reason.get("kind") or "").strip()
+                and str(block_reason.get("required_action") or "").strip()
+            ):
+                raise SystemExit(
+                    f"Blocked task {task['id']} is missing waiting_for or a structured block_reason"
+                )
     for blocker in state.get("blockers", []):
         ensure_agent(blocker["owner"])
         ensure_agent(blocker["waiting_for"])

@@ -6205,6 +6205,51 @@ class SidecarTaskTests(unittest.TestCase):
 
 
 class HumanOpsAgentTests(unittest.TestCase):
+    def test_structured_quarantine_is_a_valid_blocked_state_without_waiting_for(self) -> None:
+        state = {
+            "agents": [
+                {"name": "Codex", "status": "idle"},
+                {"name": "Antigravity", "status": "idle"},
+            ],
+            "tasks": [
+                {
+                    "id": "QUARANTINED-001",
+                    "owner": "Codex",
+                    "reviewer": "Antigravity",
+                    "status": "blocked",
+                    "block_reason": {
+                        "kind": "legacy_task_quarantine",
+                        "required_action": "operator_reopen_after_diagnosis",
+                    },
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+
+        ai_status.validate_state(state)
+
+    def test_unstructured_blocked_state_still_requires_waiting_for(self) -> None:
+        state = {
+            "agents": [
+                {"name": "Codex", "status": "idle"},
+                {"name": "Antigravity", "status": "idle"},
+            ],
+            "tasks": [
+                {
+                    "id": "INVALID-BLOCKED-001",
+                    "owner": "Codex",
+                    "reviewer": "Antigravity",
+                    "status": "blocked",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+
+        with self.assertRaisesRegex(SystemExit, "missing waiting_for or a structured block_reason"):
+            ai_status.validate_state(state)
+
     def test_human_gate_can_belong_to_human_ops_without_blocking_worker(self) -> None:
         state = {
             "agents": [

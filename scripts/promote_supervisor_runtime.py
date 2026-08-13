@@ -189,13 +189,24 @@ def launch_v2_supervisor(
             "PYTHONDONTWRITEBYTECODE": "1",
         }
     )
-    process = subprocess.Popen(
-        argv,
-        cwd=root,
-        env=environment,
-        start_new_session=True,
-        close_fds=True,
+    log_path = status_root / ".orchestrator" / "logs" / "supervisor.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_fd = os.open(
+        log_path,
+        os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC,
+        0o600,
     )
+    os.chmod(log_path, 0o600)
+    with os.fdopen(log_fd, "ab") as log_output:
+        process = subprocess.Popen(
+            argv,
+            cwd=root,
+            env=environment,
+            stdout=log_output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            close_fds=True,
+        )
     return int(process.pid)
 
 
