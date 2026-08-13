@@ -71,3 +71,17 @@ bash -n scripts/sync-dev-root.sh
 9 passed in 9.07s
 git diff --check
 ```
+
+The hardened script was also executed against the real checkout at
+`2026-08-13T13:34:33Z`, pinned to the already accepted SHA so this cleanup
+could not advance source or trigger a runtime promotion. It reported:
+
+```text
+ACTIVE_ROOT_SPLIT_PROTECTED: live supervisor pid=318563 runs from command-runtimes/12a8dd18..., not dev-root
+dev-root at 12a8dd18a, behind 12a8dd18a... by 0
+development-tool residue already clean in /home/lupin/pantheon-ci-deploy/dev-root
+done (updated=0 source_advance=0 config_drift=0 root_split=1 promotion=no-op-current-root)
+```
+
+Post-run HEAD remained `12a8dd18a78ec7bf1716b4b80226152ad3ffd533`,
+Git status remained empty, and scoped ignored residue remained zero.
