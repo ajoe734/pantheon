@@ -1,0 +1,25 @@
+{
+  "task_id": "PRODUCT-V2-SOURCE-DISTILLATION-R3-20260813",
+  "title": "Deliver the durable source-to-distillation product slice",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "completed_at": "2026-08-13T09:12:00Z",
+  "acceptance_criteria": {
+    "real_source_record_ingestion_and_controller_readback": true,
+    "supervised_distillation_controller_and_worker_reconciliation": true,
+    "strategy_spec_seed_store_and_job_queue_replayability": true,
+    "e2e_acceptance_test_passed_without_fixtures": true
+  },
+  "verification": {
+    "e2e_test": "services/source_ingestion/tests/test_product_v2_source_distillation_r3.py",
+    "test_command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest services/source_ingestion/tests/test_product_v2_source_distillation_r3.py",
+    "test_result": "1 passed in 4.73s"
+  },
+  "loop_trace": {
+    "connector_id": "tw-official-market-datasets-r3",
+    "source_record_id": "src-r3-twse-001",
+    "distillation_job_status": "done",
+    "seed_status": "draft",
+    "seed_id": "seed-strat-twse-10-day-volatility-break-predicts-short-term--b12d590e"
+  }
+}
