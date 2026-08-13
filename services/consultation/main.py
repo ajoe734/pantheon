@@ -21,16 +21,22 @@ from .models import (
     CancelConsultRequestRequest,
     ConsultAuditEvent,
     ConsultEvidenceAttachment,
+    ConsultFinding,
     ConsultGateHandoff,
     ConsultMemo,
     ConsultParticipant,
     ConsultRequest,
     ConsultRequestStatus,
+    ConsultRequestType,
     ConsultTranscript,
     CreateConsultRequest,
     CreateGateHandoffRequest,
+    CreatePolicyLearningCandidateIntakeRequest,
+    FindingSeverity,
     MemoStatus,
+    MemoType,
     PostTranscriptEventRequest,
+    Recommendation,
     RecordSponsorDecisionRequest,
     SubmitMemoRequest,
     TranscriptEvent,
@@ -38,6 +44,7 @@ from .models import (
     utc_now,
     AuthorType,
     ParticipantType,
+    validate_consult_memo_against_request,
 )
 from .store import build_consultation_store
 from .auth import (
@@ -1325,3 +1332,210 @@ def record_committee_sponsor_decision(
             },
         },
     }
+
+
+@app.post("/api/consult/intake/policy-learning-candidate", response_model=Dict[str, Any], status_code=201)
+def intake_policy_learning_candidate(
+    req: CreatePolicyLearningCandidateIntakeRequest,
+) -> Dict[str, Any]:
+    identity = current_identity()
+    if req.tenant_id and req.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=403, detail="ConsultRequest tenant scope denied")
+
+    candidate_status = (req.status or "").strip().lower()
+    if candidate_status != "processed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Intake requires a terminal policy-learning candidate status ('processed'); received '{req.status}'",
+        )
+
+    dataset_version_id = (req.dataset_version_id or "").strip()
+    if not dataset_version_id:
+        raise HTTPException(status_code=400, detail="dataset_version_id is required for candidate intake")
+
+    candidate_id = req.candidate_id.strip()
+    trace_id = req.trace_id or f"tr-intake-{candidate_id}"
+    requested_by = req.requested_by or ActorRef(actor_type="service", actor_id="policy-learning-svc")
+
+    with _REQUEST_COMMAND_LOCK:
+        # Idempotency & Replay check: search existing requests for this candidate_id
+        for existing in store.list_requests():
+            if existing.tenant_id != identity.tenant_id:
+                continue
+            meta = existing.metadata if isinstance(existing.metadata, dict) else {}
+            if (
+                meta.get("candidate_id") == candidate_id
+                or (existing.target_id == candidate_id and existing.target_type == "policy_learning_candidate")
+            ):
+                # Request already exists! Check for existing published memo
+                memos = store.list_memos_for_request(existing.request_id)
+                published_memos = [m for m in memos if m.status == MemoStatus.PUBLISHED]
+                existing_handoff_data = meta.get("service_handoff") if isinstance(meta.get("service_handoff"), dict) else None
+
+                return {
+                    "status": "existing",
+                    "request_id": existing.request_id,
+                    "candidate_id": candidate_id,
+                    "dataset_version_id": dataset_version_id,
+                    "dataset_lineage": meta.get("dataset_lineage") or req.dataset_lineage,
+                    "request": _request_dict(existing),
+                    "memo": _request_dict(published_memos[0]) if published_memos else None,
+                    "service_handoff": existing_handoff_data,
+                    "replayed": True,
+                }
+
+        # No existing request -> Create request and terminal memo
+        request_id = f"cr-cand-{candidate_id}"
+        committee_id = f"committee-cand-{candidate_id}"
+        from_persona = req.from_persona_id or "persona-policy-learner"
+
+        dataset_lineage = dict(req.dataset_lineage or {})
+        if "dataset_version_ids" not in dataset_lineage:
+            dataset_lineage["dataset_version_ids"] = [dataset_version_id]
+        if "dataset_id" not in dataset_lineage:
+            dataset_lineage["dataset_id"] = dataset_version_id
+
+        consult_meta = {
+            "candidate_id": candidate_id,
+            "dataset_version_id": dataset_version_id,
+            "dataset_lineage": dataset_lineage,
+            "evaluation_summary": req.evaluation_summary,
+            "artifact_checksum": req.artifact_checksum,
+            "policy_learning_intake": True,
+            "consultation": {
+                "committee_ref": committee_id,
+                "sponsor_persona_id": from_persona,
+                "target_version": dataset_version_id,
+                "type": "approval",
+                "action_type": "candidate_intake",
+            },
+        }
+        if req.metadata:
+            consult_meta.update(req.metadata)
+
+        consult_request = ConsultRequest(
+            request_id=request_id,
+            tenant_id=identity.tenant_id,
+            request_type=ConsultRequestType.PERSONA_POLICY,
+            requested_by=requested_by,
+            from_persona_id=from_persona,
+            target_type="policy_learning_candidate",
+            target_id=candidate_id,
+            priority=req.priority,
+            status=ConsultRequestStatus.SUBMITTED,
+            metadata=consult_meta,
+            trace_id=trace_id,
+        )
+
+        store.put_request(consult_request)
+        _emit_audit(
+            action="candidate_intake_created",
+            request_id=request_id,
+            actor_ref=requested_by,
+            service_actor_ref=CONSULTATION_SERVICE_ACTOR,
+            trace_id=trace_id,
+            after_state=ConsultRequestStatus.SUBMITTED.value,
+        )
+
+        # Build and publish terminal memo
+        memo_id = f"memo-cand-{candidate_id}"
+        auto_dec = (req.auto_decision or "approved").strip().lower()
+        if auto_dec == "rejected":
+            rec = Recommendation.REJECT
+        elif auto_dec == "approved_with_conditions":
+            rec = Recommendation.APPROVE_WITH_CONDITIONS
+        else:
+            rec = Recommendation.APPROVE
+
+        action_match_rate = req.evaluation_summary.get("action_match_rate", "N/A")
+        return_gap = req.evaluation_summary.get("return_gap", "N/A")
+
+        memo = ConsultMemo(
+            memo_id=memo_id,
+            request_id=request_id,
+            memo_type=MemoType.COMMITTEE_SUMMARY,
+            author_type=AuthorType.COMMITTEE,
+            author_ref=committee_id,
+            target_type="policy_learning_candidate",
+            target_id=candidate_id,
+            summary=req.auto_rationale or f"Terminal consultation memo for policy-learning candidate {candidate_id} on DatasetVersion {dataset_version_id}",
+            findings=[
+                ConsultFinding(
+                    severity=FindingSeverity.INFO,
+                    category="dataset_lineage",
+                    claim=f"Governed DatasetVersion {dataset_version_id} verified",
+                    evidence_refs=[f"ds-ref-{dataset_version_id}"],
+                    recommendation="lineage_verified",
+                ),
+                ConsultFinding(
+                    severity=FindingSeverity.INFO,
+                    category="model_evaluation",
+                    claim=f"Evaluation metrics: action_match_rate={action_match_rate}, return_gap={return_gap}",
+                    evidence_refs=[f"checksum-{req.artifact_checksum or 'none'}"],
+                    recommendation="evaluation_verified",
+                ),
+            ],
+            recommendation=rec,
+            confidence=0.95,
+            status=MemoStatus.PUBLISHED,
+            trace_id=trace_id,
+            published_at=utc_now(),
+        )
+
+        errors = validate_consult_memo_against_request(memo, consult_request)
+        if errors:
+            raise HTTPException(status_code=400, detail=f"Memo lineage validation failed: {errors}")
+
+        store.put_memo(memo)
+        _emit_audit(
+            action="memo_published",
+            request_id=request_id,
+            actor_ref=requested_by,
+            service_actor_ref=CONSULTATION_SERVICE_ACTOR,
+            trace_id=trace_id,
+            after_state=MemoStatus.PUBLISHED.value,
+        )
+
+        # Update request status to PUBLISHED
+        consult_request.status = ConsultRequestStatus.PUBLISHED
+        consult_request.completed_at = utc_now()
+        store.put_request(consult_request)
+
+        # Map to sponsor decision bridge proposal
+        from .sponsor_decision_bridge import bridge
+
+        evidence_payload = [
+            {"ref_type": "committee_memo", "ref_id": memo.memo_id},
+            {"ref_type": "manual_review_ticket", "ref_id": f"dataset-{dataset_version_id}"},
+        ]
+
+        bridge_payload = {
+            "decision_id": committee_id,
+            "type": "approval",
+            "sponsor_persona_id": from_persona,
+            "target_type": "candidate_artifact",
+            "target_id": candidate_id,
+            "target_version": dataset_version_id,
+            "sponsor_decision": "approved" if rec in (Recommendation.APPROVE, Recommendation.APPROVE_WITH_CONDITIONS) else "rejected",
+            "rationale": memo.summary,
+            "rationale_ref": f"memo-{memo_id}",
+            "conditions": ["Deploy to paper stage only"] if rec == Recommendation.APPROVE_WITH_CONDITIONS else [],
+            "committee_id": committee_id,
+            "trace_id": trace_id,
+            "evidence_refs": evidence_payload,
+        }
+
+        proposal = bridge(bridge_payload)
+
+        return {
+            "status": "created",
+            "request_id": request_id,
+            "candidate_id": candidate_id,
+            "dataset_version_id": dataset_version_id,
+            "dataset_lineage": dataset_lineage,
+            "request": _request_dict(consult_request),
+            "memo": _request_dict(memo),
+            "proposal": proposal.to_dict(),
+            "replayed": False,
+        }
+

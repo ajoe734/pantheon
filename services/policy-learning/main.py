@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import json as _json
 import os
@@ -232,6 +233,40 @@ class ShadowEvalTickBody(BaseModel):
     ticked_at: Optional[str] = None
     tenant_id: Optional[str] = None
     user_id: Optional[str] = None
+
+
+class AgoraDatasetHandoffBody(BaseModel):
+    handoff_id: Optional[str] = Field(
+        default=None,
+        description="Optional handoff identifier. Derived if omitted.",
+    )
+    tick_id: Optional[str] = Field(
+        default=None,
+        description="Optional scheduler tick identifier associated with handoff.",
+    )
+    dataset_version: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Full tenant-scoped Agora DatasetVersion record mapping.",
+    )
+    dataset_ref: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Dataset reference containing dataset_version_id and tenant_id.",
+    )
+    eval_type: str = Field(
+        default="shadow",
+        description="Imitation evaluation type.",
+    )
+    actor_id: str = Field(
+        default="agora-pipeline",
+        description="Actor or pipeline component emitting the handoff.",
+    )
+    handed_off_at: Optional[str] = None
+    tenant_id: Optional[str] = None
+    user_id: Optional[str] = None
+    process_immediately: bool = Field(
+        default=True,
+        description="Whether to process the handoff candidate immediately into a terminal shadow candidate.",
+    )
 
 
 class WorkerClaimBody(BaseModel):
@@ -688,6 +723,9 @@ def resolve_candidate_dataset(candidate: Dict[str, Any]) -> tuple[Dict[str, Any]
         str(dataset_ref.get("tenant_id") or ""),
         str(dataset_ref.get("user_id") or ""),
     )
+    if isinstance(dataset_ref.get("record"), dict):
+        with contextlib.suppress(Exception):
+            dataset_authority().register_version(dataset_ref["record"])
     try:
         versions = dataset_authority().get_dataset_versions(
             dataset_version_id,
@@ -783,6 +821,7 @@ def process_claimed_candidate(claim: Dict[str, Any]) -> Dict[str, Any]:
     try:
         payload, lineage = resolve_candidate_dataset(candidate)
     except DatasetResolutionError as exc:
+        print(f"DEBUG RESOLVE EXCEPTION: {exc.reason} - {exc.detail}")
         candidate["status"] = STATUS_DEGRADED
         candidate["degradation"] = _degradation(exc.reason, exc.detail, timestamp)
         candidate["seed_fallback_used"] = False
@@ -968,6 +1007,149 @@ def shadow_eval_tick(
         "candidate_ids": created_ids,
         "production_training": "fail_closed",
         "ticked_at": timestamp,
+    }
+
+
+@app.post("/api/policy-learning/agora-handoff", status_code=201)
+@app.post("/api/policy-learning/handoff", status_code=201)
+def agora_dataset_handoff(
+    body: AgoraDatasetHandoffBody,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Consume a durable Agora DatasetVersion handoff through the production consumer boundary.
+
+    Validates tenant scope, ingests the dataset version record into the dataset
+    authority, durably stores the proposed/processed shadow candidate, and only
+    acknowledges after durable ingestion succeeds.
+
+    Idempotent: duplicate submissions return the existing candidate and
+    acknowledged status without duplicating backlog state or mutating
+    authoritative lineage.
+    """
+    timestamp = body.handed_off_at or utc_now()
+    tenant_id = bind_tenant(authority, body.tenant_id)
+    _, user_id = _resolve_tenant_scope(tenant_id, body.user_id)
+
+    record = body.dataset_version or {}
+    ref = body.dataset_ref or {}
+
+    if record:
+        rec_tenant = str(record.get("tenant_id") or "").strip()
+        if rec_tenant and rec_tenant != tenant_id:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "dataset_ref_tenant_mismatch",
+                    "message": f"DatasetVersion tenant {rec_tenant!r} does not match caller tenant {tenant_id!r}",
+                },
+            )
+        try:
+            version_obj = dataset_authority().register_version(record)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "dataset_version_invalid",
+                    "message": f"Invalid Agora DatasetVersion record: {exc}",
+                },
+            ) from exc
+        dataset_version_id = version_obj.dataset_version_id
+        bound_ref = version_obj.to_dataset_ref()
+        bound_ref["record"] = dict(record)
+    elif ref:
+        dataset_version_id = _dataset_version_id(ref)
+        if not dataset_version_id:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "dataset_version_id_missing",
+                    "message": "A dataset_version_id is required for a DatasetVersion handoff",
+                },
+            )
+        ref_tenant = str(ref.get("tenant_id") or "").strip()
+        if ref_tenant and ref_tenant != tenant_id:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "dataset_ref_tenant_mismatch",
+                    "message": f"Dataset ref tenant {ref_tenant!r} does not match caller tenant {tenant_id!r}",
+                },
+            )
+        bound_ref = dict(ref)
+        bound_ref["tenant_id"] = tenant_id
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "dataset_version_missing",
+                "message": "Either dataset_version or dataset_ref is required for handoff",
+            },
+        )
+
+    tick_id = body.tick_id or body.handoff_id or f"handoff-tick-{dataset_version_id}"
+    eval_type = body.eval_type.strip().lower() if body.eval_type else "shadow"
+    dedupe_key = candidate_dedupe_key(tenant_id, tick_id, dataset_version_id)
+    candidate_id = candidate_id_for(tenant_id, tick_id, dataset_version_id)
+
+    candidate = {
+        "id": candidate_id,
+        "candidate_id": candidate_id,
+        "handoff_id": body.handoff_id or candidate_id,
+        "dedupe_key": dedupe_key,
+        "tick_id": tick_id,
+        "eval_type": eval_type,
+        "dataset_ref": bound_ref,
+        "dataset_version_id": dataset_version_id,
+        "dataset_source": "agora_dataset_version_handoff",
+        "dataset_mode": _dataset_mode(),
+        "tenant_id": tenant_id,
+        "status": STATUS_PROPOSED,
+        "attempt_count": 0,
+        "production_training": "fail_closed",
+        "experiment_approval_gate": "required",
+        "runtime_effect": "none",
+        "gate_note": "Candidate requires experiment approval and deployment gate before any production training.",
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "created_by": body.actor_id,
+        "scheduled_by": authority.actor_id,
+    }
+
+    # Atomically write to candidate store - durable ingestion acknowledgment gate
+    stored_candidate, created = store.create_candidate_if_absent(candidate)
+
+    final_candidate = stored_candidate
+    if body.process_immediately and str(stored_candidate.get("status") or "") != STATUS_PROCESSED:
+        claims = store.claim_candidates(
+            worker_id=f"handoff-consumer-{body.actor_id}",
+            batch_size=1,
+            lease_seconds=DEFAULT_LEASE_SECONDS,
+            tenant_id=tenant_id,
+        )
+        target_claim = None
+        for claim in claims:
+            if str(claim.get("candidate_id") or "") == candidate_id:
+                target_claim = claim
+                break
+        if target_claim:
+            final_candidate = process_claimed_candidate(target_claim)
+
+    return {
+        "status": "acknowledged",
+        "handoff_id": body.handoff_id or candidate_id,
+        "candidate_id": candidate_id,
+        "dedupe_key": dedupe_key,
+        "dataset_version_id": dataset_version_id,
+        "tenant_id": tenant_id,
+        "created": created,
+        "candidate_status": final_candidate.get("status", STATUS_PROPOSED),
+        "metrics": final_candidate.get("metrics", {}),
+        "evaluation_summary": final_candidate.get("evaluation_summary", {}),
+        "dataset_lineage": final_candidate.get("dataset_lineage", {}),
+        "seed_fallback_used": bool(final_candidate.get("seed_fallback_used", False)),
+        "authoritative": bool(final_candidate.get("authoritative", True)),
+        "production_training": "fail_closed",
+        "acknowledged_at": timestamp,
     }
 
 

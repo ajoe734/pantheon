@@ -1,0 +1,32 @@
+{
+  "task_id": "PRODUCT-V2-CONSULTATION-R3-20260813",
+  "title": "Deliver governed consultation intake and terminal memo",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "completed_at": "2026-08-13T09:15:00Z",
+  "acceptance_criteria": {
+    "consume_terminal_policy_learning_candidate_intake": true,
+    "persist_governed_consultation_request_with_lineage": true,
+    "produce_terminal_memo_or_governance_proposal": true,
+    "prove_replay_duplicate_intake_idempotency": true,
+    "implement_missing_supervisor_store_bridge_behavior": true,
+    "land_reviewed_pr_with_evidence": true
+  },
+  "verification": {
+    "e2e_test": "services/consultation/test_policy_learning_intake.py",
+    "test_command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest services/consultation -v",
+    "test_result": "60 passed"
+  },
+  "intake_trace": {
+    "intake_endpoint": "/api/consult/intake/policy-learning-candidate",
+    "candidate_id": "cand-prod-v2-r3-001",
+    "dataset_version_id": "dv-agora-20260813-consult-r3",
+    "request_id": "cr-cand-cand-prod-v2-r3-001",
+    "memo_id": "memo-cand-cand-prod-v2-r3-001",
+    "proposal_id": "approval-proposal-from-committee-cand-cand-prod-v2-r3-001",
+    "memo_status": "published",
+    "recommendation": "approve",
+    "sponsor_persona_id": "persona-policy-learner",
+    "replay_idempotent": true
+  }
+}

@@ -379,6 +379,28 @@ class AgoraDatasetAuthority:
             )
         return versions
 
+    def register_version(self, record: Mapping[str, Any]) -> AgoraDatasetVersion:
+        """Register or update a tenant-scoped Agora DatasetVersion record."""
+        version = AgoraDatasetVersion.from_record(record)
+        if self._injected_records is None:
+            self._injected_records = []
+        record_dict = dict(record)
+        existing_idx = None
+        for i, existing in enumerate(self._injected_records):
+            if (
+                str(existing.get("dataset_version_id") or "") == version.dataset_version_id
+                and str(existing.get("tenant_id") or "") == version.tenant_id
+            ):
+                existing_idx = i
+                break
+        if existing_idx is not None:
+            self._injected_records[existing_idx] = record_dict
+        else:
+            self._injected_records.append(record_dict)
+        if self.backend in ("unconfigured", "unsupported"):
+            self.backend = "memory"
+        return version
+
 
 def build_agora_dataset_authority(
     records: Optional[Iterable[Mapping[str, Any]]] = None,

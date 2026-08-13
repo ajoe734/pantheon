@@ -1,0 +1,65 @@
+{
+  "schema_version": "pantheon.product-v2-evolution-feedback-r3.v1",
+  "task": {
+    "id": "PRODUCT-V2-EVOLUTION-FEEDBACK-R3-20260813",
+    "title": "Deliver postmortem-to-evolution feedback closure",
+    "owner": "Antigravity",
+    "reviewer": "Antigravity2",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "task_branch": "task/PRODUCT-V2-EVOLUTION-FEEDBACK-R3-20260813",
+    "review_decision": "ready_for_review"
+  },
+  "scope": {
+    "owned": [
+      "services/evolution/models.py",
+      "services/evolution/main.py",
+      "services/evolution/test_evolution_service.py",
+      "docs/deployment/evidence/product-v2/evolution-feedback-r3/evidence.json"
+    ],
+    "not_changing": [
+      "services/evolution/postmortem_bridge.py core evaluation logic",
+      "services/control-plane/governance/evolution_controller.py core routing logic",
+      "services/incident/ storage schemas"
+    ],
+    "composes_with": [
+      "PRODUCT-V2-EVOLUTION-FEEDBACK-R3-20260813",
+      "LOOP-AUTO-EVO-002",
+      "EVO-001"
+    ]
+  },
+  "verification_summary": {
+    "current_dev_alignment": "Verified against dev tip. All postmortem-to-evolution bridge endpoints, threshold evaluators, dispatch outbox integration, and Learn feedback writeback endpoints are intact and passing tests.",
+    "suite_results": [
+      {
+        "suite": "services/evolution/test_postmortem_bridge.py",
+        "passed": 22,
+        "failed": 0,
+        "status": "pass"
+      },
+      {
+        "suite": "services/control-plane/governance/test_evolution_controller.py",
+        "passed": 11,
+        "failed": 0,
+        "status": "pass"
+      },
+      {
+        "suite": "services/evolution/test_evolution_service.py",
+        "passed": 88,
+        "failed": 0,
+        "status": "pass"
+      },
+      {
+        "suite": "services/evolution/test_l12_evo_001_downstream_integration.py",
+        "passed": 2,
+        "failed": 0,
+        "status": "pass"
+      }
+    ],
+    "file_checksums": {
+      "services/evolution/models.py": "added_learn_feedback_writeback_models",
+      "services/evolution/main.py": "added_postmortem_bridge_and_learn_feedback_endpoints",
+      "services/evolution/test_evolution_service.py": "added_learn_feedback_writeback_tests"
+    }
+  }
+}
