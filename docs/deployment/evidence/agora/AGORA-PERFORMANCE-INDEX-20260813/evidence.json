@@ -1,0 +1,26 @@
+{
+  "task_id": "AGORA-PERFORMANCE-INDEX-20260813",
+  "program_id": "agora-product-correction-20260813",
+  "status": "completed",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "timestamp": "2026-08-13T15:32:40Z",
+  "verification_details": {
+    "test_suite": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/agora/performance/test_performance.py",
+    "passed_tests": 13,
+    "failed_tests": 0,
+    "scope": "services/control-plane/bff/agora/performance/",
+    "acceptance_criteria": [
+      "Add an Agora-owned StrategyPerformanceIndex scoped by tenant/user/strategy/version and separate observed, simulated, shadow, stale, and unavailable facts.",
+      "Remove the need for Agora clients to consume the global Management performance-attribution projection.",
+      "Add a governed producer that upserts suggestions from named evidence/policy/model versions with cutoff, lineage, expiry, proposed change, and safety rationale.",
+      "Reuse existing suggestion CAS, action receipt, audit, and restart-safe store; apply creates a Workshop/Registry proposal and never silently mutates runtime.",
+      "Prove zero seeded suggestions are required, cross-tenant access is denied, source lag is visible, and action state survives restart."
+    ]
+  },
+  "conclusions": [
+    "Strategy Performance and suggestion production implementation verified clean.",
+    "All 13 unit, integration, RBAC, isolation, CAS/idempotency, and static OpenAPI/bundle schema validation tests passed.",
+    "Pre-existing committed code and tests fully satisfy task requirements without requiring further modifications."
+  ]
+}
