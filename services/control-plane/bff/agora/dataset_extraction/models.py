@@ -56,11 +56,17 @@ class AgoraInteractionEvidenceRequest(BaseModel):
       persona_id       — servant persona that generated or received the evidence
       captured_at      — ISO-8601 timestamp when evidence was captured
 
-    Optional:
-      session_id       — servant session context when available
-      content          — interaction payload (question text, feedback label, etc.)
-      source_refs      — upstream artifact or session references
-      learning_eligible — defaults True; set False to suppress from learn pipelines
+    Optional / Governance & Privacy:
+      session_id                   — servant session context when available
+      content                      — interaction payload (question text, feedback label, etc.)
+      source_refs                  — upstream artifact or session references
+      learning_eligible            — defaults True; set False to suppress from learn pipelines
+      consent_granted              — defaults True; explicit user consent for dataset extraction
+      purpose                      — declared usage purpose (e.g. "policy_learning", "observe")
+      retention_days               — data retention lifespan in days (default 30)
+      is_raw_conversation          — set True if content includes raw conversation messages
+      explicit_conversation_consent — required True to extract raw conversation data
+      allowed_use                  — permitted downstream use lanes
     """
 
     model_config = {"extra": "forbid"}
@@ -74,6 +80,45 @@ class AgoraInteractionEvidenceRequest(BaseModel):
     source_refs: List[str] = Field(default_factory=list)
     learning_eligible: bool = True
     captured_at: str = Field(min_length=1)
+    consent_granted: bool = True
+    purpose: Optional[str] = "policy_learning"
+    retention_days: Optional[int] = 30
+    is_raw_conversation: bool = False
+    explicit_conversation_consent: bool = False
+    allowed_use: List[str] = Field(default_factory=lambda: ["policy_learning", "observe", "evaluation"])
+
+
+class DatasetAdmissionReceipt(BaseModel):
+    """Admission receipt for an interaction evidence submission (admit-only).
+
+    Returned immediately upon durable persistence to the inbox without waiting
+    for worker processing.
+    """
+
+    evidence_id: str
+    tenant_id: str
+    user_id: str
+    interaction_kind: InteractionKind
+    persona_id: str
+    session_id: Optional[str] = None
+    content: Dict[str, Any]
+    source_refs: List[str]
+    learning_eligible: bool
+    governance_boundary: Literal["observe_or_learn_only"] = "observe_or_learn_only"
+    no_promote_proof: Literal["agora_observe_learn_only"] = "agora_observe_learn_only"
+    no_runtime_mutation_proof: Literal["agora_evidence_extract_only"] = "agora_evidence_extract_only"
+    captured_at: str
+    extracted_at: str
+    status: Literal["pending", "processing", "processed", "failed"] = "pending"
+    idempotent: bool = False
+    version: int = 1
+    admission_receipt_id: str
+    dataset_kind: DatasetKind
+    consent_granted: bool = True
+    purpose: Optional[str] = "policy_learning"
+    retention_days: Optional[int] = 30
+    is_raw_conversation: bool = False
+    explicit_conversation_consent: bool = False
 
 
 class DatasetRecord(BaseModel):
@@ -104,6 +149,12 @@ class DatasetRecord(BaseModel):
     # True when this response was served from an existing record (duplicate evidence_id)
     idempotent: bool = False
     version: int = 1
+    status: Literal["pending", "processing", "processed", "failed"] = "processed"
+    consent_verified: bool = True
+    redaction_applied: bool = False
+    purpose: Optional[str] = None
+    retention_days: Optional[int] = None
+    admission_receipt_id: Optional[str] = None
 
 
 class HandoffAcknowledgementRequest(BaseModel):
@@ -119,11 +170,12 @@ class HandoffAcknowledgementRequest(BaseModel):
 
     acknowledgement_id: str = Field(min_length=1)
     dataset_version_id: str = Field(min_length=1)
-    downstream_ref: str = Field(min_length=1)
+    downstream_ref: Any = Field(description="Downstream reference string or dictionary identifier")
 
 
 __all__ = [
     "AgoraInteractionEvidenceRequest",
+    "DatasetAdmissionReceipt",
     "DatasetKind",
     "DatasetRecord",
     "HandoffAcknowledgementRequest",
