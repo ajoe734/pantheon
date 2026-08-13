@@ -82,6 +82,7 @@ sync_root() {
         >/dev/null 2>&1 && log "$label stashed dirty tracked changes (recoverable via git stash list)"
     fi
     if git -C "$root" reset --hard "$REF" >/dev/null 2>&1; then
+      git -C "$root" clean -fdx >/dev/null 2>&1 || true
       updated=1
       log "updated $label -> $(git -C "$root" rev-parse --short HEAD)"
     else

@@ -353,3 +353,36 @@ def test_config_drift_on_current_runtime_fails_without_mutation_or_handoff(
     assert "CONFIG_DRIFT_REQUIRES_PROMOTION" in result.stdout
     assert live_config.read_bytes() == before
     assert not promotion_args.exists()
+
+
+def test_sync_cleans_untracked_and_ignored_residue_in_dev_root(
+    tmp_path: Path,
+) -> None:
+    remote, seed, first = _seed_remote(tmp_path)
+    dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+
+    # Add untracked and ignored residue inside dev_root
+    stale_dir = dev_root / ".orchestrator" / "task-briefs"
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "stale_brief.md").write_text("obsolete\n", encoding="utf-8")
+    (dev_root / ".orchestrator" / "supervisor.lock").write_text("lock\n", encoding="utf-8")
+
+    second = _advance(seed, "two")
+
+    env = os.environ.copy()
+    env["SYNC_REF"] = "origin/dev"
+    env["PANTHEON_SUPERVISOR_PID"] = str(tmp_path / "no-supervisor.pid")
+    result = subprocess.run(
+        ["bash", str(SYNC_SCRIPT), str(dev_root), str(tmp_path / "no-live-config.json")],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert _git(dev_root, "rev-parse", "HEAD") == second
+    assert not (stale_dir / "stale_brief.md").exists()
+    assert not (dev_root / ".orchestrator" / "supervisor.lock").exists()
+
