@@ -696,15 +696,32 @@ def _workspace_schema_validate(payload: dict) -> None:
     chart_schema_path = agora_dir / "v2" / "chart_spec_v1.schema.json"
     with chart_schema_path.open() as f:
         chart_schema = json.load(f)
-    resolver = jsonschema.RefResolver(
-        base_uri=schema_path.parent.as_uri() + "/",
-        referrer=schema,
-        store={
-            chart_schema_path.as_uri(): chart_schema,
-            chart_schema.get("$id"): chart_schema,
-        },
-    )
-    jsonschema.Draft7Validator(schema, resolver=resolver).validate(payload)
+    import copy
+    schema_copy = copy.deepcopy(schema)
+    chart_defs = chart_schema.get("definitions", {})
+    schema_copy.setdefault("definitions", {}).update(chart_defs)
+
+    def _inline_refs(obj):
+        if isinstance(obj, dict):
+            res = {}
+            for k, v in obj.items():
+                if k == "$ref" and isinstance(v, str):
+                    if v == "../v2/chart_spec_v1.schema.json":
+                        # replace with inline chart_schema
+                        res.update(_inline_refs(chart_schema))
+                        continue
+                    elif v.startswith("../v2/chart_spec_v1.schema.json#/definitions/"):
+                        def_name = v.split("/")[-1]
+                        res["$ref"] = f"#/definitions/{def_name}"
+                        continue
+                res[k] = _inline_refs(v)
+            return res
+        elif isinstance(obj, list):
+            return [_inline_refs(x) for x in obj]
+        return obj
+
+    inlined_schema = _inline_refs(schema_copy)
+    jsonschema.Draft7Validator(inlined_schema).validate(payload)
 
 
 def _create_proposal_response(client: TestClient, body: dict | None = None):
