@@ -1,0 +1,55 @@
+{
+  "task_id": "OPS-STALE-DEV-ROOT-RETIRE-20260813",
+  "program_id": "ops-stale-deployment-checkout-retirement-20260813",
+  "title": "Retire the stale mutable dev-root checkout and remove obsolete files",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "target_checkout": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "live_supervisor_cwd": "/home/lupin/pantheon-ci-deploy/command-runtimes/16e39431ce8ccf8c76c08ec1f6bccd13bb3ce2bf",
+  "live_supervisor_pid": 3915223,
+  "live_command_runtime_sha": "16e39431ce8ccf8c76c08ec1f6bccd13bb3ce2bf",
+  "before_inventory": {
+    "dev_root_head": "5d5aa72a229e0393070106a0021bf154ef40249f",
+    "origin_dev_head": "12a8dd18a78ec7bf1716b4b80226152ad3ffd533",
+    "commits_behind_origin_dev": 51,
+    "tracked_diffs": 0,
+    "untracked_and_ignored_residue": [
+      ".orchestrator/assistant-dev-packets/",
+      ".orchestrator/status-derived-views.lock",
+      ".orchestrator/supervisor.lock",
+      ".orchestrator/task-briefs/ (25 stale brief files)",
+      ".orchestrator/evidence/ (681 historical worker receipts)"
+    ]
+  },
+  "consumer_audit": {
+    "process_cwd_argv_lsof_consumers": 0,
+    "git_worktree_registrations": 0,
+    "live_supervisor_matches_dev_root": false,
+    "system_service_references": 0,
+    "outcome": "PASS"
+  },
+  "removal_manifest": {
+    "strategy": "governed_sync_with_clean_reset",
+    "clean_untracked_and_ignored": true,
+    "retention_decision": "Authoritative task history remains central in TaskStore/event log; stale dev-root local locks/briefs/caches eliminated.",
+    "rollback_procedure": "If unexpected regression occurs, git checkout -b rollback 5d5aa72a229e0393070106a0021bf154ef40249f in dev-root; live supervisor remains untouched in command-runtimes."
+  },
+  "after_inventory": {
+    "dev_root_head": "12a8dd18a78ec7bf1716b4b80226152ad3ffd533",
+    "git_status_clean": true,
+    "commits_behind_origin_dev": 0,
+    "boundary_files_match_origin_dev": true
+  },
+  "runtime_invariance": {
+    "supervisor_pid_unchanged": true,
+    "supervisor_cwd_unchanged": true,
+    "command_runtime_sha_unchanged": true,
+    "taskstore_functional": true,
+    "product_services_redeployed": false
+  },
+  "source_fix": {
+    "file_modified": "scripts/sync-dev-root.sh",
+    "test_added": "scripts/test_sync_dev_root.py::test_sync_cleans_untracked_and_ignored_residue_in_dev_root",
+    "test_results": "8 passed in 6.92s"
+  }
+}
