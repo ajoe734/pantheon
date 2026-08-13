@@ -1,23 +1,26 @@
 # Agora Governed Execution Tasks
 
-Status: task catalog prepared for signed dev-bridge materialization
+Status: task catalog prepared for local Human/Ops canonical materialization
 
 Canonical machine-readable catalog:
 [execution-tasks.json](execution-tasks.json)
 
-Bridge packet ID: `pkt-agora-product-gap-sd-20260813-v2`
+Materialization ID: `local-human-ops-agora-product-gap-sd-20260813-v1`
 
-This replaces `pkt-agora-product-gap-sd-20260813-v1`, which the immutable
-supervisor runtime rejected before materialization because the shared checkout
-still emitted legacy HMAC-SHA256 while the runtime requires Ed25519. Version 1
-created no canonical task rows; version 2 carries the unchanged task DAG.
+The earlier `pkt-agora-product-gap-sd-20260813-v1` attempt was rejected before
+materialization and created no task rows. The planner had inspected the stale
+mutable `pantheon-ci-deploy/dev-root` bridge instead of the live immutable
+command runtime. The authoritative runtime already contains
+`OPS-LOCAL-HUMAN-OPS-CANONICAL-20260812`, so task creation uses
+`scripts/human-ops-status.sh` and does not depend on product BFF login, control
+mode, bearer tokens, or bridge signing.
 
 ## Materialization boundary
 
 These are canonical task specifications for supervisor/auto-worker execution.
-The planner does not implement their product scope. They are materialized only
-through the signed assistant dev bridge; queue/state JSON must not be edited by
-hand.
+The planner does not implement their product scope. They are materialized
+through the explicit local Human/Ops canonical CLI; queue/state JSON must not
+be edited by hand.
 
 The first task independently reviews and merges PR #4834. It is a narrow plan
 gate, not a product-code gate. The source catalog deliberately reuses three

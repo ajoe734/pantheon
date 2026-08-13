@@ -90,7 +90,7 @@ worker, runtime, or deployment code.
 6. [Governed execution tasks](06_EXECUTION_TASKS.md) and
    [machine-readable catalog](execution-tasks.json) — the canonical task IDs,
    maximum-parallel DAG, repository scopes, acceptance, rollout, and rollback
-   prepared for signed assistant dev-bridge materialization.
+   prepared for BFF-independent local Human/Ops canonical materialization.
 
 ## Relation to prior Agora documents
 

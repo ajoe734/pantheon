@@ -12,9 +12,9 @@ work-package references only:
 - they are not themselves dispatchable records.
 
 The operator later requested task generation. Document 6 and
-`execution-tasks.json` fulfill that request with registered task IDs for signed
-assistant dev-bridge materialization. The `WP-*` labels below remain
-noncanonical planning references and must not be copied into task state.
+`execution-tasks.json` fulfill that request with registered task IDs for the
+BFF-independent local Human/Ops canonical command. The `WP-*` labels below
+remain noncanonical planning references and must not be copied into task state.
 
 ## 2. Dependency and merge order
 

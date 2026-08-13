@@ -1,9 +1,14 @@
 {
   "schema": "pantheon.execution-task-catalog.v1",
   "program_id": "agora-product-correction-20260813",
-  "packet_id": "pkt-agora-product-gap-sd-20260813-v2",
-  "supersedes_packet_id": "pkt-agora-product-gap-sd-20260813-v1",
-  "supersession_reason": "Version 1 was rejected before materialization because the shared checkout emitted legacy HMAC-SHA256 while the immutable supervisor runtime accepts Ed25519; it created zero task rows.",
+  "materialization_id": "local-human-ops-agora-product-gap-sd-20260813-v1",
+  "materialization_command": "scripts/human-ops-status.sh assign",
+  "failed_legacy_bridge_packet": {
+    "packet_id": "pkt-agora-product-gap-sd-20260813-v1",
+    "result": "rejected-before-materialization",
+    "task_rows_created": 0,
+    "reason": "The planner incorrectly used a stale mutable dev-root bridge implementation instead of the live immutable runtime's BFF-independent local Human/Ops canonical CLI."
+  },
   "source": {
     "pull_request": 4834,
     "planning_branch": "task/OPS-DOC-AGORA-GAP-SD-20260813",
@@ -13,7 +18,7 @@
   },
   "dispatch_policy": {
     "dispatcher": "pantheon-supervisor-only",
-    "materialization": "signed-assistant-dev-bridge",
+    "materialization": "local-human-ops-canonical-cli",
     "allowed_repositories": [
       "pantheon",
       "execute-plans"
@@ -69,7 +74,7 @@
         "runtime or deployment mutation"
       ],
       "acceptance": [
-        "Independently review the exact PR #4834 head referenced by the signed bridge packet and verify the GAP findings against representative frontend and backend source evidence.",
+        "Independently review the exact PR #4834 head referenced by the canonical materialization metadata and verify the GAP findings against representative frontend and backend source evidence.",
         "Validate all execution task IDs are unique, the DAG is acyclic, frontend and backend scopes remain in their own repositories, and declared parent/child path overlaps are ordered.",
         "Confirm L12-MFC-R4-AGORA-001, L12-MFC-R4-IMITATION-001, and L12-MFC-R4-CONSULT-001 are reused rather than duplicated and record their canonical state at review time.",
         "Publish an independent review-proof tag for the exact head, require all PR checks to pass, merge PR #4834 to dev, and record the merge SHA.",
