@@ -146,19 +146,19 @@ Claude allow rule and cannot authorize a second matching invocation.
     ownership or lease authority.
 15. Retry never launches a worker. It returns the existing intent to the one
     delivery queue, where all current eligibility and capacity gates run again.
-16. Private source-packet signing keys exist only in the BFF secret boundary;
-    supervisor, worker, git, and canonical-writer subprocesses cannot inherit
-    them.
-17. The source-packet replay ledger is bounded and belongs only to the optional
+16. Private source-packet signing keys belong only to local development
+    tooling; supervisor, worker, git, and product-BFF subprocesses cannot
+    inherit them.
+17. The source-packet replay ledger is bounded and belongs only to the local
     dev-bridge ingress; local Human/Ops maintenance needs no signing ledger.
 18. A non-remembered tool approval permits exactly one matching invocation in
     the exact task generation and never mutates global provider settings.
 19. A cycle refreshes `last_successful_loop_at` only if poll, plan, reserve,
     delivery, and finalization all completed; a critical phase exception stamps
     the cycle degraded and cannot satisfy promotion freshness.
-20. Persistent watchdog restart loads the dev-bridge public verifier map from
-    one mode-600 public-only environment file. Its final spawn boundary rejects
-    missing maps and strips every source/operator private key and key id.
+20. Persistent watchdog restart does not require a development bridge verifier
+    map. Local packet materialization loads its verifier only at the local
+    development-tooling boundary.
 
 ## 5. Authoritative runtime call path
 

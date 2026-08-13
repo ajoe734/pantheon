@@ -36,32 +36,27 @@ from assistant_command_policy import (
 
 
 ASSISTANT_SKILL_DESCRIPTOR_SCHEMA_VERSION = "assistant_skill_descriptor.v1"
-ASSISTANT_SA_SD_GENERATE_TOOL_NAME = "assistant.sa_sd.generate"
 ASSISTANT_PROVIDER_REAUTH_TOOL_NAME = "assistant.provider.reauth"
 ASSISTANT_PROVIDER_REGISTER_TOOL_NAME = "assistant.provider.register"
 ASSISTANT_OPENCLAW_ASK_TOOL_NAME = "assistant.openclaw.ask"
 ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME = "assistant.control_mode.status"
 ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME = "assistant.transcript.resync"
-ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME = "assistant.orchestrator.status"
 _DEFAULT_EFFECTIVE_SKILL_MODE = "kernel_debug"
 _DEFAULT_OPERATOR_ROLE = "operator"
-_TOOL_SKILL_MODES = ("kernel_debug", "kernel_repair")
-_ASSISTANT_COMMAND_SKILL_MODES = ("kernel_observe", "kernel_debug", "kernel_repair")
-_ASSISTANT_SA_SD_GENERATE_SKILL_MODES = ("kernel_debug", "kernel_repair")
+_TOOL_SKILL_MODES = ("kernel_debug",)
+_ASSISTANT_COMMAND_SKILL_MODES = ("kernel_observe", "kernel_debug")
 _ASSISTANT_PROVIDER_REAUTH_SKILL_MODES = ("user",)
-_ASSISTANT_PROVIDER_REGISTER_SKILL_MODES = ("kernel_debug", "kernel_repair")
-_ASSISTANT_OPENCLAW_ASK_SKILL_MODES = ("kernel_debug", "kernel_repair")
-_ASSISTANT_READBACK_SKILL_MODES = ("kernel_observe", "kernel_debug", "kernel_repair")
-_WORKFLOW_SKILL_MODES = ("kernel_repair",)
+_ASSISTANT_PROVIDER_REGISTER_SKILL_MODES = ("kernel_debug",)
+_ASSISTANT_OPENCLAW_ASK_SKILL_MODES = ("kernel_debug",)
+_ASSISTANT_READBACK_SKILL_MODES = ("kernel_observe", "kernel_debug")
+_WORKFLOW_SKILL_MODES = ("kernel_debug",)
 _ADAPTER_OWNED_ASSISTANT_TOOLS = frozenset({
     ASSISTANT_COMMAND_TOOL_NAME,
-    ASSISTANT_SA_SD_GENERATE_TOOL_NAME,
     ASSISTANT_PROVIDER_REAUTH_TOOL_NAME,
     ASSISTANT_PROVIDER_REGISTER_TOOL_NAME,
     ASSISTANT_OPENCLAW_ASK_TOOL_NAME,
     ASSISTANT_CONTROL_MODE_STATUS_TOOL_NAME,
     ASSISTANT_TRANSCRIPT_RESYNC_TOOL_NAME,
-    ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME,
 })
 _OPERATOR_ROLE_ALIASES = {
     "admin": "admin",
@@ -224,6 +219,8 @@ class BridgeAuditLog:
 # Tool names that are always blocked regardless of the allowlist.
 # These map to broker / paper / live / capital paths that must remain disabled.
 _ALWAYS_BLOCKED_TOOLS = frozenset({
+    "assistant.orchestrator.status",
+    "assistant.sa_sd.generate",
     "broker_order",
     "submit_order",
     "live_order",
@@ -398,7 +395,7 @@ def _tool_skill_descriptor(
             confirm_policy={
                 "required": False,
                 "policy": "active_control_mode_for_kernel_payloads",
-                "note": "Sends the prompt to the existing Management AI BFF route with optional OpenClaw repair metadata.",
+                "note": "Sends the prompt to the Management AI BFF route.",
             },
             input_schema={
                 "type": "object",
@@ -452,53 +449,6 @@ def _tool_skill_descriptor(
             },
             handler_ref="bff.route:GET /bff/assistant/sessions/{sessionId}/transcript",
             result_surface="assistant_transcript_resync",
-        )
-    if tool_name == ASSISTANT_ORCHESTRATOR_STATUS_TOOL_NAME:
-        return AssistantSkillDescriptor(
-            id=tool_name,
-            title="System Status",
-            surface="assistant_command",
-            mode_gate=_mode_gate(_ASSISTANT_READBACK_SKILL_MODES),
-            role="operator",
-            confirm_policy={"required": False},
-            input_schema={
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
-            handler_ref="bff.route:GET /bff/assistant/orchestrator/status",
-            result_surface="assistant_orchestrator_status",
-        )
-    if tool_name == ASSISTANT_SA_SD_GENERATE_TOOL_NAME:
-        return AssistantSkillDescriptor(
-            id=tool_name,
-            title="Generate SA/SD",
-            surface="assistant_command",
-            mode_gate=_mode_gate(_ASSISTANT_SA_SD_GENERATE_SKILL_MODES),
-            role="operator",
-            confirm_policy={
-                "required": False,
-                "note": "Generates assistant SA/SD and optional task packet through the BFF dev-docs handler.",
-            },
-            input_schema={
-                "type": "object",
-                "required": ["conversationId", "featureSummary"],
-                "properties": {
-                    "conversationId": {"type": "string"},
-                    "featureSummary": {"type": "string"},
-                    "affectedModules": {"type": "array", "items": {"type": "string"}},
-                    "proposedOwner": {"type": "string"},
-                    "proposedReviewer": {"type": "string"},
-                    "archive": {"type": "boolean"},
-                    "emitTaskPacket": {"type": "boolean"},
-                    "contextPack": {"type": "object", "additionalProperties": True},
-                    "contextPackRequest": {"type": "object", "additionalProperties": True},
-                    "extraContext": {"type": "object", "additionalProperties": True},
-                },
-                "additionalProperties": True,
-            },
-            handler_ref="bff.route:POST /bff/assistant/dev-docs/generate",
-            result_surface="assistant_dev_docs_packet",
         )
     if tool_name == ASSISTANT_PROVIDER_REAUTH_TOOL_NAME:
         return AssistantSkillDescriptor(

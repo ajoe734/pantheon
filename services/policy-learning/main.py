@@ -264,8 +264,8 @@ class AgoraDatasetHandoffBody(BaseModel):
     tenant_id: Optional[str] = None
     user_id: Optional[str] = None
     process_immediately: bool = Field(
-        default=True,
-        description="Whether to process the handoff candidate immediately into a terminal shadow candidate.",
+        default=False,
+        description="Deprecated/legacy flag. Production semantics are admit-only; candidates are always proposed and leased by background workers.",
     )
 
 
@@ -1118,22 +1118,6 @@ def agora_dataset_handoff(
     # Atomically write to candidate store - durable ingestion acknowledgment gate
     stored_candidate, created = store.create_candidate_if_absent(candidate)
 
-    final_candidate = stored_candidate
-    if body.process_immediately and str(stored_candidate.get("status") or "") != STATUS_PROCESSED:
-        claims = store.claim_candidates(
-            worker_id=f"handoff-consumer-{body.actor_id}",
-            batch_size=1,
-            lease_seconds=DEFAULT_LEASE_SECONDS,
-            tenant_id=tenant_id,
-        )
-        target_claim = None
-        for claim in claims:
-            if str(claim.get("candidate_id") or "") == candidate_id:
-                target_claim = claim
-                break
-        if target_claim:
-            final_candidate = process_claimed_candidate(target_claim)
-
     return {
         "status": "acknowledged",
         "handoff_id": body.handoff_id or candidate_id,
@@ -1142,12 +1126,12 @@ def agora_dataset_handoff(
         "dataset_version_id": dataset_version_id,
         "tenant_id": tenant_id,
         "created": created,
-        "candidate_status": final_candidate.get("status", STATUS_PROPOSED),
-        "metrics": final_candidate.get("metrics", {}),
-        "evaluation_summary": final_candidate.get("evaluation_summary", {}),
-        "dataset_lineage": final_candidate.get("dataset_lineage", {}),
-        "seed_fallback_used": bool(final_candidate.get("seed_fallback_used", False)),
-        "authoritative": bool(final_candidate.get("authoritative", True)),
+        "candidate_status": stored_candidate.get("status", STATUS_PROPOSED),
+        "metrics": stored_candidate.get("metrics", {}),
+        "evaluation_summary": stored_candidate.get("evaluation_summary", {}),
+        "dataset_lineage": stored_candidate.get("dataset_lineage", {}),
+        "seed_fallback_used": bool(stored_candidate.get("seed_fallback_used", False)),
+        "authoritative": bool(stored_candidate.get("authoritative", True)),
         "production_training": "fail_closed",
         "acknowledged_at": timestamp,
     }

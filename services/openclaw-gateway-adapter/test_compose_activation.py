@@ -25,7 +25,7 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["environment"]["OPENCLAW_CAPITAL_BINDING_ENABLED"] == "false"
     assert (
         adapter["environment"]["OPENCLAW_ALLOWED_TOOLS"]
-        == "${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate,assistant.provider.reauth,assistant.provider.register,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync,assistant.orchestrator.status}"
+        == "${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.provider.reauth,assistant.provider.register,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync}"
     )
     assert adapter["ports"] == ["127.0.0.1:${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"]
     assert adapter["cap_add"] == ["SYS_ADMIN"]
@@ -77,10 +77,6 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["environment"]["PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE"] == (
         "${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}"
     )
-    assert (
-        adapter["environment"]["PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT"]
-        == "${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}"
-    )
 
     codex_credential_volume = (
         "${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:"
@@ -92,16 +88,13 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
         "${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:"
         "${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}"
     )
-    repair_worktree_volume = (
-        "${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:"
-        "${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:rw"
-    )
     assert codex_credential_volume in upstream["volumes"]
     assert claude_credential_volume in upstream["volumes"]
-    assert repair_worktree_volume in upstream["volumes"]
     assert codex_credential_volume in adapter["volumes"]
     assert claude_credential_volume in adapter["volumes"]
-    assert repair_worktree_volume in adapter["volumes"]
+    assert "PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT" not in adapter["environment"]
+    assert all("PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT" not in volume for volume in upstream["volumes"])
+    assert all("PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT" not in volume for volume in adapter["volumes"])
 
     broker = services["broker"]
     assert broker["build"]["dockerfile"] == "services/broker/Dockerfile"

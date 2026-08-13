@@ -15,14 +15,15 @@ from pydantic import ValidationError
 CODE_ROOT = Path(__file__).resolve().parent.parent
 STATUS_ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT") or CODE_ROOT).resolve()
 
-# Import path resolution precedence: CODE_ROOT first so local script code is used,
-# followed by STATUS_ROOT so central status packages/libraries can be resolved.
+# The bridge belongs to local development tooling, not the product BFF.  Load
+# its package from each repository root so a provisioned status root remains
+# self-contained.
 for root in (STATUS_ROOT, CODE_ROOT):
-    bff_dir = root / "services" / "control-plane" / "bff"
-    if bff_dir.exists() and str(bff_dir) not in sys.path:
-        sys.path.insert(0, str(bff_dir))
+    tooling_dir = root / ".orchestrator"
+    if tooling_dir.exists() and str(tooling_dir) not in sys.path:
+        sys.path.insert(0, str(tooling_dir))
 
-from assistant.dev_bridge_inbox import queue_payload  # noqa: E402
+from development_bridge.dev_bridge_inbox import queue_payload  # noqa: E402
 
 
 def _read_payload(packet_file: str | None) -> Any:

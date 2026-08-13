@@ -16,6 +16,9 @@ from unittest import mock
 
 import pytest
 
+from services.research.alpha_replication.admission import (
+    ReplicationAdmissionStore,
+)
 from services.research.alpha_replication.controller_state import (
     ControllerState,
     ControllerStateStore,
@@ -59,6 +62,19 @@ def _setup_controller_env(tmp_path: Path, tenant_id: str = "tenant-prod-v2"):
     state_store = ControllerStateStore(tmp_path / "state.json")
     state_store.save(state)
 
+    admission_store = ReplicationAdmissionStore(tmp_path)
+    admission_store.create_admission(
+        {
+            "tenant_id": tenant_id,
+            "strategy_spec_id": "reg-strategy-spec-r3-alpha-1.0.0",
+            "strategy_id": "strat-prod-v2-r3-001",
+            "spec_version": "1.0.0",
+            "checksum": "sha256:r3-test-checksum",
+            "approval_decision_id": "app-decision-r3-alpha",
+            "approver": "approver-r3@pantheon.test",
+        }
+    )
+
     config = ReplicationControllerConfig(
         database_url="postgresql://test",
         registry_url="http://registry.test",
@@ -68,6 +84,7 @@ def _setup_controller_env(tmp_path: Path, tenant_id: str = "tenant-prod-v2"):
         data_dir=tmp_path,
         seed_store_path=seed_path,
         authority=authority,
+        admission_store=admission_store,
     )
     return config, state, state_store, authority
 

@@ -1,0 +1,22 @@
+{
+  "task_id": "AGORA-POLICY-ADMIT-WORKER-20260813",
+  "title": "Make policy handoff admit-only and worker-leased",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "review_approved",
+  "timestamp": "2026-08-13T14:52:00Z",
+  "summary": "Agora handoff endpoint made strictly admit-only (process_immediately deprecated and removed from inline execution). Candidates are admitted in STATUS_PROPOSED and processed exclusively via worker-leased claims.",
+  "acceptance_verification": {
+    "handoff_admit_only": "Verified that /api/policy-learning/agora-handoff creates candidates in STATUS_PROPOSED without inline processing.",
+    "worker_leased_processing": "Verified that worker/claim, worker/process, and worker/restart handle claims, execution, and expired lease recovery.",
+    "fail_closed_dataset_authority": "Verified product mode reads tenant-scoped DatasetVersion authority and never uses seed fallback.",
+    "runtime_effect_none": "Verified candidates carry explicit runtime_effect=none and /promote always returns HTTP 409.",
+    "test_suite": "103 passed, 5 skipped in pytest suite."
+  },
+  "artifacts_produced": [
+    "services/policy-learning/main.py",
+    "services/policy-learning/test_agora_admit_only_worker.py",
+    "services/policy-learning/tests/test_product_v2_policy_learning_r3.py",
+    "docs/deployment/evidence/agora/AGORA-POLICY-ADMIT-WORKER-20260813/evidence.json"
+  ]
+}
