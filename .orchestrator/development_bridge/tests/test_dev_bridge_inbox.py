@@ -37,7 +37,7 @@ from .dev_bridge_test_support import (
 
 
 TEST_KEY = b"test-key-for-dev-bridge-inbox"
-REPO_ROOT = Path(__file__).resolve().parents[5]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(autouse=True)

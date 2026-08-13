@@ -23,7 +23,7 @@ from .dev_bridge_test_support import (
 )
 
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 QUEUE_SCRIPT = REPO_ROOT / "scripts" / "queue_assistant_dev_task_packet.py"
 DRAIN_SCRIPT = REPO_ROOT / "scripts" / "drain_assistant_dev_task_packet_inbox.py"
 TEST_KEY = b"test-key-for-dev-bridge-inbox-cli"

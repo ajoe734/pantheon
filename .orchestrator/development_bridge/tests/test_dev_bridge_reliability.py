@@ -38,7 +38,7 @@ from .dev_bridge_test_support import (
 )
 
 
-REPO_ROOT = Path(__file__).resolve().parents[5]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 TEST_KEY = b"test-key-for-dev-bridge-reliability"
 KEY_STORE = {"assistant-bridge-dev": TEST_KEY}
 

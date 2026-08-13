@@ -719,11 +719,13 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
         )
 
 
-def assistant_dev_bridge_bff_dirs(repo_root: Path) -> list[Path]:
-    code_bff_dir = THIS_DIR.parent / "services" / "control-plane" / "bff"
-    repo_bff_dir = repo_root / "services" / "control-plane" / "bff"
+def assistant_dev_bridge_tooling_dirs(repo_root: Path) -> list[Path]:
+    """Locate the local development-bridge package, never product BFF code."""
+
+    code_tooling_dir = THIS_DIR
+    repo_tooling_dir = repo_root / ".orchestrator"
     dirs: list[Path] = []
-    for candidate in (code_bff_dir, repo_bff_dir):
+    for candidate in (code_tooling_dir, repo_tooling_dir):
         if candidate not in dirs:
             dirs.append(candidate)
     return dirs
@@ -738,20 +740,20 @@ def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, An
         repo_root = config_path(config, "status_file").parent
     except KeyError:
         repo_root = THIS_DIR.parent
-    bff_dirs = assistant_dev_bridge_bff_dirs(repo_root)
-    for bff_dir in reversed(bff_dirs):
-        if str(bff_dir) not in sys.path:
-            sys.path.insert(0, str(bff_dir))
+    tooling_dirs = assistant_dev_bridge_tooling_dirs(repo_root)
+    for tooling_dir in reversed(tooling_dirs):
+        if str(tooling_dir) not in sys.path:
+            sys.path.insert(0, str(tooling_dir))
 
     try:
-        from assistant.dev_bridge_inbox import drain_task_packet_inbox
+        from development_bridge.dev_bridge_inbox import drain_task_packet_inbox
     except Exception as exc:
         write_activity_log(
             config,
             {
                 "type": "assistant_dev_packet_drain_unavailable",
                 "message": f"Assistant dev packet inbox drain unavailable: {type(exc).__name__}: {exc}",
-                "searched_bff_dirs": [str(path) for path in bff_dirs],
+                "searched_tooling_dirs": [str(path) for path in tooling_dirs],
             },
         )
         bridge_state = state.setdefault("assistant_dev_bridge", {})

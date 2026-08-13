@@ -198,9 +198,9 @@ def test_openclaw_ops_surface_projects_effective_skill_descriptors(monkeypatch) 
         "agent_id": "management-ai",
         "mode": "kernel_debug",
         "operator_role": "operator",
-        "policy_allowed_tools": ["assistant.command", "assistant.sa_sd.generate"],
+        "policy_allowed_tools": ["assistant.command"],
         "policy_blocked_tools": [],
-        "effective_tools": ["assistant.command", "assistant.sa_sd.generate"],
+        "effective_tools": ["assistant.command"],
         "effective_workflows": [],
         "effective_skills": [
             {
@@ -210,7 +210,7 @@ def test_openclaw_ops_surface_projects_effective_skill_descriptors(monkeypatch) 
                 "mode_gate": {
                     "type": "allowlist",
                     "default": "deny",
-                    "allowed_modes": ["kernel_observe", "kernel_debug", "kernel_repair"],
+                    "allowed_modes": ["kernel_observe", "kernel_debug"],
                 },
                 "role": "operator",
                 "confirm_policy": {"required": False},
@@ -218,21 +218,6 @@ def test_openclaw_ops_surface_projects_effective_skill_descriptors(monkeypatch) 
                 "handler_ref": "openclaw.tool:assistant.command",
                 "result_surface": "assistant_command_authorization",
             },
-            {
-                "id": "assistant.sa_sd.generate",
-                "title": "Generate SA/SD",
-                "surface": "assistant_command",
-                "mode_gate": {
-                    "type": "allowlist",
-                    "default": "deny",
-                    "allowed_modes": ["kernel_debug", "kernel_repair"],
-                },
-                "role": "operator",
-                "confirm_policy": {"required": False},
-                "input_schema": {"type": "object"},
-                "handler_ref": "bff.route:POST /bff/assistant/dev-docs/generate",
-                "result_surface": "assistant_dev_docs_packet",
-            }
         ],
     }
     recorder = _Recorder(responses)
@@ -250,8 +235,7 @@ def test_openclaw_ops_surface_projects_effective_skill_descriptors(monkeypatch) 
     assert effective["schema_version"] == "assistant_skill_descriptor.v1"
     assert effective["effective_skills"][0]["id"] == "assistant.command"
     assert effective["effective_skills"][0]["handler_ref"] == "openclaw.tool:assistant.command"
-    assert effective["effective_skills"][1]["id"] == "assistant.sa_sd.generate"
-    assert effective["effective_skills"][1]["handler_ref"] == "bff.route:POST /bff/assistant/dev-docs/generate"
+    assert len(effective["effective_skills"]) == 1
     assert payload["meta"]["surfaces"]["openclaw_effective_tools"]["status"] == "ok"
 
     tool_call = [call for call in recorder.calls if "/api/openclaw-adapter/tools?" in call[1]][0]
@@ -265,25 +249,25 @@ def test_openclaw_ops_client_authorizes_assistant_skill(monkeypatch) -> None:
     recorder = _Recorder({
         (
             "POST",
-            f"{BASE_URL}/api/openclaw-adapter/assistant/skills/assistant.sa_sd.generate/authorize",
+            f"{BASE_URL}/api/openclaw-adapter/assistant/skills/assistant.command/authorize",
         ): {
             "status": "ok",
             "data": {
                 "status": "allowed",
-                "skill_id": "assistant.sa_sd.generate",
+                "skill_id": "assistant.command",
             },
         }
     })
 
     with mock.patch("openclaw_ops_client.urllib.request.urlopen", recorder):
         result = OpenClawOpsClient(timeout_seconds=1.5).authorize_assistant_skill(
-            skill_id="assistant.sa_sd.generate",
+            skill_id="assistant.command",
             operator_id="op-2",
             mode="kernel_debug",
             operator_role="operator",
             control_mode={"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
             session_id="conv-1",
-            request_type="assistant_dev_docs_generate",
+            request_type="assistant_command_authorize",
             audit_extra={"archive": True},
             trace_id="trace-1",
         )
@@ -291,7 +275,7 @@ def test_openclaw_ops_client_authorizes_assistant_skill(monkeypatch) -> None:
     assert result["data"]["status"] == "allowed"
     method, url, headers, body = recorder.calls[0]
     assert method == "POST"
-    assert url.endswith("/api/openclaw-adapter/assistant/skills/assistant.sa_sd.generate/authorize")
+    assert url.endswith("/api/openclaw-adapter/assistant/skills/assistant.command/authorize")
     assert headers["X-operator-id"] == "op-2"
     assert headers["X-operator-role"] == "operator"
     assert headers["X-assistant-mode"] == "kernel_debug"
@@ -300,7 +284,7 @@ def test_openclaw_ops_client_authorizes_assistant_skill(monkeypatch) -> None:
     assert body["operator_role"] == "operator"
     assert body["control_mode"]["activation_id"] == "act-1"
     assert body["session_id"] == "conv-1"
-    assert body["request_type"] == "assistant_dev_docs_generate"
+    assert body["request_type"] == "assistant_command_authorize"
     assert body["audit_extra"] == {"archive": True}
 
 

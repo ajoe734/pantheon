@@ -24,22 +24,20 @@ It owns:
 - development-tooling health and dispatch evidence.
 
 Primary components are `.orchestrator/`, `ai-task-archive/`,
-`scripts/ai_status.py`, and `scripts/human-ops-status.sh`.
+`scripts/ai_status.py`, and `scripts/human-ops-status.sh`. The local task-packet
+transport lives at `.orchestrator/development_bridge/`; it is excluded from the
+product container build context.
 
-Hosted development ingress is physically isolated in
-`services/control-plane/bff/assistant/development_routes.py` and its
-development-only helper modules. The product assistant router neither defines
-those endpoints nor imports those modules. `services/control-plane/bff/main.py`
-contains only two bounded composition points: the optional development router
-mount and the optional Management AI repair authorization adapter. Both are
-controlled by `PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED`; product-only mode
-does not import either development module.
+There is no hosted development ingress. The product BFF neither defines nor
+imports task-packet, dev-doc, supervisor-status, or repair-worktree modules.
+It does not receive a development bridge signing key, a task-state mount, or a
+repair-worktree mount. Product deployment also does not start, stop, provision,
+or health-check the supervisor or dashboard.
 
 Product login, product control mode, and product readiness are not prerequisites
-for local canonical task maintenance. A product-hosted assistant dev-bridge
-route is only a transport adapter into this domain. It is not canonical task
-authority, and its availability is not required for direct local Human/Ops
-maintenance.
+for local canonical task maintenance. There is no product-hosted development
+bridge route. Local Human/Ops maintenance and local task-packet transport are
+the only development-task ingress paths.
 
 Development-tooling success means that tasks can be stored and dispatched. It
 does not mean that the product has been built, deployed, or accepted.
@@ -85,8 +83,8 @@ two domains but does not become their authority.
    separate results. Never collapse them into one `healthy` or `done` claim.
 2. Local canonical task mutation uses local Human/Ops tooling. Do not route it
    through product authentication or product control mode.
-3. Dev-bridge endpoints may submit signed development requests, but canonical
-   validation and materialization remain in development tooling.
+3. Local development tooling may submit task packets, but canonical validation
+   and materialization remain in development tooling.
 4. Product acceptance requires exact hosted identities plus live product
    readiness and scenario verification. Static evidence-presence checks are
    insufficient.
@@ -119,17 +117,15 @@ ready to remove it, use the `removal_order` in the boundary manifest:
 
 1. archive/close engineering tasks and confirm there are no workers, leases, or
    queued intents;
-2. disable the supervisor/watchdog and remove development-only compose and
-   workflow references;
-3. set `PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED=false`, verify the product
-   BFF without development endpoints, then remove `development_routes.py` and
-   the development-only helper modules plus the two bounded composition points
-   in `main.py`;
-4. build and deploy the product runtime without those paths; and
-5. rerun live product readiness, hosted scenarios, and exact identity checks.
+2. disable the supervisor/watchdog and remove `.orchestrator/`,
+   `scripts/ai_status.py`, `scripts/human-ops-status.sh`, and
+   `ai-task-archive/`;
+3. build and deploy the product runtime without any development-tooling paths;
+   and
+4. rerun live product readiness, hosted scenarios, and exact identity checks.
 
 The BFF business APIs, source ingestion, lifecycle projector, product services,
-frontend, and delivery acceptance remain. The dev bridge is removed with
+frontend, and delivery acceptance remain. The local dev bridge is removed with
 development tooling because it transports engineering work; it is not a
 product API. Historical task/review evidence may be retained as an archive,
 but it is not loaded by the product runtime.

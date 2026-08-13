@@ -90,13 +90,6 @@ forbid_env_key() {
 }
 
 compose_json "$ROOT_JSON" -f docker-compose.yml
-# Compose syntax validation needs non-empty substitutions, but no production
-# signing key may be committed to an example env file.  These values never
-# start a service and are deliberately invalid as cryptographic material.
-export BRIDGE_SIGNING_PRIVATE_KEY="split-topology-validation-only"
-export BRIDGE_SIGNING_KEY_ID="split-topology-validation"
-export BRIDGE_SIGNING_PUBLIC_KEYS_JSON='{"split-topology-validation":"AA"}'
-
 compose_json "$CONTROL_JSON" --env-file env/prod-control.env.example -f docker-compose.control.yml
 compose_json "$EXEC_JSON" --env-file env/prod-exec.env.example -f docker-compose.exec.yml
 compose_json "$STAGING_JSON" --env-file env/prod-control.env.example -f docker-compose.control.yml -f docker-compose.staging-full.yml

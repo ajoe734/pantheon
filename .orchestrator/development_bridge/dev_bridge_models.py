@@ -1,11 +1,11 @@
-"""Pydantic models for the signed task packet bridge (ASST-INTEG-006).
+"""Pydantic models for the local signed task packet bridge (ASST-INTEG-006).
 
 Version: pantheon.assistant.dev-task.v1
 
-The Dev Bridge emits a signed DevTaskPacket from BFF rather than executing
-shell commands directly from the Web API layer.  The dispatcher receives the
-signed packet, verifies the signature, checks replay protection, and
-materialises the tasks through scripts/ai_status.py.
+The bridge emits a signed DevTaskPacket for the local supervisor.  It is part
+of development tooling and is never imported by the product BFF.  The
+dispatcher verifies the signature, checks replay protection, and materialises
+the tasks through scripts/ai_status.py.
 """
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ class PacketSignature(BridgeBaseModel):
 
 
 class BridgeOperatorAuthorization(BridgeBaseModel):
-    """BFF-authenticated operator authority, distinct from packet source."""
+    """Local operator authority, distinct from packet source."""
 
     operator_id: str = Field(alias="operatorId")
     control_activation_id: str = Field(alias="controlActivationId")
@@ -88,12 +88,11 @@ class BridgeOperatorAuthorization(BridgeBaseModel):
 # ---------------------------------------------------------------------------
 
 class DevTaskPacket(BridgeBaseModel):
-    """Signed task packet emitted by BFF assistant dev bridge.
+    """Signed task packet emitted by the local development bridge.
 
-    BFF never executes shell directly from the Web API layer.  Instead it
-    builds this packet, signs it, and hands it to the dispatcher which
-    verifies the signature, applies replay protection, and materialises each
-    task through scripts/ai_status.py.
+    It never executes a task directly; it hands the packet to the dispatcher,
+    which verifies it, applies replay protection, and materialises each task
+    through scripts/ai_status.py.
     """
     version: str = "pantheon.assistant.dev-task.v1"
     packet_id: str = Field(alias="packetId")
