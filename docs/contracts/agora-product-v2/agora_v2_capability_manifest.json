@@ -1,0 +1,134 @@
+{
+  "manifest_version": "2.0",
+  "program_id": "agora-product-correction-20260813",
+  "task_id": "AGORA-BE-INTEGRATION-20260813",
+  "generated_at": "2026-08-13T19:30:00Z",
+  "authority": {
+    "source_of_truth": "pantheon:dev",
+    "architecture_doc": "docs/04/pantheon_agora_product_gap_sd_2026-08-13/03_SD_AGORA_COMPLETE_PRODUCT.md",
+    "no_live_capital": true,
+    "no_broker_order_authority": true,
+    "strict_tenant_isolation": true,
+    "command_receipt_model": true,
+    "independent_consultation": true
+  },
+  "capabilities": [
+    {
+      "name": "agora.identity.v2",
+      "version": "2.0",
+      "status": "active",
+      "description": "Tenant-scoped and user-scoped identity resolution and audience validation",
+      "routes": [
+        "GET /bff/agora/me",
+        "GET /bff/agora/capabilities"
+      ]
+    },
+    {
+      "name": "agora.workshop.v2",
+      "version": "2.0",
+      "status": "active",
+      "description": "Authoritative strategy workshop, asynchronous reconstruction worker, completeness assessment, next-best question, and immutable strategy versions",
+      "routes": [
+        "GET /bff/agora/workshops",
+        "POST /bff/agora/workshops",
+        "GET /bff/agora/workshops/{workshop_id}",
+        "POST /bff/agora/workshops/{workshop_id}/messages",
+        "GET /bff/agora/workshops/{workshop_id}/events",
+        "GET /bff/agora/workshops/{workshop_id}/completeness",
+        "GET /bff/agora/workshops/{workshop_id}/cards",
+        "GET /bff/agora/workshops/{workshop_id}/readiness",
+        "POST /bff/agora/workshops/{workshop_id}/readiness/reassess",
+        "GET /bff/agora/workshops/{workshop_id}/versions",
+        "POST /bff/agora/workshops/{workshop_id}/versions",
+        "POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select",
+        "GET /bff/agora/workshops/{workshop_id}/stream"
+      ]
+    },
+    {
+      "name": "agora.research.v2",
+      "version": "2.0",
+      "status": "active",
+      "description": "Governed research plans, leased dispatcher, verified artifact checksums, and candidate pool projection",
+      "routes": [
+        "GET /bff/agora/research/plans",
+        "POST /bff/agora/research/plans",
+        "GET /bff/agora/research/plans/{plan_id}",
+        "POST /bff/agora/research/plans/{plan_id}/approve",
+        "POST /bff/agora/research/plans/{plan_id}/cancel",
+        "GET /bff/agora/research/runs/{run_id}",
+        "GET /bff/agora/research/runs/{run_id}/artifacts",
+        "GET /bff/agora/candidate-pools",
+        "GET /bff/agora/candidate-pools/{pool_id}",
+        "GET /bff/agora/candidate-pools/{pool_id}/members",
+        "GET /bff/agora/candidate-pools/{pool_id}/members/{candidate_id}",
+        "GET /bff/agora/strategies/{strategy_id}/versions/{version_id}/candidate-pool"
+      ]
+    },
+    {
+      "name": "agora.trading_room.v2",
+      "version": "2.0",
+      "status": "active",
+      "description": "Typed workspace compiler, allowlisted widget data query adapters, atomic workspace versioning, and decision events",
+      "routes": [
+        "POST /bff/agora/trading-room/workspace-proposals",
+        "GET /bff/agora/trading-room/workspaces/{workspace_id}",
+        "PUT /bff/agora/trading-room/workspaces/{workspace_id}",
+        "GET /bff/agora/trading-room/workspaces/{workspace_id}/versions",
+        "POST /bff/agora/trading-room/workspaces/{workspace_id}/rollback",
+        "GET /bff/agora/trading-room/widgets/{widget_id}/data",
+        "POST /bff/agora/trading-room/workspace-data",
+        "GET /bff/agora/trading-room/decision-events",
+        "GET /bff/agora/trading-room/decision-events/{event_id}",
+        "POST /bff/agora/trading-room/decision-events/{event_id}/intent"
+      ]
+    },
+    {
+      "name": "agora.performance.v2",
+      "version": "2.0",
+      "status": "active",
+      "description": "Tenant/owner-scoped strategy performance index, attribution, and governed suggestions",
+      "routes": [
+        "GET /bff/agora/trading-room/strategies/{strategy_id}/performance",
+        "GET /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions",
+        "POST /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions",
+        "GET /bff/agora/performance/action-receipts/{receipt_id}"
+      ]
+    },
+    {
+      "name": "agora.dataset_extraction.v2",
+      "version": "2.0",
+      "status": "active",
+      "description": "Eligible evidence extraction outbox, tenant-scoped DatasetVersion production, and policy-learning handoff",
+      "routes": [
+        "GET /bff/agora/dataset-extractions",
+        "POST /bff/agora/dataset-extractions/outbox",
+        "GET /bff/agora/dataset-extractions/handoffs/{handoff_id}"
+      ]
+    },
+    {
+      "name": "agora.policy_learning.v2",
+      "version": "2.0",
+      "status": "active",
+      "description": "Admit-only policy candidate registration, leased offline training worker, and Consultation intake",
+      "routes": [
+        "POST /api/policy-learning/candidates/admit",
+        "GET /api/policy-learning/candidates/{candidate_id}",
+        "POST /api/policy-learning/workers/claim-lease",
+        "POST /api/policy-learning/workers/process"
+      ]
+    },
+    {
+      "name": "agora.consultation.v2",
+      "version": "2.0",
+      "status": "active",
+      "description": "Submitted-only intake, independent committee evaluation, published review memo, and sponsor decision",
+      "routes": [
+        "POST /api/consult/intake/policy-learning-candidate",
+        "GET /api/consult/requests/{request_id}",
+        "POST /api/consult/reviews/{session_id}/memos",
+        "POST /api/consult/reviews/{session_id}/publish",
+        "POST /api/consult/memos/{memo_id}/sponsor-decision"
+      ]
+    }
+  ]
+}

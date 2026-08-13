@@ -1,0 +1,227 @@
+{
+  "program_id": "agora-product-correction-20260813",
+  "task_id": "AGORA-BE-INTEGRATION-20260813",
+  "verified_at": "2026-08-13T19:40:32Z",
+  "mode": "in-process",
+  "overall_status": "PASSED",
+  "stages": [
+    {
+      "stage_id": "stage_01_identity_scope",
+      "name": "Identity & Capability Scope",
+      "status": "PASSED",
+      "duration_ms": 164.60204124450684,
+      "details": {
+        "scope_id": "agora-scope-672fc5f2561a5828",
+        "tenant_id": "tenant-alpha",
+        "user_id": "user-alpha-trader-01",
+        "granted_capabilities_count": 7
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_02_workshop_reconstruction",
+      "name": "Workshop & Strategy Reconstruction",
+      "status": "PASSED",
+      "duration_ms": 59.259653091430664,
+      "details": {
+        "workshop_id": "ws-verify-72a249ddd7",
+        "reconstruction_id": "recon-3a8a5b44d0244b88",
+        "completeness_grade": "draftable",
+        "nbq": {
+          "question_id": "nbq-hyp-1",
+          "text": "What is the core economic or quantitative hypothesis behind your trading idea?",
+          "resolves": [
+            "hypothesis.summary"
+          ],
+          "why_now": "A strategy requires a clear hypothesis before defining signals and rules."
+        }
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_03_strategy_version_selection",
+      "name": "Strategy Version Draft & Selection",
+      "status": "PASSED",
+      "duration_ms": 0.2372264862060547,
+      "details": {
+        "strategy_id": "strat-e84dfa3eec",
+        "version_id": "wsv-legacy-9fcb21bb045433c64eadc226",
+        "registry_id": "ssr-f7d84c1a20",
+        "document_sha256": "857adc3912f3cd3dc845436d1d370c76a915dab7ef69184fc1c3983bf0d747dc"
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_04_research_candidate_pool",
+      "name": "Research Plan & Candidate Pool",
+      "status": "PASSED",
+      "duration_ms": 15.899181365966797,
+      "details": {
+        "plan_id": "rplan-f07da89451",
+        "run_id": "rrun-528c56c3b0",
+        "candidate_pool_id": "cpool-2420f60a60",
+        "candidate_id": "cand-e6ed134198",
+        "artifact_checksum": "151e7f05482f9ea03f40e0f233c18024ff733c338084bc12df2a45926251d5f1"
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_05_workspace_compiler",
+      "name": "Trading Workspace Compiler & Atomicity",
+      "status": "PASSED",
+      "duration_ms": 6.644248962402344,
+      "details": {
+        "workspace_id": "wsroom-4c3b208c7e",
+        "version_id": "trdv_wsroom-4c3b208c7e_v1",
+        "widgets_count": 2
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_06_decision_event_intent",
+      "name": "Decision Event & Request-Only Intent",
+      "status": "PASSED",
+      "duration_ms": 0.1556873321533203,
+      "details": {
+        "decision_event_id": "decevt-9b5d75cdce",
+        "trading_intent_id": "trintent-da3b41180e",
+        "action": "approve",
+        "has_broker_order_authority": false
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_07_performance_suggestions",
+      "name": "Strategy Performance Index & Suggestions",
+      "status": "PASSED",
+      "duration_ms": 536.7922782897949,
+      "details": {
+        "strategy_id": "strat-e84dfa3eec",
+        "suggestion_id": "sugg-36f0440275",
+        "receipt_id": "agperf-receipt-c7f89868ea814677811fe0a66e6bfdb0",
+        "receipt_status": "applied"
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_08_dataset_extraction",
+      "name": "Dataset Extraction Outbox",
+      "status": "PASSED",
+      "duration_ms": 42.10543632507324,
+      "details": {
+        "evidence_id": "evid-5b560c897c",
+        "dataset_version_id": "dv-agora-32ab27a7",
+        "status": "pending"
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_09_policy_learning_admission",
+      "name": "Policy Learning Candidate Admission",
+      "status": "PASSED",
+      "duration_ms": 15.269279479980469,
+      "details": {
+        "candidate_id": "cand-pl-6906c874d5",
+        "status": "processed",
+        "artifact_checksum": "5182f6919614fb4f06188eb344d07b3800dd80ede28bebcb047b166dcdd2116f"
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_10_independent_consultation",
+      "name": "Independent Consultation Workflow",
+      "status": "PASSED",
+      "duration_ms": 198.41766357421875,
+      "details": {
+        "request_id": "cr-cand-cand-pl-6906c874d5",
+        "memo_id": "memo-d85971ef8c",
+        "evaluator_id": "consultant-agent-independent-01",
+        "confidence": 0.86
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_11_two_tenant_isolation",
+      "name": "Two-Tenant Two-User Isolation Matrix",
+      "status": "PASSED",
+      "duration_ms": 0.29921531677246094,
+      "details": {
+        "tenant_a": "tenant-alpha",
+        "tenant_b": "tenant-beta",
+        "tested_entities": [
+          "workshop",
+          "research_plan",
+          "workspace"
+        ],
+        "cross_tenant_access": "BLOCKED_ISOLATED",
+        "cross_user_access": "BLOCKED_ISOLATED"
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_12_replay_cas_recovery",
+      "name": "Command Replay, CAS & Recovery",
+      "status": "PASSED",
+      "duration_ms": 0.1494884490966797,
+      "details": {
+        "idempotency_replay": "VERIFIED_MATCHING_SEQUENCE",
+        "cas_conflict_handling": "VERIFIED"
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_13_restart_readback",
+      "name": "Service Restart & Canonical Readback",
+      "status": "PASSED",
+      "duration_ms": 0.14638900756835938,
+      "details": {
+        "workshop_readback": "ws-verify-72a249ddd7",
+        "readback_status": "CONFIRMED"
+      },
+      "error": null
+    },
+    {
+      "stage_id": "stage_14_fail_closed_invariants",
+      "name": "Negative Controls & Invariant Checks",
+      "status": "PASSED",
+      "duration_ms": 0.0553131103515625,
+      "details": {
+        "missing_service_fails_closed": true,
+        "seeded_truth_rejected": true,
+        "no_broker_order_authority": true,
+        "self_attestation_rejected": true
+      },
+      "error": null
+    }
+  ],
+  "lineage": {
+    "trace_id": "trace-agora-verify-04180b6caba2",
+    "tenant_id": "tenant-alpha",
+    "user_id": "user-alpha-trader-01",
+    "scope_id": "agora-scope-672fc5f2561a5828",
+    "workshop_id": "ws-verify-72a249ddd7",
+    "reconstruction_id": "recon-3a8a5b44d0244b88",
+    "strategy_id": "strat-e84dfa3eec",
+    "version_id": "wsv-legacy-9fcb21bb045433c64eadc226",
+    "registry_id": "ssr-f7d84c1a20",
+    "plan_id": "rplan-f07da89451",
+    "run_id": "rrun-528c56c3b0",
+    "candidate_pool_id": "cpool-2420f60a60",
+    "candidate_id": "cand-e6ed134198",
+    "workspace_id": "wsroom-4c3b208c7e",
+    "decision_event_id": "decevt-9b5d75cdce",
+    "trading_intent_id": "trintent-da3b41180e",
+    "suggestion_id": "sugg-36f0440275",
+    "dataset_version_id": "dv-agora-32ab27a7",
+    "policy_candidate_id": "cand-pl-6906c874d5",
+    "consultation_request_id": "cr-cand-cand-pl-6906c874d5",
+    "consultation_memo_id": "memo-d85971ef8c"
+  },
+  "summary": {
+    "total_stages": 14,
+    "executed_stages": 14,
+    "passed_stages": 14,
+    "failed_stages": 0,
+    "total_duration_ms": 1041.7392253875732
+  }
+}
