@@ -122,32 +122,6 @@ Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-pro
 |---|---|---|---|
 | `MGMT-GAP-002` | Codex | execute-plans PR #124 已合併 canonical management reads，PR #126 已補最終部署狀態。<br>dev FE deploy 28490060564 與 FE-BFF Integration Gate 28490060533 均為 success。<br>mock-mode 完整重盤點 70/70 management routes rendered；此任務只關閉 canonical read wiring，不關閉 durable writes 或 studios production depth。 | docs/04/pantheon_management_console_gap_2026-06-30/archive/MGMT-GAP-002-closeout-2026-07-01.md |
 
-## Lovable Coordination
-
-- Last coordination scan: -
-- Tracked features: `0`
-- Lovable-ready packets: `0`
-- Waiting for Lovable/front-end: `0`
-- UI-done returned: `0`
-- Frontend feedback returned: `0`
-- Open BFF gaps: `0`
-- Backend route live: `0`
-- Pantheon handoff published: `0`
-- Mirrored to front default branch: `0`
-- Dispatch recorded in coordinator state: `0`
-- Receiver-visible payload on front default branch: `0`
-- Lovable consumed packet: `0`
-- UI activated: `0`
-- Runtime verified: `0`
-
-| Feature | Screen | Stage | Lovable Ready | Mirrored | UI Done | Feedback | Next Action |
-|---|---|---|---|---|---|---|---|
-| _(none)_ | - | - | - | - | - | - | - |
-
-Tracked-feature note: the table above only lists modules that currently have coordination feature records.
-Archive-done route-live activation publication lanes that remain outside explicit feature rows: `CW-02`, `KW-04`, `KW-05`, `RW-02`, `RW-04`, `RW-05`, `KW-02`, `KW-03`, `TW-01`, `TW-02`, `TW-04`.
-Do not read those omitted modules as open Pantheon backlog purely because they are absent from the coordination feature table.
-
 ## Latest Checkpoints
 
 - 2026-05-16 01:52:32 Orchestrator: PostToolUse: Bash

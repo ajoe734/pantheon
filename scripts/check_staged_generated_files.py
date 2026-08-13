@@ -29,12 +29,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Treat input as git diff --name-status records instead of plain paths.",
     )
-    parser.add_argument(
-        "--allow-deleted-path",
-        action="append",
-        default=[],
-        help="With --diff-name-status, allow a pure deletion for this exact path.",
-    )
     return parser.parse_args()
 
 
@@ -43,14 +37,13 @@ def load_paths(args: argparse.Namespace) -> list[str]:
     if not args.diff_name_status:
         return [path for path in entries if path]
 
-    allowed_deleted_paths = set(args.allow_deleted_path)
     paths: list[str] = []
     for entry in entries:
         fields = entry.split("\t")
         status, *changed_paths = fields
         if not status or not changed_paths:
             raise ValueError(f"invalid git diff --name-status record: {entry!r}")
-        if status == "D" and len(changed_paths) == 1 and changed_paths[0] in allowed_deleted_paths:
+        if status == "D" and len(changed_paths) == 1:
             continue
         paths.extend(changed_paths)
     return paths

@@ -69,9 +69,9 @@ normalize_github_slug() {
 
 validate_command_root() {
   local raw_root="$1"
-  local expected_sha="${PANTHEON_COMMAND_RUNTIME_SHA:-${PANTHEON_STATUS_COMMAND_SHA:-}}"
-  local expected_remote="${PANTHEON_COMMAND_REMOTE:-${PANTHEON_STATUS_COMMAND_REMOTE:-ajoe734/pantheon}}"
-  local base_ref="${PANTHEON_COMMAND_BASE_REF:-${PANTHEON_STATUS_COMMAND_BASE_REF:-origin/dev}}"
+  local expected_sha="${PANTHEON_COMMAND_RUNTIME_SHA:-}"
+  local expected_remote="${PANTHEON_COMMAND_REMOTE:-ajoe734/pantheon}"
+  local base_ref="${PANTHEON_COMMAND_BASE_REF:-origin/dev}"
   local symlink_component command_root git_root source_sha remote_url actual_remote expected_slug
 
   [[ -n "$raw_root" ]] || fail_closed "PANTHEON_COMMAND_ROOT is required for auto-worker status commands"
@@ -115,8 +115,8 @@ if is_auto_worker_status_command; then
     || fail_closed "PANTHEON_STATUS_ROOT is required for auto-worker status commands"
 fi
 
-if is_auto_worker_status_command || [[ -n "${PANTHEON_COMMAND_ROOT:-${PANTHEON_STATUS_COMMAND_ROOT:-}}" ]]; then
-  COMMAND_ROOT="$(validate_command_root "${PANTHEON_COMMAND_ROOT:-${PANTHEON_STATUS_COMMAND_ROOT:-}}")"
+if is_auto_worker_status_command || [[ -n "${PANTHEON_COMMAND_ROOT:-}" ]]; then
+  COMMAND_ROOT="$(validate_command_root "${PANTHEON_COMMAND_ROOT:-}")"
   export PANTHEON_STATUS_COMMAND_WRAPPER_ROOT="$ROOT_DIR"
   exec python3 -B "$COMMAND_ROOT/scripts/ai_status.py" "$@"
 fi

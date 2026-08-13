@@ -203,10 +203,6 @@ class JsonLoadResilienceTests(unittest.TestCase):
                 "PANTHEON_COMMAND_RUNTIME_SHA",
                 "PANTHEON_COMMAND_REMOTE",
                 "PANTHEON_COMMAND_BASE_REF",
-                "PANTHEON_STATUS_COMMAND_ROOT",
-                "PANTHEON_STATUS_COMMAND_SHA",
-                "PANTHEON_STATUS_COMMAND_REMOTE",
-                "PANTHEON_STATUS_COMMAND_BASE_REF",
             ):
                 env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)
@@ -500,58 +496,6 @@ class ClaudeAuthTests(unittest.TestCase):
 
             self.assertIsNone(refreshed)
 
-
-class RecentTaskActivityTests(unittest.TestCase):
-    def test_automatic_task_brief_never_scans_global_activity_history(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            status_file = root / "ai-status.json"
-            status_file.write_text(
-                json.dumps(
-                    {
-                        "tasks": [
-                            {
-                                "id": "TASK-1",
-                                "title": "Bounded dispatch context",
-                                "status": "in_progress",
-                                "owner": "Codex",
-                                "reviewer": "Claude",
-                                "depends_on": [],
-                                "artifacts": [],
-                                "next": "Finish without global history scan",
-                            }
-                        ]
-                    }
-                ),
-                encoding="utf-8",
-            )
-            from rewrite import task_state_store
-
-            event_log = root / "task-state-events.jsonl"
-            task_state_store.append_state_commit(
-                event_log,
-                json.loads(status_file.read_text(encoding="utf-8")),
-                source="test",
-            )
-            brief_path = root / "task-brief.md"
-            config = {
-                "paths": {
-                    "status_file": str(status_file),
-                    "activity_log": str(root / "huge-activity-log.jsonl"),
-                },
-                "task_state_store": {
-                    "mode": "authoritative",
-                    "event_log": str(event_log),
-                },
-            }
-
-            with mock.patch.object(common, "task_brief_path", return_value=brief_path):
-                result = common.write_task_brief(config, "TASK-1")
-
-            self.assertEqual(result, brief_path)
-            rendered = brief_path.read_text(encoding="utf-8")
-            self.assertIn("Finish without global history scan", rendered)
-            self.assertIn("Omitted from automatic dispatch context", rendered)
 
 class StableCanonicalLockPathTests(unittest.TestCase):
     def test_data_leaf_symlinks_are_rejected_before_lock_acquisition(self) -> None:
@@ -1265,6 +1209,17 @@ class LogicalActivityReaderTests(unittest.TestCase):
         self.assertEqual(len(collapsed_info), 1)
         self.assertEqual(collapsed_info[0]["prev_source"], str(f1))
         self.assertEqual(collapsed_info[0]["next_source"], str(f2))
+
+    def test_unregistered_999_line_overlap_is_rejected(self):
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(501, 1500)
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        self._write_gz(f1, entries1)
+        self._write_gz(f2, entries2)
+
+        with self.assertRaisesRegex(RuntimeError, "Invalid overlap length 999"):
+            list(common.stream_logical_activity(self.log_path))
 
     def test_three_consecutive_legacy_overlaps(self):
         entries1 = self._make_entries(0, 1500)

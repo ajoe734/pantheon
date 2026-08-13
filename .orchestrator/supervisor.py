@@ -19,12 +19,10 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
-import copy
 from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
@@ -34,36 +32,28 @@ if str(THIS_DIR) not in sys.path:
 
 import model_rotation
 from adapters import ADAPTERS, build_adapter
-from approval_queue import prune_stale_approvals, resolve_approval
 from adapters.base import DeliveryRequest
 from common import (
-    activity_audit_lock_file,
     agent_config_for,
     bound_commit_subject,
-    command_exists,
     canonical_task_state_lock_file,
     config_path,
     display_name_for,
     load_config,
     load_json,
-    load_jsonl,
     load_status,
     new_runtime_id,
     normalize_agent_id,
     is_github_cli_auth_failure,
-    preserve_github_cli_auth_env,
     resolved_coordinator_status_root,
     config_status_root,
-    relpath,
-    selected_shared_files,
-    shell_quote,
     status_command_runtime_record_from_env,
-    snapshot_task,
-    spawn_background_process,
     status_command_runtime_env,
     task_state_store_runtime_env,
     summarize_failure_reason,
     utc_now,
+    WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+    worker_process_generation_id,
     write_failure_evidence,
     write_json,
     write_status,
@@ -89,7 +79,6 @@ from runtime_state import (
     load_event_queue,
     load_runtime_state,
     load_runtime_state_snapshot,
-    prune_worker_records,
     queue_event_record,
     replace_event_queue,
     runtime_state_lock,
@@ -112,28 +101,6 @@ from rewrite import worker_lifecycle as rewrite_worker_lifecycle
 
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
-BLOCKED_OWNER_RESCUE_KEYWORDS = (
-    "auth",
-    "authentication",
-    "credential",
-    "credentials",
-    "token",
-    "permission",
-    "quota",
-    "rate limit",
-    "push",
-    "pr push",
-)
-STICKY_AUTH_FAILURE_MARKERS = (
-    "refresh-token-revoked",
-    "refresh_token_revoked",
-    "refresh token revoked",
-    "refresh token has been revoked",
-    "token has been revoked",
-    "token revoked",
-    "invalid_grant",
-)
-STICKY_AUTH_BLOCKED_UNTIL = "9999-12-31T23:59:59Z"
 
 
 _DEFERRED_DISPATCH_STATUS_SYNCS: ContextVar[
@@ -362,54 +329,6 @@ SESSION_ID_PATTERNS = [
     re.compile(r'"sessionId"\s*:\s*"([^"]+)"'),
 ]
 URL_PATTERN = re.compile(r"https://github\.com/[^\s)]+")
-WORKER_FAILURE_PATTERNS = (
-    re.compile(r"^Error when talking to gemini api\b", re.IGNORECASE),
-    re.compile(r'"error"\s*:\s*"rate_limit"', re.IGNORECASE),
-    re.compile(r'"type"\s*:\s*"rate_limit_event"', re.IGNORECASE),
-    re.compile(r'"error"\s*:\s*"authentication_failed"', re.IGNORECASE),
-    re.compile(r"quota exceeded", re.IGNORECASE),
-    re.compile(r"quota_exceeded", re.IGNORECASE),
-    re.compile(r"exceeded your .*quota", re.IGNORECASE),
-    re.compile(r"free daily quota has been reached", re.IGNORECASE),
-    re.compile(r"you have no quota", re.IGNORECASE),
-    re.compile(r"^Failed to authenticate\b", re.IGNORECASE),
-    re.compile(r"\bnot authenticated\b", re.IGNORECASE),
-    re.compile(r"invalid authentication credentials", re.IGNORECASE),
-    re.compile(
-        r"^reason:\s*.*\b("
-        r"terminalquotaerror|retryablequotaerror|quota_exhausted|resource_exhausted|"
-        r"you have exhausted your capacity|no capacity available for model|"
-        r"timed out|etimedout|econnreset|unauthorized"
-        r")\b",
-        re.IGNORECASE,
-    ),
-    re.compile(r"^status:\s*(401|429)\b", re.IGNORECASE),
-    re.compile(r"^(?:you(?:'ve| have)\s+)?hit your(?:\s+\w+)?\s+limit\b", re.IGNORECASE),
-    re.compile(r"^rate_limit\s*:\s*.*\b(?:limit|quota|reset|resets)\b", re.IGNORECASE),
-    re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
-    re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
-)
-WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
-    re.compile(r"^(?:result|error|audit):\s+Optional\[Dict\[str,\s*Any\]\]\s*=\s*None,?$", re.IGNORECASE),
-    re.compile(r"^error:\s+BFF?[A-Za-z0-9_]*Error[A-Za-z0-9_]*,?$", re.IGNORECASE),
-    re.compile(r"^error:\s+[A-Za-z_][A-Za-z0-9_<>{}\[\], :|?]+?\|\s*null$", re.IGNORECASE),
-    re.compile(r"^[+-]?\s*console\.error\(", re.IGNORECASE),
-    re.compile(r"^[+-]\s*[A-Za-z_][A-Za-z0-9_.]*\s*=\s*", re.IGNORECASE),
-    re.compile(r"^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s+·\s+", re.IGNORECASE),
-    re.compile(r"\bauto-reassigned\b.*\bafter repeated\b.*\bquota\b", re.IGNORECASE),
-)
-SEARCH_RESULT_JSON_FIELD_PATTERN = re.compile(
-    r"^(?:[^:\s][^:]*:)?\d+[:-]\s*\"[A-Za-z0-9_]+\"\s*:\s*",
-    re.IGNORECASE,
-)
-JSON_FIELD_LINE_PATTERN = re.compile(
-    r"^\"[A-Za-z0-9_]+\"\s*:\s*",
-    re.IGNORECASE,
-)
-SEARCH_RESULT_LOG_JSON_PATTERN = re.compile(
-    r"^[^\s:]+\.log:\d+[:-]\s*\{",
-    re.IGNORECASE,
-)
 RATE_LIMIT_EVENT_LINE_PATTERN = re.compile(r'"type"\s*:\s*"rate_limit_event"', re.IGNORECASE)
 NONTHROTTLING_RATE_LIMIT_STATUSES = frozenset({"allowed", "allowed_warning"})
 NONTHROTTLING_RATE_LIMIT_LINE_PATTERN = re.compile(
@@ -428,7 +347,6 @@ PROVIDER_STREAM_FAILURE_SUBTYPES = frozenset(
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
 GENERIC_WORKER_EXIT_REASON = "Worker exited before the task reached a terminal status."
-PLANNING_PHASE_DIR = THIS_DIR.parent / "docs" / "02-architecture" / "consensus" / "phase1"
 _UNSET = object()
 
 
@@ -3723,37 +3641,6 @@ def worker_pid_start_ticks(pid: int | None, proc_root: Path | None = None) -> in
         return None
 
 
-WORKER_PROCESS_GENERATION_SCHEMA_VERSION = 1
-WORKER_PROCESS_GENERATION_PREFIX = "worker-process-generation-sha256:"
-
-
-def worker_process_generation_id(
-    *,
-    task_id: str,
-    worker_run_id: str,
-    queue_event_id: str,
-    pid: int,
-    pid_start_ticks: int,
-) -> str:
-    """Bind one worker lease to the exact Linux process generation it launched."""
-
-    payload = {
-        "schema_version": WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
-        "task_id": str(task_id),
-        "worker_run_id": str(worker_run_id),
-        "queue_event_id": str(queue_event_id),
-        "pid": int(pid),
-        "pid_start_ticks": int(pid_start_ticks),
-    }
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-    return WORKER_PROCESS_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
-
-
 def worker_process_identity(worker: Mapping[str, Any]) -> dict[str, Any] | None:
     """Return a validated immutable worker/process generation binding."""
 
@@ -4368,13 +4255,7 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
     return {"kind": "terminal", "transient": False, "label": "terminal"}
 
 
-def _parse_iso_utc(ts: str | None) -> datetime | None:
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+_parse_iso_utc = parse_runtime_timestamp
 
 
 def _isoformat_utc(dt: datetime) -> str:
