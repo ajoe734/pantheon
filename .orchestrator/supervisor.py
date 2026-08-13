@@ -1442,6 +1442,8 @@ def runtime_delivery_health(state: Mapping[str, Any]) -> dict[str, Any]:
 def _delivery_endpoint_for_agent(
     config: dict[str, Any],
     endpoint_id: str,
+    *,
+    exclusive: bool,
 ) -> rewrite_dispatch_admission.DeliveryEndpoint:
     agent = (config.get("agents", {}) or {}).get(normalize_agent_id(endpoint_id))
     agent = agent if isinstance(agent, Mapping) else {}
@@ -1458,6 +1460,7 @@ def _delivery_endpoint_for_agent(
         account_id=agent_account_id(config, endpoint_id),
         enabled=enabled,
         can_auto_deliver=enabled,
+        exclusive=exclusive,
     )
 
 
@@ -1468,12 +1471,20 @@ def delivery_lane_for_agent(
     """Project configured logical worker topology into pure admission input."""
 
     logical_id = normalize_agent_id(agent_id)
-    slots = logical_worker_slot_ids(config, logical_id) or [logical_id]
+    configured_slots = logical_worker_slot_ids(config, logical_id)
+    slots = configured_slots or [logical_id]
     return rewrite_dispatch_admission.DispatchLane(
         lane_id=logical_id,
         assignment_identity=display_name_for(config, logical_id) or logical_id,
         max_parallel=agent_dispatch_capacity(config, logical_id),
-        endpoints=tuple(_delivery_endpoint_for_agent(config, slot) for slot in slots),
+        endpoints=tuple(
+            _delivery_endpoint_for_agent(
+                config,
+                slot,
+                exclusive=bool(configured_slots),
+            )
+            for slot in slots
+        ),
         enabled=logical_id in (config.get("agents", {}) or {}),
     )
 
@@ -11127,6 +11138,9 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
 
         if queue_event_is_orphaned(config, event, record, related_workers):
             age_seconds = queue_event_age_seconds(event)
+            event_key = str(event.get("event_key") or record.get("event_key") or "")
+            if event_key:
+                state.setdefault("seen_event_keys", {}).pop(event_key, None)
             write_activity_log(
                 config,
                 {
