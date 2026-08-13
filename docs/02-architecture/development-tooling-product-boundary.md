@@ -112,7 +112,9 @@ ready to remove it, use the `removal_order` in the boundary manifest:
    queued intents;
 2. disable the supervisor/watchdog and remove development-only compose and
    workflow references;
-3. remove the assistant dev-bridge ingress and the development-tooling paths;
+3. split the dev-bridge/dev-docs imports and handlers out of mixed BFF
+   `assistant/routes.py`, then remove the assistant dev-bridge ingress and the
+   development-tooling paths;
 4. build and deploy the product runtime without those paths; and
 5. rerun live product readiness, hosted scenarios, and exact identity checks.
 

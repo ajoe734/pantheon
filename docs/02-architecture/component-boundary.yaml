@@ -33,13 +33,18 @@ components:
     domain: development_tooling
     hosted_in: product-bff
     paths:
-      - services/control-plane/bff/assistant/dev_bridge_dispatcher.py
-      - services/control-plane/bff/assistant/dev_bridge_signer.py
+      - services/control-plane/bff/assistant/dev_bridge_*.py
+      - services/control-plane/bff/assistant/dev_docs_*.py
+      - scripts/*assistant_dev_task_packet.py
+      - scripts/dispatch_assistant_dev_task_packet.py
+      - services/control-plane/bff/assistant/orchestrator_status.py
     symbols:
       - "services/control-plane/bff/assistant/routes.py:dev-bridge routes"
+      - "services/control-plane/bff/assistant/routes.py:dev-docs routes"
     runtime_required: false
     removal_condition: "no external development-task ingress is required"
     boundary: "transport adapter only; never product authority or product readiness"
+    removal_prerequisite: "split dev imports and handlers out of mixed routes.py before deletion"
 
   - id: business-bff-and-services
     domain: product_runtime
@@ -52,9 +57,10 @@ components:
       - services/source_ingestion/
       - services/trade_journey/
     exclusions:
-      - "assistant/dev_bridge_dispatcher.py"
-      - "assistant/dev_bridge_signer.py"
-      - "assistant/routes.py:dev-bridge routes"
+      - "assistant/dev_bridge_*.py"
+      - "assistant/dev_docs_*.py"
+      - "assistant/orchestrator_status.py"
+      - "assistant/routes.py:dev-bridge and dev-docs routes/imports"
     runtime_required: true
     removal_condition: never
 
