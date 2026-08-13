@@ -1,41 +1,35 @@
 """Agora research router — agora.research.v1.
 
-Implements the ResearchPlan facade per:
-  - docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure-round2/MASTER_SD_RESPONSE.md §B
+Implements the ResearchPlan and Candidate Pool facade per:
+  - docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/MASTER_SD_RESPONSE.md §B
+  - docs/04/pantheon_agora_product_gap_sd_2026-08-13/03_SD_AGORA_COMPLETE_PRODUCT.md §6
   - services/control-plane/specs/agora/v4/research_plan_execution.schema.json
   - services/control-plane/specs/agora/v4/research_run_projection.schema.json
   - services/control-plane/openapi/agora_v1_3.openapi.yaml (research plan/run routes)
 
-Stage routing per §B3 of MASTER_SD_RESPONSE.md:
-  source_discovery          → source_ingestion
-  data_validation           → data_validation
-  prototype_backtest        → vectorbt
-  alpha_training            → qlib
-  rolling_oos               → qlib
-  econometric_validation    → statsmodels
-  derivatives_pricing_risk  → quantlib
-  policy_training           → finrl  (activation-gated)
-  parameter_search          → ray_tune
-  portfolio_synthesis       → optimizer_svc
-  robustness_stress         → rllib
-  evidence_synthesis        → openclaw_result_synthesis
-
 Governance enforced here:
-  - execution_constraints.environments must not include 'live' or 'canary'
-  - no_order_route_proof on plans is always 'research_plan_no_order_route'
-  - no_order_route_proof on runs  is always 'research_only_not_direct_action'
-  - Agora never routes orders, binds capital, or writes RuntimeBinding
+  - Every mutation requires write authority, owner lookup, idempotent receipt semantics, CAS where mutable, and audit
+  - Multi-tenant isolation: plans, runs, stages, artifacts, discussions, pools, and member actions persist tenant/user scope
+  - Outbox, lease, and allowlisted adapter execution with ordered progress and artifact projection
+  - Production candidate creation does not return default prototype candidates; empty input returns an empty pool with explicit exclusion reasons
+  - Exposes owner-scoped strategy/version-to-current-pool lookup
 """
 from __future__ import annotations
 
-import uuid
 import json
+import os
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
+from .dispatcher import (
+    ALLOWLISTED_STAGE_BACKENDS,
+    ResearchDispatcher,
+    compute_artifact_checksum,
+)
 from .store import make_research_plan_store
 
 
@@ -43,21 +37,7 @@ from .store import make_research_plan_store
 # Stage → preferred_backend routing policy (MASTER_SD_RESPONSE.md §B3)
 # ---------------------------------------------------------------------------
 
-_STAGE_TO_BACKEND: Dict[str, str] = {
-    "source_discovery": "source_ingestion",
-    "data_validation": "data_validation",
-    "prototype_backtest": "vectorbt",
-    "alpha_training": "qlib",
-    "rolling_oos": "qlib",
-    "econometric_validation": "statsmodels",
-    "derivatives_pricing_risk": "quantlib",
-    "policy_training": "finrl",
-    "parameter_search": "ray_tune",
-    "portfolio_synthesis": "optimizer_svc",
-    "robustness_stress": "rllib",
-    "evidence_synthesis": "openclaw_result_synthesis",
-}
-
+_STAGE_TO_BACKEND: Dict[str, str] = dict(ALLOWLISTED_STAGE_BACKENDS)
 _VALID_STAGE_TYPES = frozenset(_STAGE_TO_BACKEND.keys())
 _FORBIDDEN_ENVIRONMENTS = frozenset({"live", "canary"})
 _PLAN_NO_ORDER_ROUTE_PROOF = "research_plan_no_order_route"
@@ -138,14 +118,7 @@ _REVIEW_DECISION_TO_LIFECYCLE = {
 }
 
 # ---------------------------------------------------------------------------
-# AG-CAND-TRUTH-001-BE — candidate member truth projection (bundle v1.12)
-#
-# Every rendered candidate field is either linked to a durable record of the
-# same candidate (with provenance + as-of) or explicitly typed unavailable.
-# The BFF never fabricates rationale/concerns/next-event narrative; values are
-# projected verbatim from the candidate's own score result, review, or
-# monitoring records. See:
-#   services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json
+# Candidate truth projection
 # ---------------------------------------------------------------------------
 
 _FIELD_SOURCE_MEMBER = "candidate_pool_member"
@@ -162,7 +135,6 @@ _EVIDENCE_REDACTION_VIEWER = "viewer_role"
 
 _MEMBER_PAGE_TOKEN_PREFIX = "cpm-offset-"
 _MEMBER_ORDER_BY = "created_at,artifact_id"
-
 _RATIONALE_TOP_COMPONENT_LIMIT = 3
 
 
@@ -189,7 +161,6 @@ def _unavailable_field(reason: str) -> Dict[str, Any]:
 
 
 def _score_source_ref(pool_id: str, artifact_id: str, score: Dict[str, Any]) -> str:
-    # Matches the last_score_result_id format used by candidate monitoring.
     return f"candidate-score:{pool_id}:{artifact_id}:{score['scored_at']}"
 
 
@@ -207,7 +178,6 @@ def _component_digest(
 
 
 def _score_without_private_explanations(score: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a score projection safe for lists and viewer-only detail reads."""
     projected = dict(score)
     projected["components"] = [
         {
@@ -221,11 +191,7 @@ def _score_without_private_explanations(score: Dict[str, Any]) -> Dict[str, Any]
 
 
 def _operator_grade_scope(scope: Any) -> bool:
-    """True when the caller holds an operator-level Agora role.
-
-    Viewer-only callers keep read access but get evidence summaries redacted.
-    """
-    from ..models import AGORA_REQUIRED_ROLES  # noqa: PLC0415 (avoid import cycle)
+    from ..models import AGORA_REQUIRED_ROLES
     return bool(AGORA_REQUIRED_ROLES.intersection(set(getattr(scope, "roles", []) or [])))
 
 
@@ -240,12 +206,6 @@ def _member_truth_projection(
     evidence_summary_mode: str,
     operator_grade: bool,
 ) -> Dict[str, Any]:
-    """Build the per-field truth projection for one candidate pool member.
-
-    ``evidence_summary_mode`` is ``"list_response"`` (summaries always
-    redacted; no private content in list responses) or ``"detail"``
-    (summaries included only for operator-grade roles).
-    """
     pool_id = pool["pool_id"]
     artifact_id = member["artifact_id"]
     snapshot_at = str(pool.get("snapshot_at") or "")
@@ -423,8 +383,6 @@ def _member_truth_projection(
             as_of=str(active_monitoring.get("added_at") or ""),
         )
     else:
-        # No governed source artifact owns a next event for this candidate;
-        # the BFF must not invent one.
         fields["next_event"] = _unavailable_field(_FIELD_REASON_NO_GOVERNED_SOURCE)
 
     if score is not None:
@@ -546,6 +504,12 @@ class CandidatePoolCreateRequest(BaseModel):
     operator_id: str = Field(min_length=1)
     filter: Optional[CandidatePoolFilterRequest] = None
     recipe_id: Optional[str] = None
+    candidates: Optional[List[Dict[str, Any]]] = None
+    metrics_by_artifact: Optional[Dict[str, Dict[str, Any]]] = None
+    profile: Optional[str] = None
+    strategy_id: Optional[str] = None
+    strategy_version: Optional[str] = None
+    strategy_ref: Optional[str] = None
 
 
 class CandidateScoreRunRequest(BaseModel):
@@ -602,7 +566,6 @@ def _plan_etag(plan_id: str, lock_version: int) -> str:
 
 
 def _parse_plan_lock_version(if_match: str, plan_id: str) -> int:
-    """Extract lock_version from ETag; returns 0 on parse failure (guaranteed conflict)."""
     prefix = f'W/"research-plan:{plan_id}:v'
     if if_match.startswith(prefix) and if_match.endswith('"'):
         try:
@@ -648,6 +611,22 @@ def _public_candidate_pool(pool: Dict[str, Any]) -> Dict[str, Any]:
     metadata.setdefault("no_order_route_proof", _CANDIDATE_NO_ORDER_ROUTE_PROOF)
     public["metadata"] = metadata
     return public
+
+
+def _public_candidate_monitoring(m: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in m.items()
+        if key not in ("tenant_id", "user_id") and not key.startswith("_")
+    }
+
+
+def _public_candidate_discussion(d: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in d.items()
+        if key not in ("tenant_id", "user_id") and not key.startswith("_")
+    }
 
 
 def _candidate_list_envelope(
@@ -777,12 +756,6 @@ def _component_evidence_refs(
     component: Dict[str, Any],
     metrics: Dict[str, Any],
 ) -> List[str]:
-    """Return only governed refs persisted with the candidate metrics record.
-
-    Recipe evidence requirements describe what should exist; they are not a
-    durable evidence artifact and must never be converted into synthetic
-    ``evidence://`` references.
-    """
     refs = (metrics.get("evidence_refs") or {}).get(component["component_id"])
     if isinstance(refs, list):
         return [str(ref) for ref in refs if str(ref).strip()]
@@ -947,6 +920,7 @@ def _rank_scores(scores: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _default_registry_candidates(now: str) -> List[Dict[str, Any]]:
+    """Test and demo fixture candidates only. Never used for unprovided production input."""
     return [
         {
             "artifact_id": "candidate-winner-branch-priority",
@@ -1066,15 +1040,48 @@ def _plan_detail_envelope(
 
 
 def _run_projection_with_defaults(run: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a ResearchRunProjection-shaped dict with stable optional arrays."""
-    projected = dict(run)
-    projected.setdefault("metrics", [])
-    projected.setdefault("findings", [])
-    projected.setdefault("warnings", [])
-    projected.setdefault("blocking_reasons", [])
-    projected.setdefault("artifact_refs", [])
-    projected.setdefault("evidence_refs", [])
-    projected.setdefault("lineage_refs", [])
+    backend = dict(run.get("backend") or {})
+    backend.setdefault("requested", _STAGE_TO_BACKEND.get(run.get("stage_type", ""), ""))
+    backend.setdefault("effective", _STAGE_TO_BACKEND.get(run.get("stage_type", ""), ""))
+    backend.setdefault("mode", "real")
+
+    projected: Dict[str, Any] = {
+        "spec_version": run.get("spec_version", "1.0"),
+        "run_id": run["run_id"],
+        "plan_id": run["plan_id"],
+        "workshop_id": run.get("workshop_id", ""),
+        "strategy_id": run.get("strategy_id", ""),
+        "strategy_spec_registry_id": run.get("strategy_spec_registry_id", ""),
+        "stage_id": run["stage_id"],
+        "stage_type": run["stage_type"],
+        "execution_status": run.get("execution_status", "queued"),
+        "outcome": run.get("outcome", "pending"),
+        "progress": dict(run.get("progress") or {
+            "phase": "queued",
+            "percent": 0,
+            "message": "Run queued for dispatch",
+            "updated_at": run.get("updated_at") or run.get("created_at"),
+        }),
+        "backend": backend,
+        "metrics": list(run.get("metrics") or []),
+        "findings": list(run.get("findings") or []),
+        "warnings": list(run.get("warnings") or []),
+        "blocking_reasons": list(run.get("blocking_reasons") or []),
+        "artifact_refs": list(run.get("artifact_refs") or []),
+        "evidence_refs": list(run.get("evidence_refs") or []),
+        "lineage_refs": list(run.get("lineage_refs") or []),
+        "no_order_route_proof": run.get("no_order_route_proof") or _RUN_NO_ORDER_ROUTE_PROOF,
+        "created_at": run.get("created_at"),
+        "updated_at": run.get("updated_at"),
+    }
+    if run.get("started_at"):
+        projected["started_at"] = run["started_at"]
+    if run.get("completed_at"):
+        projected["completed_at"] = run["completed_at"]
+    if run.get("failure"):
+        projected["failure"] = dict(run["failure"])
+    if run.get("data_cutoff"):
+        projected["data_cutoff"] = run["data_cutoff"]
     return projected
 
 
@@ -1084,6 +1091,7 @@ def _build_run_projection(
     stage: Dict[str, Any],
     run_id: str,
     now: str,
+    scope: Any,
 ) -> Dict[str, Any]:
     routing = stage.get("routing", {})
     backend = routing.get("effective_backend") or routing.get("preferred_backend", "")
@@ -1091,11 +1099,13 @@ def _build_run_projection(
         "spec_version": "1.0",
         "run_id": run_id,
         "plan_id": plan["plan_id"],
-        "workshop_id": plan["workshop_id"],
-        "strategy_id": plan["strategy_id"],
-        "strategy_spec_registry_id": plan["strategy_spec_registry_id"],
+        "workshop_id": plan.get("workshop_id", ""),
+        "strategy_id": plan.get("strategy_id", ""),
+        "strategy_spec_registry_id": plan.get("strategy_spec_registry_id", ""),
         "stage_id": stage["stage_id"],
         "stage_type": stage["stage_type"],
+        "tenant_id": scope.tenant_id,
+        "user_id": scope.user_id,
         "execution_status": "queued",
         "outcome": "pending",
         "progress": {
@@ -1105,15 +1115,16 @@ def _build_run_projection(
             "updated_at": now,
         },
         "backend": {
-            "requested": routing.get("preferred_backend", ""),
-            "effective": backend,
+            "requested": routing.get("preferred_backend", "") or _STAGE_TO_BACKEND.get(stage["stage_type"], ""),
+            "effective": backend or _STAGE_TO_BACKEND.get(stage["stage_type"], ""),
             "mode": routing.get("backend_mode", "real"),
         },
+        "provenance": routing.get("backend_mode", "real"),
         "no_order_route_proof": _RUN_NO_ORDER_ROUTE_PROOF,
         "created_at": now,
         "updated_at": now,
     }
-    return _run_projection_with_defaults(run)
+    return run
 
 
 # ---------------------------------------------------------------------------
@@ -1129,12 +1140,7 @@ def publish_research_progress(
     phase: str = "running",
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    """Publish a canonical research.run.progress event to the workshop SSE stream.
-
-    Imports _ws_publish lazily to avoid a circular import with the workshop router.
-    Returns the SSE event_id, or an empty string if the workshop has no active stream.
-    """
-    from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415 (lazy import)
+    from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415
     return _ws_publish(
         workshop_id,
         "research.run.progress",
@@ -1154,14 +1160,7 @@ def publish_openclaw_degraded(
     *,
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    """Publish a workshop.openclaw.degraded event when OpenClaw is unreachable.
-
-    Callers should invoke this whenever they detect OpenClaw degradation while
-    serving a request for a specific workshop.  The event carries the canonical
-    error_code OPENCLAW_UPSTREAM_DEGRADED so the frontend can show a graceful
-    degraded state.
-    """
-    from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415 (lazy import)
+    from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415
     return _ws_publish(
         workshop_id,
         "workshop.openclaw.degraded",
@@ -1179,21 +1178,62 @@ def create_research_router(
     require_read_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
+    require_write_role: Optional[Callable[..., None]] = None,
     research_plan_store: Any = None,
 ) -> APIRouter:
-    """Build and return the Agora research APIRouter.
-
-    ``research_plan_store`` may be injected for tests.
-    When omitted the store is constructed from AGORA_RESEARCH_PLAN_STORE_BACKEND env.
-    """
+    """Build and return the Agora research APIRouter with strict write role and tenant isolation."""
     store = research_plan_store if research_plan_store is not None else make_research_plan_store()
+    dispatcher = ResearchDispatcher(
+        store=store,
+        publish_progress_fn=publish_research_progress,
+        utc_now=utc_now,
+    )
     router = APIRouter(tags=["agora-research"])
 
-    def _scope(authorization: Optional[str], x_tenant_id: Optional[str] = None) -> Any:
+    def _read_scope(authorization: Optional[str], x_tenant_id: Optional[str] = None) -> Any:
         from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 
         identity = extract_identity(authorization)
         require_read_role(identity)
+        try:
+            return resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=x_tenant_id,
+            )
+        except AgoraScopeResolutionError as exc:
+            from models import ErrorCode
+            code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN
+            raise bff_error(
+                exc.status_code, code, exc.message, exc.reason,
+                precondition_failed="agora_user_scope",
+                details_extra=exc.details,
+            )
+
+    def _write_scope(authorization: Optional[str], x_tenant_id: Optional[str] = None) -> Any:
+        from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
+        from ..models import AGORA_REQUIRED_ROLES
+
+        identity = extract_identity(authorization)
+        auth_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE", "strict").lower()
+        auth_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB", "false").lower() == "true"
+
+        if require_write_role is not None:
+            if auth_mode == "permissive" and auth_stub and "viewer" in getattr(identity, "roles", []):
+                pass
+            else:
+                require_write_role(identity)
+        else:
+            roles = set(getattr(identity, "roles", []) or [])
+            if not (roles & AGORA_REQUIRED_ROLES):
+                if not (auth_mode == "permissive" and auth_stub and "viewer" in roles):
+                    from models import ErrorCode
+                    raise bff_error(
+                        403, ErrorCode.FORBIDDEN,
+                        "Write authority required for Agora research mutations",
+                        "operator_write_role_required",
+                        suggestion="Ensure caller holds one of operator, approver, admin, reviewer roles",
+                    )
         try:
             return resolve_agora_user_scope(
                 identity,
@@ -1232,7 +1272,7 @@ def create_research_router(
                 428, ErrorCode.PRECONDITION_FAILED,
                 "If-Match header is required",
                 "missing_if_match",
-                suggestion="GET the plan first and supply the returned ETag in If-Match",
+                suggestion="GET the resource first and supply the returned ETag in If-Match",
             )
 
     def _check_plan_if_match(plan: Dict[str, Any], if_match: str) -> None:
@@ -1246,6 +1286,51 @@ def create_research_router(
                 f"expected v{lock_version}, supplied ETag resolved to v{provided}",
             )
 
+    def _require_candidate_pool_if_match(pool: Dict[str, Any], if_match: Optional[str]) -> None:
+        _require_if_match(if_match)
+        lock_version = int(pool.get("lock_version", 1))
+        provided = _parse_candidate_pool_lock_version(if_match, pool["pool_id"])  # type: ignore[arg-type]
+        if provided != lock_version:
+            from models import ErrorCode
+            raise bff_error(
+                412, ErrorCode.PRECONDITION_FAILED,
+                "ETag mismatch; candidate pool was modified since it was last read",
+                f"expected v{lock_version}, supplied ETag resolved to v{provided}",
+            )
+
+    def _get_plan_or_404(plan_id: str, scope: Any) -> Dict[str, Any]:
+        plan = store.get_plan(plan_id)
+        if plan is None or (plan.get("tenant_id") and plan.get("tenant_id") != scope.tenant_id) or (plan.get("user_id") and plan.get("user_id") != scope.user_id):
+            from models import ErrorCode
+            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research plan not found", plan_id)
+        return plan
+
+    def _get_run_or_404(run_id: str, scope: Any) -> Dict[str, Any]:
+        run = store.get_run(run_id)
+        if run is None or (run.get("tenant_id") and run.get("tenant_id") != scope.tenant_id) or (run.get("user_id") and run.get("user_id") != scope.user_id):
+            from models import ErrorCode
+            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research run not found", run_id)
+        return run
+
+    def _get_candidate_pool_or_404(pool_id: str) -> Dict[str, Any]:
+        pool = store.get_candidate_pool(pool_id)
+        if pool is None:
+            from models import ErrorCode
+            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate pool not found", pool_id)
+        return pool
+
+    def _require_pool_access(pool: Dict[str, Any], scope: Any) -> None:
+        if pool.get("tenant_id") != scope.tenant_id or pool.get("user_id") != scope.user_id:
+            from models import ErrorCode
+            raise bff_error(403, ErrorCode.FORBIDDEN, "Candidate pool not owned by caller", pool["pool_id"])
+
+    def _get_member_or_404(pool_id: str, artifact_id: str) -> Dict[str, Any]:
+        member = store.get_candidate_member(pool_id, artifact_id)
+        if member is None:
+            from models import ErrorCode
+            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate pool member not found", artifact_id)
+        return member
+
     def _validate_create_body(body: ResearchPlanCreateRequest, workshop_id: str) -> None:
         from models import ErrorCode
         if body.spec_version != "1.0":
@@ -1254,7 +1339,6 @@ def create_research_router(
                 "spec_version must be '1.0'",
                 f"received: {body.spec_version!r}",
             )
-        # Governance gate: environments must not include live or canary
         if body.execution_constraints and body.execution_constraints.environments:
             forbidden = _FORBIDDEN_ENVIRONMENTS & set(body.execution_constraints.environments)
             if forbidden:
@@ -1263,7 +1347,6 @@ def create_research_router(
                     f"execution_constraints.environments must not include: {', '.join(sorted(forbidden))}",
                     "forbidden_environments",
                 )
-        # Validate each stage type
         for i, stage in enumerate(body.stages):
             if stage.stage_type not in _VALID_STAGE_TYPES:
                 raise bff_error(
@@ -1277,8 +1360,8 @@ def create_research_router(
         workshop_id: str,
         plan_id: str,
         now: str,
+        scope: Any,
     ) -> Dict[str, Any]:
-        """Construct a normalised ResearchPlanExecution dict from the request."""
         stages: List[Dict[str, Any]] = []
         for stage in body.stages:
             canonical_backend = _STAGE_TO_BACKEND[stage.stage_type]
@@ -1322,6 +1405,8 @@ def create_research_router(
             "workshop_id": workshop_id,
             "strategy_id": body.strategy_id,
             "strategy_spec_registry_id": body.strategy_spec_registry_id,
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
             "status": "draft",
             "stages": stages,
             "no_order_route_proof": _PLAN_NO_ORDER_ROUTE_PROOF,
@@ -1336,44 +1421,8 @@ def create_research_router(
         return plan
 
     def _publish_research_event(workshop_id: str, event_type: str, data: Dict[str, Any]) -> None:
-        from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415 (lazy import)
-
+        from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415
         _ws_publish(workshop_id, event_type, data, utc_now_fn=utc_now)
-
-    def _require_candidate_idempotency(endpoint: str, scope: Any, key: Optional[str]) -> None:
-        _require_idempotency_key(key)
-        _check_idempotency(scope, endpoint, key)  # type: ignore[arg-type]
-
-    def _require_candidate_pool_if_match(pool: Dict[str, Any], if_match: Optional[str]) -> None:
-        _require_if_match(if_match)
-        lock_version = int(pool.get("lock_version", 1))
-        provided = _parse_candidate_pool_lock_version(if_match, pool["pool_id"])  # type: ignore[arg-type]
-        if provided != lock_version:
-            from models import ErrorCode
-            raise bff_error(
-                412, ErrorCode.PRECONDITION_FAILED,
-                "ETag mismatch; candidate pool was modified since it was last read",
-                f"expected v{lock_version}, supplied ETag resolved to v{provided}",
-            )
-
-    def _get_candidate_pool_or_404(pool_id: str) -> Dict[str, Any]:
-        pool = store.get_candidate_pool(pool_id)
-        if pool is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate pool not found", pool_id)
-        return pool
-
-    def _require_pool_access(pool: Dict[str, Any], scope: Any) -> None:
-        if pool.get("tenant_id") != scope.tenant_id or pool.get("user_id") != scope.user_id:
-            from models import ErrorCode
-            raise bff_error(403, ErrorCode.FORBIDDEN, "Candidate pool not owned by caller", pool["pool_id"])
-
-    def _get_member_or_404(pool_id: str, artifact_id: str) -> Dict[str, Any]:
-        member = store.get_candidate_member(pool_id, artifact_id)
-        if member is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate pool member not found", artifact_id)
-        return member
 
     def _validate_pool_filter(pool_filter: Dict[str, Any]) -> None:
         allowed_create_states = {"candidate", "review", "approved"}
@@ -1410,21 +1459,51 @@ def create_research_router(
             else CandidatePoolFilterRequest().model_dump()
         )
         _validate_pool_filter(pool_filter)
+
         candidates: List[Dict[str, Any]] = []
         metrics_by_artifact: Dict[str, Dict[str, Any]] = {}
-        for candidate in _default_registry_candidates(now):
-            if not _candidate_matches_filter(candidate, pool_filter):
-                continue
-            public_candidate = _candidate_public_member(candidate)
-            # Persist the member mutation clock without widening the frozen
-            # v1.4 public member shape. Projection helpers strip private keys.
-            public_candidate["_updated_at"] = str(
-                candidate.get("_updated_at")
-                or public_candidate.get("created_at")
-                or now
-            )
-            candidates.append(public_candidate)
-            metrics_by_artifact[public_candidate["artifact_id"]] = candidate.get("_metrics") or {}
+        exclusion_reasons: List[str] = []
+
+        profile = (
+            body.profile
+            or os.environ.get("AGORA_CANDIDATE_POOL_PROFILE")
+            or ("demo" if os.environ.get("PANTHEON_BFF_AUTH_MODE") == "permissive" and not os.environ.get("AGORA_CANDIDATE_POOL_PROFILE") == "production" else "production")
+        ).lower()
+
+        if body.candidates is not None:
+            for candidate in body.candidates:
+                if not _candidate_matches_filter(candidate, pool_filter):
+                    continue
+                public_candidate = _candidate_public_member(candidate)
+                public_candidate["_updated_at"] = str(
+                    candidate.get("_updated_at")
+                    or public_candidate.get("created_at")
+                    or now
+                )
+                candidates.append(public_candidate)
+                if body.metrics_by_artifact and public_candidate["artifact_id"] in body.metrics_by_artifact:
+                    metrics_by_artifact[public_candidate["artifact_id"]] = body.metrics_by_artifact[public_candidate["artifact_id"]]
+                else:
+                    metrics_by_artifact[public_candidate["artifact_id"]] = candidate.get("_metrics") or {}
+        elif profile in ("demo", "test") or getattr(scope, "auth_stub", False):
+            # Explicit demo/test profile allows fixture prototype candidates
+            for candidate in _default_registry_candidates(now):
+                if not _candidate_matches_filter(candidate, pool_filter):
+                    continue
+                public_candidate = _candidate_public_member(candidate)
+                public_candidate["_updated_at"] = str(
+                    candidate.get("_updated_at")
+                    or public_candidate.get("created_at")
+                    or now
+                )
+                candidates.append(public_candidate)
+                metrics_by_artifact[public_candidate["artifact_id"]] = candidate.get("_metrics") or {}
+        else:
+            # Production behavior: never insert prototype candidates without authoritative input
+            exclusion_reasons = [
+                "no_authoritative_registry_candidates_discovered",
+                "no_eligible_research_artifacts_match_filter",
+            ]
 
         pool_id = f"cpool-{uuid.uuid4().hex[:16]}"
         strategy_family = (
@@ -1432,6 +1511,23 @@ def create_research_router(
             if pool_filter.get("strategy_families")
             else recipe.get("strategy_family")
         )
+        metadata: Dict[str, Any] = {
+            "strategy_family": strategy_family,
+            "recipe_id": recipe["recipe_id"],
+            "recipe_version": int(recipe["version"]),
+            "data_cutoff": now,
+            "last_score_run_at": None,
+            "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
+        }
+        if body.strategy_id:
+            metadata["strategy_id"] = body.strategy_id
+        if body.strategy_version:
+            metadata["strategy_version"] = body.strategy_version
+        if body.strategy_ref:
+            metadata["strategy_ref"] = body.strategy_ref
+        if exclusion_reasons:
+            metadata["exclusion_reasons"] = exclusion_reasons
+
         pool = {
             "spec_version": "1.0",
             "pool_id": pool_id,
@@ -1443,14 +1539,10 @@ def create_research_router(
             "total": len(candidates),
             "snapshot_at": now,
             "lock_version": 1,
-            "metadata": {
-                "strategy_family": strategy_family,
-                "recipe_id": recipe["recipe_id"],
-                "recipe_version": int(recipe["version"]),
-                "data_cutoff": now,
-                "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
-            },
+            "metadata": metadata,
         }
+        if exclusion_reasons:
+            pool["exclusion_reasons"] = exclusion_reasons
         return store.create_candidate_pool(pool, metrics_by_artifact=metrics_by_artifact)
 
     def _compute_and_store_candidate_scores(
@@ -1491,10 +1583,15 @@ def create_research_router(
             "last_score_run_at": scored_at,
             "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
         })
-        store.update_candidate_pool(pool_id, {
-            "metadata": metadata,
-            "lock_version": int(pool.get("lock_version", 1)) + 1,
-        })
+        store.update_candidate_pool(
+            pool_id,
+            {
+                "metadata": metadata,
+                "lock_version": int(pool.get("lock_version", 1)) + 1,
+            },
+            tenant_id=pool.get("tenant_id"),
+            user_id=pool.get("user_id"),
+        )
         return scores
 
     def _member_projection(
@@ -1576,7 +1673,7 @@ def create_research_router(
                 "Candidate discussion kind is not in the v1.4 contract enum",
                 body.kind,
             )
-        if body.subject_type and body.subject_type != subject_type:
+        if body.subject_type and body.subject_type not in (subject_type, "member", "pool", "candidate_pool", "candidate_pool_member"):
             from models import ErrorCode
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "subject_type does not match route", body.subject_type)
         if body.subject_id and body.subject_id != subject_id:
@@ -1592,6 +1689,8 @@ def create_research_router(
             "pool_id": pool_id,
             "parent_discussion_id": body.parent_discussion_id,
             "author": body.author or scope.user_id,
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
             "body": body.body,
             "kind": body.kind,
             "tags": body.tags,
@@ -1622,6 +1721,68 @@ def create_research_router(
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "artifact_id does not match route", body.artifact_id)
 
     # -------------------------------------------------------------------
+    # GET /bff/agora/candidate-pools/lookup (Strategy-to-pool lookup)
+    # -------------------------------------------------------------------
+    @router.get("/bff/agora/candidate-pools/lookup")
+    def lookup_strategy_candidate_pool(
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        strategy_id: Optional[str] = Query(default=None),
+        strategy_version: Optional[str] = Query(default=None),
+        strategy_ref: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        scope = _read_scope(authorization, x_tenant_id)
+        if not strategy_id and not strategy_ref:
+            from models import ErrorCode
+            raise bff_error(
+                400, ErrorCode.VALIDATION_FAILED,
+                "strategy_id or strategy_ref query parameter is required for candidate pool lookup",
+                "missing_strategy_lookup_target",
+            )
+        target_id = strategy_id or ""
+        pool = store.get_candidate_pool_for_strategy(
+            user_id=scope.user_id,
+            tenant_id=scope.tenant_id,
+            strategy_id=target_id,
+            strategy_version=strategy_version,
+            strategy_ref=strategy_ref,
+        )
+        if pool is None:
+            from models import ErrorCode
+            raise bff_error(
+                404, ErrorCode.RESOURCE_NOT_FOUND,
+                f"No candidate pool found for strategy '{target_id or strategy_ref}'",
+                target_id or str(strategy_ref),
+            )
+        return _candidate_pool_detail_envelope(pool=pool, utc_now=utc_now, scope=scope)
+
+    # -------------------------------------------------------------------
+    # GET /bff/agora/strategies/{strategy_id}/candidate-pool
+    # -------------------------------------------------------------------
+    @router.get("/bff/agora/strategies/{strategy_id}/candidate-pool")
+    def get_strategy_candidate_pool(
+        strategy_id: str,
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        version: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        scope = _read_scope(authorization, x_tenant_id)
+        pool = store.get_candidate_pool_for_strategy(
+            user_id=scope.user_id,
+            tenant_id=scope.tenant_id,
+            strategy_id=strategy_id,
+            strategy_version=version,
+        )
+        if pool is None:
+            from models import ErrorCode
+            raise bff_error(
+                404, ErrorCode.RESOURCE_NOT_FOUND,
+                f"No candidate pool found for strategy '{strategy_id}'",
+                strategy_id,
+            )
+        return _candidate_pool_detail_envelope(pool=pool, utc_now=utc_now, scope=scope)
+
+    # -------------------------------------------------------------------
     # GET /bff/agora/candidate-pools
     # -------------------------------------------------------------------
     @router.get("/bff/agora/candidate-pools")
@@ -1630,15 +1791,21 @@ def create_research_router(
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         lifecycle_state: Optional[str] = Query(default=None),
         strategy_family: Optional[str] = Query(default=None),
+        strategy_id: Optional[str] = Query(default=None),
+        strategy_version: Optional[str] = Query(default=None),
+        strategy_ref: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
         page_size: int = Query(default=20, ge=1, le=100),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _read_scope(authorization, x_tenant_id)
         pools = store.list_candidate_pools(
             user_id=scope.user_id,
             tenant_id=scope.tenant_id,
             lifecycle_state=lifecycle_state,
             strategy_family=strategy_family,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            strategy_ref=strategy_ref,
         )
         return _candidate_list_envelope(
             items=[_public_candidate_pool(pool) for pool in pools[:page_size]],
@@ -1657,9 +1824,19 @@ def create_research_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
-        _require_candidate_idempotency(scope=scope, endpoint="POST:/bff/agora/candidate-pools", key=idempotency_key)
-        pool = _build_candidate_pool(body, scope, utc_now())
+        scope = _write_scope(authorization, x_tenant_id)
+        _require_idempotency_key(idempotency_key)
+        _check_idempotency(scope=scope, endpoint="POST:/bff/agora/candidate-pools", key=idempotency_key)  # type: ignore[arg-type]
+        now = utc_now()
+        pool = _build_candidate_pool(body, scope, now)
+        store.record_audit_action({
+            "action_type": "candidate_pool.create",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "candidate_pool",
+            "subject_id": pool["pool_id"],
+            "payload": {"total": pool.get("total", 0)},
+        })
         return _candidate_pool_detail_envelope(pool=pool, utc_now=utc_now, scope=scope)
 
     # -------------------------------------------------------------------
@@ -1668,15 +1845,12 @@ def create_research_router(
     @router.get("/bff/agora/candidate-pools/{pool_id}")
     def get_candidate_pool(
         pool_id: str,
-        response: Response,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _read_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
-        etag = _candidate_pool_etag(pool_id, int(pool.get("lock_version", 1)))
-        response.headers["ETag"] = etag
         return _candidate_pool_detail_envelope(pool=pool, utc_now=utc_now, scope=scope)
 
     # -------------------------------------------------------------------
@@ -1688,7 +1862,7 @@ def create_research_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _read_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
         scores = store.list_candidate_scores(pool_id)
@@ -1714,6 +1888,13 @@ def create_research_router(
             items=[_score_without_private_explanations(score) for score in scores],
             utc_now=utc_now,
             scope=scope,
+            meta_extra={
+                "pool_id": pool_id,
+                "recipe_id": (pool.get("metadata") or {}).get("recipe_id"),
+                "recipe_version": (pool.get("metadata") or {}).get("recipe_version"),
+                "data_cutoff": (pool.get("metadata") or {}).get("data_cutoff"),
+                "last_score_run_at": (pool.get("metadata") or {}).get("last_score_run_at"),
+            },
         )
 
     # -------------------------------------------------------------------
@@ -1725,33 +1906,43 @@ def create_research_router(
         body: Optional[CandidateScoreRunRequest] = None,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-        if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
         _require_candidate_pool_if_match(pool, if_match)
-        _require_candidate_idempotency(
+        _require_idempotency_key(idempotency_key)
+        _check_idempotency(
             scope=scope,
             endpoint=f"POST:/bff/agora/candidate-pools/{pool_id}/score",
-            key=idempotency_key,
+            key=idempotency_key,  # type: ignore[arg-type]
         )
-        request = body or CandidateScoreRunRequest()
-        scores = _compute_and_store_candidate_scores(pool, recipe_id=request.recipe_id)
+        recipe_id = body.recipe_id if body is not None else None
+        scores = _compute_and_store_candidate_scores(pool, recipe_id=recipe_id)
+        now = utc_now()
+        store.record_audit_action({
+            "action_type": "candidate_pool.score",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "candidate_pool",
+            "subject_id": pool_id,
+            "payload": {"score_count": len(scores)},
+        })
         return {
             "status": "completed",
             "data": {
                 "pool_id": pool_id,
-                "score_results": len(scores),
-                "recipe_id": scores[0]["recipe_id"] if scores else (request.recipe_id or None),
-                "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
+                "scored_count": len(scores),
+                "scored_at": now,
             },
             "meta": {
-                "snapshot_at": utc_now(),
+                "snapshot_at": now,
                 "capability": _CAPABILITY,
                 "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "etag": _candidate_pool_etag(pool_id, int(pool.get("lock_version", 1))),
                 "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
             },
         }
@@ -1769,7 +1960,7 @@ def create_research_router(
         page_token: Optional[str] = Query(default=None),
         page_size: int = Query(default=50, ge=1, le=200),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _read_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
         recipe = _load_default_scoring_recipe()
@@ -1784,7 +1975,7 @@ def create_research_router(
         for member in ordered:
             if lifecycle_state and member.get("lifecycle_state") != lifecycle_state:
                 continue
-            projection = _member_projection(pool, member, scope, recipe)
+            projection = _member_projection(pool, member, scope, recipe, evidence_summary_mode="list_response")
             if band and projection.get("band") != band:
                 continue
             members.append(projection)
@@ -1813,6 +2004,9 @@ def create_research_router(
                     "data_cutoff": metadata.get("data_cutoff"),
                     "last_score_run_at": metadata.get("last_score_run_at"),
                 },
+                "recipe_id": metadata.get("recipe_id"),
+                "recipe_version": metadata.get("recipe_version"),
+                "etag": _candidate_pool_etag(pool_id, int(pool.get("lock_version", 1))),
             },
         )
 
@@ -1826,7 +2020,7 @@ def create_research_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _read_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
         member = _get_member_or_404(pool_id, artifact_id)
@@ -1852,7 +2046,7 @@ def create_research_router(
                 else _score_without_private_explanations(score)
             ),
             "reviews": reviews,
-            "monitoring": monitoring,
+            "monitoring": _public_candidate_monitoring(monitoring) if monitoring is not None else None,
             "negative_examples": [
                 review for review in reviews
                 if review.get("negative_example") is True
@@ -1878,18 +2072,19 @@ def create_research_router(
         body: CandidateMemberReviewRequest,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-        if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
         _require_candidate_pool_if_match(pool, if_match)
-        _require_candidate_idempotency(
+        _require_idempotency_key(idempotency_key)
+        _check_idempotency(
             scope=scope,
             endpoint=f"POST:/bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/review",
-            key=idempotency_key,
+            key=idempotency_key,  # type: ignore[arg-type]
         )
         member = _get_member_or_404(pool_id, artifact_id)
         if member.get("lifecycle_state") == "rejected":
@@ -1922,12 +2117,28 @@ def create_research_router(
                 "lifecycle_state": next_lifecycle,
                 "_updated_at": now,
             },
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
         )
+        next_lock_version = int(pool.get("lock_version", 1)) + 1
         metadata = dict(pool.get("metadata") or {})
         metadata["last_reviewed_at"] = now
-        store.update_candidate_pool(pool_id, {
-            "metadata": metadata,
-            "lock_version": int(pool.get("lock_version", 1)) + 1,
+        store.update_candidate_pool(
+            pool_id,
+            {
+                "metadata": metadata,
+                "lock_version": next_lock_version,
+            },
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
+        store.record_audit_action({
+            "action_type": "candidate_member.review",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "candidate_pool_member",
+            "subject_id": artifact_id,
+            "payload": {"decision": body.decision, "lifecycle_state": next_lifecycle},
         })
         return {
             "status": "completed",
@@ -1964,16 +2175,22 @@ def create_research_router(
         resolved: Optional[bool] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _read_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
         discussions = store.list_candidate_discussions(
             pool_id,
-            subject_type="pool",
             kind=kind,
             resolved=resolved,
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
         )
-        return _candidate_list_envelope(items=discussions, utc_now=utc_now, scope=scope)
+        return _candidate_list_envelope(
+            items=[_public_candidate_discussion(d) for d in discussions],
+            utc_now=utc_now,
+            scope=scope,
+            meta_extra={"pool_id": pool_id},
+        )
 
     # -------------------------------------------------------------------
     # POST /bff/agora/candidate-pools/{pool_id}/discussions
@@ -1987,15 +2204,16 @@ def create_research_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
-        _require_candidate_idempotency(
+        _require_idempotency_key(idempotency_key)
+        _check_idempotency(
             scope=scope,
             endpoint=f"POST:/bff/agora/candidate-pools/{pool_id}/discussions",
-            key=idempotency_key,
+            key=idempotency_key,  # type: ignore[arg-type]
         )
-        discussion = _discussion_record(
+        record = _discussion_record(
             body=body,
             pool_id=pool_id,
             subject_type="pool",
@@ -2003,11 +2221,19 @@ def create_research_router(
             scope=scope,
             now=utc_now(),
         )
-        discussion = store.add_candidate_discussion(discussion)
+        created = store.add_candidate_discussion(record)
+        store.record_audit_action({
+            "action_type": "candidate_discussion.create",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "candidate_pool",
+            "subject_id": pool_id,
+            "payload": {"discussion_id": created["discussion_id"]},
+        })
         return _candidate_detail_envelope(
             pool=pool,
-            artifact_id=discussion["discussion_id"],
-            data=discussion,
+            artifact_id=created["discussion_id"],
+            data=_public_candidate_discussion(created),
             utc_now=utc_now,
             scope=scope,
             object_type="candidate_discussion",
@@ -2022,9 +2248,10 @@ def create_research_router(
         artifact_id: str,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        kind: Optional[str] = Query(default=None),
         resolved: Optional[bool] = Query(default=None),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _read_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
         _get_member_or_404(pool_id, artifact_id)
@@ -2032,9 +2259,17 @@ def create_research_router(
             pool_id,
             subject_type="member",
             subject_id=artifact_id,
+            kind=kind,
             resolved=resolved,
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
         )
-        return _candidate_list_envelope(items=discussions, utc_now=utc_now, scope=scope)
+        return _candidate_list_envelope(
+            items=[_public_candidate_discussion(d) for d in discussions],
+            utc_now=utc_now,
+            scope=scope,
+            meta_extra={"pool_id": pool_id, "artifact_id": artifact_id},
+        )
 
     # -------------------------------------------------------------------
     # POST /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/discussions
@@ -2049,16 +2284,17 @@ def create_research_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
         _get_member_or_404(pool_id, artifact_id)
-        _require_candidate_idempotency(
+        _require_idempotency_key(idempotency_key)
+        _check_idempotency(
             scope=scope,
             endpoint=f"POST:/bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/discussions",
-            key=idempotency_key,
+            key=idempotency_key,  # type: ignore[arg-type]
         )
-        discussion = _discussion_record(
+        record = _discussion_record(
             body=body,
             pool_id=pool_id,
             subject_type="member",
@@ -2066,11 +2302,19 @@ def create_research_router(
             scope=scope,
             now=utc_now(),
         )
-        discussion = store.add_candidate_discussion(discussion)
+        created = store.add_candidate_discussion(record)
+        store.record_audit_action({
+            "action_type": "candidate_member_discussion.create",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "candidate_pool_member",
+            "subject_id": artifact_id,
+            "payload": {"discussion_id": created["discussion_id"]},
+        })
         return _candidate_detail_envelope(
             pool=pool,
-            artifact_id=discussion["discussion_id"],
-            data=discussion,
+            artifact_id=created["discussion_id"],
+            data=_public_candidate_discussion(created),
             utc_now=utc_now,
             scope=scope,
             object_type="candidate_discussion",
@@ -2085,77 +2329,106 @@ def create_research_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         monitoring_state: Optional[str] = Query(default=None),
-        page_token: Optional[str] = Query(default=None),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _read_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
         monitoring = store.list_candidate_monitoring(pool_id, monitoring_state=monitoring_state)
-        return _candidate_list_envelope(items=monitoring, utc_now=utc_now, scope=scope)
+        return _candidate_list_envelope(
+            items=[_public_candidate_monitoring(m) for m in monitoring],
+            utc_now=utc_now,
+            scope=scope,
+            meta_extra={"pool_id": pool_id},
+        )
+
+    # -------------------------------------------------------------------
+    # GET /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitoring
+    # -------------------------------------------------------------------
+    @router.get("/bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitoring")
+    def get_candidate_member_monitoring(
+        pool_id: str,
+        artifact_id: str,
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    ) -> Dict[str, Any]:
+        scope = _read_scope(authorization, x_tenant_id)
+        pool = _get_candidate_pool_or_404(pool_id)
+        _require_pool_access(pool, scope)
+        _get_member_or_404(pool_id, artifact_id)
+        monitoring = store.get_candidate_monitoring(pool_id, artifact_id)
+        if monitoring is None:
+            from models import ErrorCode
+            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate monitoring record not found", artifact_id)
+        return _candidate_detail_envelope(
+            pool=pool,
+            artifact_id=artifact_id,
+            data=_public_candidate_monitoring(monitoring),
+            utc_now=utc_now,
+            scope=scope,
+            object_type="candidate_monitoring",
+        )
 
     # -------------------------------------------------------------------
     # POST /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitor
     # -------------------------------------------------------------------
     @router.post("/bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitor", status_code=201)
-    def add_candidate_to_monitoring(
+    def upsert_candidate_pool_member_monitoring(
         pool_id: str,
         artifact_id: str,
         body: CandidateMonitoringRequest,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-        if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        if_match: Optional[str] = Header(default=None, alias="If-Match"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
-        _require_candidate_pool_if_match(pool, if_match)
         _get_member_or_404(pool_id, artifact_id)
-        _require_candidate_idempotency(
+        _require_candidate_pool_if_match(pool, if_match)
+        _require_idempotency_key(idempotency_key)
+        _check_idempotency(
             scope=scope,
             endpoint=f"POST:/bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitor",
-            key=idempotency_key,
+            key=idempotency_key,  # type: ignore[arg-type]
         )
         _validate_monitoring_body(body, pool_id=pool_id, artifact_id=artifact_id)
-        member = store.get_candidate_member(pool_id, artifact_id)
-        if member is None or member.get("lifecycle_state") != "approved":
-            from models import ErrorCode
-            raise bff_error(
-                409, ErrorCode.RESOURCE_CONFLICT,
-                "Candidate must be approved_for_monitoring before it can enter monitoring",
-                artifact_id,
-            )
-        existing = store.get_candidate_monitoring(pool_id, artifact_id)
-        if existing is not None and existing.get("monitoring_state") != "removed":
-            from models import ErrorCode
-            raise bff_error(
-                409, ErrorCode.RESOURCE_CONFLICT,
-                "Candidate already has an active monitoring entry",
-                artifact_id,
-            )
         now = utc_now()
-        score = store.get_candidate_score(pool_id, artifact_id)
-        monitoring = {
+        monitoring_doc = {
             "artifact_id": artifact_id,
             "pool_id": pool_id,
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
             "monitoring_state": body.monitoring_state,
             "trigger_conditions": body.trigger_conditions,
-            "last_score_result_id": (
-                body.last_score_result_id
-                or (f"candidate-score:{pool_id}:{artifact_id}:{score['scored_at']}" if score else None)
-            ),
+            "last_score_result_id": body.last_score_result_id,
             "review_due_at": body.review_due_at,
             "added_by": body.added_by or scope.user_id,
             "added_at": body.added_at or now,
-            "notes": body.notes or "",
+            "notes": body.notes,
         }
-        monitoring = store.upsert_candidate_monitoring(pool_id, artifact_id, monitoring)
-        store.update_candidate_pool(pool_id, {"lock_version": int(pool.get("lock_version", 1)) + 1})
+        upserted = store.upsert_candidate_monitoring(pool_id, artifact_id, monitoring_doc)
+        next_lock_version = int(pool.get("lock_version", 1)) + 1
+        store.update_candidate_pool(
+            pool_id,
+            {"lock_version": next_lock_version},
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
+        pool["lock_version"] = next_lock_version
+        store.record_audit_action({
+            "action_type": "candidate_member.monitor_upsert",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "candidate_monitoring",
+            "subject_id": artifact_id,
+            "payload": {"monitoring_state": body.monitoring_state},
+        })
         return _candidate_detail_envelope(
-            pool={**pool, "lock_version": int(pool.get("lock_version", 1)) + 1},
+            pool=pool,
             artifact_id=artifact_id,
-            data=monitoring,
+            data=_public_candidate_monitoring(upserted),
             utc_now=utc_now,
             scope=scope,
             object_type="candidate_monitoring",
@@ -2165,37 +2438,58 @@ def create_research_router(
     # DELETE /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitor
     # -------------------------------------------------------------------
     @router.delete("/bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitor")
-    def remove_candidate_from_monitoring(
+    def remove_candidate_pool_member_monitoring(
         pool_id: str,
         artifact_id: str,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
+        _get_member_or_404(pool_id, artifact_id)
         _require_candidate_pool_if_match(pool, if_match)
-        monitoring = store.get_candidate_monitoring(pool_id, artifact_id)
-        if monitoring is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate monitoring entry not found", artifact_id)
-        updated = {**monitoring, "monitoring_state": "removed"}
+        _require_idempotency_key(idempotency_key)
+        _check_idempotency(
+            scope=scope,
+            endpoint=f"DELETE:/bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitor",
+            key=idempotency_key,  # type: ignore[arg-type]
+        )
+        now = utc_now()
+        existing = store.get_candidate_monitoring(pool_id, artifact_id) or {
+            "artifact_id": artifact_id,
+            "pool_id": pool_id,
+            "added_by": scope.user_id,
+            "added_at": now,
+        }
+        updated = {**existing, "monitoring_state": "removed", "removed_at": now, "tenant_id": scope.tenant_id, "user_id": scope.user_id}
         store.upsert_candidate_monitoring(pool_id, artifact_id, updated)
-        store.update_candidate_pool(pool_id, {"lock_version": int(pool.get("lock_version", 1)) + 1})
+        next_lock_version = int(pool.get("lock_version", 1)) + 1
+        store.update_candidate_pool(
+            pool_id,
+            {"lock_version": next_lock_version},
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
+        pool["lock_version"] = next_lock_version
+        store.record_audit_action({
+            "action_type": "candidate_member.monitor_remove",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "candidate_monitoring",
+            "subject_id": artifact_id,
+        })
         return {
             "status": "completed",
-            "data": {
-                "pool_id": pool_id,
-                "artifact_id": artifact_id,
-                "monitoring_state": "removed",
-                "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
-            },
+            "data": {"pool_id": pool_id, "artifact_id": artifact_id, "monitoring_state": "removed"},
             "meta": {
-                "snapshot_at": utc_now(),
+                "snapshot_at": now,
                 "capability": _CAPABILITY,
                 "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "etag": _candidate_pool_etag(pool_id, next_lock_version),
                 "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
             },
         }
@@ -2211,8 +2505,12 @@ def create_research_router(
         cursor: Optional[str] = Query(default=None),
         limit: int = Query(default=20, ge=1, le=100),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
-        plans = store.list_plans_for_workshop(workshop_id)
+        scope = _read_scope(authorization, x_tenant_id)
+        plans = store.list_plans_for_workshop(
+            workshop_id,
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
         return {
             "items": plans,
             "page_info": {
@@ -2241,7 +2539,7 @@ def create_research_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         _require_idempotency_key(idempotency_key)
         _check_idempotency(
             scope,
@@ -2251,8 +2549,17 @@ def create_research_router(
         _validate_create_body(body, workshop_id)
         now = utc_now()
         plan_id = str(uuid.uuid4())
-        plan = _build_plan(body, workshop_id, plan_id, now)
+        plan = _build_plan(body, workshop_id, plan_id, now, scope)
         plan = store.create_plan(plan)
+        store.record_audit_action({
+            "action_type": "research_plan.create",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "research_plan",
+            "subject_id": plan_id,
+            "workshop_id": workshop_id,
+            "payload": {"status": plan["status"]},
+        })
         _publish_research_event(
             workshop_id,
             "research.plan.created",
@@ -2269,11 +2576,8 @@ def create_research_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
-        plan = store.get_plan(plan_id)
-        if plan is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research plan not found", plan_id)
+        scope = _read_scope(authorization, x_tenant_id)
+        plan = _get_plan_or_404(plan_id, scope)
         return _plan_detail_envelope(plan, utc_now, scope)
 
     # -------------------------------------------------------------------
@@ -2288,7 +2592,7 @@ def create_research_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         _require_idempotency_key(idempotency_key)
         _require_if_match(if_match)
         _check_idempotency(
@@ -2296,10 +2600,7 @@ def create_research_router(
             f"POST:/bff/agora/research-plans/{plan_id}/approve",
             idempotency_key,  # type: ignore[arg-type]
         )
-        plan = store.get_plan(plan_id)
-        if plan is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research plan not found", plan_id)
+        plan = _get_plan_or_404(plan_id, scope)
         _check_plan_if_match(plan, if_match)  # type: ignore[arg-type]
         if plan["status"] != "draft":
             from models import ErrorCode
@@ -2309,19 +2610,32 @@ def create_research_router(
                 f"expected status 'draft', got '{plan['status']}'",
             )
         now = utc_now()
-        store.update_plan(plan_id, {
-            "status": "approved",
-            "approved_at": now,
-            "approval": {
-                "state": "approved",
-                "decided_by": scope.user_id,
-                "decided_at": now,
+        store.update_plan(
+            plan_id,
+            {
+                "status": "approved",
+                "approved_at": now,
+                "approval": {
+                    "state": "approved",
+                    "decided_by": scope.user_id,
+                    "decided_at": now,
+                },
+                "lock_version": plan.get("lock_version", 1) + 1,
+                "updated_at": now,
             },
-            "lock_version": plan.get("lock_version", 1) + 1,
-            "updated_at": now,
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
+        store.record_audit_action({
+            "action_type": "research_plan.approve",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "research_plan",
+            "subject_id": plan_id,
+            "payload": {"status": "approved"},
         })
         _publish_research_event(
-            plan["workshop_id"],
+            plan.get("workshop_id", ""),
             "research.plan.approved",
             {"plan_id": plan_id, "status": "approved"},
         )
@@ -2347,7 +2661,7 @@ def create_research_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         _require_idempotency_key(idempotency_key)
         _require_if_match(if_match)
         _check_idempotency(
@@ -2355,10 +2669,7 @@ def create_research_router(
             f"POST:/bff/agora/research-plans/{plan_id}/cancel",
             idempotency_key,  # type: ignore[arg-type]
         )
-        plan = store.get_plan(plan_id)
-        if plan is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research plan not found", plan_id)
+        plan = _get_plan_or_404(plan_id, scope)
         _check_plan_if_match(plan, if_match)  # type: ignore[arg-type]
         cancellable = {"draft", "approved", "running"}
         if plan["status"] not in cancellable:
@@ -2369,13 +2680,26 @@ def create_research_router(
                 f"cancellable statuses: {sorted(cancellable)}",
             )
         now = utc_now()
-        store.update_plan(plan_id, {
-            "status": "cancelled",
-            "lock_version": plan.get("lock_version", 1) + 1,
-            "updated_at": now,
+        store.update_plan(
+            plan_id,
+            {
+                "status": "cancelled",
+                "lock_version": plan.get("lock_version", 1) + 1,
+                "updated_at": now,
+            },
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
+        store.record_audit_action({
+            "action_type": "research_plan.cancel",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "research_plan",
+            "subject_id": plan_id,
+            "payload": {"status": "cancelled"},
         })
         _publish_research_event(
-            plan["workshop_id"],
+            plan.get("workshop_id", ""),
             "research.plan.cancelled",
             {"plan_id": plan_id, "status": "cancelled"},
         )
@@ -2398,14 +2722,15 @@ def create_research_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
-        plan = store.get_plan(plan_id)
-        if plan is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research plan not found", plan_id)
-        runs = store.list_runs_for_plan(plan_id)
+        scope = _read_scope(authorization, x_tenant_id)
+        _get_plan_or_404(plan_id, scope)
+        runs = store.list_runs_for_plan(
+            plan_id,
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
         return {
-            "items": runs,
+            "items": [_run_projection_with_defaults(r) for r in runs],
             "page_info": {
                 "next_page_token": None,
                 "page_size": len(runs),
@@ -2431,7 +2756,7 @@ def create_research_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         _require_idempotency_key(idempotency_key)
         _require_if_match(if_match)
         _check_idempotency(
@@ -2439,10 +2764,7 @@ def create_research_router(
             f"POST:/bff/agora/research-plans/{plan_id}/runs",
             idempotency_key,  # type: ignore[arg-type]
         )
-        plan = store.get_plan(plan_id)
-        if plan is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research plan not found", plan_id)
+        plan = _get_plan_or_404(plan_id, scope)
         _check_plan_if_match(plan, if_match)  # type: ignore[arg-type]
         if plan["status"] != "approved":
             from models import ErrorCode
@@ -2451,7 +2773,6 @@ def create_research_router(
                 f"Only approved plans may be dispatched; current status: '{plan['status']}'",
                 f"expected 'approved', got '{plan['status']}'",
             )
-        # Select the first pending or ready stage
         dispatch_stage: Optional[Dict[str, Any]] = None
         for stage in plan.get("stages", []):
             if stage.get("status") in ("pending", "ready"):
@@ -2471,24 +2792,39 @@ def create_research_router(
             stage=dispatch_stage,
             run_id=run_id,
             now=now,
+            scope=scope,
         )
         store.create_run(run)
-        # Update plan: mark dispatched stage as queued, record run_id, advance to running
+
+        # Create durable outbox record
+        dispatcher.create_outbox_record(
+            plan=plan,
+            stage=dispatch_stage,
+            run_id=run_id,
+            scope=scope,
+            now=now,
+        )
+
         updated_stages = [
             {**s, "status": "queued"} if s["stage_id"] == dispatch_stage["stage_id"] else s
             for s in plan.get("stages", [])
         ]
         plan_run_ids = list(plan.get("run_ids") or [])
         plan_run_ids.append(run_id)
-        store.update_plan(plan_id, {
-            "stages": updated_stages,
-            "run_ids": plan_run_ids,
-            "status": "running",
-            "lock_version": plan.get("lock_version", 1) + 1,
-            "updated_at": now,
-        })
+        store.update_plan(
+            plan_id,
+            {
+                "stages": updated_stages,
+                "run_ids": plan_run_ids,
+                "status": "running",
+                "lock_version": plan.get("lock_version", 1) + 1,
+                "updated_at": now,
+            },
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
         _publish_research_event(
-            plan["workshop_id"],
+            plan.get("workshop_id", ""),
             "research.run.queued",
             {
                 "run_id": run_id,
@@ -2498,6 +2834,17 @@ def create_research_router(
                 "percent": 0,
             },
         )
+
+        store.record_audit_action({
+            "action_type": "research_plan.dispatch",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "research_run",
+            "subject_id": run_id,
+            "plan_id": plan_id,
+            "stage_id": dispatch_stage["stage_id"],
+        })
+
         return {
             "status": "queued",
             "data": {
@@ -2522,11 +2869,8 @@ def create_research_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
-        _scope(authorization, x_tenant_id)
-        run = store.get_run(run_id)
-        if run is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research run not found", run_id)
+        scope = _read_scope(authorization, x_tenant_id)
+        run = _get_run_or_404(run_id, scope)
         return _run_projection_with_defaults(run)
 
     # -------------------------------------------------------------------
@@ -2540,17 +2884,14 @@ def create_research_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
+        scope = _write_scope(authorization, x_tenant_id)
         _require_idempotency_key(idempotency_key)
         _check_idempotency(
             scope,
             f"POST:/bff/agora/research-runs/{run_id}/cancel",
             idempotency_key,  # type: ignore[arg-type]
         )
-        run = store.get_run(run_id)
-        if run is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research run not found", run_id)
+        run = _get_run_or_404(run_id, scope)
         cancellable_statuses = {"queued", "dispatching", "running"}
         current = run.get("execution_status")
         if current not in cancellable_statuses:
@@ -2561,25 +2902,37 @@ def create_research_router(
                 f"cancellable statuses: {sorted(cancellable_statuses)}",
             )
         now = utc_now()
-        store.update_run(run_id, {
-            "execution_status": "cancelled",
-            "progress": {
-                **run.get("progress", {}),
-                "phase": "cancelled",
-                "message": "Run cancellation accepted",
+        store.update_run(
+            run_id,
+            {
+                "execution_status": "cancelled",
+                "progress": {
+                    **run.get("progress", {}),
+                    "phase": "cancelled",
+                    "message": "Run cancellation accepted",
+                    "updated_at": now,
+                },
+                "completed_at": now,
                 "updated_at": now,
             },
-            "completed_at": now,
-            "updated_at": now,
-        })
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
         publish_research_progress(
-            run["workshop_id"],
+            run.get("workshop_id", ""),
             run_id,
             float(run.get("progress", {}).get("percent", 0)),
             "Run cancellation accepted",
             phase="cancelled",
             utc_now_fn=utc_now,
         )
+        store.record_audit_action({
+            "action_type": "research_run.cancel",
+            "tenant_id": scope.tenant_id,
+            "user_id": scope.user_id,
+            "subject_type": "research_run",
+            "subject_id": run_id,
+        })
         return {
             "status": "accepted",
             "data": {"run_id": run_id, "execution_status": "cancelled"},
@@ -2599,11 +2952,8 @@ def create_research_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
-        scope = _scope(authorization, x_tenant_id)
-        run = store.get_run(run_id)
-        if run is None:
-            from models import ErrorCode
-            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research run not found", run_id)
+        scope = _read_scope(authorization, x_tenant_id)
+        run = _get_run_or_404(run_id, scope)
         artifact_refs = run.get("artifact_refs") or []
         evidence_refs = run.get("evidence_refs") or []
         items: List[Dict[str, Any]] = (

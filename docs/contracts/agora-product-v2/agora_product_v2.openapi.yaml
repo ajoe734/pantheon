@@ -1,0 +1,756 @@
+openapi: 3.1.0
+info:
+  title: Pantheon Agora Product Journey API
+  version: 2.0.0
+  description: >
+    Authoritative OpenAPI specification for Agora Product Journey v2.
+    Enforces strict tenant/user scoping, command receipts, no-order authority,
+    asynchronous reconstruction, and independent consultation.
+
+servers:
+  - url: /bff/agora
+    description: Pantheon BFF Agora Subsystem
+
+paths:
+  /me:
+    get:
+      summary: Get operator identity scope and granted capabilities
+      operationId: getAgoraMe
+      tags: [Identity]
+      responses:
+        '200':
+          description: Operator identity scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgoraEnvelope'
+
+  /capabilities:
+    get:
+      summary: Get frozen capability manifest filtered by operator audience
+      operationId: getAgoraCapabilities
+      tags: [Identity]
+      responses:
+        '200':
+          description: Capability manifest
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /workshops:
+    get:
+      summary: List user-scoped strategy workshops
+      operationId: listWorkshops
+      tags: [StrategyWorkshop]
+      responses:
+        '200':
+          description: List of workshops
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkshopListResponse'
+    post:
+      summary: Create new private strategy workshop
+      operationId: createWorkshop
+      tags: [StrategyWorkshop]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkshopRequest'
+      responses:
+        '201':
+          description: Workshop created with initial receipt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkshopCreatedResponse'
+
+  /workshops/{workshop_id}:
+    get:
+      summary: Get workshop details
+      operationId: getWorkshop
+      tags: [StrategyWorkshop]
+      parameters:
+        - name: workshop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Workshop details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkshopResponse'
+        '404':
+          description: Workshop not found or unauthorized
+
+  /workshops/{workshop_id}/messages:
+    post:
+      summary: Post a message to workshop (enqueues asynchronous reconstruction)
+      operationId: postWorkshopMessage
+      tags: [StrategyWorkshop]
+      parameters:
+        - name: workshop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostMessageRequest'
+      responses:
+        '202':
+          description: Message accepted and reconstruction enqueued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandReceipt'
+
+  /workshops/{workshop_id}/completeness:
+    get:
+      summary: Get authoritative server-derived completeness assessment
+      operationId: getWorkshopCompleteness
+      tags: [StrategyWorkshop]
+      parameters:
+        - name: workshop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Completeness assessment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompletenessAssessment'
+
+  /workshops/{workshop_id}/versions:
+    get:
+      summary: List immutable strategy versions for workshop
+      operationId: listWorkshopVersions
+      tags: [StrategyWorkshop]
+      parameters:
+        - name: workshop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StrategyVersion'
+    post:
+      summary: Create an immutable strategy version draft
+      operationId: createWorkshopVersion
+      tags: [StrategyWorkshop]
+      parameters:
+        - name: workshop_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVersionRequest'
+      responses:
+        '201':
+          description: Version created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StrategyVersion'
+
+  /workshops/{workshop_id}/versions/{version_id}/select:
+    post:
+      summary: Select active strategy version for downstream research and trading
+      operationId: selectWorkshopVersion
+      tags: [StrategyWorkshop]
+      parameters:
+        - name: workshop_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Version selected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StrategyVersion'
+
+  /research/plans:
+    post:
+      summary: Propose research plan for selected strategy version
+      operationId: proposeResearchPlan
+      tags: [Research]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposeResearchPlanRequest'
+      responses:
+        '201':
+          description: Research plan proposed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchPlan'
+
+  /research/plans/{plan_id}/approve:
+    post:
+      summary: Approve research plan and dispatch execution worker
+      operationId: approveResearchPlan
+      tags: [Research]
+      parameters:
+        - name: plan_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Research plan approved and run dispatched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchPlan'
+
+  /candidate-pools:
+    get:
+      summary: List candidate pools derived from research runs
+      operationId: listCandidatePools
+      tags: [Candidates]
+      responses:
+        '200':
+          description: List of candidate pools
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CandidatePool'
+
+  /candidate-pools/{pool_id}/members:
+    get:
+      summary: List members of a candidate pool
+      operationId: getCandidatePoolMembers
+      tags: [Candidates]
+      parameters:
+        - name: pool_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Members of candidate pool
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CandidateMember'
+
+  /trading-room/workspace-proposals:
+    post:
+      summary: Submit typed WorkspaceIntent to WorkspaceCompiler
+      operationId: proposeWorkspace
+      tags: [TradingRoom]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceIntent'
+      responses:
+        '200':
+          description: Compiled workspace proposal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceProposal'
+
+  /trading-room/workspaces/{workspace_id}:
+    get:
+      summary: Get active workspace
+      operationId: getWorkspace
+      tags: [TradingRoom]
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Workspace definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+    put:
+      summary: Update workspace layout/widgets atomically with version pointer update
+      operationId: updateWorkspace
+      tags: [TradingRoom]
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkspaceRequest'
+      responses:
+        '200':
+          description: Workspace updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+
+  /trading-room/decision-events:
+    get:
+      summary: List decision events for trading room
+      operationId: listDecisionEvents
+      tags: [DecisionProjection]
+      responses:
+        '200':
+          description: List of decision events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TradingDecisionEvent'
+
+  /trading-room/decision-events/{event_id}/intent:
+    post:
+      summary: Create governed intent from decision event (request-only, no broker orders)
+      operationId: createTradingIntent
+      tags: [DecisionProjection]
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateIntentRequest'
+      responses:
+        '201':
+          description: Trading intent created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradingIntent'
+
+  /trading-room/strategies/{strategy_id}/performance:
+    get:
+      summary: Get strategy performance index and attribution
+      operationId: getStrategyPerformance
+      tags: [Performance]
+      parameters:
+        - name: strategy_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Strategy performance index
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StrategyPerformanceIndex'
+
+  /trading-room/strategies/{strategy_id}/performance/suggestions:
+    get:
+      summary: Get governed suggestions for strategy
+      operationId: getStrategySuggestions
+      tags: [Performance]
+      parameters:
+        - name: strategy_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of suggestions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GovernedSuggestion'
+
+  /dataset-extractions/outbox:
+    post:
+      summary: Enqueue eligible evidence extraction to outbox
+      operationId: enqueueDatasetExtraction
+      tags: [DatasetExtraction]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DatasetExtractionRequest'
+      responses:
+        '202':
+          description: Extraction enqueued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandReceipt'
+
+components:
+  schemas:
+    AgoraEnvelope:
+      type: object
+      properties:
+        data:
+          type: object
+        meta:
+          type: object
+
+    WorkshopListResponse:
+      type: object
+      properties:
+        workshops:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkshopResponse'
+
+    CreateWorkshopRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        hypothesis:
+          type: string
+
+    WorkshopCreatedResponse:
+      type: object
+      required: [workshop_id, receipt]
+      properties:
+        workshop_id:
+          type: string
+        receipt:
+          $ref: '#/components/schemas/CommandReceipt'
+
+    WorkshopResponse:
+      type: object
+      required: [workshop_id, title, status, revision]
+      properties:
+        workshop_id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+        revision:
+          type: integer
+        selected_version_id:
+          type: string
+          nullable: true
+
+    PostMessageRequest:
+      type: object
+      required: [content, idempotency_key]
+      properties:
+        content:
+          type: string
+        idempotency_key:
+          type: string
+
+    CommandReceipt:
+      type: object
+      required: [receipt_id, command_id, idempotency_key, status]
+      properties:
+        receipt_id:
+          type: string
+        command_id:
+          type: string
+        idempotency_key:
+          type: string
+        status:
+          type: string
+          enum: [accepted, processing, succeeded, failed_retryable, failed_terminal, compensated]
+        aggregate_id:
+          type: string
+        current_revision:
+          type: integer
+
+    CompletenessAssessment:
+      type: object
+      required: [grade]
+      properties:
+        grade:
+          type: string
+          enum: [insufficient, draftable, researchable, trading_room_ready]
+        blockers:
+          type: array
+          items:
+            type: string
+        confirmed_fields:
+          type: array
+          items:
+            type: string
+        unconfirmed_fields:
+          type: array
+          items:
+            type: string
+
+    StrategyVersion:
+      type: object
+      required: [version_id, workshop_id, strategy_id, version_num, status]
+      properties:
+        version_id:
+          type: string
+        workshop_id:
+          type: string
+        strategy_id:
+          type: string
+        version_num:
+          type: integer
+        status:
+          type: string
+        strategy_map:
+          type: object
+
+    CreateVersionRequest:
+      type: object
+      required: [strategy_map]
+      properties:
+        strategy_map:
+          type: object
+
+    ProposeResearchPlanRequest:
+      type: object
+      required: [version_id, stages]
+      properties:
+        version_id:
+          type: string
+        stages:
+          type: array
+          items:
+            type: string
+
+    ResearchPlan:
+      type: object
+      required: [plan_id, version_id, status]
+      properties:
+        plan_id:
+          type: string
+        version_id:
+          type: string
+        status:
+          type: string
+        runs:
+          type: array
+          items:
+            type: object
+
+    CandidatePool:
+      type: object
+      required: [pool_id, strategy_id, version_id]
+      properties:
+        pool_id:
+          type: string
+        strategy_id:
+          type: string
+        version_id:
+          type: string
+        source_mode:
+          type: string
+          enum: [real, demo, simulation]
+        members_count:
+          type: integer
+        exclusion_reasons:
+          type: array
+          items:
+            type: string
+
+    CandidateMember:
+      type: object
+      required: [candidate_id, pool_id, score, status]
+      properties:
+        candidate_id:
+          type: string
+        pool_id:
+          type: string
+        score:
+          type: number
+        status:
+          type: string
+
+    WorkspaceIntent:
+      type: object
+      required: [strategy_id, candidate_pool_id, requested_views]
+      properties:
+        strategy_id:
+          type: string
+        candidate_pool_id:
+          type: string
+        requested_views:
+          type: array
+          items:
+            type: string
+        user_preferences:
+          type: object
+
+    WorkspaceProposal:
+      type: object
+      required: [proposal_id, strategy_id, widgets, readiness_report]
+      properties:
+        proposal_id:
+          type: string
+        strategy_id:
+          type: string
+        widgets:
+          type: array
+          items:
+            type: object
+        readiness_report:
+          type: object
+
+    Workspace:
+      type: object
+      required: [workspace_id, version_id, layout, widgets]
+      properties:
+        workspace_id:
+          type: string
+        version_id:
+          type: string
+        layout:
+          type: object
+        widgets:
+          type: array
+          items:
+            type: object
+
+    UpdateWorkspaceRequest:
+      type: object
+      required: [expected_revision, layout, widgets]
+      properties:
+        expected_revision:
+          type: integer
+        layout:
+          type: object
+        widgets:
+          type: array
+          items:
+            type: object
+
+    TradingDecisionEvent:
+      type: object
+      required: [event_id, strategy_id, probability, expected_value, risk_evaluation, status]
+      properties:
+        event_id:
+          type: string
+        strategy_id:
+          type: string
+        probability:
+          type: number
+        expected_value:
+          type: number
+        risk_evaluation:
+          type: object
+        status:
+          type: string
+
+    CreateIntentRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [approve, reject, defer, modify]
+
+    TradingIntent:
+      type: object
+      required: [intent_id, decision_event_id, action, status]
+      properties:
+        intent_id:
+          type: string
+        decision_event_id:
+          type: string
+        action:
+          type: string
+        governed_handoff_type:
+          type: string
+        status:
+          type: string
+        has_broker_order_authority:
+          type: boolean
+          enum: [false]
+
+    StrategyPerformanceIndex:
+      type: object
+      required: [strategy_id, tenant_id, summary, time_series]
+      properties:
+        strategy_id:
+          type: string
+        tenant_id:
+          type: string
+        summary:
+          type: object
+        time_series:
+          type: array
+          items:
+            type: object
+
+    GovernedSuggestion:
+      type: object
+      required: [suggestion_id, strategy_id, policy_version, proposed_change]
+      properties:
+        suggestion_id:
+          type: string
+        strategy_id:
+          type: string
+        policy_version:
+          type: string
+        proposed_change:
+          type: object
+
+    DatasetExtractionRequest:
+      type: object
+      required: [source_event_id, eligibility_consent]
+      properties:
+        source_event_id:
+          type: string
+        eligibility_consent:
+          type: boolean

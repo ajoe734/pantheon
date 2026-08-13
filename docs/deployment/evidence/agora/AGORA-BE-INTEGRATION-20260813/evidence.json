@@ -1,0 +1,82 @@
+{
+  "program_id": "agora-product-correction-20260813",
+  "task_id": "AGORA-BE-INTEGRATION-20260813",
+  "task_title": "Agora Backend Integration, Journey Verifier & Regression Defense",
+  "verified_at": "2026-08-13T19:40:32Z",
+  "author_worker": "Antigravity2",
+  "branch": "task/AGORA-BE-INTEGRATION-20260813",
+  "verification_status": "PASSED",
+  "summary": {
+    "stages_executed": 14,
+    "stages_passed": 14,
+    "stages_failed": 0,
+    "pytest_total": 21,
+    "pytest_passed": 21,
+    "pytest_failed": 0
+  },
+  "contracts": {
+    "capability_manifest": {
+      "path": "docs/contracts/agora-product-v2/agora_v2_capability_manifest.json",
+      "sha256": "92ed24a99fb40c60c1e10c31b7923bcc03a89268ab31e6779a63dd4dbb64b9ff"
+    },
+    "bundle_index": {
+      "path": "docs/contracts/agora-product-v2/agora_v2_bundle_index.json",
+      "sha256": "a1aafe05463548dca37b6d6cd8fb8d3e1b3db88c217c02c0282828d57adf95fd"
+    },
+    "openapi_delta": {
+      "path": "docs/contracts/agora-product-v2/agora_product_v2.openapi.yaml",
+      "sha256": "8b0d3d2b217ca9eb360e13894ee43b941518b66fc68a3d9fb8b80ee4582c6d7c"
+    },
+    "readme": {
+      "path": "docs/contracts/agora-product-v2/README.md",
+      "sha256": "0673a5f47137b1c4bc76cb49a4602fd15488d5cd59e78e1fbf5b365675ae368b"
+    }
+  },
+  "test_suites": {
+    "verifier_tests": {
+      "path": "scripts/test_verify_agora_product_journey.py",
+      "sha256": "6846825b9e9e8588ce62fa6795410559dcbeac4fb7464008082005e41ff32702",
+      "passed": 5
+    },
+    "journey_integration_tests": {
+      "path": "tests/agora_product_journey/",
+      "test_count": 16,
+      "passed": 16,
+      "files": [
+        {
+          "file": "test_full_product_journey.py",
+          "sha256": "381f3614fde75fd9eb7bcf00917a77a3f8b790d4a6b0c7285f6896517cb5f75a"
+        },
+        {
+          "file": "test_two_tenant_isolation.py",
+          "sha256": "3456eecf71434cf9029831f78a92d9b40dc66645ead2deee946d9c05c4c9e5cb"
+        },
+        {
+          "file": "test_command_idempotency_cas.py",
+          "sha256": "93134e4da86ce218e11d385d0ad2aef3f0ab2f3355a73cb0400f98e5e25cf57e"
+        },
+        {
+          "file": "test_worker_crash_recovery.py",
+          "sha256": "e3b4b289c05b130909c58cf062187f7a80b0ae0b887596553abb087a2e15199a"
+        },
+        {
+          "file": "test_restart_persistence_readback.py",
+          "sha256": "8d3a008da846a207b3f62487fae01c6d0f0aeaf57217144b068f5c736b61caae"
+        },
+        {
+          "file": "test_negative_controls_fail_closed.py",
+          "sha256": "5ad53d332894fe763f3d2d2067d0cb3964f3960b8b9a9bb599e3622787f68c86"
+        }
+      ]
+    }
+  },
+  "invariants_asserted": [
+    "No client-derived or seeded-only truth in production journeys",
+    "No broker order or capital routing authority in Agora BFF / TradingIntent",
+    "Fail-closed on missing producers, offline workers, or unconsented evidence",
+    "Strict multi-tenant / multi-user isolation across 2 tenants x 2 users",
+    "Deterministic command idempotency replay & CAS optimistic lock conflict detection",
+    "Independent consultation governance (evaluator != producer, no auto-approval on intake)",
+    "Clean restart persistence and canonical readback without data loss or corruption"
+  ]
+}

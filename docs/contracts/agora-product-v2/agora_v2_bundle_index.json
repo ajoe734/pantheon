@@ -1,0 +1,127 @@
+{
+  "bundle_version": "2.0",
+  "program_id": "agora-product-correction-20260813",
+  "task_id": "AGORA-BE-INTEGRATION-20260813",
+  "manifest_ref": "docs/contracts/agora-product-v2/agora_v2_capability_manifest.json",
+  "openapi_ref": "docs/contracts/agora-product-v2/agora_product_v2.openapi.yaml",
+  "schemas": {
+    "scope_envelope": {
+      "type": "object",
+      "required": ["tenant_id", "user_id", "actor_id", "roles", "trace_id"],
+      "properties": {
+        "tenant_id": {"type": "string"},
+        "user_id": {"type": "string"},
+        "actor_id": {"type": "string"},
+        "actor_type": {"type": "string", "enum": ["user", "service"]},
+        "roles": {"type": "array", "items": {"type": "string"}},
+        "trace_id": {"type": "string"}
+      }
+    },
+    "command_envelope": {
+      "type": "object",
+      "required": ["command_id", "operation", "aggregate_type", "aggregate_id", "idempotency_key", "request_hash", "payload", "scope", "submitted_at"],
+      "properties": {
+        "command_id": {"type": "string"},
+        "operation": {"type": "string"},
+        "aggregate_type": {"type": "string"},
+        "aggregate_id": {"type": "string"},
+        "expected_revision": {"type": "integer"},
+        "idempotency_key": {"type": "string"},
+        "request_hash": {"type": "string"},
+        "payload": {"type": "object"},
+        "scope": {"$ref": "#/schemas/scope_envelope"},
+        "submitted_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "command_receipt": {
+      "type": "object",
+      "required": ["receipt_id", "command_id", "idempotency_key", "status", "aggregate_id", "current_revision", "updated_at"],
+      "properties": {
+        "receipt_id": {"type": "string"},
+        "command_id": {"type": "string"},
+        "idempotency_key": {"type": "string"},
+        "status": {"type": "string", "enum": ["accepted", "processing", "succeeded", "failed_retryable", "failed_terminal", "compensated"]},
+        "aggregate_id": {"type": "string"},
+        "current_revision": {"type": "integer"},
+        "result": {"type": "object"},
+        "error": {"type": "object"},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "strategy_reconstruction_result": {
+      "type": "object",
+      "required": ["reconstruction_id", "workshop_id", "based_on_sequence_no", "strategy_map", "completeness", "created_at"],
+      "properties": {
+        "reconstruction_id": {"type": "string"},
+        "workshop_id": {"type": "string"},
+        "based_on_sequence_no": {"type": "integer"},
+        "strategy_map": {"type": "object"},
+        "explicit_facts": {"type": "array", "items": {"type": "string"}},
+        "inferences": {"type": "array", "items": {"type": "string"}},
+        "assumptions": {"type": "array", "items": {"type": "string"}},
+        "contradictions": {"type": "array", "items": {"type": "string"}},
+        "evidence_refs": {"type": "array", "items": {"type": "object"}},
+        "completeness": {
+          "type": "object",
+          "required": ["grade"],
+          "properties": {
+            "grade": {"type": "string", "enum": ["insufficient", "draftable", "researchable", "trading_room_ready"]},
+            "blockers": {"type": "array", "items": {"type": "string"}},
+            "confirmed_fields": {"type": "array", "items": {"type": "string"}},
+            "unconfirmed_fields": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "next_best_question": {
+          "type": "object",
+          "properties": {
+            "question_id": {"type": "string"},
+            "text": {"type": "string"},
+            "resolves": {"type": "array", "items": {"type": "string"}},
+            "why_now": {"type": "string"}
+          }
+        },
+        "draft_proposal": {"type": "object"},
+        "provider_lineage": {"type": "object"},
+        "created_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "trading_decision_event": {
+      "type": "object",
+      "required": ["event_id", "tenant_id", "user_id", "strategy_id", "version_id", "probability", "expected_value", "risk_evaluation", "status", "created_at"],
+      "properties": {
+        "event_id": {"type": "string"},
+        "tenant_id": {"type": "string"},
+        "user_id": {"type": "string"},
+        "strategy_id": {"type": "string"},
+        "version_id": {"type": "string"},
+        "signal_summary": {"type": "object"},
+        "probability": {"type": "number"},
+        "expected_value": {"type": "number"},
+        "invalidation_criteria": {"type": "object"},
+        "risk_evaluation": {
+          "type": "object",
+          "required": ["risk_score", "status"],
+          "properties": {
+            "risk_score": {"type": "number"},
+            "status": {"type": "string", "enum": ["evaluated", "unavailable", "degraded"]}
+          }
+        },
+        "status": {"type": "string", "enum": ["pending", "approved", "rejected", "deferred", "modified"]},
+        "created_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "trading_intent": {
+      "type": "object",
+      "required": ["intent_id", "decision_event_id", "action", "status", "created_at"],
+      "properties": {
+        "intent_id": {"type": "string"},
+        "decision_event_id": {"type": "string"},
+        "action": {"type": "string", "enum": ["approve", "reject", "defer", "modify"]},
+        "governed_handoff_type": {"type": "string", "enum": ["request_only", "shadow_eval"]},
+        "status": {"type": "string", "enum": ["created", "dispatched", "acknowledged"]},
+        "has_broker_order_authority": {"type": "boolean", "enum": [false]},
+        "created_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}
