@@ -210,7 +210,11 @@ def create_agora_router(
         canonical_operations=workshop_canonical_operations,
     ))
     router.include_router(create_research_router(**_kw))
-    router.include_router(create_trading_room_router(**_kw, workshop_store=workshop_store))
+    router.include_router(create_trading_room_router(
+        **_kw,
+        require_write_role=require_write_role,
+        workshop_store=workshop_store,
+    ))
     router.include_router(create_performance_router(
         **_kw,
         require_write_role=require_write_role,

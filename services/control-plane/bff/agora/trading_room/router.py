@@ -1564,6 +1564,10 @@ def _generate_workspace_proposal(
     )
 
 
+# Alias WorkspaceCompiler per AGORA-TRADING-AUTH-20260813 acceptance criteria
+WorkspaceCompiler = _generate_workspace_proposal
+
+
 def _workspace_from_proposal(
     *,
     proposal: Dict[str, Any],
@@ -1711,6 +1715,7 @@ def create_trading_room_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
+    require_write_role: Optional[Callable[..., None]] = None,
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
     trading_room_store: Optional[TradingRoomStore] = None,
@@ -1723,6 +1728,10 @@ def create_trading_room_router(
     """
     router = APIRouter(tags=["agora-trading"])
     store = trading_room_store if trading_room_store is not None else _get_store()
+
+    def _check_write_auth(identity: Any) -> None:
+        if require_write_role is not None:
+            require_write_role(identity)
 
     def _meta(capability: str = "agora.trading.v1", **extra: Any) -> Dict[str, Any]:
         meta = {"snapshot_at": utc_now(), "capability": capability}
@@ -2214,6 +2223,7 @@ def create_trading_room_router(
         """
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         request_body = body or {}
         if idempotency_key:
             _check_idempotency(
@@ -2342,6 +2352,7 @@ def create_trading_room_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         if idempotency_key:
             _check_idempotency(
                 identity,
@@ -2443,6 +2454,7 @@ def create_trading_room_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         if idempotency_key:
             _check_idempotency(
                 identity,
@@ -2492,6 +2504,7 @@ def create_trading_room_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         if idempotency_key:
             _check_idempotency(
                 identity,
@@ -2554,6 +2567,7 @@ def create_trading_room_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         if idempotency_key:
             _check_idempotency(
                 identity,
@@ -2618,6 +2632,7 @@ def create_trading_room_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         if idempotency_key:
             _check_idempotency(
                 identity,
@@ -2684,6 +2699,7 @@ def create_trading_room_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         if idempotency_key:
             _check_idempotency(
                 identity,
@@ -2762,6 +2778,7 @@ def create_trading_room_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         if idempotency_key:
             _check_idempotency(
                 identity,
@@ -2865,6 +2882,7 @@ def create_trading_room_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         if idempotency_key:
             _check_idempotency(
                 identity,
@@ -3062,6 +3080,7 @@ def create_trading_room_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         if idempotency_key:
             _check_idempotency(
                 identity,
@@ -3216,6 +3235,7 @@ def create_trading_room_router(
         """
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         idem_key = _require_idempotency_key(idempotency_key)
         _require_if_match(if_match)
         request_id = _require_x_request_id(x_request_id)
@@ -3412,6 +3432,7 @@ def create_trading_room_router(
         """
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         idem_key = _require_idempotency_key(idempotency_key)
         _require_if_match(if_match)
         request_id = _require_x_request_id(x_request_id)
@@ -3530,6 +3551,7 @@ def create_trading_room_router(
         """
         identity = extract_identity(authorization, session_cookie=pantheon_session)
         require_read_role(identity)
+        _check_write_auth(identity)
         idem_key = _require_idempotency_key(idempotency_key)
         _require_if_match(if_match)
         request_id = _require_x_request_id(x_request_id)

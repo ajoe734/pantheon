@@ -1,0 +1,19 @@
+{
+  "task_id": "AGORA-TRADING-AUTH-20260813",
+  "title": "Correct Trading Room authority, identity, compiler, and transactions",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "review",
+  "verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/trading_room/",
+    "result": "70 passed, 1 skipped, 3 warnings in 31.59s",
+    "write_role_denial_verified": true,
+    "schema_validation_fixed": true,
+    "workspace_compiler_aliased": true
+  },
+  "deliverables": [
+    "services/control-plane/bff/agora/router.py",
+    "services/control-plane/bff/agora/trading_room/router.py",
+    "services/control-plane/bff/agora/trading_room/test_trading_room.py"
+  ]
+}
