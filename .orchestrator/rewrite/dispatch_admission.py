@@ -66,6 +66,7 @@ class DeliveryEndpoint:
     account_id: str
     enabled: bool = True
     can_auto_deliver: bool = True
+    exclusive: bool = True
 
 
 @dataclass(frozen=True)
@@ -338,7 +339,7 @@ def evaluate_dispatch_intent(
         if not endpoint_id or not provider_id or not account_id or not endpoint.enabled or not endpoint.can_auto_deliver:
             reasons.append(DispatchBlockReason.ENDPOINT_STATIC_UNAVAILABLE)
             continue
-        if _contains(snapshot.reserved_endpoint_ids, endpoint_id):
+        if endpoint.exclusive and _contains(snapshot.reserved_endpoint_ids, endpoint_id):
             reasons.append(DispatchBlockReason.ENDPOINT_BUSY)
             continue
 
