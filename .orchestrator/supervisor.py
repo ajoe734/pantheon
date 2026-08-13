@@ -52,6 +52,8 @@ from common import (
     task_state_store_runtime_env,
     summarize_failure_reason,
     utc_now,
+    WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+    worker_process_generation_id,
     write_failure_evidence,
     write_json,
     write_status,
@@ -3637,37 +3639,6 @@ def worker_pid_start_ticks(pid: int | None, proc_root: Path | None = None) -> in
         return int(fields[19])
     except (TypeError, ValueError):
         return None
-
-
-WORKER_PROCESS_GENERATION_SCHEMA_VERSION = 1
-WORKER_PROCESS_GENERATION_PREFIX = "worker-process-generation-sha256:"
-
-
-def worker_process_generation_id(
-    *,
-    task_id: str,
-    worker_run_id: str,
-    queue_event_id: str,
-    pid: int,
-    pid_start_ticks: int,
-) -> str:
-    """Bind one worker lease to the exact Linux process generation it launched."""
-
-    payload = {
-        "schema_version": WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
-        "task_id": str(task_id),
-        "worker_run_id": str(worker_run_id),
-        "queue_event_id": str(queue_event_id),
-        "pid": int(pid),
-        "pid_start_ticks": int(pid_start_ticks),
-    }
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-    return WORKER_PROCESS_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
 
 
 def worker_process_identity(worker: Mapping[str, Any]) -> dict[str, Any] | None:

@@ -203,10 +203,6 @@ class JsonLoadResilienceTests(unittest.TestCase):
                 "PANTHEON_COMMAND_RUNTIME_SHA",
                 "PANTHEON_COMMAND_REMOTE",
                 "PANTHEON_COMMAND_BASE_REF",
-                "PANTHEON_STATUS_COMMAND_ROOT",
-                "PANTHEON_STATUS_COMMAND_SHA",
-                "PANTHEON_STATUS_COMMAND_REMOTE",
-                "PANTHEON_STATUS_COMMAND_BASE_REF",
             ):
                 env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)

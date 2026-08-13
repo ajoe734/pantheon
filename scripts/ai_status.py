@@ -35,10 +35,6 @@ STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
 TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
 STATUS_OUTBOX_VISIBILITY_ENABLED_ENV = "PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED"
-LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
-LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
-LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
-LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
 AUTO_WORKER_ENV_MARKERS = (
     "ORCH_RUN_ID",
     "PANTHEON_WORKTREE_ROOT",
@@ -98,17 +94,25 @@ from rewrite import task_machine
 from common import (
     ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
+    WORKER_PROCESS_GENERATION_PREFIX,
+    WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
     activity_audit_invariant_error,
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
     canonical_task_state_lock_path,
     durable_write_bytes,
+    first_symlink_component,
+    git_toplevel,
+    normalize_github_repo_slug,
     prepare_activity_audit_unlocked,
     read_activity_log_tail_bytes,
     read_regular_file_bytes,
     strict_activity_json_loads,
+    utc_now as iso_now,
+    validate_status_command_runtime,
     validated_activity_event_digests_unlocked,
+    worker_process_generation_id,
 )
 
 # Derived dashboard rendering intentionally uses an atomic projection-only
@@ -212,7 +216,7 @@ def _worker_workspace_root() -> Path | None:
         expanded = Path(os.path.expanduser(raw))
         if not expanded.is_absolute():
             raise RuntimeError(f"{env_name} must be an absolute path when set")
-        symlink_component = _first_symlink_component(expanded)
+        symlink_component = first_symlink_component(expanded)
         if symlink_component is not None:
             raise RuntimeError(
                 f"{env_name} cannot include a symlink component: {symlink_component}"
@@ -230,29 +234,11 @@ def _worker_workspace_root() -> Path | None:
     return first_root
 
 
-def _first_symlink_component(path: Path) -> Path | None:
-    if ".." in path.parts:
-        raise RuntimeError(f"Path contains parent directory references (..): {path}")
-    current = Path(path.anchor)
-    parts = path.parts[1:] if path.is_absolute() else path.parts
-    for part in parts:
-        current = current / part
-        try:
-            if current.is_symlink():
-                return current
-            if not current.exists() and not current.is_symlink():
-                return None
-        except OSError:
-            return current
-    return None
-
-
-
 def _status_root_from_runtime_path(raw: str, *, label: str) -> Path:
     path = Path(os.path.expanduser(raw))
     if not path.is_absolute():
         raise RuntimeError(f"{label} must be absolute when set")
-    symlink_comp = _first_symlink_component(path)
+    symlink_comp = first_symlink_component(path)
     if symlink_comp is not None:
         raise RuntimeError(f"{label} path contains a symlink component: {symlink_comp}")
     if path.is_symlink():
@@ -287,60 +273,14 @@ def _supervisor_expected_status_root() -> Path | None:
     return roots[0] if roots else None
 
 
-def _git_toplevel(path: Path) -> Path | None:
-    proc = subprocess.run(
-        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    top = proc.stdout.strip()
-    if not top:
-        return None
-    return Path(top).resolve()
-
-
-def _git_stdout(path: Path, args: list[str]) -> str:
-    proc = subprocess.run(
-        ["git", "-C", str(path), *args],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "git command failed").strip()
-        raise RuntimeError(detail)
-    return proc.stdout.strip()
-
-
-def _normalize_github_repo_slug(value: str | None) -> str:
-    candidate = str(value or "").strip()
-    if not candidate:
-        return ""
-    if candidate.endswith(".git"):
-        candidate = candidate[:-4]
-    for prefix in (
-        "git@github.com:",
-        "ssh://git@github.com/",
-        "https://github.com/",
-        "http://github.com/",
-    ):
-        if candidate.startswith(prefix):
-            candidate = candidate[len(prefix) :]
-            break
-    return candidate.strip("/")
-
-
-def _command_env(primary: str, legacy: str, default: str = "") -> str:
-    return str(os.environ.get(primary) or os.environ.get(legacy) or default).strip()
+def _command_env(name: str, default: str = "") -> str:
+    return str(os.environ.get(name) or default).strip()
 
 
 def validate_status_command_runtime_binding() -> None:
     """Ensure auto-worker status commands run from the installed command root."""
 
-    raw_root = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
+    raw_root = _command_env(STATUS_COMMAND_ROOT_ENV)
     if not raw_root:
         if _auto_worker_requires_explicit_status_root():
             raise RuntimeError(
@@ -348,30 +288,19 @@ def validate_status_command_runtime_binding() -> None:
             )
         return
 
-    expanded_root = Path(os.path.expanduser(raw_root))
-    if not expanded_root.is_absolute():
-        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
-    symlink_component = _first_symlink_component(expanded_root)
-    if symlink_component is not None:
-        raise RuntimeError(
-            f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
-        )
-    command_root = expanded_root.resolve()
-    if not command_root.exists() or not command_root.is_dir():
-        raise RuntimeError(
-            f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {command_root}"
-        )
-    if _git_toplevel(command_root) != command_root:
-        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {command_root}")
-
-    source_sha = _git_stdout(command_root, ["rev-parse", "HEAD"])
-    expected_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
+    expected_sha = _command_env(STATUS_COMMAND_SHA_ENV)
     if not expected_sha:
         raise RuntimeError("PANTHEON_COMMAND_RUNTIME_SHA is required for auto-worker status commands")
-    if source_sha != expected_sha:
-        raise RuntimeError(
-            f"PANTHEON_COMMAND_RUNTIME_SHA mismatch: command root is {source_sha}, expected {expected_sha}"
-        )
+
+    expected_remote = _command_env(STATUS_COMMAND_REMOTE_ENV, "ajoe734/pantheon")
+    base_ref = _command_env(STATUS_COMMAND_BASE_REF_ENV, "origin/dev") or "origin/dev"
+    runtime = validate_status_command_runtime(
+        Path(os.path.expanduser(raw_root)),
+        expected_sha=expected_sha,
+        expected_remote=expected_remote,
+        base_ref=base_ref,
+    )
+    command_root = Path(runtime["root"])
 
     current_root = ROOT.resolve()
     if current_root != command_root:
@@ -380,59 +309,11 @@ def validate_status_command_runtime_binding() -> None:
             f"running {current_root}, expected {command_root}"
         )
 
-    expected_remote = _normalize_github_repo_slug(
-        _command_env(STATUS_COMMAND_REMOTE_ENV, LEGACY_STATUS_COMMAND_REMOTE_ENV, "ajoe734/pantheon")
-    )
-    remote_url = _git_stdout(command_root, ["remote", "get-url", "origin"])
-    actual_remote = _normalize_github_repo_slug(remote_url)
-    if expected_remote and actual_remote != expected_remote:
-        raise RuntimeError(
-            f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_remote or remote_url} != {expected_remote}"
-        )
-
-    base_ref = _command_env(STATUS_COMMAND_BASE_REF_ENV, LEGACY_STATUS_COMMAND_BASE_REF_ENV, "origin/dev") or "origin/dev"
-    _git_stdout(command_root, ["rev-parse", "--verify", base_ref])
-    proc = subprocess.run(
-        ["git", "-C", str(command_root), "merge-base", "--is-ancestor", source_sha, base_ref],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        suffix = f": {detail}" if detail else ""
-        raise RuntimeError(
-            f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {base_ref}{suffix}"
-        )
-
-
-STATUS_WORKER_PROCESS_GENERATION_SCHEMA_VERSION = 1
-STATUS_WORKER_PROCESS_GENERATION_PREFIX = "worker-process-generation-sha256:"
-
-
-def status_worker_process_generation_id(
-    *,
-    task_id: str,
-    worker_run_id: str,
-    queue_event_id: str,
-    pid: int,
-    pid_start_ticks: int,
-) -> str:
-    payload = {
-        "schema_version": STATUS_WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
-        "task_id": str(task_id),
-        "worker_run_id": str(worker_run_id),
-        "queue_event_id": str(queue_event_id),
-        "pid": int(pid),
-        "pid_start_ticks": int(pid_start_ticks),
-    }
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-    return STATUS_WORKER_PROCESS_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+STATUS_WORKER_PROCESS_GENERATION_SCHEMA_VERSION = (
+    WORKER_PROCESS_GENERATION_SCHEMA_VERSION
+)
+STATUS_WORKER_PROCESS_GENERATION_PREFIX = WORKER_PROCESS_GENERATION_PREFIX
+status_worker_process_generation_id = worker_process_generation_id
 
 
 def _clear_status_command_lease_binding() -> None:
@@ -542,17 +423,17 @@ def _validated_status_command_worker_lease(
 
 
 def status_command_metadata() -> dict[str, Any] | None:
-    raw_root = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
-    raw_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
+    raw_root = _command_env(STATUS_COMMAND_ROOT_ENV)
+    raw_sha = _command_env(STATUS_COMMAND_SHA_ENV)
     if not raw_root and not raw_sha:
         return None
     delivery_root = _worker_workspace_root()
     payload: dict[str, Any] = {
         "command_root": str(Path(os.path.expanduser(raw_root)).resolve()) if raw_root else None,
         "source_sha": raw_sha or None,
-        "base_ref": _command_env(STATUS_COMMAND_BASE_REF_ENV, LEGACY_STATUS_COMMAND_BASE_REF_ENV) or None,
-        "remote": _normalize_github_repo_slug(
-            _command_env(STATUS_COMMAND_REMOTE_ENV, LEGACY_STATUS_COMMAND_REMOTE_ENV)
+        "base_ref": _command_env(STATUS_COMMAND_BASE_REF_ENV) or None,
+        "remote": normalize_github_repo_slug(
+            _command_env(STATUS_COMMAND_REMOTE_ENV)
         ),
         "status_root": str(STATUS_ROOT),
         "delivery_root": str(delivery_root) if delivery_root is not None else None,
@@ -605,7 +486,7 @@ def _metadata_path(value: Any, *, label: str) -> Path:
     path = Path(os.path.expanduser(text))
     if not path.is_absolute():
         raise RuntimeError(f"{label} must be an absolute path")
-    symlink_component = _first_symlink_component(path)
+    symlink_component = first_symlink_component(path)
     if symlink_component is not None:
         raise RuntimeError(f"{label} cannot include a symlink component: {symlink_component}")
     return path.resolve()
@@ -985,7 +866,7 @@ def validate_status_root_binding() -> None:
     expanded_root = Path(os.path.expanduser(raw_root))
     if not expanded_root.is_absolute():
         raise RuntimeError("PANTHEON_STATUS_ROOT must be an absolute path")
-    symlink_component = _first_symlink_component(expanded_root)
+    symlink_component = first_symlink_component(expanded_root)
     if symlink_component is not None:
         raise RuntimeError(
             f"PANTHEON_STATUS_ROOT cannot include a symlink component: {symlink_component}"
@@ -1013,7 +894,7 @@ def validate_status_root_binding() -> None:
             f"coordination root: {root} != {expected_root}"
         )
 
-    git_root = _git_toplevel(root)
+    git_root = git_toplevel(root)
     if git_root != root:
         raise RuntimeError(
             f"PANTHEON_STATUS_ROOT must be a git repository root: {root}"
@@ -1022,7 +903,7 @@ def validate_status_root_binding() -> None:
         raise RuntimeError(
             f"PANTHEON_STATUS_ROOT is missing required ai-status.json: {STATUS_FILE}"
         )
-    symlink_comp_status = _first_symlink_component(STATUS_FILE)
+    symlink_comp_status = first_symlink_component(STATUS_FILE)
     if symlink_comp_status is not None:
         raise RuntimeError(f"ai-status.json cannot be a symlink: {STATUS_FILE} (contains symlink component: {symlink_comp_status})")
     if _existing_path_is_symlink(STATUS_FILE):
@@ -1051,7 +932,7 @@ def validate_status_root_binding() -> None:
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} escapes root: {path}"
             )
-        symlink_comp = _first_symlink_component(Path(path))
+        symlink_comp = first_symlink_component(Path(path))
         if symlink_comp is not None:
             raise RuntimeError(
                 f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path} (contains symlink component: {symlink_comp})"
@@ -1068,7 +949,7 @@ def validate_status_root_binding() -> None:
         (root / ".orchestrator" / "logs" / "activity-rotation", "activity rotation"),
         (root / ".orchestrator" / "worker-runtime", "worker runtime"),
     ):
-        symlink_comp = _first_symlink_component(path)
+        symlink_comp = first_symlink_component(path)
         if symlink_comp is not None:
             raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {symlink_comp}")
         _validate_directory_no_symlinks_recursive(path, label)
@@ -1376,10 +1257,6 @@ def build_onboarding_prompt(state: dict[str, Any]) -> str:
     parts.append("Follow the canonical lifecycle todo -> in_progress -> review -> review_approved -> done.")
     parts.append("Use scripts/ai-status.sh for every state change.")
     return " ".join(parts)
-
-
-def iso_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def parse_timestamp(value: Any) -> datetime | None:
@@ -5373,11 +5250,11 @@ def _validated_git_root(raw_root: str, *, label: str) -> Path:
     candidate = Path(os.path.expanduser(raw_root))
     if not candidate.is_absolute():
         raise SystemExit(f"{label} must be an absolute path")
-    symlink_component = _first_symlink_component(candidate)
+    symlink_component = first_symlink_component(candidate)
     if symlink_component is not None:
         raise SystemExit(f"{label} cannot include a symlink component: {symlink_component}")
     root = candidate.resolve()
-    if not root.is_dir() or _git_toplevel(root) != root:
+    if not root.is_dir() or git_toplevel(root) != root:
         raise SystemExit(f"{label} must be a git repository root: {root}")
     return root
 
@@ -5831,7 +5708,7 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     if evidence_rel.is_absolute() or ".." in evidence_rel.parts:
         raise SystemExit("RECONCILE_EVIDENCE_FILE must be a repository-relative path without '..'.")
     evidence_path = ROOT / evidence_rel
-    symlink_component = _first_symlink_component(evidence_path)
+    symlink_component = first_symlink_component(evidence_path)
     if symlink_component is not None:
         raise SystemExit(
             f"RECONCILE_EVIDENCE_FILE cannot include a symlink component: {symlink_component}"
@@ -5932,10 +5809,10 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     repository_slug_value = repository_slug(config, repository_id)
     if repository_id is None or not repository_slug_value:
         raise SystemExit("Cannot reconcile task: a single delivery repository is required.")
-    requested_slug = _normalize_github_repo_slug(
+    requested_slug = normalize_github_repo_slug(
         _required_reconcile_env("RECONCILE_DELIVERY_REPOSITORY")
     )
-    expected_slug = _normalize_github_repo_slug(repository_slug_value)
+    expected_slug = normalize_github_repo_slug(repository_slug_value)
     if requested_slug != expected_slug:
         raise SystemExit(
             "Cannot reconcile task: delivery repository does not match task artifacts "
@@ -5945,7 +5822,7 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
         _required_reconcile_env("RECONCILE_DELIVERY_ROOT"),
         label="RECONCILE_DELIVERY_ROOT",
     )
-    actual_slug = _normalize_github_repo_slug(
+    actual_slug = normalize_github_repo_slug(
         run_git_command(
             ["remote", "get-url", "origin"],
             cwd=delivery_root,
@@ -6772,7 +6649,7 @@ def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
 def validate_archive_review_file_target(task_id: str, review_file: str) -> tuple[str, str]:
     normalized = task_archive_module.normalize_archive_review_file(review_file)
     candidate = ROOT / normalized
-    symlink_component = _first_symlink_component(candidate)
+    symlink_component = first_symlink_component(candidate)
     if symlink_component is not None:
         raise SystemExit(
             f"Archive review_file target cannot include a symlink component: "
@@ -6924,7 +6801,7 @@ def validate_active_proof_ownership(
         label="proof ownership file",
     )
     candidate = ROOT / normalized
-    symlink_component = _first_symlink_component(candidate)
+    symlink_component = first_symlink_component(candidate)
     if symlink_component is not None:
         raise SystemExit(
             f"Proof ownership file cannot include a symlink component: "

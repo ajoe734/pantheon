@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
-from typing import Any, Mapping, Generator, Callable, Iterable, Final
+from typing import Any, Mapping, Generator, Callable, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -339,6 +339,35 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+WORKER_PROCESS_GENERATION_SCHEMA_VERSION = 1
+WORKER_PROCESS_GENERATION_PREFIX = "worker-process-generation-sha256:"
+
+
+def worker_process_generation_id(
+    *,
+    task_id: str,
+    worker_run_id: str,
+    queue_event_id: str,
+    pid: int,
+    pid_start_ticks: int,
+) -> str:
+    payload = {
+        "schema_version": WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+        "task_id": str(task_id),
+        "worker_run_id": str(worker_run_id),
+        "queue_event_id": str(queue_event_id),
+        "pid": int(pid),
+        "pid_start_ticks": int(pid_start_ticks),
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return WORKER_PROCESS_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -439,7 +468,9 @@ def resolve_path(value: str | Path | None) -> Path | None:
     return path
 
 
-def _first_symlink_component(path: Path) -> Path | None:
+def first_symlink_component(path: Path) -> Path | None:
+    if ".." in path.parts:
+        raise RuntimeError(f"Path contains parent directory references (..): {path}")
     current = Path(path.anchor)
     parts = path.parts[1:] if path.is_absolute() else path.parts
     for part in parts:
@@ -558,13 +589,9 @@ STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
 STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
 STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
 STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
-LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
-LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
-LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
-LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
 
 
-def _git_stdout(cwd: Path, args: list[str]) -> str:
+def git_stdout(cwd: Path, args: list[str]) -> str:
     proc = subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -576,6 +603,14 @@ def _git_stdout(cwd: Path, args: list[str]) -> str:
         detail = (proc.stderr or proc.stdout or "git command failed").strip()
         raise RuntimeError(detail)
     return proc.stdout.strip()
+
+
+def git_toplevel(path: Path) -> Path | None:
+    try:
+        top = git_stdout(path, ["rev-parse", "--show-toplevel"])
+    except RuntimeError:
+        return None
+    return Path(top).resolve() if top else None
 
 
 def normalize_github_repo_slug(value: str | None) -> str:
@@ -616,7 +651,7 @@ def validate_status_command_runtime(
 
     if not root.is_absolute():
         raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
-    symlink_component = _first_symlink_component(root)
+    symlink_component = first_symlink_component(root)
     if symlink_component is not None:
         raise RuntimeError(
             f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
@@ -624,18 +659,17 @@ def validate_status_command_runtime(
     resolved = root.resolve()
     if not resolved.exists() or not resolved.is_dir():
         raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {resolved}")
-    git_root = _git_stdout(resolved, ["rev-parse", "--show-toplevel"])
-    if Path(git_root).resolve() != resolved:
+    if git_toplevel(resolved) != resolved:
         raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {resolved}")
 
-    source_sha = _git_stdout(resolved, ["rev-parse", "HEAD"])
+    source_sha = git_stdout(resolved, ["rev-parse", "HEAD"])
     if expected_sha and source_sha != expected_sha:
         raise RuntimeError(
             f"{STATUS_COMMAND_SHA_ENV} mismatch: command root is {source_sha}, expected {expected_sha}"
         )
 
     expected_slug = normalize_github_repo_slug(expected_remote)
-    remote_url = _git_stdout(resolved, ["remote", "get-url", "origin"])
+    remote_url = git_stdout(resolved, ["remote", "get-url", "origin"])
     actual_slug = normalize_github_repo_slug(remote_url)
     if expected_slug and actual_slug != expected_slug:
         raise RuntimeError(
@@ -644,7 +678,7 @@ def validate_status_command_runtime(
 
     if require_merged:
         target_ref = str(base_ref or "origin/dev").strip() or "origin/dev"
-        _git_stdout(resolved, ["rev-parse", "--verify", target_ref])
+        git_stdout(resolved, ["rev-parse", "--verify", target_ref])
         proc = subprocess.run(
             ["git", "merge-base", "--is-ancestor", source_sha, target_ref],
             cwd=resolved,
@@ -680,11 +714,13 @@ def status_command_runtime_record_from_env(env: Mapping[str, str]) -> dict[str, 
     }
 
 
-def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[str, str] | None:
-    raw_root = str(record.get("command_root") or record.get("root") or "").strip()
-    raw_sha = str(record.get("source_sha") or record.get("runtime_sha") or "").strip()
+def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[str, str]:
+    raw_root = str(record.get("command_root") or "").strip()
+    raw_sha = str(record.get("source_sha") or "").strip()
     if not raw_root or not raw_sha:
-        return None
+        raise RuntimeError(
+            "issued status_command_runtime requires command_root and source_sha"
+        )
     remote = str(record.get("remote") or "").strip()
     base_ref = str(record.get("base_ref") or "").strip() or "origin/dev"
     metadata = validate_status_command_runtime(
@@ -699,10 +735,6 @@ def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[s
         STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
         STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
         STATUS_COMMAND_BASE_REF_ENV: base_ref,
-        LEGACY_STATUS_COMMAND_ROOT_ENV: metadata["root"],
-        LEGACY_STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
-        LEGACY_STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
-        LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
     }
 
 
@@ -764,10 +796,6 @@ def status_command_runtime_env(
             STATUS_COMMAND_SHA_ENV: runtime_metadata["source_sha"],
             STATUS_COMMAND_REMOTE_ENV: runtime_metadata["remote"],
             STATUS_COMMAND_BASE_REF_ENV: base_ref,
-            LEGACY_STATUS_COMMAND_ROOT_ENV: runtime_metadata["root"],
-            LEGACY_STATUS_COMMAND_SHA_ENV: runtime_metadata["source_sha"],
-            LEGACY_STATUS_COMMAND_REMOTE_ENV: runtime_metadata["remote"],
-            LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
         }
     env.update(task_state_store_runtime_env(config))
     return env
