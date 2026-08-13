@@ -1,0 +1,115 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-assignment-fallback-account-independent-v2-20260802T0842Z--71e38c4333f73337.json",
+  "admitted_at": "2026-08-02T08:44:25Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#assignment-account-independence-v2",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-ASSIGNMENT-FALLBACK-ACCOUNT-INDEPENDENT-REBIND-V2-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "REPOSITORY_GOVERNANCE",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "lines 76-78",
+        "Codex and Codex2 share one ChatGPT account",
+        "must not be treated as independent capacity or independent review identities"
+      ]
+    },
+    {
+      "kind": "REJECTED_IMPLEMENTATION",
+      "path": "https://github.com/ajoe734/pantheon/pull/4496",
+      "sourceRefs": [
+        "rejected exact head cfa2b668fcb4029de2a2bae1c8111eb9b82c0033",
+        "retain useful bounded fallback and pair CAS design only",
+        "discard identity-only independence and mutual-review assertions"
+      ]
+    },
+    {
+      "kind": "CURRENT_GAP_AUDIT",
+      "path": "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md",
+      "sourceRefs": [
+        "28-task DAG",
+        "G1=25",
+        "supervisor-only dispatch"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T08:42:00Z",
+  "intent": "supersede_invalid_identity_only_assignment_pair_contract_with_account_independent_pair_planning",
+  "mode": "kernel_repair",
+  "packet_digest": "71e38c4333f733379b7c319af844fd0ec45e5b3c0aa5c1c8b76833f3ee281a98",
+  "packet_id": "pkt-sup-assignment-fallback-account-independent-v2-20260802T0842Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "7cc2d3b57db4bba181826227042c08c7755e91bd1246b4d8cec97baf32183dca",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-require-supervisor-auto-worker-dispatch",
+    "human-ops-reject-codex-codex2-mutual-review-20260802"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ACCOUNT-INDEPENDENT-REBIND-V2-20260802",
+      "task_spec": {
+        "acceptance": [
+          "This task supersedes the rejected identity-only contract and PR #4496 head cfa2b668; do not approve or merge that unchanged head and do not append V2 work under the old Task-ID.",
+          "Start from current origin/dev in a clean governed task worktree. Supervisor and auto-worker are the only implementation path.",
+          "Preserve the useful atomic assignment-pair planning, bounded deterministic cycle-safe fallback traversal, catalog-lock immutability, and owner/reviewer/status compare-and-swap behavior demonstrated by PR #4496, but selectively port or reimplement it under this V2 task.",
+          "Independence must be evaluated using effective execution account and quota-group identity, not agent display-name inequality. Current AGENTS.md is authoritative: Codex and Codex2 share one ChatGPT account and cannot be independent capacity or independent reviewers.",
+          "Known shared-account aliases must fail closed even if stale task data or configuration labels them as different lanes. Do not edit .orchestrator/config.json to obtain the result.",
+          "Add positive and negative regressions proving Codex owner with Codex2 reviewer and Codex2 owner with Codex reviewer are rejected or replanned to a genuinely independent ready reviewer. If no legal pair exists, perform zero canonical mutation.",
+          "Reproduce the stranded multi-task fallback scenario and prove a complete legal pair is selected before mutation; no task may be left with owner equal to reviewer or owner/reviewer sharing an effective account group.",
+          "Helper claim, mainline normalization, and worker-failure reassignment must consume the same pair planner and the same account-independence predicate.",
+          "Catalog-locked assignments remain immutable, task preferred lanes remain ordered, traversal remains bounded, and stale compare-and-swap attempts fail without partial mutation.",
+          "Run focused pair-planner tests, full supervisor regression, py_compile, JSON evidence parse, git diff --check, commit-trailer checks, and exact-head GitHub CI.",
+          "No config edit, provider policy edit, canonical JSON hand edit, live runtime mutation, service restart, product task implementation, or 28-task catalog mutation.",
+          "Evidence must identify the superseded PR/head, effective identity rules, tested legal and illegal pairs, CAS results, source SHA, residual risks, and remain review_pending until Human/Ops exact-head review.",
+          "Deliver branch, commits, PR to dev, all checks, Human/Ops exact-head review, governed merge, and canonical done/archive before rollout. Rollback is merge-commit revert."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/task-briefs/sup_assignment_fallback_account_independent_rebind_v2_20260802.md",
+          "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ACCOUNT-INDEPENDENT-REBIND-V2-20260802/"
+        ],
+        "depends_on": [
+          "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+          "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+        ],
+        "id": "SUP-ASSIGNMENT-FALLBACK-ACCOUNT-INDEPENDENT-REBIND-V2-20260802",
+        "owner": "Antigravity",
+        "phase": "Supervisor reliability / assignment fallback topology V2",
+        "reviewer": "Human/Ops",
+        "summary": "Replace identity-only owner/reviewer inequality with effective account-group independence while retaining atomic fallback pair CAS and bounded traversal.",
+        "title": "Plan atomic fallback pairs with effective account independence"
+      },
+      "task_spec_hash": "c7ce65ff719a70d31700c4d402fbb188edf2639c1d5abc0475ef02ba6e5cd6b1"
+    }
+  ]
+}

@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V5-20260802",
+  "archived_at": "2026-08-02T10:04:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Supersede operator V4 because its acceptance contains false reviewer policy and omits the corrective identity and guarded-dispatcher dependencies.",
+      "Bind every accepted dependency to exact merged dev commit, green checks, independently reviewed exact head, and canonical completed archive.",
+      "Promote only through the reviewed transactional runtime promotion path with gate-before-switch and automatic rollback; never patch live source or config.",
+      "Codex and Codex2 remain distinct execution quota groups but one current review identity. Prove no fallback, approval, closeout, or merge gate treats them as independent reviewers.",
+      "Prove task-scoped live auth or quota unavailability triggers bounded legal owner/reviewer pair fallback; with no independent legal reviewer, fail closed with zero canonical mutation.",
+      "Prove captured fixture quota lines cannot pause unrelated Codex lanes and a healthy post-cooldown Antigravity live probe clears the quota pause automatically without manual state or config edits.",
+      "Prove stale eligible missing-process streak recovery is bounded while live auth and quota failure remains fail closed.",
+      "Prove governance review and handoff do not kill healthy active worker leases.",
+      "Observe at least thirty scheduler intervals near configured 30-second cadence and record p50, p95, max lag, every lock hold, worker/queue/provider deltas, and no overlapping cycles.",
+      "Require no runtime-admission or canonical lock hold above 30 seconds and authoritative projection, queue lease, process identity, provider readiness, reviewer eligibility, and config hash invariants throughout.",
+      "Rollback automatically on any identity, cadence, projection, lease, provider, config, or queue invariant failure and prove restored PID, root, commit, tree, config hash, and three fresh loops.",
+      "Do not materialize the fixed 28-task G1 frontier in this canary; successful canary only authorizes the separately guarded Antigravity dispatcher bootstrap and admission step.",
+      "Do not enable real writes, trading capital, product controllers, account policy changes, config edits, or manual canonical state edits.",
+      "Commit exact live evidence in a clean PR to dev with Human/Ops exact-head review, merge, and canonical archive."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V5-20260802/"
+    ],
+    "depends_on": [
+      "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802",
+      "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+      "SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-V2-20260802",
+      "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802",
+      "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802",
+      "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802",
+      "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-policy-corrected-dispatch-chain-v5-20260802",
+      "conversation_id": "codex-root-l12-three-pass-gap-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Codex and Codex2 share one ChatGPT account",
+            "Pantheon supervisor is the only routine implementation dispatcher"
+          ]
+        },
+        {
+          "kind": "INVALID_V4_TASK_EVIDENCE",
+          "path": "ai-status.json",
+          "sourceRefs": [
+            "four operator V4 tasks contain false different-accounts and mutual-review acceptance",
+            "all four remain nonterminal and are replaced before implementation"
+          ]
+        },
+        {
+          "kind": "THREE_PASS_GAP_AUDIT",
+          "path": "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md",
+          "sourceRefs": [
+            "PR #4494 merge 0a2bd446952936998996ba6ecc89b1cbacd55bce"
+          ]
+        },
+        {
+          "kind": "IMMUTABLE_28_TASK_CATALOG",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+          "sourceRefs": [
+            "sha256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+            "G1 remains unmaterialized until V5 canary and legal dispatcher bootstrap"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T09:59:00Z",
+      "intent": "replace_false_policy_v4_dispatch_closeout_chain_with_correct_v5",
+      "mode": "kernel_repair",
+      "packet_digest": "0dea13a8292f4a6d8fdd760af779bd66bd2a9bd7126688b7c6d15aa0468730a0",
+      "packet_id": "pkt-sup-dispatch-closeout-chain-policy-corrected-v5-20260802T0959Z",
+      "source_turn_ids": [
+        "user-requires-supervisor-autoworker-dispatch",
+        "user-requires-complete-gap-execution",
+        "false-review-policy-propagated-into-v4-chain"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Supersede operator V4 because its acceptance contains false reviewer policy and omits the corrective identity and guarded-dispatcher dependencies.",
+          "Bind every accepted dependency to exact merged dev commit, green checks, independently reviewed exact head, and canonical completed archive.",
+          "Promote only through the reviewed transactional runtime promotion path with gate-before-switch and automatic rollback; never patch live source or config.",
+          "Codex and Codex2 remain distinct execution quota groups but one current review identity. Prove no fallback, approval, closeout, or merge gate treats them as independent reviewers.",
+          "Prove task-scoped live auth or quota unavailability triggers bounded legal owner/reviewer pair fallback; with no independent legal reviewer, fail closed with zero canonical mutation.",
+          "Prove captured fixture quota lines cannot pause unrelated Codex lanes and a healthy post-cooldown Antigravity live probe clears the quota pause automatically without manual state or config edits.",
+          "Prove stale eligible missing-process streak recovery is bounded while live auth and quota failure remains fail closed.",
+          "Prove governance review and handoff do not kill healthy active worker leases.",
+          "Observe at least thirty scheduler intervals near configured 30-second cadence and record p50, p95, max lag, every lock hold, worker/queue/provider deltas, and no overlapping cycles.",
+          "Require no runtime-admission or canonical lock hold above 30 seconds and authoritative projection, queue lease, process identity, provider readiness, reviewer eligibility, and config hash invariants throughout.",
+          "Rollback automatically on any identity, cadence, projection, lease, provider, config, or queue invariant failure and prove restored PID, root, commit, tree, config hash, and three fresh loops.",
+          "Do not materialize the fixed 28-task G1 frontier in this canary; successful canary only authorizes the separately guarded Antigravity dispatcher bootstrap and admission step.",
+          "Do not enable real writes, trading capital, product controllers, account policy changes, config edits, or manual canonical state edits.",
+          "Commit exact live evidence in a clean PR to dev with Human/Ops exact-head review, merge, and canonical archive."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V5-20260802/"
+        ],
+        "depends_on": [
+          "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+          "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+          "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+          "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802",
+          "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+          "SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-V2-20260802",
+          "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802",
+          "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802",
+          "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V5-20260802",
+          "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802"
+        ],
+        "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V5-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Live Canary / Quota Routing Cadence Identity / operator V5",
+        "reviewer": "Human/Ops",
+        "summary": "Promote the fully corrected supervisor transactionally and prove quota recovery, legal review identity, leases, and cadence before G1 admission.",
+        "title": "Run transactional live quota-routing cadence and review-identity canary"
+      },
+      "task_spec_hash": "c5e45fead22718f748bb367af79cc381579de14c5261b5c27a81a1e8eca93f9c"
+    },
+    "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V5-20260802",
+    "last_update": "2026-08-02T10:04:37Z",
+    "next": "Operator rejected the shared-account/shared-review-identity premise. Codex and Codex2 may use different accounts; preserve distinct configured quota groups, do not hardcode equivalence, and do not impose a global mutual-review ban. This task is replaced by an account-neutral governed chain.",
+    "owner": "Codex",
+    "phase": "Supervisor Live Canary / Quota Routing Cadence Identity / operator V5",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Promote the fully corrected supervisor transactionally and prove quota recovery, legal review identity, leases, and cadence before G1 admission.",
+    "title": "Run transactional live quota-routing cadence and review-identity canary",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "task_id": "OPS-L12-DEP-EVIDENCE-REPLAY-001",
+  "archived_at": "2026-07-27T13:11:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Top-level stale manifest is removed from replay discovery or explicitly relocated outside the evidence root",
+      "The canonical closeout/evidence.json checksum and archived review_file remain unchanged and valid",
+      "loop_done_guardrail reports no failing replay source for L12-DEP-001",
+      "Focused guardrail and archive-review-file regressions pass",
+      "Task branch PR checks merge SHA and independent review are archived"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/README.md",
+          "repo": "pantheon"
+        },
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.json",
+          "repo": "pantheon"
+        },
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.sha256",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "OPS-L12-DEP-EVIDENCE-REPLAY-001"
+    },
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.sha256"
+    ],
+    "depends_on": [
+      "L12-DEP-001"
+    ],
+    "evidence_integrity_followup_for": "L12-DEP-001",
+    "id": "OPS-L12-DEP-EVIDENCE-REPLAY-001",
+    "last_update": "2026-07-27T13:11:19Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: delivery PR #4209 merged as 5b8addf628c09f88ff8199080ab68429dbe7b531; task record PR #4244 merged as 82b40e7a8e0dbafb70e39b437a64a91ae5f56863. Current evidence-root replay resolves exactly one L12-DEP-001 source with result pass and gap_count 0; archived L12-DEP-001 review_file resolves to closeout/evidence.json as valid_closure; checksum OK; focused pytest 223 passed with 33 subtests; required PR checks passed. No task review_file bound because this evidence-integrity OPS task is neither product-level nor loop-autopilot, and adding an evidence.json under the audited root would recreate the duplicate-source defect.",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Evidence Integrity",
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "移除或正式歸檔 L12-DEP-001 上層的舊 schema-invalid evidence replay source，保留已通過且已綁定 archive review_file 的 closeout manifest，讓全域 closeout replay 不再被重複舊證據阻塞。",
+    "target_repo": "pantheon",
+    "title": "Remove stale duplicate L12-DEP replay source",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T13:11:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-l12-dep-evidence-replay-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-L12-DEP-EVIDENCE-REPLAY-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-1434effdc88f",
+        "source_sha": "1434effdc88fb79abd0125351a5206af8fe4a7c7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-l12-dep-evidence-replay-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-1434effdc88f"
+      },
+      "commit": "8911c3dcb27c2be3898d529ae03ce36d36d7f64f",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-L12-DEP-EVIDENCE-REPLAY-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "82b40e7a8e0dbafb70e39b437a64a91ae5f56863",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T12:46:56Z",
+      "from": "Codex",
+      "message": "Please independently review merged PR #4209 and origin/dev evidence. Confirm only README.md plus deletion of the top-level evidence.json/evidence.sha256 changed, closeout/evidence.json and .sha256 remained byte-identical, evidence-root replay resolves L12-DEP-001 once with pass/0 gaps, archived L12-DEP-001 review_file replays as valid_closure, and required checks/pytest evidence are sufficient. Approve or reopen with concrete findings; do not relabel L12-MANIFEST-001/L12-HOSTED-001 runtime or hosted proof.",
+      "resolved_at": "2026-07-27T12:56:54Z",
+      "status": "done",
+      "task_id": "OPS-L12-DEP-EVIDENCE-REPLAY-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T12:56:54Z",
+      "from": "Codex2",
+      "message": "Independent review approved: PR #4209 merged to dev as 5b8addf628c09f88ff8199080ab68429dbe7b531 and is an ancestor of origin/dev ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c. Evidence-packet net diff is README.md plus deletion of top-level evidence.json/evidence.sha256; the only additional PR file is the task-scoped brief record. closeout/evidence.json and closeout/evidence.sha256 are byte-identical at pre-merge, merge, and current origin/dev (SHA-256 262f4c80dad423c547272662801450967671042e99347dd9f67aa991301fa683 and 94cc65e8a34f2958003275b51d55829b1d999bda72b423330a36eaca63f1ea7b), and the companion checksum passes. Current origin/dev evidence-root replay resolves exactly one L12-DEP-001 source, result pass with gap_count 0; archived L12-DEP-001 review_file resolves to closeout/evidence.json and replays valid_closure with 0 gaps. Focused pytest: 223 passed, 33 subtests passed; PR Commit trailers, Runtime mirror guard, and Smoke acceptance checks all succeeded. README preserves L12-MANIFEST-001 runtime-wiring and L12-HOSTED-001 hosted-proof ownership without relabelling either.",
+      "status": "done",
+      "task_id": "OPS-L12-DEP-EVIDENCE-REPLAY-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-27T13:11:20Z"
+    }
+  ],
+  "blockers": []
+}

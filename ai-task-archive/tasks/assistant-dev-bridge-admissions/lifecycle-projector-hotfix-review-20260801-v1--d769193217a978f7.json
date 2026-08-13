@@ -1,0 +1,85 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "assistant.dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/lifecycle-projector-hotfix-review-20260801-v1--d769193217a978f7.json",
+  "admitted_at": "2026-08-01T09:25:51Z",
+  "audit_conversation_href": "https://github.com/ajoe734/pantheon/pull/4448",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-lifecycle-projector-incident-20260801",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "INCIDENT_HOTFIX",
+      "path": "docker-compose.yml",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4448",
+        "85e835448f7b86ce77ad9e4e0cc80961879b29c0"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T09:25:46.317592+00:00",
+  "intent": "review_merge_and_validate_emergency_lifecycle_projector_containment",
+  "mode": "kernel_repair",
+  "packet_digest": "d769193217a978f7b70b7388ff4826ad0538093604b8a96e9db0ee18354fb8a9",
+  "packet_id": "lifecycle-projector-hotfix-review-20260801-v1",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "622e249f760f176a7960934bf2c77579ec0155e942572c2aef490d2cd5f9ef10",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "emergency-containment",
+    "hotfix-pr-4448"
+  ],
+  "tasks": [
+    {
+      "task_id": "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Review exact PR #4448 head 85e835448f7b86ce77ad9e4e0cc80961879b29c0 independently; Codex and Codex2 are the same identity and are ineligible reviewers.",
+          "Confirm operator-bff can start and serve the last atomic read model while the projector is stopped, and that readiness continues to report stale/error truth.",
+          "Confirm the projector defaults to restart=no, has a 16 GiB hard memory ceiling, and defaults generation retention to 4 without deleting existing data.",
+          "Re-run the focused lifecycle projector tests and docker compose config validation; publish exact logs and a review verdict.",
+          "If accepted, approve and merge PR #4448 to dev without changing its head, then record the merge commit and dev rollout or explicit rollout blocker.",
+          "Do not restart the stopped projector on the current unbounded implementation and do not delete projection state or generations."
+        ],
+        "artifacts": [
+          "docker-compose.yml",
+          "services/trade_journey/test_lifecycle_projector_compose.py",
+          "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801/"
+        ],
+        "depends_on": [],
+        "id": "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801",
+        "owner": "Antigravity",
+        "phase": "incident-hotfix-review",
+        "reviewer": "Human/Ops",
+        "summary": "Independent review/merge handoff for the bounded emergency hotfix already implemented and validated by Codex. This task may review, merge, and validate; it must not broaden into the full projector redesign.",
+        "title": "Independently review and complete lifecycle projector emergency containment"
+      },
+      "task_spec_hash": "a4d886a87d61fd74c32b6746c8a40e01368169dac9fbf3deb015a24d2917c740"
+    }
+  ]
+}

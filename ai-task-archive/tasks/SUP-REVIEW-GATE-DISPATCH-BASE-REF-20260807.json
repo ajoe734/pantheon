@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+  "archived_at": "2026-08-08T15:30:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "_dispatch_canonical_review_gate_workflow must dispatch against binding.base",
+      "not binding.head_branch -- GitHub's workflow-dispatch API 422s if workflow_dispatch is missing from the workflow file on the TARGET ref",
+      "which a stale or pre-fix task branch may not carry even though dev has it.",
+      "Verified live on PR #4587: dispatching by head branch failed silently (best-effort swallow) leaving mergeable_state stuck at blocked despite a real review-proof tag and a green-looking required status; dispatching by base branch (dev) succeeded immediately.",
+      "Regression test updated to assert the dispatch ref equals binding.base using the existing fixture's already-distinct head_branch/base values."
+    ],
+    "artifacts": [
+      "scripts/git/github_review_bridge.py",
+      "scripts/git/test_github_review_bridge.py"
+    ],
+    "depends_on": [],
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "head_sha": "1ff2918c2db817be3fd10fb38e68e2e7f4cadb37",
+      "mode": "required_commit_status",
+      "pr": 4605,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4605",
+      "recorded_at": "2026-08-08T15:22:39Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/1ff2918c2db817be3fd10fb38e68e2e7f4cadb37",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51885036430,
+      "status_state": "success"
+    },
+    "id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+    "last_update": "2026-08-08T15:30:15Z",
+    "next": "Owner closeout complete: PR #4605 merged as f0f2f0951f88bb6fc9ebcfe7e84c1c27f2be13b1 from reviewed head 1ff2918c2db817be3fd10fb38e68e2e7f4cadb37; github_review_bridge tests 11/11, evidence JSON, diff check, and origin/dev ancestry passed; preserved exact-head approval without a post-review commit.",
+    "owner": "Codex",
+    "phase": "Supervisor Dispatch Reliability",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "head_sha": "1ff2918c2db817be3fd10fb38e68e2e7f4cadb37",
+      "pr": 4605
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Dispatch canonical-review-gate workflow against base branch, not head",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-08T15:30:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/claude-1002/-home-lupin-pantheon/2aa7998c-b94d-4f58-9f72-94b05e83b830/scratchpad/worktrees/sup-review-gate-dispatch-base-ref",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/claude-1002/-home-lupin-pantheon/2aa7998c-b94d-4f58-9f72-94b05e83b830/scratchpad/worktrees/sup-review-gate-dispatch-base-ref",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+          "worker_run_id": "codex-20260808T152511Z-5368cfba",
+          "queue_event_id": "evt-20260808T152504Z-400c3773",
+          "pid": 448620,
+          "pid_start_ticks": 4175966,
+          "process_generation": "worker-process-generation-sha256:a193a416f0748f18aebde62a541fbd81be906db6e96258c474cb51412db1c741"
+        }
+      },
+      "commit": "1ff2918c2db817be3fd10fb38e68e2e7f4cadb37",
+      "commit_subject": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807: anchor review handoff",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped brief and review-evidence metadata after integrating the current dev base.",
+        "Not changing": "GitHub review bridge behavior, workflow trigger definitions, canonical task state, or merge policy.",
+        "Composes with": "the existing base-ref dispatch correction, Codex2's independent exact-head review, and the protected dev merge path.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+        "Reviewer": "Codex2",
+        "Verified": "scripts/git/test_github_review_bridge.py (11 tests); json.tool evidence; git diff --check; origin/dev ancestry"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f0f2f0951f88bb6fc9ebcfe7e84c1c27f2be13b1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-07T12:19:31Z",
+      "from": "Claude",
+      "message": "Helper-claimed by idle Codex previous owner Claude becomes reviewer.",
+      "resolved_at": "2026-08-07T12:20:17Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-07T12:26:56Z",
+      "from": "Codex",
+      "message": "PR #4605 is open at exact head 79a18c08004d7656dac2558a5895eff0f3e34806. Independently review scripts/git/github_review_bridge.py and its regression, then bind docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807/evidence.json with the governed approve command. Local JSON validation, 11 focused tests, trailer check, and diff check passed; protected checks are running and auto-merge is off.",
+      "resolved_at": "2026-08-07T12:30:11Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-07T12:30:11Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Antigravity.",
+      "resolved_at": "2026-08-07T12:33:32Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-07T12:33:32Z",
+      "from": "Antigravity",
+      "message": "Reviewer Antigravity verified implementation diff in 78cae643d and test assert in 11/11 passing tests. Dispatch ref changed from binding.head_branch to binding.base, with head_ref/head_sha preserved as inputs. Committed evidence manifest verified.",
+      "resolved_at": "2026-08-07T12:48:00Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T04:00:15Z",
+      "from": "Codex",
+      "message": "Please independently review PR #4605 at exact head 79a18c08004d7656dac2558a5895eff0f3e34806. Verify the binding.base dispatch regression and the 11 focused tests. The committed manifest predates your reviewer assignment and still names Claude; do not treat it as your approval evidence. Either bind a fresh valid task-scoped evidence manifest through governed approve at the reviewed exact head, or reopen with concrete required changes. Owner must not call done before that review and protected dev merge.",
+      "resolved_at": "2026-08-08T04:02:06Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T04:02:06Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4605 at head 79a18c08004d7656dac2558a5895eff0f3e34806: github_review_bridge.py correctly dispatches workflow against binding.base ('dev') instead of binding.head_branch, avoiding 422 errors on branches predating workflow_dispatch trigger; head_ref and head_sha inputs remain intact; all 11 unit tests pass in test_github_review_bridge.py.",
+      "resolved_at": "2026-08-08T04:09:35Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T04:11:02Z",
+      "from": "Codex",
+      "message": "Fresh exact-head review required after correcting manifest reviewer metadata. Review PR #4605 at d535106a82f5e839598f11498a5384be76935e6d; manifest is already committed at docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807/evidence.json. Verify python3 scripts/git/test_github_review_bridge.py (11 tests) and the dispatch ref is binding.base while head_ref/head_sha inputs remain exact. Then approve with REVIEW_PR=4605 and REVIEW_HEAD_SHA=d535106a82f5e839598f11498a5384be76935e6d.",
+      "resolved_at": "2026-08-08T04:12:13Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T04:12:13Z",
+      "from": "Antigravity",
+      "message": "Reviewed implementation diff in scripts/git/github_review_bridge.py and test in scripts/git/test_github_review_bridge.py. Verified 11 tests pass in test_github_review_bridge.py. Confirmed evidence manifest committed at docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807/evidence.json accurately specifies Antigravity as reviewer. Approved PR #4605 at head SHA d535106a82f5e839598f11498a5384be76935e6d.",
+      "resolved_at": "2026-08-08T04:16:18Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:26:26Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex2.",
+      "resolved_at": "2026-08-08T14:27:57Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T15:18:40Z",
+      "from": "Codex",
+      "message": "PR #4605 is ready for independent exact-head review at 1ff2918c2db817be3fd10fb38e68e2e7f4cadb37. Review the binding.base dispatch change, regression test, and committed evidence manifest docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807/evidence.json. Validation: 11 bridge tests, JSON validation, diff check, and origin/dev ancestry pass. Approve only this exact head and bind REVIEW_FILE to the manifest.",
+      "resolved_at": "2026-08-08T15:22:39Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T15:22:39Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review passed for PR #4605 at 1ff2918c2db817be3fd10fb38e68e2e7f4cadb37: _dispatch_canonical_review_gate_workflow uses binding.base while preserving explicit head_ref/head_sha inputs; test_github_review_bridge.py ran 11/11; manifest JSON and origin/dev ancestry verified.",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "to": "Codex",
+      "resolved_at": "2026-08-08T15:30:15Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-07T12:48:00Z",
+      "message": "Closeout blocked: PR #4605 is open and its exact head 79a18c08004d7656dac2558a5895eff0f3e34806 has no pantheon-review/approve proof tag; Canonical Review Gate run 31178111271 failed for that missing tag. The committed review_file still names Claude and pending review, while the canonical reviewer is Antigravity. Await Antigravity to reopen / establish a valid exact-head review cycle; owner must not call done or alter reviewed evidence.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-07T14:12:15Z",
+      "status": "resolved",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "waiting_for": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T04:16:18Z",
+      "message": "Closeout blocked: PR #4605 is open and canonical-review-gate failed because exact reviewed head d535106a82f5e839598f11498a5384be76935e6d has no GitHub review-proof tag. Antigravity must re-record independent exact-head approval through the governed bridge, binding the already-committed review_file; then wait for the workflow gate to pass and PR merge into dev before owner finalization.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-08T15:07:26Z",
+      "status": "resolved",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-BASE-REF-20260807",
+      "waiting_for": "Antigravity"
+    }
+  ]
+}

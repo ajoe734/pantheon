@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "task_id": "L12-CTRL-001",
+  "archived_at": "2026-07-26T15:44:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Concurrent success failure heartbeat and backlog updates cannot lose newer fields",
+      "Normal writes renew fenced leases and stale writers are rejected",
+      "BFF projects desired-state presence and authoritative downstream actual state",
+      "Controller truth lookup is scoped by authenticated tenant and environment",
+      "A reusable conformance suite covers all required controller fields"
+    ],
+    "actual_state_sources": [
+      "loop_controller_records",
+      "domain terminal actual-state query"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [
+        "L12-BFF-001",
+        "L12-TRUTH-001",
+        "PPL-ALLOC-009"
+      ],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "schemas/loop-controller-record.schema.json",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/bff/loop_inventory.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/bff/main.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/bff/test_loop_health_read_model_contract.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/loop-control",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-CTRL-001"
+    },
+    "artifacts": [
+      "services/loop-control",
+      "schemas/loop-controller-record.schema.json",
+      "services/control-plane/bff/loop_inventory.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_loop_health_read_model_contract.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "162feb97beffe9d76424ebb54a3873933420f8d892e587324a2fc093a9fe5c6e",
+    "current_maturity": "contract",
+    "depends_on": [
+      "L12-FLEET-001",
+      "PPL-ALLOC-009"
+    ],
+    "desired_state_sources": [
+      "loop catalog controller contract",
+      "domain desired-state query"
+    ],
+    "dispatch_rules": [
+      "Do not change domain business behavior",
+      "Preserve fail-closed catalog admission",
+      "Use authenticated tenant rather than environment defaults"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001",
+    "fleet_lane": "loop-controller",
+    "id": "L12-CTRL-001",
+    "last_update": "2026-07-26T15:44:40Z",
+    "loop_ids": [
+      "source_ingestion",
+      "strategy_distillation",
+      "alpha_replication",
+      "persona_teaching",
+      "agora_interaction_evidence",
+      "human_imitation_shadow_evaluation",
+      "consultation",
+      "promotion_deployment",
+      "capital_pool_execution",
+      "telemetry_reconciliation",
+      "evolution",
+      "bff_health_monitoring"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout: PR #4178 merged into dev at 760d973900d33acc555f44c01145e58b6ab76946 (task head 95b22326b4dc578e7fa74d12d931dfea6d0c8427). Final dev re-integration at fb034b201 re-ran the reviewed six-file controller regression (110 passed, 13 warnings in 50.67s against the live Postgres store on localhost:15432), plus py_compile, json.tool, sha256sum -c evidence.sha256, git diff --check, product-evidence schema validation, and loop_done_guardrail.py --task-id L12-CTRL-001 (OK, 1/1). Reviewer Codex2's approved packet is preserved byte-identically at reviewed-controller-evidence.json (sha256 bc77e37f981d8c566e706f3313b06dd92c9d52bb29d7dae7313bf4690e2a4ff9); no controller behavior, acceptance verdict, or reviewer decision was re-derived at closeout.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No catalog maturity promotion before domain proof"
+    ],
+    "owner": "Claude",
+    "phase": "Twelve Loop Remediation / Controller Foundation",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "Postgres concurrency tests",
+      "lease and stale-writer tests",
+      "tenant isolation tests",
+      "BFF truth contract tests"
+    ],
+    "requires_human_ops_signoff": false,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "修正 loop controller lost-update、lease、desired/actual projection 與 authenticated-tenant BFF 查詢，提供 12 條循環共同使用的 conformance contract。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-CTRL-001.md",
+    "title": "Harden canonical loop controller truth",
+    "wave": 1,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T15:44:40Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-ctrl-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-CTRL-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
+        "source_sha": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-ctrl-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68"
+      },
+      "commit": "95b22326b4dc578e7fa74d12d931dfea6d0c8427",
+      "commit_subject": "L12-CTRL-001: re-cut closeout evidence on current dev",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "the L12-CTRL-001 evidence packet only. Merged current dev",
+        "Not changing": "controller behavior, acceptance verdicts, the reviewer",
+        "Composes with": "PR #4178 auto-merge into dev, then owner closeout with the",
+        "LLM-Agent": "Claude",
+        "Task-ID": "L12-CTRL-001",
+        "Reviewer": "Codex2",
+        "Verified": "pytest six-file controller regression 110 passed on fb034b201; py_compile, json.tool, sha256sum -c, git diff --check all exit 0; product-evidence schema validation pass; loop_done_guardrail.py --task-id L12-CTRL-001 OK"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "760d973900d33acc555f44c01145e58b6ab76946",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T12:57:29Z",
+      "from": "Codex",
+      "message": "Please independently review PR #4178 at 147495e6b. Re-run the 110-test focused suite, verify fenced lease/lost-update and strict tenant/environment projection, then commit the independent review decision into evidence.json, refresh evidence.sha256, and approve with REVIEW_FILE bound if satisfied.",
+      "resolved_at": "2026-07-26T13:19:52Z",
+      "status": "done",
+      "task_id": "L12-CTRL-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T13:19:52Z",
+      "from": "Codex2",
+      "message": "Independent review approved PR #4178 candidate 147495e6b with reviewer evidence commit d1854c512: 110 focused tests passed; 16 acceptance-focused Postgres/BFF tests passed; transaction-scoped partial merge preserves concurrent fields; normal writes renew generation-specific fenced leases and reject the stale token after takeover; desired/actual observations stay explicit and authoritative only with source/time; strict JWT tenant and environment scope filters both Postgres and fallback records; all 12 loop IDs conform; new PR head required checks 6/6 passed. PR remains open/behind for Codex owner refresh, merge, and done closeout.",
+      "resolved_at": "2026-07-26T13:39:34Z",
+      "status": "done",
+      "task_id": "L12-CTRL-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T13:39:34Z",
+      "from": "Codex2",
+      "message": "Independent review approved PR #4178 candidate 147495e6b with reviewer evidence commit d1854c512: 110 focused tests passed; 16 acceptance-focused Postgres/BFF tests passed; transaction-scoped partial merge preserves concurrent fields; normal writes renew generation-specific fenced leases and reject the stale token after takeover; desired/actual observations stay explicit and authoritative only with source/time; strict JWT tenant and environment scope filters both Postgres and fallback records; all 12 loop IDs conform; new PR head required checks 6/6 passed. PR remains open/behind for Codex owner refresh, merge, and done closeout.",
+      "resolved_at": "2026-07-26T13:41:36Z",
+      "status": "done",
+      "task_id": "L12-CTRL-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T13:41:36Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-CTRL-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex.",
+      "resolved_at": "2026-07-26T14:21:14Z",
+      "status": "done",
+      "task_id": "L12-CTRL-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T14:21:14Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-CTRL-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex.",
+      "status": "done",
+      "task_id": "L12-CTRL-001",
+      "to": "Claude",
+      "resolved_at": "2026-07-26T15:44:40Z"
+    }
+  ],
+  "blockers": []
+}

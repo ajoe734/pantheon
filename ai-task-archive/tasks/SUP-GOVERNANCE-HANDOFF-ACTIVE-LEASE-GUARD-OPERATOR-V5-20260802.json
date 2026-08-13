@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802",
+  "archived_at": "2026-08-02T10:04:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Supersede operator V4 because its acceptance contains false reviewer policy; start only after bridge V5 is completed.",
+      "Codex and Codex2 remain one current review identity even though execution quota groups stay distinct; preserve the merged shared eligibility predicate.",
+      "Reproduce healthy workers killed with exit 143 immediately after their own review handoff or canonical review transition at 09:45 and 09:50 on 2026-08-02.",
+      "Governance-only assign, note, reopen, review, approval, or handoff cannot supersede a healthy active implementation lease.",
+      "Only explicit cancel, eligible preemption, exact legal reassignment, or terminal canonical truth may end the lease.",
+      "Keep execution responsibility, independent review provenance, and canonical lifecycle separately auditable.",
+      "Lease decisions bind exact task, run, PID starttime, queue event, process generation, and canonical event order.",
+      "Concurrent owner, reviewer, or status mutation fails closed without killing unrelated work; stale-worker recovery remains effective.",
+      "Run focused and full relevant supervisor and ai-status suites, py_compile, evidence JSON, trailer, scope, and diff checks.",
+      "Do not edit config, account or quota groups, reviewer policy, provider policy, live runtime, services, product tasks, or catalog.",
+      "Deliver clean PR to dev, exact-head Human/Ops review, merge, and canonical archive. Rollback is merge revert."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802/"
+    ],
+    "depends_on": [
+      "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-policy-corrected-dispatch-chain-v5-20260802",
+      "conversation_id": "codex-root-l12-three-pass-gap-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Codex and Codex2 share one ChatGPT account",
+            "Pantheon supervisor is the only routine implementation dispatcher"
+          ]
+        },
+        {
+          "kind": "INVALID_V4_TASK_EVIDENCE",
+          "path": "ai-status.json",
+          "sourceRefs": [
+            "four operator V4 tasks contain false different-accounts and mutual-review acceptance",
+            "all four remain nonterminal and are replaced before implementation"
+          ]
+        },
+        {
+          "kind": "THREE_PASS_GAP_AUDIT",
+          "path": "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md",
+          "sourceRefs": [
+            "PR #4494 merge 0a2bd446952936998996ba6ecc89b1cbacd55bce"
+          ]
+        },
+        {
+          "kind": "IMMUTABLE_28_TASK_CATALOG",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+          "sourceRefs": [
+            "sha256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+            "G1 remains unmaterialized until V5 canary and legal dispatcher bootstrap"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T09:59:00Z",
+      "intent": "replace_false_policy_v4_dispatch_closeout_chain_with_correct_v5",
+      "mode": "kernel_repair",
+      "packet_digest": "0dea13a8292f4a6d8fdd760af779bd66bd2a9bd7126688b7c6d15aa0468730a0",
+      "packet_id": "pkt-sup-dispatch-closeout-chain-policy-corrected-v5-20260802T0959Z",
+      "source_turn_ids": [
+        "user-requires-supervisor-autoworker-dispatch",
+        "user-requires-complete-gap-execution",
+        "false-review-policy-propagated-into-v4-chain"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Supersede operator V4 because its acceptance contains false reviewer policy; start only after bridge V5 is completed.",
+          "Codex and Codex2 remain one current review identity even though execution quota groups stay distinct; preserve the merged shared eligibility predicate.",
+          "Reproduce healthy workers killed with exit 143 immediately after their own review handoff or canonical review transition at 09:45 and 09:50 on 2026-08-02.",
+          "Governance-only assign, note, reopen, review, approval, or handoff cannot supersede a healthy active implementation lease.",
+          "Only explicit cancel, eligible preemption, exact legal reassignment, or terminal canonical truth may end the lease.",
+          "Keep execution responsibility, independent review provenance, and canonical lifecycle separately auditable.",
+          "Lease decisions bind exact task, run, PID starttime, queue event, process generation, and canonical event order.",
+          "Concurrent owner, reviewer, or status mutation fails closed without killing unrelated work; stale-worker recovery remains effective.",
+          "Run focused and full relevant supervisor and ai-status suites, py_compile, evidence JSON, trailer, scope, and diff checks.",
+          "Do not edit config, account or quota groups, reviewer policy, provider policy, live runtime, services, product tasks, or catalog.",
+          "Deliver clean PR to dev, exact-head Human/Ops review, merge, and canonical archive. Rollback is merge revert."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802/"
+        ],
+        "depends_on": [
+          "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802"
+        ],
+        "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Governance Handoff / Active Lease Guard / operator V5",
+        "reviewer": "Human/Ops",
+        "summary": "Prevent governance transitions from killing the healthy auto-worker that produced them while preserving independent review truth.",
+        "title": "Preserve active worker lease across governance handoff with corrected identity policy"
+      },
+      "task_spec_hash": "7a9bf66d66f494e2d370ef1665752de05629e8255fd3832e9e5aa8b780785223"
+    },
+    "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802",
+    "last_update": "2026-08-02T10:04:18Z",
+    "next": "Operator rejected the shared-account/shared-review-identity premise. Codex and Codex2 may use different accounts; preserve distinct configured quota groups, do not hardcode equivalence, and do not impose a global mutual-review ban. This task is replaced by an account-neutral governed chain.",
+    "owner": "Codex",
+    "phase": "Supervisor Governance Handoff / Active Lease Guard / operator V5",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Prevent governance transitions from killing the healthy auto-worker that produced them while preserving independent review truth.",
+    "title": "Preserve active worker lease across governance handoff with corrected identity policy",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

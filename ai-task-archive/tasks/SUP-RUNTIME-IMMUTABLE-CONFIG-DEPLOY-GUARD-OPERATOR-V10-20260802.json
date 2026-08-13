@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
+  "archived_at": "2026-08-06T01:22:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce that current sync-dev-root provisions the live watchdog back to dev-root and may reset or TERM an active split immutable supervisor",
+      "Provisioning must accept only a canonical non-symlink command-runtimes slash full-40-hex root whose basename HEAD tree remote cleanliness and accepted dev ancestry all verify for a running supervisor target",
+      "Dev deploy must materialize or reuse that exact immutable runtime and must not use the mutable source-sync checkout as the supervisor command root",
+      "Separate dashboard or build use of dev-root from supervisor command authority so frontend and status hosting behavior is unchanged",
+      "sync-dev-root may refresh the staging dev-root checkout but must never stash reset or hard-update an active immutable supervisor root and must never directly TERM a split-root supervisor",
+      "When source or config advances sync and deploy must request the governed promotion transaction rather than prewriting live config or relying on watchdog to jump runtimes",
+      "Add separate tests for current-root and split-root paths immutable active root protection mutable and symlink rejection stale accepted-dev refs config drift no-op behavior promotion handoff failure and first-install behavior with no incumbent",
+      "Preserve canonical status paths provider homes account and quota grouping worker leases explicit Human/Ops reviewer and rollback authority; do not equate Codex with Codex2 or add a mutual-review ban",
+      "Use a clean task worktree after the bootstrap dependency merges and deliver only declared source tests and evidence through PR checks exact-head Human/Ops review governed merge and canonical archive",
+      "Do not deploy or restart live services in this source task; the blocked V9 canary performs the merged candidate rollout and at least ten-cycle acceptance"
+    ],
+    "artifacts": [
+      "scripts/provision_live_supervisor_config.py",
+      "scripts/test_provision_live_supervisor_config.py",
+      "scripts/sync-dev-root.sh",
+      "scripts/test_sync_dev_root.py",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_dev_supervisor_watchdog_deploy_contract.py",
+      "scripts/test_dev_deploy_worktree_isolation_contract.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-MUTABLE-INCUMBENT-BOOTSTRAP-TRANSACTION-OPERATOR-V10-20260802"
+    ],
+    "github_review_bridge": {
+      "actor": "Codex",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
+      "head_sha": "bd7039685e75c97cf18b35e984f97193a1c68e4d",
+      "mode": "required_commit_status",
+      "pr": 4526,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4526",
+      "recorded_at": "2026-08-04T01:28:43Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51586315708,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
+    "last_update": "2026-08-06T01:22:41Z",
+    "next": "Human/Ops (2026-08-06) batch closeout: PR #4526 independently reverified MERGED into dev; owner drift verified via reassignment-chain checker.",
+    "owner": "Antigravity",
+    "phase": "Supervisor immutable runtime / deploy and sync regression guard V10",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
+      "head_sha": "bd7039685e75c97cf18b35e984f97193a1c68e4d",
+      "pr": 4526
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802/evidence.json",
+    "reviewer": "Claude",
+    "status": "done",
+    "summary_zh": "修正 provisioning、sync-dev-root 與 dev deploy，讓 supervisor 永久使用 SHA 命名 immutable command runtime，禁止之後再被改回 mutable dev-root。",
+    "title": "Keep supervisor deploy and sync paths on immutable command runtimes",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-06T01:22:41Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "commit": "7fb45263d15b5f0c92bf2f65e5d8c85b788502d0",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cd98dbf9a85ab77257f417080b514fc137b8e5c2",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": ".orchestrator/task-briefs/sup_runtime_immutable_config_deploy_guard_operator_v10_20260802.md",
+        "commit": "1dd66fd50e1a7111a8bb8e97493df54f49c23075",
+        "merge_target_ref": "origin/ops/human-batch-repair-evidence-20260806",
+        "merge_target_sha": "1dd66fd50e1a7111a8bb8e97493df54f49c23075",
+        "owner": "Antigravity",
+        "reviewer": "Claude",
+        "canonical_reviewer": "Claude",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T21:29:36Z",
+      "from": "Codex2",
+      "message": "PR #4526 exact head 428b31c2f2231a5a67d409120b7435c9d8f73e30 is ready for independent review. Required checks are green. Review file: docs/deployment/evidence/supervisor/SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802/evidence.json. Validation: 349 qualification tests; 744 core tests plus 189 subtests; 43 focused tests. Source-only: no deploy, promotion, live config write, signal, launch, or rollback action. Please bind REVIEW_PR=4526 and REVIEW_HEAD_SHA=428b31c2f2231a5a67d409120b7435c9d8f73e30 on approval.",
+      "resolved_at": "2026-08-04T01:07:22Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-04T01:07:22Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-04T01:13:49Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T01:13:49Z",
+      "from": "Codex",
+      "message": "Source review passed, but the committed review evidence is not approvable after reviewer reassignment: docs/deployment/evidence/supervisor/SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802/evidence.json and evidence.md still name Human/Ops, state review_pending/not_requested_yet, and require Human/Ops final review while canonical reviewer is Codex. Commit and push an exact-head evidence update that names Codex and records a review-ready/independent review decision for the final PR head; then return the task to review. Preserve the source-only/no-live-deploy boundary.",
+      "resolved_at": "2026-08-04T01:13:49Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T01:19:05Z",
+      "from": "Codex2",
+      "message": "Evidence anchor bd7039685e75c97cf18b35e984f97193a1c68e4d is pushed to PR #4526. Independently review this exact GitHub head after required checks; bind docs/deployment/evidence/supervisor/SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802/evidence.json with REVIEW_PR=4526 and REVIEW_HEAD_SHA=bd7039685e75c97cf18b35e984f97193a1c68e4d. Source-only/no-live-deploy boundary remains.",
+      "resolved_at": "2026-08-04T01:28:43Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T01:28:43Z",
+      "from": "Codex",
+      "message": "Independent review passed: PR #4526 remote head equals bd7039685e75c97cf18b35e984f97193a1c68e4d; all required Branch CI checks passed; reran 43 focused and 349 qualification tests successfully; verified immutable admission, config no-op/promotion handoff, split-root protection, source-only boundary, and committed evidence manifest.",
+      "resolved_at": "2026-08-04T01:33:21Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
+      "to": "Codex2"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-04T01:33:21Z",
+      "message": "PR #4526 exact reviewed head bd7039685e75c97cf18b35e984f97193a1c68e4d is blocked only by dev branch protection: required status 'Pantheon root merge freeze 2026-07-27' is absent. All task checks and canonical Codex review gate are green. Human/Ops must release or replace the root freeze without changing the reviewed head; then rerun the governed integrator and owner done closeout.",
+      "owner": "Codex2",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802",
+      "waiting_for": "Human/Ops",
+      "resolved_at": "2026-08-06T01:22:41Z"
+    }
+  ]
+}

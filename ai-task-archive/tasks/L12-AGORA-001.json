@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "task_id": "L12-AGORA-001",
+  "archived_at": "2026-07-26T15:04:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Real OperatorIdentity submit process read and replay paths succeed with typed access",
+      "Every read mutation claim and replay is tenant and user scoped",
+      "Mutation requires write capability and stable idempotency digest conflict handling",
+      "Concurrent processors use bounded SKIP-LOCKED or equivalent leased claims",
+      "DatasetVersion and handoff are acknowledged once and cannot mutate runtime authority"
+    ],
+    "actual_state_sources": [
+      "Agora evidence inbox",
+      "DatasetVersion",
+      "learning handoff and DLQ"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [
+        "PPL-ALLOC-009"
+      ],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/bff/agora/dataset_extraction",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-AGORA-001"
+    },
+    "artifacts": [
+      "services/control-plane/bff/agora/dataset_extraction",
+      "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "d7cf6e91dfd7fcd8d73cef96030538175baaa243b3168c17c3d9daca192974ea",
+    "current_maturity": "api-only",
+    "depends_on": [
+      "L12-FLEET-001",
+      "PPL-ALLOC-009"
+    ],
+    "desired_state_sources": [
+      "authenticated Agora interaction evidence",
+      "dataset extraction policy"
+    ],
+    "dispatch_rules": [
+      "Observe and Learn only",
+      "Do not synchronously drain other tenants from a caller request",
+      "Ack only after durable downstream completion"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001",
+    "fleet_lane": "agora",
+    "id": "L12-AGORA-001",
+    "last_update": "2026-07-26T15:04:23Z",
+    "loop_ids": [
+      "agora_interaction_evidence"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized review-approved task L12-AGORA-001: implementation merged in PR #4177 (3998d9d341546209d3c854b6ce716dba2456086c), reviewer evidence merged in PR #4185 (cbb3fab656a67700e051ff4ef3e869b9da7cc135), and owner-aligned evidence merged in PR #4192 (3b88fc29d).",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No direct promotion deployment or runtime mutation"
+    ],
+    "owner": "Antigravity",
+    "phase": "Twelve Loop Remediation / Agora",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "real identity integration test",
+      "RBAC and tenant IDOR negatives",
+      "idempotency conflict test",
+      "multi-worker crash and replay proof"
+    ],
+    "requires_human_ops_signoff": false,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.json",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "修正真實 OperatorIdentity 路徑、RBAC/tenant IDOR、Idempotency-Key conflict，建立可多 worker 安全 claim 的 dataset extraction owner 與 downstream ack。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-AGORA-001.md",
+    "title": "Make Agora extraction governed, tenant-safe, and leased",
+    "wave": 1,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T15:04:23Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-agora-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-AGORA-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
+        "source_sha": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-agora-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68"
+      },
+      "commit": "3b88fc29db5ad9f45127471af4b690c22a120308",
+      "commit_subject": "L12-AGORA-001: align evidence manifest owner with task owner (#4192)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "L12-AGORA-001",
+        "Reviewer": "Codex",
+        "Verified": "sha256sum -c docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.sha256"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6ec0b1365d698ab1c31eae6fd61d062967e57ad7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T13:10:56Z",
+      "from": "Codex2",
+      "message": "PR #4177 merged as 3998d9d341546209d3c854b6ce716dba2456086c. Fresh origin/dev 902584bef validation: PostgreSQL extraction 70 passed; parent Agora identity/router 27 passed; product-evidence schema, checksum, compileall, and git diff --check passed. Review docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.json; read-only closeout replay fails only on ready_for_review admission and the intentionally pending independent reviewer verdict. Please independently verify, record the formal verdict in the checksummed manifest, commit/merge the review evidence, and approve with REVIEW_FILE bound to that manifest.",
+      "resolved_at": "2026-07-26T13:45:06Z",
+      "status": "done",
+      "task_id": "L12-AGORA-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T13:45:06Z",
+      "from": "Codex",
+      "message": "Independent review approved: implementation PR #4177 merged as 3998d9d341546209d3c854b6ce716dba2456086c; reviewer evidence PR #4185 merged as cbb3fab656a67700e051ff4ef3e869b9da7cc135. Fresh PostgreSQL extraction suite passed 70 tests; parent OperatorIdentity/router suite passed 27 tests; full Agora suite passed 163 with only the documented five unrelated trading-room WidgetPlacement schema-reference residuals. ProductEvidenceManifest schema, SHA-256 checksum, source hashes, compileall, diff check, tenant/RBAC/idempotency/lease-recovery/handoff-ack paths, and required GitHub checks verified.",
+      "resolved_at": "2026-07-26T14:22:04Z",
+      "status": "done",
+      "task_id": "L12-AGORA-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T14:22:04Z",
+      "from": "Codex",
+      "message": "Independent review approved: implementation PR #4177 merged as 3998d9d341546209d3c854b6ce716dba2456086c; reviewer evidence PR #4185 merged as cbb3fab656a67700e051ff4ef3e869b9da7cc135. Fresh PostgreSQL extraction suite passed 70 tests; parent OperatorIdentity/router suite passed 27 tests; full Agora suite passed 163 with only the documented five unrelated trading-room WidgetPlacement schema-reference residuals. ProductEvidenceManifest schema, SHA-256 checksum, source hashes, compileall, diff check, tenant/RBAC/idempotency/lease-recovery/handoff-ack paths, and required GitHub checks verified.",
+      "status": "done",
+      "task_id": "L12-AGORA-001",
+      "to": "Antigravity",
+      "resolved_at": "2026-07-26T15:04:24Z"
+    }
+  ],
+  "blockers": []
+}

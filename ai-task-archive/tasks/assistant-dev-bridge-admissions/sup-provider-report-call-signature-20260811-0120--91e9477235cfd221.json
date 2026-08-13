@@ -1,0 +1,87 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "supervisor",
+      "provider-report",
+      "acceptance"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator",
+      "integration"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-provider-report-call-signature-20260811-0120--91e9477235cfd221.json",
+  "admitted_at": "2026-08-11T01:24:37Z",
+  "audit_conversation_href": "task:SUPERVISOR-FLEET-THROUGHPUT-20260811",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUPERVISOR-FLEET-THROUGHPUT-20260811",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "status": "dispatched",
+      "taskId": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "PROVIDER_REPORT_RUNTIME_CALL_SIGNATURE_BLOCKER",
+      "path": "docs/deployment/evidence/supervisor/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811/evidence.json",
+      "sourceRefs": [
+        "runtime:0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "log:load_provider_report_tick:unexpected-keyword-config",
+        "canonical:SUPERVISOR-FLEET-THROUGHPUT-20260811"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-11T01:20:00Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "91e9477235cfd2210a8d3af9e9c3cfac2ee3072f16e02ca18150449c8c8d6b44",
+  "packet_id": "sup-provider-report-call-signature-20260811-0120",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "01805c9b66bec6802ac7f33711ea68ecb38a6ee4bf497409861ed135f632e0bb",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "provider-report-typeerror-reconciliation-20260811",
+    "approved-continue-20260811"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the current load_provider_report_tick TypeError against the pinned runtime/source shape and identify every apply_provider_probe_to_report call/signature in scope.",
+          "Make the smallest source-only repair so the deployed supervisor and origin/dev call sites share one compatible signature; preserve provider probe semantics, fail-closed gating, hysteresis, auth/quota handling, and all unrelated scheduler behavior.",
+          "Add focused regression coverage for the config-bearing call path and the load_provider_report_tick phase; run the relevant supervisor/provider test suites and record exact output.",
+          "Record exact-head evidence and a task-scoped manifest before independent review; do not edit live runtime files, canonical task state, provider/account credentials, scheduler caps, or restart/signal the supervisor.",
+          "Delivery requires clean task worktree, commit trailers, PR, independent exact-head review, checks, and protected merge; no manual runtime workaround is accepted as completion."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811/"
+        ],
+        "depends_on": [],
+        "id": "SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811",
+        "owner": "Codex",
+        "phase": "Supervisor / Provider Report Runtime Compatibility",
+        "reviewer": "Antigravity2",
+        "summary": "The live supervisor repeatedly logs load_provider_report_tick TypeError because the origin/dev caller passes config= while the runtime function signature is not uniform across the deployed source. Deliver the smallest source-only compatibility repair and evidence it through the governed PR flow.",
+        "title": "Repair provider-report probe call signature without changing fleet policy"
+      },
+      "task_spec_hash": "1cc31078e8c13360ff64db979b336406561472acb71bc21ffcba69747233ffa4"
+    }
+  ]
+}

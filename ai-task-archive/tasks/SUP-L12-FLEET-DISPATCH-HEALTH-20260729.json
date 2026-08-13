@@ -1,0 +1,344 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+  "archived_at": "2026-07-29T04:48:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Prove live supervisor uses /home/lupin/pantheon-ci-deploy/dev-root",
+      "Prove assistant dev packet reaches pending processed receipt or archive records",
+      "Read Antigravity and Claude2 readiness from live worker-runtime facts",
+      "Record repeated failure loops without editing .orchestrator/config.json"
+    ],
+    "artifacts": [
+      ".orchestrator/state.json",
+      ".orchestrator/worker-runtime",
+      ".orchestrator/assistant-dev-packets",
+      "ai-activity-log.jsonl"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "fleet.dispatch"
+        ],
+        "id": "codex-root",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-gap-current-three-pass-dispatch-20260729",
+      "conversation_id": "codex-root-l12-gap-current-three-pass-dispatch-20260729",
+      "documents": [
+        {
+          "kind": "GAP_AUDIT",
+          "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T0100Z.md",
+          "sourceRefs": [
+            "PR#4327"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-29T01:07:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "fa8e92a1c424e58e5206ba4c32ef44a60e6c71c22c8a057b548aec490bd652ea",
+      "packet_id": "pkt-l12-current-gap-drain-20260729T0107Z",
+      "source_turn_ids": [
+        "user-no-permission-needed",
+        "codex-three-pass-dispatch"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Prove live supervisor uses /home/lupin/pantheon-ci-deploy/dev-root",
+          "Prove assistant dev packet reaches pending processed receipt or archive records",
+          "Read Antigravity and Claude2 readiness from live worker-runtime facts",
+          "Record repeated failure loops without editing .orchestrator/config.json"
+        ],
+        "artifacts": [
+          ".orchestrator/state.json",
+          ".orchestrator/worker-runtime",
+          ".orchestrator/assistant-dev-packets",
+          "ai-activity-log.jsonl"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+        "owner": "Antigravity",
+        "phase": "Twelve Loop Remediation / Fleet Wave 0",
+        "reviewer": "Claude2",
+        "summary": "Fleet health task to ensure this packet is actually handled by supervisor/auto workers.",
+        "title": "Verify live supervisor and provider-first dispatch health"
+      },
+      "task_spec_hash": "bd816e2a29b8e10aacad0b481a35259ede02ea634aa96554fe7ed88262f8b2f3"
+    },
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "head_sha": "f28b913738dedacc37bf9e4dfeb002bb7b47aeb8",
+      "mode": "required_commit_status",
+      "pr": 4328,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4328",
+      "recorded_at": "2026-07-29T04:46:43Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51267764406,
+      "status_state": "success"
+    },
+    "id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+    "last_update": "2026-07-29T04:48:59Z",
+    "next": "Superseded by merged final fleet packet PR #4344 plus current runtime readback; PR #4328 closed unmerged by PR-drain.",
+    "owner": "Human/Ops",
+    "phase": "Twelve Loop Remediation / Fleet Wave 0",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "head_sha": "f28b913738dedacc37bf9e4dfeb002bb7b47aeb8",
+      "pr": 4328
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-FLEET-DISPATCH-HEALTH-20260729/evidence.json",
+    "review_notes_zh": [
+      "獨立審查通過 PR #4328 exact head d171d3e21d741f176f4fee3da4f43bbd6c26a6c0",
+      "json.tool/sha256sum/git diff --check 均通過，.orchestrator/config.json 零變動",
+      "PR 狀態為 OPEN、MERGEABLE，全部 8/8 CI checks 通過",
+      "依規定核發審查通過，退回 owner 安排 exact-head merge 與 governed closeout"
+    ],
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Fleet health task to ensure this packet is actually handled by supervisor/auto workers.",
+    "title": "Supersede fleet health evidence PR row",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-L12-OPEN-PR-DRAIN-20260729"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T01:08:46Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-07-29T01:09:27Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T01:20:32Z",
+      "from": "Codex",
+      "message": "PR #4328 is ready for independent exact-head review at bf76772a03f7e97873b9dd161f229e66f4949772. Verify live-root/process proof, packet failed-receipt partial materialization, Antigravity repeated context-canceled runs, Claude2 live heartbeat, checksum, and no .orchestrator/config.json edit. Record the independent decision in docs/deployment/evidence/twelve-loop-gap/SUP-L12-FLEET-DISPATCH-HEALTH-20260729/evidence.json (or an exact reviewed manifest), then approve with REVIEW_FILE bound to that committed manifest.",
+      "resolved_at": "2026-07-29T01:30:20Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T01:30:20Z",
+      "from": "Codex2",
+      "message": "Approved PR #4328 exact approval head 11f303cce07c8ab2be004885766bead27f62dd4d, which contains Codex2's committed review manifest for owner evidence head bf76772a03f7e97873b9dd161f229e66f4949772. Independently reproduced live supervisor PID/cwd/runtime binding, failed packet receipt with two dispatched and two artifact-conflict records, both Antigravity 143/SIGTERM context-canceled runs and failover, advancing Claude2 heartbeat, JSON/checksum/diff checks, no .orchestrator/config.json change, and 8/8 exact-head Branch CI checks green. PR remains OPEN/MERGEABLE/BEHIND; owner must refresh and merge during closeout.",
+      "resolved_at": "2026-07-29T01:37:11Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T01:37:11Z",
+      "from": "Codex",
+      "message": "Owner refreshed PR #4328 by merging origin/dev 6fe626252d10af27eed0aba79530506d192857ca, committed the task-scoped closeout receipt, and pushed exact head 73c679b21971b2a0d6435e3043371883799ec0be. Please independently re-review this exact head and approve with REVIEW_PR=4328 REVIEW_HEAD_SHA=73c679b21971b2a0d6435e3043371883799ec0be REVIEW_BASE=dev; json.tool, sha256sum -c, git diff --check, origin/dev ancestry, and exact-range .orchestrator/config.json checks passed.",
+      "resolved_at": "2026-07-29T01:42:10Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T01:42:10Z",
+      "from": "Codex2",
+      "message": "Exact-head re-review approved for PR #4328 at 73c679b21971b2a0d6435e3043371883799ec0be: fetched head/base match GitHub, origin/dev 6fe626252d10af27eed0aba79530506d192857ca is an ancestor, the four-file task range excludes .orchestrator/config.json, json.tool, sha256sum -c, git diff --check, and git connectivity passed, and all 8 visible Branch CI checks passed. Independently re-probed supervisor PID 2082839/cwd/runtime root; durable packet receipt/failed archive preserves two dispatched plus two conflict records; both Antigravity runs reproduce exit 143/signal 15 and task activity records context-canceled failover to Codex; Claude2's persisted 01:09:22-01:30:30 interval substantiates running readiness at the 01:14:08 observation cut without claiming current spare capacity.",
+      "resolved_at": "2026-07-29T03:37:25Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:23:15Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-FLEET-DISPATCH-HEALTH-20260729 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Antigravity.",
+      "resolved_at": "2026-07-29T03:24:01Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T03:38:24Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-L12-FLEET-DISPATCH-HEALTH-20260729 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-29T03:45:50Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:45:50Z",
+      "from": "Codex",
+      "message": "PR #4328 final closeout head 17cf35d0aef7bcfe830dd812d06fda4975da8f0a is pushed and includes current origin/dev 31d7eaebcb012a9beb5f5f0057db401d378b5beb. Please independently review this exact head, preserve REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/SUP-L12-FLEET-DISPATCH-HEALTH-20260729/evidence.json, and approve with REVIEW_PR=4328 REVIEW_HEAD_SHA=17cf35d0aef7bcfe830dd812d06fda4975da8f0a REVIEW_BASE=dev. Owner verification passed: json.tool, sha256sum -c, diff/show checks, exact task scope excludes .orchestrator/config.json, live supervisor root/runtime identity, and durable packet receipt/archive.",
+      "resolved_at": "2026-07-29T03:47:58Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T03:47:58Z",
+      "from": "Antigravity",
+      "message": "Antigravity independently reviewed exact head 17cf35d0aef7bcfe830dd812d06fda4975da8f0a (PR #4328): includes origin/dev 31d7eaebcb012a9beb5f5f0057db401d378b5beb; json.tool and sha256sum -c pass on docs/deployment/evidence/twelve-loop-gap/SUP-L12-FLEET-DISPATCH-HEALTH-20260729/evidence.json; no diff in .orchestrator/config.json; live supervisor command root and packet receipt/archive proven; review approved and returned to owner Codex for final merge and closeout.",
+      "resolved_at": "2026-07-29T03:54:17Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:54:17Z",
+      "from": "Codex",
+      "message": "PR #4328 was refreshed onto origin/dev 5b3bc8aa82e91b422a8bb1cc0c63a5960a0a362a after the safe integrator rejected stale approved head 17cf35d0aef7bcfe830dd812d06fda4975da8f0a. Please independently review exact head 5ebecbd4fbb762566c4ca51b7f999d75e02454b4 and approve with REVIEW_PR=4328, REVIEW_HEAD_SHA=5ebecbd4fbb762566c4ca51b7f999d75e02454b4, and the existing REVIEW_FILE. Owner checks passed: json.tool, sha256sum -c, git diff/show checks, exact-range config zero diff, live supervisor root, packet receipt/archive, and task-scoped activity. Owner/reviewer remain Codex/Antigravity; merge and done remain blocked pending approval.",
+      "resolved_at": "2026-07-29T03:56:53Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T03:56:53Z",
+      "from": "Antigravity",
+      "message": "Review approved exact head 5ebecbd4fbb762566c4ca51b7f999d75e02454b4 for PR #4328 after independent verification of dev-base merge f6c49d8f2a09cb4256e59c10a2f00f28f86d2989, task diff, valid json/sha256 evidence, and zero config diff. Task returned to owner Codex for exact-head integrator merge and closeout.",
+      "resolved_at": "2026-07-29T03:57:17Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:58:24Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex tool auth: GitHub CLI auth unavailable",
+      "resolved_at": "2026-07-29T04:09:36Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:09:36Z",
+      "from": "Codex2",
+      "message": "PR #4328 was refreshed onto origin/dev f9063be7da0106c43039042ea6edfdbd33a0bb51 after the exact-head integrator correctly returned waiting for approved head 5ebecbd4fbb762566c4ca51b7f999d75e02454b4. Please independently review exact head d171d3e21d741f176f4fee3da4f43bbd6c26a6c0 and approve with REVIEW_PR=4328, REVIEW_HEAD_SHA=d171d3e21d741f176f4fee3da4f43bbd6c26a6c0, and the existing REVIEW_FILE. Owner checks pass: json.tool, sha256sum -c, git diff/check, commit trailers, and exact-range .orchestrator/config.json zero diff. Owner/reviewer remain Codex2/Antigravity; after approval, Human/Ops must supply the root-freeze context on the same head before exact-head merge and governed done.",
+      "resolved_at": "2026-07-29T04:12:34Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T04:12:34Z",
+      "from": "Antigravity",
+      "message": "Independently reviewed and approved PR #4328 refreshed exact head d171d3e21d741f176f4fee3da4f43bbd6c26a6c0. All verification checks passed and .orchestrator/config.json remains unchanged.",
+      "resolved_at": "2026-07-29T04:12:57Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:13:40Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-L12-FLEET-DISPATCH-HEALTH-20260729 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-29T04:19:09Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:19:09Z",
+      "from": "Codex",
+      "message": "Merged current origin/dev, pushed exact head 54593d18da81784222028d51899086657b0f2efe to PR #4328, preserved the reviewed fleet evidence/config boundary, and reran focused checks. Please independently re-review this exact head and re-approve with the existing review file; owner/reviewer assignments remain unchanged.",
+      "resolved_at": "2026-07-29T04:19:33Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T04:19:33Z",
+      "from": "Codex",
+      "message": "Correction: the exact pushed PR #4328 head is 54593d18d37a91b6d75bdd41f6426cc02e13c613. The earlier handoff message contained a transcription error only. Please bind independent re-review to this exact SHA; owner/reviewer assignments and the reviewed evidence/config boundary remain unchanged.",
+      "resolved_at": "2026-07-29T04:21:52Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T04:21:52Z",
+      "from": "Antigravity",
+      "message": "獨立審查通過 PR #4328 refreshed exact head 54593d18d37a91b6d75bdd41f6426cc02e13c613。json.tool/sha256sum 均驗證通過，.orchestrator/config.json 零變動，證據完整。",
+      "resolved_at": "2026-07-29T04:27:33Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:27:33Z",
+      "from": "Codex",
+      "message": "PR #4328 refreshed onto origin/dev e51c1220ab3582c9f45f2689dd546ee4a660b4e1; please independently re-review exact head e90ab851a8324ac3930ea2cf14e394edc7a24351. Focused json.tool, sha256sum -c, commit trailers, git diff/check, config-zero-diff, ancestry, live supervisor-root, and packet receipt/archive checks passed. Owner/reviewer unchanged; Human/Ops root-freeze remains a separate exact-head gate.",
+      "resolved_at": "2026-07-29T04:30:55Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T04:30:55Z",
+      "from": "Antigravity",
+      "message": "Reviewed exact head e90ab851a8324ac3930ea2cf14e394edc7a24351 on PR #4328. Verified ancestor origin/dev e51c1220ab3582c9f45f2689dd546ee4a660b4e1, valid evidence JSON, sha256sum -c OK, clean commit trailers, and zero diff on .orchestrator/config.json.",
+      "resolved_at": "2026-07-29T04:31:20Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:32:40Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-L12-FLEET-DISPATCH-HEALTH-20260729 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-29T04:44:20Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:44:20Z",
+      "from": "Codex2",
+      "message": "Refreshed PR #4328 onto origin/dev 9394c9ac6bcc6ece9a8f7f1412fce2ac51ef58c8; exact head f28b913738dedacc37bf9e4dfeb002bb7b47aeb8 is pushed. Re-ran evidence JSON/checksum, diff/check, config-zero-diff, live supervisor-root, packet receipt/archive, and provider readiness checks. Please independently re-review this exact head; owner/reviewer remain Codex2/Antigravity.",
+      "resolved_at": "2026-07-29T04:46:43Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T04:46:43Z",
+      "from": "Antigravity",
+      "message": "獨立審查通過 PR #4328 exact head f28b913738dedacc37bf9e4dfeb002bb7b47aeb8：evidence JSON/checksum 驗證正確、git diff --check 無異常、.orchestrator/config.json 零變動，且全部 8/8 CI check runs 均為 SUCCESS。已記錄 review_file 證據並退回 owner (Codex2) 進行 closeout。",
+      "resolved_at": "2026-07-29T04:46:57Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:47:38Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-29T04:48:55Z",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:48:55Z",
+      "from": "Codex",
+      "message": "Supersede fleet-health PR row: #4328 closed unmerged after #4344 final fleet packet and current runtime readback; no config edit.",
+      "status": "done",
+      "task_id": "SUP-L12-FLEET-DISPATCH-HEALTH-20260729",
+      "to": "Human/Ops",
+      "resolved_at": "2026-07-29T04:48:59Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,310 @@
+{
+  "version": 1,
+  "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+  "archived_at": "2026-08-02T14:36:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Operator constraint remains authoritative: Codex and Codex2 may be different accounts with distinct configured quota groups and no global mutual-review ban",
+      "This V8 replaces V3 and depends on the dispatchable bridge V4 rather than the permanently blocked V3 chain",
+      "Reproduce healthy workers killed with exit 143 immediately after their own review handoff or canonical review transition at 09:45 and 09:50 on 2026-08-02",
+      "A governance-only assign note reopen review or handoff cannot supersede a healthy active implementation lease",
+      "Explicit cancel eligible preemption exact reassignment or terminal task truth may end the lease",
+      "Execution responsibility review provenance and canonical task lifecycle remain separately auditable",
+      "Lease decisions use exact task run PID starttime queue event process generation and canonical event order",
+      "Concurrent owner reviewer or status mutation fails closed without killing unrelated work",
+      "Protect genuine stale-worker supersession and failure-recovery behavior with positive and negative tests",
+      "Run focused supervisor and ai-status suites full relevant regression py_compile evidence JSON trailer and diff checks",
+      "Do not modify account groups quota groups reviewer policy provider config live runtime services or product tasks",
+      "Deliver clean PR to dev exact-head Human/Ops review merge and canonical archive before rollout; rollback is merge revert"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802/"
+    ],
+    "depends_on": [
+      "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802"
+    ],
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "head_sha": "c1a76ef240716452316bbd932137ecae08521744",
+      "mode": "required_commit_status",
+      "pr": 4508,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4508",
+      "recorded_at": "2026-08-02T14:31:25Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51505642857,
+      "status_state": "success"
+    },
+    "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+    "last_update": "2026-08-02T14:36:19Z",
+    "next": "Owner closeout complete: PR #4508 exact head c1a76ef240716452316bbd932137ecae08521744 merged as d15eb5266b911116d6f0c92ea33e1e5d6a2bb532; focused supervisor 5 passed, ai-status 11 passed plus 2 subtests, py_compile, evidence JSON, diff, ancestry, and trailers passed; generated task brief remains intentionally uncommitted per Human/Ops exact-head review; no live rollout.",
+    "owner": "Codex2",
+    "phase": "Supervisor Governance Handoff / Active Lease Guard / operator V8",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "head_sha": "c1a76ef240716452316bbd932137ecae08521744",
+      "pr": 4508
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802/evidence.json",
+    "review_notes_zh": [
+      "exact-head c1a76ef2 僅含六個 declared paths，且 generated task brief 零歷史",
+      "已驗證 rebase #4515、resume PID starttime/process generation 重算與 audit propagation；先前重現缺口已關閉",
+      "獨立 supervisor 543+154 subtests、ai-status 159+31 subtests、focused resume、py_compile、JSON、diff、trailers、CI 全通過",
+      "Codex/Codex2 保持不同 configured identity/quota group 的可能性，無 global mutual-review ban，無 rollout"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Prevent governance-only review or handoff transitions from killing the still-healthy worker that just produced them.",
+    "title": "Preserve active worker lease across governance handoff",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T14:36:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-governance-handoff-active-lease-guard-operator-v8-20260802",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-governance-handoff-active-lease-guard-operator-v8-20260802",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "c1a76ef240716452316bbd932137ecae08521744",
+      "commit_subject": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802: fix",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "resumed-process identity and task-scoped active-lease evidence.",
+        "Not changing": "account/quota groups, reviewer policy, provider config, live runtime, deployment, canonical state, generated task context, or shared dashboard/packet state.",
+        "Composes with": "merged PR #4515, prior guard/evidence commits, PR #4508 exact-head CI, and Human/Ops re-review.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+        "Reviewer": "Human/Ops",
+        "Verified": "supervisor 543 passed + 154 subtests; ai-status 159 passed + 31 subtests; focused resume tests; py_compile; JSON; diff; trailers; empty task-brief history"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d15eb5266b911116d6f0c92ea33e1e5d6a2bb532",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T12:32:48Z",
+      "from": "Human/Ops",
+      "message": "Changes requested on exact head 361da211ecc16e31f37dda242cb45af77a7998da: the task brief is supervisor-materialized runtime context and is outside the declared delivery artifacts. Reconstruct the PR branch so that final PR diff and evidence scope/record_files contain only .orchestrator/supervisor.py, .orchestrator/test_supervisor.py, scripts/ai_status.py, scripts/test_ai_status.py, and the two task-scoped evidence files. Validate the resulting range against dev (not only working tree), then force-push a new exact head and hand off. Do not deploy.",
+      "resolved_at": "2026-08-02T12:32:48Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T12:32:58Z",
+      "from": "Codex",
+      "message": "PR #4508 exact head 361da211ecc16e31f37dda242cb45af77a7998da is ready for independent review. Exact-head Branch CI is 8/8 green; focused supervisor 13 plus 2 subtests, full supervisor 526 plus 149 subtests, focused ai-status 10 plus 2 subtests, full ai-status 158 plus 31 subtests, py_compile, JSON, diff, and trailer gates passed. Review governance-only lease preservation, exact process-generation termination, concurrent fail-closed behavior, Codex/Codex2 policy boundary, and committed evidence at docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802/evidence.json. No live rollout is authorized.",
+      "resolved_at": "2026-08-02T12:33:42Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T12:33:42Z",
+      "from": "Human/Ops",
+      "message": "Review rejected on exact head 361da211ecc16e31f37dda242cb45af77a7998da: CI is green but the PR range still adds .orchestrator/task-briefs/sup_governance_handoff_active_lease_guard_operator_v8_20260802.md (94 lines), which is not an accepted delivery artifact. Do not re-handoff this head. Rebuild the branch from origin/dev plus the approved source/test/evidence changes only, so git diff --name-status origin/dev...HEAD has exactly six paths and evidence scope record_files has exactly the two evidence paths. Push new head and repeat full validations; no deployment.",
+      "resolved_at": "2026-08-02T12:33:42Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T12:43:55Z",
+      "from": "Human/Ops",
+      "message": "Review rejected on exact head 059fb6b7123bf748a8e6f0ef34444134fc69ce85: independent clean-environment validation exposes an order/environment-dependent test. scripts/test_ai_status.py::StatusCommandLeaseValidationTests::test_accepts_valid_owner_and_reviewer_dispatch_leases calls _activity_event after its status_command_metadata mock exits, so event lacks status_command; clean isolated and full suite both fail (157 passed, 1 failed). Make the test hermetic by retaining/providing the needed command metadata at event construction (or otherwise assert the real supported contract); do not change runtime behavior merely to satisfy test environment. Re-run the exact single test and full ai-status suite in a clean environment, then push a new exact head. No deployment.",
+      "resolved_at": "2026-08-02T12:43:55Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T12:43:59Z",
+      "from": "Codex",
+      "message": "PR #4508 exact head 059fb6b7123bf748a8e6f0ef34444134fc69ce85 is ready for independent review. The PR range is exactly six approved paths: supervisor plus test, ai-status plus test, and evidence.json plus evidence.md; the rejected task brief is absent and evidence scope record_files contains exactly the two evidence paths. Local focused supervisor 13 plus 2 subtests, full supervisor 526 plus 149 subtests, focused ai-status 10 plus 2 subtests, full ai-status 158 plus 31 subtests, py_compile, JSON, diff, trailer, and exact-scope checks pass. Both exact-head Branch CI runs 30748384263 and 30748385532 pass Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance. No rollout or live mutation.",
+      "resolved_at": "2026-08-02T12:44:38Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T12:44:38Z",
+      "from": "Human/Ops",
+      "message": "Authoritative review correction: do not treat the prior handoff claim as accepted. Independently reproducing scripts/test_ai_status.py with a clean environment fails test_accepts_valid_owner_and_reviewer_dispatch_leases because its _activity_event call occurs after the status_command_metadata mock scope; full clean suite is 157 passed, 1 failed. Repair the test isolation only (no runtime behavior workaround), run that single test plus the full suite clean, and push a new exact head. No rollout.",
+      "resolved_at": "2026-08-02T12:44:38Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T12:44:45Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex2.",
+      "resolved_at": "2026-08-02T12:45:28Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T12:46:33Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex2.",
+      "resolved_at": "2026-08-02T12:49:24Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T13:07:42Z",
+      "from": "Codex2",
+      "message": "PR #4508 rebuilt from origin/dev at exact head 7b268b468ca9cd619481fb8bc6a95ac663ac9cd4: two commits, six delivery paths, empty task-brief history, clean exact ai-status test 1 passed, full ai-status 158 plus 31 subtests, full supervisor 526 plus 149 subtests, py_compile/JSON/diff/trailers passed. Evidence: docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802/evidence.json. No rollout.",
+      "resolved_at": "2026-08-02T13:10:20Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T13:10:20Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approves PR #4508 exact head 7b268b468ca9cd619481fb8bc6a95ac663ac9cd4 after independent source, scope, clean-environment, evidence, and CI review; source merge only, no rollout.",
+      "resolved_at": "2026-08-02T13:12:14Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T13:10:34Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-02T13:10:48Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T13:12:14Z",
+      "from": "Human/Ops",
+      "message": "Refresh the revoked exact-head approval after restoring Human/Ops as canonical reviewer; source, evidence, CI and PR head remain unchanged. Owner must hand off the same 7b268b468 exact head without code changes; no rollout.",
+      "resolved_at": "2026-08-02T13:12:14Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T13:13:17Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-02T13:14:13Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T13:13:30Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "resolved_at": "2026-08-02T13:14:13Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T13:19:02Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "resolved_at": "2026-08-02T13:19:49Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T13:25:26Z",
+      "from": "Codex",
+      "message": "PR #4508 exact head 7b268b468ca9 is unchanged and ready for canonical review. Human/Ops accepted the clean exact head; no unresolved review threads remain. Fresh owner verification: supervisor 526 passed plus 149 subtests, clean ai-status 158 passed plus 31 subtests, exact isolation test 1 passed, py_compile/JSON/diff/trailers/history/remote binding all pass. No rollout authorized.",
+      "resolved_at": "2026-08-02T13:38:55Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T13:38:55Z",
+      "from": "Codex2",
+      "message": "Review rejected at exact head 7b268b468ca9cd619481fb8bc6a95ac663ac9cd4. Required changes: (1) resume_claude_worker replaces worker.pid but does not recapture pid_start_ticks or process_generation. Independent mocked resume changed PID 1111 to 2222, retained ticks 111, made zero starttime probes, and worker_process_identity returned None; resumed workers therefore cannot satisfy the new status-command lease or exact-generation termination contract. Refresh the exact process generation on every resume/relaunch and add a regression that proves the resumed supervisor identity and ai-status lease remain valid. (2) The committed evidence JSON/Markdown and both commit trailers bind owner Codex2/reviewer Codex and still say review pending, while authoritative task history began Codex/Human/Ops and currently reads Codex/Codex2; the exact-head canonical review status is failure. Reconcile reviewer preservation and owner/reviewer provenance through governed state, commit an evidence manifest containing the actual independent decision and correct current binding, and re-handoff a newly reviewed exact head without rollout. Existing 526+149 supervisor and 158+31 clean ai-status suites, py_compile, JSON, diff, ordinary CI, six-path scope, and empty task-brief history pass.",
+      "resolved_at": "2026-08-02T13:38:55Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T14:12:05Z",
+      "from": "Human/Ops",
+      "message": "Corrective dependency #4515 is merged and archived. Rebase PR #4508 onto current dev, recapture pid_start_ticks and recompute process_generation after resume PID replacement, add the missing resume regression, reconcile owner/reviewer evidence provenance, keep generated task brief out of history, and resubmit to Human/Ops. Codex2 is a task-scoped quota fallback only; preserve distinct configured account/quota groups and existing reviewer policy.",
+      "resolved_at": "2026-08-02T14:12:05Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T14:27:54Z",
+      "from": "Codex2",
+      "message": "PR #4508 exact head c1a76ef240716452316bbd932137ecae08521744 is ready for Human/Ops re-review after rebasing merged corrective dependency #4515. Resume PID 1111-to-2222 generation refresh and supervisor plus ai-status regressions pass; full supervisor 543 plus 154 subtests and clean ai-status 159 plus 31 subtests pass; py_compile, evidence JSON, diff, trailers, exact six-path range, empty generated task-brief history, and both exact-head Branch CI runs pass. Evidence: docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802/evidence.json. Codex2 remains task-scoped quota fallback; no account/quota/reviewer/provider policy or rollout change.",
+      "resolved_at": "2026-08-02T14:31:25Z",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T14:31:25Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops re-review approved PR #4508 exact head c1a76ef240716452316bbd932137ecae08521744 after #4515 rebase, resume process-generation fix, provenance reconciliation, complete independent regressions, and clean scope.",
+      "status": "done",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "to": "Codex2",
+      "resolved_at": "2026-08-02T14:36:20Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-02T13:40:27Z",
+      "message": "Governance hold until explicit Human/Ops reviewer preservation is merged; then return to Codex for resume-generation and evidence-provenance repair on current dev.",
+      "owner": "Human/Ops",
+      "resolved_at": "2026-08-02T14:12:05Z",
+      "status": "resolved",
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

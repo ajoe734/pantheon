@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "task_id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+  "archived_at": "2026-08-13T02:59:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Use the outputs of the three predecessor L12-MIN component tasks; do not reimplement their happy paths.",
+      "Persist one tenant-scoped Agora interaction, evidence record, DatasetVersion, and downstream handoff with correlated identifiers.",
+      "Acknowledge the handoff only after durable Policy Learning ingestion and make retry or duplicate delivery idempotent.",
+      "Produce one terminal shadow candidate linked to the DatasetVersion without seed fallback or live execution authority.",
+      "Create one governed Consultation request from the terminal candidate and persist a terminal memo or handoff linked to the same chain.",
+      "Prove a second tenant cannot read, acknowledge, replay, or correlate the first tenant's records.",
+      "Record before/after backlog counts and preserve historical pending rows unless their own durable consumer receipts justify acknowledgement."
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/dataset_extraction/",
+      "services/control-plane/bff/agora/router.py",
+      "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+      "services/policy-learning/",
+      "services/consultation/",
+      "docs/deployment/evidence/agora/AGORA-L12-CROSS-LOOP-INTEGRATE-20260808/"
+    ],
+    "depends_on": [
+      "AGORA-CURRENT-GAP-EXECUTION-20260808",
+      "L12-MIN-AGORA-20260808",
+      "L12-MIN-IMIT-20260808",
+      "L12-MIN-CONS-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": "codex://root/agora-current-gap-execution-20260808",
+      "conversation_id": "codex-root-agora-current-gap-execution-20260808",
+      "documents": [
+        {
+          "kind": "AGORA_CURRENT_GAP_AUDIT",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/GAP-AUDIT.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "e765bcbed",
+            "deployment run 31250996848"
+          ]
+        },
+        {
+          "kind": "AGORA_CURRENT_GAP_PLAN",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "origin/dev 0f2ab06f8"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/execution-tasks.json",
+          "sourceRefs": [
+            "seven unique addendum tasks",
+            "unique sink AGORA-CURRENT-CLOSE-20260808"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T10:50:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "e32265e892a924d69b69ce3de5d83d0ea8c5ccad56114a0638299192686a41c6",
+      "packet_id": "pkt-agora-current-environment-gap-20260808-e765bcbed",
+      "source_turn_ids": [
+        "user-request-agora-gap-and-execution-tasks-for-supervisor",
+        "codex-readonly-agora-current-state-audit-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Use the outputs of the three predecessor L12-MIN component tasks; do not reimplement their happy paths.",
+          "Persist one tenant-scoped Agora interaction, evidence record, DatasetVersion, and downstream handoff with correlated identifiers.",
+          "Acknowledge the handoff only after durable Policy Learning ingestion and make retry or duplicate delivery idempotent.",
+          "Produce one terminal shadow candidate linked to the DatasetVersion without seed fallback or live execution authority.",
+          "Create one governed Consultation request from the terminal candidate and persist a terminal memo or handoff linked to the same chain.",
+          "Prove a second tenant cannot read, acknowledge, replay, or correlate the first tenant's records.",
+          "Record before/after backlog counts and preserve historical pending rows unless their own durable consumer receipts justify acknowledgement."
+        ],
+        "artifacts": [
+          "services/control-plane/bff/agora/dataset_extraction/",
+          "services/control-plane/bff/agora/router.py",
+          "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+          "services/policy-learning/",
+          "services/consultation/",
+          "docs/deployment/evidence/agora/AGORA-L12-CROSS-LOOP-INTEGRATE-20260808/"
+        ],
+        "depends_on": [
+          "AGORA-CURRENT-GAP-EXECUTION-20260808",
+          "L12-MIN-AGORA-20260808",
+          "L12-MIN-IMIT-20260808",
+          "L12-MIN-CONS-20260808"
+        ],
+        "id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+        "owner": "Antigravity",
+        "phase": "A2 cross-loop integration",
+        "reviewer": "Claude",
+        "summary": "Connect durable Agora dataset handoff consumption, terminal shadow candidate generation, and governed Consultation memo production with correlated identifiers.",
+        "title": "Complete the tenant-safe Agora to Imitation and Consultation chain"
+      },
+      "task_spec_hash": "e1563e3eab8ce24f15e2bae2ab65e2b6fc9fde88f6347aad15fd2562fd89de22"
+    },
+    "generation": 1,
+    "id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+    "last_update": "2026-08-13T02:59:48Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset. Preserve merged/archive evidence; remaining product work is rematerialized as dependency-free, current-source V2 roots.",
+    "owner": "Antigravity",
+    "phase": "A2 cross-loop integration",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Connect durable Agora dataset handoff consumption, terminal shadow candidate generation, and governed Consultation memo production with correlated identifiers.",
+    "title": "Complete the tenant-safe Agora to Imitation and Consultation chain",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T14:43:52Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned AGORA-L12-CROSS-LOOP-INTEGRATE-20260808 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-08-09T10:19:18Z",
+      "status": "done",
+      "task_id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:19:18Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned AGORA-L12-CROSS-LOOP-INTEGRATE-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:18:09Z",
+      "status": "done",
+      "task_id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:18:09Z",
+      "from": "Codex",
+      "message": "Auto-reassigned AGORA-L12-CROSS-LOOP-INTEGRATE-20260808 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T03:09:11Z",
+      "status": "done",
+      "task_id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T03:09:11Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned AGORA-L12-CROSS-LOOP-INTEGRATE-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:39:01Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AGORA-L12-CROSS-LOOP-INTEGRATE-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:59:48Z"
+    }
+  ],
+  "blockers": []
+}

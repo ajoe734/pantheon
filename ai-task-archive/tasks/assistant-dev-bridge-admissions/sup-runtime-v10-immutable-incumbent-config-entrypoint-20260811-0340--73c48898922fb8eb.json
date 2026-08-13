@@ -1,0 +1,98 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ],
+    "id": "Codex2",
+    "roles": [
+      "auto-worker"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-runtime-v10-immutable-incumbent-config-entrypoint-20260811-0340--73c48898922fb8eb.json",
+  "admitted_at": "2026-08-11T03:51:09Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "sourceRefs": [
+        "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260811T033415569849Z-2668260.json",
+        "sha256:bdddb0cbfbeaa15a0f1d0ac2d49672579643962e62fda6e9408d78fd21233543",
+        "candidate:7f93be09e3f40e9f11a28cf6c0766e116a54adc6",
+        "candidate-tree:fd309970d03fdabba4adeb421a43801054376e4c",
+        "active-incumbent:0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "active-incumbent-pid:1795141",
+        "rollback-root:/home/lupin/pantheon-ci-deploy/rollback-command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "live-config-sha256:54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+        "failure:Captured live config does not bind the exact canonical supervisor entrypoint",
+        "prerequisite-prs:4740,4741"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-11T03:40:00Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "73c48898922fb8eb12b61d6877ac7d77b6a4b99a90fc63e0f6a3e843303cd31b",
+  "packet_id": "sup-runtime-v10-immutable-incumbent-config-entrypoint-20260811-0340",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "944b1e1c73f0dfa4a6e2553209a105e92fe2ef06876a7db0ef3bdfd1e840987f",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "promotion-evidence-20260811T033415569849Z-2668260",
+    "post-abort-readback-20260811T0338Z",
+    "immutable-incumbent-config-entrypoint-dedupe-20260811T0340Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce durable transaction bdddb0cbfbeaa15a0f1d0ac2d49672579643962e62fda6e9408d78fd21233543: accepted candidate 7f93be09/tree fd309970 and live immutable incumbent 0bd7cf88/PID 1795141 have exact cwd, argv, config, process-generation, -B, PYTHONDONTWRITEBYTECODE, command-root/runtime-SHA, authoritative-shadow, and baseline bindings, but the transaction aborts before config CAS or signalling when its live-config check is made against separately materialized rollback-command-runtimes/0bd7cf88.",
+          "Make the pre-CAS live-config/process contract bind the proven active incumbent command-runtime identity, while retaining the separately materialized rollback root as a distinct immutable artifact used only for rollback configuration and launch after the transaction boundary. Do not permit a current live config to reference the candidate or rollback path before CAS merely to satisfy validation.",
+          "Retain exact canonical absolute-path, descriptor, Git commit/tree/remote, process PID/starttime, cwd, argv, environment, live-config byte/hash/CAS, admission-lock, task-state, provider, candidate cleanliness, and rollback non-alias checks. A wrong active entrypoint, candidate entrypoint, rollback entrypoint, root alias, process/config race, changed inode/tree/env, or stale rollback artifact must fail before TERM.",
+          "Add focused regression coverage for a valid active immutable incumbent whose live config names its active command-runtime entrypoint and whose rollback root has the same commit but a distinct path; verify candidate and rollback config variants are prepared without mutating live config. Add negative tests for each mismatched root and verify no config install, signal, candidate launch, rollback launch, or child survives on rejection.",
+          "Run focused promotion and sync suites plus directly affected supervisor tests. Commit a task-scoped evidence manifest before independent review and bind that manifest to the exact reviewed task PR head before merge into dev.",
+          "Keep this task source-only: no live config or state edit, direct signal or termination, runtime promotion, candidate/incumbent/rollback mutation or deletion, canonical state edit outside governed commands, scheduler/fleet-routing/provider/account change, or rollout retry. A retry is separately supervisor-dispatched only after protected source merge."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "scripts/test_sync_dev_root.sh",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811"
+        ],
+        "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Active Incumbent Config Entrypoint",
+        "reviewer": "Claude2",
+        "summary": "The 7f93be09 promotion captured a valid active immutable incumbent, but source code later validates pre-CAS live config against a distinct rollback materialization path. Repair only that active-incumbent-versus-rollback identity boundary and retain every other promotion guard.",
+        "title": "Bind active incumbent config entrypoint separately from rollback root"
+      },
+      "task_spec_hash": "e8a0e9bdc39377747ec3cfabab8cbf749cf29518fe6195def135f38c4d3aff60"
+    }
+  ]
+}

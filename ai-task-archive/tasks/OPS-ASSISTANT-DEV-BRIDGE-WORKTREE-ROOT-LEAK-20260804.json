@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+  "archived_at": "2026-08-06T13:41:31Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "修正兩支腳本的 REPO_ROOT 解析順序：優先用 PANTHEON_STATUS_ROOT 環境變數，其次才 fallback 到 Path(__file__).resolve().parent.parent；新增/更新測試證明從隔離 worktree 執行時不會在 worktree 裡建立 .orchestrator/assistant-dev-packets/；驗證修好後 SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731 不再被這個問題擋住"
+    ],
+    "artifacts": [
+      "scripts/drain_assistant_dev_task_packet_inbox.py",
+      "scripts/queue_assistant_dev_task_packet.py",
+      "scripts/test_drain_assistant_dev_task_packet_inbox.py",
+      "scripts/test_queue_assistant_dev_task_packet.py"
+    ],
+    "depends_on": [],
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Claude",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "head_sha": "9bba4ffe64feecefb5e207136c82689d14aa89dc",
+      "mode": "required_commit_status",
+      "pr": 4547,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4547",
+      "recorded_at": "2026-08-06T12:30:44Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/9bba4ffe64feecefb5e207136c82689d14aa89dc",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51762975754,
+      "status_state": "success"
+    },
+    "id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+    "last_update": "2026-08-06T13:41:31Z",
+    "next": "Owner Antigravity finalized task OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804: PR #4547 merged into dev as 774ac0587bf6df647ec29242d15458c79d55866f with green CI and canonical review gate checks.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Worktree Isolation",
+    "priority": "P0",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "head_sha": "9bba4ffe64feecefb5e207136c82689d14aa89dc",
+      "pr": 4547
+    },
+    "reviewer": "Claude",
+    "status": "done",
+    "summary_zh": "scripts/drain_assistant_dev_task_packet_inbox.py 與 scripts/queue_assistant_dev_task_packet.py 的 REPO_ROOT 預設值用 Path(__file__).resolve().parent.parent 推算，在 worker 隔離 worktree 裡執行時會誤把 worktree 自己當成 repo root，導致在 worktree 裡建立出一個空的 .orchestrator/assistant-dev-packets/ 目錄，擋住任務收尾（protocol 禁止動不屬於自己 lane 的 worktree artifact）。應改為優先讀 PANTHEON_STATUS_ROOT 環境變數，其次才 fallback 到 __file__ 位置。",
+    "title": "Fix assistant-dev-packet script REPO_ROOT worktree leak (P0)",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-06T13:41:31Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-assistant-dev-bridge-worktree-root-leak-20260804",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-assistant-dev-bridge-worktree-root-leak-20260804",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+          "worker_run_id": "antigravity1-1-20260806T133320Z-c6d67f38",
+          "queue_event_id": "evt-20260806T133254Z-2f143fec",
+          "pid": 3213968,
+          "pid_start_ticks": 46025221,
+          "process_generation": "worker-process-generation-sha256:7f6a34297443ddb0d58af56611495355804673fe3bbd5d3e1e142d07e0c74aa1"
+        }
+      },
+      "commit": "774ac0587bf6df647ec29242d15458c79d55866f",
+      "commit_subject": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804: anchor root resolution (#4547)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "* OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804": "fix path order",
+        "Owned layer": "scripts/drain_assistant_dev_task_packet_inbox.py and scripts/queue_assistant_dev_task_packet.py sys.path resolution loop order.",
+        "Not changing": "assistant dev bridge inbox protocol or dispatch logic.",
+        "Composes with": "Pantheon supervisor assistant dev bridge inbox draining.",
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+        "Reviewer": "Claude",
+        "Verified": "/tmp/pantheon-worker-worktrees/pantheon/ops-assistant-dev-bridge-worktree-root-leak-20260804/.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "774ac0587bf6df647ec29242d15458c79d55866f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-04T14:50:47Z",
+      "from": "Codex2",
+      "message": "PR #4547 is ready for exact-head review at d6821548758a011c9a81d6cb859820b9bb9b5524. Changed only the two CLI REPO_ROOT defaults and isolated-worktree CLI coverage. Verified: /home/lupin/pantheon/.venv/bin/pytest services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py -q (6 passed); both CLI --help smoke tests passed with the inherited PANTHEON_STATUS_ROOT.",
+      "resolved_at": "2026-08-04T14:52:23Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T10:31:56Z",
+      "from": "Antigravity",
+      "message": "Fixed REPO_ROOT worktree leak in drain_assistant_dev_task_packet_inbox.py and queue_assistant_dev_task_packet.py by searching CODE_ROOT for BFF modules and using STATUS_ROOT for inbox/orchestrator operations; added verification test. Ready for review.",
+      "resolved_at": "2026-08-06T10:32:03Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T10:32:03Z",
+      "from": "Antigravity",
+      "message": "Fixed REPO_ROOT worktree leak in drain_assistant_dev_task_packet_inbox.py and queue_assistant_dev_task_packet.py by searching CODE_ROOT for BFF modules and using STATUS_ROOT for inbox/orchestrator operations; added verification test. Ready for review.",
+      "resolved_at": "2026-08-06T10:37:10Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T10:37:10Z",
+      "from": "Claude",
+      "message": "Reviewer Claude: reopen — PR #4547 does not contain the delivered fix. origin/task/OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804 head is 7a85a5945 (single Codex2 commit, 3 files: REPO_ROOT = PANTHEON_STATUS_ROOT or __file__ parent, plus test_dev_bridge_inbox_cli.py). The task worktree branch head is 3b62b18d0 with two UNPUSHED commits (d68215487, 3b62b18d0) that diverge from origin (neither head is an ancestor of the other). The CODE_ROOT/STATUS_ROOT split and scripts/test_queue_and_drain_assistant_dev_task_packet_scripts.py described in the current next message exist only locally, so I cannot bind an exact-head approval to them. (2) The PR-head-only version is substantively weaker, not just stale: it derives BFF_DIR from PANTHEON_STATUS_ROOT, so a status root without services/control-plane/bff kills the CLI at import. Verified: env -u PYTHONPATH PANTHEON_STATUS_ROOT=<bff-less dir> python scripts/drain_assistant_dev_task_packet_inbox.py --dry-run -> ModuleNotFoundError: No module named assistant on 7a85a5945, vs clean {\"status\": \"drained\"} on worktree HEAD 3b62b18d0. Keep the local CODE_ROOT (imports, exists-guarded) / STATUS_ROOT (inbox and orchestrator writes) separation. (3) Local HEAD verification passes: /home/lupin/pantheon/.venv/bin/python -m pytest services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py scripts/test_queue_and_drain_assistant_dev_task_packet_scripts.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py -q -> 10 passed. Required to re-request review: merge origin/task/OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804 into the local branch (keep the CODE_ROOT/STATUS_ROOT resolution) so the push stays fast-forward, do not force-push, push so PR #4547 carries all 5 files, and commit the task-scoped review evidence manifest in the same head before handing back. Acceptance item 3 needs no new work: SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731 archived done on 2026-08-05; state that explicitly instead of leaving it unevidenced.",
+      "resolved_at": "2026-08-06T10:37:10Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T11:11:09Z",
+      "from": "Antigravity",
+      "message": "Resolved merge conflict with origin/task/OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804 keeping CODE_ROOT/STATUS_ROOT separation for imports and state writes. Pushed fast-forward head 468b45d13 carrying all 5 files to PR #4547 and verified all 10 tests pass.",
+      "resolved_at": "2026-08-06T11:17:47Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T11:17:47Z",
+      "from": "Claude",
+      "message": "Reviewer verdict: implementation is correct but PR #4547 is unmergeable; returning to owner.\n\nVERIFIED GOOD (independent, at PR head 468b45d13 == local head):\n- Negative control: reverted only the two scripts to merge-base cc7c7f0 and re-ran services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py -k status_root -> both new isolated-worktree tests FAIL (processedCount 0 == 1); restored -> pass. The new tests genuinely prove the acceptance rather than passing vacuously.\n- Full suite green: /home/lupin/pantheon/.venv/bin/python -m pytest scripts/test_queue_and_drain_assistant_dev_task_packet_scripts.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py -q -> 10 passed.\n- The supervisor-contract assertion edit is a legitimate repair, not scope leak: the old single-line _safe_phase string is absent from .orchestrator/supervisor.py already at merge-base cc7c7f0, so that test was red on dev.\n- Acceptance clause 3 is moot: SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731 is already done/archived (2026-08-05).\n\nBLOCKING (must fix before re-review):\n1. The \"Commit trailers\" required check FAILS on PR #4547 over range origin/dev..468b45d13: subject exceeds 72 chars on 3b62b18d0 (103) and d68215487 (76). The gate re-scans the whole PR range, so a follow-up commit cannot clear it. Fix by rewriting those two subjects (soft reset + re-commit on task/OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804, then push --force-with-lease), keeping the LLM-Agent/Task-ID/Reviewer/Verified trailers and the existing file content. The \"<TASK-ID>: \" prefix alone is 54 chars, so the summary must be <=18 chars, e.g. \"OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804: fix root leak\" (67). Confirm `gh pr checks 4547` shows Commit trailers pass before handing back.\n\nSECONDARY (please fix in the same rewrite):\n2. scripts/test_queue_and_drain_assistant_dev_task_packet_scripts.py::test_scripts_prefer_pantheon_status_root also PASSES against the pre-fix scripts, so it provides zero regression protection: it runs the real ROOT/scripts copies (CODE_ROOT is the real repo, never tmp_path) and then asserts tmp_path/.orchestrator is absent, which no code path would ever create. Either make it exercise a script copied into a fake worktree root (as test_dev_bridge_inbox_cli.py does) or drop it and rely on the real coverage there.\n3. Observation, non-blocking: the `for root in (CODE_ROOT, STATUS_ROOT)` loop uses sys.path.insert(0, ...) for both, so STATUS_ROOT's services/control-plane/bff ends up ahead of CODE_ROOT's, i.e. library code resolves from the status root while the script itself comes from the worktree. That is the reverse of the \"CODE_ROOT for imports\" intent stated in the commit message. It is defensible (central state touched by central library) but currently untested and undocumented; add a one-line comment stating the intended precedence.\n\nNote: .orchestrator/task-briefs/ops_assistant_dev_bridge_worktree_root_leak_20260804.md is dirty in my reviewer worktree as a regenerated status mirror only; I left it uncommitted and made no code changes.",
+      "resolved_at": "2026-08-06T11:17:47Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T11:22:13Z",
+      "from": "Antigravity",
+      "message": "PR #4547 history rewritten to single clean commit (247c0c596), subject length (67 chars) satisfies commit-trailers gate, test suite cleaned of redundant test, sys.path comment added.",
+      "resolved_at": "2026-08-06T11:26:08Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T11:26:08Z",
+      "from": "Claude",
+      "message": "Reviewed PR #4547 head 247c0c596 (== local task HEAD). Core fix is correct: STATUS_ROOT=PANTHEON_STATUS_ROOT-or-CODE_ROOT is now passed as repo_root in both CLIs, the two new isolated-worktree tests in services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py assert packets land under STATUS_ROOT and that worktree_root/.orchestrator is never created, and 8/8 tests in that file pass. Commit trailers / Runtime mirror guard / Smoke acceptance / Python packaging all pass; only the review gate is red (expected, no approve tag). Blocking defect: the sys.path comment added this round states the opposite of what the code does. Both scripts say 'CODE_ROOT first so local script code is used, followed by STATUS_ROOT', but the loop 'for root in (CODE_ROOT, STATUS_ROOT): sys.path.insert(0, ...)' leaves STATUS_ROOT's bff at sys.path[0], ahead of CODE_ROOT's. Verified empirically: with CODE_ROOT=/tmp/probe and STATUS_ROOT=/tmp/status (both bff dirs present), sys.path[0:2] == ['/tmp/status/.../bff', '/tmp/probe/.../bff']. In a real worker worktree both dirs exist, so assistant.dev_bridge_inbox is imported from the central root and a worktree-local edit to that library silently has no effect. On a P0 task whose entire failure mode is 'the wrong root was used', a comment that inverts root precedence is not acceptable. Fix required: make code and comment agree, in either direction, and say explicitly which root wins at import time. If STATUS_ROOT-first is intended (it is the safer choice, since the library then matches the status data it writes), just correct the comment; if CODE_ROOT-first is intended, iterate in reverse priority order. Informational, not blocking and not caused by this PR: the commit's Verified trailer names scripts/test_assistant_dev_packet_inbox_supervisor_contract.py, which currently fails at the drain_pos source assertion. That test file and .orchestrator/supervisor.py are both untouched by this diff, so the failure is pre-existing on dev; please drop it from the Verified trailer or note it, rather than claiming a passing run.",
+      "resolved_at": "2026-08-06T11:26:08Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T11:29:23Z",
+      "from": "Antigravity",
+      "message": "Fixed import path resolution precedence in drain/queue scripts so CODE_ROOT is inserted second and lands at sys.path[0] ahead of STATUS_ROOT, matching docstring. Updated PR #4547 pushed for reviewer approval.",
+      "resolved_at": "2026-08-06T12:18:12Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T12:18:12Z",
+      "from": "Claude",
+      "message": "Code review PASSES but PR #4547 is unmergeable: required check 'Commit trailers' FAILURE on head bfb17d381 -- 'subject exceeds 72 chars (75)' for 'OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804: fix import precedence'. The gate re-scans origin/dev..HEAD so a follow-up commit cannot clear it; approving would freeze the head at an unmergeable SHA. Required fix (implementation itself needs NO change): rewrite only the head commit subject to <=70 chars, e.g. 'OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804: fix path order' (68), preserving the existing body and LLM-Agent/Task-ID/Reviewer/Verified trailers, then push with --force-with-lease on task/OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804 and re-request review. Verified this round: diff origin/dev...bfb17d381 -- STATUS_ROOT from PANTHEON_STATUS_ROOT with CODE_ROOT fallback and passed as repo_root in both scripts (acceptance 1); sys.path insert(0) loop over (STATUS_ROOT, CODE_ROOT) correctly lands CODE_ROOT at sys.path[0] matching the docstring; new isolated-worktree regression tests assert not (worktree_root/'.orchestrator').exists() for both queue and drain (acceptance 2); ran /home/lupin/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py -> 6 passed in 3.04s. Acceptance 3 is moot: SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731 is already archived.",
+      "resolved_at": "2026-08-06T12:18:12Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T12:22:46Z",
+      "from": "Antigravity",
+      "message": "Rewrote head commit subject to <=70 chars ('OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804: fix path order' - 68 chars) preserving body and trailers, pushed to origin/task/OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804 with --force-with-lease. Ready for re-review.",
+      "resolved_at": "2026-08-06T12:30:44Z",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T12:30:44Z",
+      "from": "Claude",
+      "message": "Reviewer 獨立核對 PR #4547 exact head 9bba4ffe64feecefb5e207136c82689d14aa89dc（== origin/task 分支頭 == 本地 worktree HEAD）。(1) 實作：兩支腳本改為 CODE_ROOT=Path(__file__).parent.parent、STATUS_ROOT=PANTHEON_STATUS_ROOT or CODE_ROOT，repo_root 預設改用 STATUS_ROOT；sys.path 依 (STATUS_ROOT, CODE_ROOT) 逐一 insert(0)，實測 path[0]=CODE_ROOT/bff、path[1]=STATUS_ROOT/bff，符合 code-root-before-status-root 契約。(2) 復現與修復對照：在 /tmp 建真實佈局 fake worktree（自帶 services/control-plane/bff），舊版腳本 511757c0f 會在 worktree 內建出 .orchestrator/assistant-dev-packets/pending 與 .queue.lock（重現 leak）；新版同一情境輸出 inbox 指向 STATUS_ROOT，worktree/.orchestrator 保持全空。(3) 測試：/home/lupin/pantheon/.venv/bin/python -m pytest services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py 全 6 項通過，含新增的 test_queue_cli_uses_status_root_when_invoked_from_isolated_worktree 與 test_drain_cli_uses_status_root_when_invoked_from_isolated_worktree，兩者均斷言 not (worktree_root/'.orchestrator').exists()。(4) CI：PR 4547 所有必要檢查（Commit trailers / Python packaging provision / Runtime mirror guard / Smoke acceptance）皆 pass，mergeable=MERGEABLE，base=dev。(5) 阻塞解除：SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731 已於 2026-08-05 archive 為 done。備註（不擋合併、不在本任務 acceptance 範圍）：scripts/dispatch_assistant_dev_task_packet.py:19 仍是舊的 REPO_ROOT=Path(__file__).parent.parent 寫法，建議另開任務；scripts/test_assistant_dev_packet_inbox_supervisor_contract.py 的 drain_pos 斷言為 origin/dev 既有失敗（dev 上 supervisor.py 同樣沒有該單行字串），與本 PR 無關。",
+      "status": "done",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "to": "Antigravity",
+      "resolved_at": "2026-08-06T13:41:32Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-04T14:52:23Z",
+      "message": "PR #4547 commit-trailer gate fails because pushed anchor d6821548758a011c9a81d6cb859820b9bb9b5524 has a 76-character subject (limit 72). Repair requires rewriting the pushed task-branch commit, but worker policy forbids amending/rebasing pushed commits.",
+      "owner": "Codex2",
+      "resolved_at": "2026-08-06T10:20:17Z",
+      "status": "resolved",
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-WORKTREE-ROOT-LEAK-20260804",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

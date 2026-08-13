@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "OPS-TASK-BRIEF-LOCK-ORDER-001",
+  "archived_at": "2026-07-26T17:28:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "process_queue 在 canonical lock context 內可生成完整 task-scoped brief且無 nested task_state acquisition",
+      "不可放寬 runtime_admission -> task_state -> activity_audit 鎖序與 fail-closed guard",
+      "worker context 包含 task status owner reviewer next dependencies artifacts而不 fallback minimal ai-status only",
+      "新增與 run_once/process_queue 相同鎖上下文的 regression test",
+      "相關 supervisor common dispatch tests及PR checks全綠"
+    ],
+    "artifacts": [
+      ".orchestrator/common.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "depends_on": [],
+    "id": "OPS-TASK-BRIEF-LOCK-ORDER-001",
+    "last_update": "2026-07-26T17:28:13Z",
+    "next": "Owner closeout complete: PR #4197 implementation merged at e82371783e18c4bac7b0c2ca650c0904a8c004f3; PR #4202 isolated proof merged at 403e30bd985ea9b0c166180103a0ab64e4e35d4f; PR #4204 reviewed evidence merged at c10e4d34e3ab6c57880892987c616ffe86e0e3db. Clean-env focused regression passed 1/1; independent review passed test_supervisor 334/334 and test_common 90/90; runtime_admission -> task_state -> activity_audit lock order and fail-closed guard remain intact.",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Orchestrator correctness",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "修復 supervisor 在已持有 runtime_admission/task_state 鎖時再次取得 task_state，造成完整 task brief 生成失敗並退回 minimal context。",
+    "title": "Fix nested task-state lock during worker brief generation",
+    "review_file": ".orchestrator/task-briefs/ops_task_brief_lock_order_001.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T17:28:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-ops-task-brief-lock-order-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-TASK-BRIEF-LOCK-ORDER-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
+        "source_sha": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-ops-task-brief-lock-order-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68"
+      },
+      "commit": "7f72d63a2255064ce217c2cc291a5e150463b86e",
+      "commit_subject": "OPS-TASK-BRIEF-LOCK-ORDER-001: finalize review evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped reviewed closeout evidence manifest.",
+        "Not changing": "merged lock-order implementation or canonical task-state policy.",
+        "Composes with": "PR #4197 implementation, PR #4202 proof, and owner done transition.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-TASK-BRIEF-LOCK-ORDER-001",
+        "Reviewer": "Codex2",
+        "Verified": "focused regression 1/1; reviewed suites 334/334 and 90/90"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c10e4d34e3ab6c57880892987c616ffe86e0e3db",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T15:57:35Z",
+      "from": "Codex",
+      "message": "PR #4197 is open against dev with auto-merge. Please independently review the configured-status-root task-state lock binding and the run_once/process_queue regression trace (one task_state acquire after runtime_admission). Full test_supervisor 334/334 and clean-env test_common 90/90 pass.",
+      "resolved_at": "2026-07-26T16:11:25Z",
+      "status": "done",
+      "task_id": "OPS-TASK-BRIEF-LOCK-ORDER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T16:53:21Z",
+      "from": "Codex",
+      "message": "Implementation is merged via PR #4197 at e82371783e18c4bac7b0c2ca650c0904a8c004f3. Isolated safety proof is committed at a77558b610effd5af1fae63605c34ed3e1bd01b5 and published in PR #4202. Clean-env verification passed: focused regression 1/1, test_supervisor 334/334, test_common 90/90. Please independently verify lock order, one task_state acquisition, full brief fields/archive dependency rendering, and no minimal-context fallback.",
+      "resolved_at": "2026-07-26T17:08:18Z",
+      "status": "done",
+      "task_id": "OPS-TASK-BRIEF-LOCK-ORDER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T17:08:18Z",
+      "from": "Codex2",
+      "message": "Codex2 independent review passed: PR #4197 merged at e82371783e18c4bac7b0c2ca650c0904a8c004f3; remote dev tip 403e30bd985ea9b0c166180103a0ab64e4e35d4f includes implementation and PR #4202 proof a77558b610effd5af1fae63605c34ed3e1bd01b5. Diff preserves runtime_admission -> task_state -> activity_audit ranks and fail-closed guard, binds archive resolution to the configured status root under one re-entrant task_state acquisition, and renders status/owner/reviewer/next/archive dependency/artifacts without minimal fallback. Independent clean-env validation passed: focused regression 1/1, test_supervisor 334/334, test_common 90/90.",
+      "status": "done",
+      "task_id": "OPS-TASK-BRIEF-LOCK-ORDER-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-26T17:28:14Z"
+    }
+  ],
+  "blockers": []
+}

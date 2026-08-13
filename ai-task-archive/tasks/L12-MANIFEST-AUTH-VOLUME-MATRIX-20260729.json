@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "task_id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+  "archived_at": "2026-07-29T03:30:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "per-worker auth applicability matrix exists",
+      "per-worker durable-volume applicability matrix exists",
+      "zero-volume services are adjudicated or repaired",
+      "validator gap is identified or patched for L12-MANIFEST-001 owner"
+    ],
+    "artifacts": [],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "head_sha": "81968bded84054ff38eebfed4db5eba9179f7e2e",
+      "mode": "required_commit_status",
+      "pr": 4336,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4336",
+      "recorded_at": "2026-07-29T03:23:14Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51265163089,
+      "status_state": "success"
+    },
+    "id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+    "last_update": "2026-07-29T03:30:46Z",
+    "next": "Owner closeout complete: PR #4336 merged into dev as 50a1c5af513d43e0e97f8174cccc0325e0d19ece; exact-head review 81968bded84054ff38eebfed4db5eba9179f7e2e is bound to the committed evidence manifest; pytest 6 passed; py_compile, audit validator, Compose config, JSON/JQ consistency, guarded-path isolation, and git diff checks passed; default validator exit 1 confirms ten declared auth gaps remain fail-closed.",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Manifest Workstream",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "head_sha": "81968bded84054ff38eebfed4db5eba9179f7e2e",
+      "pr": 4336
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "建立每個 worker 的 auth 與 durable-volume applicability matrix，補 readback/validator 缺口。",
+    "title": "L12 manifest auth volume applicability matrix workstream",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-29T03:30:46Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-manifest-auth-volume-matrix-20260729",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-manifest-auth-volume-matrix-20260729",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "639cb882ca1ddd208eec2f519a463cc1d67f232d",
+      "commit_subject": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729: prepare closeout",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "owner closeout readback after recording the independent review receipt and refreshing the task branch onto the current dev base.",
+        "Not changing": "validator behavior, applicability findings, docker-compose.yml, deploy script, parent evidence, service auth, or .orchestrator/config.json.",
+        "Composes with": "PR #4336 and Antigravity's structurally bound exact-head reapproval before integration and governed done.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+        "Reviewer": "Antigravity",
+        "Verified": "provision_python_distribution.py; pytest 6 passed; py_compile; audit validator pass; default validator expected exit 1; docker compose config --quiet; json.tool and jq consistency; guarded paths unchanged; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8b3574f015e779681743616f0d362a5e03197a47",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T02:59:06Z",
+      "from": "Codex",
+      "message": "PR #4336 exact head 96fdc27cf7d645dedfe9e62ddbebbce6d472e0d3 is ready for independent review. Verify the 27-worker matrix against bare Compose and source refs; audit mode must pass with 17 auth pass/10 declared auth gaps, 27/27 volume pass, and exactly six delegated zero-volume workers; default mode must exit 1 only because admission_ready is false. Confirm no changes to docker-compose.yml, deploy script, parent evidence, or .orchestrator/config.json. Bind REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/evidence.json when approving this exact head.",
+      "resolved_at": "2026-07-29T03:01:13Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T03:01:13Z",
+      "from": "Antigravity",
+      "message": "Review approved exact HEAD 96fdc27cf7d645dedfe9e62ddbebbce6d472e0d3: Verified 27-worker applicability matrix against bare Compose and source refs; audit mode passes with 17 auth pass/10 declared auth gaps, 27/27 volume pass, and 6 delegated zero-volume workers; default mode exits 1 with admission_ready=false as designed; verified pytest 6 passed; confirmed zero changes to docker-compose.yml, deploy script, parent evidence, or .orchestrator/config.json.",
+      "resolved_at": "2026-07-29T03:09:48Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:09:48Z",
+      "from": "Codex",
+      "message": "Re-review PR #4336 current head 639cb882ca1ddd208eec2f519a463cc1d67f232d after owner closeout preparation. The implementation findings are unchanged and focused verification passed (pytest 6 passed; audit 27 workers/10 declared auth gaps/27 volume pass/6 delegated zero-volume; default admission exits 1 as designed; Compose/JSON/guard paths pass). Approve with REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/evidence.json REVIEW_PR=4336 REVIEW_HEAD_SHA=639cb882ca1ddd208eec2f519a463cc1d67f232d so the canonical merge gate is structurally bound.",
+      "resolved_at": "2026-07-29T03:12:46Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T03:12:46Z",
+      "from": "Antigravity",
+      "message": "Review approved exact HEAD 639cb882ca1ddd208eec2f519a463cc1d67f232d bound to PR #4336: Owner prepared closeout by recording reviewer approval in evidence.json, merging dev @ d9cbbbfa2, and reverifying validator (6 pytest passed; audit mode 17 auth pass/10 declared gaps, 27/27 volume pass, 6 zero-volume delegated; default admission exits 1 fail-closed as designed; bare Compose/JSON/guard clean). PR gate parameters structurally bound for merge.",
+      "resolved_at": "2026-07-29T03:13:06Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:14:10Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-29T03:20:42Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T03:20:42Z",
+      "from": "Codex2",
+      "message": "PR #4336 refreshed onto current dev after strict-base advance. Please re-review exact head 81968bded84054ff38eebfed4db5eba9179f7e2e; task-owned matrix/validator/evidence are unchanged, focused verification is 6 passed plus audit/default admission, Compose, JSON and guard-path checks. Approve with REVIEW_PR=4336 and REVIEW_HEAD_SHA=81968bded84054ff38eebfed4db5eba9179f7e2e.",
+      "resolved_at": "2026-07-29T03:23:14Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T03:23:14Z",
+      "from": "Antigravity",
+      "message": "Reviewed exact head 81968bded84054ff38eebfed4db5eba9179f7e2e on PR #4336; per-worker auth & volume applicability matrix, validator script, pytest suite (6 passed), audit pass, default admission fail (expected exit 1 for declared gaps), Compose syntax, and JSON files verified.",
+      "resolved_at": "2026-07-29T03:25:21Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T03:25:21Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "task_id": "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "to": "Codex",
+      "resolved_at": "2026-07-29T03:30:47Z"
+    }
+  ],
+  "blockers": []
+}

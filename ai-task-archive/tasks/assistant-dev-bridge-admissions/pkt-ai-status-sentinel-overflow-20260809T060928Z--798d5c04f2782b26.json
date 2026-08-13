@@ -1,0 +1,106 @@
+{
+  "actor": {
+    "capabilities": [
+      "dev-task.dispatch",
+      "fleet.dispatch",
+      "integration.plan"
+    ],
+    "id": "Codex",
+    "roles": [
+      "coordination-agent",
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-ai-status-sentinel-overflow-20260809T060928Z--798d5c04f2782b26.json",
+  "admitted_at": "2026-08-09T06:12:54Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "noLiveRuntimeMutation": true,
+    "noOrchestratorConfigEdits": true,
+    "noProductTaskMaterialization": true,
+    "noSharedCheckoutImplementation": true,
+    "requiresBranchPrMerge": true,
+    "supervisorOnlyDispatcher": true
+  },
+  "conversation_id": "codex-root-two-blocker-dev-closeout-20260809",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "FAILED_BRIDGE_RECEIPT",
+      "path": ".orchestrator/assistant-dev-packets/receipts/pkt-two-blocker-dev-closeout-20260809T060036Z.json",
+      "sourceRefs": [
+        "OverflowError in scripts/ai_status.py format_display_timestamp",
+        "canonical tasks committed but admissionStatus remained not_attempted",
+        "SUP-RUNTIME-V10-ENOTDIR-EVIDENCE-CLOSEOUT-20260809",
+        "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809"
+      ]
+    },
+    {
+      "kind": "GOVERNED_STATUS_RUNTIME",
+      "path": "scripts/ai_status.py",
+      "sourceRefs": [
+        "format_display_timestamp",
+        "localize_embedded_timestamps",
+        "refresh_derived_status_views_if_current"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-09T06:09:28Z",
+  "intent": "repair_ai_status_sentinel_timestamp_display_overflow",
+  "mode": "kernel_repair",
+  "packet_digest": "798d5c04f2782b26b0a0031757d80fd1896ea4eaf65c2b294d5d2b8fdca2eb77",
+  "packet_id": "pkt-ai-status-sentinel-overflow-20260809T060928Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "8139ec925de1c5fe76e37bffb958d69d0c133341473cb990d35b9581217d991f",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-authorized-complete-and-merge-dev-20260809",
+    "bridge-partial-materialization-root-cause-20260809"
+  ],
+  "tasks": [
+    {
+      "task_id": "OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809",
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev in a clean task worktree and reproduce format_display_timestamp(\"9999-12-31T23:59:59Z\") raising OverflowError under Asia/Taipei before the change.",
+          "Implement the smallest deterministic display-only fallback for timezone boundary overflow. Preserve the raw normalized UTC sentinel or another explicitly tested lossless representation; do not change the parsed authoritative timestamp, task ordering, expiry semantics, or stored canonical state.",
+          "Add focused regression tests for the maximum UTC sentinel, a normal timestamp that must still convert to Asia/Taipei, malformed input fallback, embedded timestamp localization, and the derived-view refresh path that failed after assignment.",
+          "Prove a committed canonical mutation cannot be reported as failed solely because a derived display view contains the maximum sentinel, and prove ordinary timestamp output remains unchanged.",
+          "Run the focused ai-status test slice, any repository-required status-state integrity tests, JSON validation for the evidence manifest, and git diff --check.",
+          "Create complete pre-review evidence under docs/deployment/evidence/supervisor/OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809/ before requesting review; bind the exact head, validations, bounded scope, rollout, and rollback.",
+          "Commit with required trailers, push the exact task branch, open a PR to dev, obtain fresh independent Claude exact-head review with REVIEW_FILE bound, wait for every required check, and merge through the protected flow.",
+          "After merge, use the governed supervisor runtime promotion path to install the merged command runtime and verify source SHA/readback without directly patching pantheon-ci-deploy/dev-root or restarting services by hand.",
+          "Replay the exact failed two-task bridge packet through the supported inbox recovery path and require a durable admission record plus canonical materialization readback before declaring the downstream tasks dispatchable.",
+          "Rollback is a normal revert of this PR followed by the governed runtime promotion path; never roll back canonical task events or edit queue/state JSON manually."
+        ],
+        "artifacts": [
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/supervisor/OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809/"
+        ],
+        "depends_on": [],
+        "id": "OPS-AI-STATUS-SENTINEL-TIMESTAMP-OVERFLOW-20260809",
+        "owner": "Antigravity2",
+        "phase": "Assistant Dev Bridge / Governed Status Reliability",
+        "reviewer": "Claude",
+        "summary": "Repair the bounded derived-view failure where converting the valid UTC maximum sentinel 9999-12-31T23:59:59Z into Asia/Taipei raises OverflowError after canonical task state has already committed. Preserve authoritative task-state semantics, make rendering deterministic, and restore reliable bridge admission and worker status commands.",
+        "title": "Make ai-status derived timestamp rendering sentinel-safe"
+      },
+      "task_spec_hash": "9e414183eb993d7fa64898c5c9ee68dc43c530b620383460dc194f41a1a821e9"
+    }
+  ]
+}

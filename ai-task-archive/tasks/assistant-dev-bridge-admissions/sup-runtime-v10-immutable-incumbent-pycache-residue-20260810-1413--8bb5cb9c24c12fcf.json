@@ -1,0 +1,97 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ],
+    "id": "Codex",
+    "roles": [
+      "auto-worker"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-runtime-v10-immutable-incumbent-pycache-residue-20260810-1413--8bb5cb9c24c12fcf.json",
+  "admitted_at": "2026-08-10T14:21:42Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "sourceRefs": [
+        "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T140901039717Z-636096.json",
+        "sha256:bbd2b6f09587225682b5ac90070a49f14f72eb230cde154c6ae9f2943fe377ec",
+        "candidate:6607b6a706b59670009965375e0a5dd6b5824fcf",
+        "candidate-tree:5eb3d3a18ba01bb2e2f53e442842aa7c86fec23c",
+        "incumbent:5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "incumbent-pid:2272245",
+        "rejected-directory:.orchestrator/__pycache__/",
+        "incumbent-pycache-directories:3",
+        "incumbent-bytecode-files:36",
+        "incumbent-bytecode-manifest-sha256:6e00789da019c1a8243e67ab5e97827421834025df12edca218bcb844ebaf3e2"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-10T14:13:17Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "8bb5cb9c24c12fcf7d4aa1428c4c8d14f0520021dc8fa2ff3eb8f6c0e7fb3fa3",
+  "packet_id": "sup-runtime-v10-immutable-incumbent-pycache-residue-20260810-1413",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "2ed255ec2dd3d5f1baa9078f5635bcb82bf1a5c53a7db9a8b65bccb9fbb6d3be",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "promotion-evidence-20260810T140901039717Z-636096",
+    "post-abort-readback-20260810T141200Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the 6607b6a7 governed retry exactly: the clean SHA-named candidate at tree 5eb3d3a1 has zero ignored bytecode paths, while capture of live incumbent PID 2272245 at accepted dev ancestor 5877b644 aborts before baseline, config, signal, launch, or rollback on .orchestrator/__pycache__/ created at 2026-08-10T11:41:53Z through 11:41:54Z.",
+          "Keep candidate cleanliness deny-by-default. Do not add __pycache__, pyc, pyo, .orchestrator, or an arbitrary prefix to the candidate/generated-runtime allowlist, and do not weaken post-launch status-child bytecode absence or the three-fresh-loop gate.",
+          "If the incumbent must be captured despite historical bytecode, add a separate explicit capture-only legacy boundary. Bind exact PID/starttime/cwd/commit/tree/remote/config/environment, every admitted directory and file path, descriptor metadata, regular-file and single-link status, CPython cache tag/header, source-path relation, byte digest, and a stable revalidation digest before signalling authority. Reject symlinks, hard links, executable/importable source additions, pyo, source-less or foreign-tag pyc, unknown directories, staged/tracked drift, and every post-capture race.",
+          "Never trust or relaunch the incumbent bytecode. Rollback must use a separately materialized and fully clean immutable checkout at the captured incumbent commit/tree, and the rollback launch source must prove zero __pycache__, pyc, or pyo before and after its own status-child exercise. The live incumbent root must not be reset, cleaned, stashed, checked out, edited, renamed, copied as rollback source, or otherwise mutated.",
+          "Preserve immutable candidate Git and launch-source identity, config CAS, restart-intent-before-TERM, exact process-generation signalling, PYTHONDONTWRITEBYTECODE=1 and -B launch, authoritative-shadow catch-up, queue/worker parity, provider baseline, rollback cleanup, and all previously merged FLOCK, log-leaf, same-root, and task-brief provenance guards.",
+          "Add focused positive and negative regressions for the exact incumbent/candidate distinction, stable capture-only bytecode provenance, unknown or changed bytecode rejection, clean rollback materialization, and candidate/status-child zero-bytecode enforcement. Run the complete promotion suite and commit a task-scoped evidence manifest before independent review.",
+          "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate or incumbent deletion, canonical state edit, scheduling change, provider/account change, or fleet-routing policy change. Any rollout retry remains a separately governed dispatch."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810"
+        ],
+        "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Incumbent Bytecode Bootstrap",
+        "reviewer": "Codex2",
+        "summary": "The accepted 6607b6a7 candidate is clean, but the governed transaction now reaches an older ignored-bytecode residue in the SHA-named incumbent and correctly aborts before mutation. Repair only a provenance-bound, capture-only incumbent compatibility boundary backed by a clean rollback checkout; never allow or trust bytecode in the candidate or rollback launch roots.",
+        "title": "Bind immutable incumbent bytecode residue without trusting it"
+      },
+      "task_spec_hash": "df7432f6be5a7f37c6e5e7d7055c5b9feaae2fa8df1f798883bb0f3ae6849c44"
+    }
+  ]
+}

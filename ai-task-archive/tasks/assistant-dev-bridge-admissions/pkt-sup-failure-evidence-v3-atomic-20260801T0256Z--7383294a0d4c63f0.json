@@ -1,0 +1,144 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-failure-evidence-v3-atomic-20260801T0256Z--7383294a0d4c63f0.json",
+  "admitted_at": "2026-08-01T02:57:45Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#v3-real-shape-atomic-split",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "REJECTED_V2_MONOLITH_SOURCE",
+      "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-identity-retry-v2-split-20260801T0218Z.json",
+      "sourceRefs": [
+        "PR #4442 rejected heads e89d09ea/67e8ce11/85b4d860/5b2c309e/69e69ffa",
+        "captured live worker request_snapshot lacks owner/reviewer",
+        "captured ai-status reopen and worker_commit shapes fail V2 probes",
+        "Pantheon canonical review gate failure on exact head 69e69ffa"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T02:56:00Z",
+  "intent": "replace_unwired_failure_evidence_monolith_with_real_shape_atomic_tasks",
+  "mode": "kernel_repair",
+  "packet_digest": "7383294a0d4c63f067156c408dd6f69159f4df5effc29d59fa8bd38fa15aeeef",
+  "packet_id": "pkt-sup-failure-evidence-v3-atomic-20260801T0256Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "2b185663a3ff90a629b2fb9507a03cfd2d1edf0a93de2d7a23e3a924aba56c3a",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+    "human-ops-pr4442-real-runtime-shape-rejections"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev. PR #4442 heads e89d09ea, 67e8ce11, 1041551b, 85b4d860, 5b2c309e, and 69e69ffa are rejected evidence only and must not enter ancestry.",
+          "Use the captured live worker/request shape, where request_snapshot.metadata.task currently contains id/artifacts/next but not owner or reviewer. Fix the request construction or pass immutable canonical task identity explicitly; tests may not invent fields absent from the production path.",
+          "Instrument every record_task_failure_streak path, including immediate start failure, active worker failure, and boot reconciliation, with exact task id, logical provider, canonical owner-at-failure, independent reviewer-at-failure, normalized failure kind and reason class, count, full-precision failure timestamp, durable failure evidence identity/raw_ref, exact rejected/current 40-hex head when known, and a stable unique failure generation.",
+          "Do not read mutable generic task.last_update as identity or progress. Do not mutate canonical task state from the failure recorder.",
+          "The v3 decoder must fail closed when version, task, provider, owner, independent reviewer, kind, reason class, timestamp, count, generation, or durable failure evidence identity is missing or malformed. A missing rejected-head baseline must be explicit and may never allow a commit-based recovery later.",
+          "Generation identity must remain immutable for one recorded failure and must not collide after a record is cleared/recreated in the same second. Derive it from immutable failure fields/evidence rather than timestamp seconds alone.",
+          "Add deterministic tests using captured real request_snapshot/worker shapes for each failure call site, owner/reviewer propagation, logical provider slots, raw_ref identity, rejected-head capture, generation immutability/uniqueness, missing-field legacy records, malformed timestamps/heads, and unrelated streak preservation.",
+          "Run the complete .orchestrator/test_supervisor.py regression and git diff --check. This task must not add progress extraction, clear a streak, queue work, reserve a worker, change retry thresholds, or alter provider readiness.",
+          "Rollout is source merge only. Rollback is revert of this task merge commit.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend any rejected PR #4442 commit.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801"
+        ],
+        "id": "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Retry V3 / 1 Failure Record Wiring",
+        "reviewer": "Human/Ops",
+        "summary": "Implement only real-call-site failure generation capture and fail-closed decoding; do not extract progress or change retry eligibility.",
+        "title": "Wire immutable failure generations from real supervisor records"
+      },
+      "task_spec_hash": "b4e445cc029e1f2b27c0714337bf2515236fb47acc762743ffee4582b0ee9f84"
+    },
+    {
+      "task_id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Start from the merged V3 failure-record task; do not reuse or cherry-pick PR #4442.",
+          "Accept the captured governed reviewer reopen shape only when type=reopen, event_id has the canonical ai-status-event identity, task_id exactly matches, ts is strictly after failure, event.agent exactly equals reviewer_at_failure, reviewer differs from unchanged owner, and any exact-head review binding is consistent with the failure/new-head lineage.",
+          "Accept the captured governed worker commit shape only when type=worker_commit, event_id has the worker-commit identity, task_id exactly matches, ts is strictly after failure, event.agent exactly equals unchanged owner_at_failure, commit is exact lowercase 40-hex, the failure record contains an exact rejected-head baseline, and commit differs from that baseline.",
+          "If governed reviewer handoff is supported, normalize only a captured production shape with explicit independent reviewer identity and exact destination owner; an owner-to-reviewer handoff is not reviewer progress.",
+          "Reject missing task_id, agent, event_id, timestamp, failure baseline, owner/reviewer record, or exact head. Reject wrong reviewer, wrong owner, owner==reviewer, cross-task/provider, stale event, same rejected head, unverified generic commit, and malformed event identity/head.",
+          "Generic note/progress/last_update, dispatch sync, wake, worker start, test rerun, PR bind without governed reviewer action, or repeated handoff of the same head is not progress.",
+          "Return an immutable normalized progress generation binding failure generation plus event id/type/timestamp/actor/exact head when present. The pure normalizer must not mutate streaks, canonical task state, queue, workers, leases, reservations, or provider state.",
+          "Add separate deterministic tests copied from captured real ai-activity-log shapes for Human/Ops reopen and Antigravity worker_commit, plus one test for every deny row and unrelated event/streak preservation. Tests that add reviewer/owner fields not emitted by production are insufficient.",
+          "Run the complete .orchestrator/test_supervisor.py regression, captured-shape direct probes, and git diff --check.",
+          "After exact-head review and merge, hand evidence to Human/Ops. Human/Ops will supersede blocked wrapper SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801; only then may the already-governed recovery-decision task resume.",
+          "Rollout is source merge only. Rollback reverts this task and then the V3 record task.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend any rejected PR #4442 commit.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801/"
+        ],
+        "depends_on": [
+          "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801"
+        ],
+        "id": "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Retry V3 / 2 Activity Normalizer",
+        "reviewer": "Human/Ops",
+        "summary": "Add only pure progress normalization over the merged v3 failure record using captured governed ai-status and worker-commit shapes.",
+        "title": "Normalize governed progress from real activity event shapes"
+      },
+      "task_spec_hash": "4d1afea80c5bf6ad3c2cfe5050e64b71aef1f6052dd51903eeb65254a5306b4d"
+    }
+  ]
+}

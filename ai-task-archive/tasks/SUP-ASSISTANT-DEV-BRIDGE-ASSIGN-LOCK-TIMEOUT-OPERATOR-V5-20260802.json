@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802",
+  "archived_at": "2026-08-02T10:04:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Supersede operator V4 because its acceptance contains the false Codex/Codex2 independent-review policy. Start from current origin/dev only after the corrected shared identity guard V2 is merged.",
+      "Codex and Codex2 remain separate configured execution quota groups but one current review identity; this task must consume the shared predicate and may not authorize mutual review.",
+      "Reproduce the signed-packet receipts that timed out in canonical assign while later direct canonical assign succeeded; record exact lock owner and elapsed phases with scratch-root instrumentation.",
+      "Never wait on governed ai-status subprocesses while holding runtime-admission, task-state, event-log, inbox, or replay locks required by that subprocess.",
+      "Make transient task-state timeouts retryable with bounded backoff, exact packet identity replay protection, and at-most-once canonical materialization.",
+      "Require durable processed receipt, admission record, exact task-spec hash, and canonical active-or-archive readback for every task ID.",
+      "Add concurrent real-event-log integration tests with a full supervisor cycle plus approve, assign, note, reopen, and prove governed assign under two seconds p95.",
+      "Cover timeout-before-task, timeout-after-one, crash-after-rename, stale claim, forged retry, concurrent drainers, mismatched spec, and restart recovery.",
+      "Preserve provider dispatch, worker leases, shared reviewer eligibility, signature checks, artifact guards, journal integrity, and zero partial materialization.",
+      "Run focused bridge suites, relevant full supervisor regression, 2000-event benchmark, py_compile, evidence JSON, trailer, scope, and diff checks.",
+      "Do not edit config, live runtime, canonical JSON by hand, provider/account/quota policy, unrelated services, product tasks, or the fixed L12 catalog.",
+      "Deliver clean PR to dev, exact-head Human/Ops review, merge, and canonical archive before rollout. Rollback is merge revert."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802/"
+    ],
+    "depends_on": [
+      "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-policy-corrected-dispatch-chain-v5-20260802",
+      "conversation_id": "codex-root-l12-three-pass-gap-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Codex and Codex2 share one ChatGPT account",
+            "Pantheon supervisor is the only routine implementation dispatcher"
+          ]
+        },
+        {
+          "kind": "INVALID_V4_TASK_EVIDENCE",
+          "path": "ai-status.json",
+          "sourceRefs": [
+            "four operator V4 tasks contain false different-accounts and mutual-review acceptance",
+            "all four remain nonterminal and are replaced before implementation"
+          ]
+        },
+        {
+          "kind": "THREE_PASS_GAP_AUDIT",
+          "path": "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md",
+          "sourceRefs": [
+            "PR #4494 merge 0a2bd446952936998996ba6ecc89b1cbacd55bce"
+          ]
+        },
+        {
+          "kind": "IMMUTABLE_28_TASK_CATALOG",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+          "sourceRefs": [
+            "sha256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+            "G1 remains unmaterialized until V5 canary and legal dispatcher bootstrap"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T09:59:00Z",
+      "intent": "replace_false_policy_v4_dispatch_closeout_chain_with_correct_v5",
+      "mode": "kernel_repair",
+      "packet_digest": "0dea13a8292f4a6d8fdd760af779bd66bd2a9bd7126688b7c6d15aa0468730a0",
+      "packet_id": "pkt-sup-dispatch-closeout-chain-policy-corrected-v5-20260802T0959Z",
+      "source_turn_ids": [
+        "user-requires-supervisor-autoworker-dispatch",
+        "user-requires-complete-gap-execution",
+        "false-review-policy-propagated-into-v4-chain"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Supersede operator V4 because its acceptance contains the false Codex/Codex2 independent-review policy. Start from current origin/dev only after the corrected shared identity guard V2 is merged.",
+          "Codex and Codex2 remain separate configured execution quota groups but one current review identity; this task must consume the shared predicate and may not authorize mutual review.",
+          "Reproduce the signed-packet receipts that timed out in canonical assign while later direct canonical assign succeeded; record exact lock owner and elapsed phases with scratch-root instrumentation.",
+          "Never wait on governed ai-status subprocesses while holding runtime-admission, task-state, event-log, inbox, or replay locks required by that subprocess.",
+          "Make transient task-state timeouts retryable with bounded backoff, exact packet identity replay protection, and at-most-once canonical materialization.",
+          "Require durable processed receipt, admission record, exact task-spec hash, and canonical active-or-archive readback for every task ID.",
+          "Add concurrent real-event-log integration tests with a full supervisor cycle plus approve, assign, note, reopen, and prove governed assign under two seconds p95.",
+          "Cover timeout-before-task, timeout-after-one, crash-after-rename, stale claim, forged retry, concurrent drainers, mismatched spec, and restart recovery.",
+          "Preserve provider dispatch, worker leases, shared reviewer eligibility, signature checks, artifact guards, journal integrity, and zero partial materialization.",
+          "Run focused bridge suites, relevant full supervisor regression, 2000-event benchmark, py_compile, evidence JSON, trailer, scope, and diff checks.",
+          "Do not edit config, live runtime, canonical JSON by hand, provider/account/quota policy, unrelated services, product tasks, or the fixed L12 catalog.",
+          "Deliver clean PR to dev, exact-head Human/Ops review, merge, and canonical archive before rollout. Rollback is merge revert."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+          "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802/"
+        ],
+        "depends_on": [
+          "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802",
+          "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+        ],
+        "id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Dispatch Pipeline / Dev Bridge Lock Boundary / operator V5",
+        "reviewer": "Human/Ops",
+        "summary": "Correct the V4 acceptance conflict and remove the signed bridge canonical-assign lock boundary without weakening review identity.",
+        "title": "Remove canonical assign lock timeout from supervisor dev bridge with corrected identity policy"
+      },
+      "task_spec_hash": "fb20c5dde64377831d268dc32866f97ee13e25919b7da40aa3a5dc7555f1befc"
+    },
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802",
+    "last_update": "2026-08-02T10:04:08Z",
+    "next": "Operator rejected the shared-account/shared-review-identity premise. Codex and Codex2 may use different accounts; preserve distinct configured quota groups, do not hardcode equivalence, and do not impose a global mutual-review ban. This task is replaced by an account-neutral governed chain.",
+    "owner": "Codex",
+    "phase": "Supervisor Dispatch Pipeline / Dev Bridge Lock Boundary / operator V5",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Correct the V4 acceptance conflict and remove the signed bridge canonical-assign lock boundary without weakening review identity.",
+    "title": "Remove canonical assign lock timeout from supervisor dev bridge with corrected identity policy",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

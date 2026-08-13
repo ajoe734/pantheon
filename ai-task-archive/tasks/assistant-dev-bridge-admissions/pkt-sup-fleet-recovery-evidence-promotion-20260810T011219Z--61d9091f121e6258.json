@@ -1,0 +1,118 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "supervisor-runtime",
+      "acceptance"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-fleet-recovery-evidence-promotion-20260810T011219Z--61d9091f121e6258.json",
+  "admitted_at": "2026-08-10T01:16:12Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "ops-supervisor-fleet-recovery-20260810",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-REVIEW-EVIDENCE-20260810"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "CANONICAL_FLEET_RECOVERY_EVIDENCE",
+      "path": "ai-activity-log.jsonl",
+      "sourceRefs": [
+        "task:SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+        "pr:4697",
+        "merge:d27998250cac46c2d56b8b63e1784cd5cadeac19",
+        "promotion-evidence:/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T005423158659Z-2166207.json"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-10T01:12:19Z",
+  "intent": "governed_fleet_recovery_closeout_and_promotion_source_repair",
+  "mode": "supervisor_source_only",
+  "packet_digest": "61d9091f121e62589d104c5604242d726e9c8d67f15b2444d540fd0a4d15015b",
+  "packet_id": "pkt-sup-fleet-recovery-evidence-promotion-20260810T011219Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "643d7d83e22d364604b97320cafa661512af29a33be2fe4327b58a83225c885b",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-authorization:2026-08-10",
+    "audit:legacy-evidence-worker-contained:codex-20260810T005347Z-0d31a13c",
+    "audit:promotion-transaction:supervisor-runtime-promotion-20260810T005423158659Z-2166207"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-REVIEW-EVIDENCE-20260810",
+      "task_spec": {
+        "acceptance": [
+          "Start from a clean current origin/dev on branch task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-REVIEW-EVIDENCE-20260810 and change only docs/deployment/evidence/supervisor/SUP-POLL-WORKER-WORKTREE-FAILOPEN-REVIEW-EVIDENCE-20260810/evidence.json.",
+          "Before requesting review, commit an immutable JSON manifest that independently verifies and binds the original source delivery: PR #4697, reviewed head cc6b989a0ec1cce0d5271efad519ecd0b755059f, merge d27998250cac46c2d56b8b63e1784cd5cadeac19, the four original changed paths, focused validation, full supervisor suite result, and git diff --check. Cite reproducible command/log/commit evidence rather than a narrative assertion.",
+          "The manifest must record scope, merge order, zero live-runtime rollout, and rollback as a normal revert of this evidence-only PR if its facts are wrong. It must state that local commit 0b690f019 from the stopped legacy worker is unpushed audit residue and must not be recovered, pushed, or merged.",
+          "Do not modify .orchestrator/supervisor.py, tests, scripts, runtime configuration, canonical task state, bridge inbox, queues, provider/account configuration, services, or any live process. Do not reuse a legacy task branch or worktree.",
+          "Deliver through a protected PR to dev with normal checks and a fresh independent Codex2 exact-head review. The reviewer must bind REVIEW_FILE to this evidence.json plus REVIEW_PR, REVIEW_HEAD_SHA, REVIEW_HEAD_BRANCH, and REVIEW_BASE=dev before approval."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/SUP-POLL-WORKER-WORKTREE-FAILOPEN-REVIEW-EVIDENCE-20260810/evidence.json"
+        ],
+        "depends_on": [],
+        "id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-REVIEW-EVIDENCE-20260810",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime / Evidence Closeout",
+        "reviewer": "Codex2",
+        "summary": "Create a fresh, evidence-only PR that records the pre-review proof for the already merged #4697 poll-worker fail-open source change. The legacy task is superseded for audit safety; no source recovery or live action belongs here.",
+        "title": "Publish immutable review evidence for merged poll fail-open fix"
+      },
+      "task_spec_hash": "d4bbf900c93bab6257fc9ba54e38d6e98034839c27546d05ccb7393bc07837c1"
+    },
+    {
+      "task_id": "SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce from transaction evidence /home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T005423158659Z-2166207.json: candidate verification rejected .orchestrator/logs as forbidden ignored debris, then rollback verification rejected a dirty legacy task brief. Explain the precise provenance and correct layer before changing code.",
+          "Restrict implementation to scripts/promote_supervisor_runtime.py, scripts/test_promote_supervisor_runtime.py, and the task evidence path. Preserve fail-closed rejection for unknown ignored files, executable/importable source, symlinks, altered tracked trees, mismatched process/config identity, and unsafe rollback. Do not broad-ignore .orchestrator or weaken the three-fresh-loop gate.",
+          "Add focused regression coverage proving that only a finite, verified runtime-generated footprint such as approved supervisor logs can survive post-launch observation, while an unapproved ignored directory still fails. Add coverage proving rollback validation relies on the captured immutable rollback identity rather than contamination from mutable legacy task-brief material.",
+          "Use a clean branch task/SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810 from current origin/dev; create pre-review evidence with changed paths, focused tests, full relevant promotion test suite, git diff --check, PR/check identities, source-merge order, no live rollout, and rollback by normal merge revert.",
+          "Do not invoke promote_supervisor_runtime.py --promote, stop/start/restart services, alter live config/state/queues, edit command runtimes or dev-root, modify provider/account settings, or touch the pending legacy local commit. After merge, hand off only the documented evidence to a separate controlled runtime-promotion decision.",
+          "Deliver through a protected PR to dev with normal required checks and independent Codex2 exact-head review using REVIEW_FILE for this task evidence plus REVIEW_PR, REVIEW_HEAD_SHA, REVIEW_HEAD_BRANCH, and REVIEW_BASE=dev."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810/evidence.json"
+        ],
+        "depends_on": [],
+        "id": "SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime / Promotion Recovery",
+        "reviewer": "Codex2",
+        "summary": "Repair the source-only promotion verifier after the governed transaction recorded a candidate false rejection for .orchestrator/logs and rollback verification contamination from a dirty legacy task brief. Preserve fail-closed identity and source-integrity guarantees; do not rerun promotion in this task.",
+        "title": "Repair promotion validation for approved runtime debris and rollback snapshots"
+      },
+      "task_spec_hash": "7dac911473b3e64932551db6e2bdd02e9a83f161ff01be64926dbbca8d6e215b"
+    }
+  ]
+}

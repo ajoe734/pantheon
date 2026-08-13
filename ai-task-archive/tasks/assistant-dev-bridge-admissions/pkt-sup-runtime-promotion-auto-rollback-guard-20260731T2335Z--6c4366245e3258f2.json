@@ -1,0 +1,113 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-runtime-promotion-auto-rollback-guard-20260731T2335Z--6c4366245e3258f2.json",
+  "admitted_at": "2026-07-31T23:35:32Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#runtime-promotion-auto-rollback-guard",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-PROMOTION-AUTO-ROLLBACK-GUARD-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "INCIDENT_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.json",
+      "sourceRefs": [
+        "first promotion launched from disposable task worktree",
+        "worker cleanup left supervisor cwd deleted",
+        "Human/Ops rollback required; automatic rollback was not exercised"
+      ]
+    },
+    {
+      "kind": "EXISTING_HANDOFF_CONTRACT",
+      "path": "docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/handoff/swap-supervisor.sh",
+      "sourceRefs": [
+        "intentional restart and runtime-admission lock exist",
+        "post-launch health failure does not automatically restore incumbent"
+      ]
+    },
+    {
+      "kind": "LIVE_BASELINE",
+      "path": "/home/lupin/pantheon-ci-deploy/command-runtimes/012dab969455e7146f2437159d7d38fc5904a195",
+      "sourceRefs": [
+        "live PID 3523046",
+        "exact supervisor source 012dab969455e7146f2437159d7d38fc5904a195",
+        "config sha256 728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T23:35:29Z",
+  "intent": "repair_supervisor_runtime_promotion_transaction",
+  "mode": "kernel_repair",
+  "packet_digest": "6c4366245e3258f211cd7a843abd6210853e933740c922d2099109049e31c4b1",
+  "packet_id": "pkt-sup-runtime-promotion-auto-rollback-guard-20260731T2335Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "1825b5fe10d4fec978878f690db63aee4e7241742d2145c78a031dbfc9a5dee4",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+    "alias-promotion-deleted-cwd-incident",
+    "human-ops-live-rollback-20260731T232614Z",
+    "persistent-root-recovery-012dab969455"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-PROMOTION-AUTO-ROLLBACK-GUARD-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Perform a full architecture pass over sync-dev-root.sh, SUP-COMMAND-RUNTIME-REFRESH-001 handoff helpers, watchdog intentional-restart handling, status-command runtime pinning, worker/queue lease state, authoritative projection, and task-worktree cleanup; document the exact failure chain and avoid a one-off PID patch.",
+          "Add one reusable governed promotion command that prepares or validates a persistent content-addressed command root outside auto-worker task worktrees, binds exact accepted commit and tracked tree identity, captures incumbent PID/cmdline/cwd/start time under runtime-admission lock, and refuses mutable/disposable/deleted roots.",
+          "Capture the live config bytes and SHA before any handoff and never call config drift --fix or any config writer. Any byte change is a failed postcheck that triggers rollback.",
+          "Before TERM, fail closed unless exactly one incumbent supervisor exists, its identity still matches the preflight capture, authoritative projection is caught up with equal hashes, worker and queue leases agree, and no task has duplicate active workers.",
+          "After launch, require a bounded sequence of fresh successful loops from the candidate PID/root plus exact commit/tree, projection equality, worker/queue lease parity, no duplicate task IDs, provider readiness, and unchanged config bytes.",
+          "If launch or any postcheck fails or times out, automatically terminate the bad replacement under the same governed admission protocol, restore the captured incumbent root, prove a fresh healthy rollback PID and projection/lease/config invariants, and return nonzero with durable failure/rollback evidence.",
+          "Regression tests inject at least candidate launch failure, missing heartbeat, wrong cwd/commit, projection mismatch, lease mismatch, duplicate worker, config-byte drift, rollback launch failure, stale/reused PID identity, and successful promotion. Tests must use fixtures/mocks and must not kill the live supervisor.",
+          "Define tracked-tree identity separately from allowed runtime-generated untracked context files; do not call a root clean when git status has entries, and do not let generated task briefs alter executable source identity.",
+          "Preserve watchdog intentional restart accounting and status-command runtime pinning across both promotion and rollback; no direct canonical JSON edits, manual queue edits, provider policy changes, product changes, or config changes.",
+          "Deliver through task branch, focused tests plus full relevant supervisor/ai_status regression, PR to dev, all required checks, exact-head Human/Ops review, protected merge, and archived evidence. Do not run a live promotion during implementation; the next already-required runtime promotion is the governed live canary for this helper.",
+          "Rollout: after merge, require SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731 closeout to reference this task as the resolved automatic-rollback contract gap; then use the new helper for held-close guard and later scheduler/runtime promotions.",
+          "Rollback of this source change is revert of the merge commit; current live supervisor at 012dab969455e7146f2437159d7d38fc5904a195 and config SHA 728a6d90aea962a5375ae66014b4d21638f1f5376c45c5ea1e0221ee5d9979cc remain untouched during implementation."
+        ],
+        "artifacts": [
+          "scripts/promote-supervisor-runtime.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-AUTO-ROLLBACK-GUARD-20260731/"
+        ],
+        "depends_on": [
+          "SUP-AGENT-ALIAS-REASSIGN-GUARD-20260731"
+        ],
+        "id": "SUP-RUNTIME-PROMOTION-AUTO-ROLLBACK-GUARD-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime / Transactional Promotion Guard",
+        "reviewer": "Human/Ops",
+        "summary": "Implement the missing reusable promotion transaction exposed by the deleted-cwd incident. Expected branch task/SUP-RUNTIME-PROMOTION-AUTO-ROLLBACK-GUARD-20260731 in a clean governed worktree, merge target dev. Owner capability: supervisor runtime/process/lock engineering. Reviewer capability: independent Human/Ops failure-injection and exact-head evidence review.",
+        "title": "Make supervisor runtime promotion transactional with automatic rollback"
+      },
+      "task_spec_hash": "1ed8ec45fddee824f17a6fb7b975e07b3c9626f51126eae0a70e1221f2f588e7"
+    }
+  ]
+}

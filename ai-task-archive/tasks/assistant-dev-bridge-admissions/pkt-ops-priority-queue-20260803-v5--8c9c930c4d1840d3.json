@@ -1,0 +1,138 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.debug",
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-ops-priority-queue-20260803-v5--8c9c930c4d1840d3.json",
+  "admitted_at": "2026-08-03T11:12:20Z",
+  "audit_conversation_href": "/bff/assistant/sessions/ops-priority-20260803-v4",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "ops-priority-20260803-v5",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260803-V2"
+    },
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V3-20260731"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801-V2-20260803"
+    }
+  ],
+  "documents": [],
+  "durable": true,
+  "emitted_at": "2026-08-03T07:37:51Z",
+  "intent": "generate_sa_sd_and_dispatch",
+  "mode": "kernel_repair",
+  "packet_digest": "8c9c930c4d1840d337a8e7ccc60eb8715750c0f4df1b870065af11b5ee78867e",
+  "packet_id": "pkt-ops-priority-queue-20260803-v5",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "a1269a7429a4706d68c1495d87feb3c75b9db975feebf7475f10e7d1cf3e63cf",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "turn-user-20260803",
+    "turn-assistant-20260803"
+  ],
+  "tasks": [
+    {
+      "task_id": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260803-V2",
+      "task_spec": {
+        "acceptance": [
+          "Refresh or supersede PR #4297 from current dev; do not restart PR #4282 implementation; obtain exact-head review",
+          "root-freeze",
+          "merge",
+          "and canonical done/archive."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728"
+        ],
+        "depends_on": [],
+        "id": "L12-FLEET-STATUS-SYNC-CLOSEOUT-20260803-V2",
+        "owner": "Codex2",
+        "phase": "Twelve Loop Remediation / Wave 0 Fleet Status Sync Closeout",
+        "reviewer": "Codex",
+        "summary": "刷新並完成 L12-FLEET-STATUS-SYNC-001 closeout evidence；不得重做已 merged implementation。",
+        "title": "Refresh and close L12-FLEET-STATUS-SYNC-001 closeout evidence"
+      },
+      "task_spec_hash": "0c58ec998973b4a4300e86d90465e08d63cb084eaf4384ed33228c6599cffcb8"
+    },
+    {
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V3-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Verify #4396 head c4346b8d53941d665acd931d32a98b3802b1e7b2 and task row review_approved evidence before changing PR state",
+          "If #4396 is intended to be integrated evidence, make it ready for review, confirm Branch CI remains green, and run auto-integrator eligibility dry-run",
+          "If #4396 is only a ReviewBus artifact and should stay draft, record a governed closeout path that does not block #4386 support proof on a draft PR",
+          "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V3-20260731",
+        "owner": "Codex2",
+        "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
+        "reviewer": "Codex",
+        "summary": "Resolve the draft ReviewBus PR #4396 integration gap so current-head running-owner support evidence is either governably integrated or explicitly routed without draft-PR blockage.",
+        "title": "Move #4396 running-owner exact-head proof through governed PR/closeout"
+      },
+      "task_spec_hash": "d3f4577d8ed5d226808c5a0f65e47fa570c9f4f635e6eace462feff03a958027"
+    },
+    {
+      "task_id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801-V2-20260803",
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev in a clean governed task worktree.",
+          "Change only the L12-SIGNOFF-001 human task card assignment header so lane, owner, reviewer, and dependencies exactly mirror the current committed docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json entry.",
+          "Do not modify tasks.json, dispatcher code/tests, task state, config, product code, or any other task card.",
+          "Add truthful review_pending evidence in the declared unique evidence file; do not self-approve.",
+          "Run test_human_task_cards_mirror_assignment_header from the committed tree, the relevant static catalog/task-card checks, and git diff --check.",
+          "Deliver one exact two-file PR to dev with a <=72-character Task-ID-prefixed subject and exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Wait all required checks and independent exact-head Human/Ops approval. Merge this repair before retrying SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 full-suite acceptance.",
+          "Rollout is documentation-only merge; rollback is revert of the merge commit."
+        ],
+        "artifacts": [
+          "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SIGNOFF-001.md",
+          "docs/reviews/archive/2026-08-01-l12-signoff-task-card-assignment-align-evidence.json"
+        ],
+        "depends_on": [
+          "L12-SIGNOFF-001"
+        ],
+        "id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801-V2-20260803",
+        "owner": "Antigravity",
+        "phase": "Twelve Loop Dispatch / Static Task Card Repair",
+        "reviewer": "Codex2",
+        "summary": "Repair the pre-existing static L12 signoff task card assignment header in its own governed scope so the held-close guard PR does not absorb an unrelated file.",
+        "title": "Align the static L12 signoff task card assignment header"
+      },
+      "task_spec_hash": "63c6d7a5b3172486e23d6e78d9215317bfb7a8e512f41c37388d46c9b23b8e77"
+    }
+  ]
+}

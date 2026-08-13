@@ -1,0 +1,127 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "assistant.dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/lifecycle-projector-pr-review-recovery-20260801-v3--3ed08a3828cf04e9.json",
+  "admitted_at": "2026-08-01T14:26:33Z",
+  "audit_conversation_href": "https://github.com/ajoe734/pantheon/pulls?q=is%3Apr+is%3Aopen+4448+4449",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-lifecycle-projector-incident-20260801",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "LIFECYCLE-PROJ-PLAN-REVIEW-R3-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "INCIDENT_HOTFIX",
+      "path": "docker-compose.yml",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4448",
+        "85e835448f7b86ce77ad9e4e0cc80961879b29c0"
+      ]
+    },
+    {
+      "kind": "SA_SD_PLAN",
+      "path": "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/archive/LIFECYCLE_PROJECTOR_INCREMENTAL_REDESIGN_PLAN_2026-08-01.md",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4449",
+        "32528f8232d14b3eaf5a2fab51c4ae532de5a4c7",
+        "tree:721c1703022eaf0507b9bdb75c908aa88f11ba78"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T14:25:00Z",
+  "intent": "recover_independent_exact_head_reviews_after_supervisor_command_root_repair",
+  "mode": "kernel_repair",
+  "packet_digest": "3ed08a3828cf04e9dc65c6e3ed43d8fb834720749c2d38505a8bd5a8023fbfe6",
+  "packet_id": "lifecycle-projector-pr-review-recovery-20260801-v3",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "fc14bf4fd37ec82891f5bb898dcaf5177e741753c630140f07e57284c6baa536",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "supervisor-command-root-recovery",
+    "exact-head-review-recovery"
+  ],
+  "tasks": [
+    {
+      "task_id": "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Review exact PR #4448 head 85e835448f7b86ce77ad9e4e0cc80961879b29c0 independently; Codex and Codex2 are the same identity and are ineligible reviewers.",
+          "Confirm operator-bff can start and serve the last atomic read model while the projector is stopped, and that readiness continues to report stale/error truth.",
+          "Confirm the projector defaults to restart=no, has a 16 GiB hard memory ceiling, and defaults generation retention to 4 without deleting existing data.",
+          "Re-run the focused lifecycle projector tests and docker compose config validation; publish exact logs and a review verdict.",
+          "If accepted, approve and merge PR #4448 to dev without changing its head, then record the merge commit and dev rollout or explicit rollout blocker.",
+          "Do not restart the stopped projector on the current unbounded implementation and do not delete projection state or generations."
+        ],
+        "artifacts": [
+          "docker-compose.yml",
+          "services/trade_journey/test_lifecycle_projector_compose.py",
+          "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801/"
+        ],
+        "depends_on": [],
+        "id": "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801",
+        "owner": "Antigravity",
+        "phase": "incident-hotfix-review",
+        "reviewer": "Human/Ops",
+        "summary": "Recovered independent review/merge handoff after supervisor command-root repair. This preserves the original task ID because the seven-task redesign DAG depends on its accepted terminal state.",
+        "title": "Independently review and complete lifecycle projector emergency containment"
+      },
+      "task_spec_hash": "49dbefd6804f4d911fe312e1bd289b5c22c108cb60af6ea946dbe7a4bed27187"
+    },
+    {
+      "task_id": "LIFECYCLE-PROJ-PLAN-REVIEW-R3-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Treat the earlier plan-review attempts as failed preflight/superseded and do not use them as approval evidence.",
+          "Review exact PR #4449 head 32528f8232d14b3eaf5a2fab51c4ae532de5a4c7 independently; Codex and Codex2 are the same identity and are ineligible reviewers.",
+          "Confirm exact head 32528f8232d14b3eaf5a2fab51c4ae532de5a4c7 has tree 721c1703022eaf0507b9bdb75c908aa88f11ba78, identical to the prior source tree.",
+          "Confirm the design and seven tasks cover the complete objective, evidence, scopes, dependencies, acceptance, validation, rollout, rollback, security, and non-goals described in the packet.",
+          "Validate JSON, DevTaskPacket schema, CI, and no authorization for production, live capital, source deletion, supervisor redesign, or pre-approval legacy deletion.",
+          "If accepted, approve and merge exact PR #4449 head to dev, record the merge SHA, and leave implementation dispatch to the post-merge signed seven-task packet."
+        ],
+        "artifacts": [
+          "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/",
+          "docs/bff/execution-tasks/2026-08-01-lifecycle-projector-incremental-redesign/",
+          "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-INCIDENT-20260801/"
+        ],
+        "depends_on": [],
+        "id": "LIFECYCLE-PROJ-PLAN-REVIEW-R3-20260801",
+        "owner": "Antigravity",
+        "phase": "design-review-r3",
+        "reviewer": "Human/Ops",
+        "summary": "Independent exact-head review/merge authority for the archived projector redesign plan after the supervisor dispatch path was repaired.",
+        "title": "Independently review and merge lifecycle projector redesign plan"
+      },
+      "task_spec_hash": "124a1afe0167904cd69a7410c1e1620e4b791abac36f60efb973da2d60ee705b"
+    }
+  ]
+}

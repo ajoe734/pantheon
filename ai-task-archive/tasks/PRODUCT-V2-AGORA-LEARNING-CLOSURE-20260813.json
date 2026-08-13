@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "task_id": "PRODUCT-V2-AGORA-LEARNING-CLOSURE-20260813",
+  "archived_at": "2026-08-13T03:00:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start from current origin/dev and inspect existing components before changing code",
+      "Prove one Agora result is consumed by policy learning",
+      "Prove a bounded consultation handoff or document the exact current missing edge and implement it",
+      "Land one reviewed PR with current evidence"
+    ],
+    "artifacts": [
+      "services/control-plane/tests/agora/",
+      "services/policy-learning/",
+      "services/consultation/",
+      "docs/deployment/evidence/product-v2/agora-learning-closure/"
+    ],
+    "depends_on": [],
+    "generation": 1,
+    "id": "PRODUCT-V2-AGORA-LEARNING-CLOSURE-20260813",
+    "last_update": "2026-08-13T03:00:15Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset; remaining product work is rematerialized as current-source dependency-free roots.",
+    "owner": "Codex",
+    "phase": "V2 Product Delivery",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "以目前 dev 為準，驗證 Agora evidence、policy learning 與 consultation handoff；只修當前真實缺口，不重建已存在元件。",
+    "title": "Close the current Agora-to-learning product path",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

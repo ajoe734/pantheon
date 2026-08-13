@@ -1,0 +1,328 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-runtime-identity-retry-v2-split-20260801T0218Z--355ad2d403cceefb.json",
+  "admitted_at": "2026-08-01T02:23:19Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#v2-split-after-stale-review",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "SUPERSEDED_IDENTITY_MONOLITH",
+      "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-promotion-split-chain-20260801T0000Z.json",
+      "sourceRefs": [
+        "PR #4437 rejected heads 07316c73 and 77af55015",
+        "same rejected 77af55015 replayed without code changes",
+        "GitHub review comments 5148931145, 5148948795, 5149092858"
+      ]
+    },
+    {
+      "kind": "SUPERSEDED_RETRY_MONOLITH",
+      "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-progress-aware-failure-streak-retry-20260801T0116Z.json",
+      "sourceRefs": [
+        "PR #4438 rejected heads 94e3b6f3, d616beaa and 35056b71",
+        "real owner/reviewer probe returned false",
+        "15-minute owner run timed out and same trees replayed",
+        "GitHub review comments 5148942746, 5149044158, 5149078704"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T02:18:00Z",
+  "intent": "split_repeated_stale_review_monoliths_into_governed_v2_chains",
+  "mode": "kernel_repair",
+  "packet_digest": "355ad2d403cceefb30b138a1399e95d7024427643f80c7aae422463aecf1f1e0",
+  "packet_id": "pkt-sup-runtime-identity-retry-v2-split-20260801T0218Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "cd89ac43da7e468e75745508bc766dc825628bdfc08776280094100c34ff67db",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+    "human-ops-pr4437-three-exact-head-rejections",
+    "human-ops-pr4438-three-exact-head-rejections-and-timeout"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Start from origin/dev after the merged snapshot invariant task; PR #4437 and heads 07316c73/77af55015 are rejected evidence only and must not enter ancestry.",
+          "Define one immutable candidate identity carrying resolved root, exact 40-hex basename, HEAD commit, tracked tree identity, canonical remote, config path, config bytes, byte length, and SHA-256.",
+          "Require the resolved root to be exactly one direct /home/lupin/pantheon-ci-deploy/command-runtimes/<40-hex> directory; reject missing/deleted roots, nested paths, /tmp, worker worktrees, mutable aliases, symlink components/escape, and basename-to-HEAD mismatch.",
+          "Parse the origin URL structurally and accept only the exact ajoe734/pantheon repository over allowed GitHub HTTPS or SSH forms; substring or suffix spoofing fails closed.",
+          "Require HEAD to be an ancestor of the freshly resolved accepted origin/dev ref and bind the exact tracked tree. Reject staged/modified tracked entries and enumerated forbidden untracked entries while allowing only explicitly documented runtime-generated paths.",
+          "Capture config bytes once and provide an immutable comparison primitive that every later phase can call; byte, length, path, and SHA mismatch fail closed. No config writer or drift fixer is callable from this module.",
+          "Do not expose skip_identity_guards or any production bypass. Existing healthy fixture tests must inject real validator dependencies or valid immutable identities.",
+          "Add separate tests for direct valid root, nested root, out-of-prefix, symlink component/escape, deleted root, basename mismatch, exact/spoofed remotes, commit not on accepted dev, tree mismatch, dirty tracked state, forbidden/allowed untracked paths, and config byte/path/length/SHA drift.",
+          "Run focused promotion tests plus git diff --check. This task does not inspect /proc, define launch behavior, send signals, or perform live promotion.",
+          "Rollout is source merge only. Rollback is revert of this task merge commit.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801"
+        ],
+        "id": "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Identity V2 / 1 Root Config Git",
+        "reviewer": "Human/Ops",
+        "summary": "Replace only the rejected candidate-root, config-byte, and Git identity layer with immutable fail-closed values and deterministic tests.",
+        "title": "Build immutable runtime root, config, and Git identity guards"
+      },
+      "task_spec_hash": "0ee4d2100499afb5cc125659db811bcf261de1246326d3475cb74f129991536e"
+    },
+    {
+      "task_id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Enumerate supervisor candidates and require exactly one live incumbent whose full argv binds the exact canonical supervisor entrypoint and the captured live --config path; zero or multiple candidates fail closed.",
+          "Capture PID plus /proc starttime as the process generation and re-read both before every comparison; vanished, recycled, changed, unreadable, zombie, or mismatched process identity fails closed.",
+          "Bind executable, full argv, cwd realpath, cwd commit/tree, command-root environment, runtime SHA, status root, and config path to the immutable candidate/incumbent identity. A correct Python supervisor with the wrong config, cwd, commit, tree, or environment must fail.",
+          "Represent admission-lock evidence explicitly and validate the same lock generation/owner around discovery; merely observing that some process holds a lock is insufficient.",
+          "Never log full environment or secrets. Evidence may record only the allowlisted environment contract and hashes/paths needed for verification.",
+          "Add separate deterministic /proc-fixture or injected-reader tests for zero/multiple supervisors, wrong config argv, wrong entrypoint, stale PID, reused PID/starttime, deleted cwd, wrong cwd commit/tree, wrong command root/SHA/status root, unreadable proc fields, and lock-generation drift.",
+          "Include a real read-only discovery probe only if it reports the exact validations actually performed; no TERM, launch, rollback, service restart, or config mutation.",
+          "Run the focused suite plus the merged V2 root/config/Git suite and git diff --check.",
+          "Rollout is source merge only. Rollback is revert of this task merge commit.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-IDENTITY-ROOT-CONFIG-GIT-V2-20260801"
+        ],
+        "id": "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Identity V2 / 2 Process Binding",
+        "reviewer": "Human/Ops",
+        "summary": "Add only exact incumbent discovery and PID-generation binding on top of the merged immutable root/config/Git layer.",
+        "title": "Bind one incumbent supervisor process to immutable runtime identity"
+      },
+      "task_spec_hash": "9006e016c2d8dc0d74247d349e4f2c7c8b92752f720dd746013995d1d0fa1648"
+    },
+    {
+      "task_id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Read and compose the actual sync-dev-root, command-runtime refresh, watchdog intentional-restart, status-command runtime pinning, worktree cleanup, interpreter, cwd, scrubbed environment, and durable stdout/stderr log contracts. Do not merely return descriptive strings.",
+          "Fail closed when the governed interpreter is absent/non-executable, cwd differs, required environment is missing/mismatched, forbidden inherited variables remain, or durable log target is unsafe/unwritable under the injected test filesystem.",
+          "The full snapshot/preflight must use the immutable config identity and revalidate it after root/Git discovery, process discovery, and launch-contract assembly; any later drift makes the result ineligible.",
+          "Implement discover-only as the complete read-only preflight path. It must reject a realistic temporary reviewer worktree matching rejected PR #4433 behavior and accept only a valid persistent command runtime fixture.",
+          "Run the full V2 identity matrix plus snapshot and runtime-health regressions. Tests use fixtures/mocks and prove no process signal, launch, rollback, config write, or live service mutation occurs.",
+          "Create a clean replacement PR from current dev. Only after it exists, mark PR #4437 superseded with links to all three V2 tasks; never merge or reuse #4437.",
+          "After exact-head review and merge, hand off evidence to Human/Ops. Human/Ops will supersede the blocked original wrapper so the already-governed rollback transaction may proceed.",
+          "Rollout is source merge only; no live runtime promotion in this task. Rollback reverts the three V2 merge commits in reverse order.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/promote-supervisor-runtime.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801"
+        ],
+        "id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Identity V2 / 3 Launch Preflight",
+        "reviewer": "Human/Ops",
+        "summary": "Integrate the two merged V2 identity layers with the real governed launch sources and deliver the accepted replacement for blocked wrapper SUP-RUNTIME-PROMOTION-IDENTITY-GUARD-20260801.",
+        "title": "Compose governed launch identity and full discover-only preflight"
+      },
+      "task_spec_hash": "71b4b4bd94ebb0b8744c3ac6ade4985f9fa1464efa34fa9687940a8daaffb079"
+    },
+    {
+      "task_id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Start from origin/dev; rejected PR #4438 heads 94e3b6f3/d616beaa/35056b71 and stale PR #4385 are evidence only and must not enter ancestry.",
+          "Extend each exact task plus logical-provider failure record with failure kind, reason class, count, failure timestamp, owner-at-failure, provider identity, and a stable failure generation without mutating canonical task state.",
+          "Build a pure authoritative progress extractor that recognizes only a governed reviewer reopen/handoff or verified commit/head event for the same task occurring after the failure timestamp. Generic task.last_update, dispatch sync, notes, worker start, test reruns, or repeated handoff of the same rejected head are not progress.",
+          "Bind progress to exact task, unchanged owner, reviewer identity, event id/type/timestamp, and exact new head/commit when present. Independent reviewer identity must differ from owner; owner==reviewer is invalid evidence.",
+          "Provide backward-compatible fail-closed decoding for old streak records. Missing owner, kind, timestamp, event identity, or malformed generations may not auto-recover.",
+          "Add separate deterministic tests for reviewer reopen, reviewer handoff, verified new head, same rejected head replay, generic last_update, owner change, stale/pre-failure event, cross-task/provider event, malformed legacy record, and unrelated streak preservation.",
+          "Run focused tests and full relevant serialization/state regression. Do not change failure-loop gating, queueing, leases, dispatch, config, or live runtime in this task.",
+          "Rollout is source merge only. Rollback is revert of this task merge commit.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801"
+        ],
+        "id": "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Retry V2 / 1 Evidence Generation",
+        "reviewer": "Human/Ops",
+        "summary": "Implement only durable failure-generation records and authoritative governed-progress extraction; do not change dispatch eligibility yet.",
+        "title": "Record authoritative failure and governed progress generations"
+      },
+      "task_spec_hash": "384215108bb7bd3e921b08624f4ad293440db0c9285c0d29ca696c3fc595e529"
+    },
+    {
+      "task_id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Permit recovery only for explicitly nonterminal generic_exit or missing_process. Empty/unknown, terminal, timeout, parse_error, exit_code, auth, quota, policy, overlap, dirty-worktree, wrong-branch, wrong-task, and provider-unready kinds remain denied.",
+          "Require task status eligible for the owner lane, authoritative owner unchanged from failure, target agent equal to owner, independent reviewer progress newer than failure, and a new exact progress generation not previously consumed.",
+          "Require no active worker, pending/started queue event, delivery reservation, or active worktree lease for the exact task; require the logical provider to be ready and free of auth/quota/policy pause.",
+          "Return an immutable decision containing allow/deny, reason code, exact task/provider/failure generation/progress generation, prior count/kind/timestamp, qualifying event, and the proposed one-shot consumption token. The pure function must not mutate state.",
+          "Add one deterministic test per allow and deny row: actual Antigravity owner plus Human/Ops reviewer incident, stale/same-head replay, changed owner, every excluded kind, status variants, active worker, pending queue, reservation, worktree lease, provider unavailable/paused, already-consumed generation, cross-task/provider, and unrelated streaks.",
+          "Prove the actual canonical identity model owner=Antigravity/reviewer=Human/Ops can allow a qualifying retry; owner==reviewer must deny.",
+          "Run focused tests and the full relevant supervisor regression. Do not change dispatch gates, counters, queue state, audit files, config, or live runtime in this task.",
+          "Rollout is source merge only. Rollback is revert of this task merge commit.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801"
+        ],
+        "id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Retry V2 / 2 Pure Decision",
+        "reviewer": "Human/Ops",
+        "summary": "Add a pure fail-closed decision function over the merged authoritative failure/progress records, without consuming state or dispatching.",
+        "title": "Build a pure bounded retry recovery decision matrix"
+      },
+      "task_spec_hash": "70eb7525987f6bc78a1c699e874cde98f81640870b94fbfbcd0ce7832fe91849"
+    },
+    {
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Evaluate and consume the exact decision token under runtime_state_lock immediately before the governed queue/dispatch reservation. A second loop or process may not consume the same task/provider/failure/progress generation.",
+          "If reservation/queueing fails, preserve a durable fail-closed outcome that cannot create an infinite retry; define and test whether the token remains consumed or advances to an explicit failed-consumption generation.",
+          "Do not erase the record on arbitrary active-worker commit. After one recovered dispatch, a subsequent exit without newer governed progress must again reach and retain the threshold.",
+          "Emit a durable activity audit with task, logical provider, prior count/kind/timestamp, owner-at-failure, qualifying progress event/head, decision reason, consumed token, reservation/queue event, and resulting worker run when available; redact secrets.",
+          "Integrate with both failure-loop task-agent gating and chair triage without bypassing provider readiness, assignment, status, worktree, queue, or reviewer independence rules.",
+          "Add deterministic integration tests for the exact observed incident, concurrent double-consumption, next-loop replay, queue failure, worker start, subsequent failure without progress, newer second progress generation, all deny rows, audit shape, and unrelated streak preservation.",
+          "Run focused tests plus the complete relevant supervisor regression and git diff --check. No live signals, service restarts, config edits, or runtime-state test fixtures outside temporary roots.",
+          "Create a clean replacement PR from current dev. Only after it exists, close/supersede stale PR #4385 and rejected PR #4438 with links to all V2 tasks; never merge or reuse their commits.",
+          "After exact-head review and merge, hand off source evidence to Human/Ops. Human/Ops will supersede the blocked original wrapper. Live rollout waits for the separately governed supervisor runtime promotion canary after the promotion transaction chain is accepted.",
+          "Rollback is revert of the three V2 retry merge commits; no config migration is allowed.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801"
+        ],
+        "id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Retry V2 / 3 Dispatch Consumption",
+        "reviewer": "Human/Ops",
+        "summary": "Integrate the merged pure V2 decision into one-shot dispatch and deliver the accepted replacement for blocked wrapper SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801.",
+        "title": "Consume one retry generation in governed dispatch with audit"
+      },
+      "task_spec_hash": "f384ee6888b30d990c43100ea1859d4f1b0b121195a4da72c68f3a8b103fa424"
+    }
+  ]
+}

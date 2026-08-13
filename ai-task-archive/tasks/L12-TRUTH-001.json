@@ -1,0 +1,253 @@
+{
+  "version": 1,
+  "task_id": "L12-TRUTH-001",
+  "archived_at": "2026-07-29T06:17:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "All twelve loops emit current tenant-scoped canonical controller records",
+      "BFF shows desired presence health last success failure actual state and provenance",
+      "Stale absent or contradicted records remain unaccepted and visibly degraded",
+      "Catalog controller names queries restart and liveness fields match implementation",
+      "Maturity is no higher than implemented until hosted evidence is admitted"
+    ],
+    "actual_state_sources": [
+      "twelve canonical controller records",
+      "domain terminal actual state",
+      "BFF loop inventory"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [
+        "L12-BFF-001",
+        "L12-CLOSE-001",
+        "L12-CTRL-001",
+        "PPL-ALLOC-009"
+      ],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "docs/deployment/loop-catalog.registry.json",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/bff/loop_inventory.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/bff/main.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/bff/test_loop_health_read_model_contract.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-TRUTH-001"
+    },
+    "artifacts": [
+      "docs/deployment/loop-catalog.registry.json",
+      "services/control-plane/bff/loop_inventory.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+      "services/control-plane/bff/test_loop_health_read_model_contract.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "ba1630da384334ae2c5c027cfdcd822384937a19328168947096daffe93ed182",
+    "current_maturity": "contract",
+    "depends_on": [
+      "L12-CTRL-001",
+      "L12-MANIFEST-001",
+      "PPL-ALLOC-009"
+    ],
+    "desired_state_sources": [
+      "domain desired-state queries",
+      "loop catalog controller contracts"
+    ],
+    "dispatch_rules": [
+      "Do not invent liveness in BFF",
+      "Keep not-yet-proved maturity fail-closed",
+      "Bind controller evidence to exact deployment"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001",
+    "fleet_lane": "operator-truth",
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-TRUTH-001",
+      "head_sha": "82a820d75f32ebdea865c207259839f1db2735e5",
+      "mode": "required_commit_status",
+      "pr": 4351,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4351",
+      "recorded_at": "2026-07-29T05:56:55Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51270080045,
+      "status_state": "success"
+    },
+    "human_ops_reassignment_history": [
+      {
+        "at": "2026-07-27T18:29:29Z",
+        "owner": "Claude",
+        "previous": {
+          "last_update": "2026-07-27T16:22:18Z",
+          "next": "Human/Ops fleet recovery: reassigned to active supervisor lanes. Build authoritative loop truth only after manifest/controller records exist; do not synthesize health from catalog/service green.",
+          "owner": "Codex",
+          "reviewer": "Codex2"
+        },
+        "reason": "canonical fleet dispatch repair: prioritize Claude/Antigravity where available; avoid config mutation",
+        "reviewer": "Codex2"
+      }
+    ],
+    "id": "L12-TRUTH-001",
+    "last_update": "2026-07-29T06:17:18Z",
+    "loop_ids": [
+      "source_ingestion",
+      "strategy_distillation",
+      "alpha_replication",
+      "persona_teaching",
+      "agora_interaction_evidence",
+      "human_imitation_shadow_evaluation",
+      "consultation",
+      "promotion_deployment",
+      "capital_pool_execution",
+      "telemetry_reconciliation",
+      "evolution",
+      "bff_health_monitoring"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "L12-TRUTH-001 reconciled done from merged evidence: implementation PR #4350 f0c22242762f23740a7e8bea412e08b16bc6cd44 and closeout PR #4351 65f6b828645ab09fafd7c250333e845ba9be5577 are merged to dev; state-closeout evidence PR #4353 57abe669fc0b2c9c871c09920e156adf85f7e30e records the reconciliation; no config edit.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No premature proven-live promotion"
+    ],
+    "owner": "Claude2",
+    "phase": "Twelve Loop Remediation / Operator Truth",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "all-loop record conformance test",
+      "stale and contradictory record negatives",
+      "tenant-scoped BFF readback",
+      "catalog-to-runtime exactness validation"
+    ],
+    "requires_human_ops_signoff": false,
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-TRUTH-001",
+      "head_sha": "82a820d75f32ebdea865c207259839f1db2735e5",
+      "pr": 4351
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "讓每條 loop 寫 canonical record，BFF 顯示 desired/controller/last success/failure/actual/provenance；catalog 僅標 implemented，不先冒稱 proven-live。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-TRUTH-001.md",
+    "title": "Backend/controller/operator truth surfaces for L12",
+    "wave": 3,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-29T06:17:18Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/tmp/l12truth-state-closeout-kHCKBL",
+      "commit": "65f6b828645ab09fafd7c250333e845ba9be5577",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "57abe669fc0b2c9c871c09920e156adf85f7e30e",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": "docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/state-closeout-reconcile.md",
+        "commit": "57abe669fc0b2c9c871c09920e156adf85f7e30e",
+        "merge_target_ref": "origin/dev",
+        "merge_target_sha": "57abe669fc0b2c9c871c09920e156adf85f7e30e",
+        "owner": "Claude2",
+        "reviewer": "Antigravity",
+        "canonical_reviewer": "Antigravity",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T05:32:18Z",
+      "from": "Claude2",
+      "message": "Ready for independent review. PR #4350, head 9ee12147144c9d8b64f1c524dcd7fe5a394777e7, MERGEABLE, all four Actions checks green (Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance). Review file: docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json. Approve with a bound head, reading the SHA at approve time rather than reusing this one: AI_NAME=Antigravity REVIEW_PR=4350 REVIEW_HEAD_SHA=$(gh pr view 4350 --json headRefOid --jq .headRefOid) REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/evidence.json \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve L12-TRUTH-001 \"<independent review evidence>\". Both REVIEW_PR and REVIEW_HEAD_SHA are required; without them the approve only warns approval_head_binding_missing and the Pantheon canonical review gate status is never posted, leaving the PR BLOCKED. auto_integrator rebased this branch at 05:15Z and rewrote every branch SHA, so a quoted SHA can go stale between now and your approve. Separately, Pantheon root merge freeze 2026-07-27 is a Human/Ops-only status and is still absent; approval alone will not merge this PR. Both absent contexts are recorded in the manifest under implementation_delivery.required_checks. Scope for review: catalog controller_contract truth for the three implemented loops, catalog-to-runtime exactness in both directions, all-loop record conformance with tenant-scoped readback, all-loop stale/archive-only/contradicted negatives, and no maturity promotion. Focused regression 44 passed at the rebased head; five negative controls recorded in validation.commands; evidence validates against schemas/product-evidence.schema.json and sha256sum -c passes. Note this branch also carries Codex commit 106e1edd1 rebinding rebased SHAs, which my commit composes with rather than reverts.",
+      "resolved_at": "2026-07-29T05:34:30Z",
+      "status": "done",
+      "task_id": "L12-TRUTH-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T05:34:30Z",
+      "from": "Antigravity",
+      "message": "Reviewed implementation for L12-TRUTH-001. 1) Catalog controller_contract truth verified for the 3 implemented loops. 2) Bidirectional catalog-to-runtime exactness verified. 3) All-loop controller record conformance and tenant isolation verified. 4) Degradation for stale/archived/contradicted records verified. 5) Maturity fail-closed (no premature promotion) verified. 6) 44 unit/contract tests passed at head 9ee12147144c9d8b64f1c524dcd7fe5a394777e7. 7) PR #4350 is MERGEABLE with 4/4 green CI checks; evidence.json validates against product-evidence schema and sha256sum passes.",
+      "resolved_at": "2026-07-29T05:54:39Z",
+      "status": "done",
+      "task_id": "L12-TRUTH-001",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T05:54:39Z",
+      "from": "Claude2",
+      "message": "Closeout evidence needs a head-bound re-approve. The reviewed delivery already merged: PR #4350 squash-merged into dev as f0c22242 at 05:35:55Z, and 44 focused tests plus all six artifact digests re-verified at that merged tip. Closeout then produced PR #4351 (head 82a820d75), evidence-only: it binds the delivery by merge SHA instead of by branch SHA (the squash left no branch SHA an ancestor of dev), transcribes your review_approved verdict from task-state event 85a62caee41d seq 4843 per evidence_policy.mutation_rule, moves both external commit statuses from absent to success with their posted ids, sets overall_admission to approved_and_merged, and records a residual risk that scripts/validate_twelve_loop_gap_evidence.py enforces a later convention this manifest does not use. No catalog, read-model, or test file changed. All five Actions checks are green on #4351; it is BLOCKED only on 'Pantheon canonical review gate' (needs AI_NAME=Antigravity REVIEW_PR=4351 REVIEW_HEAD_SHA=82a820d75f32ebdea865c207259839f1db2735e5 approve) and on 'Pantheon root merge freeze 2026-07-27', which only Human/Ops can post. I moved the row back to review because approve requires status review and is bound to the exact head; done is withheld until #4351 merges, since archiving first would strand it.",
+      "resolved_at": "2026-07-29T05:56:55Z",
+      "status": "done",
+      "task_id": "L12-TRUTH-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T05:56:55Z",
+      "from": "Antigravity",
+      "message": "Verified L12-TRUTH-001 evidence manifest and PR #4351 re-approval binding head 82a820d75f32ebdea865c207259839f1db2735e5. 1) Implementation PR #4350 merged to dev (f0c22242). 2) Evidence manifest recorded in review_file. 3) All 44 contract & unit tests pass. 4) All acceptance criteria met and verified fail-closed.",
+      "resolved_at": "2026-07-29T06:10:06Z",
+      "status": "done",
+      "task_id": "L12-TRUTH-001",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T06:15:54Z",
+      "from": "Human/Ops",
+      "message": "Review Human/Ops state-closeout reconcile PR #4353 exact head 4816ae05ce1b0dc15dce46697656068f5ac7f9ef; delivery already merged.",
+      "status": "done",
+      "task_id": "L12-TRUTH-001",
+      "to": "Antigravity",
+      "resolved_at": "2026-07-29T06:17:18Z"
+    }
+  ],
+  "blockers": [
+    {
+      "blocker_kind": "missing_worker_terminal",
+      "created_at": "2026-07-29T06:07:32Z",
+      "dispatch_reason": null,
+      "failure_reason": "Worker process missing during supervisor boot reconciliation.",
+      "message": "Supervisor recorded terminal missing-worker outcome for task=L12-TRUTH-001, run=claude2-20260729T055826Z-fde283fb, provider=claude2: Worker process missing during supervisor boot reconciliation. Retry budget was exhausted or the request could not be reconstructed; task moved from review_approved to blocked. Confirm the failure, then reopen or reassign through scripts/ai-status.sh.",
+      "owner": "Claude2",
+      "previous_status": "review_approved",
+      "provider": "claude2",
+      "resolved_at": "2026-07-29T06:10:06Z",
+      "status": "resolved",
+      "task_id": "L12-TRUTH-001",
+      "waiting_for": "Claude2",
+      "worker_run_id": "claude2-20260729T055826Z-fde283fb"
+    }
+  ]
+}

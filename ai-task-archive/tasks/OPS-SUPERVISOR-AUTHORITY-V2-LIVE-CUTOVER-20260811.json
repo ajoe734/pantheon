@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "task_id": "OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811",
+  "archived_at": "2026-08-13T02:01:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Verify all five exact merge commits are ancestors of current origin/dev with independent exact-head approvals and required checks. Record a single program baseline and actual gross deletion, additions and net production reduction; explain any deviation from the estimated 12000 to 18000 deleted and 8000 to 12000 net production reduction.",
+      "Run the complete task-store, lifecycle, review, scheduler, provider, queue, worker, bridge, health and promotion suites plus cross-component end-to-end and failure-injection matrices from one clean exact origin/dev runtime candidate.",
+      "Prove no production legacy flags, duplicate task-status writers, direct task-row status assignments, duplicate eligibility ladders, routine chair failover, lock-held external I/O, v1 hot journal replay or mutable rollout branches remain.",
+      "Capture live preflight identity, config, head sequence, archived journal anchor, provider account health, capacities, queue, workers, two lease types, runnable roots, cycle metrics and rollback root without changing live state.",
+      "Use only the immutable PromotionTransaction to switch to the exact origin/dev runtime. On failure use its normal rollback; never patch the command root, task state, queue, capacity, credentials or process by hand.",
+      "Verify exact PID generation and source/config identity, singleton ownership, at least three fresh loops, caught-up task head, provider baseline, no duplicate leases, no false in_progress and no pending bridge partial materialization.",
+      "With runnable synthetic or existing governed canaries, prove available slots fill within two fast ticks, review and finalize dispatch through the same planner, account caps are respected, slow GitHub/provider maintenance does not suppress local scheduling, and runtime lock p95 is below one second while hot scheduling p95 is below five seconds.",
+      "Publish only redacted evidence and hashes from a clean evidence branch, obtain fresh independent exact-head review, merge to dev, and observe at least one healthy post-evidence-merge loop before canonical completion."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/supervisor/OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811/"
+    ],
+    "depends_on": [
+      "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811",
+      "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "supervisor-runtime",
+          "fleet-dispatch",
+          "deployment"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration-coordinator"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-supervisor-authority-v2-20260811",
+      "documents": [
+        {
+          "kind": "GOVERNANCE",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Integration And Coordination Lane",
+            "Single Dispatch Authority",
+            "Completion Definition For Repo Changes"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "run_once",
+            "dispatch_ready_tasks",
+            "process_queue",
+            "persist_task_reassignment",
+            "chair_reassignment_triage_needed_for_task"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/rewrite/task_state_store.py",
+          "sourceRefs": [
+            "append_state_commit",
+            "load_snapshot",
+            "full-state journal"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/ai_status.py",
+          "sourceRefs": [
+            "command_start",
+            "command_reopen",
+            "command_approve",
+            "command_done",
+            "canonical task-state lock"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/promote_supervisor_runtime.py",
+          "sourceRefs": [
+            "PromotionTransaction",
+            "mutable incumbent compatibility",
+            "rollback"
+          ]
+        },
+        {
+          "kind": "HISTORICAL_NONAUTHORITATIVE_PLAN",
+          "path": "docs/02-architecture/SUPERVISOR_REWRITE_PLAN.md",
+          "sourceRefs": [
+            "retain useful findings only",
+            "do not preserve dual paths"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T15:08:43Z",
+      "intent": "replace_conflicting_supervisor_control_paths",
+      "mode": "supervisor_architecture_governed_delivery",
+      "packet_digest": "1dae7fbc85c31410e339ec68a992fc2f46df94a5ced0798136240dbe23480f40",
+      "packet_id": "pkt-supervisor-authority-v2-cutover-20260811T150843Z",
+      "source_turn_ids": [
+        "operator-approved-authoritative-supervisor-spec-20260811",
+        "operator-approved-complete-implementation-20260811",
+        "function-level-call-path-and-deletion-map-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Verify all five exact merge commits are ancestors of current origin/dev with independent exact-head approvals and required checks. Record a single program baseline and actual gross deletion, additions and net production reduction; explain any deviation from the estimated 12000 to 18000 deleted and 8000 to 12000 net production reduction.",
+          "Run the complete task-store, lifecycle, review, scheduler, provider, queue, worker, bridge, health and promotion suites plus cross-component end-to-end and failure-injection matrices from one clean exact origin/dev runtime candidate.",
+          "Prove no production legacy flags, duplicate task-status writers, direct task-row status assignments, duplicate eligibility ladders, routine chair failover, lock-held external I/O, v1 hot journal replay or mutable rollout branches remain.",
+          "Capture live preflight identity, config, head sequence, archived journal anchor, provider account health, capacities, queue, workers, two lease types, runnable roots, cycle metrics and rollback root without changing live state.",
+          "Use only the immutable PromotionTransaction to switch to the exact origin/dev runtime. On failure use its normal rollback; never patch the command root, task state, queue, capacity, credentials or process by hand.",
+          "Verify exact PID generation and source/config identity, singleton ownership, at least three fresh loops, caught-up task head, provider baseline, no duplicate leases, no false in_progress and no pending bridge partial materialization.",
+          "With runnable synthetic or existing governed canaries, prove available slots fill within two fast ticks, review and finalize dispatch through the same planner, account caps are respected, slow GitHub/provider maintenance does not suppress local scheduling, and runtime lock p95 is below one second while hot scheduling p95 is below five seconds.",
+          "Publish only redacted evidence and hashes from a clean evidence branch, obtain fresh independent exact-head review, merge to dev, and observe at least one healthy post-evidence-merge loop before canonical completion."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811/"
+        ],
+        "depends_on": [
+          "SUP-AUTHORITY-V2-DELIVERY-RECOVERY-20260811",
+          "SUP-AUTHORITY-V2-HEALTH-ROLLOUT-SOURCE-20260811"
+        ],
+        "id": "OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811",
+        "owner": "Codex2",
+        "phase": "Supervisor Authority V2 / Integration and Live Cutover",
+        "reviewer": "Codex",
+        "summary": "Compose the five source deliveries, execute end-to-end and fault tests, perform immutable live promotion with normal rollback authority, and prove the simplified scheduler actually fills safe capacity.",
+        "title": "Integrate, promote and prove supervisor authority v2 live"
+      },
+      "task_spec_hash": "49235caa01c26b63856d4fe7625e957f9e988b5879ed191ff142d98153c53b08"
+    },
+    "generation": 1,
+    "id": "OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811",
+    "last_update": "2026-08-13T02:01:53Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Authority V2 / Integration and Live Cutover",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Compose the five source deliveries, execute end-to-end and fault tests, perform immutable live promotion with normal rollback authority, and prove the simplified scheduler actually fills safe capacity.",
+    "title": "Integrate, promote and prove supervisor authority v2 live",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-12T03:15:28Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811 away from unavailable lane Codex2, Codex (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Codex -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:45:48Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "OPS-SUPERVISOR-AUTHORITY-V2-LIVE-CUTOVER-20260811",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:01:53Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "task_id": "OPS-DEV-BRANCH-CONTENT-RESTORE-20260806",
+  "archived_at": "2026-08-13T02:01:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [],
+    "artifacts": [],
+    "depends_on": [],
+    "description": "PR #4590 squash-merged a 7/29-stale branch without rebase, deleting the required canonical-review-gate CI workflow and reverting ~220 files (ai_status.py, supervisor.py, and more) to 7/29 content. Fix PR #4599 reverts the damage, verified clean against current dev with full ai_status/supervisor test suites passing.",
+    "generation": 1,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-DEV-BRANCH-CONTENT-RESTORE-20260806",
+      "head_sha": "eb04f84873e2b33d92b9c7f0a6b047d6994aa98a",
+      "mode": "required_commit_status",
+      "pr": 4599,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4599",
+      "recorded_at": "2026-08-06T16:19:42Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/eb04f84873e2b33d92b9c7f0a6b047d6994aa98a",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51778317784,
+      "status_state": "success"
+    },
+    "id": "OPS-DEV-BRANCH-CONTENT-RESTORE-20260806",
+    "last_update": "2026-08-13T02:01:33Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Codex2",
+    "phase": "Unassigned",
+    "priority": "P0",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-DEV-BRANCH-CONTENT-RESTORE-20260806",
+      "head_sha": "eb04f84873e2b33d92b9c7f0a6b047d6994aa98a",
+      "pr": 4599
+    },
+    "review_notes_zh": [
+      "獨立審查通過",
+      "PR #4599 已成功合併至 origin/dev (merge commit c726258c33d1e6bd7668ad9862cf68eecb4bbf15)",
+      "已核對 task branch HEAD eb04f84873e2b33d92b9c7f0a6b047d6994aa98a 帶有 pantheon-review/approve tag 與 CI review gate 綠燈"
+    ],
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Restore dev branch content wiped by PR #4590 stale-branch merge",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-06T16:12:30Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-DEV-BRANCH-CONTENT-RESTORE-20260806 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Antigravity.",
+      "resolved_at": "2026-08-06T16:19:42Z",
+      "status": "done",
+      "task_id": "OPS-DEV-BRANCH-CONTENT-RESTORE-20260806",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T16:19:42Z",
+      "from": "Antigravity",
+      "message": "PR #4599 accurately reverts PR #4590's accidental wiping of ~220 files and .github/workflows/canonical-review-gate.yml. Verified scripts/test_ai_status.py (152 passed, 31 subtests passed).",
+      "resolved_at": "2026-08-07T12:16:59Z",
+      "status": "done",
+      "task_id": "OPS-DEV-BRANCH-CONTENT-RESTORE-20260806",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-07T12:34:01Z",
+      "from": "Codex2",
+      "message": "PR #4599 (head eb04f84873e2b33d92b9c7f0a6b047d6994aa98a) is merged into origin/dev at c726258c33d1e6bd7668ad9862cf68eecb4bbf15; exact-head approval tag and canonical review gate are present. The prior approval was downgraded to in_progress without review_notes_zh, so please record a fresh governed approval for this unchanged, merged restoration scope.",
+      "resolved_at": "2026-08-07T13:23:46Z",
+      "status": "done",
+      "task_id": "OPS-DEV-BRANCH-CONTENT-RESTORE-20260806",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-07T13:23:46Z",
+      "from": "Antigravity",
+      "message": "Review approved for PR #4599 merged restoration into origin/dev (c726258c33d1e6bd7668ad9862cf68eecb4bbf15)",
+      "resolved_at": "2026-08-08T04:06:03Z",
+      "status": "done",
+      "task_id": "OPS-DEV-BRANCH-CONTENT-RESTORE-20260806",
+      "to": "Codex2"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-08T04:06:03Z",
+      "message": "Closeout gate blocked: local task branch HEAD f9cf4e8 lacks this task ID while approved/merged head is eb04f848; worktree also has unrelated untracked .orchestrator/assistant-dev-packets/. Need a clean task worktree at reviewed head before owner finalization.",
+      "owner": "Codex2",
+      "status": "resolved",
+      "task_id": "OPS-DEV-BRANCH-CONTENT-RESTORE-20260806",
+      "waiting_for": "Human/Ops",
+      "resolved_at": "2026-08-13T02:01:33Z"
+    }
+  ]
+}

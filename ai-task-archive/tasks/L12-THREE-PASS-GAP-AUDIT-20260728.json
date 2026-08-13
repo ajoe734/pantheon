@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+  "archived_at": "2026-07-28T13:37:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Three-pass current-state audit archived",
+      "Machine-readable execution graph archived",
+      "Checksums and JSON validation pass",
+      "PR merged to dev",
+      "Wrapper execution tasks materialized to real supervisor"
+    ],
+    "artifacts": [],
+    "depends_on": [],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728",
+    "github_review_bridge": {
+      "actor": "Claude",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-THREE-PASS-GAP-AUDIT-20260728",
+      "head_sha": "f77358301fdecd93de26c4ca96bc688e5ab2b969",
+      "mode": "required_commit_status",
+      "pr": 4290,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4290",
+      "recorded_at": "2026-07-28T13:32:10Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51218241081,
+      "status_state": "success"
+    },
+    "id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+    "last_update": "2026-07-28T13:37:30Z",
+    "next": "Owner closeout complete: PR #4290 merged to dev as 65802d99bf5ddca1213f6742af74dc125216fa82; reviewed audit delivery PR #4288 remains merged as 77ae23f09c5f4f855dd9b5c16625b4c36bf0d955. Revalidated execution-tasks.json with python3 -m json.tool and graphlib (schema v1, 12-node DAG), sha256sum -c evidence.sha256 (4/4 OK), git diff --check origin/dev, exact HEAD=origin/dev, both merge ancestries, clean worktree, and all 12 graph rows through governed show. This closes only the audit archive/execution graph and makes no twelve-loop completion claim.",
+    "owner": "Codex2",
+    "phase": "twelve-loop gap audit closeout",
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-THREE-PASS-GAP-AUDIT-20260728",
+      "head_sha": "f77358301fdecd93de26c4ca96bc688e5ab2b969",
+      "pr": 4290
+    },
+    "review_file": ".orchestrator/task-briefs/l12_three_pass_gap_audit_20260728.md",
+    "review_notes_zh": [
+      "獨立複核 PR #4290 exact head f77358301 通過：四項 checksum 對 origin/dev blob 逐一重算比對 OK、execution-tasks.json 為合法 JSON 且 12 節點 DAG 全數存在於 supervisor active task-state、審計引用的 merge SHA (#4193/#4267/#4274/#4279/#4282/#4283) 與 GitHub 完全一致、hosted manifest 現況仍為 FE 6a8d2d9b / BFF be956c07 證實 stale_for_l12_acceptance 判定屬實",
+      "審查期間 head 由 77280c487 前進到 f77358301，已重新核對：該 commit 只是把 origin/dev 061408b09 併入分支以解除 BEHIND，五個受審 artifact blob 與 task-owned diff 完全未變",
+      "owner closeout 前提：PR #4290 仍為 OPEN，需先合併進 dev；worktree 內被 supervisor 重新產生的 task-brief 會刪除已審查的 review binding 段落，不可覆蓋提交"
+    ],
+    "reviewer": "Claude",
+    "source_ref": {
+      "base": "dev",
+      "head_sha": "681cc3d91f9e439bcad8a9dd9ceae7c17e8fc0af",
+      "pr": 4288,
+      "repository": "ajoe734/pantheon",
+      "url": "https://github.com/ajoe734/pantheon/pull/4288"
+    },
+    "status": "done",
+    "summary_zh": "歸檔 2026-07-28 三輪 L12 gap 盤點，並準備 machine-readable execution task graph 供 supervisor fleets 後續平行派工。",
+    "title": "Archive current L12 gaps and execution graph",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-28T13:37:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-l12-audit.7ztZDu/worktree",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-THREE-PASS-GAP-AUDIT-20260728",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "061408b09aa06943813c97334054bfa29b79e236",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-l12-audit.7ztZDu/worktree",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "65802d99bf5ddca1213f6742af74dc125216fa82",
+      "commit_subject": "Merge pull request #4290 from ajoe734/task/L12-THREE-PASS-GAP-AUDIT-20260728",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "L12-THREE-PASS-GAP-AUDIT-20260728": "repair review binding"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "65802d99bf5ddca1213f6742af74dc125216fa82",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-28T12:20:02Z",
+      "from": "Codex",
+      "message": "PR #4288 is open against dev at exact head 681cc3d91f9e439bcad8a9dd9ceae7c17e8fc0af. Owner verification passed: python3 -m json.tool execution-tasks.json; sha256sum -c evidence.sha256 (4/4 OK); git diff --check; commit trailer check; changed-file scope is the six audit/evidence/dispatch docs only. GitHub Branch CI Gate run 30358087434 and Orchestrator Sync run 30358087285 are green. Please independently review the exact head, JSON graph/dependencies, checksums, diff/trailers, and confirm the packet makes no all-loop completion claim before approve/reopen.",
+      "resolved_at": "2026-07-28T12:26:20Z",
+      "status": "done",
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T12:26:20Z",
+      "from": "Codex2",
+      "message": "Exact-head review at 681cc3d91f9e439bcad8a9dd9ceae7c17e8fc0af failed the claimed whitespace validation: git diff --check origin/dev...HEAD reports new blank line at EOF in docs/bff/execution-tasks/2026-07-28-twelve-loop-gap-closeout/INDEX.md:33, docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/README.md:34, and execution-tasks.json:253. Remove the extra EOF blank lines, regenerate evidence.sha256 for the changed README/JSON/dispatch index, rerun JSON parse + sha256sum -c + exact-range git diff --check, push the new exact head, and return for review. Independent checks otherwise passed: checksum 4/4, 12 unique acyclic graph nodes (external archived L12-SIGNOFF-001 dependency), owner/reviewer separation, six-file scope, required commit trailers, current green GitHub checks, hosted FE/BFF identities matching the stale verdict, and no all-loop completion claim. PR merge and the three wrapper-task materializations remain owner closeout acceptance gates after reviewer approval.",
+      "resolved_at": "2026-07-28T12:26:20Z",
+      "status": "done",
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T12:34:23Z",
+      "from": "Codex",
+      "message": "Please independently review exact head a80e725617c2fc607128bf0d517fa037103041b3 on PR #4288. The three EOF blank lines were removed, affected checksums refreshed, origin/dev is contained, and current-head CI is green.",
+      "resolved_at": "2026-07-28T12:41:03Z",
+      "status": "done",
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T12:41:03Z",
+      "from": "Codex2",
+      "message": "Approved exact PR #4288 head a80e725617c2fc607128bf0d517fa037103041b3: six-file audit scope only; review-fix delta removes exactly the three reported EOF blank lines and refreshes affected checksums; python JSON parse, checksum 4/4, exact origin/dev...HEAD diff check, 12-node unique acyclic DAG, owner/reviewer separation, catalog/external-signoff references, origin/dev ancestry, required trailers, and current-head CI all pass. Hosted FE 6a8d2d9b4f725056735eefd7165ef47b52cda53d and BFF be956c07aca889043ef301389412b6744452f20b still match the packet stale verdict, and no all-loop completion claim is made. PR merge plus three wrapper-task materializations remain owner closeout gates.",
+      "resolved_at": "2026-07-28T12:49:26Z",
+      "status": "done",
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T12:49:29Z",
+      "from": "Codex",
+      "message": "Please independently review PR #4290 exact head eb71c14ff4c84efc0531cf36d115121454a9f0cd. Scope is the single task brief closeout record; reviewed audit artifacts and graph are unchanged.",
+      "resolved_at": "2026-07-28T12:51:30Z",
+      "status": "done",
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T12:51:30Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-THREE-PASS-GAP-AUDIT-20260728 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-07-28T12:59:15Z",
+      "status": "done",
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T12:59:15Z",
+      "from": "Claude",
+      "message": "Claude reviewer verdict: the merged audit delivery passes, the open closeout record does not. Do not restart implementation. PASS on merged head a80e725617c2fc607128bf0d517fa037103041b3 (PR #4288, merge 77ae23f09c5f4f855dd9b5c16625b4c36bf0d955): acceptance 1-2 archived (THREE_PASS_GAP_AUDIT_2026-07-28T1208Z.md, execution-tasks.json with 12 unique ids, no dangling internal deps, external dep L12-CLOSE-001 -> L12-SIGNOFF-001 resolves to an archived done row); acceptance 3 verified by 'sha256sum -c docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/evidence.sha256' 4/4 OK from repo root plus 'python -m json.tool execution-tasks.json' OK; acceptance 4 verified by gh pr view 4288 MERGED 2026-07-28T12:42:02Z with Branch CI Gate, canonical review gate and root merge freeze all SUCCESS; acceptance 5 verified by governed show (L12-GAP-MERGE-QUEUE-20260728 todo, L12-GAP-CLOSEOUT-RECONCILE-20260728 in_progress, OPS-L12-PROVIDER-FIRST-READINESS-20260728 in_progress). Audit facts cross-checked against live sources: hosted deployment.json still serves FE 6a8d2d9b and BFF be956c07, merge SHAs for PR 4193/4267/4274/4283 match, base 11858f4d equals the live command runtime SHA, and no loop-completion claim is made. CHANGES REQUIRED on open PR #4290 head eb71c14ff4c84efc0531cf36d115121454a9f0cd, whose only file is .orchestrator/task-briefs/l12_three_pass_gap_audit_20260728.md, the file that sibling precedent L12-CURRENT-GAP-FLEET-AUDIT-20260727 binds as review_file: (1) the header records 'Status: review_approved' but the canonical row never left 'review' because the Codex2 bridge write failed with HTTP 422 and only set the commit status; (2) the header records 'Reviewer: Codex2' and the commit trailer says 'Reviewer: Codex2', but the canonical reviewer was reassigned Codex2 -> Claude at 2026-07-28T12:51:30Z. Merging that content would bind a review_file whose reviewer and status do not match the canonical row, which is exactly what reconcile_merged_done validates against. Fix by adding a follow-up commit on task/L12-THREE-PASS-GAP-AUDIT-20260728 (do not amend the pushed eb71c14f) that sets Reviewer: Claude and the true canonical status, keeps the accurate Codex2 canonical-review-gate status_id 51215088595 as historical provenance rather than as the canonical approval, and carries a 'Reviewer: Claude' trailer. The rest of the brief body (reviewed PR, merge commit, CI run ids 30359397859 and 30360088230, checksum and wrapper-row verification, explicit no-completion-claim scope) is accurate and should be kept. I will approve on the corrected #4290 head; note that #4288 auto-merged before the reviewer gate could run, so #4290 is the only head where the governed approve bridge can execute.",
+      "resolved_at": "2026-07-28T12:59:15Z",
+      "status": "done",
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T13:16:38Z",
+      "from": "Codex2",
+      "message": "PR #4290 exact head 77280c487bb1f9f9bff355288c99960694d3f78b repairs the closeout review binding after owner reassignment. Please independently review this exact head and, if accepted, approve with REVIEW_PR=4290 REVIEW_HEAD_SHA=77280c487bb1f9f9bff355288c99960694d3f78b REVIEW_FILE=.orchestrator/task-briefs/l12_three_pass_gap_audit_20260728.md. Historical Codex2 status on merged PR #4288 is delivery evidence only, not current approval.",
+      "resolved_at": "2026-07-28T13:32:10Z",
+      "status": "done",
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:32:10Z",
+      "from": "Claude",
+      "message": "Claude independent exact-head review of PR #4290 head f77358301fdecd93de26c4ca96bc688e5ab2b969: PASS. Verified against acceptance: (1) three-pass archive present at docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-28T1208Z.md, all three passes populated and makes no loop-completion claim; (2) machine-readable graph execution-tasks.json parses via python3 -m json.tool, schema pantheon.l12.three_pass_gap_execution_graph.v1, 12 DAG nodes; (3) sha256sum -c evidence.sha256 = 4/4 OK in the worktree AND all four blobs recomputed byte-identical against origin/dev, so the merged delivery matches the manifest; (4) delivery PR #4288 head a80e725617c2fc607128bf0d517fa037103041b3 merged as 77ae23f09c5f4f855dd9b5c16625b4c36bf0d955, confirmed ancestor of origin/dev 061408b09; (5) all 12 wrapper rows resolve in the active supervisor task-state via governed show, not only the 3 immediate ones; (6) cited merge SHAs for PR #4193/#4267/#4274/#4279/#4282/#4283 re-checked against GitHub and match exactly; (7) hosted staleness re-probed live: deployment.json still serves FE 6a8d2d9b4f725056735eefd7165ef47b52cda53d and BFF be956c07aca889043ef301389412b6744452f20b, confirming stale_for_l12_acceptance; (8) git diff --check origin/dev clean and all four required PR checks now pass on this head. Head moved from 77280c487 to f77358301 mid-review; re-verified that commit is a pure origin/dev 061408b09 merge resolving BEHIND, with all five reviewed artifact blobs byte-identical and the task-owned diff vs dev unchanged at the 53-line brief. Non-blocking: L12-CLOSE-001 depends_on L12-SIGNOFF-001, an archived done row outside this graph (matches the narrative), and graph owner/reviewer values are snapshot proposals that drift from the live board for 3 rows. Owner closeout prerequisites: PR #4290 is still OPEN and must merge into dev before done; the supervisor-regenerated task brief in the worktree strips the reviewed Current Review Binding, Review And Delivery Evidence, and Closeout Verification sections and must not be committed over the reviewed version.",
+      "status": "done",
+      "task_id": "L12-THREE-PASS-GAP-AUDIT-20260728",
+      "to": "Codex2",
+      "resolved_at": "2026-07-28T13:37:31Z"
+    }
+  ],
+  "blockers": []
+}

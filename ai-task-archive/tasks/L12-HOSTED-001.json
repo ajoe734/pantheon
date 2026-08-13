@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "task_id": "L12-HOSTED-001",
+  "archived_at": "2026-08-08T10:03:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Hosted manifest identifies exact merged Pantheon and execute-plans commits and images",
+      "All required workers are healthy with twelve current accepted controller records",
+      "Full stack restart preserves or recovers in-flight work without duplicate effects",
+      "Source-to-health and runtime-to-incident-to-evolution drills pass on replacement dev",
+      "Hosted desktop mobile auth tenant safety and no-live-capital evidence pass"
+    ],
+    "actual_state_sources": [
+      "replacement dev services and controllers",
+      "hosted FE/BFF truth",
+      "cross-loop terminal drill state"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-HOSTED-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/verify_twelve_loop_hosted.py",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-HOSTED-001"
+    },
+    "artifacts": [
+      "scripts/verify_twelve_loop_hosted.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-HOSTED-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "64c71028f0dd7207f5f2ac03e8957ab72671b4f1bd284a04cebb16c86522698e",
+    "current_maturity": "reconciled",
+    "depends_on": [
+      "L12-FE-TRUTH-001",
+      "L12-VERIFY-KNOW-001",
+      "L12-VERIFY-LEARN-001",
+      "L12-VERIFY-RUNTIME-001",
+      "L12-VERIFY-OBS-001"
+    ],
+    "desired_state_sources": [
+      "merged twelve-loop candidate",
+      "hosted deployment manifest"
+    ],
+    "dispatch_rules": [
+      "Run under the dev deployment lease",
+      "Gate before hosted symlink switch and retain rollback",
+      "Do not use the suspended project or old host"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-HOSTED-001",
+    "fleet_lane": "hosted-drill",
+    "human_ops_reassignment_history": [
+      {
+        "at": "2026-07-27T18:29:29Z",
+        "owner": "Antigravity",
+        "previous": {
+          "last_update": "2026-07-27T16:22:43Z",
+          "next": "Human/Ops fleet recovery: reassigned to active supervisor lanes. Deploy only exact accepted commits/images and run hosted full-stack restart plus source-to-health and runtime-to-incident-to-evolution drills after prerequisites.",
+          "owner": "Codex",
+          "reviewer": "Codex2"
+        },
+        "reason": "canonical fleet dispatch repair: prioritize Claude/Antigravity where available; avoid config mutation",
+        "reviewer": "Claude"
+      }
+    ],
+    "id": "L12-HOSTED-001",
+    "last_update": "2026-08-08T10:03:42Z",
+    "loop_ids": [
+      "source_ingestion",
+      "strategy_distillation",
+      "alpha_replication",
+      "persona_teaching",
+      "agora_interaction_evidence",
+      "human_imitation_shadow_evaluation",
+      "consultation",
+      "promotion_deployment",
+      "capital_pool_execution",
+      "telemetry_reconciliation",
+      "evolution",
+      "bff_health_monitoring"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Superseded by the operator-approved minimum functional hosted verifier after active-DAG reconciliation; preserve the archived legacy record and do not dispatch both hosted gates.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No live-capital activation"
+    ],
+    "owner": "Human/Ops",
+    "phase": "Twelve Loop Remediation / Hosted Acceptance",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "exact deployment identity",
+      "full-stack restart and RPO proof",
+      "two positive cross-loop drills",
+      "hosted security and browser evidence"
+    ],
+    "requires_human_ops_signoff": false,
+    "reviewer": "Claude2",
+    "status": "done",
+    "summary_zh": "把精確 merge 部署到 replacement dev，核對 FE/BFF manifest，執行全 stack restart、source-to-health與runtime-to-incident-to-evolution兩條跨 loop drill。",
+    "target_maturity": "proven-live",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-HOSTED-001.md",
+    "title": "Hosted exact FE/BFF identity proof",
+    "wave": 5,
+    "terminal_outcome": "superseded",
+    "superseded_by": "L12-MIN-HOSTED-20260808"
+  },
+  "handoffs": [],
+  "blockers": []
+}

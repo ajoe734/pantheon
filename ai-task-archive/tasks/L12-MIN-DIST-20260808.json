@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "task_id": "L12-MIN-DIST-20260808",
+  "archived_at": "2026-08-13T02:59:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Consume the SourceRecord produced by L12-MIN-SRC-20260808.",
+      "Persist one terminal StrategySpec draft and expose job and terminal readback.",
+      "Prove Alpha Replication discovery can read the resulting strategy identifier.",
+      "Do not edit shared integration or security files."
+    ],
+    "artifacts": [
+      "services/source_ingestion/distillation_controller.py",
+      "services/source_ingestion/distillation_worker.py",
+      "services/source_ingestion/tests/test_distillation_controller.py",
+      "services/source_ingestion/tests/test_distillation_worker.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DIST-20260808/"
+    ],
+    "depends_on": [
+      "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+      "L12-MIN-SRC-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-l12-minimum-functional-closure-20260808",
+      "documents": [
+        {
+          "kind": "MINIMUM_FUNCTIONAL_GAP_DESIGN",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4621",
+            "f56e2bc91",
+            "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+          "sourceRefs": [
+            "packet_a",
+            "pantheon-twelve-loop-minimum-functional-closure-2026-08-08"
+          ]
+        },
+        {
+          "kind": "LEGACY_DAG_RECONCILIATION",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+          "sourceRefs": [
+            "28-old-ids-zero-materialized-at-snapshot"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T09:23:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9",
+      "packet_id": "pkt-l12-minimum-functional-a-20260808-f56e2bc91",
+      "source_turn_ids": [
+        "user-explicit-l12-minimum-functional-closure-dispatch-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Consume the SourceRecord produced by L12-MIN-SRC-20260808.",
+          "Persist one terminal StrategySpec draft and expose job and terminal readback.",
+          "Prove Alpha Replication discovery can read the resulting strategy identifier.",
+          "Do not edit shared integration or security files."
+        ],
+        "artifacts": [
+          "services/source_ingestion/distillation_controller.py",
+          "services/source_ingestion/distillation_worker.py",
+          "services/source_ingestion/tests/test_distillation_controller.py",
+          "services/source_ingestion/tests/test_distillation_worker.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DIST-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "L12-MIN-SRC-20260808"
+        ],
+        "id": "L12-MIN-DIST-20260808",
+        "owner": "Antigravity",
+        "phase": "M1 loop closure",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Run Strategy Distillation from SourceRecord to terminal StrategySpec draft"
+      },
+      "task_spec_hash": "0fc45c3494b33c30fd6bd185f79a4ed2a73edf56075675eaf61c20e28a3493bf"
+    },
+    "generation": 1,
+    "id": "L12-MIN-DIST-20260808",
+    "last_update": "2026-08-13T02:59:35Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset. Preserve merged/archive evidence; remaining product work is rematerialized as dependency-free, current-source V2 roots.",
+    "owner": "Antigravity",
+    "phase": "M1 loop closure",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Run Strategy Distillation from SourceRecord to terminal StrategySpec draft",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T14:54:58Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-MIN-DIST-20260808 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-08-09T10:15:57Z",
+      "status": "done",
+      "task_id": "L12-MIN-DIST-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:15:57Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-MIN-DIST-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:13:27Z",
+      "status": "done",
+      "task_id": "L12-MIN-DIST-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:13:27Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-MIN-DIST-20260808 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T03:01:50Z",
+      "status": "done",
+      "task_id": "L12-MIN-DIST-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T03:01:50Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-MIN-DIST-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "L12-MIN-DIST-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:35:57Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-MIN-DIST-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "L12-MIN-DIST-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:59:35Z"
+    }
+  ],
+  "blockers": []
+}

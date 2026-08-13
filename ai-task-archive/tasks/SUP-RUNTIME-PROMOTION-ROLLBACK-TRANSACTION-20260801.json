@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801",
+  "archived_at": "2026-08-02T09:02:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Use an explicit transaction state machine with idempotent lock ownership. Under the runtime-admission lock revalidate exact incumbent identity, state snapshot and config bytes immediately before recording intent and TERM.",
+      "Record watchdog intentional restart with the actual incumbent PID and exact candidate commit, terminate only that captured identity, and launch with the governed interpreter, cwd, environment and durable logs.",
+      "Candidate acceptance requires the exact launched PID/starttime/root/commit/tree and at least three distinct fresh successful loops after launch from that PID, with unchanged config and every snapshot invariant passing each time.",
+      "Any launch, identity, timeout or postcheck failure reacquires or retains the same governed admission protocol without self-deadlock, records the actual candidate PID, terminates only the verified bad candidate and restores the captured incumbent root and launch contract.",
+      "Rollback success requires a new verified rollback PID, exact incumbent commit/tree, at least three fresh successful loops, projection equality, worker/queue parity, provider baseline and byte-identical config. Return nonzero and write durable rolled-back evidence.",
+      "Rollback launch or rollback postcheck failure must still return nonzero with durable rollback_failed evidence that includes the original failure, rollback failure, PIDs, roots, commits, trees and config hashes.",
+      "Tests inject candidate launch failure, missing heartbeat, wrong candidate cwd, wrong commit, wrong tree, projection mismatch, lease mismatch, duplicate worker, provider not ready, config drift, rollback launch failure, rollback config drift and self-lock reentry.",
+      "No live promotion in implementation or tests.",
+      "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+      "Work only in a clean governed task worktree on the exact task branch, target dev, and keep unrelated or generated task-brief changes out of commits.",
+      "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; push, open a correctly titled PR to dev, wait for all checks, and require exact-head Human/Ops review before merge.",
+      "Rollout is source merge after dependency merge. Rollback is revert of this task merge commit."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/promote-supervisor-runtime.sh",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-PROMOTION-IDENTITY-GUARD-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#runtime-promotion-split-chain",
+      "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+      "documents": [
+        {
+          "kind": "INCIDENT_EVIDENCE",
+          "path": "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.json",
+          "sourceRefs": [
+            "deleted task-worktree cwd incident",
+            "manual Human/Ops rollback",
+            "persistent 012dab runtime recovery"
+          ]
+        },
+        {
+          "kind": "SUPERSEDED_MONOLITH_PACKET",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-promotion-auto-rollback-guard-20260731T2335Z.json",
+          "sourceRefs": [
+            "PR #4433 rejected heads fa91abfd, 165779d0 and 3d679cc0",
+            "repeated worker exits before complete implementation"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T00:01:25.395559Z",
+      "intent": "split_failed_monolith_into_governed_sequential_runtime_promotion_tasks",
+      "mode": "kernel_repair",
+      "packet_digest": "0fe55babcfb9777e6a4f6b55424994d38be2341fab000e2fe81cb8c594f78c5a",
+      "packet_id": "pkt-sup-runtime-promotion-split-chain-20260801T0000Z",
+      "source_turn_ids": [
+        "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+        "human-ops-pr4433-exact-head-rejection-3d679cc",
+        "antigravity-repeated-evidence-only-handoffs"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Use an explicit transaction state machine with idempotent lock ownership. Under the runtime-admission lock revalidate exact incumbent identity, state snapshot and config bytes immediately before recording intent and TERM.",
+          "Record watchdog intentional restart with the actual incumbent PID and exact candidate commit, terminate only that captured identity, and launch with the governed interpreter, cwd, environment and durable logs.",
+          "Candidate acceptance requires the exact launched PID/starttime/root/commit/tree and at least three distinct fresh successful loops after launch from that PID, with unchanged config and every snapshot invariant passing each time.",
+          "Any launch, identity, timeout or postcheck failure reacquires or retains the same governed admission protocol without self-deadlock, records the actual candidate PID, terminates only the verified bad candidate and restores the captured incumbent root and launch contract.",
+          "Rollback success requires a new verified rollback PID, exact incumbent commit/tree, at least three fresh successful loops, projection equality, worker/queue parity, provider baseline and byte-identical config. Return nonzero and write durable rolled-back evidence.",
+          "Rollback launch or rollback postcheck failure must still return nonzero with durable rollback_failed evidence that includes the original failure, rollback failure, PIDs, roots, commits, trees and config hashes.",
+          "Tests inject candidate launch failure, missing heartbeat, wrong candidate cwd, wrong commit, wrong tree, projection mismatch, lease mismatch, duplicate worker, provider not ready, config drift, rollback launch failure, rollback config drift and self-lock reentry.",
+          "No live promotion in implementation or tests.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Work only in a clean governed task worktree on the exact task branch, target dev, and keep unrelated or generated task-brief changes out of commits.",
+          "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; push, open a correctly titled PR to dev, wait for all checks, and require exact-head Human/Ops review before merge.",
+          "Rollout is source merge after dependency merge. Rollback is revert of this task merge commit."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/promote-supervisor-runtime.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-IDENTITY-GUARD-20260801"
+        ],
+        "id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Promotion / 3 Transaction",
+        "reviewer": "Human/Ops",
+        "summary": "Implement the explicit swap and rollback state machine using the two merged invariant layers. Tests use mocks/fixtures only and must never signal the live PID.",
+        "title": "Implement transactional supervisor swap with automatic rollback"
+      },
+      "task_spec_hash": "1455ce7cdea2293296299b60b2d13d2a58e0e23cb437c3199b735520d830773b"
+    },
+    "id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801",
+    "last_update": "2026-08-02T09:02:04Z",
+    "next": "Superseded to repair stale dependency IDs, sequence overlapping source scopes, and use task-scoped live provider availability. The replacement preserves configured Codex/Codex2 quota groups and adds no global mutual-review prohibition.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Promotion / 3 Transaction",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Implement the explicit swap and rollback state machine using the two merged invariant layers. Tests use mocks/fixtures only and must never signal the live PID.",
+    "title": "Implement transactional supervisor swap with automatic rollback",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:22:58Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:29:38Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:29:38Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801",
+      "to": "Codex2",
+      "resolved_at": "2026-08-02T09:02:04Z"
+    }
+  ],
+  "blockers": []
+}

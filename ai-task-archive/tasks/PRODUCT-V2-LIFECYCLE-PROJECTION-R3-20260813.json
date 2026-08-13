@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "task_id": "PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+  "archived_at": "2026-08-13T09:21:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Drive a real lifecycle event through the production projector persistence boundary",
+      "Read the projected state through the scoped BFF API with exact lineage and deployment identity",
+      "Keep readiness fail closed for stale backlog quarantine and cursor inconsistency",
+      "Prove restart catch-up and duplicate event handling against the persistent store",
+      "Implement any missing migration capacity or retirement edge required by current source",
+      "Land one independently reviewed PR; passing unit suites alone cannot close the task"
+    ],
+    "artifacts": [
+      "services/trade_journey/",
+      "services/control-plane/bff/trade_journeys.py",
+      "services/control-plane/bff/trade_journey_projection_store.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "docs/deployment/evidence/product-v2/lifecycle-projection-r3/"
+    ],
+    "depends_on": [],
+    "generation": 1,
+    "github_review_bridge": {
+      "actor": "Antigravity2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+      "head_sha": "0e15f3055cd682eadd71ac263fa4c8c65e8ac4fc",
+      "mode": "required_commit_status",
+      "pr": 4819,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4819",
+      "recorded_at": "2026-08-13T09:19:45Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/0e15f3055cd682eadd71ac263fa4c8c65e8ac4fc",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 52163787001,
+      "status_state": "success"
+    },
+    "id": "PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+    "last_update": "2026-08-13T09:21:49Z",
+    "next": "Owner finalized approved task and verified PR #4819 merged to dev",
+    "owner": "Antigravity",
+    "phase": "V2 Product Execution R3",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+      "head_sha": "0e15f3055cd682eadd71ac263fa4c8c65e8ac4fc",
+      "pr": 4819
+    },
+    "review_file": "docs/deployment/evidence/product-v2/lifecycle-projection-r3/evidence.json",
+    "reviewer": "Antigravity2",
+    "status": "done",
+    "summary_zh": "完成 lifecycle event 到 projector store、readiness 與 BFF scoped readback 的真實持久服務路徑。",
+    "title": "Deliver lifecycle projection through current BFF truth",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-13T09:21:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/product-v2-lifecycle-projection-r3-20260813",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/fd503809262f50cf70f3e748c80b0d2357ff2648",
+        "source_sha": "fd503809262f50cf70f3e748c80b0d2357ff2648",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/product-v2-lifecycle-projection-r3-20260813",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/fd503809262f50cf70f3e748c80b0d2357ff2648",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+          "worker_run_id": "antigravity-20260813T092007Z-c2aa7897",
+          "queue_event_id": "evt-20260813T092004Z-415a5e13",
+          "pid": 3332459,
+          "pid_start_ticks": 45185513,
+          "process_generation": "worker-process-generation-sha256:90a785502ecf4ad41e0d1fed39cc89f896cd47c6b1057fa0726b8ea4de460d3c",
+          "task_generation": 1,
+          "actor": "Antigravity"
+        }
+      },
+      "commit": "218673be32ffdc47e480d030808df825af273897",
+      "commit_subject": "PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813: task evidence manifest (#4819)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "docs/deployment/evidence/product-v2/lifecycle-projection-r3/evidence.json",
+        "Not changing": "services/trade_journey/, services/control-plane/bff/",
+        "Composes with": "dev",
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+        "Reviewer": "Antigravity2",
+        "Verified": "pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py services/trade_journey/"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+      "ahead": 3,
+      "behind": 1,
+      "push_status": "diverged",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "218673be32ffdc47e480d030808df825af273897",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-13T09:12:44Z",
+      "from": "Antigravity",
+      "message": "PR #4819 created with task evidence manifest committed; handing off for independent review.",
+      "resolved_at": "2026-08-13T09:19:45Z",
+      "status": "done",
+      "task_id": "PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-13T09:19:45Z",
+      "from": "Antigravity2",
+      "message": "Independent review verified: PR #4819 targets dev at SHA 0e15f3055cd682eadd71ac263fa4c8c65e8ac4fc; task evidence manifest committed; pytest passed 55/55 tests in services/control-plane/bff/test_lifecycle_projector_readiness.py and services/trade_journey/.",
+      "status": "done",
+      "task_id": "PRODUCT-V2-LIFECYCLE-PROJECTION-R3-20260813",
+      "to": "Antigravity",
+      "resolved_at": "2026-08-13T09:21:49Z"
+    }
+  ],
+  "blockers": []
+}

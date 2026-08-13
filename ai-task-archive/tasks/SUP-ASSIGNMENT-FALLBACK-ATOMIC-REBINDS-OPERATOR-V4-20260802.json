@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+  "archived_at": "2026-08-02T09:51:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Explicit operator constraint is authoritative: keep Codex and Codex2 configured quota groups distinct and add neither hardcoded account equivalence nor a global mutual-review prohibition.",
+      "PR #4499 exact head d40b73adabec3eba27f6fa111586fc956d7bfe74 was Human/Ops approved and merged to dev as c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65. Treat that merge, not the later invalid V5 packet, as governance truth.",
+      "Start from current origin/dev in a clean governed task worktree. Reapply the useful PR #4496/f33ee38bb6bfc684cbb2be62e1751f54189aa6fe design under exact replacement Task-ID SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802; do not reuse archived status, stale approval, or the old commit trailer as delivery authority.",
+      "Plan a complete viable owner/reviewer pair before canonical mutation. Distinct configured agent identities may review one another; only task-scoped live auth/quota unavailability may trigger fallback.",
+      "Rebind owner and reviewer atomically with one governed compare-and-swap checking expected owner, reviewer, and status under the canonical lock.",
+      "Configured/preferred traversal is deterministic, bounded, and cycle-safe; catalog-locked assignments remain immutable.",
+      "Reproduce all 23 stranded unavailable-Antigravity/Codex2-reviewer todo tasks and prove each receives a complete viable pair without partial mutation.",
+      "No legal distinct pair and stale concurrent assignment/status changes both fail closed with zero canonical mutation.",
+      "Helper claim, mainline normalization, and worker-failure fallback all consume the same pair planner.",
+      "Do not edit account groups, quota groups, provider policy, config, canonical JSON by hand, live runtime, services, or the 28-task product catalog.",
+      "Run focused pair-planner tests, full supervisor regression, py_compile, evidence JSON parse, git diff --check, commit trailers, and exact-head CI. Evidence cites the stale V3 supersession, the invalid V5 packet, and merged PR #4499 and remains review_pending.",
+      "Deliver a clean PR to dev, exact-head Human/Ops review, governed merge, and canonical done/archive before rollout. Rollback is merge-commit revert."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/task-briefs/sup_assignment_fallback_atomic_rebinds_operator_v4_20260802.md",
+      "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/"
+    ],
+    "depends_on": [
+      "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/supervisor-autoworker-complete-audit-20260802#atomic-fallback-v4-postmerge-race",
+      "conversation_id": "codex-root-supervisor-autoworker-complete-audit-20260802",
+      "documents": [
+        {
+          "kind": "EXPLICIT_OPERATOR_CONSTRAINT",
+          "path": "codex://root/supervisor-autoworker-complete-audit-20260802#operator-account-constraint",
+          "sourceRefs": [
+            "Codex and Codex2 may use different accounts",
+            "do not merge quota groups",
+            "do not globally prohibit mutual review",
+            "complete all other remediation"
+          ]
+        },
+        {
+          "kind": "MERGED_GOVERNANCE",
+          "path": "https://github.com/ajoe734/pantheon/pull/4499",
+          "sourceRefs": [
+            "exact approved head d40b73adabec3eba27f6fa111586fc956d7bfe74",
+            "merge c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65",
+            "merged before invalid V5 admission"
+          ]
+        },
+        {
+          "kind": "INVALID_STALE_PACKET_ARCHIVE",
+          "path": "ai-task-archive/tasks/OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V5-20260802.json",
+          "sourceRefs": [
+            "terminal_outcome superseded",
+            "conflicted with explicit operator constraint"
+          ]
+        },
+        {
+          "kind": "REUSABLE_IMPLEMENTATION_ANCHOR",
+          "path": "git-object://f33ee38bb6bfc684cbb2be62e1751f54189aa6fe",
+          "sourceRefs": [
+            "38 focused tests passed",
+            "pair planner did not alter quota/account groups"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T09:17:00Z",
+      "intent": "restore_atomic_task_scoped_quota_auth_fallback_after_postmerge_coordinator_race",
+      "mode": "kernel_repair",
+      "packet_digest": "1c710c4fdce15345611bf8d24929d724904da000f6a5a386572e8813ca40920c",
+      "packet_id": "pkt-operator-atomic-fallback-after-postmerge-race-v4-20260802T0917Z",
+      "source_turn_ids": [
+        "operator-do-not-merge-codex-quota-groups-20260802",
+        "operator-other-remediation-continues-20260802",
+        "postmerge-stale-v5-race-recovery-20260802"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Explicit operator constraint is authoritative: keep Codex and Codex2 configured quota groups distinct and add neither hardcoded account equivalence nor a global mutual-review prohibition.",
+          "PR #4499 exact head d40b73adabec3eba27f6fa111586fc956d7bfe74 was Human/Ops approved and merged to dev as c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65. Treat that merge, not the later invalid V5 packet, as governance truth.",
+          "Start from current origin/dev in a clean governed task worktree. Reapply the useful PR #4496/f33ee38bb6bfc684cbb2be62e1751f54189aa6fe design under exact replacement Task-ID SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802; do not reuse archived status, stale approval, or the old commit trailer as delivery authority.",
+          "Plan a complete viable owner/reviewer pair before canonical mutation. Distinct configured agent identities may review one another; only task-scoped live auth/quota unavailability may trigger fallback.",
+          "Rebind owner and reviewer atomically with one governed compare-and-swap checking expected owner, reviewer, and status under the canonical lock.",
+          "Configured/preferred traversal is deterministic, bounded, and cycle-safe; catalog-locked assignments remain immutable.",
+          "Reproduce all 23 stranded unavailable-Antigravity/Codex2-reviewer todo tasks and prove each receives a complete viable pair without partial mutation.",
+          "No legal distinct pair and stale concurrent assignment/status changes both fail closed with zero canonical mutation.",
+          "Helper claim, mainline normalization, and worker-failure fallback all consume the same pair planner.",
+          "Do not edit account groups, quota groups, provider policy, config, canonical JSON by hand, live runtime, services, or the 28-task product catalog.",
+          "Run focused pair-planner tests, full supervisor regression, py_compile, evidence JSON parse, git diff --check, commit trailers, and exact-head CI. Evidence cites the stale V3 supersession, the invalid V5 packet, and merged PR #4499 and remains review_pending.",
+          "Deliver a clean PR to dev, exact-head Human/Ops review, governed merge, and canonical done/archive before rollout. Rollback is merge-commit revert."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/task-briefs/sup_assignment_fallback_atomic_rebinds_operator_v4_20260802.md",
+          "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/"
+        ],
+        "depends_on": [
+          "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+          "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+        ],
+        "id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor reliability / assignment fallback topology operator V4",
+        "reviewer": "Human/Ops",
+        "summary": "Recover the already-tested atomic owner/reviewer pair planner under merged account-neutral governance after a stale post-merge coordinator race corrupted the prior dependency record.",
+        "title": "Restore atomic task-scoped quota/auth fallback after post-merge coordinator race"
+      },
+      "task_spec_hash": "d9ee2cdee52898384d1f6170ea86ab2e8c33d5758073e0ad50acd491790ac9dd"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "head_sha": "931e1df08880bd3fa0818de373187cfdc4d9db51",
+      "mode": "required_commit_status",
+      "pr": 4501,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4501",
+      "recorded_at": "2026-08-02T09:47:29Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51500824945,
+      "status_state": "success"
+    },
+    "id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+    "last_update": "2026-08-02T09:51:04Z",
+    "next": "Owner closeout complete: PR #4501 exact head 931e1df08880bd3fa0818de373187cfdc4d9db51 merged to dev as 66621e3484a690921032d93e26ec2c9867708d2a; reviewed evidence manifest preserved; focused pair-planner/CAS/worker-fallback regression 40 passed, 475 deselected; py_compile, evidence JSON parse, git diff --check, commit trailers, and exact-head GitHub checks passed; no live rollout authorized.",
+    "owner": "Codex",
+    "phase": "Supervisor reliability / assignment fallback topology operator V4",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "head_sha": "931e1df08880bd3fa0818de373187cfdc4d9db51",
+      "pr": 4501
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/evidence.json",
+    "review_notes_zh": [
+      "獨立核對 exact head 931e1df088：原子 owner/reviewer pair planner、owner/reviewer/status CAS、23 個 stranded task、cycle/no-pair fail-closed、reviewer-failure 共用 planner均成立；Codex/Codex2 維持不同 configured identity/quota group 並允許互審，只有 task-scoped auth/quota 不可用才排除；40 focused tests、515+147 owner full suite、8/8 GitHub checks 通過。"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Recover the already-tested atomic owner/reviewer pair planner under merged account-neutral governance after a stale post-merge coordinator race corrupted the prior dependency record.",
+    "title": "Restore atomic task-scoped quota/auth fallback after post-merge coordinator race",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T09:51:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-assignment-fallback-atomic-rebinds-operator-v4-20260802",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-assignment-fallback-atomic-rebinds-operator-v4-20260802",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "931e1df08880bd3fa0818de373187cfdc4d9db51",
+      "commit_subject": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802: repair",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "durable V4 reviewer-failure planner contract, cyclic/no-pair acceptance evidence, and refreshed owner validation.",
+        "Not changing": "account/quota groups, provider policy, configured identity independence, catalog contracts, canonical state, runtime, services, product tasks, deployment, or rollout.",
+        "Composes with": "existing V4 head 4199901ad, PR #4501 exact-head CI, Human/Ops independent review, and protected dev merge.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+        "Reviewer": "Human/Ops",
+        "Verified": "focused 40; full supervisor 515 plus 147 subtests; py_compile; JSON; git diff check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "66621e3484a690921032d93e26ec2c9867708d2a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T09:30:01Z",
+      "from": "Codex",
+      "message": "PR #4501 is ready for independent exact-head review at 4199901ad9d4a53132a1627ffe1cb522e5b0bd29. Scope is exactly supervisor.py, test_supervisor.py, the V4 task brief, and two V4 evidence files. Owner validation: focused 38 passed/475 deselected; full supervisor 513 passed/147 subtests; py_compile, evidence JSON parse, git diff check, commit trailers, and all 8 exact-head Branch CI checks passed. Evidence remains review_pending at docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/evidence.json. Please bind REVIEW_FILE to that manifest and REVIEW_PR=4501 / REVIEW_HEAD_SHA=4199901ad9d4a53132a1627ffe1cb522e5b0bd29 when approving.",
+      "resolved_at": "2026-08-02T09:30:34Z",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T09:30:34Z",
+      "from": "Human/Ops",
+      "message": "Exact head 4199901ad9d4a53132a1627ffe1cb522e5b0bd29 is not yet approvable despite green checks. Acceptance requires all worker-failure fallback to consume plan_task_assignment_pair. The reviewer-failure branch still uses first_viable_agent and separate field-specific traversal. Route it through the shared planner with fixed_owner=owner and provider-first preferred reviewers; retain exact owner/reviewer/status CAS, catalog/finalize guards, and account-neutral identity semantics. Add cyclic fallback and no-legal-pair zero-mutation reviewer-failure regressions, update exact-head evidence, rerun focused/full tests and CI, then re-handoff.",
+      "resolved_at": "2026-08-02T09:30:34Z",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T09:45:14Z",
+      "from": "Codex",
+      "message": "PR #4501 exact head 931e1df08880bd3fa0818de373187cfdc4d9db51 is ready for independent review. Exact-head Branch CI is green; focused assignment regression is 40 passed and full supervisor regression is 515 passed plus 147 subtests. Review the shared reviewer-failure pair-planner routing, fixed owner, bounded provider-first reviewer allow-list, cyclic/no-pair zero mutation, exact owner/reviewer/status CAS, operator-preserved Codex/Codex2 distinct identity boundary, and committed evidence at docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802/evidence.json.",
+      "resolved_at": "2026-08-02T09:47:29Z",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T09:47:29Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approves PR #4501 exact head 931e1df08880bd3fa0818de373187cfdc4d9db51 after independent code, policy, focused-test, evidence, trailer, and 8/8 CI review. Merge only this exact head; Codex/Codex2 remain account-neutral distinct configured identities with no global mutual-review ban.",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T09:51:05Z"
+    }
+  ],
+  "blockers": []
+}

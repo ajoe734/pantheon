@@ -1,0 +1,85 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "assistant.dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/lifecycle-projector-plan-review-20260801-v1--087e38ddd8a70fae.json",
+  "admitted_at": "2026-08-01T09:37:37Z",
+  "audit_conversation_href": "https://github.com/ajoe734/pantheon/pull/4449",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-lifecycle-projector-incident-20260801",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "LIFECYCLE-PROJ-PLAN-REVIEW-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "SA_SD_PLAN",
+      "path": "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/archive/LIFECYCLE_PROJECTOR_INCREMENTAL_REDESIGN_PLAN_2026-08-01.md",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4449",
+        "8d75a3bc2ca9389eec56c12e6f94725326c1f575",
+        "docs/bff/execution-tasks/2026-08-01-lifecycle-projector-incremental-redesign/tasks.json"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T09:35:47.373732+00:00",
+  "intent": "independently_review_and_merge_lifecycle_projector_redesign_archive",
+  "mode": "kernel_repair",
+  "packet_digest": "087e38ddd8a70fae2c7fa28247584bc02306c22760c8499abffe9ad68b36fe27",
+  "packet_id": "lifecycle-projector-plan-review-20260801-v1",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "0c5b9f668d5a83f2a4060563277bb1b100b5e61fc8bf150d1cb3eb982f6503a0",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "incremental-redesign-plan",
+    "plan-pr-4449"
+  ],
+  "tasks": [
+    {
+      "task_id": "LIFECYCLE-PROJ-PLAN-REVIEW-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Review exact PR #4449 head 8d75a3bc2ca9389eec56c12e6f94725326c1f575 independently; Codex and Codex2 are the same identity and are ineligible reviewers.",
+          "Confirm the design covers objective, evidence, relational model, transaction semantics, identity/idempotency, bounded reads, observability, migration/parity, capacity, rollout, rollback, retention, security, scope, and non-goals.",
+          "Confirm seven task packets have unique IDs, one implementation owner, an independent reviewer, explicit dependencies, branches/worktrees, non-overlapping concurrent scopes, acceptance, validation, rollout, rollback, and checksummed evidence paths.",
+          "Validate all JSON and DevTaskPacket schema; confirm no task authorizes production, live capital, canonical source deletion, supervisor redesign, or pre-approval legacy deletion.",
+          "If accepted, approve and merge PR #4449 to dev without changing its head, then record the exact merge commit. Do not dispatch the seven implementation tasks from an unmerged document."
+        ],
+        "artifacts": [
+          "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/",
+          "docs/bff/execution-tasks/2026-08-01-lifecycle-projector-incremental-redesign/",
+          "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-INCIDENT-20260801/"
+        ],
+        "depends_on": [],
+        "id": "LIFECYCLE-PROJ-PLAN-REVIEW-20260801",
+        "owner": "Antigravity",
+        "phase": "design-review",
+        "reviewer": "Human/Ops",
+        "summary": "Review-only handoff for the archived redesign and execution DAG. Implementation belongs to the subsequent signed seven-task packet after this PR is merged.",
+        "title": "Independently review and merge lifecycle projector redesign archive"
+      },
+      "task_spec_hash": "52ac1152a16c7c424a9713129f8d3afbbe4f23be0b5a6ccaf3c8d21c80bf1ae9"
+    }
+  ]
+}

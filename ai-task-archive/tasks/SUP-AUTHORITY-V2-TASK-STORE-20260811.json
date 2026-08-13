@@ -1,0 +1,328 @@
+{
+  "version": 1,
+  "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+  "archived_at": "2026-08-11T17:54:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Write the approved architecture as the sole authoritative specification: responsibilities, lifecycle, invariants, failure semantics, deletion map, acceptance budgets, rollout and rollback. Historical incidents are validation cases, not constraints that preserve old mechanisms.",
+      "Replace full-board-per-event hot storage with a compact current-head snapshot plus append-only transition deltas. Append and fsync the delta before atomically replacing the head; crash recovery may replay only the tail after the head sequence.",
+      "Freeze the existing multi-gigabyte journal as a read-only archive with exact byte length, final sequence, journal SHA and projected state SHA. Bind the v2 genesis record to that archive identity; never delete historical evidence during migration.",
+      "Normal reads must not mmap, hash or parse the archived journal. Full chain verification is startup/offline verification and may not execute inside a scheduling tick or canonical mutation.",
+      "Keep one task-state lock and one transaction API. Reject nonterminal task loss, invalid deltas, sequence conflicts, corrupted tails and stale head CAS.",
+      "Delete the v1 full-state append/replay/checkpoint hot path and its obsolete tests in the same PR. Do not retain a production feature flag or automatic fallback to v1.",
+      "Add migration, corruption, crash-boundary and constant-hot-read-cost tests using a synthetic large legacy journal. Report gross deletions, additions and remaining production callers.",
+      "Deliver from a clean task worktree to dev with required trailers, focused and full task-store validation, independent exact-head review and required checks."
+    ],
+    "artifacts": [
+      "docs/02-architecture/supervisor-authority-v2.md",
+      ".orchestrator/rewrite/task_state_store.py",
+      ".orchestrator/rewrite/test_task_state_store.py",
+      "scripts/verify_task_state_store.py",
+      "scripts/test_verify_task_state_store.py",
+      "scripts/migrate_task_state_store_v2.py",
+      "scripts/test_migrate_task_state_store_v2.py"
+    ],
+    "depends_on": [
+      "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "supervisor-runtime",
+          "fleet-dispatch",
+          "deployment"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration-coordinator"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-supervisor-authority-v2-20260811",
+      "documents": [
+        {
+          "kind": "GOVERNANCE",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Integration And Coordination Lane",
+            "Single Dispatch Authority",
+            "Completion Definition For Repo Changes"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "run_once",
+            "dispatch_ready_tasks",
+            "process_queue",
+            "persist_task_reassignment",
+            "chair_reassignment_triage_needed_for_task"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/rewrite/task_state_store.py",
+          "sourceRefs": [
+            "append_state_commit",
+            "load_snapshot",
+            "full-state journal"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/ai_status.py",
+          "sourceRefs": [
+            "command_start",
+            "command_reopen",
+            "command_approve",
+            "command_done",
+            "canonical task-state lock"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/promote_supervisor_runtime.py",
+          "sourceRefs": [
+            "PromotionTransaction",
+            "mutable incumbent compatibility",
+            "rollback"
+          ]
+        },
+        {
+          "kind": "HISTORICAL_NONAUTHORITATIVE_PLAN",
+          "path": "docs/02-architecture/SUPERVISOR_REWRITE_PLAN.md",
+          "sourceRefs": [
+            "retain useful findings only",
+            "do not preserve dual paths"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T15:08:43Z",
+      "intent": "replace_conflicting_supervisor_control_paths",
+      "mode": "supervisor_architecture_governed_delivery",
+      "packet_digest": "1dae7fbc85c31410e339ec68a992fc2f46df94a5ced0798136240dbe23480f40",
+      "packet_id": "pkt-supervisor-authority-v2-cutover-20260811T150843Z",
+      "source_turn_ids": [
+        "operator-approved-authoritative-supervisor-spec-20260811",
+        "operator-approved-complete-implementation-20260811",
+        "function-level-call-path-and-deletion-map-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Write the approved architecture as the sole authoritative specification: responsibilities, lifecycle, invariants, failure semantics, deletion map, acceptance budgets, rollout and rollback. Historical incidents are validation cases, not constraints that preserve old mechanisms.",
+          "Replace full-board-per-event hot storage with a compact current-head snapshot plus append-only transition deltas. Append and fsync the delta before atomically replacing the head; crash recovery may replay only the tail after the head sequence.",
+          "Freeze the existing multi-gigabyte journal as a read-only archive with exact byte length, final sequence, journal SHA and projected state SHA. Bind the v2 genesis record to that archive identity; never delete historical evidence during migration.",
+          "Normal reads must not mmap, hash or parse the archived journal. Full chain verification is startup/offline verification and may not execute inside a scheduling tick or canonical mutation.",
+          "Keep one task-state lock and one transaction API. Reject nonterminal task loss, invalid deltas, sequence conflicts, corrupted tails and stale head CAS.",
+          "Delete the v1 full-state append/replay/checkpoint hot path and its obsolete tests in the same PR. Do not retain a production feature flag or automatic fallback to v1.",
+          "Add migration, corruption, crash-boundary and constant-hot-read-cost tests using a synthetic large legacy journal. Report gross deletions, additions and remaining production callers.",
+          "Deliver from a clean task worktree to dev with required trailers, focused and full task-store validation, independent exact-head review and required checks."
+        ],
+        "artifacts": [
+          "docs/02-architecture/supervisor-authority-v2.md",
+          ".orchestrator/rewrite/task_state_store.py",
+          ".orchestrator/rewrite/test_task_state_store.py",
+          "scripts/verify_task_state_store.py",
+          "scripts/test_verify_task_state_store.py",
+          "scripts/migrate_task_state_store_v2.py",
+          "scripts/test_migrate_task_state_store_v2.py"
+        ],
+        "depends_on": [
+          "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811"
+        ],
+        "id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+        "owner": "Codex2",
+        "phase": "Supervisor Authority V2 / Task Store",
+        "reviewer": "Codex",
+        "summary": "Land the approved simple authority model and remove the 8.65 GB full-state journal from every hot read while preserving an auditable archive and deterministic crash recovery.",
+        "title": "Establish the authoritative supervisor v2 specification and delta task store"
+      },
+      "task_spec_hash": "a29f8e83152d4cab119b043079721c1f858626d78695b9ae7105215eb0428e23"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "head_sha": "a584a6ebcff4cc0f778b40c3f69de323e5728451",
+      "mode": "required_commit_status",
+      "pr": 4757,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4757",
+      "recorded_at": "2026-08-11T17:47:05Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/a584a6ebcff4cc0f778b40c3f69de323e5728451",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 52044034021,
+      "status_state": "success"
+    },
+    "id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+    "last_update": "2026-08-11T17:54:22Z",
+    "next": "Closeout complete: PR #4757 merged into dev as 3ea702b7fe2bdd7ef644c7f779972c6a9103be82; reviewer-bound exact head a584a6ebcff4cc0f778b40c3f69de323e5728451 verified with task-store focused pytest (37 passed), py_compile, diff check, required PR checks, and conflict-free current-dev virtual merge.",
+    "owner": "Codex2",
+    "phase": "Supervisor Authority V2 / Task Store",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "head_sha": "a584a6ebcff4cc0f778b40c3f69de323e5728451",
+      "pr": 4757
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-TASK-STORE-20260811/evidence.json",
+    "review_notes_zh": [
+      "已獨立核對 PR #4757 exact head a584a6ebcff4cc0f778b40c3f69de323e5728451 與 remote/local 一致，base 為 dev 且 mergeable。",
+      "V2 head+delta、archive/genesis identity、tail recovery、nonterminal loss、corruption/CAS 與無 V1 hot-read fallback 均符合 acceptance。",
+      "獨立驗證 37 focused passed；擴大回歸 942 passed、1 個已揭露 origin/dev 非本 task 測試 deselected、200 subtests passed；py_compile、manifest binding、diff check 與 required implementation checks 通過。"
+    ],
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Land the approved simple authority model and remove the 8.65 GB full-state journal from every hot read while preserving an auditable archive and deterministic crash recovery.",
+    "title": "Establish the authoritative supervisor v2 specification and delta task store",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T17:54:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-authority-v2-task-store-20260811",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/aeb55e11633192109ca87501d0e4ad2d62d84e87",
+        "source_sha": "aeb55e11633192109ca87501d0e4ad2d62d84e87",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-authority-v2-task-store-20260811",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/aeb55e11633192109ca87501d0e4ad2d62d84e87",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+          "worker_run_id": "codex-20260811T175001Z-d122d850",
+          "queue_event_id": "evt-20260811T174919Z-36386701",
+          "pid": 3751899,
+          "pid_start_ticks": 30964961,
+          "process_generation": "worker-process-generation-sha256:08f14afd122088b919afa7faf5626ad9d27b597e5edc95749df12d6b3c65600f"
+        }
+      },
+      "commit": "a584a6ebcff4cc0f778b40c3f69de323e5728451",
+      "commit_subject": "SUP-AUTHORITY-V2-TASK-STORE-20260811: refresh review evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Task-scoped evidence manifest for the archive-genesis binding and V2 benchmark repair.",
+        "Not changing": "Supervisor scheduling, task lifecycle policy, fleet routing, live configuration, or canonical runtime state.",
+        "Composes with": "A fresh independent exact-head review by Codex before PR merge and owner closeout.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+        "Reviewer": "Codex",
+        "Verified": "task-store focused suite (37 passed); py_compile; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3ea702b7fe2bdd7ef644c7f779972c6a9103be82",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T15:57:07Z",
+      "from": "Codex2",
+      "message": "V2 delta store, architecture spec, migration/offline verifier, and committed review manifest are ready on PR #4757. Verify exact head 4f79db4ce17635a2f02b3a26b7bcb78bb19d6610; focused validation recorded: 119 passed, with one origin/dev baseline legacy-card test excluded.",
+      "resolved_at": "2026-08-11T16:13:15Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T16:13:15Z",
+      "from": "Codex",
+      "message": "Exact-head review of PR #4757 at 4f79db4ce17635a2f02b3a26b7bcb78bb19d6610 requires changes: (1) _state_delta replaces the entire tasks list whenever its length changes; adding one row to a 1,200-task board produced a 99,105-byte event versus a 98,493-byte full state. Implement compact insert/remove semantics for task materialization/archive and add a large-board row-count-change test. (2) Resume after archive rename must re-enforce read-only permissions; a simulated crash before chmod resumed as migrated with mode 0644. (3) When archive and manifest already exist, migration must compare actual byte length, final sequence, journal SHA, and projected-state SHA to the manifest and fail before writing genesis on mismatch; current migration succeeds and only full verify fails later. (4) verify_full_chain must accept and validate a durable valid post-head crash tail or settle/reconcile it consistently; current load_snapshot recovers one valid tail while verify_full_chain rejects the same store as head disagreement. Add focused regression tests for all four boundaries. Existing independent suite: 119 passed, 1 deselected.",
+      "resolved_at": "2026-08-11T16:13:15Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T16:45:23Z",
+      "from": "Codex2",
+      "message": "PR #4757 is updated at exact head 602685bb81b8d8814cd2580a391742f5e54b15b3. Review committed docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-TASK-STORE-20260811/evidence.json, V2 explicit observational-read migration, and 126 passed / 1 deselected focused validation; approve with REVIEW_PR=4757 and REVIEW_HEAD_SHA=602685bb81b8d8814cd2580a391742f5e54b15b3.",
+      "resolved_at": "2026-08-11T16:55:02Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T16:55:02Z",
+      "from": "Codex",
+      "message": "Exact-head PR #4757 review at 602685bb81b8d8814cd2580a391742f5e54b15b3 found an acceptance-blocking migration scalability defect: _read_legacy_journal calls _read_regular_bytes, retains the entire legacy journal, then payload.splitlines retains another full-journal-scale allocation while parsing. The required 8.65 GB archive migration can therefore require well above 17 GB before decoded event/state overhead and is not a viable bounded migration. Replace legacy archive validation with an O(max-record/state), streaming regular-file reader that computes exact byte length and SHA incrementally while preserving O_NOFOLLOW, complete-record, sequence/hash-chain and projected-state validation; use it for dry-run, initial migration, resume and offline archive verification. Add a regression proving the legacy path does not aggregate full journal bytes plus an explicit migration memory budget/evidence for a realistically large synthetic journal, refresh the committed evidence manifest, rerun focused validation, and request fresh exact-head review. Independent current-head checks otherwise passed: 126 passed, 1 deselected; py_compile, JSON validation and git diff --check passed.",
+      "resolved_at": "2026-08-11T16:55:02Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T16:55:23Z",
+      "from": "Codex",
+      "message": "Exact-head PR #4757 review at 602685bb81b8d8814cd2580a391742f5e54b15b3 found an acceptance-blocking migration scalability defect: _read_legacy_journal calls _read_regular_bytes, retains the entire legacy journal, then payload.splitlines retains another full-journal-scale allocation while parsing. The required 8.65 GB archive migration can therefore require well above 17 GB before decoded event/state overhead and is not a viable bounded migration. Replace legacy archive validation with an O(max-record/state), streaming regular-file reader that computes exact byte length and SHA incrementally while preserving O_NOFOLLOW, complete-record, sequence/hash-chain and projected-state validation; use it for dry-run, initial migration, resume and offline archive verification. Add a regression proving the legacy path does not aggregate full journal bytes plus an explicit migration memory budget/evidence for a realistically large synthetic journal, refresh the committed evidence manifest, rerun focused validation, and request fresh exact-head review. Independent current-head checks otherwise passed: 126 passed, 1 deselected; py_compile, JSON validation and git diff --check passed.",
+      "resolved_at": "2026-08-11T16:55:23Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T17:09:22Z",
+      "from": "Codex2",
+      "message": "Fresh exact-head review requested for PR #4757 at 115db4f2b0b8162d197af633cfae8cebf29ae8f3. Evidence docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-TASK-STORE-20260811/evidence.json binds streaming V1 archive validation, the >=16 MiB memory regression, and 34 focused task-store tests; prior full-payload migration defect is replaced.",
+      "resolved_at": "2026-08-11T17:20:10Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T17:20:10Z",
+      "from": "Codex",
+      "message": "Exact-head 115db4f2bfceb354f3d1400dce23d169c7663a79 review failed. Acceptance blocker 1: a self-consistent V2 sequence-1 delta whose resulting state SHA differs from archive_identity.projected_state_sha256 is accepted by interrupted-migration resume and verify_full_chain still reports ok=true/archive_verified=true. Enforce the frozen archive projected-state binding specifically on V2 genesis during resume and offline full-chain validation, and add regression tests for a mismatched but internally rehashed genesis. Acceptance blocker 2: the changed dispatcher_snapshot_scale_bench.py still clones events.jsonl.checkpoint.json and reads snapshot_evidence[checkpoint_used]; a synthetic V2 store raises FileNotFoundError before the benchmark and the later lookup would KeyError. Replace/remove all V1 checkpoint assumptions with V2 head/tail evidence and validate that path. The independent focused suite otherwise passed: 127 passed, 1 deselected. Refresh the committed evidence manifest and request a fresh exact-head review after fixes.",
+      "resolved_at": "2026-08-11T17:20:11Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T17:33:48Z",
+      "from": "Codex2",
+      "message": "Fresh exact-head review requested for PR #4757 at a584a6ebcff4cc0f778b40c3f69de323e5728451. The committed manifest docs/deployment/evidence/supervisor/SUP-AUTHORITY-V2-TASK-STORE-20260811/evidence.json covers the archive-genesis binding and V2 head/tail benchmark repair; focused task-store suite passed 37.",
+      "resolved_at": "2026-08-11T17:47:05Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T17:47:05Z",
+      "from": "Codex",
+      "message": "Approved PR #4757 exact head a584a6ebcff4cc0f778b40c3f69de323e5728451: architecture and deletion map match acceptance; V2 delta/head, frozen archive-genesis binding, crash-tail recovery, fail-closed corruption/CAS/loss, and archive-free hot reads verified. Independent 37-test focused suite and 942-test impacted regression suite passed (1 disclosed non-task origin/dev mismatch deselected; 200 subtests); py_compile, manifest binding, diff check, and implementation CI checks passed.",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-TASK-STORE-20260811",
+      "to": "Codex2",
+      "resolved_at": "2026-08-11T17:54:23Z"
+    }
+  ],
+  "blockers": []
+}

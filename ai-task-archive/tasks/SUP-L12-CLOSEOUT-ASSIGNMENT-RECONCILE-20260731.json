@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+  "archived_at": "2026-08-13T02:01:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Require L12-HOSTED-001 and post-DAG topology reconciliation archived completed",
+      "Refuse mutation while L12-CLOSE-001 has a live or queued worker",
+      "Reassign only L12-CLOSE-001 to Antigravity owner and Human/Ops protected reviewer",
+      "Preserve the exact closeout dependencies artifacts acceptance and protected authority contract",
+      "Do not approve finalize archive or claim L12-CLOSE-001 completion from this reconciliation task",
+      "Verify all hosted verifier truth signoff and catalog prerequisites still resolve successfully",
+      "Verify authoritative event checkpoint parity and exact before and after row digests",
+      "Deliver any required command change through clean branch PR exact-head review merge and live promotion",
+      "Do not edit .orchestrator/config.json"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731"
+    ],
+    "depends_on": [
+      "L12-HOSTED-001",
+      "SUP-L12-POST-DAG-HOSTED-TOPOLOGY-RECONCILE-20260731"
+    ],
+    "generation": 1,
+    "id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+    "last_update": "2026-08-13T02:01:12Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "L12 protected closeout release",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Prepare protected L12 closeout assignment",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:22:16Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:29:04Z",
+      "status": "done",
+      "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:29:04Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-04T13:30:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T13:23:11Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-05T01:24:41Z",
+      "status": "done",
+      "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T12:23:19Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-07T13:11:14Z",
+      "status": "done",
+      "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T13:11:14Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-08T14:27:57Z",
+      "status": "done",
+      "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:22:54Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-08-09T10:08:33Z",
+      "status": "done",
+      "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:08:33Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:06:27Z",
+      "status": "done",
+      "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:06:27Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T02:54:42Z",
+      "status": "done",
+      "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T02:54:42Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:28:35Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "SUP-L12-CLOSEOUT-ASSIGNMENT-RECONCILE-20260731",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:01:12Z"
+    }
+  ],
+  "blockers": []
+}

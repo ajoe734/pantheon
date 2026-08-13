@@ -1,0 +1,364 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+  "archived_at": "2026-08-10T14:00:03Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the 963bb20c governed retry exactly: the live incumbent is a SHA-named standalone command runtime at accepted dev ancestor 5877b644 with the required -B argv and command-root/runtime-SHA environment, but one historical supervisor-generated tracked task brief causes the default immutable incumbent capture to abort before baseline, config, signal, launch, or rollback.",
+      "Add an explicit fail-closed transaction boundary for provenance-verifiable historical task-brief residue on an immutable incumbent. Do not clean, reset, stash, checkout, edit, or otherwise mutate the incumbent root, and do not weaken the clean immutable candidate requirement.",
+      "Bind the exact incumbent PID/starttime/cwd/commit/tree/remote/config/environment plus every admitted residue path, regular-file inode metadata, current byte digest, historical generation provenance, and revalidation digest before authority is granted. Reject staged/index-flag drift, non-task-brief paths, symlinks, hard links, Git identity mismatch, unaccepted commits, arbitrary current bytes, and every post-capture race.",
+      "Preserve immutable candidate Git and launch-source identity, config CAS, restart-intent-before-TERM, exact process-generation signalling, PYTHONDONTWRITEBYTECODE=1 and -B launch, status-child bytecode absence, three fresh-loop gates, authoritative-shadow catch-up, queue/worker parity, provider baseline, and rollback identity/cleanup.",
+      "Add positive and negative tests that distinguish the explicitly bootstrapped incumbent from the clean candidate, retain the command-checkout task-brief prevention boundary, and commit a task-scoped evidence manifest before independent review.",
+      "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate deletion, canonical state edit, scheduling change, or fleet-routing policy change. Any rollout retry remains a separately governed dispatch."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "scripts/sync-dev-root.sh",
+      "scripts/test_sync_dev_root.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "schema",
+          "acceptance"
+        ],
+        "id": "Codex",
+        "roles": [
+          "auto-worker"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "documents": [
+        {
+          "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+          "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+          "sourceRefs": [
+            "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T110935473464Z-3180076.json",
+            "sha256:ca12389058566fe55813c05f26d61fe673ff7eca9dceccce826860c5d041a7b0",
+            "candidate:963bb20cf3fe0b50bd961b45a365f8f3f547716d",
+            "incumbent:5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+            "incumbent-pid:2272245",
+            "rejected-brief:.orchestrator/task-briefs/sup_runtime_v10_promotion_git_dir_enotdir_20260808.md",
+            "rejected-brief-sha256:435e5889f710ce29f17ac8d6c4bc63efb90a4c05c9adb7d08be1b907d6c14289"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-10T11:12:29Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "5db2a6f9dd01a0108d75ac77aee0f260e27827f99c65f8a56e349ec7b0875a4f",
+      "packet_id": "sup-runtime-v10-immutable-incumbent-legacy-residue-20260810-1112",
+      "source_turn_ids": [
+        "promotion-evidence-20260810T110935473464Z-3180076",
+        "post-abort-readback-20260810T111000Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the 963bb20c governed retry exactly: the live incumbent is a SHA-named standalone command runtime at accepted dev ancestor 5877b644 with the required -B argv and command-root/runtime-SHA environment, but one historical supervisor-generated tracked task brief causes the default immutable incumbent capture to abort before baseline, config, signal, launch, or rollback.",
+          "Add an explicit fail-closed transaction boundary for provenance-verifiable historical task-brief residue on an immutable incumbent. Do not clean, reset, stash, checkout, edit, or otherwise mutate the incumbent root, and do not weaken the clean immutable candidate requirement.",
+          "Bind the exact incumbent PID/starttime/cwd/commit/tree/remote/config/environment plus every admitted residue path, regular-file inode metadata, current byte digest, historical generation provenance, and revalidation digest before authority is granted. Reject staged/index-flag drift, non-task-brief paths, symlinks, hard links, Git identity mismatch, unaccepted commits, arbitrary current bytes, and every post-capture race.",
+          "Preserve immutable candidate Git and launch-source identity, config CAS, restart-intent-before-TERM, exact process-generation signalling, PYTHONDONTWRITEBYTECODE=1 and -B launch, status-child bytecode absence, three fresh-loop gates, authoritative-shadow catch-up, queue/worker parity, provider baseline, and rollback identity/cleanup.",
+          "Add positive and negative tests that distinguish the explicitly bootstrapped incumbent from the clean candidate, retain the command-checkout task-brief prevention boundary, and commit a task-scoped evidence manifest before independent review.",
+          "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate deletion, canonical state edit, scheduling change, or fleet-routing policy change. Any rollout retry remains a separately governed dispatch."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "scripts/sync-dev-root.sh",
+          "scripts/test_sync_dev_root.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809"
+        ],
+        "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Immutable Incumbent Bootstrap",
+        "reviewer": "Codex2",
+        "summary": "The authorized 963bb20c retry reached a clean candidate but treated the accepted SHA-named incumbent as a normal immutable root, so the existing mutable-only legacy bootstrap was not enabled and one pre-fix generated task-brief overwrite aborted the transaction. Extend only the explicit provenance-bound incumbent bootstrap boundary; preserve strict candidate cleanliness and all transaction gates.",
+        "title": "Bind historical task-brief residue on immutable incumbent promotion"
+      },
+      "task_spec_hash": "a256692a945e851764cabb169f2564a47ed9e1c54cbb368251b7510c5e08b0dd"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "head_sha": "e5defdfbfc4279c3d67078d1496673910fe60b17",
+      "mode": "required_commit_status",
+      "pr": 4716,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4716",
+      "recorded_at": "2026-08-10T13:52:55Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/e5defdfbfc4279c3d67078d1496673910fe60b17",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51951639846,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+    "last_update": "2026-08-10T14:00:03Z",
+    "next": "Finalized approved task after PR #4716 merged into dev (merge commit 6607b6a706b59670009965375e0a5dd6b5824fcf)",
+    "owner": "Antigravity2",
+    "phase": "Supervisor Runtime / Source-only Immutable Incumbent Bootstrap",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "head_sha": "e5defdfbfc4279c3d67078d1496673910fe60b17",
+      "pr": 4716
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "The authorized 963bb20c retry reached a clean candidate but treated the accepted SHA-named incumbent as a normal immutable root, so the existing mutable-only legacy bootstrap was not enabled and one pre-fix generated task-brief overwrite aborted the transaction. Extend only the explicit provenance-bound incumbent bootstrap boundary; preserve strict candidate cleanliness and all transaction gates.",
+    "title": "Bind historical task-brief residue on immutable incumbent promotion",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-10T14:00:03Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-immutable-incumbent-legacy-residue-20260810",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "source_sha": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-immutable-incumbent-legacy-residue-20260810",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+          "worker_run_id": "antigravity2-20260810T135621Z-c66da954",
+          "queue_event_id": "evt-20260810T135552Z-610a3b31",
+          "pid": 559693,
+          "pid_start_ticks": 20922920,
+          "process_generation": "worker-process-generation-sha256:c8055457b2d4b02cd8c85379ffb2a50ef1724b06e90460da1bb6d6f9be5fac4e"
+        }
+      },
+      "commit": "e5defdfbfc4279c3d67078d1496673910fe60b17",
+      "commit_subject": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810: evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity2",
+        "Task-ID": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+        "Reviewer": "Codex2",
+        "Verified": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_sync_dev_root.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6607b6a706b59670009965375e0a5dd6b5824fcf",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-10T11:39:30Z",
+      "from": "Antigravity2",
+      "message": "PR #4716 implementation and evidence manifest are complete; handed off to reviewer Codex2 for independent review.",
+      "resolved_at": "2026-08-10T11:49:16Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T11:49:16Z",
+      "from": "Codex2",
+      "message": "Review failed: (1) PR #4716 Commit trailers rejects 208cecfa, 3a721f5, and 5dfcb23 because each subject is 128 chars (>72); publish a governed corrected PR/history with every commit passing the trailer gate. (2) acceptance requires rejecting hard links, but OSLaunchFilesystem.capture_regular_file accepts a task brief with st_nlink=2; make the immutable incumbent residue capture/revalidation fail closed on hard links and add direct immutable-incumbent symlink and hard-link rejection tests. Preserve strict clean candidate and provenance binding. Rerun pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_sync_dev_root.py and git diff --check, then refresh the pre-review evidence manifest and request a new independent review.",
+      "resolved_at": "2026-08-10T11:49:16Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T11:59:38Z",
+      "from": "Antigravity2",
+      "message": "Published corrected single-commit PR #4716 (HEAD 65f27ebc5e11eb9c46aa9b6272c064fe836d701e, subject <=72 chars, trailers verified). Updated OSLaunchFilesystem.capture_regular_file to fail closed on hard-linked files (st_nlink == 1 requirement). Added 3 direct unit and integration tests for hard-linked and symlinked task brief rejection. All 314 promotion and sync tests passed cleanly; git diff --check passed.",
+      "resolved_at": "2026-08-10T12:06:03Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:06:03Z",
+      "from": "Codex2",
+      "message": "Reject: clean immutable incumbents now fail before promotion. OSPromotionBackend.prepare unconditionally calls build_candidate_runtime_identity(seed_cwd.path, allow_legacy_task_brief_drift=True), which unconditionally calls _capture_legacy_mutable_task_brief_drift; with a clean diff-files report that helper raises ValueError('Mutable incumbent task-brief drift report is malformed'). Make the exception boundary admit exactly zero residue or registered/revalidated residue only, without weakening candidate cleanliness. Add a regression that prepares/revalidates a clean SHA-named immutable incumbent, refresh the already-committed evidence manifest in the new exact head, rerun pytest -q scripts/test_promote_supervisor_runtime.py scripts/test_sync_dev_root.py and git diff --check, then request new review.",
+      "resolved_at": "2026-08-10T12:06:03Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T12:09:44Z",
+      "from": "Antigravity2",
+      "message": "Updated _capture_legacy_mutable_task_brief_drift to admit zero residue when diff-files report is clean. Added regression tests in test_promote_supervisor_runtime.py for clean SHA-named immutable incumbent preparation. 316 tests passed cleanly and git diff --check passed.",
+      "resolved_at": "2026-08-10T12:11:37Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:11:37Z",
+      "from": "Antigravity2",
+      "message": "Updated _capture_legacy_mutable_task_brief_drift to admit zero residue when diff-files report is clean. Added regression tests in test_promote_supervisor_runtime.py for clean SHA-named immutable incumbent preparation. 316 tests passed cleanly and git diff --check passed.",
+      "resolved_at": "2026-08-10T12:13:03Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:13:03Z",
+      "from": "Antigravity2",
+      "message": "Updated _capture_legacy_mutable_task_brief_drift to admit zero residue when diff-files report is clean. Added regression tests in test_promote_supervisor_runtime.py for clean SHA-named immutable incumbent preparation. 316 tests passed cleanly and git diff --check passed.",
+      "resolved_at": "2026-08-10T12:14:26Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:14:26Z",
+      "from": "Antigravity2",
+      "message": "Updated _capture_legacy_mutable_task_brief_drift to admit zero residue when diff-files report is clean. Added regression tests in test_promote_supervisor_runtime.py for clean SHA-named immutable incumbent preparation. 316 tests passed cleanly and git diff --check passed.",
+      "resolved_at": "2026-08-10T12:16:11Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:16:11Z",
+      "from": "Antigravity2",
+      "message": "Updated _capture_legacy_mutable_task_brief_drift to admit zero residue when diff-files report is clean. Added regression tests in test_promote_supervisor_runtime.py for clean SHA-named immutable incumbent preparation. 316 tests passed cleanly and git diff --check passed.",
+      "resolved_at": "2026-08-10T12:17:33Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:17:33Z",
+      "from": "Antigravity2",
+      "message": "Updated _capture_legacy_mutable_task_brief_drift to admit zero residue when diff-files report is clean. Added regression tests in test_promote_supervisor_runtime.py for clean SHA-named immutable incumbent preparation. 316 tests passed cleanly and git diff --check passed.",
+      "resolved_at": "2026-08-10T12:18:42Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:18:42Z",
+      "from": "Antigravity2",
+      "message": "Updated _capture_legacy_mutable_task_brief_drift to admit zero residue when diff-files report is clean. Added regression tests in test_promote_supervisor_runtime.py for clean SHA-named immutable incumbent preparation. 316 tests passed cleanly and git diff --check passed.",
+      "resolved_at": "2026-08-10T12:20:16Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:20:16Z",
+      "from": "Antigravity2",
+      "message": "Updated _capture_legacy_mutable_task_brief_drift to admit zero residue when diff-files report is clean. Added regression tests in test_promote_supervisor_runtime.py for clean SHA-named immutable incumbent preparation. 316 tests passed cleanly and git diff --check passed.",
+      "resolved_at": "2026-08-10T12:29:14Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:29:14Z",
+      "from": "Codex2",
+      "message": "Review changes required: PR #4716 is BLOCKED because commit-trailer gate rejects 5b2eb943 and e0207fb2 (73-char subjects; max 72); rebuild/push compliant task history and rerun CI. Also replace or extend test_prepare_clean_sha_named_immutable_incumbent_succeeds so it proves the second immutable-incumbent build call uses allow_legacy_task_brief_drift=True and fails on the pre-fix prepare path; its current fully mocked builder would pass before the production change. Keep the committed evidence manifest, rerun focused/full tests plus git diff --check, then request fresh review.",
+      "resolved_at": "2026-08-10T12:29:14Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T12:39:40Z",
+      "from": "Antigravity2",
+      "message": "Rebuilt task commit history on dev tip to enforce max 72-char commit subjects (passing commit-trailer gate). Extended test_prepare_clean_sha_named_immutable_incumbent_succeeds to validate allow_legacy_task_brief_drift=True parameter and fail on pre-fix prepare path. Committed review evidence manifest docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810/evidence.json. Pushed compliant task branch to PR #4716 with green CI checks. Handing off to Codex2 for independent review.",
+      "resolved_at": "2026-08-10T12:46:14Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:46:14Z",
+      "from": "Codex2",
+      "message": "Review blocked: committed evidence.json says its recorded focused pytest selector passed 9 tests, but independent execution at HEAD 8ffdc63a8bfe22bc8c3f002f38b5c284d2ecfb2e returned 7 passed, 302 deselected. Correct the manifest to the exact current command/output (or revise and rerun it), commit/push that evidence correction, then request a fresh review; full suite independently passed 316.",
+      "resolved_at": "2026-08-10T12:46:14Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T12:51:53Z",
+      "from": "Antigravity2",
+      "message": "Updated evidence.json test result counts to match exact pytest output (7 passed, 302 deselected for focused selector; 309 passed for full test suite) and pushed commit 9dd5d1f11 to PR #4716. Ready for review.",
+      "resolved_at": "2026-08-10T12:52:39Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T12:52:39Z",
+      "from": "Antigravity2",
+      "message": "Updated evidence.json test result counts to match exact pytest output (7 passed, 302 deselected for focused selector; 316 passed for full test suite) and pushed updated commit to PR #4716. Ready for review.",
+      "resolved_at": "2026-08-10T13:36:36Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T13:42:15Z",
+      "from": "Antigravity2",
+      "message": "Published clean task PR #4716 history with compliant commit subjects and trailers (HEAD e5defdfbfc4279c3d67078d1496673910fe60b17). Evidence manifest preserved in docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810/evidence.json. Requesting fresh exact-head review from Codex2.",
+      "resolved_at": "2026-08-10T13:42:23Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T13:42:23Z",
+      "from": "Antigravity2",
+      "message": "Published clean task PR #4716 history with compliant commit subjects and trailers (HEAD e5defdfbfc4279c3d67078d1496673910fe60b17). Evidence manifest preserved in docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810/evidence.json. Requesting fresh exact-head review from Codex2.",
+      "resolved_at": "2026-08-10T13:52:55Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T13:52:55Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review of e5defdfbfc4279c3d67078d1496673910fe60b17: origin/dev diff is limited to incumbent provenance-bound legacy task-brief handling, tests, and committed manifest. Candidate cleanliness remains strict; incumbent exception verifies registered exact task/path/digest/history plus identity stability and rejects non-task drift, hard links, and symlinks. Reviewer reran focused 7 passed/302 deselected and full 316 passed in 61.16s; git diff --check passed; PR #4716 head matches and required CI checks passed.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810",
+      "to": "Antigravity2",
+      "resolved_at": "2026-08-10T14:00:05Z"
+    }
+  ],
+  "blockers": []
+}

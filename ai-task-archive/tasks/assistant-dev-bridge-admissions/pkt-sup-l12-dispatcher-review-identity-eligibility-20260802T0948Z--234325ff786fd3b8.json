@@ -1,0 +1,127 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-l12-dispatcher-review-identity-eligibility-20260802T0948Z--234325ff786fd3b8.json",
+  "admitted_at": "2026-08-02T09:47:34Z",
+  "audit_conversation_href": "codex://root/l12-three-pass-gap-dispatcher-identity-20260802",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-three-pass-gap-20260802",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "THREE_PASS_GAP_AUDIT",
+      "path": "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md",
+      "sourceRefs": [
+        "PR #4494 merge 0a2bd446952936998996ba6ecc89b1cbacd55bce"
+      ]
+    },
+    {
+      "kind": "IMMUTABLE_28_TASK_CATALOG",
+      "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+      "sourceRefs": [
+        "sha256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+        "G1=25 G2=2 G3=1"
+      ]
+    },
+    {
+      "kind": "GAP_EVIDENCE",
+      "path": "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "sourceRefs": [
+        "resolve_current_assignment excludes only exact owner display name",
+        "CURRENT_OWNER_PREFERENCE and CURRENT_REVIEWER_PREFERENCE"
+      ]
+    },
+    {
+      "kind": "DEPENDENCY_CONTRACT",
+      "path": ".orchestrator/review_identity.py",
+      "sourceRefs": [
+        "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+        "PR #4488 source evidence only"
+      ]
+    },
+    {
+      "kind": "READONLY_DEPENDENCY_CONTRACT",
+      "path": ".orchestrator/rewrite/task_state_store.py",
+      "sourceRefs": [
+        "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802",
+        "PR #4502 source evidence only"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T09:48:00Z",
+  "intent": "close_guarded_l12_dynamic_assignment_review_identity_gap",
+  "mode": "kernel_repair",
+  "packet_digest": "234325ff786fd3b83bde979e34635a8335a511c80a5beb1a5083d1572f3d257a",
+  "packet_id": "pkt-sup-l12-dispatcher-review-identity-eligibility-20260802T0948Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "ba71ef76d4befe790013d24b0689f39d4d3eb2cb16fc964cc805837570480e28",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-requires-three-pass-gap-audit",
+    "user-requires-supervisor-autoworker-dispatch",
+    "readonly-permission-root-cause-audit"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev only after both declared dependencies are merged; use a clean governed worktree and task branch, PR target dev, and do not reuse either dependency branch history.",
+          "Consume the canonical shared reviewer-eligibility predicate delivered by SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802; do not duplicate or weaken identity policy inside the L12 dispatcher.",
+          "resolve_current_assignment must select a complete owner/reviewer pair whose reviewer is genuinely independent from the owner; display-name inequality alone is insufficient.",
+          "Codex owner with Codex2 reviewer and Codex2 owner with Codex reviewer must be rejected or replanned through the shared predicate. If no legal pair exists, fail closed before queue, task-state, archive, checkpoint, or catalog mutation.",
+          "Preserve preference order so fresh live-ready Antigravity and Claude-family capacity is considered before Codex fallback, while rejecting any owner/reviewer pair the shared identity predicate marks ineligible.",
+          "Add positive matrices for Antigravity owner with an independent Codex reviewer and genuinely independent configured lanes, plus negative matrices for same review identity in both directions, one remaining identity, stale or missing readiness, and no legal reviewer.",
+          "Provider-assignment evidence must record identity-ineligible candidates and the selected legal pair without exposing credentials or relying on stale slot-only capability records.",
+          "The committed guarded-remediation catalog must remain byte-for-byte unchanged at SHA-256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca with exactly 28 unique tasks, G1=25, G2=2, G3=1, and unique sink L12-VERIFY-LEARN-REAL-VERIFIER-001.",
+          "Dry-run remains observational: no mkdir, lock creation, chmod, checkpoint refresh, journal/projection mutation, task materialization, or directory-entry change. Reuse the readonly contract delivered by the snapshot-scaling dependency.",
+          "Run focused identity-resolution tests, complete current-remediation dispatcher tests, relevant shared review-identity tests, py_compile, catalog/hash validation, git diff --check, evidence JSON parse, and a current at-least-2GB guarded dry-run that reaches a catalog admission verdict under 30 seconds without mutation.",
+          "Evidence must include objective, current source and runtime evidence, exact gap, dependencies, file scope, out-of-scope boundaries, acceptance matrix, validation, merge order, rollout, rollback, and remain review_pending until independent exact-head Human/Ops approval.",
+          "Out of scope: config edits, canonical JSON edits, provider/account/quota-group changes, catalog edits, product-controller implementation, G1 materialization, service restart, live promotion, deployment, or closeout.",
+          "Merge order is identity guard, snapshot scaling, this rebased task, then separately governed command-runtime promotion and scheduler/provider canary before guarded G1 materialization.",
+          "Rollback is revert of this task merge; a failed identity check must leave all canonical state and the fixed catalog unchanged."
+        ],
+        "artifacts": [
+          "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+          "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+          "docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-20260802/"
+        ],
+        "depends_on": [
+          "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+          "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802"
+        ],
+        "id": "SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-20260802",
+        "owner": "Antigravity",
+        "phase": "Supervisor G0 / G1 Admission",
+        "reviewer": "Human/Ops",
+        "summary": "Close the remaining G1 admission gap by applying the merged shared review-identity predicate to dynamic owner/reviewer resolution without changing the immutable 28-task catalog.",
+        "title": "Apply shared review-identity eligibility to guarded L12 assignment resolution"
+      },
+      "task_spec_hash": "430709a2951c20acbdff977fb1318cdbd8ba7a928801910e415237f795cc5564"
+    }
+  ]
+}

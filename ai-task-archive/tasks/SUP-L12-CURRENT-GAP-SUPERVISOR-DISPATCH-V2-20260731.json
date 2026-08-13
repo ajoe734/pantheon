@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+  "archived_at": "2026-08-13T02:01:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Confirm both infrastructure dependencies are archived completed and live",
+      "Confirm L12-VERIFY-LEARN-001 is archived superseded by L12-VERIFY-LEARN-REAL-VERIFIER-001",
+      "Run guarded validate-only and dry-run against exact current catalog and live command root",
+      "Run --apply only as the real Antigravity fleet actor and never through generic DevTaskPacket",
+      "Read back exactly 25 G1 tasks with exact catalog contracts assignment decisions and digests",
+      "Verify authoritative event checkpoint parity and admission archive atomicity",
+      "Record actual supervisor worker run ids and truthful concurrency limits",
+      "Correct merged #4422 evidence only after admission with #4390 delivery 314e02 and PR head 93dddc separated",
+      "Do not edit .orchestrator/config.json and do not claim loop completion before hosted verifier and L12-CLOSE-001"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731"
+    ],
+    "depends_on": [
+      "SUP-AGENT-ALIAS-REASSIGN-GUARD-20260731",
+      "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731",
+      "SUP-L12-SCOPED-REVIEWER-LEASE-20260731",
+      "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731"
+    ],
+    "generation": 1,
+    "id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+    "last_update": "2026-08-13T02:01:06Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "Twelve Loop Current Gap / Guarded Supervisor Admission V2",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "在兩個 supervisor/dispatcher 修復合併並 live 後，由真實 Antigravity worker 執行 guarded current catalog apply，驗證 25-task canonical admission 與 authoritative readback。",
+    "title": "Guarded current-gap supervisor dispatch V2",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:21:49Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:26:28Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:26:28Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-04T13:30:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T13:22:36Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-05T01:22:51Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T12:22:25Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-07T13:10:20Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T13:10:20Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-08T14:27:57Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:21:58Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-08-09T10:07:26Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:07:26Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:05:16Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:05:16Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T02:53:11Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T02:53:11Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:26:44Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:01:06Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "task_id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+  "archived_at": "2026-08-13T02:01:18Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start from current origin/dev in a clean governed task worktree.",
+      "Change only the L12-SIGNOFF-001 human task card assignment header so lane, owner, reviewer, and dependencies exactly mirror the current committed docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json entry.",
+      "Do not modify tasks.json, dispatcher code/tests, task state, config, product code, or any other task card.",
+      "Add truthful review_pending evidence in the declared unique evidence file; do not self-approve.",
+      "Run test_human_task_cards_mirror_assignment_header from the committed tree, the relevant static catalog/task-card checks, and git diff --check.",
+      "Deliver one exact two-file PR to dev with a <=72-character Task-ID-prefixed subject and exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+      "Wait all required checks and independent exact-head Human/Ops approval. Merge this repair before retrying SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 full-suite acceptance.",
+      "Rollout is documentation-only merge; rollback is revert of the merge commit."
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SIGNOFF-001.md",
+      "docs/reviews/archive/2026-08-01-l12-signoff-task-card-assignment-align-evidence.json"
+    ],
+    "depends_on": [
+      "L12-SIGNOFF-001"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.debug",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#signoff-task-card-scope-split",
+      "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+      "documents": [
+        {
+          "kind": "CANONICAL_STATIC_TASK_CATALOG",
+          "path": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json",
+          "sourceRefs": [
+            "L12-SIGNOFF-001 owner/reviewer contract"
+          ]
+        },
+        {
+          "kind": "FAILING_REGRESSION",
+          "path": "scripts/test_dispatch_twelve_loop_gap_2026_07_26.py",
+          "sourceRefs": [
+            "test_human_task_cards_mirror_assignment_header"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T04:02:16Z",
+      "intent": "repair_one_out_of_scope_static_task_card_before_held_close_guard",
+      "mode": "kernel_debug",
+      "packet_digest": "7f6cf17b436e8d8d15823f68a6abeb09e726a4af9178616e6a66e1e18b4b19e7",
+      "packet_id": "pkt-l12-signoff-task-card-assignment-align-20260801T0402Z",
+      "source_turn_ids": [
+        "human-ops-pr4425-exact-head-audit",
+        "full-suite-task-card-mismatch"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev in a clean governed task worktree.",
+          "Change only the L12-SIGNOFF-001 human task card assignment header so lane, owner, reviewer, and dependencies exactly mirror the current committed docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json entry.",
+          "Do not modify tasks.json, dispatcher code/tests, task state, config, product code, or any other task card.",
+          "Add truthful review_pending evidence in the declared unique evidence file; do not self-approve.",
+          "Run test_human_task_cards_mirror_assignment_header from the committed tree, the relevant static catalog/task-card checks, and git diff --check.",
+          "Deliver one exact two-file PR to dev with a <=72-character Task-ID-prefixed subject and exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Wait all required checks and independent exact-head Human/Ops approval. Merge this repair before retrying SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 full-suite acceptance.",
+          "Rollout is documentation-only merge; rollback is revert of the merge commit."
+        ],
+        "artifacts": [
+          "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SIGNOFF-001.md",
+          "docs/reviews/archive/2026-08-01-l12-signoff-task-card-assignment-align-evidence.json"
+        ],
+        "depends_on": [
+          "L12-SIGNOFF-001"
+        ],
+        "id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+        "owner": "Antigravity",
+        "phase": "Twelve Loop Dispatch / Static Task Card Repair",
+        "reviewer": "Human/Ops",
+        "summary": "Repair the pre-existing static L12-SIGNOFF task-card header in its own governed scope so the held-close guard PR does not absorb an unrelated file.",
+        "title": "Align the static L12 signoff task card assignment header"
+      },
+      "task_spec_hash": "d7923fcb2abf4e9cc390744b488aada897eed03845ddbb008c34a12dfa3921bf"
+    },
+    "generation": 1,
+    "id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+    "last_update": "2026-08-13T02:01:18Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "Twelve Loop Dispatch / Static Task Card Repair",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Repair the pre-existing static L12-SIGNOFF task-card header in its own governed scope so the held-close guard PR does not absorb an unrelated file.",
+    "title": "Align the static L12 signoff task card assignment header",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:28:23Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:30:59Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:30:59Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-04T14:43:13Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T17:59:54Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-11T18:03:05Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T18:04:25Z",
+      "from": "Antigravity",
+      "message": "Updated static L12-SIGNOFF-001 task card assignment header to match tasks.json (owner Claude, reviewer Codex2), generated review_pending evidence in docs/reviews/archive/2026-08-01-l12-signoff-task-card-assignment-align-evidence.json, verified 32/32 tests green including test_human_task_cards_mirror_assignment_header, committed and pushed to PR #4450.",
+      "resolved_at": "2026-08-11T18:14:07Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T18:14:07Z",
+      "from": "Codex2",
+      "message": "Review failed: PR #4450 head 471d26080e0048346c612918297f568efebfb457 is open/blocked and changes 3 files, including .orchestrator/task-briefs/l12_signoff_task_card_assignment_align_20260801.md; acceptance requires exactly the task card and declared evidence file. Rebuild the PR to that exact two-file scope. Required Commit trailers CI fails because subjects 471d260 (82 chars) and 81b7922 (74 chars) exceed 72; replace with <=72-char Task-ID-prefixed subjects and required trailers. PR has no reviews, so obtain independent exact-head Human/Ops approval and all required checks green before re-requesting review. Preserve review_pending evidence and rerun pytest -q scripts/test_dispatch_twelve_loop_gap_2026_07_26.py plus git diff --check.",
+      "resolved_at": "2026-08-11T18:14:07Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T18:18:56Z",
+      "from": "Antigravity",
+      "message": "Re-submitted exact 2-file PR #4450 with single clean commit efb687ad4f9fc63e60b7eb57f546ba560cfdde87 (subject length <= 72, trailers verified). Waiting for CI checks and independent exact-head Human/Ops review approval.",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-TASK-CARD-ASSIGNMENT-ALIGN-20260801",
+      "to": "Human/Ops",
+      "resolved_at": "2026-08-13T02:01:18Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,120 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Claude",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-guarded-remediation-correction-20260803T1345Z--5fce437eb8b21fb6.json",
+  "admitted_at": "2026-08-03T13:34:06Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "claude-root-l12-guarded-remediation-correction-20260803",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "SUPERSEDED_CATALOG",
+      "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+      "sourceRefs": [
+        "PR #4394 exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4",
+        "9-of-12 missing-controller claim independently verified WRONG for 4 loops (TEACH/IMIT/CONS/BFF) on 2026-08-03"
+      ]
+    },
+    {
+      "kind": "GROUND_TRUTH_BINDING_CONTRACT",
+      "path": "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+      "sourceRefs": [
+        "RUNTIME_CONTROLLER_BINDINGS dict, currently 3 entries only",
+        "L12-TRUTH-001 catalog-to-runtime exactness binding"
+      ]
+    },
+    {
+      "kind": "DISPATCHER_TO_EXTEND",
+      "path": "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "sourceRefs": [
+        "PR #4417 (SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2), merged to origin/dev",
+        "supports --validate-only/--dry-run/--apply and a --current profile; needs a second profile added, not replaced"
+      ]
+    },
+    {
+      "kind": "EVIDENCE_VALIDATOR",
+      "path": "scripts/validate_twelve_loop_gap_evidence.py",
+      "sourceRefs": [
+        "Run 2026-08-03 against L12-TEACH-001/L12-IMIT-001/L12-CONS-001 evidence.json: all three reject (21/31/19 rejections respectively, mostly current_cut_consistency + head_binding)",
+        "Run 2026-08-03 against L12-BFF-001/evidence.json: passes with zero rejections"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-03T13:45:00Z",
+  "intent": "supervisor_materialize_corrected_l12_guarded_remediation_catalog",
+  "mode": "kernel_repair",
+  "packet_digest": "5fce437eb8b21fb6214dc436095961dabbf3bf7d6f59a144e39a8e76ca87918d",
+  "packet_id": "pkt-l12-guarded-remediation-correction-20260803T1345Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "778406fe8f323543aa1cf7f620372331b1a438aedf900fad7373c6e6fbc1bb07",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-review-codex-l12-audit",
+    "claude-verified-4-of-9-controllers-already-exist-20260803",
+    "claude-verified-telrec-drift-worker-registered-gap-20260803"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803",
+      "task_spec": {
+        "acceptance": [
+          "Treat the 2026-07-31 catalog (docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json, PR #4394 exact head fb9adfb84944e276b254ccfdfff784fb6728a7f4) as superseded input, not as ground truth: verification against origin/dev on 2026-08-03 found its 9-missing-controller list conflates two different defects.",
+          "Ground truth for 'canonical controller' is the bidirectional binding contract in services/control-plane/bff/test_loop_inventory_read_model_contract.py (RUNTIME_CONTROLLER_BINDINGS) plus docker-compose.yml PANTHEON_CONTROLLER_NAME entries. Only source_ingestion, strategy_distillation, alpha_replication are currently registered there; a loop with a real deployed worker but no registry entry is NOT reconciled and must not be treated as done, but also must not be rebuilt from zero if a compliant implementation already exists.",
+          "persona_teaching: do not implement a new controller. services/training-session/preview_eval_worker.py already exists, is deployed in docker-compose.yml, and carries a real L12-TEACH-001/LOOP-PROD-TEACH-001 commit history (verified ancestor of origin/dev). Scope this task as: register it in RUNTIME_CONTROLLER_BINDINGS + PANTHEON_CONTROLLER_NAME + the BFF loop_inventory read model, and fix its evidence manifest (docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.json currently FAILS scripts/validate_twelve_loop_gap_evidence.py with 21 rejections, mostly current_cut_consistency and head_binding) rather than writing new controller code.",
+          "human_imitation_shadow_evaluation: same pattern as persona_teaching. services/policy-learning/scheduler_worker.py exists, is deployed, carries a real L12-IMIT-001 commit history. Scope as registration + evidence-manifest repair (L12-IMIT-001/evidence.json currently fails with 31 rejections), not a rebuild.",
+          "consultation: same pattern. services/consultation/workflow_executor.py exists, is deployed, self-describes as 'a tenant-scoped reconciler' with SQLite lease+fencing+DLQ, carries a real L12-CONS-001 commit history. Scope as registration + evidence-manifest repair (L12-CONS-001/evidence.json currently fails with 19 rejections), not a rebuild.",
+          "bff_health_monitoring: same pattern, but its evidence already PASSES (docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json is clean under scripts/validate_twelve_loop_gap_evidence.py, zero rejections). services/control-plane/bff/downstream_health_monitor.py exists, is deployed, carries a real L12-BFF-001 commit history. Scope as registration ONLY (no evidence work needed). Before dispatching this task, resolve its confirmed artifact-scope conflict: a live dry-run of scripts/dispatch_twelve_loop_gap_2026_07_26.py --dry-run --current failed closed with 'live nonterminal artifact overlap is not dependency-ordered: L12-CONTROLLER-BFF-20260731 <-> LIFECYCLE-PROJ-BFF-001' (LIFECYCLE-PROJ-BFF-001 and LIFECYCLE-PROJ-RETIRE-001 are both still nonterminal on the live board and touch overlapping services/control-plane/bff files) — this task must declare an explicit depends_on those lifecycle-projector tasks, or narrow its own artifact list to files disjoint from them, before the corrected catalog is considered valid.",
+          "agora_interaction_evidence: confirmed genuinely missing. No L12-AGORA-* or equivalent commit exists anywhere in git history; the artifact path the old catalog named (services/control-plane/specs/agora) is only a JSON schema file, not a service. Existing agora_dataset_authority.py / agora_dataset_source.py / agora_seed_bridge.py belong to OTHER loops (mostly L12-IMIT-001) and do not substitute. Keep this as a real build-from-scratch controller task, same shape as the original L12-CONTROLLER-AGORA-20260731.",
+          "promotion_deployment: confirmed genuinely missing. deployment_plan.py / deployment_saga.py in services/control-plane/governance are static models only; no always-on saga dispatcher/worker was found anywhere in governance or runtime-manager. Keep as a real build-from-scratch controller task, same shape as the original L12-CONTROLLER-DEP-20260731.",
+          "capital_pool_execution: the existing services/runtime-manager/runtime_truth_reconciler.py is NOT a substitute — verified it reconciles cross-service identity-field truth (persona_id/deployment_plan_id/etc under MGMT-OPS-003-GAP-002), not 'exactly one supervised worker per active RuntimeBinding with restart/stop/signal isolation' as the loop catalog requires. Scope this task as building that specific missing worker-supervision reconciler; it may call into runtime_truth_reconciler.py for identity checks but must not be described as already solved by it.",
+          "evolution: the existing services/control-plane/governance/evolution_controller.py is NOT a substitute — verified it is a dispatch-boundary router for ALREADY-APPROVED EvolutionDecision records, not the threshold-sweep / incident-postmortem-proposal-generation loop the catalog describes as missing. Scope this task as building the missing upstream piece (scheduled threshold sweep + proposal generation) that feeds INTO the existing evolution_controller.py, not a duplicate dispatch boundary.",
+          "telemetry_reconciliation: services/reconciliation-drift/scheduler_worker.py and consumer.py already exist, are deployed (reconciliation-drift-scheduler, reconciliation-drift-consumer in docker-compose.yml), and carry a real L12-REC-001/LOOP-PROD-TEL-001 commit history. This covers the drift-detection half only. No automatic drift-report -> incident-creation -> postmortem -> evolution-handoff chain was found (grep across services/reconciliation-drift and services/telemetry found no postmortem or evolution-handoff wiring). Scope this task as registration of the existing drift worker PLUS building the missing postmortem/evolution-handoff chain segment -- not a full rebuild.",
+          "source_ingestion, strategy_distillation, alpha_replication: verified already correctly registered and passing (RUNTIME_CONTROLLER_BINDINGS + compose + evidence). Do not create any task for these three.",
+          "Deliver the corrected catalog as a new versioned document (new program_id, e.g. pantheon-twelve-loop-gap-current-proof-remediation-2026-08-03) through a clean branch, commit, push, PR to dev, independent exact-head review, and protected merge -- exactly the same governance shape as the original PR #4394/#4417. Extend scripts/dispatch_twelve_loop_gap_2026_07_26.py to recognize the new catalog (new CURRENT_CATALOG_FILE_SHA256/CURRENT_CATALOG_CANONICAL_SHA256/CURRENT_SOURCE_PR constants bound to the new PR's exact head) alongside, not instead of, its existing profiles.",
+          "Do not bulk-materialize any of the 9 corrected product tasks via the generic assistant-dev-packet/DevTaskPacket path. Only this bootstrap/authoring task may go through the generic bridge; the 9 product tasks must be materialized exclusively by running the (now-extended) dispatcher script's --validate-only then --dry-run then --apply sequence after this PR merges and live-promotes.",
+          "Do not edit .orchestrator/config.json, do not impersonate Human/Ops or root-freeze approval, and do not claim any of these loops operational or reconciled before its own current-proof evidence (fresh run of scripts/validate_twelve_loop_gap_evidence.py) passes with zero rejections."
+        ],
+        "artifacts": [
+          "docs/bff/execution-tasks/2026-08-03-l12-guarded-remediation-correction/corrected-remediation-tasks.json",
+          "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/",
+          "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/",
+          "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Twelve Loop Current Gap Correction",
+        "reviewer": "Claude2",
+        "summary": "The 2026-07-31 guarded-remediation-tasks.json claims 9 of 12 loops are missing a canonical controller. Independent re-verification against origin/dev on 2026-08-03 (commit 1d0355768) found this conflates two distinct defects: for persona_teaching, human_imitation_shadow_evaluation, consultation, and bff_health_monitoring, a real, deployed, restart-safe worker already exists with a genuine L12-<ID>-001 commit trail -- it is simply not registered in the RUNTIME_CONTROLLER_BINDINGS/compose PANTHEON_CONTROLLER_NAME binding contract, and (except BFF) its evidence manifest fails the current fail-closed validator on formatting/binding grounds, not on missing implementation. agora_interaction_evidence and promotion_deployment are confirmed genuinely missing end to end. capital_pool_execution, evolution, and telemetry_reconciliation each already have a real adjacent component that solves a DIFFERENT problem than the one the loop catalog requires, and need only the specific missing piece built, not a full rebuild. This task produces a corrected catalog that reflects this and extends the dispatcher to materialize it safely.",
+        "title": "Author and land a corrected successor to the 2026-07-31 guarded-remediation catalog"
+      },
+      "task_spec_hash": "391aa769c5b26e61250f776431ddb03de93a3b10bdb6c4a84e26ce6297026852"
+    }
+  ]
+}

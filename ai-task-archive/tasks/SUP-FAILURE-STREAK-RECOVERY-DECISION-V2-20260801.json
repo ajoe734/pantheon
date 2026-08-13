@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "task_id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+  "archived_at": "2026-08-02T07:16:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Permit recovery only for explicitly nonterminal generic_exit or missing_process. Empty/unknown, terminal, timeout, parse_error, exit_code, auth, quota, policy, overlap, dirty-worktree, wrong-branch, wrong-task, and provider-unready kinds remain denied.",
+      "Require task status eligible for the owner lane, authoritative owner unchanged from failure, target agent equal to owner, independent reviewer progress newer than failure, and a new exact progress generation not previously consumed.",
+      "Require no active worker, pending/started queue event, delivery reservation, or active worktree lease for the exact task; require the logical provider to be ready and free of auth/quota/policy pause.",
+      "Return an immutable decision containing allow/deny, reason code, exact task/provider/failure generation/progress generation, prior count/kind/timestamp, qualifying event, and the proposed one-shot consumption token. The pure function must not mutate state.",
+      "Add one deterministic test per allow and deny row: actual Antigravity owner plus Human/Ops reviewer incident, stale/same-head replay, changed owner, every excluded kind, status variants, active worker, pending queue, reservation, worktree lease, provider unavailable/paused, already-consumed generation, cross-task/provider, and unrelated streaks.",
+      "Prove the actual canonical identity model owner=Antigravity/reviewer=Human/Ops can allow a qualifying retry; owner==reviewer must deny.",
+      "Run focused tests and the full relevant supervisor regression. Do not change dispatch gates, counters, queue state, audit files, config, or live runtime in this task.",
+      "Rollout is source merge only. Rollback is revert of this task merge commit.",
+      "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+      "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+      "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+      "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+      "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+      "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801/"
+    ],
+    "depends_on": [
+      "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+      "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#v2-split-after-stale-review",
+      "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+      "documents": [
+        {
+          "kind": "SUPERSEDED_IDENTITY_MONOLITH",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-promotion-split-chain-20260801T0000Z.json",
+          "sourceRefs": [
+            "PR #4437 rejected heads 07316c73 and 77af55015",
+            "same rejected 77af55015 replayed without code changes",
+            "GitHub review comments 5148931145, 5148948795, 5149092858"
+          ]
+        },
+        {
+          "kind": "SUPERSEDED_RETRY_MONOLITH",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-progress-aware-failure-streak-retry-20260801T0116Z.json",
+          "sourceRefs": [
+            "PR #4438 rejected heads 94e3b6f3, d616beaa and 35056b71",
+            "real owner/reviewer probe returned false",
+            "15-minute owner run timed out and same trees replayed",
+            "GitHub review comments 5148942746, 5149044158, 5149078704"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T02:18:00Z",
+      "intent": "split_repeated_stale_review_monoliths_into_governed_v2_chains",
+      "mode": "kernel_repair",
+      "packet_digest": "355ad2d403cceefb30b138a1399e95d7024427643f80c7aae422463aecf1f1e0",
+      "packet_id": "pkt-sup-runtime-identity-retry-v2-split-20260801T0218Z",
+      "source_turn_ids": [
+        "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+        "human-ops-pr4437-three-exact-head-rejections",
+        "human-ops-pr4438-three-exact-head-rejections-and-timeout"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Permit recovery only for explicitly nonterminal generic_exit or missing_process. Empty/unknown, terminal, timeout, parse_error, exit_code, auth, quota, policy, overlap, dirty-worktree, wrong-branch, wrong-task, and provider-unready kinds remain denied.",
+          "Require task status eligible for the owner lane, authoritative owner unchanged from failure, target agent equal to owner, independent reviewer progress newer than failure, and a new exact progress generation not previously consumed.",
+          "Require no active worker, pending/started queue event, delivery reservation, or active worktree lease for the exact task; require the logical provider to be ready and free of auth/quota/policy pause.",
+          "Return an immutable decision containing allow/deny, reason code, exact task/provider/failure generation/progress generation, prior count/kind/timestamp, qualifying event, and the proposed one-shot consumption token. The pure function must not mutate state.",
+          "Add one deterministic test per allow and deny row: actual Antigravity owner plus Human/Ops reviewer incident, stale/same-head replay, changed owner, every excluded kind, status variants, active worker, pending queue, reservation, worktree lease, provider unavailable/paused, already-consumed generation, cross-task/provider, and unrelated streaks.",
+          "Prove the actual canonical identity model owner=Antigravity/reviewer=Human/Ops can allow a qualifying retry; owner==reviewer must deny.",
+          "Run focused tests and the full relevant supervisor regression. Do not change dispatch gates, counters, queue state, audit files, config, or live runtime in this task.",
+          "Rollout is source merge only. Rollback is revert of this task merge commit.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801"
+        ],
+        "id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Retry V2 / 2 Pure Decision",
+        "reviewer": "Human/Ops",
+        "summary": "Add a pure fail-closed decision function over the merged authoritative failure/progress records, without consuming state or dispatching.",
+        "title": "Build a pure bounded retry recovery decision matrix"
+      },
+      "task_spec_hash": "70eb7525987f6bc78a1c699e874cde98f81640870b94fbfbcd0ce7832fe91849"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "head_sha": "494e98d471ca605e98acc4e2ebb3016b5a75fff8",
+      "mode": "required_commit_status",
+      "pr": 4489,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4489",
+      "recorded_at": "2026-08-02T07:08:21Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51498402931,
+      "status_state": "success"
+    },
+    "id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+    "last_update": "2026-08-02T07:16:37Z",
+    "next": "Owner closeout complete: PR #4489 exact head 494e98d471ca605e98acc4e2ebb3016b5a75fff8 merged to dev as 79ba3f431127bf9718697d2ba9e9ddce97969ec3 after Human/Ops canonical review status 51498402931 and root-freeze status 51498506179. Revalidated 8 passed/45 subtests, 25 passed/135 subtests, full supervisor 499 passed/147 subtests, py_compile, evidence JSON, diff scope/check, remote head, and rejected ancestry.",
+    "owner": "Codex",
+    "phase": "Supervisor Retry V2 / 2 Pure Decision",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "head_sha": "494e98d471ca605e98acc4e2ebb3016b5a75fff8",
+      "pr": 4489
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801/evidence.json",
+    "review_notes_zh": [
+      "Human/Ops 已獨立複核 exact head 494e98d471ca605e98acc4e2ebb3016b5a75fff8；實作固定於 dd819f3f2cf40d4c14d34097a95f7cf064a48202，最後一個 commit 僅修正 reviewer/candidate/PR evidence 綁定。獨立驗證：8 passed、491 deselected、45 subtests，py_compile、JSON、diff、parent 與兩檔 evidence scope 均通過；兩組 GitHub CI 8/8 success。"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Add a pure fail-closed decision function over the merged authoritative failure/progress records, without consuming state or dispatching.",
+    "title": "Build a pure bounded retry recovery decision matrix",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T07:16:37Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-failure-streak-recovery-decision-v2-20260801",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-failure-streak-recovery-decision-v2-20260801",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "494e98d471ca605e98acc4e2ebb3016b5a75fff8",
+      "commit_subject": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801: bind review",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped evidence reviewer, implementation candidate, and PR binding",
+        "Not changing": "recovery decision code, tests, dispatch, consumption, queues, provider policy, config, canonical state, or live runtime",
+        "Composes with": "PR #4489 exact-head Human/Ops review of implementation candidate dd819f3f2cf40d4c14d34097a95f7cf064a48202",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+        "Reviewer": "Human/Ops",
+        "Verified": "recovery 8 passed/45 subtests; full supervisor 499 passed/147 subtests; JSON; diff check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 4,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "79ba3f431127bf9718697d2ba9e9ddce97969ec3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:25:19Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:30:33Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:30:33Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-02T06:43:03Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T06:55:53Z",
+      "from": "Codex",
+      "message": "PR #4489 exact head dd819f3f2cf40d4c14d34097a95f7cf064a48202 is ready for independent review. Review docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801/evidence.json; rerun recovery 8/45, V3 chain 25/135, full supervisor 499/147, py_compile, JSON, trailer, diff and rejected-ancestry checks. Auto-merge is off; bind REVIEW_PR=4489 and this exact REVIEW_HEAD_SHA on approval.",
+      "resolved_at": "2026-08-02T07:00:44Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T07:00:44Z",
+      "from": "Human/Ops",
+      "message": "Exact-head review of dd819f3f2cf40d4c14d34097a95f7cf064a48202: implementation and focused 8/45 validation pass, but task-scoped reviewer fallback changed canonical reviewer from auth-revoked Codex2 to Human/Ops. Update commit Reviewer trailer and evidence task/review reviewer fields to Human/Ops; bind candidate_head and PR #4489 truthfully, preserve the four-file scope and code unchanged, then request a fresh exact-head review.",
+      "resolved_at": "2026-08-02T07:00:44Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T07:05:05Z",
+      "from": "Codex",
+      "message": "Fresh exact-head review requested for PR #4489 at 494e98d471ca605e98acc4e2ebb3016b5a75fff8. Implementation remains dd819f3f2cf40d4c14d34097a95f7cf064a48202 with no code changes; evidence now binds Human/Ops, candidate_head, and PR truthfully. Revalidated recovery 8 passed/45 subtests and full supervisor 499 passed/147 subtests.",
+      "resolved_at": "2026-08-02T07:08:21Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T07:08:21Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approved PR #4489 exact head 494e98d471ca605e98acc4e2ebb3016b5a75fff8 after independent scoped review and validation.",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T07:16:38Z"
+    }
+  ],
+  "blockers": []
+}

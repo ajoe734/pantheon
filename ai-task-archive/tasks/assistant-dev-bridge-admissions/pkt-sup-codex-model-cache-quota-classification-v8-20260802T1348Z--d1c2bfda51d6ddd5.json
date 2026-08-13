@@ -1,0 +1,118 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-codex-model-cache-quota-classification-v8-20260802T1348Z--d1c2bfda51d6ddd5.json",
+  "admitted_at": "2026-08-02T13:49:45Z",
+  "audit_conversation_href": "codex://root/supervisor-autoworker-full-audit-20260802#codex-cache-quota-recovery",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-supervisor-autoworker-full-audit-20260802",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "Pantheon supervisor is the only routine dispatcher",
+        "Codex and Codex2 may be distinct accounts; use task-scoped live evidence"
+      ]
+    },
+    {
+      "kind": "LIVE_PROVIDER_EVIDENCE",
+      "path": ".orchestrator/provider_capabilities.json",
+      "sourceRefs": [
+        "Codex v0.144.6 live probe failed on models cache missing supports_reasoning_summaries",
+        "after recoverable cache quarantine the fresh probe reached the provider and returned usage limit with reset 2026-08-09T05:10:00Z",
+        "Codex2 remained independently healthy and dispatched under quota_group codex2"
+      ]
+    },
+    {
+      "kind": "MERGED_DEPENDENCY",
+      "path": "https://github.com/ajoe734/pantheon/pull/4510",
+      "sourceRefs": [
+        "merge 71654443b53ba32f66e046aa7dcb12e85127edb2",
+        "stale auth capability readmission source"
+      ]
+    },
+    {
+      "kind": "MERGED_DEPENDENCY",
+      "path": "ai-task-archive/tasks/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802.json",
+      "sourceRefs": [
+        "atomic task-scoped owner/reviewer fallback without account equivalence"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T13:48:30Z",
+  "intent": "repair_codex_cache_compatibility_and_quota_aware_task_fallback",
+  "mode": "kernel_repair",
+  "packet_digest": "d1c2bfda51d6ddd5bd6ef55ce9ffc418f07600a761d4e5dd0e00b38a0bce00a9",
+  "packet_id": "pkt-sup-codex-model-cache-quota-classification-v8-20260802T1348Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "f2684b648130b0237898aa9bd4e04473e921a7f80e470301526280eaf9a667e4",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-preserve-distinct-codex-accounts",
+    "operator-complete-auto-worker-quota-fallback-audit"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce Codex CLI v0.144.6 failing before auth/quota evaluation because models_cache.json lacks supports_reasoning_summaries, while the separately configured Codex2 cache and quota group remain healthy.",
+          "Treat the exact model-cache schema parse signature as local cache compatibility, never as credential revocation or account equivalence; do not read, rewrite, copy, rotate, or expose auth.json or API keys.",
+          "Outside runtime-admission and canonical locks, atomically quarantine only the exact affected provider-home models cache with inode/hash/mtime evidence, then perform one bounded fresh live probe; ambiguous paths remain fail closed and no whole-fleet probe is allowed.",
+          "Classify the observed Codex usage-limit response as quota_reached, capture a sanitized reset timestamp when present, and persist it through existing provider capability and dispatch-pause APIs rather than hand-editing JSON.",
+          "While Codex is quota-blocked, atomically rebind only eligible task owner/reviewer pairs to healthy configured targets; preserve dependency, priority, capacity, cooldown, failure-loop, chair-triage, active lease and exact-head review gates.",
+          "Codex and Codex2 remain separate configured account and quota groups. Do not hardcode same-account equivalence and do not add a global mutual-review ban; current task-scoped live availability and independent-review evidence remain authoritative.",
+          "A fresh successful probe after the recorded reset clears only the affected provider pause; failed, timeout, revoked, quota, malformed-cache or ambiguous probes remain closed without consuming a worker.",
+          "Regression matrix covers compatible cache, exact incompatible cache, unsafe/unowned cache path, concurrent probes, quarantine failure, refresh success, quota with/without reset timestamp, auth revoked, timeout, and distinct Codex/Codex2 routing.",
+          "Use a clean task worktree from current origin/dev, commit only declared scope, run focused and full relevant provider/supervisor tests, py_compile, JSON, diff and trailer checks, open PR to dev, obtain exact-head Human/Ops review, merge and canonical archive.",
+          "No live service restart or production deployment belongs to this source task. A governed canary later proves cache recovery, quota pause, distinct-group fallback and rollback; rollback is merge revert and restoring the quarantined cache only if needed."
+        ],
+        "artifacts": [
+          ".orchestrator/provider_permissions.py",
+          ".orchestrator/test_provider_permissions.py",
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802/"
+        ],
+        "depends_on": [
+          "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+          "SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802"
+        ],
+        "id": "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802",
+        "owner": "Codex2",
+        "phase": "Supervisor provider admission / cache compatibility / quota routing V8",
+        "reviewer": "Human/Ops",
+        "summary": "Make one provider home self-recover from an exactly identified incompatible models cache, then classify actual usage-limit evidence as quota and reassign only affected tasks across still-distinct configured groups.",
+        "title": "Recover incompatible Codex model cache and classify usage-limit quota accurately"
+      },
+      "task_spec_hash": "b01f585d8a02074c324315acb6782796aab2a865ce8afe61e47526fa9efd84f3"
+    }
+  ]
+}
