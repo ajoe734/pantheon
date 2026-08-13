@@ -334,9 +334,16 @@ def _make_registry_sync(
         existing = _get_registry_entry(config.registry_url, registry_id)
         if existing is not None:
             state = _registry_artifact_state(existing)
+            existing_payload = _registry_entry_payload(existing)
+            strategy_id = existing_payload.get("strategy_id") or payload.get("strategy_id")
+            version = existing_payload.get("version") or payload.get("version")
+            checksum = existing_payload.get("checksum") or payload.get("checksum")
             if state in {"approved", "retired"}:
                 return RegistrySyncResult(
                     registry_id=registry_id,
+                    strategy_id=strategy_id,
+                    version=version,
+                    checksum=checksum,
                     status="immutable",
                     reason=f"Registry artifact {registry_id} is immutable ({state})",
                 )
@@ -349,6 +356,9 @@ def _make_registry_sync(
             # readback path: the write landed before the worker ack did.
             return RegistrySyncResult(
                 registry_id=registry_id,
+                strategy_id=strategy_id,
+                version=version,
+                checksum=checksum,
                 status="already_terminal",
                 reason="versioned Registry draft already exists",
             )
@@ -360,9 +370,16 @@ def _make_registry_sync(
                 f"Registry write lacked terminal readback for {registry_id}"
             )
         state = _registry_artifact_state(readback)
+        readback_payload = _registry_entry_payload(readback)
+        strategy_id = readback_payload.get("strategy_id") or payload.get("strategy_id")
+        version = readback_payload.get("version") or payload.get("version")
+        checksum = readback_payload.get("checksum") or payload.get("checksum")
         if state in {"approved", "retired"}:
             return RegistrySyncResult(
                 registry_id=registry_id,
+                strategy_id=strategy_id,
+                version=version,
+                checksum=checksum,
                 status="immutable",
                 reason=f"Registry artifact {registry_id} became immutable ({state})",
             )
@@ -370,7 +387,13 @@ def _make_registry_sync(
             raise RuntimeError(
                 f"Registry write readback mismatched distillation lineage/content for {registry_id}"
             )
-        return RegistrySyncResult(registry_id=registry_id, status="synced")
+        return RegistrySyncResult(
+            registry_id=registry_id,
+            strategy_id=strategy_id,
+            version=version,
+            checksum=checksum,
+            status="synced",
+        )
 
     return sync
 
@@ -455,12 +478,25 @@ def run_controller_tick(
             default_max_attempts=config.max_attempts,
         )
         queue_metrics = queue.metrics()
+        terminal_drafts = [
+            {
+                "source_id": job.source_id,
+                "registry_id": job.registry_id,
+                "strategy_id": job.strategy_id,
+                "version": job.version,
+                "checksum": job.checksum,
+                "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+            }
+            for job in queue.list_all()
+            if (job.status.value if hasattr(job.status, "value") else str(job.status)) in ("done", "skipped") and job.registry_id
+        ]
         actual_meta = {
             "synced_count": run_result.registry_synced,
             "skipped_immutable_count": run_result.skipped,
             "sync_failures_count": run_result.failed,
             "outbox": queue_metrics,
             "pending_dead_letter_count": len(queue.list_dead_letters()),
+            "terminal_drafts": terminal_drafts,
         }
 
         if (
