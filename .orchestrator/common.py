@@ -24,17 +24,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
-from typing import Any, Mapping, Generator, Callable, Iterable, Final
+from typing import Any, Mapping, Generator, Callable, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
-STATUS_OUTBOX_VISIBILITY_ENABLED_ENV = "PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED"
-TASK_BRIEFS_DIR = ORCHESTRATOR_DIR / "task-briefs"
-EVIDENCE_DIR = ORCHESTRATOR_DIR / "evidence"
-CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.md"
-WORKER_ANCHOR_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "worker-anchor-commit.md"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
@@ -344,6 +339,35 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+WORKER_PROCESS_GENERATION_SCHEMA_VERSION = 1
+WORKER_PROCESS_GENERATION_PREFIX = "worker-process-generation-sha256:"
+
+
+def worker_process_generation_id(
+    *,
+    task_id: str,
+    worker_run_id: str,
+    queue_event_id: str,
+    pid: int,
+    pid_start_ticks: int,
+) -> str:
+    payload = {
+        "schema_version": WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
+        "task_id": str(task_id),
+        "worker_run_id": str(worker_run_id),
+        "queue_event_id": str(queue_event_id),
+        "pid": int(pid),
+        "pid_start_ticks": int(pid_start_ticks),
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return WORKER_PROCESS_GENERATION_PREFIX + hashlib.sha256(encoded).hexdigest()
+
+
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -444,7 +468,9 @@ def resolve_path(value: str | Path | None) -> Path | None:
     return path
 
 
-def _first_symlink_component(path: Path) -> Path | None:
+def first_symlink_component(path: Path) -> Path | None:
+    if ".." in path.parts:
+        raise RuntimeError(f"Path contains parent directory references (..): {path}")
     current = Path(path.anchor)
     parts = path.parts[1:] if path.is_absolute() else path.parts
     for part in parts:
@@ -563,13 +589,9 @@ STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
 STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
 STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
 STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
-LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
-LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
-LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
-LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
 
 
-def _git_stdout(cwd: Path, args: list[str]) -> str:
+def git_stdout(cwd: Path, args: list[str]) -> str:
     proc = subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -581,6 +603,14 @@ def _git_stdout(cwd: Path, args: list[str]) -> str:
         detail = (proc.stderr or proc.stdout or "git command failed").strip()
         raise RuntimeError(detail)
     return proc.stdout.strip()
+
+
+def git_toplevel(path: Path) -> Path | None:
+    try:
+        top = git_stdout(path, ["rev-parse", "--show-toplevel"])
+    except RuntimeError:
+        return None
+    return Path(top).resolve() if top else None
 
 
 def normalize_github_repo_slug(value: str | None) -> str:
@@ -621,7 +651,7 @@ def validate_status_command_runtime(
 
     if not root.is_absolute():
         raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
-    symlink_component = _first_symlink_component(root)
+    symlink_component = first_symlink_component(root)
     if symlink_component is not None:
         raise RuntimeError(
             f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
@@ -629,18 +659,17 @@ def validate_status_command_runtime(
     resolved = root.resolve()
     if not resolved.exists() or not resolved.is_dir():
         raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {resolved}")
-    git_root = _git_stdout(resolved, ["rev-parse", "--show-toplevel"])
-    if Path(git_root).resolve() != resolved:
+    if git_toplevel(resolved) != resolved:
         raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {resolved}")
 
-    source_sha = _git_stdout(resolved, ["rev-parse", "HEAD"])
+    source_sha = git_stdout(resolved, ["rev-parse", "HEAD"])
     if expected_sha and source_sha != expected_sha:
         raise RuntimeError(
             f"{STATUS_COMMAND_SHA_ENV} mismatch: command root is {source_sha}, expected {expected_sha}"
         )
 
     expected_slug = normalize_github_repo_slug(expected_remote)
-    remote_url = _git_stdout(resolved, ["remote", "get-url", "origin"])
+    remote_url = git_stdout(resolved, ["remote", "get-url", "origin"])
     actual_slug = normalize_github_repo_slug(remote_url)
     if expected_slug and actual_slug != expected_slug:
         raise RuntimeError(
@@ -649,7 +678,7 @@ def validate_status_command_runtime(
 
     if require_merged:
         target_ref = str(base_ref or "origin/dev").strip() or "origin/dev"
-        _git_stdout(resolved, ["rev-parse", "--verify", target_ref])
+        git_stdout(resolved, ["rev-parse", "--verify", target_ref])
         proc = subprocess.run(
             ["git", "merge-base", "--is-ancestor", source_sha, target_ref],
             cwd=resolved,
@@ -685,11 +714,13 @@ def status_command_runtime_record_from_env(env: Mapping[str, str]) -> dict[str, 
     }
 
 
-def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[str, str] | None:
-    raw_root = str(record.get("command_root") or record.get("root") or "").strip()
-    raw_sha = str(record.get("source_sha") or record.get("runtime_sha") or "").strip()
+def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[str, str]:
+    raw_root = str(record.get("command_root") or "").strip()
+    raw_sha = str(record.get("source_sha") or "").strip()
     if not raw_root or not raw_sha:
-        return None
+        raise RuntimeError(
+            "issued status_command_runtime requires command_root and source_sha"
+        )
     remote = str(record.get("remote") or "").strip()
     base_ref = str(record.get("base_ref") or "").strip() or "origin/dev"
     metadata = validate_status_command_runtime(
@@ -704,10 +735,6 @@ def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[s
         STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
         STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
         STATUS_COMMAND_BASE_REF_ENV: base_ref,
-        LEGACY_STATUS_COMMAND_ROOT_ENV: metadata["root"],
-        LEGACY_STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
-        LEGACY_STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
-        LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
     }
 
 
@@ -769,10 +796,6 @@ def status_command_runtime_env(
             STATUS_COMMAND_SHA_ENV: runtime_metadata["source_sha"],
             STATUS_COMMAND_REMOTE_ENV: runtime_metadata["remote"],
             STATUS_COMMAND_BASE_REF_ENV: base_ref,
-            LEGACY_STATUS_COMMAND_ROOT_ENV: runtime_metadata["root"],
-            LEGACY_STATUS_COMMAND_SHA_ENV: runtime_metadata["source_sha"],
-            LEGACY_STATUS_COMMAND_REMOTE_ENV: runtime_metadata["remote"],
-            LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
         }
     env.update(task_state_store_runtime_env(config))
     return env
@@ -1133,7 +1156,6 @@ ACTIVITY_ROTATION_RESOLUTION_TYPE_SUPERSEDED = "superseded-by-legacy-rotation"
 ACTIVITY_ROTATION_RESOLUTION_TYPE_LEGACY_SUPERSEDED = (
     "legacy-rotation-superseded-by-content-rotation"
 )
-ACTIVITY_ROTATION_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 ACTIVITY_ROTATION_WRITER_GUARD_ENV = "PANTHEON_ACTIVITY_ROTATION_PAUSE"
 ACTIVITY_LOG_STRANDED_V1_INTENT_ERROR = (
     "stranded schema-v1 activity rotation intent requires the reviewed "
@@ -1422,89 +1444,6 @@ def strict_activity_json_loads(payload: str | bytes | bytearray) -> Any:
         payload,
         object_pairs_hook=_reject_duplicate_activity_json_keys,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class HistoricalActivityOverlapException:
-    """Closed identity for one byte-proven legacy overlap exception."""
-
-    predecessor_name: str
-    predecessor_gzip_sha256: str
-    predecessor_gzip_byte_count: int
-    predecessor_payload_sha256: str
-    predecessor_payload_byte_count: int
-    predecessor_line_count: int
-    successor_name: str
-    successor_gzip_sha256: str
-    successor_gzip_byte_count: int
-    successor_payload_sha256: str
-    successor_payload_byte_count: int
-    successor_line_count: int
-    overlap_sha256: str
-    overlap_byte_count: int
-    overlap_line_count: int
-
-
-HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS: Final[
-    tuple[HistoricalActivityOverlapException, ...]
-] = (
-    HistoricalActivityOverlapException(
-        predecessor_name="ai-activity-log.jsonl-2026-05-24T1237Z.gz",
-        predecessor_gzip_sha256=(
-            "ad7dd174e0278a3c21b10024cd227f0d138052dd0945bc3b24159538d87ed6c5"
-        ),
-        predecessor_gzip_byte_count=772038,
-        predecessor_payload_sha256=(
-            "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57"
-        ),
-        predecessor_payload_byte_count=5326818,
-        predecessor_line_count=1001,
-        successor_name="ai-activity-log.jsonl-2026-05-24T1239Z.gz",
-        successor_gzip_sha256=(
-            "d211e27bc5337c8eff200e14d48800f949658e6c8b43d9fd22e54ea8c77061da"
-        ),
-        successor_gzip_byte_count=771941,
-        successor_payload_sha256=(
-            "da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff"
-        ),
-        successor_payload_byte_count=5326326,
-        successor_line_count=1001,
-        overlap_sha256=(
-            "0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247"
-        ),
-        overlap_byte_count=5325808,
-        overlap_line_count=999,
-    ),
-)
-
-
-def _historical_activity_overlap_for_pair(
-    predecessor_name: str,
-    successor_name: str,
-) -> HistoricalActivityOverlapException | None:
-    matches = [
-        exception
-        for exception in HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS
-        if exception.predecessor_name == predecessor_name
-        and exception.successor_name == successor_name
-    ]
-    if len(matches) > 1:
-        raise RuntimeError("historical activity overlap registry has a duplicate pair")
-    return matches[0] if matches else None
-
-
-def _historical_activity_source_identity(
-    source_name: str,
-) -> tuple[HistoricalActivityOverlapException, str] | None:
-    matches: list[tuple[HistoricalActivityOverlapException, str]] = []
-    for exception in HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS:
-        if exception.predecessor_name == source_name:
-            matches.append((exception, "predecessor"))
-        if exception.successor_name == source_name:
-            matches.append((exception, "successor"))
-    if len(matches) > 1:
-        raise RuntimeError("historical activity overlap registry reuses a source")
-    return matches[0] if matches else None
 
 
 def _jsonl_line_count(payload: bytes) -> int:
@@ -3410,51 +3349,6 @@ def _snapshot_activity_source_descriptor(
         raise
 
 
-def _validate_historical_activity_source(
-    source: Path,
-    *,
-    raw_sha256: str,
-    raw_byte_count: int,
-    payload_sha256: str,
-    payload_byte_count: int,
-    payload_line_count: int,
-) -> None:
-    identity = _historical_activity_source_identity(source.name)
-    if identity is None:
-        return
-    exception, role = identity
-    expected_payload_sha256 = getattr(exception, f"{role}_payload_sha256")
-    expected_payload_byte_count = getattr(
-        exception, f"{role}_payload_byte_count"
-    )
-    expected_line_count = getattr(exception, f"{role}_line_count")
-    expected_gzip_sha256 = getattr(exception, f"{role}_gzip_sha256")
-    expected_gzip_byte_count = getattr(exception, f"{role}_gzip_byte_count")
-    if payload_sha256 != expected_payload_sha256:
-        raise RuntimeError(
-            f"Invalid {role} hash for historical exception: {payload_sha256}"
-        )
-    if payload_byte_count != expected_payload_byte_count:
-        raise RuntimeError(
-            f"Invalid {role} byte count for historical exception: "
-            f"{payload_byte_count}"
-        )
-    if payload_line_count != expected_line_count:
-        raise RuntimeError(
-            f"Invalid {role} line count for historical exception: "
-            f"{payload_line_count}"
-        )
-    if raw_sha256 != expected_gzip_sha256:
-        raise RuntimeError(
-            f"Invalid {role} gzip hash for historical exception: {raw_sha256}"
-        )
-    if raw_byte_count != expected_gzip_byte_count:
-        raise RuntimeError(
-            f"Invalid {role} gzip byte count for historical exception: "
-            f"{raw_byte_count}"
-        )
-
-
 def _assert_activity_sources_stable_unlocked(
     log_path: Path,
     sources: list[Path],
@@ -3618,14 +3512,11 @@ def _build_logical_activity_snapshot_unlocked(
                 recent_entries.append((decoded, str(source), line_number))
 
         prev_source: Path | None = None
-        prev_source_payload_sha256: str | None = None
         prev_buffer_1001: list[bytes] = []
         max_ts_std: str | None = None
         max_ts_old: str | None = None
 
         for source_idx, source in enumerate(sources):
-            current_hasher = hashlib.sha256()
-            current_byte_count = 0
             current_line_count = 0
             source_class = classify_source(source)
             if source_class == "unknown":
@@ -3718,8 +3609,6 @@ def _build_logical_activity_snapshot_unlocked(
                             break
                         line_number += 1
                         current_line_count += 1
-                        current_byte_count += len(line)
-                        current_hasher.update(line)
                         current_buffer_1001.append(line)
                         if len(current_buffer_1001) == 1001:
                             break
@@ -3736,22 +3625,6 @@ def _build_logical_activity_snapshot_unlocked(
                             == prev_buffer_1001[-count:]
                         ):
                             overlap_len = count
-
-                    historical_exception = None
-                    if prev_source is not None:
-                        historical_exception = _historical_activity_overlap_for_pair(
-                            prev_source.name,
-                            source.name,
-                        )
-                    if (
-                        historical_exception is not None
-                        and overlap_len
-                        != historical_exception.overlap_line_count
-                    ):
-                        raise RuntimeError(
-                            f"Invalid overlap length {overlap_len} between "
-                            f"{prev_source.name} and {source.name}"
-                        )
 
                     if overlap_len > 0:
                         if prev_source is None:
@@ -3773,41 +3646,6 @@ def _build_logical_activity_snapshot_unlocked(
                                     "Non-collapsible 1000-line overlap between "
                                     f"{prev_source.name} and {source.name}"
                                 )
-                        elif (
-                            historical_exception is not None
-                            and overlap_len
-                            == historical_exception.overlap_line_count
-                        ):
-                            if (
-                                prev_source_payload_sha256
-                                != historical_exception.predecessor_payload_sha256
-                            ):
-                                raise RuntimeError(
-                                    "Invalid predecessor hash for historical "
-                                    f"exception: {prev_source_payload_sha256}"
-                                )
-                            overlap_bytes = b"".join(
-                                current_buffer_1001[:overlap_len]
-                            )
-                            if (
-                                len(overlap_bytes)
-                                != historical_exception.overlap_byte_count
-                            ):
-                                raise RuntimeError(
-                                    "Invalid overlap bytes length: "
-                                    f"{len(overlap_bytes)}"
-                                )
-                            overlap_sha256 = hashlib.sha256(
-                                overlap_bytes
-                            ).hexdigest()
-                            if (
-                                overlap_sha256
-                                != historical_exception.overlap_sha256
-                            ):
-                                raise RuntimeError(
-                                    f"Invalid overlap SHA-256: {overlap_sha256}"
-                                )
-                            should_collapse = True
                         else:
                             raise RuntimeError(
                                 f"Invalid overlap length {overlap_len} between "
@@ -3961,8 +3799,6 @@ def _build_logical_activity_snapshot_unlocked(
                             break
                         line_number += 1
                         current_line_count += 1
-                        current_byte_count += len(line)
-                        current_hasher.update(line)
                         sliding_window_1001.append(line)
                         if len(sliding_window_1001) > 1001:
                             sliding_window_1001.pop(0)
@@ -4012,17 +3848,7 @@ def _build_logical_activity_snapshot_unlocked(
                             ),
                         )
 
-                    source_payload_sha256 = current_hasher.hexdigest()
-                    _validate_historical_activity_source(
-                        source,
-                        raw_sha256=raw_sha256,
-                        raw_byte_count=raw_byte_count,
-                        payload_sha256=source_payload_sha256,
-                        payload_byte_count=current_byte_count,
-                        payload_line_count=current_line_count,
-                    )
                     prev_source = source
-                    prev_source_payload_sha256 = source_payload_sha256
                     prev_buffer_1001 = list(sliding_window_1001)
                     conn.commit()
                 except (EOFError, gzip.BadGzipFile, OSError) as exc:
@@ -4478,32 +4304,6 @@ def spawn_background_process(
     return process, log_path
 
 
-def snapshot_task(task: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
-    payload = {
-        "id": task.get(schema["task_id_field"]),
-        "status": task.get(schema["status_field"]),
-        "owner": task.get(schema["assignee_field"]),
-        "reviewer": task.get(schema["reviewer_field"]),
-        "artifacts": list(task.get(schema.get("artifacts_field", "artifacts"), []) or []),
-        "next": task.get(schema.get("next_field", "next")),
-        "last_update": task.get(schema.get("last_update_field", "last_update")),
-    }
-    for key in (
-        "task_class",
-        "auto_generated",
-        "helper_parent",
-        "helper_kind",
-        "mutates_canonical",
-        "auto_created_by",
-        "source_plane",
-        "source_ref",
-        "materialization_ref",
-    ):
-        if key in task:
-            payload[key] = task.get(key)
-    return payload
-
-
 def load_status(config: dict[str, Any]) -> dict[str, Any]:
     runtime_env = task_state_store_runtime_env(config)
     from rewrite import task_state_store
@@ -4537,15 +4337,6 @@ def write_status(config: dict[str, Any], payload: dict[str, Any], *, source: str
     write_json(config_path(config, "status_file"), payload)
 
 
-def selected_shared_files(config: dict[str, Any]) -> list[Path]:
-    files: list[Path] = []
-    for key in ("status_file", "current_work", "activity_log", "dashboard"):
-        path = config.get("paths", {}).get(key)
-        if path:
-            files.append(config_path(config, key))
-    return files
-
-
 def compact_whitespace(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
@@ -4574,18 +4365,6 @@ def approval_tool_input_preview(tool_input: Any, *, limit: int = 220) -> str:
         preview = compact_whitespace(stable_json(tool_input))
         return preview[:limit]
     return compact_whitespace(tool_input)[:limit]
-
-
-def unique_strings(items: list[str]) -> list[str]:
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        value = str(item or "").strip()
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
 
 
 def summarize_failure_reason(reason: str | None, provider: str | None = None, *, limit: int = 180) -> dict[str, str]:
@@ -4630,118 +4409,6 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
     if "an unexpected critical error occurred" in lowered:
         return {"kind": "unknown_critical", "summary": "Unexpected critical provider failure", "detail": raw[: max(420, limit)]}
     return {"kind": "terminal", "summary": raw[:limit], "detail": raw[: max(420, limit)]}
-
-
-def task_brief_path(task_id: str | None) -> Path:
-    slug = normalize_agent_id(task_id or "unknown-task") or "unknown-task"
-    return TASK_BRIEFS_DIR / f"{slug}.md"
-
-
-def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None:
-    from task_archive import TaskResolver
-
-    if not task_id:
-        return None
-    status_path = config_path(config, "status_file", "ai-status.json")
-    with canonical_task_state_lock_file(
-        status_path,
-        shared=True,
-        nonblocking=False,
-    ):
-        status = load_status(config)
-        tasks = status.get("tasks", []) or []
-        task = next(
-            (
-                item
-                for item in tasks
-                if str(item.get("id") or "").strip() == task_id
-            ),
-            None,
-        )
-        if task is None:
-            return None
-        # Bind archive lookup to the same status root and task-state lock as the
-        # active snapshot. The supervisor may already hold this exact lock while
-        # building a dispatch event; falling back to task_archive's import-time
-        # root would acquire a peer task_state plane and violate canonical order.
-        resolver = TaskResolver(tasks, status_root=status_path.parent)
-        deps = [resolver.get(dep_id) for dep_id in (task.get("depends_on") or [])]
-        deps = [item for item in deps if item]
-        dependency_lines = [
-            (
-                f"- {dep.get('id')}: {resolver.dependency_status(dep.get('id'))} · "
-                f"{compact_whitespace(dep.get('title') or dep.get('summary_zh') or '-')}"
-            )
-            for dep in deps
-        ]
-    source_ref = task.get("source_ref") if isinstance(task.get("source_ref"), dict) else {}
-    source_plane = str(task.get("source_plane") or "").strip()
-    path = task_brief_path(task_id)
-    ensure_parent(path)
-    body = [
-        f"# Task Brief: {task_id}",
-        "",
-        "This file is generated by the orchestrator for task-scoped execution context.",
-        "Treat `ai-status.json` as the durable execution source of truth only when you need to verify or update state.",
-        "Do not read `current-work.md` by default for implementation context.",
-        "",
-        "## Task",
-        f"- Title: {task.get('title') or '-'}",
-        f"- Status: {task.get('status') or '-'}",
-        f"- Owner: {task.get('owner') or '-'}",
-        f"- Reviewer: {task.get('reviewer') or '-'}",
-        f"- Phase: {task.get('phase') or '-'}",
-        f"- Last update: {task.get('last_update') or '-'}",
-        f"- Next: {compact_whitespace(task.get('next') or '-')}",
-        "",
-        "## Summary",
-        f"{task.get('summary_zh') or '-'}",
-        "",
-        "## Dependencies",
-    ]
-    if dependency_lines:
-        body.extend(dependency_lines)
-    else:
-        body.append("- none")
-    body.extend(["", "## Artifacts"])
-    artifacts = [str(item).strip() for item in (task.get("artifacts") or []) if str(item).strip()]
-    body.extend([f"- {item}" for item in artifacts] or ["- none"])
-    body.extend(["", "## Recent Task Activity"])
-    body.append(
-        "- Omitted from automatic dispatch context. The canonical task row above "
-        "is the bounded handoff context; query validated activity history only for "
-        "targeted forensic work."
-    )
-    body.extend(["", "## Relevant Canonical Files", "- AI_COLLABORATION_GUIDE.md", "- ai-status.json"])
-    if source_plane or source_ref:
-        body.extend(["", "## Planning Origin"])
-        body.append(f"- Source plane: {source_plane or '-'}")
-        if source_ref:
-            for label, key in (
-                ("Session", "session_id"),
-                ("Phase", "phase"),
-                ("Profile", "profile"),
-                ("Planning dir", "planning_dir"),
-                ("Session file", "session_file"),
-                ("Consensus packet", "consensus_packet"),
-                ("Execution materialization", "execution_materialization"),
-            ):
-                value = str(source_ref.get(key) or "").strip()
-                if value:
-                    body.append(f"- {label}: {value}")
-    body.extend([f"- {item}" for item in artifacts[:6] if item not in {"AI_COLLABORATION_GUIDE.md", "ai-status.json"}])
-    body.extend(
-        [
-            "",
-            "## Working Rules",
-            "- Use scripts/ai-status.sh or python3 scripts/ai_status.py for status changes.",
-            "- Keep execution updates short and structured.",
-            "- If you need raw provider/debug details, ask for the relevant runtime log or evidence ref instead of scanning global summaries.",
-            "",
-        ]
-    )
-    path.write_text("\n".join(body), encoding="utf-8")
-    return path
 
 
 def write_failure_evidence(

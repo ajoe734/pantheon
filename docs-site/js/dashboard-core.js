@@ -89,19 +89,6 @@ export function defaultDashboardBundle() {
       materialized_count: 0,
       proposed_execution_tasks: 0,
     },
-    coordination_summary: {
-      last_scan_at: null,
-      counts: {
-        tracked_features: 0,
-        lovable_ready: 0,
-        mirrored_to_target_repo: 0,
-        waiting_for_lovable: 0,
-        ui_done_received: 0,
-        frontend_feedback_received: 0,
-        open_bff_gaps: 0,
-      },
-      features: [],
-    },
     bridge_summary: {
       source_plane: "planning",
       session_id: null,
@@ -166,12 +153,6 @@ export function normalizeDashboardBundle(value) {
     runtime_summary: { ...base.runtime_summary, ...(value.runtime_summary || {}) },
     execution_summary: { ...base.execution_summary, ...(value.execution_summary || {}) },
     planning_summary: { ...base.planning_summary, ...(value.planning_summary || {}) },
-    coordination_summary: {
-      ...base.coordination_summary,
-      ...(value.coordination_summary || {}),
-      counts: { ...base.coordination_summary.counts, ...((value.coordination_summary || {}).counts || {}) },
-      features: Array.isArray((value.coordination_summary || {}).features) ? value.coordination_summary.features : [],
-    },
     bridge_summary: { ...base.bridge_summary, ...(value.bridge_summary || {}) },
     chair_summary: { ...base.chair_summary, ...(value.chair_summary || {}) },
     dispatch_policy: {

@@ -37,35 +37,30 @@ class CheckStagedGeneratedFilesTests(unittest.TestCase):
         self.assertIn("dashboard-bundle.json", result.stderr)
         self.assertIn(".orchestrator/state.json", result.stderr)
 
-    def test_allows_only_the_explicit_dashboard_bundle_deletions_in_diff_mode(self) -> None:
+    def test_diff_mode_allows_pure_generated_file_deletions(self) -> None:
         result = self.run_script(
             "--diff-name-status",
-            "--allow-deleted-path",
-            "dashboard-bundle.json",
-            "--allow-deleted-path",
-            "docs-site/dashboard-bundle.json",
-            input_text="D\tdashboard-bundle.json\nD\tdocs-site/dashboard-bundle.json\n",
+            input_text=(
+                "D\tdashboard-bundle.json\n"
+                "D\tdocs-site/dashboard-bundle.json\n"
+                "D\tai-activity-log.jsonl\n"
+                "D\t.orchestrator/state.json\n"
+            ),
         )
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, "")
 
-    def test_diff_mode_still_blocks_generated_additions_modifications_and_other_deletions(self) -> None:
+    def test_diff_mode_still_blocks_generated_additions_and_modifications(self) -> None:
         result = self.run_script(
             "--diff-name-status",
-            "--allow-deleted-path",
-            "dashboard-bundle.json",
-            "--allow-deleted-path",
-            "docs-site/dashboard-bundle.json",
             input_text=(
                 "A\tdashboard-bundle.json\n"
                 "M\tdocs-site/dashboard-bundle.json\n"
-                "D\t.orchestrator/state.json\n"
             ),
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("dashboard-bundle.json", result.stderr)
         self.assertIn("docs-site/dashboard-bundle.json", result.stderr)
-        self.assertIn(".orchestrator/state.json", result.stderr)
 
 
 if __name__ == "__main__":

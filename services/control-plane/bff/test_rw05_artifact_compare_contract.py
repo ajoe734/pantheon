@@ -152,7 +152,7 @@ def test_rw05_compare_rejects_non_comparable_artifacts() -> None:
 
         payload = response.json()
         assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
-        assert payload["non_comparable_artifacts"] == [
+        assert payload["error"]["details"]["non_comparable_artifacts"] == [
             {
                 "artifact_id": "art_2024_pending01",
                 "status": "pending",

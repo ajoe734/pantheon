@@ -29,8 +29,6 @@ import {
   renderExecutionSectionSummary,
   renderExecutionSummary,
   renderFocusSummary,
-  renderLovableCoordination,
-  renderLovableCoordinationSummary,
   renderOverviewMetrics,
   renderPlanningArtifacts,
   renderPlanningGate,
@@ -156,8 +154,6 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("delivery_layers", renderFailures, () => renderDeliveryLayers(status, planningState, dashboardBundle));
     runRenderStep("agent_lanes", renderFailures, () => renderAgentLanes(status, agentStates));
     runRenderStep("archive_records", renderFailures, () => renderArchiveRecords(dashboardBundle));
-    runRenderStep("lovable_coordination_summary", renderFailures, () => renderLovableCoordinationSummary(dashboardBundle));
-    runRenderStep("lovable_coordination", renderFailures, () => renderLovableCoordination(orchState, status, dashboardBundle));
     runRenderStep("execution_summary", renderFailures, () => renderExecutionSummary(status, orchState, dashboardBundle));
     runRenderStep("board_summary", renderFailures, () => renderBoardSummary(status, orchState, dashboardBundle));
     runRenderStep("task_board", renderFailures, () => renderTaskBoard(status, orchState, dashboardBundle));
