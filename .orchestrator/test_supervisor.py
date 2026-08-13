@@ -81,6 +81,58 @@ class V2StartupCacheTests(unittest.TestCase):
             with mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
                 self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
 
+    def test_reserved_phase_can_publish_launch_intent_after_state_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime_root = root / ".orchestrator"
+            runtime_root.mkdir()
+            config = {
+                "paths": {
+                    "status_file": str(root / "ai-status.json"),
+                    "state_file": str(runtime_root / "state.json"),
+                    "event_queue": str(runtime_root / "event-queue.jsonl"),
+                }
+            }
+            (runtime_root / "event-queue.jsonl").write_text("", encoding="utf-8")
+            runtime_state.save_runtime_state(config, runtime_state.default_state())
+
+            def publish_intent(state: dict[str, object]) -> bool:
+                request = supervisor.DeliveryRequest(
+                    agent_id="codex",
+                    provider="codex",
+                    delivery_mode="codex",
+                    message="wake",
+                    task_id="TASK-V2",
+                    reason=supervisor.REASON_OWNED_READY,
+                    metadata={"task_generation": 1},
+                )
+                supervisor._persist_runtime_phase_launch_intent(
+                    config,
+                    state,
+                    request=request,
+                    queue_event_id="evt-v2",
+                    attempt_count=1,
+                    event_id_for_log="evt-v2",
+                    parent_run_id=None,
+                    adapter_name="codex",
+                    activity_type="worker_started",
+                    activity_message=None,
+                )
+                return True
+
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    config,
+                    "process_queue",
+                    publish_intent,
+                )
+            )
+            final_state = runtime_state.load_runtime_state(config)
+            self.assertNotIn(
+                "process_queue",
+                final_state["supervisor"]["runtime_phase_reservations"],
+            )
+
 
 def config_fixture(root: Path | None = None) -> dict[str, object]:
     paths: dict[str, str] = {}

@@ -120,6 +120,7 @@ def default_state() -> dict[str, Any]:
             "last_loop_finished_at": None,
             "last_loop_duration_ms": None,
             "last_loop_error": None,
+            "runtime_phase_reservations": {},
         },
     }
 
@@ -209,6 +210,10 @@ def normalize_v2_runtime_cache(raw: Any) -> dict[str, Any]:
     state["supervisor"].setdefault("last_loop_finished_at", None)
     state["supervisor"].setdefault("last_loop_duration_ms", None)
     state["supervisor"].setdefault("last_loop_error", None)
+    reservations = state["supervisor"].get("runtime_phase_reservations")
+    state["supervisor"]["runtime_phase_reservations"] = (
+        reservations if isinstance(reservations, dict) else {}
+    )
     state["version"] = 2
     return state
 
