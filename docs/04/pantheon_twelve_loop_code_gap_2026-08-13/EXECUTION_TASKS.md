@@ -55,7 +55,7 @@ consumer adapter，但不得因另一 domain 尚未 merge 而增加鏈式 depend
 
 | Task ID | Design | Repo | 可開始條件 | Objective |
 |---|---|---|---|---|
-| `L12-MFC-R4-PLAN-FREEZE-001` | Wave 0 | pantheon | 立即 | 獨立 review/merge 本 GAP、SD 與 execution catalog |
+| `L12-MFC-R4-PLAN-FREEZE-002` | Wave 0 | pantheon | 立即 | 獨立 review/merge 本 GAP、SD 與 execution catalog |
 | `L12-MFC-R4-SOURCE-001` | D01 | pantheon | PLAN | 正式 source controller 與 bounded smoke 分離 |
 | `L12-MFC-R4-DISTILL-001` | D02 | pantheon | PLAN | 保存 canonical Registry draft identity/readback |
 | `L12-MFC-R4-ALPHA-001` | D03 | pantheon | PLAN | reviewed ReplicationAdmission 取代 seed discovery |
@@ -94,4 +94,3 @@ Materialization 只能使用 assistant dev bridge 或 installed canonical task c
 queue/state JSON。完成後至少要有：canonical row、完整 metadata、supervisor observation、
 auto-worker dispatch/claim（dependency-blocked row 可等待）、owner/reviewer 不同、且沒有 Codex
 fallback。PR/check/review/merge/readback 屬各 task closeout artifacts，不以「row 已建立」代替。
-
