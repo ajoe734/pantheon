@@ -376,14 +376,6 @@ def load_json(path: Path, default: Any | None = None) -> Any:
     return deepcopy(default)
 
 
-def load_nonempty_json(path: Path, *, label: str, default: Any | None = None) -> Any:
-    if not path.exists():
-        return deepcopy(default)
-    if not path.read_text(encoding="utf-8").strip():
-        raise RuntimeError(f"{label} file is empty: {path}")
-    return load_json(path, default=default)
-
-
 def write_json(path: Path, payload: Any) -> None:
     ensure_parent(path)
     serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
@@ -1304,10 +1296,6 @@ def activity_rotation_lineage_path(log_path: Path) -> Path:
 
 def activity_rotation_resolutions_path(log_path: Path) -> Path:
     return _activity_rotation_dir(log_path) / f"{log_path.name}.resolutions.jsonl"
-
-
-def activity_rotation_preserved_dir(log_path: Path, transaction_id: str) -> Path:
-    return _activity_rotation_dir(log_path) / "resolved" / transaction_id
 
 
 def _canonical_json_sha256(payload: Any) -> str:
@@ -4157,56 +4145,6 @@ def _resolved_activity_log_path(log_path: Path) -> Path:
     )
 
 
-def validated_recent_task_activity(
-    log_path: Path,
-    task_id: str,
-    *,
-    limit: int = 6,
-) -> list[dict[str, Any]]:
-    """Return recent task rows only after validating all logical history.
-
-    The validation pass retains at most ``limit`` matching rows in Python
-    memory and exposes none until source ordering, identity, content, JSON,
-    and overlap checks complete under the shared activity lock.
-    """
-
-    if (
-        not isinstance(task_id, str)
-        or not task_id
-        or task_id != task_id.strip()
-        or not isinstance(limit, int)
-        or limit <= 0
-    ):
-        raise RuntimeError("recent task activity request is not canonical")
-    try:
-        resolved_log_path = _resolved_activity_log_path(log_path)
-        with activity_audit_lock_file(resolved_log_path, shared=True):
-            snapshot = _build_logical_activity_snapshot_unlocked(
-                resolved_log_path,
-                capture_logical_entries=False,
-                recent_task_id=task_id,
-                recent_limit=limit,
-            )
-        try:
-            return [
-                entry
-                for entry, _source, _line_number in _replay_logical_activity_snapshot(
-                    snapshot,
-                    None,
-                )
-            ]
-        finally:
-            snapshot.close()
-    except ActivityAuditInvariantError:
-        raise
-    except RuntimeError as exc:
-        raise activity_audit_invariant_error(
-            exc,
-            log_path=log_path,
-            operation="recent_task_activity",
-        ) from exc
-
-
 def stream_logical_activity(
     log_path: Path,
     on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
@@ -4236,19 +4174,6 @@ def stream_logical_activity(
     finally:
         if snapshot is not None:
             snapshot.close()
-
-
-def _stream_logical_activity_unlocked(
-    log_path: Path,
-    on_collapse: Callable[[Path | None, Path, int, int, str], None] | None = None,
-) -> Generator[tuple[dict[str, Any], Path, int], None, None]:
-    """Compatibility path for callers that already hold the activity lock."""
-
-    snapshot = _build_logical_activity_snapshot_unlocked(log_path)
-    try:
-        yield from _replay_logical_activity_snapshot(snapshot, on_collapse)
-    finally:
-        snapshot.close()
 
 
 def _activity_log_exceeds_rotation_threshold_unlocked(

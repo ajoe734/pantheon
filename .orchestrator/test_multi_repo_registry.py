@@ -56,7 +56,7 @@ class MultiRepoRegistryTests(unittest.TestCase):
             "id": "CROSS-REPO",
             "artifacts": [
                 "execute-plans/e2e/dummy.spec.ts",
-                "front-ai-trading-system/src/routes/dummy.tsx",
+                "lean-platform/src/runtime.py",
             ],
         }
 

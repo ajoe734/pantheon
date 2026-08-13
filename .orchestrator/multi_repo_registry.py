@@ -24,16 +24,6 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
         "requests_dir": ".coordination/requests",
         "responses_dir": ".coordination/responses",
     },
-    "front_ai_trading_system": {
-        "display_name": "front-ai-trading-system",
-        "repo": "ajoe734/front-ai-trading-system",
-        "local_path": "../front-ai-trading-system",
-        "default_branch": "main",
-        "artifact_prefixes": ["front-ai-trading-system/"],
-        "coordination_dir": ".coordination",
-        "requests_dir": ".coordination/requests",
-        "responses_dir": ".coordination/responses",
-    },
     "execute_plans": {
         "display_name": "execute-plans",
         "repo": "ajoe734/execute-plans",
@@ -311,15 +301,6 @@ def task_primary_repository_id(config: dict[str, Any], task: dict[str, Any]) -> 
     if len(non_pantheon) > 1:
         return None
     return "pantheon"
-
-
-def coordination_responses_dir(config: dict[str, Any], repo_id: str | None) -> Path | None:
-    base = repository_local_path(config, repo_id)
-    if base is None:
-        return None
-    repo = resolve_repository(config, repo_id or "")
-    rel = str(repo.get("responses_dir") or ".coordination/responses")
-    return base / rel if not Path(rel).is_absolute() else Path(rel)
 
 
 def iter_local_repositories(config: dict[str, Any]) -> list[dict[str, Any]]:
