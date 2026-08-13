@@ -1,0 +1,35 @@
+{
+  "task_id": "AGORA-TRADING-DATA-EVENTS-20260813",
+  "program_id": "agora-product-correction-20260813",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "status": "review_approved",
+  "created_at": "2026-08-13T15:32:00Z",
+  "scope": [
+    "services/control-plane/bff/agora/trading_data/",
+    "services/control-plane/bff/agora/decision_projection/"
+  ],
+  "artifacts": [
+    "services/control-plane/bff/agora/trading_data/",
+    "services/control-plane/bff/agora/decision_projection/",
+    "docs/deployment/evidence/agora/AGORA-TRADING-DATA-EVENTS-20260813/"
+  ],
+  "acceptance_verification": {
+    "query_contract_verified": true,
+    "allowlist_only_adapters_verified": true,
+    "decision_event_projection_verified": true,
+    "fail_closed_on_stale_or_missing_risk": true,
+    "two_tenant_isolation_verified": true,
+    "point_in_time_cutoff_verified": true,
+    "producer_idempotency_verified": true,
+    "restart_recovery_verified": true,
+    "zero_broker_order_authority_verified": true,
+    "live_profile_fixture_guard_verified": true
+  },
+  "test_execution": {
+    "total_tests": 11,
+    "passed": 11,
+    "failed": 0,
+    "test_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/trading_data services/control-plane/bff/agora/decision_projection"
+  }
+}
