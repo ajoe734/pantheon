@@ -136,8 +136,11 @@ class AgoraDatasetAuthority:
         self.dsn = self._read_role_dsn or (_env("DATABASE_URL") if dsn is None else "")
         self.schema = (schema if schema is not None else _env(SCHEMA_ENV)) or DEFAULT_SCHEMA
 
-        self._unsupported = ""
-        if requested == "postgres":
+        SCANNER_ENABLED_ENV = "AGORA_DATASET_STORE_SCANNER_ENABLED"
+        scanner_enabled_val = (os.getenv(SCANNER_ENABLED_ENV) or "").strip().lower()
+        if scanner_enabled_val in ("false", "0", "off", "disabled"):
+            self.backend = "disabled"
+        elif requested == "postgres":
             self.backend = "postgres"
         elif self._injected_records is not None and requested in _MEMORY_BACKENDS:
             self.backend = "memory"
@@ -173,6 +176,11 @@ class AgoraDatasetAuthority:
     # -- resolution -----------------------------------------------------
 
     def _require_backend(self) -> None:
+        if self.backend == "disabled":
+            raise AgoraAuthorityUnavailable(
+                "agora_scanner_disabled",
+                "Direct Agora database scanner is disabled in production enqueue path; use durable Agora dataset handoff",
+            )
         if self.backend == "unconfigured":
             raise AgoraAuthorityUnavailable(
                 "agora_authority_unconfigured",
