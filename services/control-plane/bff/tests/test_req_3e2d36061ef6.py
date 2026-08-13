@@ -15,6 +15,7 @@ if BFF_DIR not in sys.path:
     sys.path.insert(0, BFF_DIR)
 
 from assistant.control_mode import ControlModeStore  # noqa: E402
+from assistant.development_routes import create_development_router  # noqa: E402
 from assistant.models import AssistantMode  # noqa: E402
 from assistant.routes import create_assistant_router  # noqa: E402
 from assistant.transcript_store import (  # noqa: E402
@@ -34,7 +35,13 @@ class _Identity:
     operator_id = "op-repair-smoke"
     roles = ["operator"]
     mfa_verified = True
-    claims = {"capabilities": ["assistant.kernel.debug", "assistant.kernel.repair"]}
+    claims = {
+        "capabilities": [
+            "assistant.kernel.debug",
+            "assistant.kernel.repair",
+            "assistant.canonical.mutate",
+        ]
+    }
 
 
 class _FakeHttpResponse:
@@ -124,16 +131,24 @@ def _make_client(
     prepare_repair_worktree: Any = None,
 ) -> tuple[TestClient, InMemoryTranscriptStore]:
     monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_REPAIR_RECEIPT_KEY", "test-repair-receipt-key")
     monkeypatch.delenv("PANTHEON_STATUS_ROOT", raising=False)
 
     identity = _Identity()
     control_store = ControlModeStore(storage_path="off", initial_passphrase=CONTROL_PHRASE)
     transcript_store = InMemoryTranscriptStore()
-    router = create_assistant_router(
+    product_router = create_assistant_router(
         build_context_pack=_context_pack,
         extract_identity=lambda _authorization: identity,
         require_read_role=lambda _identity: None,
         session_store=InMemorySessionStore(),
+        transcript_store=transcript_store,
+        control_mode_store=control_store,
+    )
+    development_router = create_development_router(
+        build_context_pack=_context_pack,
+        extract_identity=lambda _authorization: identity,
+        require_read_role=lambda _identity: None,
         transcript_store=transcript_store,
         control_mode_store=control_store,
         dev_docs_repo_root=str(tmp_path),
@@ -142,7 +157,8 @@ def _make_client(
         prepare_repair_worktree=prepare_repair_worktree,
     )
     app = FastAPI()
-    app.include_router(router)
+    app.include_router(product_router)
+    app.include_router(development_router)
     client = TestClient(app, raise_server_exceptions=True)
 
     response = client.post(
@@ -242,6 +258,7 @@ def test_repair_worktree_prepare_route_requires_kernel_repair_and_delegates(tmp_
                     "task_worktree": "/srv/worktrees/repair-smoke",
                     "declared_scope": payload["declared_scope"],
                     "expected_branch": payload["expected_branch"],
+                    "remote": "origin",
                     "merge_target": payload["merge_target"],
                 },
                 "workflow": {"clean": True},

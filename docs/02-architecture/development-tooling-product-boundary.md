@@ -26,6 +26,15 @@ It owns:
 Primary components are `.orchestrator/`, `ai-task-archive/`,
 `scripts/ai_status.py`, and `scripts/human-ops-status.sh`.
 
+Hosted development ingress is physically isolated in
+`services/control-plane/bff/assistant/development_routes.py` and its
+development-only helper modules. The product assistant router neither defines
+those endpoints nor imports those modules. `services/control-plane/bff/main.py`
+contains only two bounded composition points: the optional development router
+mount and the optional Management AI repair authorization adapter. Both are
+controlled by `PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED`; product-only mode
+does not import either development module.
+
 Product login, product control mode, and product readiness are not prerequisites
 for local canonical task maintenance. A product-hosted assistant dev-bridge
 route is only a transport adapter into this domain. It is not canonical task
@@ -112,9 +121,10 @@ ready to remove it, use the `removal_order` in the boundary manifest:
    queued intents;
 2. disable the supervisor/watchdog and remove development-only compose and
    workflow references;
-3. split the dev-bridge/dev-docs imports and handlers out of mixed BFF
-   `assistant/routes.py`, then remove the assistant dev-bridge ingress and the
-   development-tooling paths;
+3. set `PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED=false`, verify the product
+   BFF without development endpoints, then remove `development_routes.py` and
+   the development-only helper modules plus the two bounded composition points
+   in `main.py`;
 4. build and deploy the product runtime without those paths; and
 5. rerun live product readiness, hosted scenarios, and exact identity checks.
 

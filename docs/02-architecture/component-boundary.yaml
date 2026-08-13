@@ -33,18 +33,22 @@ components:
     domain: development_tooling
     hosted_in: product-bff
     paths:
+      - services/control-plane/bff/assistant/development_routes.py
+      - services/control-plane/bff/assistant/development_repair.py
+      - services/control-plane/bff/assistant/development_models.py
       - services/control-plane/bff/assistant/dev_bridge_*.py
       - services/control-plane/bff/assistant/dev_docs_*.py
       - scripts/*assistant_dev_task_packet.py
       - scripts/dispatch_assistant_dev_task_packet.py
       - services/control-plane/bff/assistant/orchestrator_status.py
-    symbols:
-      - "services/control-plane/bff/assistant/routes.py:dev-bridge routes"
-      - "services/control-plane/bff/assistant/routes.py:dev-docs routes"
+      - services/control-plane/bff/assistant/repair_receipts.py
+    composition_points:
+      - "services/control-plane/bff/main.py:_include_assistant_routes"
+      - "services/control-plane/bff/main.py:_mgmt_nl_authorize_openclaw_repair_metadata"
+    enable_flag: PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED
     runtime_required: false
     removal_condition: "no external development-task ingress is required"
     boundary: "transport adapter only; never product authority or product readiness"
-    removal_prerequisite: "split dev imports and handlers out of mixed routes.py before deletion"
 
   - id: business-bff-and-services
     domain: product_runtime
@@ -59,8 +63,11 @@ components:
     exclusions:
       - "assistant/dev_bridge_*.py"
       - "assistant/dev_docs_*.py"
+      - "assistant/development_routes.py"
+      - "assistant/development_repair.py"
+      - "assistant/development_models.py"
       - "assistant/orchestrator_status.py"
-      - "assistant/routes.py:dev-bridge and dev-docs routes/imports"
+      - "assistant/repair_receipts.py"
     runtime_required: true
     removal_condition: never
 
@@ -91,6 +98,7 @@ cross_domain_contracts:
 removal_order:
   - "archive/close development tasks and verify zero workers, leases, and queue intents"
   - "disable supervisor/watchdog and remove dev-only compose/workflow references"
-  - "remove assistant-dev-bridge ingress and development-tooling files"
+  - "disable PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED and validate product-only BFF"
+  - "remove assistant development ingress files and the two bounded composition points"
   - "build and deploy product runtime without development-tooling paths"
   - "run product readiness and hosted identity acceptance again"
