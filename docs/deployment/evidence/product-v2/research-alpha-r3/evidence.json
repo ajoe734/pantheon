@@ -1,0 +1,33 @@
+{
+  "task_id": "PRODUCT-V2-RESEARCH-ALPHA-R3-20260813",
+  "title": "Deliver durable strategy-to-alpha replication execution",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "completed_at": "2026-08-13T09:12:45Z",
+  "acceptance_criteria": {
+    "consume_promoted_strategy_input_through_service_boundary": true,
+    "run_replication_revalidation_to_durable_terminal_experiment_result": true,
+    "expose_terminal_experiment_and_authority_identifiers_to_next_surface": true,
+    "prove_lease_retry_and_duplicate_submission_idempotency": true,
+    "implement_production_edge_for_stable_key_readback": true,
+    "land_independently_reviewed_pr": true
+  },
+  "verification": {
+    "test_suite": "services/research/alpha_replication/test_product_v2_research_alpha_r3.py",
+    "test_command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -v services/research/alpha_replication/test_product_v2_research_alpha_r3.py",
+    "test_result": "2 passed"
+  },
+  "loop_trace": {
+    "tenant_id": "tenant-prod-v2",
+    "strategy_id": "strat-prod-v2-r3-001",
+    "strategy_spec_id": "reg-strategy-spec-r3-alpha-1.0.0",
+    "revalidation_status": "completed",
+    "queue_get_entry_query_support": true,
+    "authority_task_id_recorded": true,
+    "authority_run_id_recorded": true,
+    "experiment_task_id_recorded": true,
+    "experiment_run_id_recorded": true,
+    "duplicate_submission_idempotent": true,
+    "fencing_token_lease_recovery_verified": true
+  }
+}
