@@ -195,6 +195,37 @@ class BoundedPaperStrategy:
                 "is_real_capital": False,
             }
         }
+
+        # Check if binding carries a pinned strategy_artifact or Object Store reference
+        strategy_artifact = binding_metadata.get("strategy_artifact") or b_dict.get("strategy_artifact")
+        object_store = binding_metadata.get("object_store") or b_dict.get("object_store")
+
+        if not strategy_artifact and object_store and artifact_id and artifact_version:
+            try:
+                from services.execution.artifact_loader import ArtifactLoader, ExecutionMode
+                loader = ArtifactLoader.from_runtime(object_store)
+                loaded = loader.load(
+                    strategy_id=artifact_id,
+                    version=artifact_version,
+                    execution_mode=ExecutionMode.PAPER,
+                )
+                if loaded and loaded.metadata:
+                    strategy_artifact = loaded.metadata.get("strategy_artifact") or loaded.metadata
+            except Exception as exc:
+                log.warning("ArtifactLoader failed to load artifact for binding %s: %s", binding_id, exc)
+
+        if strategy_artifact and isinstance(strategy_artifact, Mapping):
+            try:
+                from services.registry.strategy_artifact import evaluate_strategy_action
+                closes = binding_metadata.get("recent_closes") or b_dict.get("recent_closes")
+                if closes and isinstance(closes, Sequence) and len(closes) >= 2:
+                    action = evaluate_strategy_action(strategy_artifact, closes)
+                    decision["action"] = action
+                    if action == "SELL":
+                        decision["direction"] = "SHORT"
+            except Exception as exc:
+                log.warning("Failed to evaluate strategy_artifact for binding %s: %s", binding_id, exc)
+
         return decision
 
 
