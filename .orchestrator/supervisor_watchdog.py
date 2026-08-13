@@ -20,7 +20,23 @@ ROOT = THIS_DIR.parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from common import config_path, durable_write_bytes, load_config, repo_root_for_config, utc_now, write_activity_log, LockContentionError, resolved_coordinator_status_root
+from common import (
+    STATUS_COMMAND_BASE_REF_ENV,
+    STATUS_COMMAND_REMOTE_ENV,
+    STATUS_COMMAND_ROOT_ENV,
+    STATUS_COMMAND_SHA_ENV,
+    LockContentionError,
+    config_path,
+    durable_write_bytes,
+    load_config,
+    repo_root_for_config,
+    resolved_coordinator_status_root,
+    status_command_base_ref,
+    status_command_expected_remote,
+    utc_now,
+    validate_status_command_runtime,
+    write_activity_log,
+)
 from runtime_state import default_state, runtime_state_lock, save_runtime_state
 
 
@@ -921,6 +937,21 @@ def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: date
     # "missing", stalling ready-dispatch down to a single self-claiming worker.
     # See docs/decisions/supervisor-status-root-split-brain-2026-06-09.md.
     env = supervisor_restart_environment(dict(os.environ))
+    base_ref = status_command_base_ref(config)
+    runtime_identity = validate_status_command_runtime(
+        ROOT.resolve(),
+        expected_remote=status_command_expected_remote(config),
+        base_ref=base_ref,
+        require_merged=False,
+    )
+    env.update(
+        {
+            STATUS_COMMAND_ROOT_ENV: runtime_identity["root"],
+            STATUS_COMMAND_SHA_ENV: runtime_identity["source_sha"],
+            STATUS_COMMAND_REMOTE_ENV: runtime_identity["remote"],
+            STATUS_COMMAND_BASE_REF_ENV: base_ref,
+        }
+    )
     # Persist the immutable-runtime no-bytecode contract across watchdog
     # restarts.  The supervisor's ``-B`` argv protects its own interpreter;
     # this inherited setting protects every Python child it later launches.
