@@ -20,6 +20,13 @@ LIVE_CONFIG="${2:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroo
 REF="${SYNC_REF:-origin/dev}"
 PID_FILE="${PANTHEON_SUPERVISOR_PID:-/home/lupin/pantheon/.orchestrator/supervisor.pid}"
 COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
+DEV_TOOL_RESIDUE_PATHS=(
+  ".orchestrator/assistant-dev-packets"
+  ".orchestrator/evidence"
+  ".orchestrator/task-briefs"
+  ".orchestrator/status-derived-views.lock"
+  ".orchestrator/supervisor.lock"
+)
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[sync-dev-root $(stamp)] $*"; }
 
@@ -92,6 +99,34 @@ sync_root() {
   return 0
 }
 
+clean_dev_tool_residue() {
+  # Remove only known ephemeral development-tool residue. Never use an
+  # unscoped `git clean -fdx`: dev-root may contain ignored local configuration
+  # that is unrelated to supervisor staging and must survive a source refresh.
+  local root="$1" may_clean="$2" preview
+  if [[ "$may_clean" != "1" ]]; then
+    log "DEV_TOOL_RESIDUE_CLEANUP_SKIPPED: $root is the active supervisor root"
+    return 0
+  fi
+  if [[ -z "$ACTIVE_ROOT" || "$ACTIVE_ROOT" == "$root" ]]; then
+    log "DEV_TOOL_RESIDUE_CLEANUP_SKIPPED: immutable incumbent is not independently bound"
+    return 0
+  fi
+  if ! preview="$(git -C "$root" clean -ndx -- "${DEV_TOOL_RESIDUE_PATHS[@]}")"; then
+    log "ERROR: scoped development-tool residue preview failed in $root"
+    return 1
+  fi
+  if [[ -z "$preview" ]]; then
+    log "development-tool residue already clean in $root"
+    return 0
+  fi
+  if ! git -C "$root" clean -fdx -- "${DEV_TOOL_RESIDUE_PATHS[@]}" >/dev/null; then
+    log "ERROR: scoped development-tool residue cleanup failed in $root"
+    return 1
+  fi
+  log "removed scoped development-tool residue from $root"
+}
+
 config_updated=0
 live_hash_before="$(sha256sum "$LIVE_CONFIG" 2>/dev/null | awk '{print $1}')"
 
@@ -101,6 +136,9 @@ if [[ -n "$ACTIVE_ROOT" && "$ACTIVE_ROOT" == "$DEV_ROOT" ]]; then
 fi
 if ! sync_root "$DEV_ROOT" "dev-root" "$dev_root_may_move"; then
   log "FATAL: cannot sync dev-root $DEV_ROOT"; exit 1
+fi
+if ! clean_dev_tool_residue "$DEV_ROOT" "$dev_root_may_move"; then
+  log "FATAL: cannot clean scoped development-tool residue in $DEV_ROOT"; exit 1
 fi
 target_sha="$(git -C "$DEV_ROOT" rev-parse "$REF")"
 if [[ ! "$target_sha" =~ ^[0-9a-f]{40}$ ]]; then
