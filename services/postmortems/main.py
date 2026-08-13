@@ -753,7 +753,21 @@ async def process_postmortems_outbox():
     max_attempts = _positive_int_env("POSTMORTEMS_OUTBOX_MAX_ATTEMPTS", 8)
     base_delay = _nonnegative_float_env("POSTMORTEMS_OUTBOX_BACKOFF_BASE_SECONDS", 1.0)
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    from services.evolution.client import (
+        EvolutionAuthenticationError,
+        EvolutionClient,
+        EvolutionClientError,
+        EvolutionReadbackError,
+    )
+
+    evo_client = EvolutionClient(
+        base_url=evolution_url,
+        auth_token=os.getenv("EVOLUTION_AUTH_TOKEN"),
+        tenant_id=os.getenv("EVOLUTION_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "pantheon-default",
+    )
+
+    async with httpx.AsyncClient(timeout=5.0) as http_client:
+        evo_client._async_client = http_client
         for record in records:
             postmortem_id = record.event.payload.get("postmortem_id")
             log.info("AUDIT: Outbox worker attempting delivery of postmortem %s proposal to %s", postmortem_id, url)
@@ -772,32 +786,39 @@ async def process_postmortems_outbox():
             request_payload = {**dict(proposal_payload), "delivery_event": record.event.to_dict()}
 
             try:
-                resp = await client.post(url, json=request_payload)
-                if resp.status_code in {200, 201}:
-                    log.info("AUDIT: Successfully delivered proposal for postmortem %s to evolution. Status: %d", postmortem_id, resp.status_code)
-                    applied, canonical = outbox_store.complete_published(record)
-                    if not applied:
-                        log.warning(
-                            "AUDIT: Ignored stale success completion for postmortem outbox %s; canonical status=%s",
-                            record.outbox_id,
-                            canonical.status,
-                        )
-                else:
-                    err_msg = f"status_code={resp.status_code} body={resp.text}"
-                    log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s returned error: %s", record.delivery_attempts + 1, postmortem_id, err_msg)
-                    applied, canonical = outbox_store.complete_failed(
-                        record,
-                        err_msg,
-                        max_attempts=max_attempts,
-                        base_delay_seconds=base_delay,
-                        permanent=resp.status_code in {400, 409, 422},
+                data, readback = await evo_client.submit_proposal(
+                    request_payload,
+                    idempotency_key=record.event.idempotency_key,
+                    verify_readback=True,
+                )
+                log.info("AUDIT: Successfully delivered proposal for postmortem %s to evolution. Readback verified: %s", postmortem_id, bool(readback))
+                applied, canonical = outbox_store.complete_published(record)
+                if not applied:
+                    log.warning(
+                        "AUDIT: Ignored stale success completion for postmortem outbox %s; canonical status=%s",
+                        record.outbox_id,
+                        canonical.status,
                     )
-                    if not applied:
-                        log.warning(
-                            "AUDIT: Ignored stale failure completion for postmortem outbox %s; canonical status=%s",
-                            record.outbox_id,
-                            canonical.status,
-                        )
+            except EvolutionAuthenticationError as exc:
+                err_msg = f"status_code={exc.status_code} body={exc.response_body}"
+                log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s auth failed: %s", record.delivery_attempts + 1, postmortem_id, err_msg)
+                applied, canonical = outbox_store.complete_failed(
+                    record,
+                    err_msg,
+                    max_attempts=max_attempts,
+                    base_delay_seconds=base_delay,
+                    permanent=(exc.status_code in {400, 401, 403, 409, 422}),
+                )
+            except (EvolutionClientError, EvolutionReadbackError) as exc:
+                err_msg = f"status_code={exc.status_code} body={exc.response_body or str(exc)}"
+                log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s returned error: %s", record.delivery_attempts + 1, postmortem_id, err_msg)
+                applied, canonical = outbox_store.complete_failed(
+                    record,
+                    err_msg,
+                    max_attempts=max_attempts,
+                    base_delay_seconds=base_delay,
+                    permanent=(exc.status_code in {400, 409, 422}),
+                )
             except Exception as exc:
                 err_msg = str(exc)
                 log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s failed with exception: %s", record.delivery_attempts + 1, postmortem_id, err_msg)

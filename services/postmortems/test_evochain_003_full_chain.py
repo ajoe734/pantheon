@@ -137,9 +137,10 @@ def test_resolve_publish_chain_creates_one_postmortem_and_one_proposal():
 
     second_hop_requests: list[dict] = []
 
-    async def deliver_to_evolution(url, *, json):
+    async def deliver_to_evolution(url, *, json, **kwargs):
         second_hop_requests.append(json)
-        return evolution_client.post("/api/evolution/proposals", json=json)
+        headers = kwargs.get("headers") or {}
+        return evolution_client.post("/api/evolution/proposals", json=json, headers=headers)
 
     with patch("httpx.AsyncClient.post", side_effect=deliver_to_evolution):
         asyncio.run(postmortems_main.process_postmortems_outbox())
