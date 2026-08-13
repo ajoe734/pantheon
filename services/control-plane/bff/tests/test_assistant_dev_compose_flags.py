@@ -27,6 +27,10 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
     )
     assert env["PANTHEON_ASSISTANT_KERNEL_ENABLED"] == "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-true}"
     assert (
+        env["PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED"]
+        == "${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-true}"
+    )
+    assert (
         env["PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH"]
         == "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"
     )
@@ -144,3 +148,15 @@ def test_openclaw_adapter_can_prepare_repair_worktrees_from_status_root() -> Non
         "${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:${PANTHEON_ASSISTANT_REPAIR_WORKTREE_ROOT:-/srv/pantheon-assistant/worktrees}:rw"
         in service["volumes"]
     )
+
+
+def test_product_compose_defaults_do_not_require_development_tooling() -> None:
+    for name in ("docker-compose.staging-full.yml", "docker-compose.control.yml"):
+        source = (REPO_ROOT / name).read_text(encoding="utf-8")
+        assert (
+            "PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED: "
+            "${PANTHEON_DEVELOPMENT_TOOLING_ROUTES_ENABLED:-false}"
+        ) in source
+        assert "BRIDGE_SIGNING_PRIVATE_KEY: ${BRIDGE_SIGNING_PRIVATE_KEY:-}" in source
+        assert "BRIDGE_SIGNING_KEY_ID: ${BRIDGE_SIGNING_KEY_ID:-}" in source
+        assert "BRIDGE_SIGNING_PUBLIC_KEYS_JSON: ${BRIDGE_SIGNING_PUBLIC_KEYS_JSON:-}" in source

@@ -1420,7 +1420,7 @@ def test_management_nl_context_pack_reflects_active_control_mode(tmp_path, monke
         bff_main._sse_buffers["ask"].clear()
 
 
-def test_management_nl_context_pack_includes_orchestrator_status_for_system_questions(
+def test_management_nl_context_pack_excludes_development_orchestrator_status(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -1484,31 +1484,13 @@ def test_management_nl_context_pack_includes_orchestrator_status_for_system_ques
 
         assert resp.status_code == 202, resp.text
         context_pack = fake.calls[0]["context_pack"]
-        orchestrator_context = context_pack["backend"]["orchestrator_status"]["data"]
-        assert orchestrator_context["project"] == "pantheon"
-        assert orchestrator_context["taskCount"] == 1
-        assert orchestrator_context["supervisor"]["lifecycle"] == "running"
-        assert orchestrator_context["supervisor"]["pid"] == 4242
-        assert orchestrator_context["assistantDevBridge"]["lastDrainAt"] == "2026-06-07T09:01:00Z"
-        assert orchestrator_context["providerReadiness"]["status"] == "ready"
-        assert orchestrator_context["openclawToolPolicy"]["status"] == "ready"
-        assert orchestrator_context["openclawToolPolicy"]["assistantCommandAllowed"] is True
-        assert orchestrator_context["openclawToolPolicy"]["allowedTools"] == ["assistant.command"]
-        assert orchestrator_context["openclawToolPolicy"]["effectiveStatus"] == "degraded"
-        assert {ref["path"] for ref in orchestrator_context["sourceRefs"]} == {
-            "ai-status.json",
-            ".orchestrator/state.json",
-            ".orchestrator/github-bus-state.json",
-        }
+        assert "orchestrator_status" not in context_pack["backend"]
         source_ids = {
             source.get("sourceId") or source.get("source_id")
             for source in context_pack["sources"]
         }
-        assert "orchestrator_status" in source_ids
-        assert (
-            "Use backend.orchestrator_status.data for supervisor"
-            in fake.calls[0]["prompt"]
-        )
+        assert "orchestrator_status" not in source_ids
+        assert "backend.orchestrator_status" not in fake.calls[0]["prompt"]
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
