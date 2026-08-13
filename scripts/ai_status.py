@@ -26,13 +26,6 @@ from zoneinfo import ZoneInfo
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-try:
-    import yaml
-except ModuleNotFoundError:  # pragma: no cover - exercised only in lean supervisor envs
-    yaml = None
-
-YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
-
 ROOT = Path(__file__).resolve().parents[1]
 STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
 STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
@@ -1159,19 +1152,6 @@ AGENT_ALIASES = {
     "ops": "Human/Ops",
 }
 
-RETIRED_AGENT_REPLACEMENTS = {}
-
-STATUS_LABELS = {
-    "todo": "todo",
-    "in_progress": "in_progress",
-    "review": "review",
-    "review_approved": "review_approved",
-    "blocked": "blocked",
-    "done": "done",
-}
-
-DEPENDENCY_DONE_STATUSES = {"done"}
-ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked"}
 EXTERNAL_TASK_PREFIXES = {"OC", "RS", "LP", "OSS", "SPIKE"}
 EXTERNAL_TASK_ID_TOKENS = {
     "DATASOURCE",
@@ -1238,9 +1218,6 @@ OPTIONAL_CURRENT_WORK_REFERENCES = (
 DISPLAY_TIMEZONE = ZoneInfo("Asia/Taipei")
 DISPLAY_TIMEZONE_LABEL = "台灣時間 (UTC+8)"
 ISO_TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b")
-FEATURE_MODULE_RE = re.compile(r"^([A-Z]+-\d{2,3})(?:-|$)")
-
-
 def default_canonical_document_layers() -> dict[str, list[str]]:
     return {
         "L0 Collaboration & State": [
@@ -1384,18 +1361,6 @@ def human_join(items: list[str]) -> str:
     return f"{', '.join(items[:-1])}, and {items[-1]}"
 
 
-def unique_strings(items: list[str]) -> list[str]:
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        value = str(item or "").strip()
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
-
-
 def build_onboarding_prompt(state: dict[str, Any]) -> str:
     canonical_files = canonical_file_set(state)
     prompt_files = [item for item in FIRST_PROMPT_PRIORITY if item in canonical_files]
@@ -1469,9 +1434,7 @@ def canonical_agent_name(name: str | None) -> str:
 
 
 def active_agent_name(name: str | None) -> str:
-    canonical = canonical_agent_name(name)
-    replacement = RETIRED_AGENT_REPLACEMENTS.get(canonical.lower())
-    return replacement or canonical
+    return canonical_agent_name(name)
 
 
 def current_actor(default: str = "Codex") -> str:
@@ -2801,46 +2764,6 @@ def commit_subject_skips_trailer_check(subject: str) -> str | None:
     return None
 
 
-LOOP_AUTOPILOT_NON_GOALS = {
-    "No panel-only closure",
-    "No seed fixture as live proof",
-    "No approval gate bypass",
-}
-
-# Phrases in review notes or completion messages that signal a fixture/seed-only or
-# panel-only closure.  Matches are case-insensitive substrings.
-_FIXTURE_ONLY_SIGNALS = (
-    "fixture only",
-    "fixture-only",
-    "fixture_only",
-    "seed only",
-    "seed-only",
-    "seed_only",
-    "seed fixture as proof",
-    "seed fixture as live",
-    "fixture as live proof",
-    "panel only",
-    "panel-only",
-    "panel_only",
-    "panel copy",
-    "route only",
-    "route-only",
-    "route_only",
-)
-
-
-def is_loop_autopilot_task(task: dict[str, Any]) -> bool:
-    """Return True when the task carries loop-autopilot guardrail requirements.
-
-    A task qualifies when it has a non-empty ``loop_ids`` list, or when its
-    ``non_goals`` list overlaps with the canonical LOOP_AUTOPILOT_NON_GOALS set.
-    """
-    if task.get("loop_ids"):
-        return True
-    non_goals: list[str] = task.get("non_goals") or []
-    return bool(set(non_goals) & LOOP_AUTOPILOT_NON_GOALS)
-
-
 def validate_loop_completion_claim(task: dict[str, Any]) -> None:
     """Gate the done transition for loop-autopilot tasks.
 
@@ -3440,8 +3363,6 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     current_logs = logs[-20:]
     canonical_files = canonical_file_set(state)
     tier_labels = canonical_tier_labels(state)
-    orchestrator_state = load_json_file(ORCHESTRATOR_STATE_FILE, {})
-    coordination_summary = build_coordination_summary(orchestrator_state)
     archive_index = load_archive_index()
     archive_counts = archive_index.get("counts", {}) if isinstance(archive_index.get("counts"), dict) else {}
     recent_terminal_tasks = recent_terminal_summaries(limit=task_archive_recent_limit())
@@ -3612,66 +3533,6 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     else:
         lines.append("| _(none)_ | - | - | - |")
 
-    coordination_counts = coordination_summary.get("counts", {}) if isinstance(coordination_summary.get("counts"), dict) else {}
-    lines.extend(
-        [
-            "",
-            "## Lovable Coordination",
-            "",
-            f"- Last coordination scan: {format_display_timestamp(coordination_summary.get('last_scan_at'))}",
-            f"- Tracked features: `{coordination_counts.get('tracked_features', 0)}`",
-            f"- Lovable-ready packets: `{coordination_counts.get('lovable_ready', 0)}`",
-            f"- Waiting for Lovable/front-end: `{coordination_counts.get('waiting_for_lovable', 0)}`",
-            f"- UI-done returned: `{coordination_counts.get('ui_done_received', 0)}`",
-            f"- Frontend feedback returned: `{coordination_counts.get('frontend_feedback_received', 0)}`",
-            f"- Open BFF gaps: `{coordination_counts.get('open_bff_gaps', 0)}`",
-            f"- Backend route live: `{coordination_counts.get('backend_route_live', 0)}`",
-            f"- Pantheon handoff published: `{coordination_counts.get('pantheon_handoff_published', 0)}`",
-            f"- Mirrored to front default branch: `{coordination_counts.get('mirrored_to_front_default_branch', 0)}`",
-            f"- Dispatch recorded in coordinator state: `{coordination_counts.get('dispatch_emitted', 0)}`",
-            f"- Receiver-visible payload on front default branch: `{coordination_counts.get('front_receiver_applied', 0)}`",
-            f"- Lovable consumed packet: `{coordination_counts.get('lovable_consumed', 0)}`",
-            f"- UI activated: `{coordination_counts.get('ui_activated', 0)}`",
-            f"- Runtime verified: `{coordination_counts.get('runtime_verified', 0)}`",
-            "",
-            "| Feature | Screen | Stage | Lovable Ready | Mirrored | UI Done | Feedback | Next Action |",
-            "|---|---|---|---|---|---|---|---|",
-        ]
-    )
-    coordination_features = coordination_summary.get("features") if isinstance(coordination_summary.get("features"), list) else []
-    if coordination_features:
-        for feature in coordination_features:
-            lines.append(
-                "| `{feature_id}` | {screen} | `{stage}` | {lovable_ready} | {mirrored} | {ui_done} | {feedback} | {next_action} |".format(
-                    feature_id=cell(feature.get("feature_id") or "-"),
-                    screen=cell(feature.get("screen") or "-"),
-                    stage=cell(feature.get("stage") or "-"),
-                    lovable_ready="yes" if feature.get("lovable_ready") else "no",
-                    mirrored="yes" if feature.get("mirrored_to_target_repo") else "no",
-                    ui_done="yes" if feature.get("has_ui_done") else "no",
-                    feedback="yes" if feature.get("has_frontend_feedback") else "no",
-                    next_action=cell(localize_embedded_timestamps(feature.get("next_action") or "-")),
-                )
-            )
-    else:
-        lines.append("| _(none)_ | - | - | - | - | - | - | - |")
-
-    route_live_activation_archive = archived_route_live_activation_modules()
-    route_live_activation_outside_feature_rows = modules_outside_coordination_feature_rows(
-        route_live_activation_archive,
-        coordination_features,
-    )
-    if route_live_activation_outside_feature_rows:
-        lines.extend(
-            [
-                "",
-                "Tracked-feature note: the table above only lists modules that currently have coordination feature records.",
-                "Archive-done route-live activation publication lanes that remain outside explicit feature rows: "
-                + ", ".join(f"`{module}`" for module in route_live_activation_outside_feature_rows) + ".",
-                "Do not read those omitted modules as open Pantheon backlog purely because they are absent from the coordination feature table.",
-            ]
-        )
-
     lines.extend(["", "## Latest Checkpoints", ""])
     if current_logs:
         for entry in current_logs:
@@ -3685,52 +3546,6 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         lines.append("- No checkpoints yet.")
 
     CURRENT_WORK_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def archived_route_live_activation_modules() -> list[str]:
-    task_modules = {
-        "APP-003-ROUTE-LIVE-FRONTEND-001": ["CW-02", "KW-04", "KW-05"],
-        "APP-003-ROUTE-LIVE-FRONTEND-002": ["RW-02", "RW-04", "RW-05", "KW-02", "KW-03", "TW-01", "TW-02", "TW-04"],
-    }
-    modules: list[str] = []
-    for task_id, task_module_list in task_modules.items():
-        snapshot = archived_task_snapshot(task_id)
-        if snapshot is None:
-            continue
-        task = snapshot.get("task") if isinstance(snapshot, dict) else None
-        if not isinstance(task, dict):
-            continue
-        if str(task.get("status") or "").lower() != "done":
-            continue
-        for module in task_module_list:
-            if module not in modules:
-                modules.append(module)
-    return modules
-
-
-def feature_module_identifier(feature_id: Any) -> str | None:
-    candidate = str(feature_id or "").strip()
-    if not candidate:
-        return None
-    match = FEATURE_MODULE_RE.match(candidate)
-    if match:
-        return match.group(1)
-    return None
-
-
-def modules_outside_coordination_feature_rows(
-    modules: list[str],
-    coordination_features: list[dict[str, Any]],
-) -> list[str]:
-    tracked_modules: set[str] = set()
-    for feature in coordination_features:
-        if not isinstance(feature, dict):
-            continue
-        module = feature_module_identifier(feature.get("feature_id"))
-        if module:
-            tracked_modules.add(module)
-
-    return [module for module in modules if module not in tracked_modules]
 
 
 def normalize_worker_actor(worker: dict[str, Any]) -> str:
@@ -4328,426 +4143,6 @@ def normalized_source_ref(task: dict[str, Any] | None) -> dict[str, Any]:
     return normalized
 
 
-def coordination_payload_resolved(entry: dict[str, Any] | None) -> bool:
-    if not isinstance(entry, dict):
-        return False
-    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
-    if payload.get("resolved_at"):
-        return True
-    status = str(payload.get("status") or "").strip().lower()
-    return status in {"resolved", "completed", "done"}
-
-
-def normalize_coordination_token(value: Any) -> str:
-    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
-
-
-def coordination_payload_status(entry: dict[str, Any] | None) -> str:
-    if not isinstance(entry, dict):
-        return ""
-    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
-    return normalize_coordination_token(payload.get("status"))
-
-
-def coordination_payload_field(entry: dict[str, Any] | None, field: str) -> Any:
-    if not isinstance(entry, dict):
-        return None
-    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
-    return payload.get(field)
-
-
-def load_local_coordination_payload(path_value: str) -> dict[str, Any] | None:
-    candidate = str(path_value or "").strip()
-    if not candidate or candidate.startswith("../") or "://" in candidate:
-        return None
-    local_path = ROOT / candidate
-    if not local_path.exists() or not local_path.is_file():
-        return None
-    try:
-        text = local_path.read_text(encoding="utf-8")
-        if local_path.suffix == ".json":
-            payload = json.loads(text)
-        else:
-            if yaml is None:
-                return None
-            payload = yaml.safe_load(text)
-    except (OSError, json.JSONDecodeError, *YAML_ERROR_TYPES):
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
-def coordination_repo_root(repo_id: str) -> Path | None:
-    config = load_config()
-    root = repository_local_path(config, repo_id)
-    if isinstance(root, Path):
-        return root
-    if repo_id == "front_ai_trading_system":
-        fallback = ROOT.parent / "front-ai-trading-system"
-        return fallback if fallback.exists() else None
-    if repo_id == "pantheon":
-        return ROOT
-    return None
-
-
-def coordination_audit_matches(repo_root: Path | None, feature_id: str, marker: str) -> bool:
-    if repo_root is None:
-        return False
-    audit_dir = repo_root / ".coordination" / "audit"
-    if not audit_dir.exists():
-        return False
-    return any(audit_dir.glob(f"{feature_id}-{marker}-*.json"))
-
-
-def coordination_repo_payload_exists(repo_root: Path | None, rel_path: str | None) -> bool:
-    candidate = str(rel_path or "").strip()
-    if repo_root is None or not candidate:
-        return False
-    if candidate.startswith("/") or ".." in candidate:
-        return False
-    return (repo_root / candidate).is_file()
-
-
-def coordination_payload_has_runtime_verification(entry: dict[str, Any] | None) -> bool:
-    payload = entry.get("payload") if isinstance(entry, dict) else None
-    if not isinstance(payload, dict):
-        return False
-    if payload.get("runtime_verified_at") or payload.get("verified_runtime_ref"):
-        return True
-    payload_type = normalize_coordination_token(payload.get("type"))
-    return payload_type in {"needs_runtime", "bff_gap"} and bool(payload.get("resolved_at"))
-
-
-def coordination_state_flags(feature: dict[str, Any]) -> dict[str, bool]:
-    feature_id = str(feature.get("feature_id") or "").strip()
-    contract_ready = coordination_payload_entry(feature, "responses", "contract-ready")
-    lovable_task = coordination_payload_entry(feature, "responses", "lovable-ui-task")
-    backend_delivery = coordination_payload_entry(feature, "responses", "backend-delivery")
-    ui_done = coordination_payload_entry(feature, "requests", "ui-done")
-    frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
-    frontend_feedback_response = coordination_payload_entry(feature, "responses", "frontend-feedback")
-    bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
-    needs_runtime = coordination_payload_entry(feature, "requests", "needs-runtime")
-
-    front_root = coordination_repo_root("front_ai_trading_system")
-    pantheon_root = coordination_repo_root("pantheon")
-    mirrored_contract_path = f".coordination/responses/{feature_id}-contract-ready.yaml" if feature_id else None
-    mirrored_delivery_path = f".coordination/responses/{feature_id}-backend-delivery.yaml" if feature_id else None
-
-    mirrored_to_front = bool(feature.get("mirrored_to_target_repo")) or coordination_repo_payload_exists(front_root, mirrored_contract_path)
-    if not mirrored_to_front:
-        mirrored_to_front = coordination_repo_payload_exists(front_root, mirrored_delivery_path)
-
-    dispatch_recorded = bool(feature.get("last_dispatched_at")) or coordination_audit_matches(
-        pantheon_root, feature_id, "dispatch-emitted"
-    )
-    receiver_visible = mirrored_to_front and (
-        bool(feature.get("last_dispatched_at"))
-        or coordination_audit_matches(front_root, feature_id, "received")
-    )
-
-    lovable_consumed = any(bool(entry) for entry in (ui_done, frontend_feedback, frontend_feedback_response, bff_gap, needs_runtime))
-    ui_activated = any(bool(entry) for entry in (ui_done, frontend_feedback, frontend_feedback_response))
-    runtime_verified = any(
-        coordination_payload_has_runtime_verification(entry)
-        for entry in (needs_runtime, bff_gap, ui_done, frontend_feedback, frontend_feedback_response, backend_delivery)
-    )
-
-    return {
-        "backend_route_live": bool(contract_ready or backend_delivery),
-        "pantheon_handoff_published": bool(contract_ready or lovable_task or backend_delivery),
-        "mirrored_to_front_default_branch": mirrored_to_front,
-        "dispatch_emitted": dispatch_recorded,
-        "front_receiver_applied": receiver_visible,
-        "lovable_consumed": lovable_consumed,
-        "ui_activated": ui_activated,
-        "runtime_verified": runtime_verified,
-    }
-
-
-def coordination_local_response_path(feature: dict[str, Any], payload_type: str) -> str | None:
-    feature_id = str(feature.get("feature_id") or "").strip()
-    if not feature_id:
-        return None
-    candidate = ROOT / ".coordination" / "responses" / f"{feature_id}-{payload_type}.yaml"
-    if candidate.exists():
-        return str(candidate.relative_to(ROOT))
-    return None
-
-
-def coordination_payload_entry(feature: dict[str, Any], bucket: str, payload_type: str) -> dict[str, Any] | None:
-    typed_key = f"{bucket}_by_type"
-    typed_entries = feature.get(typed_key)
-    if isinstance(typed_entries, dict):
-        candidate = typed_entries.get(payload_type)
-        if isinstance(candidate, dict):
-            if bucket == "responses" and payload_type == "frontend-feedback":
-                local_payload = load_local_coordination_payload(str(candidate.get("path") or ""))
-                if isinstance(local_payload, dict):
-                    overlaid = dict(candidate)
-                    overlaid["payload"] = local_payload
-                    return overlaid
-            return candidate
-
-    latest_key = "latest_request" if bucket == "requests" else "latest_response"
-    latest_path_key = f"{latest_key}_path"
-    latest_payload = feature.get(latest_key)
-    if isinstance(latest_payload, dict) and str(latest_payload.get("type") or "").strip() == payload_type:
-        return {
-            "type": payload_type,
-            "path": feature.get(latest_path_key) or feature.get("latest_path"),
-            "payload": latest_payload,
-            "updated_at": latest_payload.get("updated_at") or latest_payload.get("created_at") or feature.get("last_updated_at"),
-            "source_repo_id": feature.get("source_repo_id"),
-            "target_repo_id": feature.get("target_repo_id"),
-        }
-
-    if bucket == "responses" and payload_type == "frontend-feedback":
-        local_path = coordination_local_response_path(feature, payload_type)
-        if local_path:
-            local_payload = load_local_coordination_payload(local_path)
-            if isinstance(local_payload, dict):
-                return {
-                    "type": payload_type,
-                    "path": local_path,
-                    "payload": local_payload,
-                    "updated_at": local_payload.get("reviewed_at") or feature.get("last_updated_at"),
-                    "source_repo_id": feature.get("source_repo_id"),
-                    "target_repo_id": feature.get("target_repo_id"),
-                }
-
-    if bucket == "responses" and payload_type == "lovable-ui-task" and isinstance(feature.get("lovable_task"), dict):
-        lovable_payload = feature["lovable_task"]
-        return {
-            "type": payload_type,
-            "path": feature.get("lovable_task_path"),
-            "payload": lovable_payload,
-            "updated_at": lovable_payload.get("updated_at") or lovable_payload.get("created_at") or feature.get("last_updated_at"),
-            "source_repo_id": feature.get("source_repo_id"),
-            "target_repo_id": feature.get("target_repo_id"),
-        }
-
-    return None
-
-
-def coordination_review_snapshot(feature_id: str | None) -> dict[str, str] | None:
-    candidate = str(feature_id or "").strip()
-    if not candidate:
-        return None
-    review_path = ROOT / ".coordination" / "reviews" / f"{candidate}-review.md"
-    if not review_path.exists():
-        return None
-    try:
-        text = review_path.read_text(encoding="utf-8")
-    except OSError:
-        return {"path": str(review_path.relative_to(ROOT)), "disposition": "reviewed"}
-
-    lowered = text.lower()
-    disposition = "reviewed"
-    decision_sections = re.findall(
-        r"(?ims)^##\s+(?:final\s+decision|decision)\s*\n+(.*?)(?=^##\s|\Z)",
-        text,
-    )
-    scoped_text = decision_sections[-1].lower() if decision_sections else lowered
-    if (
-        "follow-up required" in scoped_text
-        or "not loop-complete" in scoped_text
-        or "required follow-up" in scoped_text
-        or "changes requested" in scoped_text
-        or "blocked" in scoped_text
-    ):
-        disposition = "follow_up_required"
-    elif "task scope" in scoped_text or "acceptance gate" in scoped_text:
-        disposition = "reviewed"
-    elif (
-        "approved" in scoped_text
-        or "loop is complete" in scoped_text
-        or "loop-complete" in scoped_text
-        or "loop complete" in scoped_text
-        or "loop can close" in scoped_text
-    ):
-        disposition = "approved"
-    return {
-        "path": str(review_path.relative_to(ROOT)),
-        "disposition": disposition,
-    }
-
-
-def coordination_stage(feature: dict[str, Any]) -> tuple[str, str]:
-    frontend_feedback = coordination_payload_entry(feature, "requests", "frontend-feedback")
-    frontend_feedback_response = coordination_payload_entry(feature, "responses", "frontend-feedback")
-    ui_done = coordination_payload_entry(feature, "requests", "ui-done")
-    bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
-    contract_ready = coordination_payload_entry(feature, "responses", "contract-ready")
-    lovable_task = coordination_payload_entry(feature, "responses", "lovable-ui-task")
-    backend_delivery = coordination_payload_entry(feature, "responses", "backend-delivery")
-    review = coordination_review_snapshot(feature.get("feature_id"))
-
-    response_disposition = normalize_coordination_token(coordination_payload_field(frontend_feedback_response, "disposition"))
-    response_can_close = bool(coordination_payload_field(frontend_feedback_response, "can_close"))
-    response_lovable_status = normalize_coordination_token(coordination_payload_field(frontend_feedback_response, "lovable_ui_task_status"))
-    response_coordination_stage = normalize_coordination_token(coordination_payload_field(frontend_feedback_response, "coordination_stage"))
-    response_next_action = str(coordination_payload_field(frontend_feedback_response, "next_action") or "").strip()
-    ui_status = coordination_payload_status(ui_done)
-    ui_disposition = normalize_coordination_token(coordination_payload_field(ui_done, "pantheon_disposition"))
-    lovable_status = coordination_payload_status(lovable_task)
-    backend_status = coordination_payload_status(backend_delivery)
-
-    response_marks_complete = response_can_close or response_disposition in {"approved", "close", "loop_complete"}
-    response_marks_followup = response_disposition in {"blocked", "follow_up", "follow_up_required"} or response_coordination_stage in {"blocked", "follow_up", "follow_up_required"}
-    explicit_loop_complete = (
-        response_marks_complete
-        or ui_disposition == "loop_complete"
-        or lovable_status == "loop_complete"
-        or backend_status == "loop_complete"
-        or response_lovable_status == "loop_complete"
-    )
-    explicit_closed = (
-        ui_status == "closed"
-        or lovable_status == "closed"
-        or response_lovable_status == "closed"
-    )
-
-    if explicit_loop_complete:
-        return "loop_complete", "Pantheon closeout record marks the current packet loop complete."
-
-    if response_marks_followup:
-        if explicit_closed and not response_coordination_stage and response_next_action and response_next_action.lower() != "none":
-            # Keep the loop visible as follow-up when the response explicitly names a next action.
-            pass
-        elif explicit_closed and not response_coordination_stage:
-            return "closed", "Current packet record is closed for this scope; reopen only if a later follow-up cycle is dispatched."
-        return "frontend_feedback_reviewed_followup", (
-            f"Pantheon review is complete; follow-up remains ({response_next_action})."
-            if response_next_action and response_next_action.lower() != "none"
-            else "Pantheon review is complete; follow-up remains per the closeout response."
-        )
-
-    if explicit_closed:
-        return "closed", "Current packet record is closed for this scope; reopen only if a later follow-up cycle is dispatched."
-
-    if frontend_feedback:
-        if review:
-            if review.get("disposition") == "approved":
-                return "frontend_feedback_reviewed", "Pantheon review packet approves loop closeout; finalize the closure record."
-            if review.get("disposition") == "follow_up_required":
-                return "frontend_feedback_reviewed_followup", "Pantheon review is complete; follow-up remains per the review packet."
-            return "frontend_feedback_reviewed", "Pantheon review packet exists; inspect the recorded disposition."
-        return "frontend_feedback_received", "Pantheon should review the frontend feedback bundle and decide follow-up work."
-    if ui_done:
-        if review:
-            if review.get("disposition") == "approved":
-                return "ui_done_reviewed", "Pantheon reviewed the ui-done handoff; finalize the next closure or publish step."
-            if review.get("disposition") == "follow_up_required":
-                return "ui_done_reviewed_followup", "Pantheon reviewed the ui-done handoff; follow-up remains per the review packet."
-            return "ui_done_reviewed", "Pantheon review packet exists for the ui-done handoff; inspect the recorded disposition."
-        return "ui_done_received", "Pantheon should pick up review and integration from the returned ui-done handoff."
-    if bff_gap and not coordination_payload_resolved(bff_gap):
-        return "bff_gap_open", "Pantheon must resolve the open BFF gap before the front-end lane can continue."
-    if lovable_task or feature.get("lovable_task_path"):
-        return "waiting_for_lovable", "Lovable or the front-end lane can implement the screen and emit ui-done when finished."
-    if contract_ready:
-        return "contract_ready", "Supervisor should publish or mirror the Lovable task packet from the contract-ready bundle."
-    current_type = str(feature.get("current_payload_type") or feature.get("status") or "unknown").strip().lower().replace("-", "_")
-    return current_type or "unknown", str(feature.get("next_step") or feature.get("summary") or "Awaiting next coordination payload.")
-
-
-def build_coordination_summary(orchestrator_state: dict[str, Any] | None) -> dict[str, Any]:
-    orchestrator = orchestrator_state or {}
-    coordination = orchestrator.get("coordination") if isinstance(orchestrator.get("coordination"), dict) else {}
-    raw_features = coordination.get("features") if isinstance(coordination.get("features"), dict) else {}
-
-    features: list[dict[str, Any]] = []
-    counts = {
-        "tracked_features": 0,
-        "lovable_ready": 0,
-        "mirrored_to_target_repo": 0,
-        "waiting_for_lovable": 0,
-        "ui_done_received": 0,
-        "frontend_feedback_received": 0,
-        "open_bff_gaps": 0,
-        "backend_route_live": 0,
-        "pantheon_handoff_published": 0,
-        "mirrored_to_front_default_branch": 0,
-        "dispatch_emitted": 0,
-        "front_receiver_applied": 0,
-        "lovable_consumed": 0,
-        "ui_activated": 0,
-        "runtime_verified": 0,
-    }
-
-    for feature_id in sorted(raw_features):
-        feature = raw_features.get(feature_id)
-        if not isinstance(feature, dict):
-            continue
-
-        contract_ready = coordination_payload_entry(feature, "responses", "contract-ready")
-        lovable_task = coordination_payload_entry(feature, "responses", "lovable-ui-task")
-        ui_done = coordination_payload_entry(feature, "requests", "ui-done")
-        frontend_feedback_request = coordination_payload_entry(feature, "requests", "frontend-feedback")
-        frontend_feedback_response = coordination_payload_entry(feature, "responses", "frontend-feedback")
-        frontend_feedback = frontend_feedback_request or frontend_feedback_response
-        bff_gap = coordination_payload_entry(feature, "requests", "bff-gap")
-        review = coordination_review_snapshot(feature_id)
-        stage, next_action = coordination_stage(feature)
-        state_flags = coordination_state_flags(feature)
-        mirrored = bool(state_flags.get("mirrored_to_front_default_branch"))
-        lovable_ready = bool(lovable_task or feature.get("lovable_task_path"))
-        open_bff_gap = bool(stage == "bff_gap_open" and bff_gap and not coordination_payload_resolved(bff_gap))
-
-        feature_summary = {
-            "feature_id": feature_id,
-            "screen": feature.get("screen"),
-            "summary": feature.get("summary"),
-            "source_repo": feature.get("source_repo"),
-            "source_repo_id": feature.get("source_repo_id"),
-            "target_repo_id": feature.get("target_repo_id"),
-            "target_agent": feature.get("target_agent"),
-            "worker_kind": feature.get("worker_kind"),
-            "current_payload_type": feature.get("current_payload_type"),
-            "stage": stage,
-            "next_action": next_action,
-            "last_updated_at": feature.get("last_updated_at"),
-            "last_dispatched_at": feature.get("last_dispatched_at"),
-            "lovable_ready": lovable_ready,
-            "mirrored_to_target_repo": mirrored,
-            "has_contract_ready": bool(contract_ready),
-            "has_lovable_task": bool(lovable_task or feature.get("lovable_task_path")),
-            "has_ui_done": bool(ui_done),
-            "has_frontend_feedback": bool(frontend_feedback),
-            "has_bff_gap": bool(bff_gap),
-            "bff_gap_open": open_bff_gap,
-            "state_flags": state_flags,
-            "review_path": review.get("path") if isinstance(review, dict) else None,
-            "review_disposition": review.get("disposition") if isinstance(review, dict) else None,
-            "paths": {
-                "contract_ready": contract_ready.get("path") if isinstance(contract_ready, dict) else None,
-                "lovable_task": lovable_task.get("path") if isinstance(lovable_task, dict) else feature.get("lovable_task_path"),
-                "lovable_prompt": feature.get("lovable_prompt_path"),
-                "ui_done": ui_done.get("path") if isinstance(ui_done, dict) else None,
-                "frontend_feedback": frontend_feedback.get("path") if isinstance(frontend_feedback, dict) else None,
-                "bff_gap": bff_gap.get("path") if isinstance(bff_gap, dict) else None,
-                "review": review.get("path") if isinstance(review, dict) else None,
-            },
-        }
-        features.append(feature_summary)
-
-        counts["tracked_features"] += 1
-        counts["lovable_ready"] += int(lovable_ready)
-        counts["mirrored_to_target_repo"] += int(mirrored)
-        counts["waiting_for_lovable"] += int(stage == "waiting_for_lovable")
-        counts["ui_done_received"] += int(bool(ui_done))
-        counts["frontend_feedback_received"] += int(bool(frontend_feedback))
-        counts["open_bff_gaps"] += int(open_bff_gap)
-        for flag_name, enabled in state_flags.items():
-            counts[flag_name] += int(bool(enabled))
-
-    return {
-        "last_scan_at": coordination.get("last_scan_at"),
-        "counts": counts,
-        "features": features,
-    }
-
-
 def build_dashboard_bundle(
     state: dict[str, Any],
     orchestrator_state: dict[str, Any] | None,
@@ -4779,7 +4174,6 @@ def build_dashboard_bundle(
         resolver,
         orchestrator,
     )
-    coordination_summary = build_coordination_summary(orchestrator)
     supervisor_state = orchestrator.get("supervisor") if isinstance(orchestrator.get("supervisor"), dict) else {}
 
     live_workers_by_task: dict[str, list[dict[str, Any]]] = {}
@@ -4943,7 +4337,6 @@ def build_dashboard_bundle(
             "recent_terminal_tasks": recent_terminal_tasks,
             "bff_consol_archived_ids": bff_consol_archived_ids,
         },
-        "coordination_summary": coordination_summary,
         "dispatch_policy": dispatch_policy,
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
@@ -8344,38 +7737,6 @@ def read_dev_bridge_materialized_batch(
     return results
 
 
-def execute_external_mutation_command(
-    command: str,
-    state: dict[str, Any],
-    args: list[str],
-) -> None:
-    """Execute a review mutation with the same two-phase path as the CLI.
-
-    This is intentionally useful for isolated tests and in-process callers;
-    production CLI code snapshots the task under a shared lock before calling
-    the same preflight function.
-    """
-
-    task_id = args[0] if args else ""
-    task = get_task(state, task_id)
-    if task is None:
-        if command == "reopen" and archived_task_snapshot(task_id):
-            raise SystemExit(
-                f"Task {task_id} is archived and cannot be reopened in place. "
-                f"Create a new follow-up task that references {task_id}."
-            )
-        raise SystemExit(f"Unknown task: {task_id}")
-    preflight = prepare_external_mutation_preflight(command, task, args)
-    functions = {
-        "approve": command_approve,
-        "reopen": command_reopen,
-        "done": command_done,
-        "reconcile_merged_done": command_reconcile_merged_done,
-    }
-    with bound_external_mutation_preflight(preflight):
-        functions[command](state, args)
-
-
 def canonical_external_mutation_preflight(
     command: str,
     args: list[str],
@@ -8398,16 +7759,10 @@ def canonical_external_mutation_preflight(
                     raise SystemExit(f"Unknown task: {task_id}")
                 return deepcopy(task)
 
-    if str(os.environ.get("ORCH_RUN_ID") or "").strip():
-        config = load_config()
-        with runtime_state_lock(config, shared=True):
-            validate_active_status_command_lease(command, args)
-            task_snapshot = read_task_snapshot()
-    else:
-        config = load_config()
-        with runtime_state_lock(config, shared=True):
-            validate_active_status_command_lease(command, args)
-            task_snapshot = read_task_snapshot()
+    config = load_config()
+    with runtime_state_lock(config, shared=True):
+        validate_active_status_command_lease(command, args)
+        task_snapshot = read_task_snapshot()
 
     # No runtime, task-state, or audit lock is held beyond this point.
     return prepare_external_mutation_preflight(command, task_snapshot, args)

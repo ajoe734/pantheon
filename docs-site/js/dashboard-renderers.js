@@ -1,9 +1,7 @@
 import {
   activityTypeLabel,
   boardColumns,
-  logicalAgents,
   planningHighSignalTypes,
-  workerStatusIcon,
 } from "./dashboard-config.js?v=20260517-audit";
 import {
   buildActiveWorkRows,
@@ -17,13 +15,10 @@ import {
   buildWorkerHealth,
   dependencyBatchState,
   deriveAgentState,
-  DISPLAY_TIME_ZONE_LABEL,
   formatTime,
   laneLabel,
-  normalizeDispatchQueue,
   normalizePlanningState,
   normalizeReviewNotes,
-  normalizeWorkerRecords,
   qs,
   statusLabel,
   taskBadgeRow,
@@ -32,7 +27,6 @@ import {
   timeAgo,
   titleCase,
   truncate,
-  workerLifecycleBadge,
 } from "./dashboard-core.js?v=20260517-audit";
 
 function escapeHtml(value) {
@@ -1189,94 +1183,6 @@ export function renderStackList(selector, items, emptyText, formatter) {
   }
 }
 
-function coordinationStageLabel(stage) {
-  const normalized = compactWhitespace(stage || "").toLowerCase();
-  if (!normalized) return "未知";
-  if (normalized === "loop_complete") return "loop-complete";
-  if (normalized === "frontend_feedback_reviewed_followup") return "feedback reviewed / follow-up";
-  if (normalized === "waiting_for_lovable") return "等待 Lovable / 前端";
-  if (normalized === "ui_done_received") return "已收 ui-done";
-  if (normalized === "frontend_feedback_received") return "已收 feedback";
-  if (normalized === "bff_gap_open") return "BFF gap 開啟";
-  if (normalized === "contract_ready") return "contract-ready";
-  return titleCase(normalized.replaceAll("_", " "));
-}
-
-export function renderLovableCoordinationSummary(dashboardBundle = null) {
-  const container = qs("#lovable-coordination");
-  if (!container) return;
-  container.innerHTML = "";
-
-  const summary = dashboardBundle?.coordination_summary || {};
-  const counts = summary.counts || {};
-  const features = Array.isArray(summary.features) ? summary.features : [];
-  const loopComplete = features.filter((feature) => feature.stage === "loop_complete").length;
-  const followUp = features.filter((feature) => feature.stage && feature.stage !== "loop_complete").length;
-  const runtimeVerified = Number.isFinite(counts.runtime_verified) ? counts.runtime_verified : 0;
-  const runtimePending = Math.max(features.length - runtimeVerified, 0);
-
-  const summaryCard = document.createElement("article");
-  summaryCard.className = "stack-card";
-  summaryCard.innerHTML = `
-    <div class="stack-head">
-      <strong>Coordination Records</strong>
-      <span class="status-pill">${formatTime(summary.last_scan_at)}</span>
-    </div>
-    <p class="card-copy">這裡是前端交付協調紀錄，不等於 remaining workbench backlog；剩餘模組真相以 <code>WORKBENCH_DELIVERY_BACKLOG.md</code> 和 <code>ai-status.json</code> 為準。</p>
-    <div class="lane-meta">
-      <span class="chip">追蹤 feature ${counts.tracked_features || 0}</span>
-      <span class="chip">loop-complete ${loopComplete}</span>
-      <span class="chip">follow-up ${followUp}</span>
-      <span class="chip">Lovable-ready ${counts.lovable_ready || 0}</span>
-      <span class="chip">等待執行 ${counts.waiting_for_lovable || 0}</span>
-      <span class="chip">ui-done ${counts.ui_done_received || 0}</span>
-      <span class="chip">feedback ${counts.frontend_feedback_received || 0}</span>
-      <span class="chip">open BFF gap ${counts.open_bff_gaps || 0}</span>
-      <span class="chip">runtime verified ${runtimeVerified}/${features.length}</span>
-      <span class="chip ${runtimePending ? "status-review" : "status-ready"}">runtime pending ${runtimePending}</span>
-    </div>
-  `;
-  container.appendChild(summaryCard);
-
-  if (!features.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "目前沒有 Lovable coordination feature。";
-    container.appendChild(empty);
-    return;
-  }
-
-  for (const feature of features) {
-    const card = document.createElement("article");
-    card.className = "stack-card";
-    const paths = Object.entries(feature.paths || {})
-      .filter(([, value]) => value)
-      .map(([label, value]) => `<code>${escapeHtml(label)}: ${escapeHtml(value)}</code>`)
-      .join("、");
-    card.innerHTML = `
-      <div class="stack-head">
-        <strong>${escapeHtml(feature.feature_id || "-")}</strong>
-        <span class="status-pill">${escapeHtml(coordinationStageLabel(feature.stage))}</span>
-      </div>
-      <p>${escapeHtml(feature.summary || feature.screen || "尚無摘要。")}</p>
-      <div class="lane-meta">
-        <span class="chip">畫面 ${escapeHtml(feature.screen || "-")}</span>
-        <span class="chip">來源 ${escapeHtml(feature.source_repo || feature.source_repo_id || "-")}</span>
-        <span class="chip">Agent ${escapeHtml(feature.target_agent || "-")}</span>
-      </div>
-      <div class="lane-meta">
-        <span class="chip">Lovable-ready ${feature.lovable_ready ? "yes" : "no"}</span>
-        <span class="chip">Mirrored ${feature.mirrored_to_target_repo ? "yes" : "no"}</span>
-        <span class="chip">ui-done ${feature.has_ui_done ? "yes" : "no"}</span>
-        <span class="chip">feedback ${feature.has_frontend_feedback ? "yes" : "no"}</span>
-      </div>
-      ${paths ? `<p class="card-copy">Artifacts：${paths}</p>` : ""}
-      <p class="card-copy">下一步：${escapeHtml(truncate(feature.next_action || "-", 180))}</p>
-    `;
-    container.appendChild(card);
-  }
-}
-
 export function renderSnapshot(snapshot) {
   const container = qs("#snapshot");
   container.innerHTML = "";
@@ -1300,7 +1206,6 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const tasks = status.tasks || [];
   const archiveCounts = dashboardBundle?.archive_summary?.counts || {};
   const bridgeSummary = dashboardBundle?.bridge_summary || {};
-  const coordinationCounts = dashboardBundle?.coordination_summary?.counts || {};
 
   const todo          = tasks.filter((t) => String(t.status || "").toLowerCase() === "todo").length;
   const inProgress    = tasks.filter((t) => String(t.status || "").toLowerCase() === "in_progress").length;
@@ -1315,14 +1220,10 @@ export function renderOverviewMetrics(status, orchState, approvalQueue, dashboar
   const archivedSuperseded = Number.isFinite(archiveCounts.superseded) ? archiveCounts.superseded : 0;
   if (!activeOpen && archivedTotal) {
     const pendingBridge = Number.isFinite(bridgeSummary.pending_materialization_count) ? bridgeSummary.pending_materialization_count : 0;
-    const trackedFeatures = Number.isFinite(coordinationCounts.tracked_features) ? coordinationCounts.tracked_features : 0;
-    const runtimeVerified = Number.isFinite(coordinationCounts.runtime_verified) ? coordinationCounts.runtime_verified : 0;
     const items = [
       { label: "Active Open", value: 0, tone: "card-done" },
       { label: "Archived Done", value: archivedDone, tone: "card-done" },
       { label: "Superseded", value: archivedSuperseded, tone: archivedSuperseded ? "card-review" : "" },
-      { label: "Frontend Loops", value: trackedFeatures, tone: trackedFeatures ? "card-active" : "" },
-      { label: "Runtime Proof", value: trackedFeatures ? `${runtimeVerified}/${trackedFeatures}` : "0/0", tone: runtimeVerified < trackedFeatures ? "card-review" : "card-done" },
       { label: "Pending Bridge", value: pendingBridge, tone: pendingBridge ? "card-review" : "card-done" },
     ];
 
@@ -2847,137 +2748,6 @@ function dashboardFocusMode(planning) {
     return "execution";
   }
   return "execution";
-}
-
-const LOVABLE_STAGE_LABEL = {
-  needs_ui: "等待 Lovable 實作",
-  contract_ready: "Contract Ready",
-  waiting_for_lovable: "等待 Lovable 回傳",
-  ui_done_received: "UI Done — 待整合",
-  bff_gap_open: "BFF Gap 待解",
-  frontend_feedback_received: "Feedback 收到",
-  frontend_feedback_reviewed_followup: "Feedback reviewed / follow-up",
-  loop_complete: "loop-complete",
-  done: "已完成",
-};
-const LOVABLE_STAGE_TONE = {
-  needs_ui: "",
-  contract_ready: "",
-  waiting_for_lovable: "",
-  ui_done_received: "card-review",
-  bff_gap_open: "card-blocked",
-  frontend_feedback_received: "card-active",
-  frontend_feedback_reviewed_followup: "card-review",
-  loop_complete: "card-done",
-  done: "card-done",
-};
-
-function deriveLovableStage(f) {
-  const latestReq = f.latest_request || {};
-  const reqType = String(latestReq.type || "").replace(/-/g, "_");
-  if (reqType === "frontend_feedback") return "frontend_feedback_received";
-  if (reqType === "ui_done") return "ui_done_received";
-  const bffGapType = String((f.latest_request || {}).type || "").replace(/-/g, "_");
-  if (bffGapType === "bff_gap" && !(f.latest_request || {}).resolved) return "bff_gap_open";
-  if (f.lovable_task || f.lovable_task_path) return "waiting_for_lovable";
-  const ct = String(f.current_payload_type || f.status || "").replace(/-/g, "_");
-  if (ct === "contract_ready") return "contract_ready";
-  return "needs_ui";
-}
-
-export function renderLovableCoordination(orchState, status, dashboardBundle = null) {
-  const overview = qs("#lovable-overview");
-  const featureList = qs("#lovable-features");
-  const panelSummary = qs("#lovable-panel-summary");
-  if (!overview || !featureList) return;
-
-  const coord = orchState?.coordination || {};
-  const rawFeatures = coord.features || {};
-  const bundledFeatures = dashboardBundle?.coordination_summary?.features;
-  const features = Array.isArray(bundledFeatures) && bundledFeatures.length
-    ? bundledFeatures
-    : Object.values(rawFeatures);
-
-  // Build summary counts
-  const counts = {
-    needs_ui: 0,
-    contract_ready: 0,
-    waiting_for_lovable: 0,
-    ui_done_received: 0,
-    bff_gap_open: 0,
-    frontend_feedback_received: 0,
-    frontend_feedback_reviewed_followup: 0,
-    loop_complete: 0,
-    done: 0,
-  };
-  for (const f of features) {
-    const stage = f.stage || deriveLovableStage(f);
-    const key = Object.prototype.hasOwnProperty.call(counts, stage) ? stage : "needs_ui";
-    counts[key]++;
-  }
-
-  // Map coordination tasks from status.tasks to features
-  const coordTasks = (status?.tasks || []).filter((t) => {
-    const meta = t.coordination || t.metadata?.coordination || {};
-    return meta.feature_id || String(t.task_class || "") === "coordination";
-  });
-
-  // Overview metrics
-  const metricItems = [
-    { label: "協調紀錄", value: features.length, tone: "" },
-    { label: "Loop Complete", value: counts.loop_complete + counts.done, tone: "card-done" },
-    { label: "Follow-up", value: counts.frontend_feedback_reviewed_followup, tone: counts.frontend_feedback_reviewed_followup ? "card-review" : "" },
-    { label: "BFF Gap", value: counts.bff_gap_open, tone: counts.bff_gap_open ? "card-blocked" : "" },
-    { label: "整合任務", value: coordTasks.length, tone: coordTasks.length ? "card-active" : "" },
-    { label: "等待前端", value: counts.needs_ui + counts.contract_ready + counts.waiting_for_lovable + counts.ui_done_received + counts.frontend_feedback_received, tone: "" },
-  ];
-  overview.innerHTML = metricItems.map((m) => `
-    <article class="metric-card ${m.tone}">
-      <div class="metric-label">${m.label}</div>
-      <div class="metric-value">${m.value}</div>
-    </article>
-  `).join("");
-
-  // Panel summary
-  if (panelSummary) {
-    const pending = counts.frontend_feedback_reviewed_followup + counts.bff_gap_open + counts.needs_ui + counts.contract_ready + counts.waiting_for_lovable;
-    panelSummary.textContent = pending ? `${pending} follow-up / pending` : features.length ? `${counts.loop_complete + counts.done}/${features.length} loop-complete` : "無追蹤項目";
-  }
-
-  if (!features.length) {
-    featureList.innerHTML = `<p class="empty">目前沒有追蹤中的 Lovable feature。</p>`;
-    return;
-  }
-
-  featureList.innerHTML = features.map((f) => {
-    const stage = f.stage || deriveLovableStage(f);
-    const tone = LOVABLE_STAGE_TONE[stage] || "";
-    const stageLabel = LOVABLE_STAGE_LABEL[stage] || coordinationStageLabel(stage);
-    const featureId = escapeHtml(f.feature_id || "-");
-    const screen = escapeHtml(f.screen || "-");
-    const nextAction = escapeHtml(f.next_action || "");
-
-    // Find linked execution task(s)
-    const linked = coordTasks.filter((t) => {
-      const meta = t.coordination || t.metadata?.coordination || {};
-      return meta.feature_id === f.feature_id;
-    });
-    const linkedHtml = linked.length
-      ? linked.map((t) => `<span class="chip">${escapeHtml(t.id)} · ${escapeHtml(t.status)}</span>`).join(" ")
-      : "";
-
-    return `
-      <article class="stack-card ${tone}">
-        <div class="stack-head">
-          <strong>${featureId}</strong>
-          <span class="status-pill">${stageLabel}</span>
-        </div>
-        <p class="card-copy">畫面：${screen}</p>
-        ${nextAction ? `<p class="card-copy">${nextAction}</p>` : ""}
-        ${linkedHtml ? `<div class="lane-meta">${linkedHtml}</div>` : ""}
-      </article>
-    `;
-  }).join("");
 }
 
 export function applyModeVisibility(status, planningState) {
