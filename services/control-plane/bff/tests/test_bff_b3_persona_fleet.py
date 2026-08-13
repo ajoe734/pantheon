@@ -12,12 +12,21 @@ import os
 import sys
 import tempfile
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
 from read_store import ReadSurfaceStore
+
+
+@pytest.fixture(autouse=True)
+def _enable_market_persona_seed(monkeypatch):
+    """This legacy-fleet contract must explicitly opt into demo records."""
+
+    monkeypatch.setenv("PANTHEON_BFF_MARKET_PERSONA_SEED", "1")
+
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3:operator"}
 PERSONA_FLEET_ROW_HARD_LIMIT_BYTES = 8_000

@@ -8,12 +8,20 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from read_store import ReadSurfaceStore, _merge_market_persona_fleet
+
+
+@pytest.fixture(autouse=True)
+def _enable_market_persona_seed(monkeypatch):
+    """This module tests the retired fixture itself, so opt in explicitly."""
+
+    monkeypatch.setenv("PANTHEON_BFF_MARKET_PERSONA_SEED", "1")
 
 
 HEADERS = {"Authorization": "Bearer op-pathreon-fleet:operator,reviewer,admin:mfa"}
@@ -37,6 +45,16 @@ PERSONA_FLEET_FORBIDDEN_LIST_KEYS = {
     "sourceHealthBindings",
     "source_health_bindings",
 }
+
+
+def test_market_persona_seed_is_disabled_without_explicit_opt_in(monkeypatch) -> None:
+    monkeypatch.delenv("PANTHEON_BFF_MARKET_PERSONA_SEED", raising=False)
+    target: dict[str, object] = {}
+
+    assert _merge_market_persona_fleet(target) is False
+    assert target == {}
+
+
 MARKET_PERSONAS = {
     "US": "persona-us-equity",
     "TW": "persona-tw-equity",

@@ -175,9 +175,7 @@ jobs:
           fi
           if [[ -z "$CHANGED" ]]; then exit 0; fi
           printf '%s\n' "$CHANGED" | python3 scripts/check_staged_generated_files.py \
-            --diff-name-status \
-            --allow-deleted-path dashboard-bundle.json \
-            --allow-deleted-path docs-site/dashboard-bundle.json
+            --diff-name-status
       - name: Reject embedded frontend mirror
         run: |
           if [[ -n "$(git ls-files execute-plans)" ]]; then

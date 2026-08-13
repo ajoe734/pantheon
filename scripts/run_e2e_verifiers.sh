@@ -3,7 +3,8 @@
 # One command to check every e2e invariant the E2E-R1..R10 campaign established.
 #
 # Usage (read-only verifiers; producer-chain is skipped):
-#   BFF_BASE=https://...sslip.io BFF_TOKEN=op-dev:admin:mfa scripts/run_e2e_verifiers.sh
+#   BFF_BASE=https://...sslip.io FE_BASE=https://...sslip.io \
+#     BFF_TOKEN=op-dev:admin:mfa scripts/run_e2e_verifiers.sh
 # Usage (includes the mutating producer-chain verifier on a dev host):
 #   ALLOW_MUTATING_E2E=1 EVOCHAIN_VERIFY_RUNTIME_ID=<paper-runtime-id> \
 #     BFF_BASE=https://...sslip.io scripts/run_e2e_verifiers.sh
@@ -26,6 +27,7 @@ VERIFIERS=(
   "verify_e2e_auth_boundary.py:R17 auth boundary"
   "verify_e2e_runtime_state_coherence.py:R18 runtime-state coherence"
   "verify_e2e_telemetry_coverage.py:R19 telemetry coverage"
+  "verify_e2e_fe_serving.py:frontend static asset serving"
   "verify_e2e_producer_chain.py:producer-chain live verifier"
 )
 
@@ -35,6 +37,10 @@ for entry in "${VERIFIERS[@]}"; do
   path="$HERE/$script"
   if [[ ! -f "$path" ]]; then
     echo "SKIP  $label ($script not present)"; missing=$((missing+1)); continue
+  fi
+  if [[ "$script" == "verify_e2e_fe_serving.py" && -z "${FE_BASE:-}" ]]; then
+    echo "SKIP  $label (set FE_BASE to the deployed frontend origin)"
+    skipped=$((skipped+1)); continue
   fi
   if [[ "$script" == "verify_e2e_producer_chain.py" && "${ALLOW_MUTATING_E2E:-0}" != "1" ]]; then
     echo "SKIP  $label (set ALLOW_MUTATING_E2E=1 and EVOCHAIN_VERIFY_RUNTIME_ID to opt in)"

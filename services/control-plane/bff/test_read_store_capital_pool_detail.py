@@ -16,8 +16,17 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(__file__))
 from read_store import ReadSurfaceStore
+
+
+@pytest.fixture(autouse=True)
+def _enable_market_persona_seed(monkeypatch):
+    """These detail contracts intentionally exercise the retired fixture."""
+
+    monkeypatch.setenv("PANTHEON_BFF_MARKET_PERSONA_SEED", "1")
 
 
 def _write_json(path: Path, payload) -> None:

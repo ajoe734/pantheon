@@ -1,9 +1,0 @@
-feature_id: TW-04-teaching-replay
-type: bff-gap
-screen: teaching-replay
-screen_id: screen-teaching-replay
-bff_contract_path: docs/bff/TW-04-teaching-replay.md
-frontend_change_spec: docs/pantheon-handoffs/TW-04-teaching-replay/FRONTEND_CHANGE_SPEC.md
-missing_or_divergent_fields: []
-observed_endpoint:
-notes:
