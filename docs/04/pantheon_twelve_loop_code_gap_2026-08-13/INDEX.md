@@ -26,8 +26,9 @@
 
 ## 基線與邊界
 
-- Pantheon 程式碼基線：`3307552b55af75850dab1d50e58cef9f86e10b53`
-  (`origin/dev`)。
+- Pantheon 程式碼基線：`refs/remotes/origin/dev`
+  `3307552b55af75850dab1d50e58cef9f86e10b53`。本機另有同名的舊
+  `refs/heads/origin/dev`，本次沒有使用該歧義 ref。
 - Management 前端程式碼基線：`execute-plans/dev`
   `3ee9f962a36626f085e2ca1c088b3ce4b4d08e6f`。
 - 規格真相：`LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`。

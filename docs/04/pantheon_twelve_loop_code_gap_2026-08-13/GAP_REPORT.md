@@ -15,10 +15,13 @@ consumer，不以舊開發紀錄或 evidence manifest 判斷完成。盤點包�
 - 舊 28-task DAG、2026-08-08 minimum closure plan、open PR、canonical task state、
   branches 與 worktrees 的重疊。
 
-盤點時 Pantheon `origin/dev` 為
-`3307552b55af75850dab1d50e58cef9f86e10b53`；前端 `execute-plans/origin/dev`
-為 `3ee9f962a36626f085e2ca1c088b3ce4b4d08e6f`。Pantheon canonical task journal
-沒有 active L12/Product-V2 implementation task，GitHub 沒有 open PR；因此以下缺口不是
+盤點時 Pantheon `refs/remotes/origin/dev` 為
+`3307552b55af75850dab1d50e58cef9f86e10b53`；前端
+`execute-plans/refs/remotes/origin/dev` 為
+`3ee9f962a36626f085e2ca1c088b3ce4b4d08e6f`。Pantheon checkout 另有同名的舊
+`refs/heads/origin/dev`；本次一律使用完整 remote-tracking ref 與 `git ls-remote`，沒有讓
+Git 解析歧義的裸 `origin/dev`。Pantheon canonical task journal 沒有 active
+L12/Product-V2 implementation task，盤點開始時 GitHub 沒有 open PR；因此以下缺口不是
 正在執行工作的暫時中間態。
 
 ## 2. 總判定
