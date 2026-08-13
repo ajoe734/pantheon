@@ -1,7 +1,9 @@
 {
   "schema": "pantheon.execution-task-catalog.v1",
   "program_id": "agora-product-correction-20260813",
-  "packet_id": "pkt-agora-product-gap-sd-20260813-v1",
+  "packet_id": "pkt-agora-product-gap-sd-20260813-v2",
+  "supersedes_packet_id": "pkt-agora-product-gap-sd-20260813-v1",
+  "supersession_reason": "Version 1 was rejected before materialization because the shared checkout emitted legacy HMAC-SHA256 while the immutable supervisor runtime accepts Ed25519; it created zero task rows.",
   "source": {
     "pull_request": 4834,
     "planning_branch": "task/OPS-DOC-AGORA-GAP-SD-20260813",

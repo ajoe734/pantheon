@@ -5,7 +5,12 @@ Status: task catalog prepared for signed dev-bridge materialization
 Canonical machine-readable catalog:
 [execution-tasks.json](execution-tasks.json)
 
-Bridge packet ID: `pkt-agora-product-gap-sd-20260813-v1`
+Bridge packet ID: `pkt-agora-product-gap-sd-20260813-v2`
+
+This replaces `pkt-agora-product-gap-sd-20260813-v1`, which the immutable
+supervisor runtime rejected before materialization because the shared checkout
+still emitted legacy HMAC-SHA256 while the runtime requires Ed25519. Version 1
+created no canonical task rows; version 2 carries the unchanged task DAG.
 
 ## Materialization boundary
 
