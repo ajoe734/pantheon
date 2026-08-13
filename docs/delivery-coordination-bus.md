@@ -1,8 +1,8 @@
 # Delivery Coordination Bus
 
-Last updated: 2026-04-14
-Status: legacy implementation guide; superseded for current frontend dev on
-2026-06-08
+Last updated: 2026-08-13
+Status: retired historical guide; the tracked `.coordination/` bus was removed
+on 2026-08-13 after its production callers had already been retired
 Tier: L2 Planning & Execution
 Scope: multi-repo coordination files, GitHub issue flow, worker routing, and Lovable trigger policy
 Conflict rule: this guide explains the delivery bus; it does not override Pantheon runtime or BFF policy
@@ -13,13 +13,19 @@ Do not use this file to route current Pantheon frontend development.
 
 The current frontend repository is `ajoe734/execute-plans`, not
 `ajoe734/front-ai-trading-system`. Pantheon dev frontend hosting is
-Pantheon-owned at `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`, with
-the dev BFF at `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`.
+Pantheon-owned at `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io`, with
+the dev BFF at `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`.
 
 Do not ask the operator to press Lovable publish, wait on Lovable connector
 authorization, or revive `front-ai-trading-system` for dev delivery. The active
 frontend delivery loop is GitHub branch, commit, PR, merge, build from
 `execute-plans`, and deploy to the Pantheon-owned dev FE host.
+
+The historical `.coordination/` payloads were point-in-time handoff artifacts,
+not an unfinished backlog. They remain recoverable from Git history but must
+not be restored or scanned by runtime code. See
+`docs/04/v2-legacy-cleanup-2026-08-13.md` for the deletion and task
+reconciliation record.
 
 For current frontend hosting, read
 `docs/frontend/execute-plans-dev-hosting.md`. For Management AI/OpenClaw dev

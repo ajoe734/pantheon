@@ -1,9 +1,0 @@
-feature_id: TW-03-before-after-compare
-type: bff-gap
-screen: before-after-compare
-screen_id: screen-before-after-compare
-bff_contract_path: docs/bff/TW-03-before-after-compare.md
-frontend_change_spec: docs/pantheon-handoffs/TW-03-before-after-compare/FRONTEND_CHANGE_SPEC.md
-missing_or_divergent_fields: []
-observed_endpoint:
-notes:

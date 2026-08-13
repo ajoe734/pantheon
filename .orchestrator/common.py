@@ -1418,89 +1418,6 @@ def strict_activity_json_loads(payload: str | bytes | bytearray) -> Any:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class HistoricalActivityOverlapException:
-    """Closed identity for one byte-proven legacy overlap exception."""
-
-    predecessor_name: str
-    predecessor_gzip_sha256: str
-    predecessor_gzip_byte_count: int
-    predecessor_payload_sha256: str
-    predecessor_payload_byte_count: int
-    predecessor_line_count: int
-    successor_name: str
-    successor_gzip_sha256: str
-    successor_gzip_byte_count: int
-    successor_payload_sha256: str
-    successor_payload_byte_count: int
-    successor_line_count: int
-    overlap_sha256: str
-    overlap_byte_count: int
-    overlap_line_count: int
-
-
-HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS: Final[
-    tuple[HistoricalActivityOverlapException, ...]
-] = (
-    HistoricalActivityOverlapException(
-        predecessor_name="ai-activity-log.jsonl-2026-05-24T1237Z.gz",
-        predecessor_gzip_sha256=(
-            "ad7dd174e0278a3c21b10024cd227f0d138052dd0945bc3b24159538d87ed6c5"
-        ),
-        predecessor_gzip_byte_count=772038,
-        predecessor_payload_sha256=(
-            "8435543b845639383471bd3a3d1b1d1642bb0944649b5e2a4ffe1ad5ad9a4e57"
-        ),
-        predecessor_payload_byte_count=5326818,
-        predecessor_line_count=1001,
-        successor_name="ai-activity-log.jsonl-2026-05-24T1239Z.gz",
-        successor_gzip_sha256=(
-            "d211e27bc5337c8eff200e14d48800f949658e6c8b43d9fd22e54ea8c77061da"
-        ),
-        successor_gzip_byte_count=771941,
-        successor_payload_sha256=(
-            "da6a102178c82fb4eca8d0794ed5b419f0c97770e0ad63542dde0033e7efa3ff"
-        ),
-        successor_payload_byte_count=5326326,
-        successor_line_count=1001,
-        overlap_sha256=(
-            "0a3b56f720a5aa493d8968edfff8e32e0df98e410f6334d6790f10a06019f247"
-        ),
-        overlap_byte_count=5325808,
-        overlap_line_count=999,
-    ),
-)
-
-
-def _historical_activity_overlap_for_pair(
-    predecessor_name: str,
-    successor_name: str,
-) -> HistoricalActivityOverlapException | None:
-    matches = [
-        exception
-        for exception in HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS
-        if exception.predecessor_name == predecessor_name
-        and exception.successor_name == successor_name
-    ]
-    if len(matches) > 1:
-        raise RuntimeError("historical activity overlap registry has a duplicate pair")
-    return matches[0] if matches else None
-
-
-def _historical_activity_source_identity(
-    source_name: str,
-) -> tuple[HistoricalActivityOverlapException, str] | None:
-    matches: list[tuple[HistoricalActivityOverlapException, str]] = []
-    for exception in HISTORICAL_ACTIVITY_OVERLAP_EXCEPTIONS:
-        if exception.predecessor_name == source_name:
-            matches.append((exception, "predecessor"))
-        if exception.successor_name == source_name:
-            matches.append((exception, "successor"))
-    if len(matches) > 1:
-        raise RuntimeError("historical activity overlap registry reuses a source")
-    return matches[0] if matches else None
-
-
 def _jsonl_line_count(payload: bytes) -> int:
     return len(payload.splitlines()) if payload else 0
 
@@ -3404,51 +3321,6 @@ def _snapshot_activity_source_descriptor(
         raise
 
 
-def _validate_historical_activity_source(
-    source: Path,
-    *,
-    raw_sha256: str,
-    raw_byte_count: int,
-    payload_sha256: str,
-    payload_byte_count: int,
-    payload_line_count: int,
-) -> None:
-    identity = _historical_activity_source_identity(source.name)
-    if identity is None:
-        return
-    exception, role = identity
-    expected_payload_sha256 = getattr(exception, f"{role}_payload_sha256")
-    expected_payload_byte_count = getattr(
-        exception, f"{role}_payload_byte_count"
-    )
-    expected_line_count = getattr(exception, f"{role}_line_count")
-    expected_gzip_sha256 = getattr(exception, f"{role}_gzip_sha256")
-    expected_gzip_byte_count = getattr(exception, f"{role}_gzip_byte_count")
-    if payload_sha256 != expected_payload_sha256:
-        raise RuntimeError(
-            f"Invalid {role} hash for historical exception: {payload_sha256}"
-        )
-    if payload_byte_count != expected_payload_byte_count:
-        raise RuntimeError(
-            f"Invalid {role} byte count for historical exception: "
-            f"{payload_byte_count}"
-        )
-    if payload_line_count != expected_line_count:
-        raise RuntimeError(
-            f"Invalid {role} line count for historical exception: "
-            f"{payload_line_count}"
-        )
-    if raw_sha256 != expected_gzip_sha256:
-        raise RuntimeError(
-            f"Invalid {role} gzip hash for historical exception: {raw_sha256}"
-        )
-    if raw_byte_count != expected_gzip_byte_count:
-        raise RuntimeError(
-            f"Invalid {role} gzip byte count for historical exception: "
-            f"{raw_byte_count}"
-        )
-
-
 def _assert_activity_sources_stable_unlocked(
     log_path: Path,
     sources: list[Path],
@@ -3612,14 +3484,11 @@ def _build_logical_activity_snapshot_unlocked(
                 recent_entries.append((decoded, str(source), line_number))
 
         prev_source: Path | None = None
-        prev_source_payload_sha256: str | None = None
         prev_buffer_1001: list[bytes] = []
         max_ts_std: str | None = None
         max_ts_old: str | None = None
 
         for source_idx, source in enumerate(sources):
-            current_hasher = hashlib.sha256()
-            current_byte_count = 0
             current_line_count = 0
             source_class = classify_source(source)
             if source_class == "unknown":
@@ -3712,8 +3581,6 @@ def _build_logical_activity_snapshot_unlocked(
                             break
                         line_number += 1
                         current_line_count += 1
-                        current_byte_count += len(line)
-                        current_hasher.update(line)
                         current_buffer_1001.append(line)
                         if len(current_buffer_1001) == 1001:
                             break
@@ -3730,22 +3597,6 @@ def _build_logical_activity_snapshot_unlocked(
                             == prev_buffer_1001[-count:]
                         ):
                             overlap_len = count
-
-                    historical_exception = None
-                    if prev_source is not None:
-                        historical_exception = _historical_activity_overlap_for_pair(
-                            prev_source.name,
-                            source.name,
-                        )
-                    if (
-                        historical_exception is not None
-                        and overlap_len
-                        != historical_exception.overlap_line_count
-                    ):
-                        raise RuntimeError(
-                            f"Invalid overlap length {overlap_len} between "
-                            f"{prev_source.name} and {source.name}"
-                        )
 
                     if overlap_len > 0:
                         if prev_source is None:
@@ -3767,41 +3618,6 @@ def _build_logical_activity_snapshot_unlocked(
                                     "Non-collapsible 1000-line overlap between "
                                     f"{prev_source.name} and {source.name}"
                                 )
-                        elif (
-                            historical_exception is not None
-                            and overlap_len
-                            == historical_exception.overlap_line_count
-                        ):
-                            if (
-                                prev_source_payload_sha256
-                                != historical_exception.predecessor_payload_sha256
-                            ):
-                                raise RuntimeError(
-                                    "Invalid predecessor hash for historical "
-                                    f"exception: {prev_source_payload_sha256}"
-                                )
-                            overlap_bytes = b"".join(
-                                current_buffer_1001[:overlap_len]
-                            )
-                            if (
-                                len(overlap_bytes)
-                                != historical_exception.overlap_byte_count
-                            ):
-                                raise RuntimeError(
-                                    "Invalid overlap bytes length: "
-                                    f"{len(overlap_bytes)}"
-                                )
-                            overlap_sha256 = hashlib.sha256(
-                                overlap_bytes
-                            ).hexdigest()
-                            if (
-                                overlap_sha256
-                                != historical_exception.overlap_sha256
-                            ):
-                                raise RuntimeError(
-                                    f"Invalid overlap SHA-256: {overlap_sha256}"
-                                )
-                            should_collapse = True
                         else:
                             raise RuntimeError(
                                 f"Invalid overlap length {overlap_len} between "
@@ -3955,8 +3771,6 @@ def _build_logical_activity_snapshot_unlocked(
                             break
                         line_number += 1
                         current_line_count += 1
-                        current_byte_count += len(line)
-                        current_hasher.update(line)
                         sliding_window_1001.append(line)
                         if len(sliding_window_1001) > 1001:
                             sliding_window_1001.pop(0)
@@ -4006,17 +3820,7 @@ def _build_logical_activity_snapshot_unlocked(
                             ),
                         )
 
-                    source_payload_sha256 = current_hasher.hexdigest()
-                    _validate_historical_activity_source(
-                        source,
-                        raw_sha256=raw_sha256,
-                        raw_byte_count=raw_byte_count,
-                        payload_sha256=source_payload_sha256,
-                        payload_byte_count=current_byte_count,
-                        payload_line_count=current_line_count,
-                    )
                     prev_source = source
-                    prev_source_payload_sha256 = source_payload_sha256
                     prev_buffer_1001 = list(sliding_window_1001)
                     conn.commit()
                 except (EOFError, gzip.BadGzipFile, OSError) as exc:

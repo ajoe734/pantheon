@@ -1214,6 +1214,17 @@ class LogicalActivityReaderTests(unittest.TestCase):
         self.assertEqual(collapsed_info[0]["prev_source"], str(f1))
         self.assertEqual(collapsed_info[0]["next_source"], str(f2))
 
+    def test_unregistered_999_line_overlap_is_rejected(self):
+        entries1 = self._make_entries(0, 1500)
+        entries2 = self._make_entries(501, 1500)
+        f1 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T0358Z.gz"
+        f2 = self.archive_dir / "ai-activity-log.jsonl-2026-07-16T1130Z.gz"
+        self._write_gz(f1, entries1)
+        self._write_gz(f2, entries2)
+
+        with self.assertRaisesRegex(RuntimeError, "Invalid overlap length 999"):
+            list(common.stream_logical_activity(self.log_path))
+
     def test_three_consecutive_legacy_overlaps(self):
         entries1 = self._make_entries(0, 1500)
         entries2 = self._make_entries(500, 2000)

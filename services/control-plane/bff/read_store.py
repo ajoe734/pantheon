@@ -969,17 +969,32 @@ def _ref_values(refs: List[Any]) -> List[str]:
     return values
 
 
+def _market_persona_seed_enabled() -> bool:
+    """Return whether the retired demo persona fleet was explicitly requested."""
+
+    return str(os.getenv("PANTHEON_BFF_MARKET_PERSONA_SEED", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _merge_market_persona_fleet(
     target: Dict[str, Any],
     *,
     preserve_explicit_agora: bool = False,
 ) -> bool:
-    """Seed the canonical US/TW/CRYPTO persona fleet read model.
+    """Seed the legacy US/TW/CRYPTO persona fleet read model when opted in.
 
     The records are deliberately read-model only: they prove the Agora,
     Management, and Execution Plane wiring without granting live capital
-    authority. Promotion suggestions stay in governance metadata.
+    authority. Production read truth must come from persisted paper personas,
+    so the synthetic fleet is disabled by default and retained only for
+    explicit fixture/diagnostic use.
     """
+    if not _market_persona_seed_enabled():
+        return False
     skip_datasets: set[str] = set()
     if preserve_explicit_agora:
         for dataset in ("agora_signals", "agora_sessions", "agora_watchlist"):
