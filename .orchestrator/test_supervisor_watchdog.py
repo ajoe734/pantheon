@@ -784,12 +784,21 @@ class SupervisorWatchdogTests(unittest.TestCase):
         now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
         authority_env = {
             "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": '{"bridge":"public"}',
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": '{"operator":"public"}',
             "BRIDGE_SIGNING_PRIVATE_KEY": "must-not-leak",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY": "must-not-leak",
+        }
+        runtime_identity = {
+            "root": "/immutable/runtime",
+            "source_sha": "a" * 40,
+            "remote": "ajoe734/pantheon",
+            "base_ref": "origin/dev",
         }
         with (
             mock.patch.dict(os.environ, authority_env, clear=False),
+            mock.patch.object(
+                supervisor_watchdog,
+                "validate_status_command_runtime",
+                return_value=runtime_identity,
+            ),
             mock.patch.object(supervisor_watchdog.subprocess, "Popen", _fake_popen),
         ):
             pid, _log_path = supervisor_watchdog.start_supervisor(self.config, {}, now)
@@ -805,16 +814,15 @@ class SupervisorWatchdogTests(unittest.TestCase):
             authority_env["BRIDGE_SIGNING_PUBLIC_KEYS_JSON"],
         )
         self.assertNotIn("BRIDGE_SIGNING_PRIVATE_KEY", captured["env"])
-        self.assertNotIn(
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
-            captured["env"],
-        )
+        self.assertEqual(captured["env"].get("PANTHEON_COMMAND_ROOT"), "/immutable/runtime")
+        self.assertEqual(captured["env"].get("PANTHEON_COMMAND_RUNTIME_SHA"), "a" * 40)
+        self.assertEqual(captured["env"].get("PANTHEON_COMMAND_REMOTE"), "ajoe734/pantheon")
+        self.assertEqual(captured["env"].get("PANTHEON_COMMAND_BASE_REF"), "origin/dev")
 
     def test_start_supervisor_rejects_missing_public_verifier_environment(self) -> None:
         now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
         missing = {
             "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": "",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": "",
         }
         with (
             mock.patch.dict(os.environ, missing, clear=False),

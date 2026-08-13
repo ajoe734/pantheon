@@ -11,7 +11,7 @@ import os
 import sys
 from pathlib import Path
 
-root = Path(__file__).resolve().parents[1]
+root = Path(os.environ.get("PANTHEON_STATUS_ROOT") or Path(__file__).resolve().parents[1])
 status_path = root / "ai-status.json"
 state = json.loads(status_path.read_text(encoding="utf-8"))
 command = sys.argv[1]
@@ -71,10 +71,6 @@ if command == "dev-bridge-materialize-batch":
             "BRIDGE_SIGNING_PRIVATE_KEY",
             "BRIDGE_SIGNING_KEY",
             "BRIDGE_SIGNING_KEY_ID",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_JSON",
         )
         if os.environ.get(key)
         },
@@ -120,6 +116,20 @@ def write_materializing_ai_status(repo_root: Path) -> None:
         MATERIALIZING_AI_STATUS_SCRIPT,
         encoding="utf-8",
     )
+
+
+def authoritative_test_runtime_env(repo_root: Path) -> dict[str, str]:
+    event_log = repo_root / "task-state-events-v2.jsonl"
+    event_log.touch(exist_ok=True)
+    return {
+        "PANTHEON_STATUS_ROOT": str(repo_root),
+        "PANTHEON_COMMAND_ROOT": str(repo_root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": "0" * 40,
+        "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+        "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+    }
 
 
 def bind_isolated_ai_status_module(ai_status_module: Any, status_root: Path) -> Path:

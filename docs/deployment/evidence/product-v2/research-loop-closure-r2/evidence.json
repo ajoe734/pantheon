@@ -1,0 +1,30 @@
+{
+  "task_id": "PRODUCT-V2-RESEARCH-LOOP-CLOSURE-R2-20260813",
+  "title": "Close the current source-to-research product path",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "completed_at": "2026-08-13T03:17:00Z",
+  "acceptance_criteria": {
+    "start_from_dev_and_ignore_retired_l12": true,
+    "real_source_record_distillation_readback": true,
+    "strategy_input_reaches_alpha_replication_without_fixtures": true,
+    "land_reviewed_pr_with_evidence": true
+  },
+  "verification": {
+    "e2e_test": "services/source_ingestion/tests/test_product_v2_research_loop_closure_r2.py",
+    "test_command": "/home/lupin/pantheon/.venv/bin/pytest services/source_ingestion/tests/test_product_v2_research_loop_closure_r2.py -v",
+    "test_result": "1 passed"
+  },
+  "loop_trace": {
+    "source_record_id": "src-prod-v2-r2-001",
+    "connector_id": "internal-research-notes",
+    "distillation_job_status": "done",
+    "seed_id": "seed-strat-evidence-suggests-twse-cross-sectional-momentum--5d662b74",
+    "seed_promoted_status": "promoted_to_strategy_spec",
+    "replication_ref": "research-orchestrator://experiment-tasks/exp-seed-3ad27038e217",
+    "experiment_task_id": "exp-seed-3ad27038e217",
+    "alpha_replication_revalidated": 1,
+    "authority_task_id": "rtask:exp-seed-3ad27038e217",
+    "authority_run_id": "rrun:run-exp-seed-3ad27038e217"
+  }
+}

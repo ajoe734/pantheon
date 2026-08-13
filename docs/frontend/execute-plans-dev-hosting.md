@@ -307,27 +307,14 @@ Any workflow or script that still defaults to `https://pantheon-dev.lovable.app`
 for dev acceptance should be treated as legacy until it is updated to accept the
 Pantheon-owned FE URL.
 
-## Legacy Automation Warning
+## Retired Legacy Automation
 
-Some historical orchestration scripts and tests still mention
-`front-ai-trading-system`, `lovable-ui-task`, or Lovable publish flows. Do not
-use those paths to route current frontend work until they have been explicitly
-migrated to `execute-plans` and Pantheon-owned dev hosting.
+The repository no longer ships the Lovable/`front-ai-trading-system`
+coordination publisher, mirror, drift guard, bootstrap helper, receiver, or
+manual-replay workflows. Current frontend work must use `execute-plans`, the
+assistant dev bridge, and governed repair worktrees described above.
 
-The repo-owned supervisor config keeps the legacy coordination publisher
-disabled for current dev delivery. Do not re-enable `.orchestrator` coordination
-publishing as a live workaround for Management AI, OpenClaw, Pantheon, Agora, or
-`execute-plans` work; use the assistant dev bridge and governed repair-worktree
-routes instead.
-
-Known legacy surfaces include:
-
-- `.orchestrator/coordination_repo_mirror.py`
-- `.orchestrator/lovable_task_publisher.py`
-- `scripts/bootstrap_front_repo.sh`
-- `scripts/coordination_publish_handoff.py`
-- `scripts/coordination_drift_guard.py`
-- `docs/delivery-coordination-bus.md` before its 2026-06-08 supersession note
-
-If a worker needs to use one of these flows, update the code/config first and
-put that change through PR review before dispatching frontend work.
+Historical specifications and delivery evidence can still mention
+`front-ai-trading-system`, `lovable-ui-task`, or Lovable publish flows. Those
+references are archival evidence only; they are not executable development
+instructions and must not be used to recreate the retired automation.

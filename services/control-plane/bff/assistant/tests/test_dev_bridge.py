@@ -40,7 +40,10 @@ from ..dev_bridge_signer import (
 )
 from .. import dev_bridge_dispatcher
 from ..dev_bridge_dispatcher import dispatch_task_packet
-from .dev_bridge_test_support import write_materializing_ai_status
+from .dev_bridge_test_support import (
+    authoritative_test_runtime_env,
+    write_materializing_ai_status,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +274,12 @@ class TestDispatcher(unittest.TestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.repo_root = self._tmpdir.name
         write_materializing_ai_status(Path(self.repo_root))
+        self.runtime_env = authoritative_test_runtime_env(Path(self.repo_root))
+        self._environment = patch.dict(os.environ, self.runtime_env, clear=False)
+        self._environment.start()
 
     def tearDown(self):
+        self._environment.stop()
         self._tmpdir.cleanup()
 
     def _signed_request(self, *, dry_run: bool = False, packet_id: str = "pkt_disp001") -> BridgeDispatchRequest:
@@ -308,15 +315,11 @@ class TestDispatcher(unittest.TestCase):
             "BRIDGE_SIGNING_PRIVATE_KEY": "private",
             "BRIDGE_SIGNING_KEY": "legacy-symmetric",
             "BRIDGE_SIGNING_KEY_ID": "active-id",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY": "assertion-private",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY": "assertion-ed25519-private",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID": "assertion-active-id",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_JSON": "{}",
         }
         dispatch_task_packet(
             req,
             key_store=_TEST_KEY_STORE,
-            runtime_env=secrets,
+            runtime_env={**self.runtime_env, **secrets},
         )
         calls = [
             json.loads(line)
@@ -333,8 +336,6 @@ class TestDispatcher(unittest.TestCase):
         with patch.dict(os.environ, {
             "BRIDGE_SIGNING_PRIVATE_KEY": "bridge-private",
             "BRIDGE_SIGNING_KEY_ID": "bridge-id",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY": "operator-private",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID": "operator-id",
         }, clear=False), patch.object(
             dev_bridge_dispatcher.subprocess, "run", return_value=completed
         ) as run:
@@ -342,8 +343,6 @@ class TestDispatcher(unittest.TestCase):
         child_env = run.call_args.kwargs["env"]
         self.assertNotIn("BRIDGE_SIGNING_PRIVATE_KEY", child_env)
         self.assertNotIn("BRIDGE_SIGNING_KEY_ID", child_env)
-        self.assertNotIn("PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY", child_env)
-        self.assertNotIn("PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID", child_env)
 
     def test_replay_rejected_on_second_dispatch(self):
         req = self._signed_request(packet_id="pkt_replay001")

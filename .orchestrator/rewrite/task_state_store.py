@@ -309,10 +309,6 @@ def _task_census(state: Any) -> dict[str, Any]:
     }
 
 
-def nonterminal_task_ids(state: Any) -> set[str]:
-    return set(_task_census(state)["nonterminal_ids"])
-
-
 def _parse_audit_timestamp(value: str) -> datetime | None:
     text = value.strip()
     if text[-1:] in {"z", "Z"}:

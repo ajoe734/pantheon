@@ -276,10 +276,11 @@ Lifecycle:
 
 ## 3. Status Commands
 
-Do not edit state files or impersonate an actor with `AI_NAME`. Source tasks
-enter through the signed dev bridge. Lifecycle commands are accepted only from
-the exact supervisor-issued worker lease; Human/Ops recovery uses a short-lived,
-single-use operator assertion.
+Do not edit state files or impersonate an actor with `AI_NAME`. Product-originated
+source tasks may enter through the signed dev bridge; explicit local Human/Ops
+maintenance uses `scripts/human-ops-status.sh`. Worker lifecycle commands are
+accepted only from the exact supervisor-issued worker lease. Workers must not
+invoke the Human/Ops wrapper.
 
 ## 4. Local Runtime
 
@@ -426,9 +427,10 @@ Use that output as the first prompt in Claude Code, Codex CLI, Gemini CLI, Copil
 
 ## 4. Status Commands
 
-Do not edit collaboration files or use `AI_NAME` as authorization. Source task
-creation uses the signed dev bridge; lifecycle writes require the exact active
-worker lease, and Human/Ops recovery requires a single-use operator assertion.
+Do not edit collaboration files or use `AI_NAME` as authorization. Product task
+creation may use the signed dev bridge; explicit local Human/Ops maintenance
+uses `scripts/human-ops-status.sh`. Worker lifecycle writes require the exact
+active worker lease, and workers must not invoke the Human/Ops wrapper.
 
 Lifecycle:
 - `todo -> in_progress -> review -> review_approved -> done`

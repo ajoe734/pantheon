@@ -77,14 +77,12 @@ def test_authority_private_keys_use_per_environment_protected_files() -> None:
     assert 'docker compose --env-file "$env_file" --env-file "$PANTHEON_AUTHORITY_SIGNING_ENV_FILE"' in script
     assert "STAGING_AUTHORITY_SIGNING_ENV_FILE" in workflow
     assert "BRIDGE_SIGNING_PRIVATE_KEY" not in command_prefix
-    assert "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY" not in command_prefix
     assert "secrets.BRIDGE_SIGNING_PRIVATE_KEY" not in workflow
-    assert "secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY" not in workflow
 
 
 def test_payload_validation_uses_only_invalid_authority_placeholders() -> None:
     """The early Compose syntax check runs before protected deployment
-    settings are injected.  It needs inert non-empty placeholders for all six
+    settings are injected.  It needs inert non-empty placeholders for all three
     required authority fields, but must never receive a production private key
     or replace the deploy-step public-map bindings."""
     workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
@@ -101,15 +99,11 @@ def test_payload_validation_uses_only_invalid_authority_placeholders() -> None:
         "BRIDGE_SIGNING_PRIVATE_KEY",
         "BRIDGE_SIGNING_KEY_ID",
         "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
-        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PRIVATE_KEY",
-        "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID",
-        "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON",
     ):
         assert f"{name}=" in validation
     assert "authority-validation-only" in validation
     assert "docker compose -f docker-compose.yml config --quiet" in validation
     assert "secrets.BRIDGE_SIGNING_PUBLIC_KEYS_JSON" in deploy
-    assert "secrets.PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON" in deploy
 
 
 def test_workflow_rejects_refs_that_predate_the_strict_auth_contract() -> None:
@@ -183,8 +177,6 @@ def _run_deploy_script(
         {
             "BRIDGE_SIGNING_KEY_ID": "test-bridge-v1",
             "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": '{"test-bridge-v1":"AA"}',
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_KEY_ID": "test-operator-v1",
-            "PANTHEON_CANONICAL_MUTATION_ASSERTION_PUBLIC_KEYS_JSON": '{"test-operator-v1":"AA"}',
         }
     )
     env.update(extra_env)

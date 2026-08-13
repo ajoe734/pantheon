@@ -81,6 +81,58 @@ class V2StartupCacheTests(unittest.TestCase):
             with mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
                 self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
 
+    def test_reserved_phase_can_publish_launch_intent_after_state_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime_root = root / ".orchestrator"
+            runtime_root.mkdir()
+            config = {
+                "paths": {
+                    "status_file": str(root / "ai-status.json"),
+                    "state_file": str(runtime_root / "state.json"),
+                    "event_queue": str(runtime_root / "event-queue.jsonl"),
+                }
+            }
+            (runtime_root / "event-queue.jsonl").write_text("", encoding="utf-8")
+            runtime_state.save_runtime_state(config, runtime_state.default_state())
+
+            def publish_intent(state: dict[str, object]) -> bool:
+                request = supervisor.DeliveryRequest(
+                    agent_id="codex",
+                    provider="codex",
+                    delivery_mode="codex",
+                    message="wake",
+                    task_id="TASK-V2",
+                    reason=supervisor.REASON_OWNED_READY,
+                    metadata={"task_generation": 1},
+                )
+                supervisor._persist_runtime_phase_launch_intent(
+                    config,
+                    state,
+                    request=request,
+                    queue_event_id="evt-v2",
+                    attempt_count=1,
+                    event_id_for_log="evt-v2",
+                    parent_run_id=None,
+                    adapter_name="codex",
+                    activity_type="worker_started",
+                    activity_message=None,
+                )
+                return True
+
+            self.assertTrue(
+                supervisor._run_reserved_runtime_phase(
+                    config,
+                    "process_queue",
+                    publish_intent,
+                )
+            )
+            final_state = runtime_state.load_runtime_state(config)
+            self.assertNotIn(
+                "process_queue",
+                final_state["supervisor"]["runtime_phase_reservations"],
+            )
+
 
 def config_fixture(root: Path | None = None) -> dict[str, object]:
     paths: dict[str, str] = {}
@@ -893,7 +945,7 @@ class DurableQueueContractTests(unittest.TestCase):
         self.assertEqual(record["status"], "pending")
         self.assertEqual(record["last_wait_reason"], "account_capacity_reached")
 
-    def test_delivery_revalidates_exact_endpoint_reservation_before_launch(self) -> None:
+    def test_delivery_allows_parallel_non_slot_endpoint_within_lane_capacity(self) -> None:
         state = with_healthy_delivery_health(self.config, {
             "workers": {
                 "busy": {
@@ -911,14 +963,60 @@ class DurableQueueContractTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
             mock.patch.object(
                 supervisor,
-                "start_worker_for_request",
-                side_effect=AssertionError("reserved endpoint must not launch"),
+                "build_request",
+                return_value=supervisor.DeliveryRequest(
+                    agent_id="codex",
+                    provider="codex",
+                    delivery_mode="codex",
+                    message="wake",
+                    task_id="TASK-1",
+                    reason=supervisor.REASON_OWNED_READY,
+                    metadata={"task_generation": 1, "workspace_path": "/tmp/task-1"},
+                ),
             ),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-2", {"auto_delivered": True}),
+            ) as launch,
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
         ):
             supervisor.process_queue(self.config, state)
         record = state["queue"]["events"]["evt-1"]
-        self.assertEqual(record["status"], "pending")
-        self.assertEqual(record["last_wait_reason"], "endpoint_busy")
+        self.assertEqual(record["status"], "started")
+        launch.assert_called_once()
+
+    def test_pruned_orphan_does_not_cool_down_the_unserved_task(self) -> None:
+        event = {
+            **self.event,
+            "created_at": "2026-08-01T00:00:00Z",
+        }
+        event_key = str(event["event_key"])
+        state = {
+            "workers": {},
+            "queue": {
+                "events": {
+                    "evt-1": {
+                        "status": "queued",
+                        "event_key": event_key,
+                    }
+                }
+            },
+            "seen_event_keys": {event_key: "2026-08-13T03:05:38Z"},
+        }
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
+            mock.patch.object(supervisor, "save_event_queue") as save_queue,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.prune_event_queue(self.config, state))
+
+        self.assertNotIn(event_key, state["seen_event_keys"])
+        self.assertEqual(state["queue"]["events"], {})
+        save_queue.assert_called_once_with(self.config, [])
 
     def test_due_retry_returns_to_queue_and_never_launches(self) -> None:
         due = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
