@@ -1,0 +1,72 @@
+{
+  "task_id": "AGORA-RESEARCH-CANDIDATE-20260813",
+  "program_id": "agora-product-correction-20260813",
+  "status": "ready_for_review",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "timestamp": "2026-08-13T19:15:00Z",
+  "scope": {
+    "repository": "pantheon",
+    "deliverables": [
+      "services/control-plane/bff/agora/research/dispatcher.py",
+      "services/control-plane/bff/agora/research/store.py",
+      "services/control-plane/bff/agora/research/router.py",
+      "services/control-plane/bff/agora/router.py",
+      "services/control-plane/bff/tests/test_agora_research_candidate_governed.py"
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "criterion_1_write_authority_cas_audit": {
+      "verified": true,
+      "details": "Every mutation enforces require_write_role, owner lookup, Idempotency-Key duplicate detection, CAS If-Match / lock_version checks, and audit logging to store.record_audit_action."
+    },
+    "criterion_2_multi_tenant_isolation_404": {
+      "verified": true,
+      "details": "Plans, runs, stages, artifacts, discussions, pools, and member actions persist tenant_id and user_id. Foreign IDs return non-enumerating 404 RESOURCE_NOT_FOUND."
+    },
+    "criterion_3_durable_outbox_lease_adapters_provenance": {
+      "verified": true,
+      "details": "Implemented ResearchDispatcher, StageAdapter, DefaultAllowlistedAdapter for all SD-allowlisted backends (vectorbt, qlib, statsmodels, quantlib, finrl, ray_tune, optimizer_svc, rllib, openclaw_result_synthesis), sha256 checksums, lineage refs, and explicit real/simulation/fixture/unavailable provenance."
+    },
+    "criterion_4_production_candidate_pool_no_default_prototypes": {
+      "verified": true,
+      "details": "Production profile candidate pool creation returns empty pool with explicit exclusion_reasons (no_authoritative_registry_candidates_discovered, no_eligible_research_artifacts_match_filter) when no authoritative candidates are supplied."
+    },
+    "criterion_5_strategy_pool_lookup_and_parity": {
+      "verified": true,
+      "details": "Exposed GET /bff/agora/candidate-pools/lookup (strategy_id, strategy_version, strategy_ref) and GET /bff/agora/strategies/{strategy_id}/candidate-pool with owner scoping. Tested durable outbox leases, crash recovery, and store parity."
+    }
+  },
+  "test_suites_executed": [
+    {
+      "suite": "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
+      "passed": 6,
+      "failed": 0
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_agora_candidate_truth.py",
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_agora_candidate_pool.py",
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_agora_research_run_projection.py",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_agora_research_store_backend.py",
+      "passed": 3,
+      "skipped": 2,
+      "failed": 0
+    }
+  ],
+  "conclusions": [
+    "All 5 acceptance criteria for AGORA-RESEARCH-CANDIDATE-20260813 are fully implemented and verified.",
+    "23 tests passed across all 5 test suites (100% pass rate)."
+  ]
+}
