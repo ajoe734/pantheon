@@ -328,8 +328,9 @@ def create_app(
     provider_token: str | None = None,
     expected_service_actor: str | None = None,
     replay_path: str | Path | None = None,
+    application: FastAPI | None = None,
 ) -> FastAPI:
-    """Build the internal endpoint with injectable boundaries for acceptance."""
+    """Attach the internal endpoint to an app with injectable boundaries."""
 
     provider = provider or AssistantOpenClawProvider()
     configured_token = (
@@ -346,7 +347,7 @@ def create_app(
     replay_store = ConsultationProviderReplayStore(
         replay_path or _default_replay_path()
     )
-    application = FastAPI(
+    application = application or FastAPI(
         title="Pantheon OpenClaw Consultation Provider",
         version="1.0.0",
     )
@@ -475,4 +476,11 @@ def create_app(
     return application
 
 
-app = create_app()
+# The compose writer can switch the existing adapter command from ``main:app``
+# to ``consultation_provider:app`` without losing any of the adapter's routes.
+# This module only attaches one owner-specific route; it does not start a second
+# service or workflow.
+from main import app as _gateway_app  # noqa: E402
+
+
+app = create_app(application=_gateway_app)

@@ -40,6 +40,7 @@ if str(_ADAPTER_DIR) not in sys.path:
 
 from consultation_provider import (  # noqa: E402
     CONSULTATION_CONTRIBUTION_PATH,
+    app as integrated_adapter_app,
     create_app,
 )
 
@@ -338,6 +339,14 @@ def _http_provider(config: ExecutorConfig) -> HttpContributionProvider:
         service_actor=config.provider_service_actor,
         timeout_seconds=config.timeout_seconds,
     )
+
+
+def test_consultation_entrypoint_preserves_existing_adapter_routes() -> None:
+    paths = {getattr(route, "path", None) for route in integrated_adapter_app.routes}
+
+    assert "/healthz" in paths
+    assert "/api/openclaw-adapter/assistant/providers/openclaw/invoke" in paths
+    assert CONSULTATION_CONTRIBUTION_PATH in paths
 
 
 def test_current_provider_publishes_one_memo_and_replays_acknowledgement(
