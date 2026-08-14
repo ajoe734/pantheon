@@ -624,6 +624,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                     "status": "running",
                     "lease_expires_at": lease_expires_at,
                     "workspace_path": str(self.workspace),
+                    "workspace_repository_id": "pantheon",
                     "status_root": str(worker_status_root),
                     "status_command_runtime": self.issued_runtime,
                     "queue_event_id": queue_event_id,
@@ -642,6 +643,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                     worker_task_id: {
                         "task_id": worker_task_id,
                         "path": str(self.workspace),
+                        "repository_id": "pantheon",
                         "status_root": str(worker_status_root),
                     }
                 }
@@ -1912,6 +1914,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                                 "pid_start_ticks": worker_pid_start_ticks,
                                 "process_generation": worker_process_generation,
                                 "workspace_path": str(worktree),
+                                "workspace_repository_id": "pantheon",
                                 "status_root": str(central),
                                 "status_command_runtime": issued_runtime,
                                 "request_snapshot": {
@@ -1921,6 +1924,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                                         "task_generation": 1,
                                         "workspace_task_id": "CENTRAL-ROOT-001",
                                         "workspace_path": str(worktree),
+                                        "workspace_repository_id": "pantheon",
                                         "status_root": str(central),
                                         "status_command_runtime": issued_runtime,
                                     }
@@ -1934,6 +1938,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                                     "workspace_task_id": "CENTRAL-ROOT-001",
                                     "branch": "task/CENTRAL-ROOT-001",
                                     "path": str(worktree),
+                                    "repository_id": "pantheon",
                                     "status_root": str(central),
                                     "last_queue_event_id": "evt-codex-test-run",
                                     "last_target_agent": "Codex2",
@@ -2055,6 +2060,36 @@ class StatusRootRoutingTests(unittest.TestCase):
             )
             self.assertEqual(approve.returncode, 0, approve.stderr + approve.stdout)
             bind_runtime_actor("codex2", "codex2_1")
+            delivery_worktree = root / "registered-delivery-worktree"
+            subprocess.run(
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "-b",
+                    "task/CENTRAL-ROOT-001",
+                    str(delivery_worktree),
+                    "HEAD",
+                ],
+                cwd=central,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            runtime = json.loads(central_state_path.read_text(encoding="utf-8"))
+            worker = runtime["workers"]["codex-test-run"]
+            worker["workspace_path"] = str(delivery_worktree)
+            worker["request_snapshot"]["metadata"]["workspace_path"] = str(
+                delivery_worktree
+            )
+            runtime["worker_worktrees"]["leases"]["CENTRAL-ROOT-001"][
+                "path"
+            ] = str(delivery_worktree)
+            central_state_path.write_text(
+                json.dumps(runtime, indent=2) + "\n", encoding="utf-8"
+            )
+            env["PANTHEON_WORKTREE_ROOT"] = str(delivery_worktree)
+            env["ORCH_WORKSPACE_PATH"] = str(delivery_worktree)
             done = run_status(
                 ["done", "CENTRAL-ROOT-001", "central done and archive only"],
                 actor="Codex2",
@@ -2110,7 +2145,13 @@ class StatusRootRoutingTests(unittest.TestCase):
                 self.assertEqual(event["status_command"]["command_root"], str(central.resolve()))
                 self.assertEqual(event["status_command"]["source_sha"], command_sha)
                 self.assertEqual(event["status_command"]["status_root"], str(central.resolve()))
-                self.assertEqual(event["status_command"]["delivery_root"], str(worktree.resolve()))
+                expected_delivery_root = (
+                    delivery_worktree if event.get("type") == "done" else worktree
+                )
+                self.assertEqual(
+                    event["status_command"]["delivery_root"],
+                    str(expected_delivery_root.resolve()),
+                )
                 self.assertEqual(
                     event["status_command"]["worker_lease"],
                     {
@@ -2123,11 +2164,14 @@ class StatusRootRoutingTests(unittest.TestCase):
                         "process_generation": worker_process_generation,
                         "task_generation": 1,
                         "actor": "Codex2",
+                        "workspace_repository_id": "pantheon",
+                        "workspace_branch": "",
+                        "workspace_source_root": "",
                     },
                 )
             self.assertEqual(
                 archived["task"]["delivery"]["repository_path"],
-                str(worktree.resolve()),
+                str(delivery_worktree.resolve()),
             )
             self.assertEqual(
                 archived["task"]["delivery"]["status_command_runtime"]["command_root"],
@@ -4435,6 +4479,158 @@ class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
             )
 
 
+class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
+    @staticmethod
+    def _git(cwd: Path, *args: str) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def _repository_fixture(
+        self, root: Path
+    ) -> tuple[dict[str, object], Path, Path, Path, dict[str, object]]:
+        status_root = root / "pantheon-status"
+        source_root = root / "execute-plans"
+        workspace_root = root / "worker" / "agora-candidate"
+        status_root.mkdir()
+        source_root.mkdir()
+        self._git(source_root, "init", "-b", "dev")
+        self._git(source_root, "config", "user.name", "Test")
+        self._git(source_root, "config", "user.email", "test@example.com")
+        (source_root / "README.md").write_text("execute plans\n", encoding="utf-8")
+        self._git(source_root, "add", "README.md")
+        self._git(source_root, "commit", "-m", "initial")
+        self._git(
+            source_root,
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/ajoe734/execute-plans.git",
+        )
+        workspace_root.parent.mkdir()
+        self._git(
+            source_root,
+            "worktree",
+            "add",
+            "-b",
+            "task/AGORA-FE-CANDIDATE-20260813",
+            str(workspace_root),
+        )
+        config: dict[str, object] = {
+            "paths": {"status_file": str(status_root / "ai-status.json")},
+            "github_bus": {"repo": "ajoe734/pantheon"},
+            "coordination": {
+                "repositories": {
+                    "execute_plans": {"local_path": str(source_root)}
+                }
+            },
+        }
+        task: dict[str, object] = {
+            "id": "AGORA-FE-CANDIDATE-20260813",
+            "artifacts": [
+                "execute-plans/src/agora/components/CandidateReviewDrawer.tsx"
+            ],
+        }
+        return config, status_root, source_root, workspace_root, task
+
+    def test_explicit_workspace_uses_registered_execute_plans_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config, status_root, _source, workspace, task = self._repository_fixture(
+                Path(directory)
+            )
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "PANTHEON_WORKTREE_ROOT": str(workspace),
+                        "ORCH_WORKSPACE_PATH": str(workspace),
+                    },
+                    clear=True,
+                ),
+            ):
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    config, task, "execute_plans"
+                )
+
+        self.assertEqual(selected, workspace.resolve())
+        self.assertEqual(metadata["repository_path_source"], "explicit_workspace_env")
+        self.assertTrue(metadata["workspace_env_match"])
+        self.assertFalse(metadata["workspace_lease_validated"])
+
+    def test_workspace_binding_requires_both_environment_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config, status_root, _source, workspace, task = self._repository_fixture(
+                Path(directory)
+            )
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_WORKTREE_ROOT": str(workspace)},
+                    clear=True,
+                ),
+                self.assertRaisesRegex(
+                    SystemExit, "requires both PANTHEON_WORKTREE_ROOT"
+                ),
+            ):
+                ai_status._done_delivery_repository_root(
+                    config, task, "execute_plans"
+                )
+
+    def test_worker_workspace_requires_matching_lease_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config, status_root, _source, workspace, task = self._repository_fixture(
+                Path(directory)
+            )
+            ai_status._STATUS_COMMAND_LEASE_LOCAL.binding = {
+                "task_id": task["id"],
+                "workspace_repository_id": "pantheon",
+            }
+            try:
+                with (
+                    mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            "ORCH_RUN_ID": "run-agora",
+                            "PANTHEON_WORKTREE_ROOT": str(workspace),
+                            "ORCH_WORKSPACE_PATH": str(workspace),
+                        },
+                        clear=True,
+                    ),
+                    self.assertRaisesRegex(
+                        SystemExit, "worker lease repository does not match"
+                    ),
+                ):
+                    ai_status._done_delivery_repository_root(
+                        config, task, "execute_plans"
+                    )
+            finally:
+                ai_status._clear_status_command_lease_binding()
+
+    def test_registry_fallback_remains_for_commands_without_workspace_env(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config, status_root, source, _workspace, task = self._repository_fixture(
+                Path(directory)
+            )
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(os.environ, {}, clear=True),
+            ):
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    config, task, "execute_plans"
+                )
+
+        self.assertEqual(selected, source.resolve())
+        self.assertEqual(metadata["repository_path_source"], "repository_registry")
+
+
 class DeliveryMetadataValidationTests(unittest.TestCase):
     @staticmethod
     def _owner_reassignment_event(
@@ -4945,13 +5141,26 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "status": "review_approved",
             "artifacts": ["execute-plans/e2e/dummy.spec.ts"],
         }
+        execute_plans_root = Path("/tmp/execute-plans-delivery-test")
         with (
             mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(
+                ai_status,
+                "_done_delivery_repository_root",
+                return_value=(
+                    execute_plans_root,
+                    {
+                        "repository_path_source": "repository_registry",
+                        "workspace_env_names": [],
+                        "workspace_env_match": False,
+                        "workspace_lease_validated": False,
+                    },
+                ),
+            ),
         ):
             delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
 
-        execute_plans_root = Path(delivery["repository_path"])
         self.assertEqual(delivery["repository_id"], "execute_plans")
         self.assertEqual(delivery["repository_path"], str(execute_plans_root))
         self.assertEqual(delivery["repository_slug"], "ajoe734/execute-plans")
@@ -4959,25 +5168,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertTrue(calls)
         self.assertTrue(all(cwd == execute_plans_root for _, cwd in calls))
 
-    def test_collect_done_delivery_metadata_falls_back_to_pantheon_for_missing_mixed_repo(self) -> None:
-        responses = iter(
-            [
-                "task/BFF-PM12-002",
-                "abc123",
-                "BFF-PM12-002: refresh closeout gate",
-                "LLM-Agent: Codex2\nTask-ID: BFF-PM12-002\nReviewer: Claude2\n",
-                "Codex2",
-                "codex2@example.com",
-                "",
-                "",
-            ]
-        )
-        calls: list[tuple[list[str], Path | None]] = []
-
-        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
-            calls.append((args, kwargs.get("cwd") if isinstance(kwargs.get("cwd"), Path) else None))
-            return next(responses)
-
+    def test_collect_done_delivery_metadata_rejects_missing_mixed_repo(self) -> None:
         task = {
             "id": "BFF-PM12-002",
             "owner": "Codex2",
@@ -5006,18 +5197,12 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
 
             with (
                 mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
-                mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
                 mock.patch.object(ai_status, "repository_local_path", side_effect=fake_repository_local_path),
+                self.assertRaisesRegex(
+                    SystemExit, "registered delivery repository does not exist"
+                ),
             ):
-                delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
-
-        self.assertEqual(delivery["repository_id"], "pantheon")
-        self.assertEqual(delivery["repository_path"], str(pantheon_root))
-        self.assertEqual(delivery["branch"], "task/BFF-PM12-002")
-        self.assertEqual(delivery["repository_fallback"]["from_repository_id"], "execute_plans")
-        self.assertEqual(delivery["repository_fallback"]["missing_repository_path"], str(missing_execute_plans_root))
-        self.assertTrue(calls)
-        self.assertTrue(all(cwd == pantheon_root for _, cwd in calls))
+                ai_status.collect_done_delivery_metadata(task, "Codex2")
 
     def test_collect_done_delivery_metadata_blocks_unmerged_task_pr(self) -> None:
         task = {

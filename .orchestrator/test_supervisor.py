@@ -14,6 +14,7 @@ import ast
 import inspect
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -375,6 +376,153 @@ def planner_decision(
         checked_at="2026-08-11T00:00:01Z",
         cooldown_seconds=0,
     )
+
+
+class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
+    @staticmethod
+    def _git(cwd: Path, *args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return proc.stdout.strip()
+
+    def test_execute_plans_task_gets_execute_plans_worktree_and_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon"
+            execute_root = root / "execute-plans"
+            status_root.mkdir()
+            execute_root.mkdir()
+            self._git(execute_root, "init", "-b", "dev")
+            self._git(execute_root, "config", "user.name", "Test")
+            self._git(execute_root, "config", "user.email", "test@example.com")
+            (execute_root / "README.md").write_text("execute plans\n", encoding="utf-8")
+            self._git(execute_root, "add", "README.md")
+            self._git(execute_root, "commit", "-m", "initial")
+            self._git(
+                execute_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/execute-plans.git",
+            )
+            head = self._git(execute_root, "rev-parse", "HEAD")
+            self._git(execute_root, "update-ref", "refs/remotes/origin/dev", head)
+            self._git(
+                execute_root,
+                "branch",
+                "task/AGORA-FE-CANDIDATE-20260813",
+                head,
+            )
+            (execute_root / "README.md").write_text(
+                "execute plans current dev\n", encoding="utf-8"
+            )
+            self._git(execute_root, "add", "README.md")
+            self._git(execute_root, "commit", "-m", "advance dev")
+            current_dev_head = self._git(execute_root, "rev-parse", "HEAD")
+            self._git(
+                execute_root,
+                "update-ref",
+                "refs/remotes/origin/dev",
+                current_dev_head,
+            )
+
+            config = config_fixture(status_root)
+            config.update(
+                {
+                    "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                    "github_bus": {"repo": "ajoe734/pantheon"},
+                    "worker_worktrees": {
+                        "enabled": True,
+                        "root": str(root / "worker-worktrees"),
+                        "base_ref": "origin/dev",
+                        "reuse_existing": True,
+                        "execution_reasons": [supervisor.REASON_OWNED_READY],
+                    },
+                    "coordination": {
+                        "repositories": {
+                            "execute_plans": {"local_path": str(execute_root)}
+                        }
+                    },
+                }
+            )
+            task = task_fixture("AGORA-FE-CANDIDATE-20260813")
+            task["artifacts"] = [
+                "execute-plans/src/agora/components/CandidateReviewDrawer.tsx"
+            ]
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=str(task["id"]),
+                reason=supervisor.REASON_OWNED_READY,
+                context_files=["AI_COLLABORATION_GUIDE.md"],
+                target_files=list(task["artifacts"]),
+                metadata={"task": task, "task_generation": 1},
+            )
+            state: dict[str, object] = {"worker_worktrees": {"leases": {}}}
+
+            with (
+                mock.patch.object(
+                    supervisor, "_worker_base_ref_precondition", return_value=(True, None)
+                ),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, error = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-agora",
+                    target_agent="Codex",
+                )
+
+            self.assertTrue(ok, error)
+            workspace = Path(str(request.metadata["workspace_path"]))
+            self.assertEqual(
+                workspace.parent.name,
+                "execute-plans",
+            )
+            self.assertEqual(request.metadata["workspace_repository_id"], "execute_plans")
+            self.assertEqual(request.metadata["workspace_source_root"], str(execute_root))
+            self.assertEqual(request.metadata["workspace_base_ref"], "origin/dev")
+            self.assertEqual(self._git(workspace, "rev-parse", "--show-toplevel"), str(workspace))
+            self.assertEqual(self._git(workspace, "rev-parse", "HEAD"), current_dev_head)
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+            lease = state["worker_worktrees"]["leases"][str(task["id"])]
+            self.assertEqual(lease["repository_id"], "execute_plans")
+            self.assertEqual(lease["source_root"], str(execute_root))
+            self.assertIn("Cross-repository delivery authority", request.message)
+            self.assertEqual(
+                request.metadata["workspace_target_files"],
+                ["src/agora/components/CandidateReviewDrawer.tsx"],
+            )
+            replay_request = supervisor.request_from_snapshot(
+                supervisor.request_snapshot(request)
+            )
+            with mock.patch.object(supervisor, "write_activity_log"):
+                replay_ok, replay_error = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    replay_request,
+                    queue_event_id="evt-agora-replay",
+                    target_agent="Codex",
+                )
+            self.assertTrue(replay_ok, replay_error)
+            self.assertEqual(
+                replay_request.metadata["workspace_repository_id"], "execute_plans"
+            )
+            with mock.patch.object(supervisor, "write_activity_log"):
+                cleaned = supervisor.cleanup_inactive_worker_worktrees(config, state)
+            self.assertTrue(cleaned)
+            self.assertFalse(workspace.exists())
+            self.assertNotIn(
+                str(task["id"]), state["worker_worktrees"]["leases"]
+            )
 
 
 class RuntimeConfigurationContractTests(unittest.TestCase):

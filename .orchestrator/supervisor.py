@@ -43,7 +43,9 @@ from common import (
     load_json,
     load_status,
     new_runtime_id,
+    first_symlink_component,
     normalize_agent_id,
+    normalize_github_repo_slug,
     is_github_cli_auth_failure,
     resolved_coordinator_status_root,
     config_status_root,
@@ -72,6 +74,15 @@ from dispatch_policy import (
     ready_dispatch_settings,
 )
 from github_bus import GitHubBusError, resolve_gh_binary, run_gh_process, sync_github_bus
+from multi_repo_registry import (
+    artifact_repository_id,
+    repository_configured_local_path,
+    repository_local_path,
+    repository_relative_artifact_path,
+    repository_slug,
+    resolve_repository,
+    task_primary_repository_id,
+)
 from provider_permissions import probe_provider_auth
 from rebase_helper import continue_or_skip_empty
 from runtime_state import (
@@ -1858,7 +1869,12 @@ def _worker_worktree_base_root(config: dict[str, Any], settings: dict[str, Any])
     return configured.resolve()
 
 
-def worker_worktree_source_root(config: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
+def worker_worktree_source_root(
+    config: dict[str, Any],
+    settings: dict[str, Any] | None = None,
+    *,
+    repository_id: str = "pantheon",
+) -> Path:
     """Return the writable git checkout used to create worker worktrees.
 
     The supervisor can run split-root: canonical status, activity, and queue
@@ -1869,6 +1885,13 @@ def worker_worktree_source_root(config: dict[str, Any], settings: dict[str, Any]
     """
 
     active_settings = settings or worker_worktree_settings(config)
+    if repository_id != "pantheon":
+        repository_root = repository_local_path(config, repository_id)
+        if repository_root is None:
+            raise RuntimeError(
+                f"delivery repository {repository_id!r} has no registered local_path"
+            )
+        return repository_root.resolve()
     status_root = config_path(config, "status_file").parents[0]
     configured = str(active_settings.get("source_root") or "").strip()
     if not configured:
@@ -1879,11 +1902,178 @@ def worker_worktree_source_root(config: dict[str, Any], settings: dict[str, Any]
     return source_root.resolve()
 
 
-def worker_task_worktree_path(config: dict[str, Any], task_id: str | None, settings: dict[str, Any] | None = None) -> Path:
+def worker_task_worktree_path(
+    config: dict[str, Any],
+    task_id: str | None,
+    settings: dict[str, Any] | None = None,
+    *,
+    repository_id: str = "pantheon",
+) -> Path:
     active_settings = settings or worker_worktree_settings(config)
-    repo_root = config_path(config, "status_file").parents[0]
-    repo_slug = re.sub(r"[^a-z0-9]+", "-", repo_root.name.lower()).strip("-") or "repo"
+    if repository_id == "pantheon":
+        repository_name = config_path(config, "status_file").parents[0].name
+    else:
+        repository_name = str(
+            resolve_repository(config, repository_id).get("display_name") or repository_id
+        )
+    repo_slug = re.sub(r"[^a-z0-9]+", "-", repository_name.lower()).strip("-") or "repo"
     return _worker_worktree_base_root(config, active_settings) / repo_slug / _task_id_slug(task_id)
+
+
+def worker_request_repository_id(config: dict[str, Any], request: DeliveryRequest) -> str:
+    task = request.metadata.get("task")
+    task_payload = task if isinstance(task, dict) else {}
+    repository_id = task_primary_repository_id(config, task_payload)
+    if repository_id is None:
+        raise RuntimeError(
+            "task artifacts span multiple non-Pantheon delivery repositories"
+        )
+    declared = str(request.metadata.get("workspace_repository_id") or "").strip()
+    if declared and declared != repository_id:
+        raise RuntimeError(
+            f"workspace repository mismatch: {declared} != {repository_id}"
+        )
+    return repository_id
+
+
+def worker_repository_base_ref(
+    config: dict[str, Any],
+    settings: dict[str, Any],
+    repository_id: str,
+) -> str:
+    if repository_id == "pantheon":
+        return str(settings.get("base_ref") or "origin/dev")
+    default_branch = str(
+        resolve_repository(config, repository_id).get("default_branch") or ""
+    ).strip()
+    if not default_branch:
+        raise RuntimeError(
+            f"delivery repository {repository_id!r} has no default_branch"
+        )
+    return f"origin/{default_branch}"
+
+
+def validate_worker_repository_source(
+    config: dict[str, Any],
+    repository_id: str,
+    source_root: Path,
+) -> None:
+    configured_root = repository_configured_local_path(config, repository_id)
+    if repository_id == "pantheon":
+        source_setting = str(
+            worker_worktree_settings(config).get("source_root") or ""
+        ).strip()
+        if source_setting:
+            configured_root = Path(os.path.expanduser(source_setting))
+            if not configured_root.is_absolute():
+                configured_root = (
+                    config_path(config, "status_file").parents[0]
+                    / configured_root
+                )
+            configured_root = Path(os.path.abspath(configured_root))
+    if configured_root is None:
+        raise RuntimeError(
+            f"delivery repository {repository_id!r} has no configured local_path"
+        )
+    configured_symlink = first_symlink_component(configured_root)
+    if configured_symlink is not None:
+        raise RuntimeError(
+            "repository source root cannot include a symlink component: "
+            f"{configured_symlink}"
+        )
+    if configured_root.resolve() != source_root:
+        raise RuntimeError(
+            f"repository source root does not match configured local_path: {source_root}"
+        )
+    if not source_root.is_absolute():
+        raise RuntimeError(f"repository source root must be absolute: {source_root}")
+    symlink_component = first_symlink_component(source_root)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"repository source root cannot include a symlink component: {symlink_component}"
+        )
+    if not source_root.is_dir():
+        raise RuntimeError(f"repository source root does not exist: {source_root}")
+    top_proc = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=source_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if top_proc.returncode != 0 or Path(top_proc.stdout.strip()).resolve() != source_root:
+        raise RuntimeError(f"repository source root is not a git root: {source_root}")
+    expected_slug = normalize_github_repo_slug(repository_slug(config, repository_id))
+    if not expected_slug:
+        raise RuntimeError(
+            f"delivery repository {repository_id!r} has no configured GitHub slug"
+        )
+    remote_proc = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=source_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    actual_slug = normalize_github_repo_slug(remote_proc.stdout.strip())
+    if remote_proc.returncode != 0 or actual_slug != expected_slug:
+        raise RuntimeError(
+            f"repository source origin mismatch: {actual_slug or 'missing'} != {expected_slug}"
+        )
+
+
+def validate_worker_workspace_binding(
+    source_root: Path,
+    workspace_path: Path,
+    *,
+    expected_branch: str | None = None,
+) -> None:
+    top_proc = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=workspace_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if top_proc.returncode != 0 or Path(top_proc.stdout.strip()).resolve() != workspace_path:
+        raise RuntimeError(
+            f"workspace_path is not a git repository root: {workspace_path}"
+        )
+
+    def common_dir(root: Path) -> Path:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"git common directory is unavailable for {root}")
+        path = Path(proc.stdout.strip())
+        if not path.is_absolute():
+            path = root / path
+        return path.resolve()
+
+    if common_dir(workspace_path) != common_dir(source_root):
+        raise RuntimeError(
+            "workspace_path is not registered to the selected delivery repository"
+        )
+    records = {
+        Path(record["worktree"]).resolve(): record
+        for record in _git_worktree_records(source_root)
+        if record.get("worktree")
+    }
+    record = records.get(workspace_path)
+    if record is None:
+        raise RuntimeError(
+            "workspace_path is absent from the selected repository worktree registry"
+        )
+    branch = _worktree_record_branch(record)
+    if expected_branch and branch != expected_branch:
+        raise RuntimeError(
+            f"workspace branch mismatch: {branch or 'detached'} != {expected_branch}"
+        )
 
 
 def worker_worktree_reason_enabled(reason: str | None, settings: dict[str, Any]) -> bool:
@@ -2546,6 +2736,74 @@ def materialize_worker_context_files(
     return materialized
 
 
+def bind_external_worker_context(
+    config: dict[str, Any],
+    request: DeliveryRequest,
+    repository_id: str,
+) -> list[str]:
+    """Bind Pantheon-owned instructions without writing them into another repo."""
+
+    if repository_id == "pantheon":
+        return []
+    status_root = config_path(config, "status_file").parents[0].resolve()
+    command_root = THIS_DIR.parent.resolve()
+    bound_context: list[str] = []
+    for raw_path in request.context_files:
+        raw_value = str(raw_path or "").strip()
+        if not raw_value:
+            continue
+        candidate = Path(raw_value)
+        if candidate.is_absolute():
+            resolved = candidate.resolve()
+            for root in (status_root, command_root):
+                try:
+                    resolved.relative_to(root)
+                except ValueError:
+                    continue
+                if resolved.is_file():
+                    bound_context.append(str(resolved))
+                break
+            continue
+        for root in (status_root, command_root):
+            resolved = (root / candidate).resolve()
+            try:
+                resolved.relative_to(root)
+            except ValueError:
+                continue
+            if resolved.is_file():
+                bound_context.append(str(resolved))
+                break
+
+    # Keep the delivery checkout pristine.  A generated Pantheon task brief in
+    # an execute-plans worktree is neither product source nor valid evidence.
+    request.context_files = list(dict.fromkeys(bound_context))
+    delivery_targets = [
+        str(repository_relative_artifact_path(config, artifact, repository_id))
+        for artifact in request.target_files
+        if artifact_repository_id(config, artifact) == repository_id
+    ]
+    request.metadata["workspace_target_files"] = delivery_targets
+    context_lines = "\n".join(f"- {path}" for path in request.context_files) or "- (none; use governed task show)"
+    target_lines = "\n".join(f"- {path}" for path in delivery_targets) or "- (none)"
+    request.message += (
+        "\n\nCross-repository delivery authority (this section overrides any relative "
+        "Pantheon path above):\n"
+        f"- Delivery repository id: {repository_id}\n"
+        "- The current working directory is the supervisor-leased delivery worktree. "
+        "Do not create another checkout or edit supervisor configuration.\n"
+        "- The task branch is already provisioned. Do not run Pantheon's relative "
+        "task_start.sh here; if the branch binding is wrong, report a blocker.\n"
+        "- Run governed lifecycle commands only through "
+        "`$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh`; relative Pantheon scripts "
+        "are not part of this repository.\n"
+        "- Read-only context files:\n"
+        f"{context_lines}\n"
+        "- Repository-relative delivery targets:\n"
+        f"{target_lines}\n"
+    )
+    return []
+
+
 def prepare_worker_workspace(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -2597,40 +2855,96 @@ def prepare_worker_workspace(
             )
             return False, message
         return True, None
+    try:
+        repository_id = worker_request_repository_id(config, request)
+        source_root = worker_worktree_source_root(
+            config,
+            settings,
+            repository_id=repository_id,
+        )
+        base_ref = worker_repository_base_ref(config, settings, repository_id)
+        validate_worker_repository_source(config, repository_id, source_root)
+    except RuntimeError as exc:
+        message = (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: {exc}."
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_lease",
+                "task_id": request.task_id,
+                "workspace_task_id": workspace_task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "message": message,
+                "refresh_status": "delivery_repository_invalid",
+            },
+        )
+        return False, message
     if request.metadata.get("workspace_path"):
-        if requires_isolated:
-            status_root = config_path(config, "status_file").parents[0].resolve()
-            source_root = worker_worktree_source_root(config, settings)
-            workspace_path = Path(
-                os.path.expanduser(str(request.metadata["workspace_path"]))
-            ).resolve()
+        status_root = config_path(config, "status_file").parents[0].resolve()
+        raw_workspace_path = Path(
+            os.path.expanduser(str(request.metadata["workspace_path"]))
+        )
+        try:
+            if not raw_workspace_path.is_absolute():
+                raise RuntimeError("workspace_path must be absolute")
+            workspace_symlink = first_symlink_component(raw_workspace_path)
+            if workspace_symlink is not None:
+                raise RuntimeError(
+                    f"workspace_path contains a symlink component: {workspace_symlink}"
+                )
+            workspace_path = raw_workspace_path.resolve()
             if workspace_path in {status_root, source_root}:
-                message = (
-                    f"Cannot dispatch explicit retry for {workspace_task_id}: "
-                    "workspace_path resolves to the shared supervisor checkout "
-                    "or configured worker source checkout. "
-                    "Refusing shared-checkout fallback."
+                raise RuntimeError(
+                    "workspace_path resolves to the shared supervisor or repository source checkout"
                 )
-                write_activity_log(
-                    config,
-                    {
-                        "type": "dispatch_blocked_worktree_lease",
-                        "task_id": request.task_id,
-                        "workspace_task_id": workspace_task_id,
-                        "target_agent": target_agent,
-                        "queue_event_id": queue_event_id,
-                        "message": message,
-                        "workspace_path": str(workspace_path),
-                        "refresh_status": "shared_checkout_rejected",
-                    },
-                )
-                return False, message
+            validate_worker_workspace_binding(
+                source_root,
+                workspace_path,
+                expected_branch=str(
+                    request.metadata.get("workspace_branch")
+                    or worker_task_branch(config, workspace_task_id)
+                ),
+            )
+        except RuntimeError as exc:
+            message = (
+                f"Cannot dispatch existing workspace for {workspace_task_id}: {exc}. "
+                "Refusing unregistered checkout fallback."
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_blocked_worktree_lease",
+                    "task_id": request.task_id,
+                    "workspace_task_id": workspace_task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "message": message,
+                    "workspace_path": str(raw_workspace_path),
+                    "refresh_status": "workspace_binding_rejected",
+                },
+            )
+            return False, message
+        request.metadata.update(
+            {
+                "workspace_path": str(workspace_path),
+                "workspace_repository_id": repository_id,
+                "workspace_source_root": str(source_root),
+                "workspace_base_ref": base_ref,
+            }
+        )
         return True, None
 
     status_root = config_path(config, "status_file").parents[0].resolve()
-    repo_root = worker_worktree_source_root(config, settings)
+    repo_root = source_root
     branch = worker_task_branch(config, workspace_task_id)
-    worktree_path = worker_task_worktree_path(config, workspace_task_id, settings)
+    worktree_path = worker_task_worktree_path(
+        config,
+        workspace_task_id,
+        settings,
+        repository_id=repository_id,
+    )
     reused = False
 
     if not repo_root.exists():
@@ -2664,7 +2978,7 @@ def prepare_worker_workspace(
             refresh_ok, refresh_status = _refresh_reused_worker_worktree(
                 repo_root,
                 worktree_path,
-                str(settings.get("base_ref") or "origin/dev"),
+                base_ref,
                 task_id=workspace_task_id,
                 branch=branch,
             )
@@ -2730,7 +3044,12 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
-        created, error = _create_worker_worktree(repo_root, worktree_path, branch, str(settings.get("base_ref") or "origin/dev"))
+        created, error = _create_worker_worktree(
+            repo_root,
+            worktree_path,
+            branch,
+            base_ref,
+        )
         if not created:
             message = error or f"Failed to create worker worktree for {workspace_task_id}."
             write_activity_log(
@@ -2749,6 +3068,40 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
+        # A local task branch can outlive its old worktree.  Creating a new
+        # worktree from that branch without refreshing it resurrects stale
+        # product/control-plane bytes (the live Agora candidate branch pointed
+        # at an earlier Workshop merge).  Apply the same safe ff-only refresh
+        # used for an existing worktree before the lease is published.
+        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+            repo_root,
+            worktree_path,
+            base_ref,
+            task_id=workspace_task_id,
+            branch=branch,
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "worker_worktree_refreshed",
+                "task_id": request.task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "workspace_branch": branch,
+                "workspace_path": str(worktree_path),
+                "status_root": str(status_root),
+                "workspace_source_root": str(repo_root),
+                "workspace_repository_id": repository_id,
+                "refresh_ok": refresh_ok,
+                "refresh_status": refresh_status,
+            },
+        )
+        if not refresh_ok and refresh_status == "skipped_dirty_worktree":
+            message = (
+                f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                f"new worktree {worktree_path} could not be refreshed safely."
+            )
+            return False, message
 
     request.metadata.update(
         {
@@ -2757,9 +3110,18 @@ def prepare_worker_workspace(
             "workspace_branch": branch,
             "status_root": str(status_root),
             "workspace_source_root": str(repo_root),
+            "workspace_repository_id": repository_id,
+            "workspace_base_ref": base_ref,
         }
     )
-    materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
+    if repository_id == "pantheon":
+        materialized_context_files = materialize_worker_context_files(
+            config, request, worktree_path
+        )
+    else:
+        materialized_context_files = bind_external_worker_context(
+            config, request, repository_id
+        )
     leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
     leases[workspace_task_id] = {
         "task_id": request.task_id,
@@ -2768,6 +3130,8 @@ def prepare_worker_workspace(
         "path": str(worktree_path),
         "status_root": str(status_root),
         "source_root": str(repo_root),
+        "repository_id": repository_id,
+        "base_ref": base_ref,
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
@@ -2785,6 +3149,8 @@ def prepare_worker_workspace(
             "workspace_path": str(worktree_path),
             "status_root": str(status_root),
             "workspace_source_root": str(repo_root),
+            "workspace_repository_id": repository_id,
+            "workspace_base_ref": base_ref,
         },
     )
     return True, None
@@ -3115,6 +3481,9 @@ def start_worker_for_request(
         "workspace_mode": request.metadata.get("workspace_mode"),
         "workspace_path": request.metadata.get("workspace_path"),
         "workspace_branch": request.metadata.get("workspace_branch"),
+        "workspace_repository_id": request.metadata.get("workspace_repository_id"),
+        "workspace_source_root": request.metadata.get("workspace_source_root"),
+        "workspace_base_ref": request.metadata.get("workspace_base_ref"),
         "work_progress_snapshot": initial_work_progress_snapshot,
         "last_commit_progress_at": None,
         "last_work_progress_at": None,
@@ -3198,6 +3567,9 @@ def start_worker_for_request(
             "workspace_mode": request.metadata.get("workspace_mode"),
             "workspace_path": request.metadata.get("workspace_path"),
             "workspace_branch": request.metadata.get("workspace_branch"),
+            "workspace_repository_id": request.metadata.get("workspace_repository_id"),
+            "workspace_source_root": request.metadata.get("workspace_source_root"),
+            "workspace_base_ref": request.metadata.get("workspace_base_ref"),
             "status_root": request.metadata.get("status_root"),
         },
     )
@@ -6181,6 +6553,9 @@ def _worker_record_from_runtime_launch_marker(
         "workspace_mode": metadata.get("workspace_mode"),
         "workspace_path": metadata.get("workspace_path"),
         "workspace_branch": metadata.get("workspace_branch"),
+        "workspace_repository_id": metadata.get("workspace_repository_id"),
+        "workspace_source_root": metadata.get("workspace_source_root"),
+        "workspace_base_ref": metadata.get("workspace_base_ref"),
         "work_progress_snapshot": {},
         "last_commit_progress_at": None,
         "last_work_progress_at": None,
@@ -9937,33 +10312,51 @@ def _cleanup_registered_worker_worktrees(
     if not base_root.exists():
         return False
     status_root = config_path(config, "status_file").parents[0]
-    repo_root = worker_worktree_source_root(config, worktree_settings)
     active_roots = active_worker_workspace_roots(config, state)
     live_paths = _scan_process_paths_in_root(base_root)
     max_removals = max(0, int(settings["max_removals_per_tick"]))
     archive_root = Path(os.path.expanduser(str(settings["archive_root"])))
     if not archive_root.is_absolute():
         archive_root = status_root / archive_root
-    merged_branches = _merged_task_branches(repo_root, list(settings["base_branches"])) if require_merged else set()
-    if require_merged and not merged_branches:
-        return False
-
     leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
     if not isinstance(leases, dict):
         return False
 
-    records_by_path: dict[Path, dict[str, str]] = {}
-    for record in _git_worktree_records(repo_root):
-        wt_value = record.get("worktree")
-        if not wt_value:
+    repository_roots: set[Path] = {
+        worker_worktree_source_root(config, worktree_settings)
+    }
+    for lease in leases.values():
+        if not isinstance(lease, dict) or not lease.get("source_root"):
             continue
-        try:
-            wt_path = Path(wt_value).expanduser().resolve()
-        except OSError:
-            continue
-        records_by_path[wt_path] = record
+        repository_roots.add(Path(str(lease["source_root"])).expanduser().resolve())
+    if include_unregistered:
+        for repository_id in ("execute_plans", "runtime_platform", "lean_engine"):
+            repository_root = repository_local_path(config, repository_id)
+            if repository_root is not None and repository_root.is_dir():
+                repository_roots.add(repository_root.resolve())
 
-    candidates: list[tuple[str | None, dict[str, Any], Path, str | None]] = []
+    records_by_path: dict[Path, tuple[dict[str, str], Path]] = {}
+    merged_by_root: dict[Path, set[str]] = {}
+    for repository_root in repository_roots:
+        if not repository_root.is_dir():
+            continue
+        if require_merged:
+            merged_by_root[repository_root] = _merged_task_branches(
+                repository_root, list(settings["base_branches"])
+            )
+        for record in _git_worktree_records(repository_root):
+            wt_value = record.get("worktree")
+            if not wt_value:
+                continue
+            try:
+                wt_path = Path(wt_value).expanduser().resolve()
+            except OSError:
+                continue
+            records_by_path[wt_path] = (record, repository_root)
+
+    candidates: list[
+        tuple[str | None, dict[str, Any], Path, str | None, Path]
+    ] = []
     candidate_paths: set[Path] = set()
     normalized_only = {path.resolve() for path in only_workspace_paths} if only_workspace_paths else None
     for workspace_id, lease in list(leases.items()):
@@ -9980,24 +10373,33 @@ def _cleanup_registered_worker_worktrees(
             continue
         if normalized_only is not None and wt_path not in normalized_only:
             continue
-        record = records_by_path.get(wt_path)
-        branch = str(lease.get("branch") or _worktree_record_branch(record or {}) or "")
-        candidates.append((str(workspace_id), lease, wt_path, branch))
+        record_binding = records_by_path.get(wt_path)
+        record = record_binding[0] if record_binding is not None else {}
+        lease_source = Path(
+            str(lease.get("source_root") or worker_worktree_source_root(config, worktree_settings))
+        ).expanduser().resolve()
+        repository_root = record_binding[1] if record_binding is not None else lease_source
+        branch = str(lease.get("branch") or _worktree_record_branch(record) or "")
+        candidates.append(
+            (str(workspace_id), lease, wt_path, branch, repository_root)
+        )
         candidate_paths.add(wt_path)
 
     if include_unregistered:
-        for wt_path, record in records_by_path.items():
+        for wt_path, (record, repository_root) in records_by_path.items():
             if wt_path in candidate_paths or not _path_is_within(wt_path, base_root):
                 continue
             if normalized_only is not None and wt_path not in normalized_only:
                 continue
-            candidates.append((None, {}, wt_path, _worktree_record_branch(record)))
+            candidates.append(
+                (None, {}, wt_path, _worktree_record_branch(record), repository_root)
+            )
 
     summary: dict[str, Any] = {
         "at": utc_now(),
         "source": source,
         "status_root": str(status_root.resolve()),
-        "workspace_source_root": str(repo_root),
+        "workspace_source_roots": sorted(str(root) for root in repository_roots),
         "checked": 0,
         "removed": 0,
         "skipped": 0,
@@ -10009,7 +10411,7 @@ def _cleanup_registered_worker_worktrees(
     }
     changed = False
     removed_paths: list[str] = []
-    for workspace_id, _lease, wt_path, branch in candidates:
+    for workspace_id, _lease, wt_path, branch, repository_root in candidates:
         if summary["removed"] >= max_removals and wt_path.exists():
             break
         summary["checked"] += 1
@@ -10018,7 +10420,9 @@ def _cleanup_registered_worker_worktrees(
         ):
             summary["active"] += 1
             continue
-        if require_merged and (not branch or branch not in merged_branches):
+        if require_merged and (
+            not branch or branch not in merged_by_root.get(repository_root, set())
+        ):
             summary["skipped"] += 1
             continue
         if not wt_path.exists():
@@ -10061,7 +10465,9 @@ def _cleanup_registered_worker_worktrees(
                 summary["skipped"] += 1
                 continue
 
-        remove_proc = _remove_worker_worktree(repo_root, wt_path, force=force_remove)
+        remove_proc = _remove_worker_worktree(
+            repository_root, wt_path, force=force_remove
+        )
         if remove_proc.returncode != 0:
             summary["failed"] += 1
             summary["details"].append(
