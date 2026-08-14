@@ -1,0 +1,93 @@
+{
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "docs/deployment/loop-catalog.registry.json",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestTwelveOwnerCatalogContract::test_catalog_declares_all_twelve_canonical_owners",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestTwelveOwnerCatalogContract::test_loop_inventory_endpoint_publishes_all_twelve_canonical_contracts",
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py#test_loop_catalog_ids_match_the_canonical_controller_record_contract",
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py#test_loop_catalog_controller_contract_matches_runtime_implementation"
+      ],
+      "id": "AC1",
+      "statement": "Catalog declares one existing owner contract for each canonical loop with complete desired/actual state queries, restart behavior, and liveness metrics.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/loop_inventory.py",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestDegradedAndUnobservedProjection::test_unobserved_loops_project_as_unobserved_and_not_live",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestDegradedAndUnobservedProjection::test_stale_heartbeat_is_rejected_as_degraded",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestDegradedAndUnobservedProjection::test_future_heartbeat_is_rejected_as_degraded",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestDegradedAndUnobservedProjection::test_controller_identity_mismatch_is_rejected",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestDegradedAndUnobservedProjection::test_degraded_reported_status_cannot_claim_live",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestTaskArchiveLivenessRejection::test_task_archive_only_refs_are_rejected_from_live_proof"
+      ],
+      "id": "AC2",
+      "statement": "Unobserved or worker-degraded loops cannot be accepted live: stale heartbeats, future heartbeats, missing observations, or archive-only evidence fail closed with explicit rejection reasons.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/downstream_health_monitor.py",
+        "services/control-plane/bff/loop_inventory.py",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestWorkerFunctionalHealthOverridesProcessReadyz::test_downstream_health_probe_fails_when_worker_reports_unready",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestWorkerFunctionalHealthOverridesProcessReadyz::test_downstream_health_probe_fails_when_worker_reports_degraded_status",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestWorkerFunctionalHealthOverridesProcessReadyz::test_downstream_health_probe_succeeds_when_worker_is_functionally_healthy",
+        "services/control-plane/bff/test_current_twelve_owner_truth.py#TestWorkerFunctionalHealthOverridesProcessReadyz::test_loop_health_read_model_rejects_record_with_degraded_worker_health"
+      ],
+      "id": "AC3",
+      "statement": "Worker functional health overrides process readyz: downstream HTTP 200 responses with degraded/unready payload bodies fail closed in both the downstream health prober and loop inventory health projection.",
+      "status": "pass"
+    }
+  ],
+  "authorities": {
+    "actual_state": [
+      "BFF loop inventory and health read models (services/control-plane/bff/loop_inventory.py)",
+      "Downstream HTTP prober (services/control-plane/bff/downstream_health_monitor.py)"
+    ],
+    "desired_state": [
+      "Loop catalog (docs/deployment/loop-catalog.registry.json)",
+      "Twelve-loop system design (docs/04/pantheon_twelve_loop_code_gap_2026-08-13/SYSTEM_DESIGN.md)"
+    ],
+    "task_packet": ".orchestrator/task-briefs/l12_current_bff_truth_20260814.md"
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "All twelve controller contracts in loop-catalog.registry.json declare complete idempotency_key and duplicate_event_policy configurations.",
+        "Read models deduplicate health and inventory items by loop_id, tenant_id, and environment."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "test_downstream_health_probe_fails_when_worker_reports_unready and test_downstream_health_probe_fails_when_worker_reports_degraded_status verify that HTTP 200 with degraded JSON payload fails closed with a functional failure reason.",
+        "test_loop_health_read_model_rejects_record_with_degraded_worker_health verifies that worker functional degradation sets current_record_accepted to False and rejection_reason to 'worker functional health is degraded despite process readiness'.",
+        "test_unobserved_loops_project_as_unobserved_and_not_live verifies that implemented loops without active runtime records project as unobserved and cannot claim live truth."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Each projected loop reports controller contract coverage and declaration via GET /bff/v5/loop-inventory.",
+        "GET /bff/v5/loop-health exposes detailed evidence packet, highest truth level, and operator truth provenance for each loop."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "All 12 loop catalog entries define restart_behavior specifying how each controller restores state from durable stores upon restart.",
+        "Downstream health monitor maintains SQLite WAL persistence for incidents and outbox deliveries across restarts."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "All changes preserve backward compatibility for BFF read models and registry loaders.",
+        "Contract tests in test_loop_inventory_read_model_contract.py and test_loop_health_read_model_contract.py pass completely."
+      ],
+      "status": "pass"
+    }
+  },
+  "task_id": "L12-CURRENT-BFF-TRUTH-20260814"
+}
