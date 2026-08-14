@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import parse_qs, urlparse
 
 _THIS_DIR = Path(__file__).resolve().parent
@@ -2294,10 +2294,15 @@ class LifecycleTelemetryOutbox:
             self._require_healthy()
             return self._strict_copy(self._state["chains"])
 
-    def pending(self) -> list[dict[str, Any]]:
+    def pending(self, *, limit: int | None = None) -> list[dict[str, Any]]:
         with self._lock:
             self._require_healthy()
-            return self._strict_copy(self._state["pending"])
+            pending = self._state["pending"]
+            if limit is not None:
+                if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+                    raise ValueError("lifecycle telemetry pending limit must be positive")
+                pending = pending[:limit]
+            return self._strict_copy(pending)
 
     def admit(
         self,
@@ -2361,17 +2366,25 @@ class LifecycleTelemetryOutbox:
 
     def acknowledge(self, event_id: str) -> None:
         """Remove a pending record only after a positive remote acknowledgement."""
+        self.acknowledge_many((event_id,))
+
+    def acknowledge_many(self, event_ids: Iterable[str]) -> None:
+        """Persist one removal for a positively acknowledged delivery batch."""
         with self._lock:
             self._require_healthy()
-            candidate = self._strict_copy(self._state)
+            acknowledged = {str(event_id) for event_id in event_ids if event_id}
+            if not acknowledged:
+                return
             remaining = [
                 record
-                for record in candidate["pending"]
-                if record["event_id"] != event_id
+                for record in self._state["pending"]
+                if record["event_id"] not in acknowledged
             ]
-            if len(remaining) == len(candidate["pending"]):
+            if len(remaining) == len(self._state["pending"]):
                 return
+            candidate = dict(self._state)
             candidate["pending"] = remaining
+            self._validate_state(candidate)
             self._write_state(candidate)
             self._state = candidate
 
@@ -2488,6 +2501,10 @@ class PaperRuntimeService:
         self._lifecycle_outbox_verified = False
         self._lifecycle_outbox_persistence_error = lifecycle_load_error
         self._lifecycle_delivery_error: str | None = None
+        self._lifecycle_replay_batch_size = max(
+            int(os.getenv("PANTHEON_LIFECYCLE_REPLAY_BATCH_SIZE", "512")),
+            1,
+        )
         self._mark_provider = mark_provider or SourceIngestMarkProvider()
         self._drawdown_tracker = RollingDrawdownTracker(
             window_days=int(os.getenv("PANTHEON_PERFORMANCE_WINDOW_DAYS", "20"))
@@ -2554,10 +2571,11 @@ class PaperRuntimeService:
     def start(self) -> None:
         if self._thread is not None:
             return
-        # Lifecycle replay precedes all new runtime activity. Remote delivery
-        # failure keeps exact payloads pending but does not halt paper execution.
-        self._flush_lifecycle_outbox()
+        # A durable replay backlog must not delay the HTTP server or heartbeat
+        # loop. The normal drain cycle replays a bounded batch before consuming
+        # new signals, preserving admission order without blocking startup.
         self._emit_deploy_started()
+        self._maybe_emit_heartbeat()
 
         if self._legacy_journey_publish_enabled:
             # Temporary compatibility publisher. Canonical live journey writes
@@ -2798,9 +2816,11 @@ class PaperRuntimeService:
         self._blocked_lifecycle_chains.clear()
 
     def _flush_lifecycle_outbox(self) -> bool:
-        """Replay exact pending payloads in durable admission order."""
+        """Replay one bounded batch in durable admission order."""
         try:
-            pending = self._lifecycle_outbox.pending()
+            pending = self._lifecycle_outbox.pending(
+                limit=self._lifecycle_replay_batch_size
+            )
         except LifecycleTelemetryOutboxError as exc:
             self._record_lifecycle_persistence_failure(exc)
             return False
@@ -2813,32 +2833,39 @@ class PaperRuntimeService:
                 "canonical lifecycle telemetry emitter lacks exact-payload delivery"
             )
             return False
+        acknowledged_event_ids: list[str] = []
+        delivery_error: str | None = None
         for record in pending:
             payload = record["payload"]
             try:
                 acknowledged = bool(sender(payload))
             except Exception as exc:  # noqa: BLE001
-                self._lifecycle_delivery_error = f"{type(exc).__name__}: {exc}"
-                return False
+                delivery_error = f"{type(exc).__name__}: {exc}"
+                break
             if not acknowledged:
-                self._lifecycle_delivery_error = (
+                delivery_error = (
                     f"remote acknowledgement missing for lifecycle event "
                     f"{record['event_id']}"
                 )
-                return False
+                break
+            acknowledged_event_ids.append(str(record["event_id"]))
+
+        if acknowledged_event_ids:
             try:
-                self._lifecycle_outbox.acknowledge(record["event_id"])
+                self._lifecycle_outbox.acknowledge_many(acknowledged_event_ids)
             except LifecycleTelemetryOutboxError as exc:
-                # The exact payload remains pending on disk. A subsequent replay
-                # may duplicate a remotely accepted event; ingest idempotency
-                # collapses it by event_id.
+                # Exact payloads remain pending on disk. A subsequent replay may
+                # duplicate remotely accepted events; ingest idempotency
+                # collapses them by event_id.
                 self._record_lifecycle_persistence_failure(
                     exc,
-                    journey_id=str(record["journey_id"]),
+                    journey_id=str(pending[0]["journey_id"]),
                 )
                 return False
-        self._lifecycle_delivery_error = None
-        return True
+        self._lifecycle_delivery_error = delivery_error
+        if delivery_error is not None:
+            return False
+        return self._lifecycle_outbox.snapshot()["pending_count"] == 0
 
     def _emit_lifecycle_telemetry(
         self,
