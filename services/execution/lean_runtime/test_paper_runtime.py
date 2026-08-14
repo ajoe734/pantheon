@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -1902,6 +1903,37 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             service.stop()
 
         self.assertEqual(calls[:2], ["heartbeat", "replay"])
+
+    def test_lifecycle_replay_does_not_block_runtime_snapshot(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+        replay_started = threading.Event()
+        release_replay = threading.Event()
+
+        def slow_replay():
+            replay_started.set()
+            release_replay.wait(timeout=2)
+            return True
+
+        with patch.object(service, "_flush_lifecycle_outbox", side_effect=slow_replay):
+            worker = threading.Thread(target=service.drain_once)
+            worker.start()
+            self.assertTrue(replay_started.wait(timeout=1))
+            started = time.monotonic()
+            snapshot = service.snapshot()
+            elapsed = time.monotonic() - started
+            release_replay.set()
+            worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(snapshot["runtime_package"], "paper_execution_runtime")
+        self.assertLess(elapsed, 0.25)
 
     def test_lifecycle_replay_batches_remote_acks_into_one_durable_write(self):
         class PendingTelemetry(_FakeTelemetryEmitter):

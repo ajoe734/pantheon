@@ -2607,14 +2607,25 @@ class PaperRuntimeService:
             self._outbox_thread.join(timeout=5)
 
     def drain_once(self) -> dict[str, Any]:
+        # Lifecycle replay performs remote I/O and a durable JSON rewrite.  It
+        # must not hold the service-state lock: readiness/heartbeat readers
+        # need to remain responsive while an old outbox is draining.
         with self._lock:
             self._last_poll_at = _iso_now()
+        lifecycle_replay_error: BaseException | None = None
+        try:
+            self._ensure_lifecycle_outbox_ready()
+            self._flush_lifecycle_outbox()
+        except Exception as exc:  # noqa: BLE001
+            lifecycle_replay_error = exc
+
+        with self._lock:
             before = len(self._consumer._processed_signal_ids)
             binding = self._binding_resolver.resolve()
             ledger_binding_failed = False
             try:
-                self._ensure_lifecycle_outbox_ready()
-                self._flush_lifecycle_outbox()
+                if lifecycle_replay_error is not None:
+                    raise lifecycle_replay_error
                 if not binding:
                     raise RuntimeError(
                         "RuntimeBinding is required before paper execution can drain signals"
@@ -2835,6 +2846,7 @@ class PaperRuntimeService:
             return False
         acknowledged_event_ids: list[str] = []
         delivery_error: str | None = None
+        next_heartbeat_at = time.monotonic() + 10.0
         for record in pending:
             payload = record["payload"]
             try:
@@ -2849,6 +2861,12 @@ class PaperRuntimeService:
                 )
                 break
             acknowledged_event_ids.append(str(record["event_id"]))
+            if time.monotonic() >= next_heartbeat_at:
+                # A slow remote drain must never make the live runtime appear
+                # dead to fleet monitoring.  Heartbeats use the independent
+                # telemetry path and do not alter outbox admission order.
+                self._maybe_emit_heartbeat()
+                next_heartbeat_at = time.monotonic() + 10.0
 
         if acknowledged_event_ids:
             try:
