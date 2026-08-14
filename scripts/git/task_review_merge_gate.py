@@ -272,12 +272,39 @@ def _ignored_waiver_claims(task: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(found)
 
 
-def _declared_github_binding(task: Mapping[str, Any]) -> tuple[str, str]:
-    meta = task.get("github")
-    if not isinstance(meta, Mapping):
+def _declared_delivery_binding(task: Mapping[str, Any]) -> tuple[str, str]:
+    """Resolve the canonical exact-head contract in authority order.
+
+    ``delivery_binding`` is frozen by ``ai_status.py handoff`` and validated
+    again when the reviewer approves it.  ``review_binding`` is the resulting
+    task-row proof.  The older ``github`` field is only packet provenance and
+    may still identify a superseded PR, so it is a compatibility fallback for
+    tasks that predate frozen delivery bindings.
+
+    A malformed or artifact-only delivery binding must fail closed instead of
+    silently falling through to legacy GitHub metadata.
+    """
+
+    delivery = task.get("delivery_binding")
+    if isinstance(delivery, Mapping):
+        kind = str(delivery.get("kind") or "").strip()
+        if kind != "pull_request":
+            return f"invalid-delivery-binding:{kind or 'missing-kind'}", ""
+        head_sha = str(delivery.get("head_sha") or "").strip().lower()
+        head_branch = str(delivery.get("head_branch") or "").strip()
+        return head_sha or "invalid-delivery-binding:missing-head", head_branch
+
+    review = task.get("review_binding")
+    if isinstance(review, Mapping):
+        head_sha = str(review.get("head_sha") or "").strip().lower()
+        head_branch = str(review.get("head_branch") or "").strip()
+        return head_sha or "invalid-review-binding:missing-head", head_branch
+
+    legacy = task.get("github")
+    if not isinstance(legacy, Mapping):
         return "", ""
-    head_sha = str(meta.get("head_sha") or "").strip().lower()
-    head_branch = str(meta.get("head_branch") or "").strip()
+    head_sha = str(legacy.get("head_sha") or "").strip().lower()
+    head_branch = str(legacy.get("head_branch") or "").strip()
     return head_sha, head_branch
 
 
@@ -293,7 +320,7 @@ def contract_from_task_row(
     reviewer = str(task.get("reviewer") or "").strip()
     status = normalize_status(task.get("status"))
     declared = _declared_policy(task)
-    head_sha, head_branch = _declared_github_binding(task)
+    head_sha, head_branch = _declared_delivery_binding(task)
     waiver_claims = _ignored_waiver_claims(task)
 
     policy = POLICY_REVIEW_BEFORE_MERGE

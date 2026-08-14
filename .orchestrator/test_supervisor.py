@@ -774,6 +774,43 @@ class SharedPlannerContractTests(unittest.TestCase):
             "task_not_dispatchable",
         )
 
+    def test_planner_consumes_terminal_facts_from_authoritative_projection(self) -> None:
+        task = task_fixture(
+            "CHILD",
+            status="in_progress",
+            depends_on=["ARCHIVED-DEP"],
+        )
+        status = {
+            "tasks": [task],
+            "terminal_facts": {
+                "ARCHIVED-DEP": {
+                    "status": "done",
+                    "terminal_outcome": "completed",
+                    "generation": 2,
+                    "recorded_at": "2026-08-14T00:00:00Z",
+                }
+            },
+        }
+        state = with_healthy_delivery_health(
+            self.config,
+            {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}},
+        )
+        queued: list[dict[str, object]] = []
+
+        changed = supervisor.dispatch_ready_tasks(
+            self.config,
+            state,
+            agent_ids_override=["codex"],
+            status_snapshot=status,
+            queue_events_snapshot=[],
+            live_total_snapshot=0,
+            event_sink=lambda _config, event: queued.append(event) or True,
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual([event["task_id"] for event in queued], ["CHILD"])
+        self.assertEqual(queued[0]["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+
     def test_active_or_pending_task_is_never_planned_twice(self) -> None:
         task = task_fixture()
         active = planner_decision(

@@ -5510,6 +5510,39 @@ class ArchiveWorkflowTests(unittest.TestCase):
         self.assertEqual(snapshot["terminal_outcome"], "superseded")
         self.assertEqual(snapshot["task"]["terminal_outcome"], "superseded")
 
+    def test_archive_migrate_backfills_only_archived_active_dependencies(self) -> None:
+        completed = deepcopy(self.state["tasks"][0])
+        completed["generation"] = 3
+        ai_status.task_archive_module.archive_task_snapshot(
+            completed,
+            archived_at="2026-04-14T02:00:00Z",
+        )
+        active = deepcopy(self.state["tasks"][1])
+        active["depends_on"] = ["REG-100", "MISSING-LEGACY"]
+        self.state["tasks"] = [active]
+        self.state[ai_status.TERMINAL_FACTS_KEY] = {}
+
+        with mock.patch.object(ai_status, "append_log") as append_log:
+            ai_status.command_archive_migrate(self.state, [])
+
+        self.assertEqual(
+            self.state[ai_status.TERMINAL_FACTS_KEY]["REG-100"],
+            {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 3,
+                "recorded_at": "2026-04-14T02:00:00Z",
+            },
+        )
+        self.assertNotIn(
+            "MISSING-LEGACY",
+            self.state[ai_status.TERMINAL_FACTS_KEY],
+        )
+        self.assertEqual(
+            append_log.call_args.args[0]["backfilled_dependency_ids"],
+            ["REG-100"],
+        )
+
     def _write_modern_archive_with_absolute_review_file(
         self,
         *,

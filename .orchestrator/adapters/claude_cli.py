@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from common import (
@@ -68,6 +69,40 @@ def _claude_auth_ready(
 def _configured_claude_cli(config: dict | None = None, provider_id: str | None = None) -> str | None:
     runtime = _runtime_settings(config, provider_id)
     return command_exists(runtime.get("cli") or "claude")
+
+
+def _supervisor_issued_access_roots(metadata: dict | None) -> list[Path]:
+    """Return absolute roots that the supervisor issued for governed task work.
+
+    Claude limits file and shell access to its working directory unless extra
+    roots are declared explicitly.  Workers need read access to task briefs in
+    the canonical status root and execute access to the immutable command
+    runtime in order to report lifecycle transitions through ``ai-status.sh``.
+    Only supervisor-issued metadata is accepted here; task context and target
+    paths are intentionally not promoted into additional access roots.
+    """
+
+    metadata = metadata or {}
+    command_runtime = metadata.get("status_command_runtime") or {}
+    candidates = [metadata.get("status_root")]
+    if isinstance(command_runtime, dict):
+        candidates.append(command_runtime.get("command_root"))
+
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if not value:
+            continue
+        path = Path(os.path.expanduser(value))
+        if not path.is_absolute():
+            continue
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        roots.append(resolved)
+    return roots
 
 
 class ClaudeCLIAdapter(BaseAdapter):
@@ -139,12 +174,17 @@ class ClaudeCLIAdapter(BaseAdapter):
             command.append("--verbose")
         if runtime.get("include_hook_events", True):
             command.append("--include-hook-events")
+        for access_root in _supervisor_issued_access_roots(request.metadata):
+            command.extend(["--add-dir", str(access_root)])
 
-        provider_info = (
-            (self.provider_capabilities or {}).get("providers", {}).get(provider_id)
-            or (self.provider_capabilities or {}).get("providers", {}).get("claude", {})
-        )
-        if runtime.get("enable_auto_mode_if_supported", True) and provider_info.get("supports_auto_approve"):
+        # Reaching launch means the adapter has just verified both the CLI and
+        # its non-interactive authentication above.  Use that live delivery
+        # result for launch policy too.  The v2 supervisor deliberately keeps
+        # the retired provider-capability cache out of admission and passes an
+        # empty telemetry report to adapters; consulting that report here made
+        # every healthy Claude worker fall back to interactive ``acceptEdits``
+        # and stall unattended review commands.
+        if runtime.get("enable_auto_mode_if_supported", True):
             command.extend(["--permission-mode", runtime.get("auto_permission_mode", "auto")])
         else:
             command.extend(["--permission-mode", runtime.get("permission_mode", "acceptEdits")])
