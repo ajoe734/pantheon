@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import enum
 import hashlib
+import json
 from dataclasses import dataclass
+from typing import Mapping
 
 
 class TaskState(enum.Enum):
@@ -44,6 +46,87 @@ class DispatchReason(enum.Enum):
 
 class TransitionError(ValueError):
     """The requested action is not legal from the task's current state."""
+
+
+_HEX = frozenset("0123456789abcdef")
+
+
+def _is_hex(value: object, length: int) -> bool:
+    text = str(value or "").strip().lower()
+    return len(text) == length and set(text) <= _HEX
+
+
+def delivery_contract_payload(task: Mapping[str, object]) -> dict[str, object]:
+    """Return the immutable artifact contract frozen by a review handoff."""
+
+    def normalized_list(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return sorted({str(item).strip() for item in value if str(item).strip()})
+
+    try:
+        generation = int(task.get("generation", 1) or 1)
+    except (TypeError, ValueError):
+        generation = 0
+    return {
+        "task_id": str(task.get("id") or "").strip(),
+        "task_generation": generation,
+        "repository_id": str(
+            task.get("repository_id") or task.get("target_repo") or ""
+        ).strip(),
+        "artifacts": normalized_list(task.get("artifacts")),
+        "required_artifacts": normalized_list(task.get("required_artifacts")),
+        "acceptance": normalized_list(task.get("acceptance")),
+    }
+
+
+def _canonical_json_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def delivery_binding_is_current(task: Mapping[str, object]) -> bool:
+    """Return whether a review task still has its handoff-bound delivery.
+
+    GitHub proof remains an approval/closeout concern.  Dispatch only needs to
+    reject a review row that has no immutable subject to inspect.
+    """
+
+    binding = task.get("delivery_binding")
+    if not isinstance(binding, Mapping):
+        return False
+    kind = str(binding.get("kind") or "").strip()
+    if kind == "pull_request":
+        raw_pr = str(binding.get("pr") or "").strip().lstrip("#")
+        return (
+            raw_pr.isdigit()
+            and int(raw_pr) > 0
+            and _is_hex(binding.get("head_sha"), 40)
+            and bool(str(binding.get("head_branch") or "").strip())
+            and bool(str(binding.get("base") or "").strip())
+        )
+    if kind == "artifact_contract":
+        contract = delivery_contract_payload(task)
+        return (
+            str(binding.get("task_id") or "") == contract["task_id"]
+            and binding.get("task_generation") == contract["task_generation"]
+            and _is_hex(binding.get("contract_sha256"), 64)
+            and str(binding.get("contract_sha256")) == _canonical_json_sha256(contract)
+        )
+    return False
+
+
+def delivery_binding_digest(task: Mapping[str, object]) -> str | None:
+    """Return the immutable delivery identity used by dispatch keys."""
+
+    if not delivery_binding_is_current(task):
+        return None
+    binding = task.get("delivery_binding")
+    assert isinstance(binding, Mapping)
+    return _canonical_json_sha256(dict(binding))
 
 
 @dataclass(frozen=True)

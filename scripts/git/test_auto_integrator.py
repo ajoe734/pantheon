@@ -5,6 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -321,6 +322,21 @@ class GitHubJsonCommandRunnerTests(unittest.TestCase):
 
 
 class IntegrationPlanTests(unittest.TestCase):
+
+    def test_merge_command_always_requests_a_merge_commit(self) -> None:
+        command = auto_integrator.merge_command(44, auto_integrator.Settings(), auto=False)
+        self.assertEqual(command, ["gh", "pr", "merge", "44", "--merge"])
+
+    def test_non_merge_method_is_rejected_at_config_load(self) -> None:
+        with mock.patch.object(
+            auto_integrator,
+            "load_json",
+            return_value={
+                "branch_workflow": {"auto_integrator": {"merge_method": "squash"}}
+            },
+        ):
+            with self.assertRaisesRegex(ValueError, "requires merge commits"):
+                auto_integrator.load_settings()
     def test_task_brief_only_successor_is_carried_forward_automatically(self) -> None:
         successor = "b" * 40
         candidate = auto_integrator.TaskCandidate(
