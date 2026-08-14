@@ -1,0 +1,145 @@
+{
+  "timestamp": "2026-08-14T00:42:07Z",
+  "stack_base_url": "http://localhost:8000",
+  "overall_passed": false,
+  "loop_results": [
+    {
+      "loop_id": "source_ingestion",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 33.37
+    },
+    {
+      "loop_id": "strategy_distillation",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.29
+    },
+    {
+      "loop_id": "alpha_replication",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.17
+    },
+    {
+      "loop_id": "persona_teaching",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.17
+    },
+    {
+      "loop_id": "agora_interaction_evidence",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.16
+    },
+    {
+      "loop_id": "human_imitation_shadow_evaluation",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.2
+    },
+    {
+      "loop_id": "consultation",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.16
+    },
+    {
+      "loop_id": "promotion_deployment",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.17
+    },
+    {
+      "loop_id": "capital_pool_execution",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.16
+    },
+    {
+      "loop_id": "telemetry_reconciliation",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.16
+    },
+    {
+      "loop_id": "evolution",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.19
+    },
+    {
+      "loop_id": "bff_health_monitoring",
+      "passed": false,
+      "trigger_identity": null,
+      "terminal_output_id": null,
+      "readback_verified": false,
+      "next_consumer_receipt": null,
+      "error_message": "<urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.2
+    }
+  ],
+  "chain_results": [
+    {
+      "chain_id": "correlated_chain_full_ooda",
+      "passed": false,
+      "step_results": [],
+      "error_message": "Correlated chain execution error: <urlopen error [Errno 111] Connection refused>",
+      "duration_ms": 0.19
+    }
+  ],
+  "anti_mock_passed": true,
+  "summary": {
+    "total_loops": 12,
+    "passed_loops": 0,
+    "failed_loops": 12,
+    "total_chains": 1,
+    "passed_chains": 0,
+    "duration_ms": 36.1
+  }
+}

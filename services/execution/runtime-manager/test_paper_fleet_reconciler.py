@@ -973,6 +973,39 @@ class TestPaperFleetMinimumFunctionalClosure(unittest.TestCase):
 
 
 class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
+    def test_runtime_summary_request_uses_telemetry_service_token(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "summaries": [
+                    {
+                        "runtime_id": "rt-authenticated",
+                        "state": "active",
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+        recon = PaperFleetReconciler(
+            telemetry_api_url="http://telemetry.test",
+            telemetry_service_token="telemetry-service-secret",
+            telemetry_tenant_id="tenant-paper",
+            leader_store=_unit_leader_store(),
+        )
+        with patch("urllib.request.urlopen", return_value=response) as urlopen:
+            summaries = recon._fetch_runtime_summaries()
+
+        self.assertIn("rt-authenticated", summaries or {})
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.get_header("Authorization"),
+            "Bearer telemetry-service-secret",
+        )
+        self.assertEqual(request.get_header("X-tenant-id"), "tenant-paper")
+        self.assertIsNone(recon.snapshot()["monitoring_last_error"])
+
     def test_worker_start_opens_monitoring_session(self) -> None:
         wrapper = _InstrumentedReconciler(
             worker_base_port=9960,
