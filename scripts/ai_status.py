@@ -130,6 +130,7 @@ STATUS_ACTIVITY_OUTBOX_KEY = "status_activity_outbox"
 STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
 STATUS_ARCHIVE_OUTBOX_KEY = "status_archive_outbox"
 STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 1
+TERMINAL_FACTS_KEY = "terminal_facts"
 SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
 SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
@@ -1446,6 +1447,10 @@ def default_state() -> dict[str, Any]:
         ],
         "handoffs": [],
         "blockers": [],
+        # Terminal dependency truth remains in the authoritative TaskStore
+        # after the richer, human-facing archive snapshot has been written.
+        # The archive is deliberately not consulted by scheduling.
+        TERMINAL_FACTS_KEY: {},
         "workload": {name: meta["target_workload"] for name, meta in KNOWN_AGENTS.items()},
     }
 
@@ -1495,6 +1500,7 @@ def load_state() -> dict[str, Any]:
             raise SystemExit("Authoritative task-state projection is not a non-empty object.")
         sync_canonical_document_metadata(state)
         normalize_state_agents(state)
+        normalize_terminal_facts(state)
         return state
     try:
         payload = read_regular_file_bytes(
@@ -1508,6 +1514,7 @@ def load_state() -> dict[str, Any]:
     state = json.loads(payload.decode("utf-8", errors="strict"))
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
+    normalize_terminal_facts(state)
     return state
 
 
@@ -1602,7 +1609,6 @@ def load_config() -> dict[str, Any]:
                 "current_work": str(CURRENT_WORK_FILE),
                 "dashboard": str(DOCS_SITE_DIR / "index.html"),
                 "state_file": str(ORCHESTRATOR_STATE_FILE),
-                "event_queue": str(STATUS_ROOT / ".orchestrator" / "event-queue.jsonl"),
                 "approval_queue": str(APPROVAL_QUEUE_FILE),
                 "github_bus_state": str(STATUS_ROOT / ".orchestrator" / "github-bus-state.json"),
                 "github_webhook_events": str(STATUS_ROOT / ".orchestrator" / "github-webhook-events.jsonl"),
@@ -1755,7 +1761,12 @@ def count_terminal_since(threshold_iso: str | None) -> tuple[int, int]:
 
 
 def task_resolver(state: dict[str, Any]) -> TaskResolver:
-    return TaskResolver(state.get("tasks", []))
+    normalize_terminal_facts(state)
+    return TaskResolver(
+        state.get("tasks", []),
+        terminal_facts=state.get(TERMINAL_FACTS_KEY),
+        allow_archive_lookup=False,
+    )
 
 
 def archived_task_snapshot(task_id: str) -> dict[str, Any] | None:
@@ -1800,6 +1811,101 @@ def _status_archive_terminal_outcome(task: Any) -> str:
     return ""
 
 
+def _terminal_fact_for_task(
+    task: Mapping[str, Any],
+    *,
+    recorded_at: str | None = None,
+) -> dict[str, Any]:
+    """Create the small immutable dependency fact retained after archival."""
+
+    task_id = str(task.get("id") or "").strip()
+    outcome = _status_archive_terminal_outcome(dict(task))
+    try:
+        generation = int(task.get("generation", 1))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"terminal task has invalid generation: {task_id}") from exc
+    if not task_id or not outcome or generation < 1:
+        raise RuntimeError(f"terminal task cannot produce a dependency fact: {task_id}")
+    return {
+        "status": "done",
+        "terminal_outcome": outcome,
+        "generation": generation,
+        "recorded_at": str(recorded_at or iso_now()),
+    }
+
+
+def normalize_terminal_facts(state: dict[str, Any]) -> None:
+    """Validate the TaskStore's compact terminal-dependency index.
+
+    This is authoritative state, not an archive index: an invalid fact must
+    stop a scheduler rather than fall through to an archive lookup.
+    """
+
+    raw_facts = state.get(TERMINAL_FACTS_KEY)
+    if raw_facts in (None, {}):
+        state[TERMINAL_FACTS_KEY] = {}
+        return
+    if not isinstance(raw_facts, dict):
+        raise RuntimeError("terminal_facts must be an object")
+    normalized: dict[str, dict[str, Any]] = {}
+    for raw_task_id, raw_fact in raw_facts.items():
+        task_id = str(raw_task_id or "").strip()
+        if not task_id or not isinstance(raw_fact, Mapping):
+            raise RuntimeError("terminal_facts contains an invalid entry")
+        try:
+            generation = int(raw_fact.get("generation"))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"terminal fact has invalid generation: {task_id}") from exc
+        outcome = str(raw_fact.get("terminal_outcome") or "").strip().lower()
+        recorded_at = str(raw_fact.get("recorded_at") or "").strip()
+        if (
+            raw_fact.get("status") != "done"
+            or outcome not in {"completed", "superseded"}
+            or generation < 1
+            or not recorded_at
+        ):
+            raise RuntimeError(f"terminal fact has invalid lifecycle data: {task_id}")
+        normalized[task_id] = {
+            "status": "done",
+            "terminal_outcome": outcome,
+            "generation": generation,
+            "recorded_at": recorded_at,
+        }
+    state[TERMINAL_FACTS_KEY] = normalized
+
+
+def record_terminal_fact(
+    state: dict[str, Any],
+    task: Mapping[str, Any],
+    *,
+    recorded_at: str | None = None,
+) -> dict[str, Any]:
+    """Atomically retain a terminal fact; conflicting terminal history fails."""
+
+    normalize_terminal_facts(state)
+    task_id = str(task.get("id") or "").strip()
+    candidate = _terminal_fact_for_task(task, recorded_at=recorded_at)
+    facts = state[TERMINAL_FACTS_KEY]
+    existing = facts.get(task_id)
+    if existing is not None:
+        if {
+            key: existing.get(key)
+            for key in ("status", "terminal_outcome", "generation")
+        } != {
+            key: candidate[key]
+            for key in ("status", "terminal_outcome", "generation")
+        }:
+            raise RuntimeError(f"terminal fact conflicts with existing TaskStore fact: {task_id}")
+        return deepcopy(existing)
+    facts[task_id] = candidate
+    return deepcopy(candidate)
+
+
+def has_terminal_fact(state: Mapping[str, Any], task_id: str) -> bool:
+    facts = state.get(TERMINAL_FACTS_KEY)
+    return isinstance(facts, Mapping) and str(task_id or "").strip() in facts
+
+
 def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any], *, archived_at: str | None = None) -> dict[str, Any]:
     assert_task_archive_root_binding()
     task_id = str(task.get("id") or "").strip()
@@ -1842,6 +1948,11 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
                 )
         snapshot = deepcopy(existing)
 
+    # The archive is only a rich derived record.  Dependency resolution keeps
+    # this compact fact in the TaskStore even after recovery removes the active
+    # terminal row.
+    record_terminal_fact(state, task, recorded_at=str(snapshot["archived_at"]))
+
     pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
     snapshots: list[dict[str, Any]] = []
     if pending not in (None, {}, []):
@@ -1878,33 +1989,6 @@ def archive_terminal_tasks_in_state(state: dict[str, Any], *, archived_at: str |
         snapshot = archive_terminal_task_from_state(state, task, archived_at=archived_at)
         archived_ids.append(str(snapshot.get("task_id") or task.get("id") or ""))
     return [task_id for task_id in archived_ids if task_id]
-
-
-def prune_archived_active_tasks(state: dict[str, Any]) -> list[str]:
-    """Remove invalid active rows whose task id already has an archive snapshot."""
-
-    pruned_ids: list[str] = []
-    remaining_tasks: list[dict[str, Any]] = []
-    for task in list(state.get("tasks", [])):
-        task_id = str(task.get("id") or "").strip()
-        existing = archived_task_snapshot(task_id) if task_id else None
-        if existing:
-            archive_terminal_task_from_state(
-                state,
-                task,
-                archived_at=str(existing.get("archived_at") or "").strip() or None,
-            )
-            pruned_ids.append(task_id)
-            continue
-        remaining_tasks.append(task)
-    if not pruned_ids:
-        return []
-
-    pruned = set(pruned_ids)
-    state["tasks"] = remaining_tasks
-    state["handoffs"] = [handoff for handoff in state.get("handoffs", []) if handoff.get("task_id") not in pruned]
-    state["blockers"] = [blocker for blocker in state.get("blockers", []) if blocker.get("task_id") not in pruned]
-    return pruned_ids
 
 
 def _canonical_json_sha256(value: Any) -> str:
@@ -2135,6 +2219,11 @@ def recover_status_archive_outbox(state: dict[str, Any]) -> bool:
                 raise RuntimeError(
                     f"active terminal task changed during archive recovery: {task_id}"
                 )
+        record_terminal_fact(
+            state,
+            expected["task"],
+            recorded_at=str(expected["archived_at"]),
+        )
     state["tasks"] = [
         task
         for task in state.get("tasks", [])
@@ -3149,6 +3238,7 @@ def ensure_review_finalize_handoff(
 def validate_state(state: dict[str, Any]) -> None:
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
+    normalize_terminal_facts(state)
     for task in state["tasks"]:
         ensure_agent(task["owner"])
         ensure_agent(task["reviewer"])
@@ -3738,16 +3828,17 @@ def normalize_runtime_queue(orchestrator_state: dict[str, Any]) -> list[dict[str
             workers_by_event[str(queue_event_id)] = {"run_id": run_id, **worker}
     rows: list[dict[str, Any]] = []
     for event_id, event in queue_records.items():
+        intent = event.get("intent") if isinstance(event.get("intent"), dict) else {}
         linked_worker = workers_by_event.get(str(event_id), {})
         rows.append(
             {
                 "id": event_id,
-                "task_id": event.get("task_id") or linked_worker.get("task_id"),
+                "task_id": intent.get("task_id") or linked_worker.get("task_id"),
                 "status": event.get("status"),
-                "agent": canonical_agent_name(event.get("target_display_name") or event.get("target_agent") or linked_worker.get("agent_id")),
-                "provider": event.get("provider") or linked_worker.get("provider"),
-                "reason": event.get("reason") or linked_worker.get("reason") or (linked_worker.get("request_snapshot") or {}).get("reason"),
-                "run_id": event.get("run_id") or linked_worker.get("run_id"),
+                "agent": canonical_agent_name(intent.get("target_display_name") or intent.get("target_agent") or linked_worker.get("agent_id")),
+                "provider": intent.get("provider") or linked_worker.get("provider"),
+                "reason": intent.get("reason") or linked_worker.get("reason") or (linked_worker.get("request_snapshot") or {}).get("reason"),
+                "run_id": intent.get("run_id") or linked_worker.get("run_id"),
                 "last_event_at": event.get("last_event_at") or event.get("processed_at") or event.get("last_attempt_at") or linked_worker.get("last_event_at"),
             }
         )
@@ -4473,7 +4564,7 @@ def sync_all(
     assert_task_archive_root_binding()
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
-    prune_archived_active_tasks(state)
+    normalize_terminal_facts(state)
     validate_state(state)
     normalize_handoffs(state)
     recompute_agents(state)
@@ -5040,9 +5131,9 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     old_owner = str(task.get("owner") or "") if task is not None else ""
     old_reviewer = str(task.get("reviewer") or "") if task is not None else ""
     if task is None:
-        if archived_task_snapshot(task_id):
+        if has_terminal_fact(state, task_id):
             raise SystemExit(
-                f"Task {task_id} is archived. Create a new follow-up task instead of reusing the archived task id."
+                f"Task {task_id} is terminal. Create a new follow-up task instead of reusing the terminal task id."
             )
         task = {
             "id": task_id,
@@ -5111,9 +5202,10 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             raise SystemExit(
                 f"Task {task_id} assignment transition rejected: {exc}"
             ) from exc
+        old_generation = task_assignment_generation(task)
         task["owner"] = assignment.new_owner
         task["reviewer"] = assignment.new_reviewer
-        task["generation"] = task_assignment_generation(task) + 1
+        task["generation"] = old_generation + 1
         if title:
             task["title"] = title
         if summary_zh:
@@ -5135,16 +5227,16 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
         }
     if old_owner or old_reviewer:
-        event.update(
-            {
-                "old_owner": old_owner,
-                "new_owner": owner,
-                "old_reviewer": old_reviewer,
-                "new_reviewer": reviewer,
-                "reason": assignment_reason,
-                "generation": task["generation"],
-            }
+        event = task_machine.assignment_activity_event(
+            task_id=task_id,
+            timestamp=timestamp,
+            assignment=assignment,
+            old_generation=old_generation,
+            new_generation=task["generation"],
+            message=assignment_reason,
+            event_type="task_reassigned",
         )
+        event["reason"] = assignment_reason
     event.update(local_human_ops_audit_fields())
     append_log(event)
 
@@ -5234,9 +5326,9 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     ensure_agent(actor)
     task = get_task(state, task_id)
     if task is None:
-        if archived_task_snapshot(task_id):
+        if has_terminal_fact(state, task_id):
             raise SystemExit(
-                f"Task {task_id} is archived and cannot be reopened in place. Create a new follow-up task that references {task_id}."
+                f"Task {task_id} is terminal and cannot be reopened in place. Create a new follow-up task that references {task_id}."
             )
         raise SystemExit(f"Unknown task: {task_id}")
     owner = canonical_agent_name(task.get("owner"))
@@ -5252,6 +5344,9 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
+    # A reviewer rejection returns the work to the owner.  A subsequent
+    # handoff must freeze the new deliverable instead of reusing this head.
+    task.pop(DELIVERY_BINDING_KEY, None)
     if github_review_bridge:
         task[GITHUB_REVIEW_BRIDGE_KEY] = dict(github_review_bridge)
     mark_blockers_resolved(state, task_id)
@@ -5300,10 +5395,12 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(
             f"{task_id} handoff target must match the assigned reviewer ({task.get('reviewer')}); reassign reviewer first if needed"
         )
+    binding = resolve_handoff_delivery_binding(task)
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "handoff")
     task["last_update"] = timestamp
     task["next"] = message
+    task[DELIVERY_BINDING_KEY] = deepcopy(binding)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
     state.setdefault("handoffs", []).append(
@@ -5316,7 +5413,16 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
             "created_at": timestamp,
         }
     )
-    append_log({"ts": timestamp, "agent": actor, "type": "handoff", "task_id": task_id, "message": f"Handoff to {to_agent}: {message}"})
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "handoff",
+            "task_id": task_id,
+            "message": f"Handoff to {to_agent}: {message}",
+            DELIVERY_BINDING_KEY: deepcopy(binding),
+        }
+    )
 
 
 def structured_blocker_fields(args: list[str]) -> dict[str, Any]:
@@ -6188,6 +6294,7 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+DELIVERY_BINDING_KEY = "delivery_binding"
 APPROVAL_BINDING_KEY = "review_binding"
 GITHUB_REVIEW_BRIDGE_KEY = "github_review_bridge"
 APPROVAL_HEAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -6198,6 +6305,146 @@ GITHUB_REVIEW_MODES = {
     "pull_request_review_and_required_status",
     "required_commit_status",
 }
+
+
+def _delivery_contract_payload(task: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the immutable work contract a non-PR reviewer must inspect."""
+
+    def normalized_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return sorted(
+            {
+                str(item).strip()
+                for item in value
+                if str(item).strip()
+            }
+        )
+
+    return {
+        "task_id": str(task.get("id") or "").strip(),
+        "task_generation": int(task.get("generation", 1) or 1),
+        "repository_id": str(
+            task.get("repository_id") or task.get("target_repo") or ""
+        ).strip(),
+        "artifacts": normalized_list(task.get("artifacts")),
+        "required_artifacts": normalized_list(task.get("required_artifacts")),
+        "acceptance": normalized_list(task.get("acceptance")),
+    }
+
+
+def _declared_pr_binding(task: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Read a packet-declared PR identity; never infer it from an archive."""
+
+    for key in ("source_ref", "github"):
+        payload = task.get(key)
+        if not isinstance(payload, Mapping):
+            continue
+        raw_pr = str(payload.get("pr") or payload.get("pull_request") or "").strip().lstrip("#")
+        head_sha = str(payload.get("head_sha") or "").strip().lower()
+        if raw_pr.isdigit() and int(raw_pr) > 0 and APPROVAL_HEAD_SHA_RE.fullmatch(head_sha):
+            return {
+                "pr": int(raw_pr),
+                "head_sha": head_sha,
+                "head_branch": str(payload.get("head_branch") or "").strip()
+                or f"task/{str(task.get('id') or '').strip()}",
+                "base": str(payload.get("base") or DEFAULT_APPROVAL_BASE_BRANCH).strip()
+                or DEFAULT_APPROVAL_BASE_BRANCH,
+            }
+    return None
+
+
+def _validated_pr_binding(binding: Mapping[str, Any], task_id: str) -> dict[str, Any]:
+    raw_pr = str(binding.get("pr") or "").strip().lstrip("#")
+    head_sha = str(binding.get("head_sha") or "").strip().lower()
+    if not raw_pr.isdigit() or int(raw_pr) <= 0 or not APPROVAL_HEAD_SHA_RE.fullmatch(head_sha):
+        raise SystemExit(f"{task_id} has an invalid pull-request delivery binding")
+    return {
+        "pr": int(raw_pr),
+        "head_sha": head_sha,
+        "head_branch": str(binding.get("head_branch") or "").strip()
+        or f"task/{task_id}",
+        "base": str(binding.get("base") or DEFAULT_APPROVAL_BASE_BRANCH).strip()
+        or DEFAULT_APPROVAL_BASE_BRANCH,
+    }
+
+
+def resolve_handoff_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any]:
+    """Create the one delivery contract before a task becomes reviewable.
+
+    A PR task receives a full exact-head identity.  A task with no PR receives
+    a hash of its declared artifact/acceptance contract.  Both are persisted on
+    the task at handoff, eliminating the old late discovery at approval.
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    explicit_pr = bool(os.environ.get("REVIEW_PR", "").strip())
+    explicit_head = bool(os.environ.get("REVIEW_HEAD_SHA", "").strip())
+    if explicit_pr != explicit_head:
+        raise SystemExit(
+            "REVIEW_PR and REVIEW_HEAD_SHA must be supplied together for a PR handoff"
+        )
+    if explicit_pr:
+        binding = resolve_approval_binding(
+            dict(task),
+            warn_if_unbound=False,
+            repository=None,
+            use_delivery_binding=False,
+        )
+        return {"kind": "pull_request", **_validated_pr_binding(binding, task_id)}
+
+    declared = _declared_pr_binding(task)
+    if declared is not None:
+        return {"kind": "pull_request", **declared}
+    if task_has_pr_review_target(task):
+        raise SystemExit(
+            f"{task_id} requires a PR delivery binding at handoff. Set REVIEW_PR "
+            "and REVIEW_HEAD_SHA after pushing the reviewed branch."
+        )
+    contract = _delivery_contract_payload(task)
+    return {
+        "kind": "artifact_contract",
+        **contract,
+        "contract_sha256": _canonical_json_sha256(contract),
+    }
+
+
+def validate_delivery_binding_for_approval(
+    task: Mapping[str, Any],
+    review_binding: Mapping[str, Any],
+) -> None:
+    """Reject a review that is not for the delivery frozen at handoff."""
+
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    if not isinstance(delivery, Mapping):
+        # Old task rows are reconciled explicitly; do not manufacture a second
+        # migration/fallback path here.
+        return
+    kind = str(delivery.get("kind") or "").strip()
+    task_id = str(task.get("id") or "").strip()
+    if kind == "pull_request":
+        expected = _validated_pr_binding(delivery, task_id)
+        actual = _validated_pr_binding(review_binding, task_id)
+        if actual != expected:
+            raise SystemExit(
+                f"{task_id} review binding does not match the exact PR head frozen at handoff; "
+                "reopen and hand off the new delivery head for review."
+            )
+        return
+    if kind == "artifact_contract":
+        expected = dict(delivery)
+        contract = _delivery_contract_payload(task)
+        if (
+            expected.get("contract_sha256") != _canonical_json_sha256(contract)
+            or expected.get("task_id") != contract["task_id"]
+            or expected.get("task_generation") != contract["task_generation"]
+        ):
+            raise SystemExit(
+                f"{task_id} artifact delivery contract changed after handoff; "
+                "reopen and hand off the current contract for review."
+            )
+        return
+    raise SystemExit(f"{task_id} has an unknown delivery binding kind: {kind}")
 
 
 def discover_open_pr_binding(
@@ -6247,6 +6494,7 @@ def resolve_approval_binding(
     *,
     warn_if_unbound: bool = True,
     repository: str | None = None,
+    use_delivery_binding: bool = True,
 ) -> dict[str, Any]:
     """Bind an approval to the exact pull-request head the reviewer inspected.
 
@@ -6274,6 +6522,36 @@ def resolve_approval_binding(
     owner = str(task.get("owner") or "").strip().casefold()
     reviewer = str(task.get("reviewer") or "").strip().casefold()
     independent = bool(reviewer) and reviewer != owner
+
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    if use_delivery_binding and isinstance(delivery, Mapping):
+        kind = str(delivery.get("kind") or "").strip()
+        if kind == "pull_request":
+            persisted = _validated_pr_binding(delivery, task_id)
+            if raw_pr or raw_head:
+                explicit = _validated_pr_binding(
+                    {
+                        "pr": raw_pr,
+                        "head_sha": raw_head,
+                        "head_branch": head_branch,
+                        "base": base_branch,
+                    },
+                    task_id,
+                )
+                if explicit != persisted:
+                    raise SystemExit(
+                        f"{task_id} supplied review head does not match its handoff delivery binding; "
+                        "reopen and hand off the new PR head first."
+                    )
+            return persisted
+        if kind == "artifact_contract":
+            if raw_pr or raw_head:
+                raise SystemExit(
+                    f"{task_id} is artifact-bound at handoff and cannot receive a PR review binding "
+                    "without a new handoff."
+                )
+            return {}
+        raise SystemExit(f"{task_id} has an unknown delivery binding kind: {kind}")
 
     if not raw_pr and not raw_head:
         discovered = (
@@ -6336,6 +6614,9 @@ def resolve_approval_binding(
 def task_has_pr_review_target(task: Mapping[str, Any]) -> bool:
     """Return whether durable task metadata identifies a delivery PR."""
 
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    if isinstance(delivery, Mapping) and str(delivery.get("kind") or "") == "pull_request":
+        return True
     if isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
         return True
     for key in ("source_ref", "github"):
@@ -6548,6 +6829,7 @@ def prepare_external_mutation_preflight(
         repository_id = task_primary_repository_id(config, task)
         repository_slug_value = repository_slug(config, repository_id)
         binding = resolve_approval_binding(task, repository=repository_slug_value)
+        validate_delivery_binding_for_approval(task, binding)
         if review_file and binding and (
             not repository_slug_value
             or not review_evidence_file_committed(
@@ -7815,9 +8097,9 @@ def canonical_external_mutation_preflight(
                 state = load_state()
                 task = get_task(state, task_id)
                 if task is None:
-                    if command == "reopen" and archived_task_snapshot(task_id):
+                    if command == "reopen" and has_terminal_fact(state, task_id):
                         raise SystemExit(
-                            f"Task {task_id} is archived and cannot be reopened in place. "
+                            f"Task {task_id} is terminal and cannot be reopened in place. "
                             f"Create a new follow-up task that references {task_id}."
                         )
                     raise SystemExit(f"Unknown task: {task_id}")

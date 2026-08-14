@@ -99,7 +99,7 @@ two domains but does not become their authority.
 | Concern | Authoritative entry point |
 | --- | --- |
 | Canonical development task maintenance | `scripts/human-ops-status.sh` / `scripts/ai_status.py` |
-| Dispatch and worker state | V2 supervisor runtime and durable event queue |
+| Dispatch and worker state | V2 supervisor runtime state (`queue.events` plus worker leases) |
 | Development-tooling process health | `scripts/supervisor_runtime_health.py` |
 | Backend lifecycle readiness | `scripts/wait_for_bff_lifecycle_readiness.py` |
 | Hosted product scenarios | `scripts/verify_hosted_scenarios.py` |

@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
-"""Durable delivery-intent queue for Supervisor Authority V2.
+"""Delivery-intent payload construction for Supervisor Authority V2.
 
-The historical filename is retained for the runtime-writer registry and old
-imports.  Status watching, replay, and event synthesis were removed: only the
-shared planner may call this module, and only canonical execution reasons are
-accepted.
+There is no event-log authority in this module.  The shared planner constructs
+an intent here and atomically stores it with its lease record in runtime state.
 """
 from __future__ import annotations
 
-import json
-import os
 import re
-import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,7 +18,6 @@ if str(THIS_DIR) not in sys.path:
 from common import (
     agent_config_for,
     bound_commit_subject,
-    config_path,
     display_name_for,
     new_runtime_id,
     render_template,
@@ -32,74 +26,7 @@ from common import (
     write_activity_log,
 )
 from dispatch_policy import is_execution_dispatch_reason
-
-
-def _assert_regular_queue_leaf(path: Path, descriptor: int) -> None:
-    descriptor_stat = os.fstat(descriptor)
-    path_stat = path.lstat()
-    if (
-        not stat.S_ISREG(descriptor_stat.st_mode)
-        or stat.S_ISLNK(path_stat.st_mode)
-        or path_stat.st_dev != descriptor_stat.st_dev
-        or path_stat.st_ino != descriptor_stat.st_ino
-    ):
-        raise RuntimeError(f"runtime event queue data leaf changed during append: {path}")
-
-
-def _pread_exact(descriptor: int, size: int, offset: int) -> bytes:
-    chunks: list[bytes] = []
-    remaining = size
-    while remaining:
-        chunk = os.pread(descriptor, remaining, offset)
-        if not chunk:
-            break
-        chunk = chunk[:remaining]
-        chunks.append(chunk)
-        offset += len(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
-
-
-def _append_runtime_event_locked(config: dict[str, Any], event: dict[str, Any]) -> None:
-    path = config_path(config, "event_queue")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_symlink():
-        raise RuntimeError(f"runtime event queue data leaf cannot be a symlink: {path}")
-    payload = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
-    flags = (
-        os.O_RDWR
-        | os.O_APPEND
-        | os.O_CREAT
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    descriptor = os.open(path, flags, 0o600)
-    try:
-        _assert_regular_queue_leaf(path, descriptor)
-        offset = os.lseek(descriptor, 0, os.SEEK_END)
-        if offset and os.pread(descriptor, 1, offset - 1) != b"\n":
-            raise RuntimeError(f"runtime event queue is not newline terminated: {path}")
-        view = memoryview(payload)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                raise OSError("runtime event queue append made no progress")
-            view = view[written:]
-        os.fsync(descriptor)
-        _assert_regular_queue_leaf(path, descriptor)
-        if _pread_exact(descriptor, len(payload), offset) != payload:
-            raise RuntimeError(f"runtime event queue readback mismatch: {path}")
-        _assert_regular_queue_leaf(path, descriptor)
-    finally:
-        os.close(descriptor)
-    directory_descriptor = os.open(
-        path.parent,
-        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
-    )
-    try:
-        os.fsync(directory_descriptor)
-    finally:
-        os.close(directory_descriptor)
+from runtime_state import store_queue_event
 
 
 def render_wakeup_message(
@@ -190,6 +117,7 @@ def render_wakeup_message(
 
 def _queue_delivery_event_locked(
     config: dict[str, Any],
+    state: dict[str, Any],
     event: dict[str, Any],
 ) -> bool:
     reason = str(event.get("reason") or "")
@@ -232,7 +160,8 @@ def _queue_delivery_event_locked(
             "task": prepared.get("task") or {},
         },
     }
-    _append_runtime_event_locked(config, queue_payload)
+    if not store_queue_event(state, queue_payload):
+        return False
     write_activity_log(
         config,
         {

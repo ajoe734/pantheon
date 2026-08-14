@@ -98,9 +98,9 @@ def _execute_external_mutation_command(
     task_id = args[0] if args else ""
     task = ai_status.get_task(state, task_id)
     if task is None:
-        if command == "reopen" and ai_status.archived_task_snapshot(task_id):
+        if command == "reopen" and ai_status.has_terminal_fact(state, task_id):
             raise SystemExit(
-                f"Task {task_id} is archived and cannot be reopened in place. "
+                f"Task {task_id} is terminal and cannot be reopened in place. "
                 f"Create a new follow-up task that references {task_id}."
             )
         raise SystemExit(f"Unknown task: {task_id}")
@@ -1798,7 +1798,7 @@ class StatusRootRoutingTests(unittest.TestCase):
         self.assertEqual(config["paths"]["status_file"], str(status_root / "ai-status.json"))
         self.assertEqual(config["paths"]["activity_log"], str(status_root / "ai-activity-log.jsonl"))
         self.assertEqual(config["paths"]["state_file"], str(status_root / ".orchestrator" / "state.json"))
-        self.assertEqual(config["paths"]["event_queue"], str(status_root / ".orchestrator" / "event-queue.jsonl"))
+        self.assertNotIn("event_queue", config["paths"])
 
     def test_worktree_status_wrapper_reads_and_writes_only_central_root(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-central-routing-") as temp_dir:
@@ -1946,7 +1946,20 @@ class StatusRootRoutingTests(unittest.TestCase):
                                 }
                             }
                         },
-                        "queue": {"events": {}},
+                        "queue": {
+                            "version": 2,
+                            "events": {
+                                "evt-codex-test-run": {
+                                    "status": "running",
+                                    "intent": {
+                                        "event_id": "evt-codex-test-run",
+                                        "task_id": "CENTRAL-ROOT-001",
+                                        "task_generation": 1,
+                                        "target_agent": "codex2_1",
+                                    },
+                                }
+                            },
+                        },
                     },
                     indent=2,
                 )
@@ -4148,6 +4161,50 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         self.assertEqual(self.state["tasks"][0]["status"], "review")
         self.assertNotIn("failure_streak", self.state["tasks"][0])
+        binding = self.state["tasks"][0][ai_status.DELIVERY_BINDING_KEY]
+        self.assertEqual(binding["kind"], "artifact_contract")
+        self.assertEqual(binding["task_id"], "REG-002")
+        self.assertTrue(binding["contract_sha256"])
+
+    def test_pr_handoff_freezes_exact_head_and_rejects_late_head_substitution(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task["required_artifacts"] = ["pull request", "exact-head review"]
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Codex",
+                "REVIEW_PR": "4820",
+                "REVIEW_HEAD_SHA": "a" * 40,
+            },
+            clear=False,
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Review the frozen delivery head."],
+            )
+
+        delivery = task[ai_status.DELIVERY_BINDING_KEY]
+        self.assertEqual(
+            delivery,
+            {
+                "kind": "pull_request",
+                "pr": 4820,
+                "head_sha": "a" * 40,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+        )
+        with self.assertRaisesRegex(SystemExit, "does not match the exact PR head frozen at handoff"):
+            ai_status.validate_delivery_binding_for_approval(
+                task,
+                {
+                    "pr": 4820,
+                    "head_sha": "b" * 40,
+                    "head_branch": "task/REG-002",
+                    "base": "dev",
+                },
+            )
 
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
@@ -5606,41 +5663,43 @@ class ArchiveWorkflowTests(unittest.TestCase):
             "archive_review_file_corrected",
         )
 
-    def test_prune_archived_active_tasks_removes_duplicate_active_rows(self) -> None:
+    def test_terminal_facts_satisfy_dependencies_without_archive_lookup(self) -> None:
         terminal = deepcopy(self.state["tasks"][0])
-        related_handoffs = deepcopy(self.state["handoffs"])
-        related_blockers = deepcopy(self.state["blockers"])
+        terminal.update({"status": "done", "terminal_outcome": "completed", "generation": 3})
+        self.state["tasks"] = [self.state["tasks"][1]]
+        ai_status.record_terminal_fact(
+            self.state,
+            terminal,
+            recorded_at="2026-04-14T02:01:00Z",
+        )
 
-        def fake_archived_snapshot(task_id: str):
-            if task_id != "REG-100":
-                return None
-            return {
-                "version": 1,
-                "task_id": task_id,
-                "archived_at": "2026-04-14T02:01:00Z",
-                "terminal_status": "done",
-                "terminal_outcome": "completed",
-                "task": terminal,
-                "handoffs": related_handoffs,
-                "blockers": related_blockers,
-            }
+        with mock.patch.object(
+            ai_status.task_archive_module,
+            "load_archived_snapshot",
+            side_effect=AssertionError("scheduler must not read the archive"),
+        ):
+            resolver = ai_status.task_resolver(self.state)
+            resolved = resolver.get("REG-100")
 
-        with mock.patch.object(ai_status, "archived_task_snapshot", side_effect=fake_archived_snapshot):
-            pruned = ai_status.prune_archived_active_tasks(self.state)
-
-        self.assertEqual(pruned, ["REG-100"])
-        self.assertEqual([task["id"] for task in self.state["tasks"]], ["REG-101"])
-        self.assertEqual(self.state["handoffs"], [])
-        self.assertEqual(self.state["blockers"], [])
+        self.assertEqual(resolver.source("REG-100"), "terminal_fact")
+        self.assertEqual(resolved["status"], "done")
+        self.assertTrue(resolver.dependency_satisfied("REG-100"))
 
     def test_reopen_rejects_archived_task(self) -> None:
         self.state["tasks"] = []
-        with mock.patch.object(ai_status, "archived_task_snapshot", return_value={"task_id": "REG-100"}):
-            with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
-                with self.assertRaises(SystemExit) as exc_info:
-                    _command_reopen(self.state, ["REG-100", "Resume work"])
+        self.state[ai_status.TERMINAL_FACTS_KEY] = {
+            "REG-100": {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 1,
+                "recorded_at": "2026-04-14T02:00:00Z",
+            }
+        }
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            with self.assertRaises(SystemExit) as exc_info:
+                _command_reopen(self.state, ["REG-100", "Resume work"])
 
-        self.assertIn("archived", str(exc_info.exception))
+        self.assertIn("terminal", str(exc_info.exception))
         self.assertIn("follow-up", str(exc_info.exception))
 
     def test_show_reads_archive_snapshot(self) -> None:
@@ -7595,7 +7654,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                 },
             ],
         }
-        config = {"paths": {"state_file": ".orchestrator/state.json", "event_queue": ".orchestrator/event-queue.jsonl"}}
+        config = {"paths": {"state_file": ".orchestrator/state.json"}}
         planning_state = {"status": "accepted", "runtime_mode": "supervisor_managed_execution", "proposed_execution_tasks": []}
         orchestrator_state = {"supervisor": {"pid": 1, "last_heartbeat_at": "2026-04-11T13:08:22Z"}, "queue": {"events": {}}, "workers": {}}
         approval_state = {"pending": [], "history": []}
@@ -8450,6 +8509,15 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         final = json.loads(self.status_file.read_text(encoding="utf-8"))
         self.assertIsNone(final[ai_status.STATUS_ARCHIVE_OUTBOX_KEY])
         self.assertIsNone(ai_status.get_task(final, "LOCK-ONE"))
+        self.assertEqual(
+            final[ai_status.TERMINAL_FACTS_KEY]["LOCK-ONE"],
+            {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 1,
+                "recorded_at": "2026-07-14T00:03:00Z",
+            },
+        )
         archived = json.loads(
             (self.root / "ai-task-archive/tasks/LOCK-ONE.json").read_text(
                 encoding="utf-8"

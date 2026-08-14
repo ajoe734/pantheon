@@ -45,7 +45,6 @@ DEFAULT_ACTIVE_WORKER_STATUSES = [
     "stalled",
 ]
 DEFAULT_MAX_DISPATCHES_PER_TICK = 4
-DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS = 300
 DEFAULT_MAX_CONCURRENT_WORKERS: int | None = None
 DEFAULT_WORKER_OS_DUPLICATE_GUARD = True
 DEFAULT_MAX_CONCURRENT_PER_ACCOUNT: dict[str, int] = {}
@@ -83,7 +82,6 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     )
     settings.setdefault("active_worker_statuses", list(DEFAULT_ACTIVE_WORKER_STATUSES))
     settings.setdefault("max_dispatches_per_tick", DEFAULT_MAX_DISPATCHES_PER_TICK)
-    settings.setdefault("orphaned_queue_event_grace_seconds", DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS)
     settings.setdefault("max_concurrent_workers", DEFAULT_MAX_CONCURRENT_WORKERS)
     settings.setdefault("worker_os_duplicate_guard", DEFAULT_WORKER_OS_DUPLICATE_GUARD)
     if "max_concurrent_per_account" not in settings:

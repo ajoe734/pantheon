@@ -10,6 +10,7 @@ vocabulary.  It does not mutate tasks and it is not a second lifecycle.
 from __future__ import annotations
 
 import enum
+import hashlib
 from dataclasses import dataclass
 
 
@@ -98,6 +99,68 @@ def assignment_transition(
         actor=transition_actor,
         reason=transition_reason,
     )
+
+
+def assignment_activity_event(
+    *,
+    task_id: object,
+    timestamp: object,
+    assignment: AssignmentTransition,
+    old_generation: object,
+    new_generation: object,
+    message: object,
+    event_type: object = "task_reassigned",
+) -> dict[str, object]:
+    """Build the one canonical assignment audit shape for both writers.
+
+    Authorization differs between Human/Ops and the bounded Orchestrator
+    reconciler, but neither should independently invent event fields or the
+    generation-bound digest used by closeout/recovery readers.
+    """
+
+    normalized_task_id = str(task_id or "").strip()
+    normalized_timestamp = str(timestamp or "").strip()
+    normalized_message = str(message or "").strip()
+    normalized_type = str(event_type or "task_reassigned").strip() or "task_reassigned"
+    try:
+        previous_generation = int(old_generation)
+        current_generation = int(new_generation)
+    except (TypeError, ValueError) as exc:
+        raise TransitionError("assignment event generation is invalid") from exc
+    if (
+        not normalized_task_id
+        or not normalized_timestamp
+        or not normalized_message
+        or previous_generation < 1
+        or current_generation != previous_generation + 1
+    ):
+        raise TransitionError("assignment event is not generation-bound")
+    payload = (
+        f"{normalized_task_id}\0{normalized_timestamp}\0"
+        f"{assignment.old_owner}\0{assignment.new_owner}\0"
+        f"{assignment.old_reviewer}\0{assignment.new_reviewer}\0"
+        f"{previous_generation}\0{current_generation}\0{normalized_message}"
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    prefix = (
+        f"supervisor-{normalized_type.replace('_', '-')}-"
+        if assignment.actor == "Orchestrator"
+        else f"human-ops-{normalized_type.replace('_', '-')}-"
+    )
+    return {
+        "event_id": prefix + digest,
+        "ts": normalized_timestamp,
+        "agent": assignment.actor,
+        "type": normalized_type,
+        "task_id": normalized_task_id,
+        "old_owner": assignment.old_owner,
+        "new_owner": assignment.new_owner,
+        "old_reviewer": assignment.old_reviewer,
+        "new_reviewer": assignment.new_reviewer,
+        "old_generation": previous_generation,
+        "generation": current_generation,
+        "message": normalized_message,
+    }
 
 
 # The one lifecycle table used by canonical commands.  Self-transitions are

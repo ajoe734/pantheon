@@ -17,7 +17,6 @@ class ExplainDispatchV2Tests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
             "paths": {
-                "event_queue": "/tmp/unused-events.jsonl",
                 "status_file": "/tmp/unused-status.json",
                 "state_file": "/tmp/unused-state.json",
             },
@@ -77,15 +76,14 @@ class ExplainDispatchV2Tests(unittest.TestCase):
                 },
             },
         }
-        with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
-            return supervisor.explain_dispatch_for_task(
-                self.config,
-                runtime_state,
-                task["id"],
-                target_agent_filter=task.get("owner") or task.get("reviewer"),
-                status={"tasks": [task]},
-                live_total=0,
-            )
+        return supervisor.explain_dispatch_for_task(
+            self.config,
+            runtime_state,
+            task["id"],
+            target_agent_filter=task.get("owner") or task.get("reviewer"),
+            status={"tasks": [task]},
+            live_total=0,
+        )
 
     def test_ready_decision_uses_shared_planner(self) -> None:
         task = {"id": "T1", "status": "todo", "owner": "Codex", "reviewer": "Claude2"}
