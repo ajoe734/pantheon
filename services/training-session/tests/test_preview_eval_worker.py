@@ -333,3 +333,37 @@ def test_preview_eval_worker_fails_closed_without_authority(monkeypatch) -> None
         assert "inbound authority is incomplete" in str(exc)
     else:
         raise AssertionError("worker request must fail closed without service/tenant authority")
+
+
+def test_preview_eval_worker_degrades_health_on_http_401(monkeypatch, tmp_path) -> None:
+    import io
+    import urllib.error
+
+    module = _load_worker_module()
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:invalid-token")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
+
+    def fake_urlopen_401(request, timeout):  # noqa: ANN001
+        del timeout
+        fp = io.BytesIO(b'{"error":{"code":"AUTH_UNAUTHORIZED","message":"Invalid token"}}')
+        raise urllib.error.HTTPError(
+            request.full_url,
+            401,
+            "Unauthorized",
+            {"Content-Type": "application/json"},
+            fp,
+        )
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen_401)
+
+    result = module.run_tick(api_url="http://training-session-svc:8099", limit=1)
+
+    assert result["failed"] == 1
+    assert result["jobs_found"] == 0
+    assert len(result["errors"]) == 1
+    assert "fetch_claimable_jobs http_error=401" in result["errors"][0]
+
+    alive_path = tmp_path / "preview-worker-alive"
+    assert not alive_path.exists()
+
+

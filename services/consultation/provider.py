@@ -41,6 +41,26 @@ class ContributionBlocked(ContributionProviderError):
         self.retryable = retryable
 
 
+def _blocked_http_response(exc: urllib.error.HTTPError) -> ContributionBlocked:
+    """Translate the provider endpoint's typed blocked envelope when present."""
+
+    reason = f"provider HTTP {exc.code}: {exc.reason}"
+    retryable = exc.code == 429 or exc.code >= 500
+    try:
+        raw = exc.read().decode("utf-8")
+        payload = json.loads(raw) if raw else {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        payload = {}
+    if isinstance(payload, Mapping) and str(payload.get("status") or "").lower() == "blocked":
+        supplied_reason = str(payload.get("reason") or "").strip()
+        if supplied_reason:
+            reason = supplied_reason
+        supplied_retryable = payload.get("retryable")
+        if isinstance(supplied_retryable, bool):
+            retryable = supplied_retryable
+    return ContributionBlocked(reason, retryable=retryable)
+
+
 def _required_text(payload: Mapping[str, Any], field: str) -> str:
     value = str(payload.get(field) or "").strip()
     if not value:
@@ -228,17 +248,18 @@ class HttpContributionProvider:
             ) as response:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
-            retryable = exc.code == 429 or exc.code >= 500
-            raise ContributionBlocked(
-                f"provider HTTP {exc.code}: {exc.reason}",
-                retryable=retryable,
-            ) from exc
+            raise _blocked_http_response(exc) from exc
         except (OSError, urllib.error.URLError) as exc:
             raise ContributionBlocked(
                 f"provider transport failed: {exc}",
                 retryable=True,
             ) from exc
-        parsed = json.loads(raw) if raw else {}
+        try:
+            parsed = json.loads(raw) if raw else {}
+        except json.JSONDecodeError as exc:
+            raise ContributionProviderError(
+                "provider response must be valid JSON"
+            ) from exc
         if not isinstance(parsed, Mapping):
             raise ContributionProviderError("provider response must be a JSON object")
         if str(parsed.get("status") or "").lower() == "blocked":

@@ -332,10 +332,10 @@ def _dispatch_handoff(
     if not handoff_id:
         raise WorkflowBlocked("persisted handoff response is missing handoff_id")
     if not config.handoff_sink_url:
-        # The consultation API's successful durable create is the minimum
-        # acknowledgement boundary.  Production may configure a governance
-        # sink for an additional service-boundary acknowledgement.
-        return "consultation-api"
+        raise WorkflowBlocked(
+            "CONSULTATION_HANDOFF_SINK_URL is not configured; "
+            "downstream acknowledgement is required"
+        )
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
@@ -718,6 +718,79 @@ def _write_health(path: str, state: Mapping[str, Any]) -> None:
     os.replace(temporary, target)
 
 
+def initial_health_state(config: ExecutorConfig) -> dict[str, Any]:
+    """Return the executor-owned health record consumed by compose wiring."""
+
+    return {
+        "consumer_name": CONSUMER_NAME,
+        "worker_id": config.worker_id,
+        "tenant_id": config.tenant_id,
+        "status": "starting",
+        "ticks": 0,
+        "last_tick_at": None,
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "total_completed": 0,
+        "total_dead_lettered": 0,
+        "functional_health": {
+            "ready": False,
+            "blocked_count": 0,
+            "dead_letter_count": 0,
+            "last_success_at": None,
+        },
+    }
+
+
+def update_functional_health(
+    health: dict[str, Any],
+    result: Mapping[str, Any],
+    *,
+    observed_at: str | None = None,
+) -> dict[str, Any]:
+    """Apply one tick without allowing process liveness to mask blocked work."""
+
+    timestamp = observed_at or _utc_now()
+    raw_counts = result.get("state_counts")
+    counts = dict(raw_counts) if isinstance(raw_counts, Mapping) else {}
+    blocked_count = int(counts.get("blocked") or 0)
+    dead_letter_count = int(counts.get("dead_letter") or 0)
+    errors = [str(item) for item in (result.get("errors") or []) if str(item)]
+
+    health["ticks"] = int(health.get("ticks") or 0) + 1
+    health["last_tick_at"] = timestamp
+    health["total_completed"] = int(health.get("total_completed") or 0) + int(
+        result.get("completed") or 0
+    )
+    health["total_dead_lettered"] = int(
+        health.get("total_dead_lettered") or 0
+    ) + int(result.get("dead_lettered") or 0)
+    health["state_counts"] = counts
+
+    failures = list(errors)
+    if blocked_count:
+        failures.append(f"{blocked_count} blocked item(s)")
+    if dead_letter_count:
+        failures.append(f"{dead_letter_count} dead-letter item(s)")
+
+    if failures:
+        health["status"] = "degraded"
+        health["last_failure_at"] = timestamp
+        health["last_failure_reason"] = "; ".join(failures)
+    else:
+        health["status"] = "ok"
+        health["last_success_at"] = timestamp
+        health["last_failure_reason"] = None
+
+    health["functional_health"] = {
+        "ready": health["status"] == "ok" and health["last_success_at"] is not None,
+        "blocked_count": blocked_count,
+        "dead_letter_count": dead_letter_count,
+        "last_success_at": health["last_success_at"],
+    }
+    return health
+
+
 def main() -> int:
     config = ExecutorConfig.from_env()
     state = WorkflowStateStore(config.state_path)
@@ -754,38 +827,12 @@ def main() -> int:
             request_id=request_id,
         )
 
-    health: dict[str, Any] = {
-        "consumer_name": CONSUMER_NAME,
-        "worker_id": config.worker_id,
-        "tenant_id": config.tenant_id,
-        "status": "starting",
-        "ticks": 0,
-        "last_tick_at": None,
-        "last_success_at": None,
-        "last_failure_at": None,
-        "last_failure_reason": None,
-        "total_completed": 0,
-        "total_dead_lettered": 0,
-    }
+    health = initial_health_state(config)
     tick = 0
     while True:
         tick += 1
         result = run_tick(config=config, state=state, provider=provider)
-        health["ticks"] = tick
-        health["last_tick_at"] = _utc_now()
-        health["total_completed"] += result["completed"]
-        health["total_dead_lettered"] += result["dead_lettered"]
-        health["state_counts"] = result["state_counts"]
-        if result["errors"] or result["state_counts"]["dead_letter"]:
-            health["status"] = "degraded"
-            health["last_failure_at"] = _utc_now()
-            health["last_failure_reason"] = "; ".join(result["errors"]) or (
-                f"{result['state_counts']['dead_letter']} dead-letter item(s)"
-            )
-        else:
-            health["status"] = "ok"
-            health["last_success_at"] = _utc_now()
-            health["last_failure_reason"] = None
+        update_functional_health(health, result)
         _write_health(health_file, health)
         print(
             json.dumps(
