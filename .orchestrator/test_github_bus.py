@@ -235,6 +235,24 @@ class GitHubBusCommandTests(unittest.TestCase):
         )
         self.assertEqual(bus_state["poll_cursors"]["issue_comments"], 2)
 
+    def test_bus_state_migrates_retired_webhook_delivery_cache(self) -> None:
+        config = {"paths": {"github_bus_state": "/tmp/github-bus-state.json"}}
+        legacy_state = {
+            "tasks": {},
+            "processed_webhook_deliveries": ["delivery-1"],
+        }
+
+        with mock.patch.object(github_bus, "load_json", return_value=legacy_state):
+            bus_state = github_bus.load_bus_state(config)
+
+        self.assertNotIn("processed_webhook_deliveries", bus_state)
+
+        with mock.patch.object(github_bus, "write_json") as write_json:
+            github_bus.save_bus_state(config, bus_state)
+
+        persisted = write_json.call_args.args[1]
+        self.assertNotIn("processed_webhook_deliveries", persisted)
+
     def test_poll_coordination_issue_comments_batches_with_cursor(self) -> None:
         self.config["github_bus"]["poll_batch_sizes"] = {"coordination_comments": 2}
         bus_state = {

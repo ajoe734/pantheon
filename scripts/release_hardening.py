@@ -76,8 +76,6 @@ GENERATED_EXACT_PATHS = {
     ".orchestrator/approval-queue.json",
     ".orchestrator/approval-queue.lock",
     ".orchestrator/github-bus-state.json",
-    ".orchestrator/github-relay-state.json",
-    ".orchestrator/github-webhook-events.jsonl",
     ".orchestrator/provider_capabilities.json",
     ".orchestrator/state.json",
     ".orchestrator/supervisor.pid",
