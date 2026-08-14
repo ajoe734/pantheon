@@ -1935,6 +1935,42 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["runtime_package"], "paper_execution_runtime")
         self.assertLess(elapsed, 0.25)
 
+    def test_dedicated_heartbeat_continues_while_replay_is_blocked(self):
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+        replay_started = threading.Event()
+        release_replay = threading.Event()
+
+        def slow_replay():
+            replay_started.set()
+            release_replay.wait(timeout=3)
+            return True
+
+        with (
+            patch.dict(
+                os.environ,
+                {"PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS": "1"},
+            ),
+            patch.object(service, "_flush_lifecycle_outbox", side_effect=slow_replay),
+        ):
+            service.start()
+            self.assertTrue(replay_started.wait(timeout=1))
+            time.sleep(1.2)
+            heartbeat_count = sum(
+                event.get("event_type") == "heartbeat" for event in telemetry.events
+            )
+            release_replay.set()
+            service.stop()
+
+        self.assertGreaterEqual(heartbeat_count, 2)
+
     def test_lifecycle_replay_batches_remote_acks_into_one_durable_write(self):
         class PendingTelemetry(_FakeTelemetryEmitter):
             def emit_payload(self, payload):
