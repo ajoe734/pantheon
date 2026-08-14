@@ -31,6 +31,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 import model_rotation
+from approval_queue import prune_stale_approvals
 from adapters import ADAPTERS, build_adapter
 from adapters.base import DeliveryRequest
 from common import (
@@ -1122,6 +1123,41 @@ def validate_provider_accounts(config: dict[str, Any]) -> None:
             errors.append(
                 f"agents.{agent_id}.worker_slots must exactly match dispatch_slot_for children"
             )
+    reassignment = config.get("worker_reassignment", {}) or {}
+    if not isinstance(reassignment, dict):
+        errors.append("worker_reassignment must be an object")
+    else:
+        known_reassignment_agents = {
+            canonical_agent_name(config, name).casefold()
+            for name in known_agent_display_names(config)
+            if canonical_agent_name(config, name)
+        }
+        for mapping_name in ("owner_fallbacks", "reviewer_fallbacks"):
+            mapping = reassignment.get(mapping_name, {})
+            if not isinstance(mapping, dict):
+                errors.append(f"worker_reassignment.{mapping_name} must be an object")
+                continue
+            for raw_root, raw_targets in mapping.items():
+                root = canonical_agent_name(config, str(raw_root))
+                if not root or root.casefold() not in known_reassignment_agents:
+                    errors.append(
+                        f"worker_reassignment.{mapping_name} has unknown root {raw_root!r}"
+                    )
+                if not isinstance(raw_targets, list):
+                    errors.append(
+                        f"worker_reassignment.{mapping_name}.{raw_root} must be a list"
+                    )
+                    continue
+                for raw_target in raw_targets:
+                    target = canonical_agent_name(config, str(raw_target))
+                    if not target or target.casefold() not in known_reassignment_agents:
+                        errors.append(
+                            f"worker_reassignment.{mapping_name}.{raw_root} has unknown target {raw_target!r}"
+                        )
+                    elif target in sidecar_only_agent_names(config):
+                        errors.append(
+                            f"worker_reassignment.{mapping_name}.{raw_root} targets sidecar-only agent {target}"
+                        )
     if errors:
         raise ValueError("invalid provider account configuration: " + "; ".join(errors))
 
@@ -5096,27 +5132,6 @@ def agent_is_known(config: dict[str, Any], agent_name: str | None) -> bool:
     return bool(agent_id and agent_id in (config.get("agents", {}) or {}))
 
 
-def default_reassignment_candidates(config: dict[str, Any], exclude: set[str] | None = None) -> list[str]:
-    """Roster-ordered healthy fallback owners, used when an unavailable owner
-    has no specific owner_fallbacks entry (e.g. a phantom owner)."""
-    exclude_cf = {str(x).strip().casefold() for x in (exclude or set()) if str(x).strip()}
-    sidecar_cf = {s.casefold() for s in sidecar_only_agent_names(config)}
-    out: list[str] = []
-    for agent_id, agent in (config.get("agents", {}) or {}).items():
-        if agent_is_dispatch_slot(agent):
-            continue
-        name = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
-        if not name:
-            continue
-        cf = name.casefold()
-        if cf in exclude_cf or cf in sidecar_cf:
-            continue
-        if agent_dispatch_capacity(config, agent_id) == 0:
-            continue
-        out.append(name)
-    return out
-
-
 def reassignment_candidate_order(
     config: dict[str, Any],
     mapping: dict[str, Any],
@@ -5124,12 +5139,11 @@ def reassignment_candidate_order(
     roots: list[str],
     exclude: set[str] | None = None,
 ) -> list[str]:
-    """Return configured fallbacks followed by the remaining live roster.
+    """Return only the configured, cycle-safe fallback allow-list.
 
-    A configured fallback graph is a preference, not a closed allow-list.
-    Treating any non-empty graph as exhaustive lets a cycle such as
-    Codex -> Codex2 -> Codex strand a task even while another independent
-    lane is healthy.  Keep the declared order, then exhaust the bounded roster.
+    Assignment recovery may change responsibility but not task scope.  The
+    configured graph therefore defines the complete set of permitted targets;
+    a healthy but unrelated roster lane is not an implicit fallback.
     """
 
     excluded = {
@@ -5140,8 +5154,7 @@ def reassignment_candidate_order(
     ordered: list[str] = []
     seen: set[str] = set(excluded)
     configured = bounded_fallback_candidates(config, mapping, roots=roots)
-    defaults = default_reassignment_candidates(config, exclude=exclude)
-    for raw_name in configured + defaults:
+    for raw_name in configured:
         name = canonical_agent_name(config, raw_name)
         key = name.casefold()
         if not name or key in seen:
@@ -5333,13 +5346,6 @@ def plan_task_assignment_pair(
                     roots=[name for name in (owner, candidate_owner) if name],
                 )
             )
-            reviewer_order.extend(
-                default_reassignment_candidates(
-                    config,
-                    exclude={candidate_owner},
-                )
-            )
-
         seen_reviewers: set[str] = set()
         for candidate_reviewer in reviewer_order:
             candidate_reviewer = canonical_agent_name(config, candidate_reviewer)
@@ -8524,7 +8530,6 @@ def _persist_task_reassignment_locked(
     expected_status: str | None = None,
     expected_generation: int | None = None,
 ) -> bool:
-    status_path = config_path(config, "status_file")
     status = load_status(config)
     if status.get("status_activity_outbox") not in (None, {}, []):
         return False
@@ -8992,12 +8997,6 @@ def reconcile_unavailable_assignments(
         )
         changed = True
 
-    recovery = state.setdefault("recovery", {})
-    recovery["assignment_reconciliation"] = {
-        "checked_at": utc_now(),
-        "actions": actions,
-        "bounded_limit": limit,
-    }
     return changed
 
 
@@ -12935,6 +12934,13 @@ def run_once(
                 quiet=quiet,
             )
         )
+        pruned_approvals = _safe_phase(
+            "prune_stale_approvals",
+            prune_stale_approvals,
+            config,
+            quiet=quiet,
+        )
+        changed = bool(pruned_approvals) or changed
         # Close the previous cycle's local worker/process observations before
         # taking planner snapshots.  A dead or completed worker must not keep
         # capacity occupied for another cycle.  This phase performs no slow

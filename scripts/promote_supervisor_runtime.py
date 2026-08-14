@@ -22,6 +22,7 @@ from typing import Any, Mapping
 
 from provision_live_supervisor_config import (
     build_live_config,
+    ensure_approval_queue_marker,
     load_json_object,
     validated_immutable_command_root,
     validated_root,
@@ -32,6 +33,7 @@ from provision_live_supervisor_config import (
 LIVE_SUPERVISOR_CONFIG_PATH = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
 )
+COMMAND_RUNTIME_PARENT = Path("/home/lupin/pantheon-ci-deploy/command-runtimes")
 TASK_STATE_MODE = "authoritative"
 
 
@@ -71,6 +73,12 @@ def candidate_runtime_identity(repo_root: Path) -> dict[str, str]:
 
     identity = validated_immutable_command_root(repo_root)
     root = Path(identity["root"])
+    runtime_parent = COMMAND_RUNTIME_PARENT.expanduser().absolute().resolve()
+    if root.parent != runtime_parent or root.name != identity["head"]:
+        raise ValueError(
+            "candidate V2 command source must be the exact "
+            f"command-runtimes/<HEAD> checkout under {runtime_parent}"
+        )
     if _git_output(root, "status", "--porcelain"):
         raise ValueError("candidate V2 source tree must be clean")
     return identity
@@ -118,6 +126,21 @@ def _pid_path(rendered: Mapping[str, Any]) -> Path:
     if not state_file.is_absolute():
         raise ValueError("rendered V2 state_file must be absolute")
     return state_file.parent / "supervisor.pid"
+
+
+def _incumbent_pid_path(live_config_path: Path, rendered: Mapping[str, Any]) -> Path:
+    """Read the incumbent PID location only from its installed config.
+
+    Status-root migration is an ordinary V2 replacement: command source and
+    coordination state may both change together.  The prior config is the
+    only durable identity for the process to stop; process cwd and a global
+    product-root PID file are not authority.
+    """
+
+    if not live_config_path.exists():
+        return _pid_path(rendered)
+    incumbent = _load_json(live_config_path, label="installed live config")
+    return _pid_path(incumbent)
 
 
 def _read_pid(path: Path) -> int | None:
@@ -238,6 +261,11 @@ def replace_supervisor(
         python_executable=python_executable,
     )
     rendered_bytes = (json.dumps(rendered, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    approval_queue_value = rendered.get("paths", {}).get("approval_queue")
+    if not isinstance(approval_queue_value, str) or not approval_queue_value.strip():
+        raise ValueError("rendered V2 config must define paths.approval_queue")
+    approval_queue_path = Path(approval_queue_value).expanduser().absolute()
+    incumbent_pid_path = _incumbent_pid_path(live_config_path, rendered)
     result: dict[str, Any] = {
         "schema_version": 2,
         "kind": "supervisor_v2_replacement",
@@ -246,13 +274,19 @@ def replace_supervisor(
         "live_config": str(live_config_path),
         "config_sha256": _sha256(rendered_bytes),
         "task_state_store": dict(rendered["task_state_store"]),
+        "approval_queue": str(approval_queue_path),
+        "incumbent_pid_file": str(incumbent_pid_path),
         "stopped_pid": None,
         "launched_pid": None,
         "outcome": "failed",
     }
     try:
+        # Workers require this split-root marker before their adapter starts.
+        # Creating it is idempotent and happens before TERM, so a malformed
+        # coordination root cannot turn a healthy incumbent into an outage.
+        ensure_approval_queue_marker(approval_queue_path)
         stopped_pid = stop_existing_supervisor(
-            _pid_path(rendered), timeout_seconds=termination_timeout
+            incumbent_pid_path, timeout_seconds=termination_timeout
         )
         result["stopped_pid"] = stopped_pid
         write_json_atomic(live_config_path, rendered)
@@ -273,7 +307,7 @@ def replace_supervisor(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=".", help="Exact V2 command source root.")
-    parser.add_argument("--status-root", default=os.environ.get("PANTHEON_STATUS_ROOT"))
+    parser.add_argument("--status-root", required=True)
     parser.add_argument("--live-config", default=str(LIVE_SUPERVISOR_CONFIG_PATH))
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--termination-timeout", type=float, default=15.0)
@@ -290,7 +324,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repo_root = _path(args.repo)
-    status_root = _path(args.status_root) if args.status_root else repo_root
+    status_root = _path(args.status_root)
     live_config_path = _path(args.live_config)
     python_executable = _path(args.python)
     try:

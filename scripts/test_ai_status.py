@@ -2821,6 +2821,22 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(task["status"], "review_approved")
         self.assertNotIn("review_binding", task)
 
+    def test_required_pr_artifacts_reject_unbound_approval_before_a_pr_exists(self) -> None:
+        task = ai_status.get_task(self.state, "REG-002")
+        task["required_artifacts"] = [
+            "PR",
+            "required checks",
+            "independent exact-head review",
+            "merge SHA",
+        ]
+        self.assertTrue(ai_status.task_has_pr_review_target(task))
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(ai_status, "discover_open_pr_binding", return_value=None),
+            self.assertRaisesRegex(SystemExit, "PR-backed but approve has no exact reviewed-head binding"),
+        ):
+            ai_status.resolve_approval_binding(task, repository="ajoe734/pantheon")
+
     def test_discover_open_pr_binding_accepts_an_open_matching_pr(self) -> None:
         with mock.patch.object(
             ai_status,
