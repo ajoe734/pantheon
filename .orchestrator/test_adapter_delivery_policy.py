@@ -350,6 +350,148 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertIn("--effort", result.command)
         self.assertEqual(result.command[result.command.index("--effort") + 1], "medium")
 
+    def test_claude_runtime_auto_permission_does_not_require_retired_provider_cache(self) -> None:
+        config = {
+            "paths": {"status_file": "ai-status.json"},
+            "providers": {
+                "claude": {
+                    "runtime": {
+                        "cli": ".orchestrator/bin/claude",
+                        "output_format": "stream-json",
+                        "enable_auto_mode_if_supported": True,
+                        "auto_permission_mode": "auto",
+                        "permission_mode": "acceptEdits",
+                    },
+                }
+            },
+        }
+        request = DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude_cli",
+            message="wake",
+        )
+        adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
+        fake_process = mock.Mock(pid=1234)
+
+        with (
+            mock.patch(
+                "adapters.claude_cli._configured_claude_cli",
+                return_value=".orchestrator/bin/claude",
+            ),
+            mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+            mock.patch(
+                "adapters.claude_cli.spawn_background_process",
+                return_value=(fake_process, Path("/tmp/claude.log")),
+            ),
+        ):
+            result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        permission_index = result.command.index("--permission-mode")
+        self.assertEqual(result.command[permission_index + 1], "auto")
+
+    def test_claude_runtime_adds_supervisor_issued_status_and_command_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_root = root / "status-root"
+            command_root = root / "command-runtime"
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "providers": {
+                    "claude": {
+                        "runtime": {
+                            "cli": ".orchestrator/bin/claude",
+                            "output_format": "stream-json",
+                        },
+                    }
+                },
+            }
+            request = DeliveryRequest(
+                agent_id="claude",
+                provider="claude",
+                delivery_mode="claude_cli",
+                message="wake",
+                metadata={
+                    "status_root": str(status_root),
+                    "status_command_runtime": {"command_root": str(command_root)},
+                },
+            )
+            adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch(
+                    "adapters.claude_cli._configured_claude_cli",
+                    return_value=".orchestrator/bin/claude",
+                ),
+                mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+                mock.patch("adapters.claude_cli.delivery_runtime_env", return_value={}),
+                mock.patch(
+                    "adapters.claude_cli.spawn_background_process",
+                    return_value=(fake_process, root / "claude.log"),
+                ),
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        add_dirs = [
+            result.command[index + 1]
+            for index, value in enumerate(result.command)
+            if value == "--add-dir"
+        ]
+        self.assertEqual(add_dirs, [str(status_root), str(command_root)])
+
+    def test_claude_runtime_deduplicates_roots_and_ignores_task_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_root = root / "status-root"
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "providers": {
+                    "claude": {
+                        "runtime": {
+                            "cli": ".orchestrator/bin/claude",
+                            "output_format": "stream-json",
+                        },
+                    }
+                },
+            }
+            request = DeliveryRequest(
+                agent_id="claude",
+                provider="claude",
+                delivery_mode="claude_cli",
+                message="wake",
+                context_files=["task-controlled-relative-path"],
+                metadata={
+                    "status_root": str(status_root),
+                    "status_command_runtime": {"command_root": str(status_root)},
+                },
+            )
+            adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch(
+                    "adapters.claude_cli._configured_claude_cli",
+                    return_value=".orchestrator/bin/claude",
+                ),
+                mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+                mock.patch("adapters.claude_cli.delivery_runtime_env", return_value={}),
+                mock.patch(
+                    "adapters.claude_cli.spawn_background_process",
+                    return_value=(fake_process, root / "claude.log"),
+                ),
+            ):
+                result = adapter.deliver(request)
+
+        add_dirs = [
+            result.command[index + 1]
+            for index, value in enumerate(result.command)
+            if value == "--add-dir"
+        ]
+        self.assertEqual(add_dirs, [str(status_root)])
+
     def test_claude_runtime_omits_model_and_effort_when_unset(self) -> None:
         config = {
             "paths": {"status_file": "ai-status.json"},
