@@ -2,20 +2,27 @@
 
 Each cycle does two things against the policy-learning service:
 
-  1. ``shadow-eval-tick`` — discover tenant-scoped Agora DatasetVersions and
-     propose ShadowImitationCandidate records for them.
-  2. ``worker/process``  — claim a batch of that backlog under an expiring
-     lease and run the shadow evaluation for the claimed candidates.
+  1. **durable Agora handoff intake** — claim unacknowledged dataset handoffs
+     from the Agora BFF, hand each one to policy-learning's
+     ``/api/policy-learning/agora-handoff`` endpoint, and acknowledge it once
+     ingestion is durable. This is the sole production intake path: the
+     direct Agora database scanner (``shadow-eval-tick`` discovery through
+     ``AgoraDatasetAuthority``) is no longer invoked from this scheduled
+     loop. ``run_tick``/``window_tick_id`` remain for direct/manual use of
+     the scanner-backed discovery endpoint; production no longer calls them.
+  2. ``worker/process``  — claim a batch of the resulting backlog under an
+     expiring lease and run the shadow evaluation for the claimed candidates.
 
-Duplicate ticks are safe: the tick id is derived from the schedule window, so a
-restarted or doubled scheduler re-proposes the same window instead of creating
-a second copy of the work, and backlog claims are leased so two workers never
-process the same candidate concurrently.
+A handoff already acknowledged on the Agora BFF is not returned by a later
+poll, so a restarted or doubled scheduler claims and acknowledges each
+handoff exactly once; backlog claims are separately leased so two workers
+never process the same candidate concurrently.
 
 Production training remains fail-closed; candidates require a separate
 experiment approval and deployment gate before any training is activated.
-There is no seed fallback: when the dataset authority is unavailable the tick
-returns a truthful degradation record and this worker reports it as a failure.
+There is no seed fallback: when the durable handoff intake cannot reach its
+dependencies it reports zero processed and this worker's health degrades
+only if the backlog claim cycle itself fails.
 """
 
 from __future__ import annotations
@@ -28,10 +35,23 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from services.worker_health import healthcheck as check_worker_health
 from services.worker_health import write_health
+
+# ``agora_handoff_drainer`` is a sibling flat module inside this hyphenated
+# service directory (not importable as a dotted ``services.policy_learning``
+# package). Resolve this file's own directory so the import works regardless
+# of how this module is loaded -- as ``__main__``, via a dotted import, or
+# via ``importlib.util.spec_from_file_location`` in tests, none of which
+# reliably put this directory on ``sys.path`` for us.
+_SERVICE_DIR = str(Path(__file__).resolve().parent)
+if _SERVICE_DIR not in sys.path:
+    sys.path.insert(0, _SERVICE_DIR)
+
+import agora_handoff_drainer
 
 
 DEFAULT_LEASE_SECONDS = 60
@@ -40,6 +60,8 @@ DEFAULT_BATCH_SIZE = 25
 SERVICE_TOKEN_ENV = "POLICY_LEARNING_SERVICE_TOKEN"
 API_TOKEN_ENV = "POLICY_LEARNING_API_TOKEN"
 TENANT_ENV = "POLICY_LEARNING_AGORA_TENANT_ID"
+AGORA_BFF_URL_ENV = agora_handoff_drainer.AGORA_BFF_URL_ENV
+INTAKE_BATCH_SIZE_ENV = "SHADOW_EVAL_INTAKE_BATCH_SIZE"
 _WORKER_NAME = "policy-learning-shadow-eval-scheduler"
 
 
@@ -251,6 +273,41 @@ def run_recovery(
     )
 
 
+def run_intake_cycle(
+    *,
+    agora_url: str,
+    policy_learning_url: str,
+    tenant_id: str,
+    token: str,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    """Claim and acknowledge the durable Agora dataset handoff, once.
+
+    This is the sole production admission path: it drains whatever the Agora
+    BFF currently reports as unacknowledged, posts each one to
+    policy-learning's ``/api/policy-learning/agora-handoff`` endpoint, and
+    acknowledges it on the BFF only after that ingestion durably succeeds. A
+    handoff the BFF already has recorded as acknowledged is not returned by a
+    later poll, so calling this once per scheduled tick claims and
+    acknowledges each handoff exactly once rather than repeatedly.
+
+    A short ``timeout_seconds`` default keeps one unreachable-BFF tick from
+    stalling the scheduler loop; an unreachable BFF degrades to zero
+    processed for this tick rather than raising, matching
+    ``agora_handoff_drainer.process_drainer_cycle``'s own contract.
+    """
+
+    return agora_handoff_drainer.process_drainer_cycle(
+        agora_url=agora_url,
+        policy_learning_url=policy_learning_url,
+        tenant_id=tenant_id,
+        token=token,
+        batch_size=batch_size,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def healthcheck() -> int:
     """Validate a recent successful shadow-evaluation tick."""
 
@@ -268,22 +325,20 @@ def healthcheck() -> int:
 
 def main() -> int:
     api_url = os.getenv("POLICY_LEARNING_API_URL", "http://policy-learning-svc:8100")
+    agora_url = _env_text(AGORA_BFF_URL_ENV, agora_handoff_drainer.DEFAULT_AGORA_BFF_URL)
     interval_seconds = _env_int("SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS", 3600, minimum=1)
     max_ticks = _env_int("SHADOW_EVAL_SCHEDULER_MAX_TICKS", 0, minimum=0)
-    eval_type = os.getenv("SHADOW_EVAL_TYPE", "shadow").strip() or "shadow"
-    max_datasets_raw = os.getenv("SHADOW_EVAL_MAX_DATASETS", "").strip()
-    max_datasets = int(max_datasets_raw) if max_datasets_raw else None
     try:
-        _, tenant_id = require_caller_configuration()
+        token, tenant_id = require_caller_configuration()
     except SchedulerConfigurationError as exc:
         print(
             json.dumps({"status": "error", "reason": "scheduler_unconfigured", "detail": str(exc)}),
             flush=True,
         )
         return 2
-    user_id = _env_text("POLICY_LEARNING_AGORA_USER_ID")
     batch_size = _env_int("SHADOW_EVAL_WORKER_BATCH_SIZE", DEFAULT_BATCH_SIZE, minimum=1)
     lease_seconds = _env_int("SHADOW_EVAL_WORKER_LEASE_SECONDS", DEFAULT_LEASE_SECONDS, minimum=1)
+    intake_batch_size = _env_int(INTAKE_BATCH_SIZE_ENV, agora_handoff_drainer.DEFAULT_BATCH_SIZE, minimum=1)
     worker = worker_id()
     health_file = _env_text("SHADOW_EVAL_SCHEDULER_HEALTH_FILE")
     health: dict[str, Any] = {
@@ -296,6 +351,7 @@ def main() -> int:
         "last_failure_reason": None,
         "tenant_id": tenant_id,
         "production_training": "fail_closed",
+        "agora_intake": "durable_handoff",
     }
     write_health(health_file, health)
 
@@ -309,21 +365,16 @@ def main() -> int:
     while True:
         tick += 1
         try:
-            result = run_tick(
-                api_url=api_url,
-                tick_id=window_tick_id(
-                    eval_type=eval_type,
-                    interval_seconds=interval_seconds,
-                    now=time.time(),
-                ),
-                eval_type=eval_type,
-                max_datasets=max_datasets,
+            result = run_intake_cycle(
+                agora_url=agora_url,
+                policy_learning_url=api_url,
                 tenant_id=tenant_id,
-                user_id=user_id,
+                token=token,
+                batch_size=intake_batch_size,
             )
             if result.get("status") == "error":
                 last_failure = result
-                cycle: dict[str, Any] = {"status": "skipped", "reason": "tick_failed"}
+                cycle: dict[str, Any] = {"status": "skipped", "reason": "intake_failed"}
             else:
                 last_success = result
                 cycle = run_claim_cycle(
@@ -336,7 +387,7 @@ def main() -> int:
         except Exception as exc:
             last_failure = {"status": "error", "detail": str(exc)}
             result = last_failure
-            cycle = {"status": "skipped", "reason": "tick_exception"}
+            cycle = {"status": "skipped", "reason": "intake_exception"}
 
         tick_failed = result.get("status") == "error"
         cycle_failed = cycle.get("status") in {"error", "skipped", "degraded"}
@@ -363,7 +414,8 @@ def main() -> int:
             "worker_id": worker,
             "result": result,
             "cycle": cycle,
-            "last_success_candidate_count": (last_success or {}).get("candidate_count"),
+            "last_success_processed_count": (last_success or {}).get("processed_count"),
+            "last_success_acked_count": (last_success or {}).get("acked_count"),
             "last_failure_detail": (last_failure or {}).get("detail"),
             "last_failure_reason": (last_failure or {}).get("reason"),
             "health": health,

@@ -30,6 +30,12 @@ SERVICE_TOKEN_ENV = "POLICY_LEARNING_SERVICE_TOKEN"
 API_TOKEN_ENV = "POLICY_LEARNING_API_TOKEN"
 TENANT_ENV = "POLICY_LEARNING_AGORA_TENANT_ID"
 
+# The compose stack's Agora BFF service is ``operator-bff``, listening on
+# 8001 (see docker-compose.yml healthcheck hitting 127.0.0.1:8001). There is
+# no ``control-plane-bff-svc`` service in this stack, so that hostname would
+# never resolve inside the cluster network.
+DEFAULT_AGORA_BFF_URL = "http://operator-bff:8001"
+
 _WORKER_NAME = "policy-learning-agora-handoff-drainer"
 _logger = logging.getLogger("policy-learning.agora-handoff-drainer")
 
@@ -68,7 +74,7 @@ def caller_token() -> str:
 
 def require_drainer_configuration() -> tuple[str, str, str, str]:
     """Validate and return (agora_url, policy_learning_url, token, tenant_id)."""
-    agora_url = _env_text(AGORA_BFF_URL_ENV, "http://control-plane-bff-svc:8000")
+    agora_url = _env_text(AGORA_BFF_URL_ENV, DEFAULT_AGORA_BFF_URL)
     policy_learning_url = _env_text(POLICY_LEARNING_API_URL_ENV, "http://policy-learning-svc:8100")
     token = caller_token()
     tenant_id = _env_text(TENANT_ENV)
