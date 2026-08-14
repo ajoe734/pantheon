@@ -8,7 +8,7 @@ import stat
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from common import (
     RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID as _LOCK_PROTOCOL_ID,
@@ -33,7 +33,6 @@ RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID = _LOCK_PROTOCOL_ID
 RUNTIME_TASK_AUDIT_LOCK_ORDER = _LOCK_ORDER
 RUNTIME_ADMISSION_SOURCE_IDS = (
     "runtime_state",
-    "event_queue",
     "approval_queue",
 )
 RUNTIME_ADMISSION_CONFLICT_STATUSES = {
@@ -69,6 +68,7 @@ def default_state() -> dict[str, Any]:
         "pending_handoff_keys": [],
         "seen_event_keys": {},
         "queue": {
+            "version": 2,
             "events": {},
         },
         "workers": {},
@@ -139,7 +139,11 @@ def default_state() -> dict[str, Any]:
     }
 
 
-def normalize_v2_runtime_cache(raw: Any) -> dict[str, Any]:
+def normalize_v2_runtime_cache(
+    raw: Any,
+    *,
+    allow_legacy_queue_records: bool = False,
+) -> dict[str, Any]:
     """Load a structurally valid V2 cache.
 
     ``state.json`` is an ephemeral runtime cache, not canonical task
@@ -174,8 +178,54 @@ def normalize_v2_runtime_cache(raw: Any) -> dict[str, Any]:
     state.setdefault("pending_handoff_keys", [])
     state.setdefault("seen_event_keys", {})
     state.setdefault("queue", {})
-    state["queue"].setdefault("events", {})
+    state["queue"].setdefault("version", 2)
+    queue_events = state["queue"].get("events")
+    if not isinstance(queue_events, dict):
+        raise RuntimeStateSchemaError("runtime cache queue.events must be an object")
+    normalized_queue_events: dict[str, dict[str, Any]] = {}
+    for raw_event_id, raw_record in queue_events.items():
+        event_id = str(raw_event_id or "").strip()
+        if not event_id or not isinstance(raw_record, dict):
+            continue
+        record = deepcopy(raw_record)
+        intent = record.get("intent")
+        if intent is None:
+            if not allow_legacy_queue_records:
+                raise RuntimeStateSchemaError(
+                    "runtime cache contains legacy queue records without embedded intents; "
+                    "run the offline V2 queue migration before starting the supervisor"
+                )
+        elif not isinstance(intent, dict):
+            raise RuntimeStateSchemaError(
+                f"runtime cache queue event {event_id} has a non-object intent"
+            )
+        else:
+            intent = deepcopy(intent)
+            intent["event_id"] = event_id
+            record["intent"] = intent
+        normalized_queue_events[event_id] = record
+    state["queue"]["version"] = 2
+    state["queue"]["events"] = normalized_queue_events
     state.setdefault("workers", {})
+    for run_id, worker in state["workers"].items():
+        if not isinstance(worker, dict):
+            raise RuntimeStateSchemaError(f"runtime cache worker {run_id} is not an object")
+        status = str(worker.get("status") or "").strip().lower()
+        if status not in {
+            "queued",
+            "started",
+            "running",
+            "retry_backoff",
+            "stalled",
+            "admitted",
+        }:
+            continue
+        event_id = str(worker.get("queue_event_id") or "").strip()
+        if not event_id or event_id not in normalized_queue_events:
+            raise RuntimeStateSchemaError(
+                "runtime cache active worker has no matching state-owned queue intent: "
+                f"worker={run_id} queue_event_id={event_id or '<missing>'}"
+            )
     state.setdefault("worker_worktrees", {})
     state["worker_worktrees"].setdefault("leases", {})
     state.setdefault("worker_worktree_cleanup", {})
@@ -229,39 +279,6 @@ def normalize_v2_runtime_cache(raw: Any) -> dict[str, Any]:
     )
     state["version"] = 2
     return state
-
-
-ACTIVE_QUEUE_STATUSES = {"running", "waiting_approval", "suspended_approval", "retry_backoff", "stalled", "started"}
-
-
-def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, Any]]) -> None:
-    valid_event_ids = [event.get("event_id") for event in queued_events if event.get("event_id")]
-    queue = state.setdefault("queue", {})
-    existing_records = queue.setdefault("events", {})
-    queue["events"] = {
-        event_id: deepcopy(existing_records.get(event_id, {"attempt_count": 0, "status": "queued"}))
-        for event_id in valid_event_ids
-    }
-
-    workers = state.setdefault("workers", {})
-    for event_id, record in queue["events"].items():
-        related = [worker for worker in workers.values() if worker.get("queue_event_id") == event_id]
-        if not related:
-            continue
-        latest = sorted(related, key=lambda item: item.get("last_event_at") or "", reverse=True)[0]
-        if any(worker.get("status") in ACTIVE_QUEUE_STATUSES for worker in related):
-            record["status"] = "waiting_approval" if any(worker.get("status") == "waiting_approval" for worker in related) else "started"
-            continue
-        if any(worker.get("status") == "failed" for worker in related):
-            record["status"] = "failed"
-            record["processed_at"] = latest.get("last_event_at")
-            if latest.get("last_error"):
-                record["error"] = latest.get("last_error")
-            continue
-        record["status"] = "completed"
-        record["processed_at"] = latest.get("last_event_at")
-
-
 
 
 def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | None = None) -> None:
@@ -337,7 +354,6 @@ def _runtime_source_layout(
     )
     key_by_source = {
         "runtime_state": "state_file",
-        "event_queue": "event_queue",
         "approval_queue": "approval_queue",
     }
     source_paths: dict[str, Path] = {}
@@ -502,8 +518,6 @@ def _load_runtime_state_unlocked(config: dict[str, Any]) -> dict[str, Any]:
     state = normalize_v2_runtime_cache(
         load_json(config_path(config, "state_file"), default=None)
     )
-    queued_events = load_jsonl(config_path(config, "event_queue"))
-    _rebuild_queue_records(state, queued_events)
 
     valid_pending_event_ids = set(
         state.setdefault("queue", {}).setdefault("events", {})
@@ -578,31 +592,151 @@ def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
         _save_runtime_state_unlocked(config, state)
 
 
-def load_event_queue(config: dict[str, Any]) -> list[dict[str, Any]]:
-    with runtime_state_lock(config, shared=True):
-        return load_jsonl(config_path(config, "event_queue"))
-
-
-def replace_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
-    """Durably replace the queue while retaining the stable runtime sidecar."""
-
-    with runtime_state_lock(config, shared=False):
-        path = config_path(config, "event_queue")
-        serialized = "".join(
-            json.dumps(event, ensure_ascii=False) + "\n" for event in events
-        ).encode("utf-8")
-        _write_runtime_bytes_unlocked(
-            path,
-            serialized,
-            source_id="event_queue",
-        )
-
-
 def queue_event_record(state: dict[str, Any], event_id: str) -> dict[str, Any]:
     queue = state.setdefault("queue", {})
     events = queue.setdefault("events", {})
-    record = events.setdefault(event_id, {"attempt_count": 0, "status": "queued"})
+    record = events.get(event_id)
+    if not isinstance(record, dict) or not isinstance(record.get("intent"), dict):
+        raise RuntimeStateSchemaError(
+            f"runtime queue record is missing its immutable intent: {event_id}"
+        )
     return record
+
+
+def queue_events(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return immutable delivery-intent views from one runtime snapshot."""
+
+    queue = state.get("queue") if isinstance(state, Mapping) else None
+    records = queue.get("events") if isinstance(queue, Mapping) else None
+    if not isinstance(records, Mapping):
+        return []
+    result: list[dict[str, Any]] = []
+    for raw_event_id, raw_record in records.items():
+        event_id = str(raw_event_id or "").strip()
+        if not event_id or not isinstance(raw_record, Mapping):
+            continue
+        intent = raw_record.get("intent")
+        if not isinstance(intent, Mapping):
+            continue
+        event = deepcopy(dict(intent))
+        event["event_id"] = event_id
+        result.append(event)
+    return result
+
+
+def queue_event_by_id(state: Mapping[str, Any], event_id: str | None) -> dict[str, Any] | None:
+    normalized = str(event_id or "").strip()
+    if not normalized:
+        return None
+    queue = state.get("queue") if isinstance(state, Mapping) else None
+    records = queue.get("events") if isinstance(queue, Mapping) else None
+    record = records.get(normalized) if isinstance(records, Mapping) else None
+    intent = record.get("intent") if isinstance(record, Mapping) else None
+    if not isinstance(intent, Mapping):
+        return None
+    event = deepcopy(dict(intent))
+    event["event_id"] = normalized
+    return event
+
+
+def store_queue_event(state: dict[str, Any], event: Mapping[str, Any]) -> bool:
+    """Store one immutable delivery intent with its mutable lease record.
+
+    This function deliberately performs no file I/O.  Its caller owns the
+    surrounding ``runtime_state_update``/CAS transaction, so an intent cannot
+    survive if its matching worker/lease mutation loses that transaction.
+    """
+
+    event_id = str(event.get("event_id") or "").strip()
+    if not event_id:
+        raise ValueError("queue intent requires event_id")
+    events = state.setdefault("queue", {}).setdefault("events", {})
+    existing = events.get(event_id)
+    if isinstance(existing, dict):
+        existing_intent = existing.get("intent")
+        if isinstance(existing_intent, dict):
+            return False
+    payload = deepcopy(dict(event))
+    payload["event_id"] = event_id
+    record = {
+        "intent": payload,
+        "attempt_count": 0,
+        "status": "queued",
+    }
+    event_key = str(payload.get("event_key") or "")
+    if event_key:
+        record["event_key"] = event_key
+    events[event_id] = record
+    return True
+
+
+def migrate_legacy_event_queue_into_runtime_state(
+    config: dict[str, Any],
+    *,
+    legacy_event_queue_path: Path,
+) -> dict[str, int]:
+    """One-time offline V2 migration from the retired JSONL queue.
+
+    The caller must have stopped the supervisor and workers.  Normal runtime
+    paths never read this file: it is only a bounded source for converting an
+    already-existing V2 cache before the state-only queue is enabled.
+    """
+
+    path = legacy_event_queue_path.expanduser().absolute()
+    legacy_events = load_jsonl(path)
+    by_id: dict[str, dict[str, Any]] = {}
+    for raw_event in legacy_events:
+        if not isinstance(raw_event, dict):
+            raise RuntimeStateSchemaError("legacy queue contains a non-object event")
+        event_id = str(raw_event.get("event_id") or "").strip()
+        task_id = str(raw_event.get("task_id") or "").strip()
+        if not event_id or not task_id or event_id in by_id:
+            raise RuntimeStateSchemaError("legacy queue has invalid or duplicate event ids")
+        event = deepcopy(raw_event)
+        event["event_id"] = event_id
+        by_id[event_id] = event
+
+    with runtime_state_lock(config, shared=False):
+        raw = load_json(config_path(config, "state_file"), default=None)
+        state = normalize_v2_runtime_cache(
+            raw,
+            allow_legacy_queue_records=True,
+        )
+        records = state.setdefault("queue", {}).setdefault("events", {})
+        imported = 0
+        discarded_terminal_records = 0
+        for event_id, record in list(records.items()):
+            if not isinstance(record, dict):
+                records.pop(event_id, None)
+                continue
+            if isinstance(record.get("intent"), dict):
+                continue
+            event = by_id.pop(str(event_id), None)
+            status = str(record.get("status") or "").lower()
+            if event is None:
+                if status in RUNTIME_ADMISSION_CONFLICT_STATUSES:
+                    raise RuntimeStateSchemaError(
+                        "legacy runtime queue has an active record without a matching intent: "
+                        f"{event_id}"
+                    )
+                records.pop(event_id, None)
+                discarded_terminal_records += 1
+                continue
+            record["intent"] = event
+            record.setdefault("event_key", event.get("event_key"))
+            imported += 1
+        for event_id, event in by_id.items():
+            if store_queue_event(state, event):
+                imported += 1
+        state["queue"]["version"] = 2
+        _save_runtime_state_unlocked(
+            config,
+            normalize_v2_runtime_cache(state),
+        )
+    return {
+        "imported_intents": imported,
+        "discarded_terminal_records": discarded_terminal_records,
+    }
 
 
 def default_approval_state() -> dict[str, Any]:
@@ -785,7 +919,6 @@ def _strict_runtime_sources(
 ]:
     key_by_source = {
         "runtime_state": "state_file",
-        "event_queue": "event_queue",
         "approval_queue": "approval_queue",
     }
     paths = {
@@ -824,6 +957,7 @@ def _strict_runtime_sources(
             runtime.get("version") != 2
             or not isinstance(runtime.get("workers"), dict)
             or not isinstance(runtime.get("queue"), dict)
+            or (runtime.get("queue") or {}).get("version") != 2
             or not isinstance((runtime.get("queue") or {}).get("events"), dict)
             or any(
                 not isinstance(worker, dict)
@@ -833,35 +967,21 @@ def _strict_runtime_sources(
             )
             or any(
                 not isinstance(record, dict)
+                or not isinstance(record.get("intent"), dict)
                 for record in runtime["queue"]["events"].values()
             )
         ):
             raise ValueError("runtime state schema")
 
-        events: list[dict[str, Any]] = []
-        event_ids: set[str] = set()
-        for line_number, line in enumerate(
-            bodies["event_queue"].splitlines(), start=1
+        events = queue_events(runtime)
+        if any(
+            not isinstance(event.get("event_id"), str)
+            or not str(event.get("event_id") or "").strip()
+            or not isinstance(event.get("task_id"), str)
+            or not str(event.get("task_id") or "").strip()
+            for event in events
         ):
-            if not line.strip():
-                continue
-            event = _strict_json_object(
-                line, source=f"event_queue:{line_number}"
-            )
-            event_id = event.get("event_id")
-            task_id = event.get("task_id")
-            if (
-                not isinstance(event_id, str)
-                or not event_id.strip()
-                or event_id in event_ids
-                or not isinstance(task_id, str)
-                or not task_id.strip()
-            ):
-                raise ValueError("event queue schema")
-            event_ids.add(event_id)
-            events.append(event)
-        if not events:
-            raise ValueError("event queue empty")
+            raise ValueError("runtime queue intent schema")
 
         approvals = _strict_json_object(
             bodies["approval_queue"], source="approval_queue"
@@ -928,7 +1048,7 @@ def _runtime_conflicts(
         status = str(event.get("status") or "").strip().lower()
         if not status and isinstance(record, dict):
             status = str(record.get("status") or "").strip().lower()
-        add("event_queue", task_id, status or "queued", event_id)
+        add("runtime_state", task_id, status or "queued", f"queue:{event_id}")
 
     for index, item in enumerate(approvals["pending"]):
         task_id = str(item.get("task_id") or "").strip()

@@ -144,6 +144,37 @@ class AssignmentTransitionTests(unittest.TestCase):
                 reason="reassign",
             )
 
+    def test_orchestrator_assignment_event_is_generation_bound(self) -> None:
+        assignment = task_machine.assignment_transition(
+            "Codex",
+            "Claude",
+            "Codex2",
+            "Claude",
+            actor="Orchestrator",
+            reason="terminal quota reassignment",
+        )
+        event = task_machine.assignment_activity_event(
+            task_id="TASK-42",
+            timestamp="2026-08-14T12:00:00Z",
+            assignment=assignment,
+            old_generation=4,
+            new_generation=5,
+            message="terminal quota reassignment",
+        )
+
+        self.assertTrue(event["event_id"].startswith("supervisor-task-reassigned-"))
+        self.assertEqual(event["old_generation"], 4)
+        self.assertEqual(event["generation"], 5)
+        with self.assertRaisesRegex(TransitionError, "generation-bound"):
+            task_machine.assignment_activity_event(
+                task_id="TASK-42",
+                timestamp="2026-08-14T12:00:00Z",
+                assignment=assignment,
+                old_generation=4,
+                new_generation=6,
+                message="terminal quota reassignment",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

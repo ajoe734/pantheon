@@ -911,6 +911,17 @@ class WorkflowContractTests(unittest.TestCase):
             self.workflow,
         )
 
+    def test_tooling_delivery_uses_its_dedicated_review_gate(self) -> None:
+        # The diagnostic signed-attestation audit is product-only.  Tooling
+        # delivery is governed by the separately published canonical tooling
+        # gate, so it must be filtered both for scheduled scans and an event
+        # for a single PR.
+        self.assertIn('index("delivery:tooling") | not', self.workflow)
+        self.assertIn(
+            'gh api "repos/$GITHUB_REPOSITORY/pulls/$EVENT_PR_NUMBER"',
+            self.workflow,
+        )
+
     def test_attacker_controlled_task_base_fails_before_checkout(self) -> None:
         attacker_pr = {
             "base": {

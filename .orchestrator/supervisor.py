@@ -88,11 +88,11 @@ from provider_permissions import probe_provider_auth
 from rebase_helper import continue_or_skip_empty
 from runtime_state import (
     load_approval_state,
-    load_event_queue,
     load_runtime_state,
     load_runtime_state_snapshot,
+    queue_event_by_id,
     queue_event_record,
-    replace_event_queue,
+    queue_events,
     runtime_state_lock,
     runtime_state_update,
     save_runtime_state,
@@ -1235,10 +1235,7 @@ def queued_account_counts(
         if worker.get("status") in active_statuses and worker.get("queue_event_id")
     }
     if events is None:
-        try:
-            events = load_event_queue(config)
-        except KeyError:
-            events = []
+        events = queue_events(state)
     queued_events = events
     for event in queued_events:
         if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
@@ -3631,35 +3628,11 @@ def process_queue(
     changed = False
     task_map = task_index_from_status(config, load_status(config))
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    for event in load_event_queue(config):
+    for event in queue_events(state):
         event_id = event.get("event_id")
         if not event_id:
             continue
         existing_record = state.get("queue", {}).get("events", {}).get(event_id, {})
-        related_workers = [
-            worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id
-        ]
-        if queue_event_is_orphaned(config, event, existing_record, related_workers):
-            orphan_record = queue_status(state, event_id)
-            if not orphan_record.get("orphan_logged"):
-                orphan_record["orphan_logged"] = True
-                write_activity_log(
-                    config,
-                    {
-                        "type": "wake_orphaned",
-                        "task_id": event.get("task_id"),
-                        "target_agent": event.get("target_display_name") or event.get("target_agent"),
-                        "message": (
-                            f"Dropped orphaned wake event for {event.get('task_id') or 'unknown task'} "
-                            f"(reason {event.get('reason')}): no worker started within "
-                            f"{orphaned_queue_event_grace_seconds(config)}s grace. "
-                            "Task stays eligible for re-dispatch."
-                        ),
-                        "queue_event_id": event_id,
-                    },
-                )
-                changed = True
-            continue
         record = queue_status(state, event_id)
         event_key = str(event.get("event_key") or "")
         if event_key and record.get("event_key") != event_key:
@@ -3802,7 +3775,7 @@ def process_queue(
             state,
             event,
             task_map,
-            load_event_queue(config),
+            queue_events(state),
         )
         if decision is None:
             record["status"] = "completed"
@@ -8619,27 +8592,15 @@ def _persist_task_reassignment_locked(
             }
         )
 
-    event_type = str(activity_event_type or "task_reassigned").strip() or "task_reassigned"
-    event = {
-        "event_id": f"supervisor-{event_type.replace('_', '-')}-"
-        + hashlib.sha256(
-            (
-                f"{task_id}\0{timestamp}\0{old_owner}\0{new_owner}\0"
-                f"{old_reviewer}\0{new_reviewer}\0{old_generation}\0{old_generation + 1}\0{message}"
-            ).encode("utf-8")
-        ).hexdigest(),
-        "ts": timestamp,
-        "agent": assignment.actor,
-        "type": event_type,
-        "task_id": task_id,
-        "old_owner": old_owner,
-        "new_owner": new_owner,
-        "old_reviewer": old_reviewer,
-        "new_reviewer": new_reviewer,
-        "old_generation": old_generation,
-        "generation": old_generation + 1,
-        "message": message,
-    }
+    event = rewrite_task_machine.assignment_activity_event(
+        task_id=task_id,
+        timestamp=timestamp,
+        assignment=assignment,
+        old_generation=old_generation,
+        new_generation=old_generation + 1,
+        message=message,
+        event_type=activity_event_type,
+    )
     status["status_activity_outbox"] = _status_activity_outbox([event])
     write_status(config, status, source="supervisor-reassignment")
     return True
@@ -9030,17 +8991,19 @@ def schedule_queue_event_retry(config: dict[str, Any], record: dict[str, Any], *
     record["processed_at"] = utc_now()
 
 
-def request_for_worker(config: dict[str, Any], worker: dict[str, Any]) -> DeliveryRequest | None:
+def request_for_worker(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+) -> DeliveryRequest | None:
     snapshot = worker.get("request_snapshot")
     if isinstance(snapshot, dict) and snapshot.get("message"):
         return request_from_snapshot(snapshot)
     queue_event_id = worker.get("queue_event_id")
     if not queue_event_id:
         return None
-    for event in load_event_queue(config):
-        if event.get("event_id") == queue_event_id:
-            return build_request(config, event)
-    return None
+    event = queue_event_by_id(state, str(queue_event_id))
+    return build_request(config, event) if event is not None else None
 
 
 def schedule_worker_retry(config: dict[str, Any], worker: dict[str, Any], reason: str) -> None:
@@ -9063,7 +9026,7 @@ def schedule_retry_from_worker_failure(
     failure = classify_worker_failure(config, worker, reason)
     max_attempts = int(retry.get("max_attempts", 5))
     retry_count = int(worker.get("retry_count", 0))
-    request = request_for_worker(config, worker)
+    request = request_for_worker(config, state, worker)
     if request is None:
         return False, False
     if retry_count < max_attempts:
@@ -10811,7 +10774,7 @@ def schedule_missing_process_retry(
     if consumed >= int(retry.get("max_attempts", 5)):
         return False
     try:
-        request = request_for_worker(config, worker)
+        request = request_for_worker(config, state, worker)
     except (KeyError, TypeError, ValueError):
         request = None
     if request is None:
@@ -11222,10 +11185,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         changed = True
 
     queue_records = state.setdefault("queue", {}).setdefault("events", {})
-    try:
-        queued_events = load_event_queue(config)
-    except KeyError:
-        queued_events = []
+    queued_events = queue_events(state)
     for event in queued_events:
         event_id = str(event.get("event_id") or "")
         if not event_id:
@@ -11308,26 +11268,21 @@ def redispatch_candidate_statuses(config: dict[str, Any]) -> set[str]:
     return statuses
 
 
-def status_root_for_config(config: dict[str, Any]) -> Path:
-    try:
-        return config_path(config, "status_file", "ai-status.json").parent
-    except KeyError:
-        return THIS_DIR.parent
-
-
 def task_resolver_for_config(
     config: dict[str, Any],
     task_lookup: TaskResolver | dict[str, dict[str, Any]],
 ) -> TaskResolver:
     if isinstance(task_lookup, TaskResolver):
         return task_lookup
-    return TaskResolver(task_lookup, status_root=status_root_for_config(config))
+    # The archive is presentation/audit evidence only.  Scheduler dependency
+    # decisions receive compact terminal facts through task_index_from_status.
+    return TaskResolver(task_lookup, allow_archive_lookup=False)
 
 
 def _task_resolver(task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> TaskResolver:
     if isinstance(task_lookup, TaskResolver):
         return task_lookup
-    return TaskResolver(task_lookup)
+    return TaskResolver(task_lookup, allow_archive_lookup=False)
 
 
 def dependencies_satisfied(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]], done_statuses: set[str]) -> bool:
@@ -11363,38 +11318,6 @@ def active_worker_indexes(state: dict[str, Any], active_statuses: set[str]) -> t
     return agents, task_agents
 
 
-def orphaned_queue_event_grace_seconds(config: dict[str, Any]) -> int:
-    value = ready_dispatch_settings(config).get("orphaned_queue_event_grace_seconds", 300)
-    try:
-        return max(30, int(value))
-    except (TypeError, ValueError):
-        return 300
-
-
-def queue_event_age_seconds(event: dict[str, Any]) -> float | None:
-    created_at = _parse_iso_utc(str(event.get("created_at") or ""))
-    if created_at is None:
-        return None
-    return max(0.0, (datetime.now(timezone.utc) - created_at.astimezone(timezone.utc)).total_seconds())
-
-
-def queue_event_is_orphaned(
-    config: dict[str, Any],
-    event: dict[str, Any],
-    record: dict[str, Any],
-    related_workers: list[dict[str, Any]],
-) -> bool:
-    if related_workers:
-        return False
-    status = str(record.get("status") or "").lower()
-    if status in {"completed", "failed"}:
-        return False
-    age_seconds = queue_event_age_seconds(event)
-    if age_seconds is None:
-        return False
-    return age_seconds > orphaned_queue_event_grace_seconds(config)
-
-
 def outstanding_delivery_indexes(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -11405,7 +11328,7 @@ def outstanding_delivery_indexes(
     task_agents: set[tuple[str, str]] = set()
     event_keys: set[str] = set()
     queue_records = state.get("queue", {}).get("events", {})
-    queued_events = load_event_queue(config) if events is None else events
+    queued_events = queue_events(state) if events is None else events
     for event in queued_events:
         if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
             continue
@@ -11413,12 +11336,7 @@ def outstanding_delivery_indexes(
         if not event_id:
             continue
         record = queue_records.get(event_id, {})
-        related_workers = [
-            worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id
-        ]
         if record.get("status") in {"completed", "failed"}:
-            continue
-        if queue_event_is_orphaned(config, event, record, related_workers):
             continue
         event_key = str(event.get("event_key") or "")
         if event_key:
@@ -11455,68 +11373,29 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
         record["error"] = error
 
 
-def save_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
-    replace_event_queue(config, events)
+def reconcile_queue_intents(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Reconcile leases against intents held in the same runtime snapshot.
 
+    A queued intent without a worker is normal: it is the durable work waiting
+    for delivery.  The retired JSONL queue treated that condition as an orphan
+    after a timer and could delete it independently of the runtime-state CAS.
+    """
 
-def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
-    events = load_event_queue(config)
+    events = queue_events(state)
     task_map = task_index_from_status(config, load_status(config))
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     redispatch_statuses = redispatch_candidate_statuses(config)
-    queue_events = state.setdefault("queue", {}).setdefault("events", {})
+    queue_records = state.setdefault("queue", {}).setdefault("events", {})
     workers = state.setdefault("workers", {})
-    kept: list[dict[str, Any]] = []
-    kept_ids: set[str] = set()
     changed = False
     now = datetime.now(timezone.utc)
-
-    # Queue records are only authoritative while their durable event still
-    # exists.  A started record without a task, durable event, or worker cannot
-    # be resumed or finalized through any normal worker path; retaining it
-    # falsely advertises an active lease and blocks promotion preflight.
-    durable_event_ids = {
-        str(event.get("event_id") or "")
-        for event in events
-        if isinstance(event, dict) and str(event.get("event_id") or "")
-    }
-    for event_id, record in list(queue_events.items()):
-        if event_id in durable_event_ids or not isinstance(record, dict):
-            continue
-        if record.get("status") not in active_statuses:
-            continue
-        if str(record.get("task_id") or ""):
-            continue
-        if any(
-            worker.get("queue_event_id") == event_id
-            for worker in state.get("workers", {}).values()
-            if isinstance(worker, dict)
-        ):
-            continue
-        queue_events.pop(event_id, None)
-        write_activity_log(
-            config,
-            {
-                "type": "malformed_queue_record_pruned",
-                "queue_event_id": event_id,
-                "message": (
-                    "Pruned an active queue record with no durable event, "
-                    "task, or worker."
-                ),
-            },
-        )
-        changed = True
-
-    if not events:
-        return changed
 
     for event in events:
         event_id = event.get("event_id")
         if not event_id:
-            changed = True
             continue
 
-        record = queue_events.get(event_id, {})
+        record = queue_records.get(event_id, {})
         related_worker_items = [
             (run_id, worker)
             for run_id, worker in workers.items()
@@ -11525,12 +11404,9 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
         related_workers = [worker for _, worker in related_worker_items]
         has_active_worker = any(worker.get("status") in active_statuses for worker in related_workers)
 
-        # ``retry_backoff`` is a scheduler hold, not a live process.  If every
-        # linked retry is overdue and its recorded process generation is gone,
-        # retaining the old ``started`` lease blocks promotion while no worker
-        # can complete it.  Drop that expired delivery lineage so the normal
-        # dispatcher may construct a fresh durable event for the still-open
-        # task on a later cycle.
+        # ``retry_backoff`` is a scheduler hold, not a live process.  When its
+        # process is gone, release only the lease; preserve the exact intent so
+        # a later delivery uses the same generation-bound work item.
         stale_retry_workers = (
             record.get("status") in {"started", "retry_backoff"}
             and bool(related_worker_items)
@@ -11561,42 +11437,12 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
                         ),
                     },
                 )
-            write_activity_log(
-                config,
-                {
-                    "type": "queue_event_pruned",
-                    "task_id": event.get("task_id"),
-                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
-                    "queue_event_id": event_id,
-                    "message": (
-                        "Pruned a started queue lease after every linked "
-                        "retry-backoff worker exceeded its retry deadline "
-                        "without a live process."
-                    ),
-                },
-            )
-            changed = True
-            continue
-
-        if queue_event_is_orphaned(config, event, record, related_workers):
-            age_seconds = queue_event_age_seconds(event)
-            event_key = str(event.get("event_key") or record.get("event_key") or "")
-            if event_key:
-                state.setdefault("seen_event_keys", {}).pop(event_key, None)
-            write_activity_log(
-                config,
-                {
-                    "type": "queue_event_pruned",
-                    "task_id": event.get("task_id"),
-                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
-                    "queue_event_id": event_id,
-                    "message": (
-                        f"Pruned orphaned queue event after {age_seconds:.1f}s without a live worker or queue record."
-                        if age_seconds is not None
-                        else "Pruned orphaned queue event without a live worker or queue record."
-                    ),
-                },
-            )
+            record["status"] = "queued"
+            record.pop("processed_at", None)
+            record.pop("error", None)
+            record.pop("lease_owner", None)
+            record.pop("lease_acquired_at", None)
+            record.pop("lease_expires_at", None)
             changed = True
             continue
         skip_message = stale_dispatch_skip_message(config, event, task_map)
@@ -11614,42 +11460,59 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
             record.pop("processed_at", None)
             record.pop("error", None)
             changed = True
-            kept.append(event)
-            kept_ids.add(event_id)
             continue
 
         current_task = task_map.get(str(event.get("task_id") or ""))
         current_status = str(current_task.get("status") or "").lower() if current_task else ""
 
         if record.get("status") == "failed" and not has_active_worker and current_status in redispatch_statuses:
+            record["status"] = "queued"
+            record.pop("processed_at", None)
+            record.pop("error", None)
             changed = True
             continue
 
-        if record.get("status") in {"completed", "failed"} and not has_active_worker:
-            changed = True
-            continue
-
-        kept.append(event)
-        kept_ids.add(event_id)
-
-    if not changed:
-        return False
-
-    state.setdefault("queue", {}).setdefault("events", {})
-    state["queue"]["events"] = {event_id: record for event_id, record in queue_events.items() if event_id in kept_ids}
-    save_event_queue(config, kept)
-    return True
+    return changed
 
 
 def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> dict[str, dict[str, Any]]:
     schema = config.get("schema", {})
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
-    return {
+    tasks = {
         str(task.get(task_id_field)): task
         for task in status.get(tasks_path, [])
         if task.get(task_id_field)
     }
+    terminal_facts = status.get("terminal_facts")
+    if terminal_facts is None:
+        terminal_facts = {}
+    if not isinstance(terminal_facts, dict):
+        raise RuntimeError("canonical terminal_facts must be an object")
+    for raw_task_id, raw_fact in terminal_facts.items():
+        task_id = str(raw_task_id or "").strip()
+        if task_id in tasks:
+            # A terminal row stays active only while the archive outbox is
+            # recovering.  The row remains the current lifecycle record until
+            # that transaction removes it.
+            continue
+        if not isinstance(raw_fact, dict):
+            raise RuntimeError(f"canonical terminal fact is invalid: {task_id}")
+        if (
+            raw_fact.get("status") != "done"
+            or str(raw_fact.get("terminal_outcome") or "")
+            not in {"completed", "superseded"}
+            or not isinstance(raw_fact.get("generation"), int)
+            or int(raw_fact["generation"]) < 1
+        ):
+            raise RuntimeError(f"canonical terminal fact is invalid: {task_id}")
+        tasks[task_id] = {
+            "id": task_id,
+            "status": "done",
+            "terminal_outcome": raw_fact["terminal_outcome"],
+            "generation": raw_fact["generation"],
+        }
+    return tasks
 
 
 def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
@@ -11881,7 +11744,7 @@ def agent_dispatch_loads(
             represented_queue_event_ids.add(queue_event_id)
 
     queue_records = state.get("queue", {}).get("events", {})
-    queued_events = load_event_queue(config) if events is None else events
+    queued_events = queue_events(state) if events is None else events
     for event in queued_events:
         if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
             continue
@@ -12543,10 +12406,7 @@ def reserve_dispatch_plan(
         return False
     settings = ready_dispatch_settings(config)
     active_statuses = normalized_status_set(settings.get("active_worker_statuses"), [])
-    try:
-        queued_events = load_event_queue(config)
-    except KeyError:
-        queued_events = []
+    queued_events = queue_events(state)
     task_map = task_index_from_status(config, load_status(config))
     _active_agents, active_pairs = active_worker_indexes(state, active_statuses)
     _pending_agents, pending_pairs, pending_keys = outstanding_delivery_indexes(
@@ -12605,7 +12465,7 @@ def reserve_dispatch_plan(
             continue
         if not event.get("context_files"):
             event["context_files"] = worker_execution_context_files(task_id)
-        if not _queue_delivery_event_locked(config, event):
+        if not _queue_delivery_event_locked(config, state, event):
             continue
         task_payload = event.get("task")
         redispatch = (
@@ -12885,7 +12745,7 @@ def apply_post_dispatch_maintenance(
             state["assistant_dev_bridge"] = deepcopy(bridge_state)
             changed = bool(assistant_dev_bridge_snapshot.get("changed")) or changed
     changed = bool(reconcile_queue_records(config, state)) or changed
-    changed = bool(prune_event_queue(config, state)) or changed
+    changed = bool(reconcile_queue_intents(config, state)) or changed
     changed = bool(
         reconcile_ownerless_in_progress_tasks(
             config,
@@ -12969,12 +12829,6 @@ def run_once(
         )
         if not isinstance(dispatch_status_snapshot, dict):
             dispatch_status_snapshot = {}
-        dispatch_queue_snapshot = _safe_phase(
-            "load_dispatch_queue_snapshot", load_event_queue, config, quiet=quiet,
-            critical=True,
-        )
-        if not isinstance(dispatch_queue_snapshot, list):
-            dispatch_queue_snapshot = []
         live_pid_snapshot = _safe_phase(
             "scan_live_worker_pids", scan_live_worker_pids_by_agent, quiet=quiet,
             critical=True,
@@ -12993,6 +12847,7 @@ def run_once(
         )
         if not isinstance(planning_runtime_snapshot, dict):
             planning_runtime_snapshot = {}
+        dispatch_queue_snapshot = queue_events(planning_runtime_snapshot)
         dispatch_plan = _safe_phase(
             "build_dispatch_plan",
             build_dispatch_plan,
@@ -13480,8 +13335,8 @@ def _finalize_runtime_cycle_locked(
     )
     changed = bool(
         _safe_phase(
-            "prune_event_queue_post_io",
-            prune_event_queue,
+            "reconcile_queue_intents_post_io",
+            reconcile_queue_intents,
             config,
             state,
             quiet=quiet,

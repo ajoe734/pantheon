@@ -40,7 +40,6 @@ ORCHESTRATOR_EXCLUDES = {
     "claude-approval-broker.mcp.json",
     "config.json",
     "config.local.json",
-    "event-queue.jsonl",
     "github-bus-state.json",
     "github-relay-state.json",
     "github-webhook-events.jsonl",
@@ -129,7 +128,6 @@ def copy_tree_filtered(src: Path, dest: Path, excludes: set[str]) -> None:
 def remove_generated_portable_runtime(target_root: Path) -> None:
     for rel_path in (
         ".orchestrator/state.json",
-        ".orchestrator/event-queue.jsonl",
         ".orchestrator/approval-queue.json",
         ".orchestrator/provider_capabilities.json",
         ".orchestrator/claude-approval-broker.mcp.json",

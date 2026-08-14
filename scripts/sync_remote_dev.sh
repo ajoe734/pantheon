@@ -56,7 +56,6 @@ RSYNC_ARGS=(
 if [[ "${MODE}" == "code" ]]; then
   RSYNC_ARGS+=(
     --exclude=.orchestrator/approval-queue.json
-    --exclude=.orchestrator/event-queue.jsonl
     --exclude=.orchestrator/github-bus-state.json
     --exclude=.orchestrator/provider_capabilities.json
     --exclude=.orchestrator/state.json

@@ -16,7 +16,6 @@ CANONICAL_RELATIVE_PATHS = (
     Path("ai-status.json"),
     Path("ai-activity-log.jsonl"),
     Path(".orchestrator/state.json"),
-    Path(".orchestrator/event-queue.jsonl"),
     Path(".orchestrator/approval-queue.json"),
 )
 
