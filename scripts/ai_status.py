@@ -1991,6 +1991,63 @@ def archive_terminal_tasks_in_state(state: dict[str, Any], *, archived_at: str |
     return [task_id for task_id in archived_ids if task_id]
 
 
+def backfill_dependency_terminal_facts_from_archive(
+    state: dict[str, Any],
+) -> list[str]:
+    """Restore only archived facts that active dependency edges require.
+
+    Terminal facts became the V2 scheduler's sole dependency authority.  A
+    cutover from a legacy projection can already have durable, validated task
+    archives while its new ``terminal_facts`` map is empty.  Scanning every
+    historical archive would inflate canonical state with unrelated history,
+    so the explicit Human/Ops archive migration backfills only missing IDs
+    referenced by currently active tasks.
+    """
+
+    normalize_terminal_facts(state)
+    active_tasks = [
+        task for task in state.get("tasks", []) if isinstance(task, Mapping)
+    ]
+    active_ids = {
+        str(task.get("id") or "").strip()
+        for task in active_tasks
+        if str(task.get("id") or "").strip()
+    }
+    facts = state[TERMINAL_FACTS_KEY]
+    dependency_ids = sorted(
+        {
+            str(dependency_id or "").strip()
+            for task in active_tasks
+            for dependency_id in (task.get("depends_on", []) or [])
+            if str(dependency_id or "").strip()
+        }
+        - active_ids
+        - set(facts)
+    )
+
+    backfilled: list[str] = []
+    for dependency_id in dependency_ids:
+        snapshot = archived_task_snapshot(dependency_id)
+        if snapshot is None:
+            continue
+        archived_task = snapshot.get("task")
+        if not isinstance(archived_task, Mapping):
+            raise RuntimeError(
+                f"archived dependency snapshot has no task: {dependency_id}"
+            )
+        candidate = deepcopy(dict(archived_task))
+        candidate["id"] = dependency_id
+        candidate["status"] = "done"
+        candidate["terminal_outcome"] = snapshot["terminal_outcome"]
+        record_terminal_fact(
+            state,
+            candidate,
+            recorded_at=str(snapshot["archived_at"]),
+        )
+        backfilled.append(dependency_id)
+    return backfilled
+
+
 def _canonical_json_sha256(value: Any) -> str:
     payload = json.dumps(
         value,
@@ -7104,13 +7161,20 @@ def command_sync(state: dict[str, Any], _args: list[str]) -> None:
 def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
     archived_at = iso_now()
     archived_ids = archive_terminal_tasks_in_state(state, archived_at=archived_at)
+    backfilled_dependency_ids = backfill_dependency_terminal_facts_from_archive(
+        state
+    )
     append_log(
         {
             "ts": archived_at,
             "agent": current_actor(),
             "type": "archive_migrate",
-            "message": f"Archived {len(archived_ids)} terminal tasks from ai-status.json.",
+            "message": (
+                f"Archived {len(archived_ids)} terminal tasks from ai-status.json "
+                f"and backfilled {len(backfilled_dependency_ids)} active dependency facts."
+            ),
             "task_ids": archived_ids,
+            "backfilled_dependency_ids": backfilled_dependency_ids,
         }
     )
 
