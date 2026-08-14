@@ -83,6 +83,28 @@ class BuildStatusPayloadTests(unittest.TestCase):
         self.assertEqual(payload["context"], "Pantheon canonical review gate")
         self.assertIn("does not match", payload["description"])
 
+    def test_tooling_delivery_succeeds_without_a_product_review_proof(self) -> None:
+        payload = gate_ci.build_status_payload(
+            head_ref="agent/tooling-repair",
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            delivery_class="tooling",
+            lookup=mock.Mock(),
+        )
+        self.assertEqual(payload["state"], "success")
+        self.assertIn("development tooling", payload["description"])
+
+    def test_unknown_delivery_class_fails_closed(self) -> None:
+        payload = gate_ci.build_status_payload(
+            head_ref="task/SUP-X",
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            delivery_class="anything-goes",
+            lookup=_lookup({}),
+        )
+        self.assertEqual(payload["state"], "failure")
+        self.assertIn("unknown delivery class", payload["description"])
+
     def test_task_branch_without_proof_tag_fails_closed(self) -> None:
         payload = gate_ci.build_status_payload(
             head_ref="task/SUP-X", repository=REPOSITORY, head_sha=HEAD, lookup=_lookup({})
@@ -260,6 +282,10 @@ class WorkflowDispatchContractTests(unittest.TestCase):
         self.assertEqual(
             gate_step["env"]["HEAD_SHA"],
             "${{ github.event.inputs.head_sha || github.event.pull_request.head.sha }}",
+        )
+        self.assertEqual(
+            gate_step["env"]["DELIVERY_CLASS"],
+            "${{ contains(github.event.pull_request.labels.*.name, 'delivery:tooling') && 'tooling' || 'product' }}",
         )
 
     def test_publisher_job_does_not_collide_with_required_status_context(self) -> None:
