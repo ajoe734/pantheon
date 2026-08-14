@@ -7,11 +7,12 @@ repository root with repository-relative path ``e2e/dummy.spec.ts``.
 """
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from common import resolve_path, to_bool
+from common import config_status_root, to_bool
 
 
 DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
@@ -27,7 +28,7 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
     "execute_plans": {
         "display_name": "execute-plans",
         "repo": "ajoe734/execute-plans",
-        "local_path": "../execute-plans",
+        "local_path": "../code/execute-plans",
         "default_branch": "dev",
         "artifact_prefixes": ["execute-plans/"],
         "coordination_dir": ".coordination",
@@ -82,9 +83,35 @@ def resolve_repository(config: dict[str, Any], repo_id: str) -> dict[str, Any]:
     repo = deepcopy(repositories(config).get(repo_id, {}))
     repo["id"] = repo_id
     repo["display_name"] = repo.get("display_name") or repo_id
-    local_path = repo.get("local_path")
-    repo["resolved_local_path"] = resolve_path(local_path) if local_path else None
+    configured_local_path = repository_configured_local_path(config, repo_id)
+    resolved_local_path = (
+        configured_local_path.resolve(strict=False)
+        if configured_local_path is not None
+        else None
+    )
+    repo["configured_local_path"] = configured_local_path
+    repo["resolved_local_path"] = resolved_local_path
     return repo
+
+
+def repository_configured_local_path(
+    config: dict[str, Any], repo_id: str | None
+) -> Path | None:
+    if not repo_id:
+        return None
+    repo = repositories(config).get(repo_id, {})
+    local_path = repo.get("local_path")
+    if not local_path:
+        return None
+    candidate = Path(str(local_path)).expanduser()
+    if not candidate.is_absolute():
+        # Repository paths belong to the coordination/data plane.  The
+        # installed command checkout may be an immutable release root and must
+        # never become path authority for delivery repositories.
+        candidate = config_status_root(config) / candidate
+    # Normalize parent references lexically without following symlinks.  Callers
+    # that establish authority can inspect every component before resolving.
+    return Path(os.path.abspath(candidate))
 
 
 def matching_repo_id(config: dict[str, Any], value: str | None) -> str | None:

@@ -115,6 +115,13 @@
       "review_ready_dispatch"
     ]
   },
+  "coordination": {
+    "repositories": {
+      "execute_plans": {
+        "local_path": "../code/execute-plans"
+      }
+    }
+  },
   "worker_worktree_cleanup": {
     "enabled": true,
     "cleanup_inactive_leases": true,
