@@ -20,8 +20,10 @@ The target system has seven responsibilities:
    current authoritative head, and its append-only audit journal.
 2. **Dispatch Planner** is a pure computation over one task snapshot, one
    runtime snapshot, dependency results, and cached account health.
-3. **Delivery Queue** durably records an approved launch intent and its delivery
-   attempt. It does not decide eligibility, assignment, or policy.
+3. **Delivery Queue** is the `queue.events` subdocument of the V2 runtime
+   state. It durably records an approved launch intent and its delivery attempt
+   in the same compare-and-swap transaction as the matching lease. It does not
+   decide eligibility, assignment, or policy.
 4. **Worker Manager** owns process identity, task worktree, execution lease,
    heartbeat, progress, and exact-generation termination.
 5. **Account Health** owns normalized auth, quota, retry-at, and capacity for a
@@ -116,6 +118,12 @@ reason, previous assignment, new assignment, and task generation.
 Approval is bound to an exact PR and head SHA. Routing may change after
 approval, but finalization is legal only while the reviewed head remains exact.
 
+Handoff freezes the delivery target before a task enters `review`: a PR task
+stores its exact PR/head identity, while a non-PR task stores the hash of its
+declared artifact and acceptance contract. Approval may not discover or replace
+that target later. A rejection clears the binding and a new handoff establishes
+the next one.
+
 A non-remembered worker tool approval is also one-shot. It is bound to task,
 task generation, tool name, and canonical tool-input digest, then atomically
 consumed by the next delivery session. It never installs a temporary global
@@ -164,9 +172,9 @@ Claude allow rule and cannot authorize a second matching invocation.
 
 Each supervisor cycle has one execution path:
 
-1. Read one canonical TaskStore head, one runtime head, the durable delivery
-   queue, cached Account Health, and local process identities outside exclusive
-   locks.
+1. Read one canonical TaskStore head, one runtime head (including its embedded
+   durable delivery intents and leases), cached Account Health, and local
+   process identities outside exclusive locks.
 2. Run the pure Dispatch Planner over those immutable snapshots. It emits
    accepted intents and a rejection reason for every rejected candidate. The
    diagnostic CLI serializes this same result; it has no copy of the policy.
@@ -212,6 +220,11 @@ The head is authority for the current state and is cryptographically bound to
 the journal event at its recorded offset. The journal is authority for audit
 history and crash-tail recovery. The legacy anchor is not consulted during a
 hot read.
+
+When a task reaches `done`, TaskStore retains a compact terminal fact
+(`status`, terminal outcome, generation, and recorded timestamp) in the
+current head. Dependency resolution reads this fact, never the rich task
+archive. The archive remains an audit/display projection only.
 
 ### 6.2 Delta event
 

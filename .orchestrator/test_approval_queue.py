@@ -23,7 +23,6 @@ class ApprovalQueuePruneTests(unittest.TestCase):
             "paths": {
                 "approval_queue": str(self.root / "approval-queue.json"),
                 "state_file": str(self.root / "state.json"),
-                "event_queue": str(self.root / "event-queue.jsonl"),
                 "activity_log": str(self.root / "activity-log.jsonl"),
                 "evidence_dir": str(self.root / "evidence"),
             },
@@ -61,7 +60,6 @@ class ApprovalQueuePruneTests(unittest.TestCase):
             },
         )
         self._write_json(self.root / "state.json", {"version": 2, "workers": {}, "queue": {"events": {}}})
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         pruned = approval_queue.prune_stale_approvals(self.config)
 
@@ -109,7 +107,6 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                 "queue": {"events": {}},
             },
         )
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         pruned = approval_queue.prune_stale_approvals(self.config)
 
@@ -154,7 +151,6 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                 "queue": {"events": {}},
             },
         )
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         pruned = approval_queue.prune_stale_approvals(self.config)
 
@@ -200,7 +196,6 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                 "queue": {"events": {}},
             },
         )
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         pruned = approval_queue.prune_stale_approvals(self.config)
 
@@ -246,7 +241,6 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                 "queue": {"events": {}},
             },
         )
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         pruned = approval_queue.prune_stale_approvals(self.config)
 
@@ -297,7 +291,6 @@ class ApprovalQueuePruneTests(unittest.TestCase):
                 "queue": {"events": {}},
             },
         )
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         pruned = approval_queue.prune_stale_approvals(self.config)
 

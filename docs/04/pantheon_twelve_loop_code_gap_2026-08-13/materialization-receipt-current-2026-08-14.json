@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "program_id": "pantheon-l12-current-clean-closure-20260814",
+  "catalog": {
+    "path": "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/execution-tasks-current-2026-08-14.json",
+    "sha256": "4119f3b2759279182f3e131b46d9cef6ae733907ae61dbe6320f91307f259a33",
+    "pull_request": 4889,
+    "head_sha": "5bb3c7f2859715ee4a4583232fb3a414ae8f78a4"
+  },
+  "canonical_materialization": {
+    "completed_at": "2026-08-14T07:36:59Z",
+    "command": "scripts/human-ops-status.sh assign",
+    "command_runtime_sha": "768eba39b35d4e9c53beaef22fe7bf841b8f5e45",
+    "store_mode": "authoritative",
+    "materialization_id": "local-human-ops-l12-current-clean-closure-20260814-v1",
+    "task_count": 16,
+    "all_task_ids_present": true,
+    "all_generation_one": true,
+    "all_catalog_digests_match": true,
+    "initial_status": {
+      "todo": 16
+    },
+    "owner_distribution": {
+      "Claude": 4,
+      "Claude2": 4,
+      "Antigravity": 4,
+      "Antigravity2": 4
+    },
+    "task_ids": [
+      "L12-CURRENT-ALPHA-ADMISSION-20260814",
+      "L12-CURRENT-TEACHING-IDENTITY-20260814",
+      "L12-CURRENT-CONSULTATION-WIRING-20260814",
+      "L12-CURRENT-DEPLOYMENT-AUTH-20260814",
+      "L12-CURRENT-AGORA-HANDOFF-CUTOVER-20260814",
+      "L12-CURRENT-IMITATION-HTTP-20260814",
+      "L12-CURRENT-CAPITAL-ARTIFACT-20260814",
+      "L12-CURRENT-BFF-TRUTH-20260814",
+      "L12-CURRENT-COMPOSE-INTEGRATION-20260814",
+      "L12-CURRENT-FE-TRUTH-20260814",
+      "L12-CURRENT-E2E-RESEARCH-20260814",
+      "L12-CURRENT-E2E-HUMAN-LEARNING-20260814",
+      "L12-CURRENT-E2E-RUNTIME-20260814",
+      "L12-CURRENT-CROSS-LOOP-E2E-20260814",
+      "L12-CURRENT-LEGACY-RETIRE-20260814",
+      "L12-CURRENT-HOSTED-ACCEPT-20260814"
+    ]
+  },
+  "supervisor_dispatch_readback": {
+    "observed_at": "2026-08-14T07:38:37Z",
+    "implementation_underway": true,
+    "active_worker_count": 5,
+    "workers": [
+      {
+        "task_id": "L12-CURRENT-TEACHING-IDENTITY-20260814",
+        "provider": "antigravity",
+        "run_id": "antigravity-20260814T073820Z-3af51e39",
+        "workspace_mode": "isolated_worktree"
+      },
+      {
+        "task_id": "L12-CURRENT-DEPLOYMENT-AUTH-20260814",
+        "provider": "antigravity2",
+        "run_id": "antigravity2-20260814T073824Z-60f11e13",
+        "workspace_mode": "isolated_worktree"
+      },
+      {
+        "task_id": "L12-CURRENT-FE-TRUTH-20260814",
+        "provider": "antigravity",
+        "run_id": "antigravity-20260814T073827Z-57b2d465",
+        "workspace_mode": "isolated_worktree"
+      },
+      {
+        "task_id": "L12-CURRENT-BFF-TRUTH-20260814",
+        "provider": "antigravity2",
+        "run_id": "antigravity2-20260814T073831Z-5854883b",
+        "workspace_mode": "isolated_worktree"
+      },
+      {
+        "task_id": "L12-CURRENT-ALPHA-ADMISSION-20260814",
+        "provider": "claude",
+        "run_id": "claude-20260814T073837Z-61dc8855",
+        "workspace_mode": "isolated_worktree"
+      }
+    ],
+    "capacity_note": "Claude and Claude2 share claude_account_shared_max_1; remaining ready work stays todo until supervisor capacity is available."
+  },
+  "non_materializing_bridge_attempts": [
+    {
+      "packet_id": "pkt-l12-current-clean-closure-20260814-v1",
+      "packet_digest": "9e9cd9d7d4a10ac4e9bc612de336d5893e7603312440650cfb282cec0875e6e7",
+      "status": "error",
+      "canonical_rows_written": 0,
+      "error": "BRIDGE_SIGNING_PUBLIC_KEYS_JSON is required"
+    },
+    {
+      "packet_id": "pkt-l12-current-clean-closure-20260814-v2",
+      "packet_digest": "608b3024ac5f0557a6abf78b516ca7958c574b5bb13ae35df90347fb4adaee61",
+      "status": "invalid_materialization",
+      "canonical_rows_written": 0,
+      "error": "Dev bridge source and operator authorization must be separate; authoritative post-batch readback invalid"
+    }
+  ]
+}

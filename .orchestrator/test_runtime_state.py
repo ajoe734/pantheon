@@ -134,7 +134,6 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.config = {
             "paths": {
                 "state_file": str(self.root / "state.json"),
-                "event_queue": str(self.root / "event-queue.jsonl"),
             }
         }
 
@@ -155,10 +154,9 @@ class LoadRuntimeStateTests(unittest.TestCase):
                         "queue_event_id": "evt-missing",
                     }
                 },
-                "queue": {"events": {}},
+                "queue": {"version": 2, "events": {}},
             },
         )
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         state = runtime_state.load_runtime_state(self.config)
 
@@ -177,12 +175,19 @@ class LoadRuntimeStateTests(unittest.TestCase):
                         "queue_event_id": "evt-live",
                     }
                 },
-                "queue": {"events": {}},
+                "queue": {
+                    "version": 2,
+                    "events": {
+                        "evt-live": {
+                            "intent": {
+                                "event_id": "evt-live",
+                                "task_id": "EXEC-FRONT-TW03-001",
+                            },
+                            "status": "suspended_approval",
+                        }
+                    },
+                },
             },
-        )
-        (self.root / "event-queue.jsonl").write_text(
-            json.dumps({"event_id": "evt-live", "task_id": "EXEC-FRONT-TW03-001"}) + "\n",
-            encoding="utf-8",
         )
 
         state = runtime_state.load_runtime_state(self.config)
@@ -195,7 +200,7 @@ class LoadRuntimeStateTests(unittest.TestCase):
             {
                 "version": 2,
                 "workers": {},
-                "queue": {"events": {}},
+                "queue": {"version": 2, "events": {}},
                 "tasks": {
                     "STALE-CACHE-ROW": {
                         "status": "todo",
@@ -220,7 +225,6 @@ class LoadRuntimeStateTests(unittest.TestCase):
                 },
             },
         )
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         state = runtime_state.load_runtime_state(self.config)
 
@@ -251,14 +255,13 @@ class LoadRuntimeStateTests(unittest.TestCase):
             {
                 "version": 2,
                 "workers": {},
-                "queue": {"events": {}},
+                "queue": {"version": 2, "events": {}},
                 "watchdog": {
                     "safe_mode_until": "2026-05-18T14:30:00Z",
                     "safe_mode_reason": "stale_heartbeat",
                 },
             },
         )
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         state = runtime_state.load_runtime_state(self.config)
 
@@ -267,7 +270,6 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertIn("last_safe_mode_observed_until", state["watchdog"])
 
     def test_runtime_phase_reservation_survives_save_and_reload(self) -> None:
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
         state = runtime_state.default_state()
         state["supervisor"]["runtime_phase_reservations"] = {
             "process_queue": {
@@ -298,11 +300,10 @@ class LoadRuntimeStateTests(unittest.TestCase):
             {
                 "version": 2,
                 "workers": {},
-                "queue": {"events": {}},
+                "queue": {"version": 2, "events": {}},
                 "worker_worktree_cleanup": {"last_run": last_run},
             },
         )
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         state = runtime_state.load_runtime_state(self.config)
 
@@ -312,10 +313,6 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self._write_json(
             self.root / "state.json",
             {"version": 1, "workers": [], "queue": {"events": {}}},
-        )
-        (self.root / "event-queue.jsonl").write_text(
-            json.dumps({"event_id": "evt-v2", "task_id": "TASK-V2"}) + "\n",
-            encoding="utf-8",
         )
 
         with self.assertRaises(runtime_state.RuntimeStateSchemaError):
@@ -334,12 +331,16 @@ class LoadRuntimeStateTests(unittest.TestCase):
                         "status": "running",
                     }
                 },
-                "queue": {"events": {"evt-v2": {"status": "started"}}},
+                "queue": {
+                    "version": 2,
+                    "events": {
+                        "evt-v2": {
+                            "intent": {"event_id": "evt-v2", "task_id": "TASK-V2"},
+                            "status": "started",
+                        }
+                    },
+                },
             },
-        )
-        (self.root / "event-queue.jsonl").write_text(
-            json.dumps({"event_id": "evt-v2", "task_id": "TASK-V2"}) + "\n",
-            encoding="utf-8",
         )
 
         state = runtime_state.load_runtime_state(self.config)
@@ -347,15 +348,83 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertIn("run-active", state["workers"])
         self.assertEqual(state["queue"]["events"]["evt-v2"]["status"], "started")
 
+    def test_ordinary_runtime_never_reads_the_retired_queue_file(self) -> None:
+        self._write_json(
+            self.root / "state.json",
+            {
+                "version": 2,
+                "workers": {},
+                "queue": {
+                    "version": 2,
+                    "events": {
+                        "evt-v2": {
+                            "intent": {"event_id": "evt-v2", "task_id": "TASK-V2"},
+                            "status": "queued",
+                        }
+                    },
+                },
+            },
+        )
+        retired = self.root / "event-queue.jsonl"
+        retired.write_bytes(b"not-jsonl-and-not-runtime-authority\n")
+
+        state = runtime_state.load_runtime_state(self.config)
+
+        self.assertEqual(runtime_state.queue_events(state)[0]["event_id"], "evt-v2")
+
+    def test_offline_migration_embeds_legacy_queue_intents_before_normal_start(self) -> None:
+        self._write_json(
+            self.root / "state.json",
+            {
+                "version": 2,
+                "workers": {},
+                "queue": {"version": 2, "events": {"evt-v2": {"status": "queued"}}},
+            },
+        )
+        retired = self.root / "event-queue.jsonl"
+        retired.write_text(
+            json.dumps({"event_id": "evt-v2", "task_id": "TASK-V2", "event_key": "k-v2"})
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(runtime_state.RuntimeStateSchemaError):
+            runtime_state.load_runtime_state(self.config)
+        result = runtime_state.migrate_legacy_event_queue_into_runtime_state(
+            self.config,
+            legacy_event_queue_path=retired,
+        )
+        migrated = runtime_state.load_runtime_state(self.config)
+
+        self.assertEqual(result, {"imported_intents": 1, "discarded_terminal_records": 0})
+        self.assertEqual(migrated["queue"]["events"]["evt-v2"]["intent"]["task_id"], "TASK-V2")
+
+    def test_offline_migration_rejects_active_record_without_matching_intent(self) -> None:
+        self._write_json(
+            self.root / "state.json",
+            {
+                "version": 2,
+                "workers": {},
+                "queue": {"version": 2, "events": {"evt-missing": {"status": "started"}}},
+            },
+        )
+        retired = self.root / "event-queue.jsonl"
+        retired.write_text("", encoding="utf-8")
+
+        with self.assertRaisesRegex(runtime_state.RuntimeStateSchemaError, "active record"):
+            runtime_state.migrate_legacy_event_queue_into_runtime_state(
+                self.config,
+                legacy_event_queue_path=retired,
+            )
+
     def test_projection_reader_does_not_reverse_acquire_runtime_from_task_lock(self) -> None:
         self.config["paths"]["approval_queue"] = str(
             self.root / "approval-queue.json"
         )
         self._write_json(
             self.root / "state.json",
-            {"version": 2, "workers": {}, "queue": {"events": {}}},
+            {"version": 2, "workers": {}, "queue": {"version": 2, "events": {}}},
         )
-        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
         self._write_json(
             self.root / "approval-queue.json",
             {"version": 2, "pending": [], "history": []},
@@ -375,12 +444,10 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
         self.addCleanup(self.tmpdir.cleanup)
         self.root = Path(self.tmpdir.name)
         self.state_path = self.root / "state.json"
-        self.event_queue_path = self.root / "event-queue.jsonl"
         self.approval_queue_path = self.root / "approval-queue.json"
         self.config = {
             "paths": {
                 "state_file": str(self.state_path),
-                "event_queue": str(self.event_queue_path),
                 "approval_queue": str(self.approval_queue_path),
             }
         }
@@ -389,25 +456,24 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
         self,
         *,
         runtime: dict[str, object] | None = None,
-        events: list[dict[str, object]] | None = None,
         approvals: dict[str, object] | None = None,
     ) -> dict[str, bytes]:
         runtime_payload = runtime or {
             "version": 2,
             "workers": {},
             "queue": {
+                "version": 2,
                 "events": {
-                    "evt-unrelated": {"status": "completed"},
+                    "evt-unrelated": {
+                        "intent": {
+                            "event_id": "evt-unrelated",
+                            "task_id": "TASK-UNRELATED",
+                        },
+                        "status": "completed",
+                    },
                 }
             },
         }
-        event_payload = events or [
-            {
-                "event_id": "evt-unrelated",
-                "task_id": "TASK-UNRELATED",
-                "status": "completed",
-            }
-        ]
         approval_payload = approvals or {
             "version": 2,
             "pending": [],
@@ -419,15 +485,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                 + "\n"
             ).encode("utf-8")
         )
-        self.event_queue_path.write_bytes(
-            b"".join(
-                (
-                    json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-                    + "\n"
-                ).encode("utf-8")
-                for event in event_payload
-            )
-        )
         self.approval_queue_path.write_bytes(
             (
                 json.dumps(approval_payload, ensure_ascii=False, separators=(",", ":"))
@@ -436,7 +493,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
         )
         return {
             "runtime_state": self.state_path.read_bytes(),
-            "event_queue": self.event_queue_path.read_bytes(),
             "approval_queue": self.approval_queue_path.read_bytes(),
         }
 
@@ -545,7 +601,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             source_id: hashlib.sha256(bodies[source_id]).hexdigest()
             for source_id in (
                 "runtime_state",
-                "event_queue",
                 "approval_queue",
             )
         }
@@ -589,7 +644,7 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             )
             self.assertEqual(
                 list(decision["source_sha256"]),
-                ["runtime_state", "event_queue", "approval_queue"],
+                ["runtime_state", "approval_queue"],
             )
 
     def test_queued_event_joins_runtime_queue_record_for_conflict_status(self) -> None:
@@ -598,17 +653,18 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                 "version": 2,
                 "workers": {},
                 "queue": {
+                    "version": 2,
                     "events": {
-                        "evt-target": {"status": "queued"},
+                        "evt-target": {
+                            "intent": {
+                                "event_id": "evt-target",
+                                "task_id": "TASK-A",
+                            },
+                            "status": "queued",
+                        },
                     }
                 },
             },
-            events=[
-                {
-                    "event_id": "evt-target",
-                    "task_id": "TASK-A",
-                }
-            ],
         )
 
         with runtime_state.tasks_runtime_admission_guard(
@@ -624,10 +680,10 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                 decision["conflicts"],
                 [
                     {
-                        "source_id": "event_queue",
+                        "source_id": "runtime_state",
                         "task_id": "TASK-A",
                         "status": "queued",
-                        "record_id": "evt-target",
+                        "record_id": "queue:evt-target",
                     }
                 ],
             )
@@ -637,7 +693,7 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             self.state_path.unlink()
 
         def empty_source() -> None:
-            self.event_queue_path.write_bytes(b"")
+            self.state_path.write_bytes(b"")
 
         def malformed_source() -> None:
             self.approval_queue_path.write_bytes(b'{"version":2,"pending":[')
@@ -661,7 +717,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     path: path.read_bytes() if path.exists() else None
                     for path in (
                         self.state_path,
-                        self.event_queue_path,
                         self.approval_queue_path,
                     )
                 }
@@ -677,12 +732,12 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     self.assertEqual(decision["conflicts"], [])
                     self.assertEqual(
                         list(decision["source_sha256"]),
-                        ["runtime_state", "event_queue", "approval_queue"],
+                        ["runtime_state", "approval_queue"],
                     )
                 self.assertEqual(
                     {
-                        path: path.read_bytes() if path.exists() else None
-                        for path in before
+                    path: path.read_bytes() if path.exists() else None
+                    for path in before
                     },
                     before,
                     "failed admission mutated a canonical runtime source",
@@ -702,20 +757,33 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             "approval-newer-version": lambda: self._write_valid_sources(
                 approvals={"version": 3, "pending": [], "history": []}
             ),
-            "duplicate-event-id": lambda: self._write_valid_sources(
-                events=[
-                    {"event_id": "evt-duplicate", "task_id": "TASK-A"},
-                    {"event_id": "evt-duplicate", "task_id": "TASK-B"},
-                ]
+            "legacy-queue-record": lambda: self._write_valid_sources(
+                runtime={
+                    "version": 2,
+                    "workers": {},
+                    "queue": {"version": 2, "events": {"evt-legacy": {"status": "queued"}}},
+                }
             ),
-            "blank-event-task": lambda: self._write_valid_sources(
-                events=[{"event_id": "evt-blank", "task_id": ""}]
+            "blank-queue-intent-task": lambda: self._write_valid_sources(
+                runtime={
+                    "version": 2,
+                    "workers": {},
+                    "queue": {
+                        "version": 2,
+                        "events": {
+                            "evt-blank": {
+                                "intent": {"event_id": "evt-blank", "task_id": ""},
+                                "status": "queued",
+                            }
+                        },
+                    },
+                }
             ),
             "blank-worker-task": lambda: self._write_valid_sources(
                 runtime={
                     "version": 2,
                     "workers": {"run-blank": {"task_id": "", "status": "running"}},
-                    "queue": {"events": {}},
+                    "queue": {"version": 2, "events": {}},
                 }
             ),
             "blank-approval-task": lambda: self._write_valid_sources(
@@ -733,7 +801,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     path: path.read_bytes()
                     for path in (
                         self.state_path,
-                        self.event_queue_path,
                         self.approval_queue_path,
                     )
                 }
@@ -756,7 +823,7 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
         real_read = runtime_state._read_canonical_runtime_source
 
         def unreadable(path: Path, *, source_id: str) -> bytes:
-            if source_id == "event_queue":
+            if source_id == "approval_queue":
                 raise PermissionError("injected unreadable source")
             return real_read(path, source_id=source_id)
 
@@ -775,7 +842,7 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                 self.assertFalse(decision["allowed"])
                 self.assertEqual(decision["reason_id"], "runtime_source_invalid")
                 self.assertEqual(
-                    decision["source_sha256"]["event_queue"],
+                    decision["source_sha256"]["approval_queue"],
                     hashlib.sha256(b"").hexdigest(),
                 )
 
@@ -792,7 +859,7 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                                 "status": status,
                             }
                         },
-                        "queue": {"events": {}},
+                        "queue": {"version": 2, "events": {}},
                     }
                 )
                 with runtime_state.tasks_runtime_admission_guard(
@@ -822,7 +889,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
     def test_runtime_source_leaf_symlinks_fail_closed_without_reading_targets(self) -> None:
         source_paths = {
             "runtime_state": self.state_path,
-            "event_queue": self.event_queue_path,
             "approval_queue": self.approval_queue_path,
         }
         for source_id, path in source_paths.items():
@@ -870,7 +936,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
     def test_nonregular_runtime_source_leaves_fail_closed(self) -> None:
         source_paths = {
             "runtime_state": self.state_path,
-            "event_queue": self.event_queue_path,
             "approval_queue": self.approval_queue_path,
         }
         for source_id, path in source_paths.items():
@@ -910,7 +975,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                 "status_file": str(status_path),
                 "activity_log": str(activity_path),
                 "state_file": str(runtime_root / "state.json"),
-                "event_queue": str(runtime_root / "event-queue.jsonl"),
                 "approval_queue": str(runtime_root / "approval-queue.json"),
             }
         }
@@ -940,7 +1004,7 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             "runtime-sources": {
                 "paths": {
                     **self.config["paths"],
-                    "event_queue": str(split_root / "event-queue.jsonl"),
+                    "approval_queue": str(split_root / "approval-queue.json"),
                 }
             },
             "status-vs-runtime": {
@@ -1008,10 +1072,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     self.config,
                     {"version": 2, "workers": {}, "queue": {"events": {}}},
                 ),
-            ),
-            (
-                "event_queue",
-                lambda: runtime_state.replace_event_queue(self.config, []),
             ),
             (
                 "approval_queue",

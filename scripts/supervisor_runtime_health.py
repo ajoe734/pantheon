@@ -261,29 +261,6 @@ def _git_head(root: Path) -> str | None:
     return value if HEX_40_PATTERN.fullmatch(value) else None
 
 
-def _validated_jsonl_access(path: Path, *, max_bytes: int = 1024 * 1024) -> tuple[bool, dict[str, Any]]:
-    if path.is_symlink():
-        return False, {"path": str(path), "error": "symlink"}
-    try:
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            size = handle.tell()
-            start = max(0, size - max_bytes)
-            handle.seek(start)
-            payload = handle.read(max_bytes)
-    except OSError as exc:
-        return False, {"path": str(path), "error": f"{type(exc).__name__}:{exc}"}
-    if start:
-        _, separator, payload = payload.partition(b"\n")
-        if not separator:
-            return False, {"path": str(path), "error": "record_exceeds_bounded_probe"}
-    try:
-        records = [json.loads(line.decode("utf-8", errors="strict")) for line in payload.splitlines() if line.strip()]
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        return False, {"path": str(path), "error": f"{type(exc).__name__}:{exc}"}
-    return all(isinstance(item, dict) for item in records), {"path": str(path), "byte_size": size, "records_probed": len(records)}
-
-
 def check(name: str, ok: bool, detail: dict[str, Any] | None = None) -> dict[str, Any]:
     return {"name": name, "ok": bool(ok), **(detail or {})}
 
@@ -473,8 +450,23 @@ def evaluate_runtime_health(
         approval_queue_error = None
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         approval_queue_error = f"{type(exc).__name__}:{exc}"
-    queue_path = config_path(repo_root, config, "event_queue", ".orchestrator/event-queue.jsonl")
-    queue_ok, queue_detail = _validated_jsonl_access(queue_path)
+    runtime_queue = state.get("queue") if isinstance(state, dict) else None
+    runtime_events = runtime_queue.get("events") if isinstance(runtime_queue, dict) else None
+    queue_ok = bool(
+        isinstance(runtime_queue, dict)
+        and runtime_queue.get("version") == 2
+        and isinstance(runtime_events, dict)
+        and all(
+            isinstance(record, dict)
+            and isinstance(record.get("intent"), dict)
+            and str(record["intent"].get("event_id") or event_id) == str(event_id)
+            for event_id, record in runtime_events.items()
+        )
+    )
+    queue_detail = {
+        "source": "runtime_state.queue.events",
+        "event_count": len(runtime_events) if isinstance(runtime_events, dict) else None,
+    }
     task_head_path = _task_head_path(repo_root, config)
     task_head, task_head_error = _load_json_object(task_head_path) if task_head_path is not None else (None, "not_configured")
     projection = (
@@ -507,7 +499,7 @@ def evaluate_runtime_health(
             projection_ok,
             {"task_state_projection": projection},
         ),
-        check("readiness_queue_accessible", queue_ok, queue_detail),
+        check("readiness_queue_intents_accessible", queue_ok, queue_detail),
         check(
             "readiness_approval_queue_marker_accessible",
             approval_queue_error is None,

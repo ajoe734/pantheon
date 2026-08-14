@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "program_id": "pantheon-l12-current-clean-closure-20260814",
+  "source_reconciliation": "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/CURRENT_BLOCKER_RECONCILIATION_2026-08-14.md",
+  "merge_target": "dev",
+  "tasks": [
+    {
+      "id": "L12-CURRENT-IMITATION-ENTRYPOINT-20260814",
+      "repo": "pantheon",
+      "title": "Fail closed when the imitation worker cannot complete Research HTTP handoff",
+      "summary": "Repair the existing policy-learning worker settlement boundary so a failed Research HTTP admission/readback never settles the candidate as a completed handoff.",
+      "owner": "Antigravity2",
+      "reviewer": "Claude",
+      "phase": "W2-component-scope-correction",
+      "depends_on": [
+        "L12-CURRENT-AGORA-HANDOFF-CUTOVER-20260814"
+      ],
+      "scope": [
+        "services/policy-learning/main.py",
+        "services/policy-learning/tests/test_current_imitation_entrypoint.py"
+      ],
+      "out_of_scope": [
+        "services/policy-learning/candidate_experiment_handoff.py",
+        "services/policy-learning/research_candidate_client.py",
+        "Research store implementation",
+        "new Research client or endpoint",
+        "docker-compose.yml"
+      ],
+      "acceptance": [
+        "Research HTTP admission and authoritative readback failure retain a retryable or explicitly failed candidate without handoff_status completed",
+        "successful exact Research task and run readback permits the existing worker settlement path",
+        "production worker entrypoints have zero silent exception path that marks a failed Research handoff complete"
+      ],
+      "validation": [
+        "focused policy-learning worker settlement tests",
+        "failure and replay test with no completed mutation",
+        "declared-scope and direct-store caller guard"
+      ],
+      "rollout": "merge before approval of L12-CURRENT-IMITATION-HTTP-20260814",
+      "rollback": "pause candidate settlement with backlog retained and explicit failure; never restore silent completion"
+    }
+  ]
+}

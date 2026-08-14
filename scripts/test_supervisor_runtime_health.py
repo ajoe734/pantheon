@@ -27,7 +27,6 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
     state_path = status_root / ".orchestrator" / "state.json"
     status_path = status_root / "ai-status.json"
     approval_queue_path = status_root / ".orchestrator" / "approval-queue.json"
-    queue_path = status_root / ".orchestrator" / "event-queue.jsonl"
     event_log = repo / "runtime" / "task-state-events.jsonl"
     head_path = event_log.with_name(f"{event_log.name}.head.json")
     config_path = repo / "runtime" / "live-config.json"
@@ -45,7 +44,6 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
             "state_file": str(state_path),
             "status_file": str(status_path),
             "approval_queue": str(approval_queue_path),
-            "event_queue": str(queue_path),
         },
         "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
         "watchdog": {
@@ -92,8 +90,12 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
             }
         },
         "queue": {
+            "version": 2,
             "events": {
-                "evt-1": {"status": "started", "task_id": "TASK-1"}
+                "evt-1": {
+                    "intent": {"event_id": "evt-1", "task_id": "TASK-1"},
+                    "status": "started",
+                }
             }
         },
         "worker_worktrees": {"leases": {"TASK-1": {"task_id": "TASK-1"}}},
@@ -128,8 +130,6 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
     write_json(status_path, status)
     write_json(approval_queue_path, {"version": 2, "pending": [], "history": []})
     write_json(head_path, {"sequence": 7, "state": status})
-    queue_path.parent.mkdir(parents=True, exist_ok=True)
-    queue_path.write_text(json.dumps({"event_id": "evt-1", "task_id": "TASK-1"}) + "\n", encoding="utf-8")
     state_path.with_name("supervisor.pid").write_text(f"{PID}\n", encoding="utf-8")
     return {
         "config": config,

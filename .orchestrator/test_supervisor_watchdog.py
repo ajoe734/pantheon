@@ -772,6 +772,14 @@ class SupervisorWatchdogTests(unittest.TestCase):
         status_file = self.root / "canonical" / "ai-status.json"
         status_file.parent.mkdir(parents=True, exist_ok=True)
         self.config["paths"]["status_file"] = str(status_file)
+        runtime_root = Path("/immutable/runtime")
+        self.config["watchdog"]["supervisor_command"] = [
+            "python3",
+            "-u",
+            str(runtime_root / ".orchestrator" / "supervisor.py"),
+            "--config",
+            str(self.root / "live-supervisor.json"),
+        ]
         captured = {}
 
         class _FakeProc:
@@ -779,6 +787,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
         def _fake_popen(command, **kwargs):
             captured["env"] = kwargs.get("env")
+            captured["cwd"] = kwargs.get("cwd")
             return _FakeProc()
 
         now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
@@ -801,7 +810,9 @@ class SupervisorWatchdogTests(unittest.TestCase):
             ),
             mock.patch.object(supervisor_watchdog.subprocess, "Popen", _fake_popen),
         ):
-            pid, _log_path = supervisor_watchdog.start_supervisor(self.config, {}, now)
+            pid, _log_path = supervisor_watchdog.start_supervisor(
+                self.config, self.config["watchdog"], now
+            )
         self.assertEqual(pid, 4242)
         self.assertIsNotNone(captured["env"])
         self.assertEqual(
@@ -818,9 +829,14 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(captured["env"].get("PANTHEON_COMMAND_RUNTIME_SHA"), "a" * 40)
         self.assertEqual(captured["env"].get("PANTHEON_COMMAND_REMOTE"), "ajoe734/pantheon")
         self.assertEqual(captured["env"].get("PANTHEON_COMMAND_BASE_REF"), "origin/dev")
+        self.assertEqual(captured["cwd"], runtime_root)
 
     def test_start_supervisor_rejects_missing_public_verifier_environment(self) -> None:
         now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
+        self.config["watchdog"]["supervisor_command"] = [
+            "python3",
+            str(Path("/immutable/runtime/.orchestrator/supervisor.py")),
+        ]
         missing = {
             "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": "",
         }
@@ -829,7 +845,9 @@ class SupervisorWatchdogTests(unittest.TestCase):
             mock.patch.object(supervisor_watchdog.subprocess, "Popen") as popen,
             self.assertRaisesRegex(ValueError, "valid JSON|public-key map"),
         ):
-            supervisor_watchdog.start_supervisor(self.config, {}, now)
+            supervisor_watchdog.start_supervisor(
+                self.config, self.config["watchdog"], now
+            )
         popen.assert_not_called()
 
     def test_supervisor_lock_held_true_when_locked(self) -> None:
@@ -1777,7 +1795,12 @@ class SupervisorRootCoherenceTests(unittest.TestCase):
                 {},
                 100,
                 proc_root=proc_root,
-                settings={"supervisor_root": str(supervisor_root)},
+                settings={
+                    "supervisor_command": [
+                        "python3",
+                        str(supervisor_root / ".orchestrator" / "supervisor.py"),
+                    ]
+                },
             )
 
         self.assertEqual(report["active_root"], str(supervisor_root.resolve()))
@@ -1800,7 +1823,12 @@ class SupervisorRootCoherenceTests(unittest.TestCase):
                 {},
                 101,
                 proc_root=proc_root,
-                settings={"supervisor_root": str(expected_root)},
+                settings={
+                    "supervisor_command": [
+                        "python3",
+                        str(expected_root / ".orchestrator" / "supervisor.py"),
+                    ]
+                },
             )
 
         self.assertEqual(report["expected_root"], str(expected_root.resolve()))
