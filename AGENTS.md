@@ -25,6 +25,21 @@ forged credentials or evidence, secret disclosure, hand-edited canonical task
 or queue JSON, or unrequested destructive, production, or capital-affecting
 actions.
 
+### Operator-Authorized Development Tooling Delivery
+
+When the operator explicitly authorizes development-tooling cleanup,
+refactoring, or repair to be delivered directly, the chatbox must validate and
+commit the scoped change, then integrate and push it directly to `dev`. It must
+not create a PR, request a reviewer, wait for a canonical reviewer attestation,
+or treat this work as product delivery merely because the files live in this
+repository.
+
+This exception covers the supervisor, `.orchestrator/`, development scripts,
+development workflows, and their focused tests and documentation. It preserves
+clean-worktree, scope, validation, commit-trailer, and current-`dev` rebase
+requirements. It does not authorize product-runtime, production, secret, or
+capital-affecting changes unless the operator explicitly includes them.
+
 ### Default Coordination
 
 Without an explicit direct-implementation or bypass instruction, the Pantheon
