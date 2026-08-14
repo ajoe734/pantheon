@@ -604,6 +604,17 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported"):
             supervisor.validate_provider_accounts(config)
 
+    def test_reassignment_graph_is_a_closed_known_agent_allow_list(self) -> None:
+        config = config_fixture()
+        config["worker_reassignment"]["owner_fallbacks"]["Codex"] = ["Unknown"]
+        with self.assertRaisesRegex(ValueError, "unknown target"):
+            supervisor.validate_provider_accounts(config)
+
+        config = config_fixture()
+        config["worker_reassignment"]["reviewer_fallbacks"]["RetiredLane"] = ["Codex"]
+        with self.assertRaisesRegex(ValueError, "unknown root"):
+            supervisor.validate_provider_accounts(config)
+
     def test_account_key_normalization_preserves_zero_cap(self) -> None:
         config = config_fixture()
         config["ready_dispatcher"]["max_concurrent_per_account"] = {
@@ -983,6 +994,87 @@ class DurableQueueContractTests(unittest.TestCase):
                 )
             request = launch.call_args.args[2]
             self.assertEqual(request.metadata["task_generation"], 7)
+
+    def test_terminal_reassignment_dispatches_once_on_the_next_cycle(self) -> None:
+        """Recovery mutates assignment only; the next planner cycle owns launch."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            task = task_fixture(reviewer="Human/Ops")
+            status = {"tasks": [task]}
+            state = {
+                "workers": {},
+                "queue": {"events": {}},
+                "seen_event_keys": {},
+                "delivery_health": {
+                    "version": 1,
+                    "endpoints": {
+                        "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                        "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    },
+                    "accounts": {
+                        "codex_account": {
+                            "state": "retry_after",
+                            "reason_kind": "quota_terminal",
+                            "retry_at": "2999-01-01T00:00:00Z",
+                        },
+                        "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    },
+                },
+            }
+
+            def persist(_config: dict[str, object], **kwargs: object) -> bool:
+                task["owner"] = kwargs["new_owner"]
+                task["reviewer"] = kwargs["new_reviewer"]
+                task["generation"] = int(task["generation"]) + 1
+                return True
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=status),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(supervisor, "persist_task_reassignment", side_effect=persist),
+                mock.patch.object(
+                    supervisor,
+                    "start_worker_for_request",
+                    side_effect=AssertionError("recovery must not launch"),
+                ),
+            ):
+                self.assertTrue(supervisor.reconcile_unavailable_assignments(config, state))
+
+            self.assertEqual((task["owner"], task["generation"]), ("Codex2", 2))
+            plan = supervisor.build_dispatch_plan(config, state, status, [], live_total=0)
+            self.assertEqual(len(plan["events"]), 1)
+            self.assertEqual(plan["events"][0]["task_generation"], 2)
+            self.assertEqual(plan["events"][0]["target_agent"], "Codex2")
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=status),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(supervisor.reserve_dispatch_plan(config, state, plan))
+            queued = supervisor.load_event_queue(config)
+            self.assertEqual(len(queued), 1)
+            self.assertEqual(queued[0]["task_generation"], 2)
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=status),
+                mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+                mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
+                mock.patch.object(
+                    supervisor,
+                    "start_worker_for_request",
+                    return_value=(True, "run-generation-2", {"auto_delivered": True}),
+                ) as launch,
+                mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(supervisor.process_queue(config, state))
+
+            self.assertEqual(launch.call_count, 1)
+            request = launch.call_args.args[2]
+            self.assertEqual((request.agent_id, request.metadata["task_generation"]), ("codex2", 2))
 
     def test_suspended_approval_returns_to_queue_without_direct_spawn(self) -> None:
         state = {
@@ -1401,7 +1493,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
             persist.call_args.kwargs["message"],
         )
 
-    def test_configured_fallback_cycle_exhausts_remaining_healthy_roster(self) -> None:
+    def test_configured_fallback_never_escapes_to_an_unrelated_healthy_roster(self) -> None:
         task = task_fixture(reviewer="Human/Ops")
         self.config["agents"]["claude"] = {
             "display_name": "Claude",
@@ -1452,10 +1544,10 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
             ) as persist,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
-        self.assertTrue(changed)
-        self.assertEqual(persist.call_args.kwargs["new_owner"], "Claude")
+        self.assertFalse(changed)
+        persist.assert_not_called()
 
-    def test_terminal_assignment_demands_health_for_unknown_fallback(self) -> None:
+    def test_terminal_assignment_demands_health_for_configured_fallback(self) -> None:
         task = task_fixture(reviewer="Human/Ops")
         self.config["agents"]["claude"] = {
             "display_name": "Claude",
@@ -1498,7 +1590,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
             live_total=0,
         )
         self.assertIn(
-            {"scope": "endpoint", "id": "claude"},
+            {"scope": "endpoint", "id": "codex2"},
             plan["health_refresh_targets"],
         )
 
@@ -1598,6 +1690,10 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         self.assertLess(source.index('"process_queue_reserved"'), source.index("probe_demanded_delivery_health"))
         self.assertNotIn("dispatch_chair_review", source)
         self.assertNotIn("discussion_planning", source)
+
+    def test_run_once_prunes_existing_approvals_before_worker_polling(self) -> None:
+        source = inspect.getsource(supervisor.run_once)
+        self.assertLess(source.index('"prune_stale_approvals"'), source.index('"poll_workers_before_plan_reserved"'))
 
     def test_safe_phase_contains_one_failure(self) -> None:
         result = supervisor._safe_phase(

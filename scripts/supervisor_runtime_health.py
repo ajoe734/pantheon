@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
+from provision_live_supervisor_config import validate_approval_queue_marker
+
 
 HEX_40_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 PROCESS_ENVIRONMENT_ALLOWLIST = (
@@ -20,14 +22,6 @@ PROCESS_ENVIRONMENT_ALLOWLIST = (
     "PANTHEON_STATUS_ROOT",
     "PYTHONDONTWRITEBYTECODE",
 )
-ACTIVE_WORKER_STATUSES = frozenset(
-    {"active", "fallback", "retry_backoff", "running", "started", "suspended_approval", "waiting_approval"}
-)
-TERMINAL_QUEUE_STATUSES = frozenset({"cancelled", "completed", "done", "failed"})
-TERMINAL_TASK_STATUSES = frozenset({"done", "supersede"})
-RUNNABLE_TASK_STATUSES = frozenset({"in_progress", "review", "review_approved", "todo"})
-
-
 def parse_utc_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -333,55 +327,6 @@ def _task_head_path(repo_root: Path, config: Mapping[str, Any]) -> Path | None:
     return event_path.with_name(f"{event_path.name}.head.json")
 
 
-def _active_service_ids(state: Mapping[str, Any]) -> set[str]:
-    result: set[str] = set()
-    workers = state.get("workers") if isinstance(state.get("workers"), dict) else {}
-    for worker in workers.values():
-        if not isinstance(worker, dict) or str(worker.get("status") or "") not in ACTIVE_WORKER_STATUSES:
-            continue
-        task_id = str(worker.get("current_task_id") or worker.get("task_id") or "").strip()
-        if task_id:
-            result.add(task_id)
-    queue = state.get("queue") if isinstance(state.get("queue"), dict) else {}
-    events = queue.get("events") if isinstance(queue.get("events"), dict) else {}
-    for event in events.values():
-        if not isinstance(event, dict) or str(event.get("status") or event.get("state") or "") in TERMINAL_QUEUE_STATUSES:
-            continue
-        task_id = str(event.get("task_id") or "").strip()
-        if task_id:
-            result.add(task_id)
-    return result
-
-
-def _runnable_task_ids(status: Mapping[str, Any], config: Mapping[str, Any]) -> set[str]:
-    tasks = status.get("tasks") if isinstance(status.get("tasks"), list) else []
-    task_status = {
-        str(task.get("id")): str(task.get("status") or "")
-        for task in tasks
-        if isinstance(task, dict) and task.get("id")
-    }
-    configured_agents = {str(name).lower() for name in (config.get("providers") or {})}
-    runnable: set[str] = set()
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        task_id = str(task.get("id") or "").strip()
-        status_value = str(task.get("status") or "").strip()
-        if not task_id or status_value not in RUNNABLE_TASK_STATUSES:
-            continue
-        if task.get("non_dispatchable") or task.get("sidecar") or task.get("waiting_for"):
-            continue
-        actor_field = "reviewer" if status_value == "review" else "owner"
-        actor = str(task.get(actor_field) or "").strip().lower()
-        if configured_agents and actor not in configured_agents:
-            continue
-        dependencies = task.get("depends_on") if isinstance(task.get("depends_on"), list) else []
-        if any(task_status.get(str(dependency)) not in TERMINAL_TASK_STATUSES for dependency in dependencies):
-            continue
-        runnable.add(task_id)
-    return runnable
-
-
 def evaluate_runtime_health(
     repo_root: Path,
     *,
@@ -520,9 +465,14 @@ def evaluate_runtime_health(
     status_path = config_path(repo_root, config, "status_file", "ai-status.json")
     status, status_error = _load_json_object(status_path)
     status = status or {}
-    provider_path = config_path(repo_root, config, "provider_capabilities", ".orchestrator/provider_capabilities.json")
-    providers, provider_error = _load_json_object(provider_path)
-    providers = providers or {}
+    approval_queue_path = config_path(
+        repo_root, config, "approval_queue", ".orchestrator/approval-queue.json"
+    )
+    try:
+        validate_approval_queue_marker(approval_queue_path)
+        approval_queue_error = None
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        approval_queue_error = f"{type(exc).__name__}:{exc}"
     queue_path = config_path(repo_root, config, "event_queue", ".orchestrator/event-queue.jsonl")
     queue_ok, queue_detail = _validated_jsonl_access(queue_path)
     task_head_path = _task_head_path(repo_root, config)
@@ -559,9 +509,9 @@ def evaluate_runtime_health(
         ),
         check("readiness_queue_accessible", queue_ok, queue_detail),
         check(
-            "readiness_provider_registry_accessible",
-            provider_error is None and isinstance(providers.get("providers"), dict) and bool(providers.get("providers")),
-            {"provider_registry": str(provider_path), "error": provider_error},
+            "readiness_approval_queue_marker_accessible",
+            approval_queue_error is None,
+            {"approval_queue": str(approval_queue_path), "error": approval_queue_error},
         ),
     ]
 
@@ -598,9 +548,6 @@ def evaluate_runtime_health(
     if isinstance(queue_to_start.get("max_seconds"), (int, float)):
         dispatch_latency = queue_to_start["max_seconds"]
     dispatch_latency_value = float(dispatch_latency) if isinstance(dispatch_latency, (int, float)) else None
-    runnable_ids = _runnable_task_ids(status, config)
-    serviced_ids = _active_service_ids(state)
-    runnable_service_ok = not runnable_ids or bool(runnable_ids & serviced_ids)
     progress_checks = [
         check("progress_heartbeat_present", heartbeat is not None, {"last_heartbeat_at": supervisor.get("last_heartbeat_at")}),
         check(
@@ -622,11 +569,6 @@ def evaluate_runtime_health(
             "progress_dispatch_latency_within_budget",
             dispatch_latency_value is None or 0 <= dispatch_latency_value <= max_dispatch_latency,
             {"dispatch_latency_seconds": dispatch_latency_value, "max_dispatch_latency_seconds": max_dispatch_latency},
-        ),
-        check(
-            "progress_runnable_backlog_serviced",
-            runnable_service_ok,
-            {"runnable_task_ids": sorted(runnable_ids), "serviced_task_ids": sorted(serviced_ids), "unserviced_task_ids": sorted(runnable_ids - serviced_ids)},
         ),
         check(
             "progress_supervisor_not_degraded",
