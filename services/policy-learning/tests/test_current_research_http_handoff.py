@@ -38,6 +38,20 @@ def test_direct_import_removal():
         assert not hasattr(candidate_experiment_handoff, attr), f"candidate_experiment_handoff still contains direct import {attr}"
 
 
+def test_research_service_url_routing():
+    """Verify default URL resolves to http://research-orchestrator-svc:8101 and respects env overrides."""
+    from research_candidate_client import get_research_service_url
+
+    with mock.patch.dict("os.environ", {}, clear=True):
+        assert get_research_service_url() == "http://research-orchestrator-svc:8101"
+
+    with mock.patch.dict("os.environ", {"RESEARCH_ORCHESTRATOR_URL": "http://custom-orchestrator:8101"}):
+        assert get_research_service_url() == "http://custom-orchestrator:8101"
+
+    with mock.patch.dict("os.environ", {"RESEARCH_SERVICE_URL": "http://override-svc:8200"}):
+        assert get_research_service_url() == "http://override-svc:8200"
+
+
 def _sample_processed_candidate(candidate_id: str = "sic-http-test-001") -> dict:
     return {
         "candidate_id": candidate_id,

@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 RESEARCH_SERVICE_URL_ENV = "RESEARCH_SERVICE_URL"
-DEFAULT_RESEARCH_SERVICE_URL = "http://research-svc:8200"
+RESEARCH_ORCHESTRATOR_URL_ENV = "RESEARCH_ORCHESTRATOR_URL"
+DEFAULT_RESEARCH_SERVICE_URL = "http://research-orchestrator-svc:8101"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
@@ -44,7 +45,8 @@ class ResearchCandidateClientReceipt:
 
 def get_research_service_url() -> str:
     """Return the configured or default Research service URL."""
-    return os.getenv(RESEARCH_SERVICE_URL_ENV, DEFAULT_RESEARCH_SERVICE_URL).rstrip("/")
+    url = os.getenv(RESEARCH_SERVICE_URL_ENV) or os.getenv(RESEARCH_ORCHESTRATOR_URL_ENV) or DEFAULT_RESEARCH_SERVICE_URL
+    return url.rstrip("/")
 
 
 def post_imitation_candidate_intake_http(
