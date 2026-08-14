@@ -188,7 +188,12 @@ def _stable_event_id(
 
 
 def _probe_http(url: str, timeout: float) -> tuple[bool, int, str]:
-    """Return ``(ok, status_code, failure_reason)`` for one health endpoint."""
+    """Return ``(ok, status_code, failure_reason)`` for one health endpoint.
+
+    Worker functional health overrides process readiness: even when the HTTP
+    status code is 200, if the JSON response body indicates the worker is
+    not ready, not live, degraded, or unhealthy, the probe fails closed.
+    """
 
     req = urllib.request.Request(
         url,
@@ -197,7 +202,33 @@ def _probe_http(url: str, timeout: float) -> tuple[bool, int, str]:
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return 200 <= int(resp.status) < 300, int(resp.status), ""
+            status_code = int(resp.status)
+            if not (200 <= status_code < 300):
+                return False, status_code, f"HTTP {status_code}"
+            raw_body = resp.read()
+            if raw_body:
+                try:
+                    payload = json.loads(raw_body.decode("utf-8"))
+                    if isinstance(payload, dict):
+                        is_ready = payload.get("ready")
+                        if is_ready is False:
+                            reason = payload.get("reason") or payload.get("message") or "worker reported ready=false"
+                            return False, status_code, f"functional_unready: {reason}"
+                        is_live = payload.get("live")
+                        if is_live is False:
+                            reason = payload.get("reason") or payload.get("message") or "worker reported live=false"
+                            return False, status_code, f"functional_not_live: {reason}"
+                        is_ok = payload.get("ok")
+                        if is_ok is False:
+                            reason = payload.get("reason") or payload.get("message") or "worker reported ok=false"
+                            return False, status_code, f"functional_not_ok: {reason}"
+                        payload_status = str(payload.get("status") or "").strip().lower()
+                        if payload_status in {"degraded", "unhealthy", "failed", "down", "error", "unavailable"}:
+                            reason = payload.get("reason") or payload.get("failure_reason") or payload.get("message") or f"worker reported status={payload_status}"
+                            return False, status_code, f"functional_degraded: {reason}"
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+            return True, status_code, ""
     except urllib.error.HTTPError as exc:
         return False, int(exc.code), f"HTTP {exc.code}"
     except urllib.error.URLError as exc:

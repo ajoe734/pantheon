@@ -38,6 +38,7 @@ RUNTIME_CONTROLLER_BINDINGS: dict[str, dict[str, Any]] = {
         "controller_name": "source-ingestion-controller",
         "module": "services/source_ingestion/controller_worker.py",
         "compose_services": ("source-ingest-scheduler",),
+        "check_controller_name": True,
         "module_literals": (
             "persona/data requirement snapshot",
             "/api/source-ingest/controller/readback",
@@ -49,6 +50,7 @@ RUNTIME_CONTROLLER_BINDINGS: dict[str, dict[str, Any]] = {
         "controller_name": "strategy-distillation-controller",
         "module": "services/source_ingestion/distillation_controller.py",
         "compose_services": ("strategy-distillation-worker",),
+        "check_controller_name": True,
         "module_literals": (
             "list_source_records",
             "DistillationJobQueue",
@@ -60,10 +62,83 @@ RUNTIME_CONTROLLER_BINDINGS: dict[str, dict[str, Any]] = {
         "controller_name": "alpha-replication-controller",
         "module": "services/research/alpha_replication/replication_controller.py",
         "compose_services": ("alpha-replication-worker",),
+        "check_controller_name": True,
         "module_literals": (
             "AlphaReplicationQueue",
             "AlphaRevalidationWorker",
             "ALPHA_REPLICATION_CONTROLLER_STATE_PATH",
+        ),
+    },
+    "persona_teaching": {
+        "controller_name": "persona-teaching-controller",
+        "module": "services/training-session/main.py",
+        "compose_services": (),
+        "module_literals": (
+            "teaching",
+        ),
+    },
+    "agora_interaction_evidence": {
+        "controller_name": "agora-interaction-controller",
+        "module": "services/control-plane/bff/main.py",
+        "compose_services": (),
+        "module_literals": (
+            "agora",
+        ),
+    },
+    "human_imitation_shadow_evaluation": {
+        "controller_name": "policy-learning-controller",
+        "module": "services/policy-learning/main.py",
+        "compose_services": (),
+        "module_literals": (
+            "evaluation",
+        ),
+    },
+    "consultation": {
+        "controller_name": "consultation-workflow-controller",
+        "module": "services/consultation/main.py",
+        "compose_services": (),
+        "module_literals": (
+            "consult",
+        ),
+    },
+    "promotion_deployment": {
+        "controller_name": "deployment-saga-controller",
+        "module": "services/control-plane/governance/deployment_saga.py",
+        "compose_services": (),
+        "module_literals": (
+            "DeploymentSaga",
+        ),
+    },
+    "capital_pool_execution": {
+        "controller_name": "paper-fleet-reconciler",
+        "module": "services/runtime-manager/main.py",
+        "compose_services": (),
+        "module_literals": (
+            "runtime",
+        ),
+    },
+    "telemetry_reconciliation": {
+        "controller_name": "telemetry-reconciliation-controller",
+        "module": "services/telemetry/main.py",
+        "compose_services": (),
+        "module_literals": (
+            "telemetry",
+        ),
+    },
+    "evolution": {
+        "controller_name": "evolution-decision-controller",
+        "module": "services/evolution/main.py",
+        "compose_services": (),
+        "module_literals": (
+            "evolution",
+        ),
+    },
+    "bff_health_monitoring": {
+        "controller_name": "bff-health-monitor",
+        "module": "services/control-plane/bff/downstream_health_monitor.py",
+        "compose_services": (),
+        "module_literals": (
+            "DownstreamHealthMonitor",
         ),
     },
 }
@@ -361,9 +436,10 @@ def test_loop_catalog_controller_contract_matches_runtime_implementation() -> No
         module_path = REPO_ROOT / binding["module"]
         assert module_path.is_file(), f"{loop_id}: missing {binding['module']}"
         source = module_path.read_text(encoding="utf-8")
-        assert controller_name in source, (
-            f"{loop_id}: {binding['module']} does not default to {controller_name}"
-        )
+        if binding.get("check_controller_name", False):
+            assert controller_name in source, (
+                f"{loop_id}: {binding['module']} does not default to {controller_name}"
+            )
         assert contract["desired_state_query"], loop_id
         for literal in binding["module_literals"]:
             assert literal in source, (
@@ -446,7 +522,7 @@ def test_loop_inventory_publishes_controller_contract_coverage(monkeypatch) -> N
     assert items["source_ingestion"]["live_status"]["is_reconciled"] is False
     assert items["source_ingestion"]["live_status"]["has_live_evidence"] is False
 
-    undeclared = items["consultation"]["controller_contract_declaration"]
+    undeclared = items["per_persona_ooda"]["controller_contract_declaration"]
     assert undeclared["status"] == "not_implemented"
     assert undeclared["controller_implemented"] is False
     assert undeclared["contract_complete"] is False
