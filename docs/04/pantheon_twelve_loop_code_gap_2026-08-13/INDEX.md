@@ -3,7 +3,8 @@
 日期：2026-08-14
 
 狀態：2026-08-13 文件已降級為 historical planning baseline；最新 current truth 為
-`CURRENT_GAP_2026-08-14.md`。本輪尚未 materialize 新 execution tasks。
+`CURRENT_GAP_2026-08-14.md`，current execution catalog 為
+`execution-tasks-current-2026-08-14.json`。materialization receipt 待補。
 
 ## 本次結論
 
@@ -20,6 +21,10 @@ wiring、測試與 dev runtime 逐條對照 `LOOP_TRIGGER_AND_CONCURRENCY_POLICY
 - [CURRENT_GAP_2026-08-14.md](CURRENT_GAP_2026-08-14.md)：**唯一 current gap 與下一步
   最小開發設計**；逐循環程式碼真相、dev runtime 反證、疊床架屋汰除清單、舊 R4
   適用性、E2E 缺口與可平行 slices。
+- [CURRENT_EXECUTION_TASKS_2026-08-14.md](CURRENT_EXECUTION_TASKS_2026-08-14.md)：
+  16-task 去重後 DAG、owner/reviewer、平行 wave 與 materialization evidence 規則。
+- [execution-tasks-current-2026-08-14.json](execution-tasks-current-2026-08-14.json)：
+  **唯一 current machine-readable execution catalog**。
 - [GAP_REPORT.md](GAP_REPORT.md)：逐循環程式碼現況、根因、錯誤設計、缺失開發、
   缺失驗證、廢棄／誤導內容與舊計畫適用性。**Historical；不得當 current truth。**
 - [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)：替代錯誤設計的最小可用系統設計、資料與
@@ -32,7 +37,7 @@ wiring、測試與 dev runtime 逐條對照 `LOOP_TRIGGER_AND_CONCURRENCY_POLICY
 ## 基線與邊界
 
 - Pantheon current gap 程式碼基線：`refs/remotes/origin/dev`
-  `7ecef96e97a8de4f8bb6acd7d6c572104478c50b`。
+  `768eba39b35d4e9c53beaef22fe7bf841b8f5e45`。
 - Management 前端程式碼基線：`execute-plans/dev`
   `da50ceee0ba1c6965954b26fb1f69a8b7b0b33d5`（local remote-tracking
   `origin/dev`；本次未修改前端 repository）。
@@ -62,6 +67,7 @@ catalog `implemented`、PR merged 或 hosted bundle 存在，均不能單獨代�
 
 ## 後續使用規則
 
-後續以 `CURRENT_GAP_2026-08-14.md` 先做 active work 去重，再另行產生新的 governed
-execution catalog。此目錄的舊 `execution-tasks.json`、舊 28-task DAG 與 2026-08-08
-minimum closure task IDs 不得直接重送或原地改寫；它們只作 historical input。
+後續以 `CURRENT_GAP_2026-08-14.md` 與 `execution-tasks-current-2026-08-14.json`
+為唯一 current planning/materialization truth。此目錄的舊 `execution-tasks.json`、舊
+28-task DAG 與 2026-08-08 minimum closure task IDs 不得直接重送或原地改寫；它們只作
+historical input。

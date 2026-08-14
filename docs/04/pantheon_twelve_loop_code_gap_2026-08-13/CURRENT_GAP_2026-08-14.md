@@ -2,9 +2,9 @@
 
 日期：2026-08-14
 
-狀態：current planning truth；尚未 materialize execution tasks
+狀態：current planning truth；execution catalog 已準備，materialization receipt 待補
 
-Pantheon 基線：`origin/dev` `7ecef96e97a8de4f8bb6acd7d6c572104478c50b`
+Pantheon 基線：`origin/dev` `768eba39b35d4e9c53beaef22fe7bf841b8f5e45`
 
 Management 前端基線：`execute-plans/origin/dev`
 `da50ceee0ba1c6965954b26fb1f69a8b7b0b33d5`
@@ -295,9 +295,11 @@ controller 或 task-state-to-product-health bridge。
 
 ## 9. 下一步
 
-下一步應先以本文件為唯一 current gap truth，對 active PR/task/branch/worktree 去重後，
-才把 S1–S12 拆成 governed execution tasks 交給 supervisor/auto-worker。不得直接重送
-舊 R4 18-task catalog，也不得一邊保留舊錯誤 mechanism、一邊再加 repair layer。
+本文件已對 active PR/task/branch/worktree 去重，具體 execution catalog 位於
+`CURRENT_EXECUTION_TASKS_2026-08-14.md` 與 `execution-tasks-current-2026-08-14.json`。
+materialization 必須透過 governed dev bridge／canonical command，並以 supervisor receipt
+與 canonical readback 為準。不得直接重送舊 R4 18-task catalog，也不得一邊保留舊錯誤
+mechanism、一邊再加 repair layer。
 
 ## 10. 程式碼證據索引
 
