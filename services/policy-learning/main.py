@@ -1403,11 +1403,7 @@ def handoff_candidate_endpoint(
     """Hand off a processed imitation candidate to Research experiment authority."""
     candidate = _tenant_candidate(candidate_id, authority)
     try:
-        # If HTTP research_url is set or active, use_http=True; if connection fails or in local test without server, fallback to in-memory intake
-        try:
-            result = handoff_candidate_to_experiment_authority(candidate, use_http=True)
-        except CandidateHandoffError:
-            result = handoff_candidate_to_experiment_authority(candidate, use_http=False)
+        result = handoff_candidate_to_experiment_authority(candidate)
         store.put_candidate(candidate)
         return result.to_dict()
     except (CandidateHandoffError, ExperimentCandidateIntakeError) as exc:

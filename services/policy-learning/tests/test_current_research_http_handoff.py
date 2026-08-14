@@ -31,7 +31,11 @@ from research_candidate_client import (
     post_imitation_candidate_intake_http,
 )
 from services.research.main import app as research_app
-from services.research.store import ResearchOrchestratorStore
+def test_direct_import_removal():
+    """Assert candidate_experiment_handoff has no direct imports from services.research."""
+    import candidate_experiment_handoff
+    for attr in ("ResearchOrchestratorStore", "intake_imitation_candidate", "ExperimentCandidateIntakeReceipt"):
+        assert not hasattr(candidate_experiment_handoff, attr), f"candidate_experiment_handoff still contains direct import {attr}"
 
 
 def _sample_processed_candidate(candidate_id: str = "sic-http-test-001") -> dict:
@@ -65,51 +69,8 @@ def _sample_processed_candidate(candidate_id: str = "sic-http-test-001") -> dict
     }
 
 
-def test_research_candidate_client_intake_and_readback():
-    """Verify HTTP client posts candidate intake and performs exact readback against FastAPI app."""
-    client = TestClient(research_app)
-
-    def _mock_urlopen(req, timeout=None):
-        url = req.full_url
-        method = req.get_method()
-        if method == "POST" and "/api/research-orchestrator/intake/imitation-candidate" in url:
-            payload = req.data
-            response = client.post("/api/research-orchestrator/intake/imitation-candidate", content=payload, headers=dict(req.headers))
-            class MockResp:
-                status = response.status_code
-                def read(self):
-                    return response.content
-                def __enter__(self):
-                    return self
-                def __exit__(self, *args):
-                    pass
-            return MockResp()
-        elif method == "GET" and "/api/research-orchestrator/runs/" in url:
-            run_id = url.split("/api/research-orchestrator/runs/")[1]
-            response = client.get(f"/api/research-orchestrator/runs/{run_id}", headers=dict(req.headers))
-            class MockResp:
-                status = response.status_code
-                def read(self):
-                    return response.content
-                def __enter__(self):
-                    return self
-                def __exit__(self, *args):
-                    pass
-            return MockResp()
-        raise NotImplementedError(f"Unexpected HTTP call: {method} {url}")
-
-    candidate = _sample_processed_candidate("sic-client-test-001")
-    with mock.patch("urllib.request.urlopen", side_effect=_mock_urlopen):
-        receipt = post_imitation_candidate_intake_http(candidate, research_url="http://research-svc:8200")
-
-    assert receipt.candidate_id == "sic-client-test-001"
-    assert receipt.task_id == "rtask-exp-sic-client-test-001"
-    assert receipt.run_id == "rrun-exp-sic-client-test-001"
-    assert receipt.status == "intaken"
-
-
 def test_candidate_experiment_handoff_via_http():
-    """Verify handoff_candidate_to_experiment_authority works via HTTP without passing research_store."""
+    """Verify handoff_candidate_to_experiment_authority works via HTTP."""
     client = TestClient(research_app)
 
     def _mock_urlopen(req, timeout=None):
@@ -145,9 +106,7 @@ def test_candidate_experiment_handoff_via_http():
     with mock.patch("urllib.request.urlopen", side_effect=_mock_urlopen):
         res = handoff_candidate_to_experiment_authority(
             candidate,
-            research_store=None,
             research_url="http://research-svc:8200",
-            use_http=True,
         )
 
     assert candidate["experiment_task_id"] == "rtask-exp-sic-handoff-http-001"
@@ -197,3 +156,47 @@ def test_idempotent_replay_http_intake():
 
     assert receipt1.task_id == receipt2.task_id == "rtask-exp-sic-replay-http-001"
     assert receipt1.run_id == receipt2.run_id == "rrun-exp-sic-replay-http-001"
+
+
+def test_http_intake_and_readback_error_handling():
+    """Assert HTTP connection/status errors and readback mismatches raise ResearchCandidateClientError and CandidateHandoffError."""
+    import urllib.error
+    candidate = _sample_processed_candidate("sic-err-001")
+
+    # 1. Connection error
+    with mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+        with pytest.raises(CandidateHandoffError) as exc_info:
+            handoff_candidate_to_experiment_authority(candidate, research_url="http://research-svc:8200")
+        assert "HTTP intake failed" in str(exc_info.value)
+        assert candidate.get("handoff_status") != "completed"
+
+    # 2. Readback identity mismatch error
+    def _mock_urlopen_mismatch(req, timeout=None):
+        url = req.full_url
+        method = req.get_method()
+        if method == "POST":
+            class MockResp:
+                status = 201
+                def read(self):
+                    return b'{"task_id": "t1", "run_id": "r1", "candidate_id": "sic-err-001", "status": "intaken", "created_at": "2026-08-14T00:00:00Z"}'
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return MockResp()
+        elif method == "GET":
+            class MockResp:
+                status = 200
+                def read(self):
+                    return b'{"task_id": "t1", "run_id": "MISMATCHED_RUN_ID"}'
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return MockResp()
+
+    with mock.patch("urllib.request.urlopen", side_effect=_mock_urlopen_mismatch):
+        with pytest.raises(ResearchCandidateClientError) as exc_info:
+            post_imitation_candidate_intake_http(candidate, research_url="http://research-svc:8200")
+        assert "readback identity mismatch" in str(exc_info.value)
+
