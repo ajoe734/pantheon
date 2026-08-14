@@ -505,7 +505,6 @@ merged only at the exact head that reviewer approved.
 | `.github/workflows/publish-promote.yml`    | cron hourly + `release/v*` push + `workflow_dispatch`                    | Open `promote/<v>` PR after soak; auto-merge             |
 | `.github/workflows/master-release.yml`     | push on `master`                                                         | Tag `prod/<v>` on promote merges; tag hotfix merges      |
 | `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*`, push on `master`, and `workflow_dispatch`           | Fail-closed nonprod deploy with exact-pair admission before dev switch |
-| `.github/workflows/orchestrator-sync.yml`  | push/tag/PR labeled                                                      | POST git event to orchestrator webhook (no-op without SYNC_URL) |
 
 ---
 
@@ -717,7 +716,6 @@ is retired by OPS-GIT-REDESIGN-001:
 - `.github/workflows/publish-promote.yml`
 - `.github/workflows/master-release.yml`
 - `.github/workflows/nonprod-deploy.yml`
-- `.github/workflows/orchestrator-sync.yml`
 - `.githooks/pre-commit`, `.githooks/commit-msg`
 - `scripts/git/task_start.sh`, `scripts/git/task_finalize.sh`
 - `scripts/git/nightly_publish.sh`

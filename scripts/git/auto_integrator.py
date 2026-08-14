@@ -84,7 +84,6 @@ class Settings:
     dev_branch: str = DEFAULT_DEV_BRANCH
     task_branch_prefix: str = DEFAULT_TASK_PREFIX
     lock_path: Path = ROOT / DEFAULT_LOCK
-    merge_method: str = DEFAULT_MERGE_METHOD
     max_tasks_per_run: int = 1
     smoke_commands: tuple[str, ...] = ()
     unblock_owner: str | None = None
@@ -413,11 +412,16 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
         smoke_commands = (smoke,)
     else:
         smoke_commands = tuple(str(item) for item in smoke if str(item).strip())
+    merge_method = str(auto.get("merge_method") or DEFAULT_MERGE_METHOD).strip().lower()
+    if merge_method != DEFAULT_MERGE_METHOD:
+        raise ValueError(
+            "Governed auto integration requires merge commits; "
+            "squash and rebase merges do not preserve the reviewed head"
+        )
     return Settings(
         dev_branch=dev_branch,
         task_branch_prefix=task_prefix,
         lock_path=lock_path,
-        merge_method=str(auto.get("merge_method") or DEFAULT_MERGE_METHOD),
         max_tasks_per_run=int(auto.get("max_tasks_per_run") or 1),
         smoke_commands=smoke_commands,
         unblock_owner=str(auto.get("unblock_owner") or "").strip() or None,
@@ -969,13 +973,7 @@ def merge_command(
     auto: bool,
     match_head_commit: str = "",
 ) -> list[str]:
-    args = ["gh", "pr", "merge", str(number)]
-    if settings.merge_method == "squash":
-        args.append("--squash")
-    elif settings.merge_method == "rebase":
-        args.append("--rebase")
-    else:
-        args.append("--merge")
+    args = ["gh", "pr", "merge", str(number), "--merge"]
     if auto:
         args.append("--auto")
     if match_head_commit:

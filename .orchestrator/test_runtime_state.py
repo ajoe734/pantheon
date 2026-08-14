@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import base64
 import gzip
-import hashlib
 import json
 import multiprocessing
 import os
@@ -496,16 +495,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             "approval_queue": self.approval_queue_path.read_bytes(),
         }
 
-    @staticmethod
-    def _canonical_sha256(value: object) -> str:
-        body = json.dumps(
-            value,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-        return hashlib.sha256(body).hexdigest()
-
     def _start_lock_holder(self) -> tuple[multiprocessing.Process, object]:
         context = multiprocessing.get_context("fork")
         parent_connection, child_connection = context.Pipe()
@@ -595,297 +584,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             raise
         return process, parent_connection
 
-    def test_admission_decision_has_exact_keys_source_order_and_digests(self) -> None:
-        bodies = self._write_valid_sources()
-        source_sha256 = {
-            source_id: hashlib.sha256(bodies[source_id]).hexdigest()
-            for source_id in (
-                "runtime_state",
-                "approval_queue",
-            )
-        }
-
-        with runtime_state.tasks_runtime_admission_guard(
-            self.config,
-            ["TASK-B", "TASK-A"],
-            strict=True,
-            shared=False,
-            nonblocking=True,
-        ) as decision:
-            self.assertEqual(
-                list(decision),
-                [
-                    "schema_version",
-                    "protocol_id",
-                    "strict",
-                    "lock_mode",
-                    "task_ids",
-                    "source_sha256",
-                    "conflicts",
-                    "allowed",
-                    "reason_id",
-                    "snapshot_sha256",
-                ],
-            )
-            self.assertEqual(
-                decision,
-                {
-                    "schema_version": 1,
-                    "protocol_id": "pantheon-runtime-task-audit-lock-v1",
-                    "strict": True,
-                    "lock_mode": "exclusive",
-                    "task_ids": ["TASK-B", "TASK-A"],
-                    "source_sha256": source_sha256,
-                    "conflicts": [],
-                    "allowed": True,
-                    "reason_id": "clear",
-                    "snapshot_sha256": self._canonical_sha256(source_sha256),
-                },
-            )
-            self.assertEqual(
-                list(decision["source_sha256"]),
-                ["runtime_state", "approval_queue"],
-            )
-
-    def test_queued_event_joins_runtime_queue_record_for_conflict_status(self) -> None:
-        self._write_valid_sources(
-            runtime={
-                "version": 2,
-                "workers": {},
-                "queue": {
-                    "version": 2,
-                    "events": {
-                        "evt-target": {
-                            "intent": {
-                                "event_id": "evt-target",
-                                "task_id": "TASK-A",
-                            },
-                            "status": "queued",
-                        },
-                    }
-                },
-            },
-        )
-
-        with runtime_state.tasks_runtime_admission_guard(
-            self.config,
-            ["TASK-A"],
-            strict=True,
-            shared=True,
-            nonblocking=True,
-        ) as decision:
-            self.assertFalse(decision["allowed"])
-            self.assertEqual(decision["reason_id"], "target_has_runtime_admission")
-            self.assertEqual(
-                decision["conflicts"],
-                [
-                    {
-                        "source_id": "runtime_state",
-                        "task_id": "TASK-A",
-                        "status": "queued",
-                        "record_id": "queue:evt-target",
-                    }
-                ],
-            )
-
-    def test_invalid_runtime_sources_fail_closed(self) -> None:
-        def missing_source() -> None:
-            self.state_path.unlink()
-
-        def empty_source() -> None:
-            self.state_path.write_bytes(b"")
-
-        def malformed_source() -> None:
-            self.approval_queue_path.write_bytes(b'{"version":2,"pending":[')
-
-        def duplicate_key_source() -> None:
-            self.state_path.write_bytes(
-                b'{"version":2,"workers":{},"workers":{},"queue":{"events":{}}}\n'
-            )
-
-        cases = {
-            "missing": missing_source,
-            "empty": empty_source,
-            "malformed": malformed_source,
-            "duplicate-key": duplicate_key_source,
-        }
-        for label, mutate in cases.items():
-            with self.subTest(source=label):
-                self._write_valid_sources()
-                mutate()
-                before = {
-                    path: path.read_bytes() if path.exists() else None
-                    for path in (
-                        self.state_path,
-                        self.approval_queue_path,
-                    )
-                }
-                with runtime_state.tasks_runtime_admission_guard(
-                    self.config,
-                    ["TASK-A"],
-                    strict=True,
-                    shared=False,
-                    nonblocking=True,
-                ) as decision:
-                    self.assertFalse(decision["allowed"])
-                    self.assertEqual(decision["reason_id"], "runtime_source_invalid")
-                    self.assertEqual(decision["conflicts"], [])
-                    self.assertEqual(
-                        list(decision["source_sha256"]),
-                        ["runtime_state", "approval_queue"],
-                    )
-                self.assertEqual(
-                    {
-                    path: path.read_bytes() if path.exists() else None
-                    for path in before
-                    },
-                    before,
-                    "failed admission mutated a canonical runtime source",
-                )
-
-    def test_runtime_source_schema_and_unreadable_matrix_fails_closed(self) -> None:
-        mutations = {
-            "runtime-older-version": lambda: self._write_valid_sources(
-                runtime={"version": 1, "workers": {}, "queue": {"events": {}}}
-            ),
-            "runtime-newer-version": lambda: self._write_valid_sources(
-                runtime={"version": 3, "workers": {}, "queue": {"events": {}}}
-            ),
-            "approval-older-version": lambda: self._write_valid_sources(
-                approvals={"version": 1, "pending": [], "history": []}
-            ),
-            "approval-newer-version": lambda: self._write_valid_sources(
-                approvals={"version": 3, "pending": [], "history": []}
-            ),
-            "legacy-queue-record": lambda: self._write_valid_sources(
-                runtime={
-                    "version": 2,
-                    "workers": {},
-                    "queue": {"version": 2, "events": {"evt-legacy": {"status": "queued"}}},
-                }
-            ),
-            "blank-queue-intent-task": lambda: self._write_valid_sources(
-                runtime={
-                    "version": 2,
-                    "workers": {},
-                    "queue": {
-                        "version": 2,
-                        "events": {
-                            "evt-blank": {
-                                "intent": {"event_id": "evt-blank", "task_id": ""},
-                                "status": "queued",
-                            }
-                        },
-                    },
-                }
-            ),
-            "blank-worker-task": lambda: self._write_valid_sources(
-                runtime={
-                    "version": 2,
-                    "workers": {"run-blank": {"task_id": "", "status": "running"}},
-                    "queue": {"version": 2, "events": {}},
-                }
-            ),
-            "blank-approval-task": lambda: self._write_valid_sources(
-                approvals={
-                    "version": 2,
-                    "pending": [{"approval_id": "approval-blank", "task_id": ""}],
-                    "history": [],
-                }
-            ),
-        }
-        for label, prepare in mutations.items():
-            with self.subTest(source=label):
-                prepare()
-                before = {
-                    path: path.read_bytes()
-                    for path in (
-                        self.state_path,
-                        self.approval_queue_path,
-                    )
-                }
-                with runtime_state.tasks_runtime_admission_guard(
-                    self.config,
-                    ["TASK-A"],
-                    strict=True,
-                    shared=False,
-                    nonblocking=True,
-                ) as decision:
-                    self.assertFalse(decision["allowed"])
-                    self.assertEqual(decision["reason_id"], "runtime_source_invalid")
-                    self.assertEqual(decision["conflicts"], [])
-                self.assertEqual(
-                    {path: path.read_bytes() for path in before},
-                    before,
-                )
-
-        self._write_valid_sources()
-        real_read = runtime_state._read_canonical_runtime_source
-
-        def unreadable(path: Path, *, source_id: str) -> bytes:
-            if source_id == "approval_queue":
-                raise PermissionError("injected unreadable source")
-            return real_read(path, source_id=source_id)
-
-        with mock.patch.object(
-            runtime_state,
-            "_read_canonical_runtime_source",
-            side_effect=unreadable,
-        ):
-            with runtime_state.tasks_runtime_admission_guard(
-                self.config,
-                ["TASK-A"],
-                strict=True,
-                shared=False,
-                nonblocking=True,
-            ) as decision:
-                self.assertFalse(decision["allowed"])
-                self.assertEqual(decision["reason_id"], "runtime_source_invalid")
-                self.assertEqual(
-                    decision["source_sha256"]["approval_queue"],
-                    hashlib.sha256(b"").hexdigest(),
-                )
-
-    def test_every_runtime_conflict_status_blocks_with_exact_reason(self) -> None:
-        for status in sorted(runtime_state.RUNTIME_ADMISSION_CONFLICT_STATUSES):
-            with self.subTest(status=status):
-                self._write_valid_sources(
-                    runtime={
-                        "version": 2,
-                        "workers": {
-                            "run-target": {
-                                "run_id": "run-target",
-                                "task_id": "TASK-A",
-                                "status": status,
-                            }
-                        },
-                        "queue": {"version": 2, "events": {}},
-                    }
-                )
-                with runtime_state.tasks_runtime_admission_guard(
-                    self.config,
-                    ["TASK-A"],
-                    strict=True,
-                    shared=True,
-                    nonblocking=True,
-                ) as decision:
-                    self.assertFalse(decision["allowed"])
-                    self.assertEqual(
-                        decision["reason_id"],
-                        "target_has_runtime_admission",
-                    )
-                    self.assertEqual(
-                        decision["conflicts"],
-                        [
-                            {
-                                "source_id": "runtime_state",
-                                "task_id": "TASK-A",
-                                "status": status,
-                                "record_id": "run-target",
-                            }
-                        ],
-                    )
-
     def test_runtime_source_leaf_symlinks_fail_closed_without_reading_targets(self) -> None:
         source_paths = {
             "runtime_state": self.state_path,
@@ -901,21 +599,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                 external.write_bytes(external_body)
                 path.unlink()
                 path.symlink_to(external)
-
-                with runtime_state.tasks_runtime_admission_guard(
-                    self.config,
-                    ["TASK-A"],
-                    strict=True,
-                    shared=False,
-                    nonblocking=True,
-                ) as decision:
-                    self.assertFalse(decision["allowed"])
-                    self.assertEqual(decision["reason_id"], "runtime_source_invalid")
-                    self.assertEqual(decision["conflicts"], [])
-                    self.assertEqual(
-                        decision["source_sha256"][source_id],
-                        hashlib.sha256(b"").hexdigest(),
-                    )
 
                 self.assertEqual(external.read_bytes(), external_body)
                 self.assertTrue(path.is_symlink())
@@ -944,22 +627,16 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                 path.unlink()
                 path.mkdir()
 
-                with runtime_state.tasks_runtime_admission_guard(
-                    self.config,
-                    ["TASK-A"],
-                    strict=True,
-                    shared=False,
-                    nonblocking=True,
-                ) as decision:
-                    self.assertFalse(decision["allowed"])
-                    self.assertEqual(decision["reason_id"], "runtime_source_invalid")
-                    self.assertEqual(decision["conflicts"], [])
-
                 with self.assertRaisesRegex(
                     RuntimeError,
                     rf"canonical {source_id} data leaf must be a regular file",
                 ):
-                    runtime_state.runtime_admission_lock_path(self.config)
+                    with runtime_state.runtime_state_lock(
+                        self.config,
+                        shared=False,
+                        nonblocking=True,
+                    ):
+                        self.fail("runtime lock accepted a nonregular data leaf")
                 path.rmdir()
 
     def test_runtime_sources_and_all_lock_planes_share_canonical_status_root(
@@ -1092,26 +769,6 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
                     rf"canonical {source_id} readback mismatch",
                 ):
                     writer()
-
-    def test_input_and_strict_reason_ids_are_stable(self) -> None:
-        self._write_valid_sources()
-        cases = (
-            ([], True, "task_ids_empty"),
-            (["TASK-A", "TASK-A"], True, "task_ids_duplicate"),
-            ([""], True, "task_ids_invalid"),
-            (["TASK-A"], False, "strict_required"),
-        )
-        for task_ids, strict, expected_reason in cases:
-            with self.subTest(reason=expected_reason):
-                with runtime_state.tasks_runtime_admission_guard(
-                    self.config,
-                    task_ids,
-                    strict=strict,
-                    shared=False,
-                    nonblocking=True,
-                ) as decision:
-                    self.assertFalse(decision["allowed"])
-                    self.assertEqual(decision["reason_id"], expected_reason)
 
     def test_runtime_sidecar_inode_survives_canonical_replace(self) -> None:
         self._write_valid_sources()
@@ -1443,14 +1100,11 @@ class RuntimeAdmissionProtocolTests(unittest.TestCase):
             os.environ,
             {"PANTHEON_RUNTIME_LOCK_TRACE": str(trace_path)},
         ):
-            with runtime_state.tasks_runtime_admission_guard(
+            with runtime_state.runtime_state_lock(
                 self.config,
-                ["TASK-A"],
-                strict=True,
                 shared=False,
                 nonblocking=True,
-            ) as decision:
-                self.assertTrue(decision["allowed"])
+            ):
                 with runtime_state.canonical_task_state_lock_file(
                     self.root / "ai-status.json",
                     shared=False,

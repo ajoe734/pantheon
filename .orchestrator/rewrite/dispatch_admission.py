@@ -55,6 +55,7 @@ class TaskIntent:
     reviewer: str
     dependencies_satisfied: bool
     human_ops_hold: bool = False
+    review_binding_current: bool = True
 
 
 @dataclass(frozen=True)
@@ -290,6 +291,13 @@ def evaluate_dispatch_intent(
         deps_satisfied=bool(intent.dependencies_satisfied),
     )
     if task_reason is None:
+        return DispatchDecision(
+            False,
+            DispatchBlockReason.TASK_NOT_DISPATCHABLE,
+            None,
+            lane_id,
+        )
+    if task_reason is DispatchReason.REVIEW_READY and not intent.review_binding_current:
         return DispatchDecision(
             False,
             DispatchBlockReason.TASK_NOT_DISPATCHABLE,

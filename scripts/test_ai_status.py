@@ -146,7 +146,6 @@ def audited_reassignment_event(
     event["event_id"] = ai_status._supervisor_reassignment_event_id(event)
     return event
 
-from canonical_writer_guard import assert_isolated_legacy_write_target
 from rewrite.task_state_store import load_events
 
 
@@ -2460,49 +2459,6 @@ class StatusRootRoutingTests(unittest.TestCase):
             runtime_leaf.unlink()
 
 
-class CanonicalWriterGuardTests(unittest.TestCase):
-    def test_isolated_override_never_bypasses_a_git_checkout(self) -> None:
-        canonical_status = Path(__file__).resolve().parents[1] / "ai-status.json"
-        with mock.patch.dict(
-            os.environ,
-            {"PANTHEON_ALLOW_ISOLATED_TEST_WRITES": "1"},
-            clear=False,
-        ):
-            with self.assertRaisesRegex(RuntimeError, "canonical state in a git checkout"):
-                assert_isolated_legacy_write_target(
-                    canonical_status,
-                    tool="guard-test",
-                )
-
-    def test_configured_non_git_fixture_requires_explicit_override(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir) / "ai-status.json"
-            with mock.patch.dict(
-                os.environ,
-                {"PANTHEON_STATUS_ROOT": temp_dir},
-                clear=False,
-            ):
-                os.environ.pop("PANTHEON_ALLOW_ISOLATED_TEST_WRITES", None)
-                with self.assertRaisesRegex(RuntimeError, "PANTHEON_STATUS_ROOT"):
-                    assert_isolated_legacy_write_target(target, tool="guard-test")
-                os.environ["PANTHEON_ALLOW_ISOLATED_TEST_WRITES"] = "1"
-                assert_isolated_legacy_write_target(target, tool="guard-test")
-
-    def test_legacy_override_cannot_authorize_configured_status_root_write(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir) / "ai-status.json"
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "PANTHEON_STATUS_ROOT": temp_dir,
-                    "PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES": "1",
-                },
-                clear=False,
-            ):
-                with self.assertRaisesRegex(RuntimeError, "PANTHEON_STATUS_ROOT"):
-                    assert_isolated_legacy_write_target(target, tool="guard-test")
-
-
 class ReviewApprovedWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
@@ -2541,6 +2497,13 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "blockers": [],
             "workload": {},
             "workload_summary": {},
+        }
+        task = self.state["tasks"][0]
+        contract = ai_status._delivery_contract_payload(task)
+        task[ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "artifact_contract",
+            **contract,
+            "contract_sha256": ai_status._canonical_json_sha256(contract),
         }
 
     def tearDown(self) -> None:
@@ -2677,8 +2640,35 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             if line.strip() and json.loads(line).get("type") == "review_approved"
         ]
 
+    def _set_artifact_delivery_binding(self, task: dict[str, Any] | None = None) -> None:
+        target = task or self.state["tasks"][0]
+        contract = ai_status._delivery_contract_payload(target)
+        target[ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "artifact_contract",
+            **contract,
+            "contract_sha256": ai_status._canonical_json_sha256(contract),
+        }
+
+    def _set_pr_delivery_binding(
+        self,
+        *,
+        pr: int,
+        head_sha: str,
+        task: dict[str, Any] | None = None,
+    ) -> None:
+        target = task or self.state["tasks"][0]
+        target[ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "pull_request",
+            "pr": pr,
+            "head_sha": head_sha.lower(),
+            "head_branch": f"task/{target['id']}",
+            "base": "dev",
+        }
+
     def test_approve_records_the_reviewed_pr_head_binding(self) -> None:
         """The merge gate compares these identities; free text is not a binding."""
+
+        self._set_pr_delivery_binding(pr=4218, head_sha="b" * 40)
 
         bridge_evidence = {
             "repository": "ajoe734/pantheon",
@@ -2737,6 +2727,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(events[0]["github_review_bridge"], bridge_evidence)
 
     def test_approve_bridge_failure_preserves_review_state(self) -> None:
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
         with (
             mock.patch.dict(
                 os.environ,
@@ -2765,18 +2756,16 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn("github_review_bridge", task)
         self.assertEqual(self._approval_events(), [])
 
-    def test_approve_discovers_pr_binding_live_when_env_vars_absent(self) -> None:
-        """SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808: source_ref/github task
-        metadata is never populated by the normal assign/handoff flow, so the
-        exact-head safety gate must not depend on it. When REVIEW_PR/
-        REVIEW_HEAD_SHA are absent, approve must ask GitHub directly whether an
-        open PR exists at this task's branch instead of silently no-op'ing."""
-
-        discovered = {
+    def test_approve_uses_only_the_handoff_pr_binding(self) -> None:
+        binding = {
             "pr": 4218,
             "head_sha": "c" * 40,
             "head_branch": "task/REG-002",
             "base": "dev",
+        }
+        self.state["tasks"][0][ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "pull_request",
+            **binding,
         }
         bridge_evidence = {
             "repository": "ajoe734/pantheon",
@@ -2793,143 +2782,38 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         }
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
-            mock.patch.object(ai_status, "repository_slug", return_value="ajoe734/pantheon"),
-            mock.patch.object(
-                ai_status, "discover_open_pr_binding", return_value=dict(discovered)
-            ) as discover,
             mock.patch.object(
                 ai_status, "bridge_github_review_decision", return_value=bridge_evidence
             ) as github_bridge,
         ):
             _command_approve(
                 self.state,
-                ["REG-002", "Approved via live-discovered head."],
+                ["REG-002", "Approved against the handoff head."],
             )
 
-        discover.assert_called_once_with(
-            "ajoe734/pantheon", head_branch="task/REG-002", base_branch="dev"
-        )
         task = ai_status.get_task(self.state, "REG-002")
-        self.assertEqual(task["review_binding"], discovered)
+        self.assertEqual(task["review_binding"], binding)
         github_bridge.assert_called_once_with(
             task,
             actor="Claude",
             decision="approve",
-            message="Approved via live-discovered head.",
-            binding=discovered,
+            message="Approved against the handoff head.",
+            binding=binding,
         )
 
-    def test_approve_falls_back_to_unbound_warning_when_no_pr_is_discovered(self) -> None:
-        """No open PR found live (and no metadata claims one either) must still
-        behave exactly like the pre-existing internal-only approval path."""
-
+    def test_approve_refuses_missing_handoff_delivery_binding(self) -> None:
+        task = self.state["tasks"][0]
+        task.pop(ai_status.DELIVERY_BINDING_KEY)
+        task["source_ref"] = {"pr": 4218, "head_sha": "c" * 40}
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
-            mock.patch.object(ai_status, "repository_slug", return_value="ajoe734/pantheon"),
-            mock.patch.object(ai_status, "discover_open_pr_binding", return_value=None),
+            self.assertRaisesRegex(SystemExit, "no handoff delivery binding"),
         ):
             _command_approve(self.state, ["REG-002", "Approved."])
-
-        task = ai_status.get_task(self.state, "REG-002")
-        self.assertEqual(task["status"], "review_approved")
-        self.assertNotIn("review_binding", task)
-
-    def test_required_pr_artifacts_reject_unbound_approval_before_a_pr_exists(self) -> None:
-        task = ai_status.get_task(self.state, "REG-002")
-        task["required_artifacts"] = [
-            "PR",
-            "required checks",
-            "independent exact-head review",
-            "merge SHA",
-        ]
-        self.assertTrue(ai_status.task_has_pr_review_target(task))
-        with (
-            mock.patch.dict(os.environ, {}, clear=True),
-            mock.patch.object(ai_status, "discover_open_pr_binding", return_value=None),
-            self.assertRaisesRegex(SystemExit, "PR-backed but approve has no exact reviewed-head binding"),
-        ):
-            ai_status.resolve_approval_binding(task, repository="ajoe734/pantheon")
-
-    def test_discover_open_pr_binding_accepts_an_open_matching_pr(self) -> None:
-        with mock.patch.object(
-            ai_status,
-            "run_gh_json_command",
-            return_value={
-                "number": 4218,
-                "headRefOid": "D" * 40,
-                "baseRefName": "dev",
-                "state": "OPEN",
-            },
-        ) as run_gh:
-            result = ai_status.discover_open_pr_binding(
-                "ajoe734/pantheon", head_branch="task/REG-002", base_branch="dev"
-            )
-
-        self.assertEqual(
-            result,
-            {"pr": 4218, "head_sha": "d" * 40, "head_branch": "task/REG-002", "base": "dev"},
-        )
-        run_gh.assert_called_once_with(
-            [
-                "pr", "view", "task/REG-002",
-                "--repo", "ajoe734/pantheon",
-                "--json", "number,headRefOid,baseRefName,state",
-            ]
-        )
-
-    def test_discover_open_pr_binding_ignores_a_closed_or_merged_pr(self) -> None:
-        with mock.patch.object(
-            ai_status,
-            "run_gh_json_command",
-            return_value={
-                "number": 4218,
-                "headRefOid": "d" * 40,
-                "baseRefName": "dev",
-                "state": "MERGED",
-            },
-        ):
-            result = ai_status.discover_open_pr_binding(
-                "ajoe734/pantheon", head_branch="task/REG-002", base_branch="dev"
-            )
-        self.assertIsNone(result)
-
-    def test_discover_open_pr_binding_returns_none_when_gh_finds_nothing(self) -> None:
-        with mock.patch.object(ai_status, "run_gh_json_command", return_value=None):
-            result = ai_status.discover_open_pr_binding(
-                "ajoe734/pantheon", head_branch="task/REG-002", base_branch="dev"
-            )
-        self.assertIsNone(result)
-
-    def test_approve_without_a_binding_warns_but_still_approves(self) -> None:
-        """Not every task has a PR, so the refusal belongs to the merge gate."""
-
-        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
-            _command_approve(self.state, ["REG-002", "Approved."])
-
-        task = ai_status.get_task(self.state, "REG-002")
-        self.assertEqual(task["status"], "review_approved")
-        self.assertNotIn("review_binding", task)
-        self.assertNotIn("review_binding", self._approval_events()[0])
-
-    def test_approve_refuses_internal_only_verdict_for_pr_backed_task(self) -> None:
-        self.state["tasks"][0]["source_ref"] = {
-            "pr": 4269,
-            "head_sha": "a" * 40,
-            "base": "dev",
-        }
-        with (
-            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
-            self.assertRaisesRegex(SystemExit, "internal activity approval alone"),
-        ):
-            _command_approve(
-                self.state,
-                ["REG-002", "No exact head supplied."],
-            )
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review")
         self.assertNotIn("review_binding", task)
-        self.assertEqual(self._approval_events(), [])
 
     def test_fixture_clears_inherited_review_inputs_for_no_binding_approval(
         self,
@@ -2979,6 +2863,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             )
 
     def test_approve_refuses_an_abbreviated_head_sha(self) -> None:
+        self._set_pr_delivery_binding(pr=4218, head_sha="a" * 40)
         with mock.patch.dict(
             os.environ,
             {
@@ -2997,6 +2882,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
 
     def test_approve_refuses_a_head_sha_without_a_pr_number(self) -> None:
+        self._set_pr_delivery_binding(pr=4218, head_sha="b" * 40)
         with mock.patch.dict(
             os.environ,
             {"AI_NAME": "Claude", "REVIEW_HEAD_SHA": "b" * 40},
@@ -3164,6 +3050,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         task = self.state["tasks"][0]
         task["id"] = "L12-CLOSE-001"
         task["requires_human_ops_signoff"] = True
+        self._set_artifact_delivery_binding(task)
         self.state["handoffs"][0]["task_id"] = "L12-CLOSE-001"
 
         with (
@@ -3218,6 +3105,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         task = self.state["tasks"][0]
         task["id"] = "L12-CLOSE-001"
         task["requires_human_ops_signoff"] = True
+        self._set_artifact_delivery_binding(task)
         self.state["handoffs"][0]["task_id"] = "L12-CLOSE-001"
 
         with (
@@ -3426,6 +3314,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(archive_task["review_file"], review_file)
 
     def test_approve_refuses_a_review_file_not_present_at_the_reviewed_head(self) -> None:
+        self._set_pr_delivery_binding(pr=4218, head_sha="b" * 40)
         with (
             mock.patch.dict(
                 os.environ,
@@ -3445,6 +3334,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
 
     def test_approve_accepts_a_review_file_present_at_the_reviewed_head(self) -> None:
+        self._set_pr_delivery_binding(pr=4218, head_sha="b" * 40)
         with (
             mock.patch.dict(
                 os.environ,
@@ -4206,6 +4096,28 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 },
             )
 
+    def test_handoff_never_reuses_historical_source_ref_as_delivery_binding(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task.pop(ai_status.DELIVERY_BINDING_KEY)
+        task["required_artifacts"] = ["pull request"]
+        task["source_ref"] = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "requires a PR delivery binding"),
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Do not freeze historical provenance."],
+            )
+        self.assertEqual(task["status"], "in_progress")
+        self.assertNotIn(ai_status.DELIVERY_BINDING_KEY, task)
+
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
         self.state["tasks"][0]["failure_streak"] = 2
@@ -4238,6 +4150,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "status_state": "failure",
         }
         self.state["tasks"][0]["status"] = "review_approved"
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
         self.state["tasks"][0]["review_binding"] = binding
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
@@ -4263,7 +4176,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             binding=binding,
         )
 
-    def test_reviewer_reopen_refuses_unbound_pr_rejection(self) -> None:
+    def test_reviewer_reopen_ignores_historical_pr_provenance(self) -> None:
         self.state["tasks"][0]["source_ref"] = {
             "pr": 4269,
             "head_sha": "a" * 40,
@@ -4271,7 +4184,6 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         }
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
-            self.assertRaisesRegex(SystemExit, "rejection.*GitHub review gate"),
         ):
             _command_reopen(
                 self.state,
@@ -4279,14 +4191,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             )
 
         task = ai_status.get_task(self.state, "REG-002")
-        self.assertEqual(task["status"], "review")
-        self.assertFalse(
-            [
-                handoff
-                for handoff in self.state["handoffs"]
-                if handoff.get("from") == "Claude"
-            ]
-        )
+        self.assertEqual(task["status"], "in_progress")
+        self.assertNotIn("github_review_bridge", task)
 
     def test_human_ops_reopen_clears_blocker_without_impersonating_worker(self) -> None:
         self.state["tasks"][0]["status"] = "blocked"

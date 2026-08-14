@@ -760,6 +760,13 @@ class SharedPlannerContractTests(unittest.TestCase):
 
     def test_reviewer_review_is_dispatchable(self) -> None:
         task = task_fixture(status="review")
+        task["delivery_binding"] = {
+            "kind": "pull_request",
+            "pr": 42,
+            "head_sha": "a" * 40,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
         decision = planner_decision(self.config, task, target="Codex2")
         self.assertTrue(decision["eligible"])
         self.assertEqual(decision["reason"], supervisor.REASON_REVIEW_READY)
@@ -966,6 +973,55 @@ class SharedPlannerContractTests(unittest.TestCase):
         )
         self.assertFalse(decision["eligible"])
         self.assertEqual(decision["first_blocking_gate"], "account_capacity_reached")
+
+    def test_review_requires_a_current_delivery_binding(self) -> None:
+        task = task_fixture(status="review", reviewer="Codex2")
+        rejected = planner_decision(self.config, task, target="Codex2")
+        self.assertFalse(rejected["eligible"])
+        self.assertEqual(rejected["first_blocking_gate"], "task_not_dispatchable")
+
+        task["delivery_binding"] = {
+            "kind": "pull_request",
+            "pr": 42,
+            "head_sha": "a" * 40,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        accepted = planner_decision(self.config, task, target="Codex2")
+        self.assertTrue(accepted["eligible"])
+
+    def test_review_binding_is_served_once_until_canonical_change(self) -> None:
+        task = task_fixture(status="review", reviewer="Codex2")
+        task["delivery_binding"] = {
+            "kind": "pull_request",
+            "pr": 42,
+            "head_sha": "a" * 40,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex2",
+            supervisor.REASON_REVIEW_READY,
+            {"TASK-1": task},
+        )
+        state = with_healthy_delivery_health(
+            self.config,
+            {
+                "workers": {},
+                "queue": {"events": {"evt-review": {"event_key": event["key"], "status": "completed"}}},
+            },
+        )
+        rejected = planner_decision(self.config, task, state=state, target="Codex2")
+        self.assertFalse(rejected["eligible"])
+        self.assertEqual(rejected["first_blocking_gate"], "review_binding_already_served")
+
+        task["delivery_binding"] = {
+            **task["delivery_binding"],
+            "head_sha": "b" * 40,
+        }
+        accepted = planner_decision(self.config, task, state=state, target="Codex2")
+        self.assertTrue(accepted["eligible"])
 
 
 class DurableQueueContractTests(unittest.TestCase):

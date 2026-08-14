@@ -432,12 +432,10 @@ def prepare_full_supervisor_fixture(
         "current_work": str(workspace / "current-work.md"),
         "dashboard": str(workspace / "docs-site" / "index.html"),
         "state_file": str(runtime_dir / "state.json"),
-        "event_queue": str(runtime_dir / "event-queue.jsonl"),
         "approval_queue": str(runtime_dir / "approval-queue.json"),
         "provider_capabilities": str(runtime_dir / "provider-capabilities.json"),
     }
     Path(paths["activity_log"]).write_text("", encoding="utf-8")
-    Path(paths["event_queue"]).write_text("", encoding="utf-8")
     Path(paths["approval_queue"]).write_text(
         json.dumps({"pending": [], "history": []}) + "\n",
         encoding="utf-8",
@@ -475,7 +473,6 @@ def prepare_full_supervisor_fixture(
     }
 
     command_binding = command_runtime_binding()
-    queue_events: list[dict[str, Any]] = []
     runtime_state = supervisor_module.load_runtime_state(config)
     for spec in specs:
         if not spec["uses_worker_lease"]:
@@ -516,7 +513,6 @@ def prepare_full_supervisor_fixture(
         spec["run_id"] = run_id
         spec["workspace_path"] = str(workspace_path)
 
-    supervisor_module.replace_event_queue(config, queue_events)
     supervisor_module.save_runtime_state(config, runtime_state)
     return config, command_binding
 
