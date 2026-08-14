@@ -73,6 +73,7 @@ from task_archive import (
     recent_terminal_summaries,
 )
 from multi_repo_registry import (
+    repository_configured_local_path,
     repository_local_path,
     repository_slug,
     resolve_repository,
@@ -209,10 +210,13 @@ def _auto_worker_requires_explicit_status_root() -> bool:
 
 def _worker_workspace_root() -> Path | None:
     roots: list[tuple[str, Path]] = []
-    for env_name in ("PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH"):
+    env_names = ("PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH")
+    present: list[str] = []
+    for env_name in env_names:
         raw = str(os.environ.get(env_name) or "").strip()
         if not raw:
             continue
+        present.append(env_name)
         expanded = Path(os.path.expanduser(raw))
         if not expanded.is_absolute():
             raise RuntimeError(f"{env_name} must be an absolute path when set")
@@ -224,6 +228,12 @@ def _worker_workspace_root() -> Path | None:
         roots.append((env_name, expanded.resolve()))
     if not roots:
         return None
+    if len(present) != len(env_names):
+        missing = [name for name in env_names if name not in present]
+        raise RuntimeError(
+            "delivery workspace binding requires both PANTHEON_WORKTREE_ROOT and "
+            f"ORCH_WORKSPACE_PATH; missing {', '.join(missing)}"
+        )
     first_name, first_root = roots[0]
     for env_name, root in roots[1:]:
         if root != first_root:
@@ -419,6 +429,15 @@ def _validated_status_command_worker_lease(
         "process_generation": process_generation,
         "task_generation": task_generation,
         "actor": normalize_worker_actor(dict(worker)),
+        "workspace_repository_id": str(
+            _worker_metadata_value(worker, "workspace_repository_id") or ""
+        ).strip(),
+        "workspace_branch": str(
+            _worker_metadata_value(worker, "workspace_branch") or ""
+        ).strip(),
+        "workspace_source_root": str(
+            _worker_metadata_value(worker, "workspace_source_root") or ""
+        ).strip(),
     }
 
 
@@ -798,6 +817,19 @@ def validate_active_status_command_lease(
     if lease_status_root != status_root:
         raise RuntimeError(
             f"worktree lease status root mismatch for {lease_key}: {lease_status_root} != {status_root}"
+        )
+    worker_repository_id = str(
+        _worker_metadata_value(worker, "workspace_repository_id") or ""
+    ).strip()
+    lease_repository_id = str(lease.get("repository_id") or "").strip()
+    if not worker_repository_id or not lease_repository_id:
+        raise RuntimeError(
+            f"worktree lease {lease_key} has no exact delivery repository identity"
+        )
+    if worker_repository_id != lease_repository_id:
+        raise RuntimeError(
+            f"worktree lease repository mismatch for {lease_key}: "
+            f"{lease_repository_id} != {worker_repository_id}"
         )
     raw_lease_path = lease.get("path")
     if raw_lease_path not in (None, ""):
@@ -1578,19 +1610,6 @@ def load_config() -> dict[str, Any]:
                 "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
             }
         )
-    delivery_root = _worker_workspace_root()
-    if delivery_root is not None:
-        coordination = payload.setdefault("coordination", {})
-        if isinstance(coordination, dict):
-            repositories = coordination.setdefault("repositories", {})
-            if isinstance(repositories, dict):
-                pantheon_repo = repositories.setdefault("pantheon", {})
-                if isinstance(pantheon_repo, dict):
-                    pantheon_repo["local_path"] = str(delivery_root)
-                    pantheon_repo.setdefault(
-                        "repo",
-                        str(((payload.get("github_bus") or {}).get("repo")) or "ajoe734/pantheon"),
-                    )
     return payload
 
 
@@ -2683,6 +2702,167 @@ def validate_protected_closeout_transition(
         ) from exc
 
 
+def _resolved_git_common_dir(repository_root: Path) -> Path:
+    raw_common_dir = run_git_command(
+        ["rev-parse", "--git-common-dir"],
+        cwd=repository_root,
+        failure_message=(
+            "Cannot finalize task: delivery repository git common directory is unavailable."
+        ),
+    )
+    common_dir = Path(raw_common_dir)
+    if not common_dir.is_absolute():
+        common_dir = repository_root / common_dir
+    return common_dir.resolve()
+
+
+def _registered_worktree_paths(repository_root: Path) -> set[Path]:
+    output = run_git_command(
+        ["worktree", "list", "--porcelain"],
+        cwd=repository_root,
+        failure_message=(
+            "Cannot finalize task: registered delivery worktrees are unavailable."
+        ),
+    )
+    paths: set[Path] = set()
+    for line in output.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        paths.add(Path(line.removeprefix("worktree ")).expanduser().resolve())
+    return paths
+
+
+def _validate_delivery_workspace_repository(
+    config: dict[str, Any],
+    *,
+    repository_id: str,
+    repository_root: Path,
+    registered_root: Path,
+) -> None:
+    if not repository_root.is_dir() or git_toplevel(repository_root) != repository_root:
+        raise SystemExit(
+            f"Cannot finalize task: delivery workspace must be a git repository root: {repository_root}."
+        )
+    if not registered_root.is_dir() or git_toplevel(registered_root) != registered_root:
+        raise SystemExit(
+            "Cannot finalize task: registered repository local_path is not a git root: "
+            f"{registered_root}."
+        )
+    if _resolved_git_common_dir(repository_root) != _resolved_git_common_dir(registered_root):
+        raise SystemExit(
+            "Cannot finalize task: delivery workspace is not registered to the configured "
+            f"{repository_id} checkout."
+        )
+    if repository_root not in _registered_worktree_paths(registered_root):
+        raise SystemExit(
+            "Cannot finalize task: delivery workspace is not present in the configured "
+            "repository worktree registry."
+        )
+    expected_slug = normalize_github_repo_slug(repository_slug(config, repository_id))
+    if not expected_slug:
+        raise SystemExit(
+            f"Cannot finalize task: repository `{repository_id}` has no configured GitHub slug."
+        )
+    actual_slug = normalize_github_repo_slug(
+        run_git_command(
+            ["remote", "get-url", "origin"],
+            cwd=repository_root,
+            failure_message=(
+                "Cannot finalize task: delivery workspace origin remote is unavailable."
+            ),
+        )
+    )
+    if actual_slug != expected_slug:
+        raise SystemExit(
+            "Cannot finalize task: delivery workspace origin does not match task "
+            f"repository ({actual_slug or 'missing'} != {expected_slug})."
+        )
+
+
+def _done_delivery_repository_root(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    repository_id: str,
+) -> tuple[Path, dict[str, Any]]:
+    configured_root = repository_configured_local_path(config, repository_id)
+    if configured_root is None:
+        raise SystemExit(
+            f"Cannot finalize task: repository `{repository_id}` has no local_path configured."
+        )
+    configured_symlink = first_symlink_component(configured_root)
+    if configured_symlink is not None:
+        raise SystemExit(
+            "Cannot finalize task: registered repository local_path cannot include a "
+            f"symlink component: {configured_symlink}."
+        )
+    registered_root = repository_local_path(config, repository_id)
+    if registered_root is None:
+        raise SystemExit(
+            f"Cannot finalize task: repository `{repository_id}` has no local_path configured."
+        )
+    registered_root = registered_root.resolve(strict=False)
+    try:
+        workspace_root = _worker_workspace_root()
+    except RuntimeError as exc:
+        raise SystemExit(f"Cannot finalize task: {exc}.") from exc
+    if workspace_root is None:
+        if not registered_root.is_dir():
+            raise SystemExit(
+                "Cannot finalize task: registered delivery repository does not exist: "
+                f"{registered_root}."
+            )
+        return registered_root, {
+            "repository_path_source": "repository_registry",
+            "workspace_env_names": [],
+            "workspace_env_match": False,
+            "workspace_lease_validated": False,
+        }
+
+    canonical_status_root = STATUS_ROOT.resolve()
+    if workspace_root == canonical_status_root:
+        raise SystemExit(
+            "Cannot finalize task: delivery workspace must differ from the canonical status root."
+        )
+    _validate_delivery_workspace_repository(
+        config,
+        repository_id=repository_id,
+        repository_root=workspace_root,
+        registered_root=registered_root,
+    )
+
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    source = "explicit_workspace_env"
+    lease_validated = False
+    if run_id:
+        binding = getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", None)
+        if not isinstance(binding, Mapping):
+            raise SystemExit(
+                "Cannot finalize task: active worker delivery workspace has no validated lease binding."
+            )
+        lease_repository_id = str(
+            binding.get("workspace_repository_id") or ""
+        ).strip()
+        if lease_repository_id != repository_id:
+            raise SystemExit(
+                "Cannot finalize task: worker lease repository does not match task artifacts "
+                f"({lease_repository_id or 'missing'} != {repository_id})."
+            )
+        binding_task_id = str(binding.get("task_id") or "").strip()
+        if binding_task_id != str(task.get("id") or "").strip():
+            raise SystemExit(
+                "Cannot finalize task: worker lease task does not match closeout task."
+            )
+        source = "worker_lease"
+        lease_validated = True
+
+    return workspace_root, {
+        "repository_path_source": source,
+        "workspace_env_names": ["PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH"],
+        "workspace_env_match": True,
+        "workspace_lease_validated": lease_validated,
+    }
+
+
 def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
@@ -2694,25 +2874,9 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             "Cannot finalize task: task artifacts span multiple non-Pantheon repositories; "
             f"split closeout or set a single artifact prefix. Repositories: {', '.join(repo_ids)}."
         )
-    repository_root = repository_local_path(config, repository_id)
-    if repository_root is None:
-        raise SystemExit(f"Cannot finalize task: repository `{repository_id}` has no local_path configured.")
-    repository_fallback: dict[str, Any] | None = None
-    if repository_id != "pantheon" and not repository_root.exists():
-        repo_ids = task_artifact_repository_ids(config, task)
-        pantheon_root = repository_local_path(config, "pantheon")
-        if "pantheon" in repo_ids and pantheon_root is not None:
-            repository_fallback = {
-                "from_repository_id": repository_id,
-                "missing_repository_path": str(repository_root.resolve(strict=False)),
-                "reason": (
-                    "non-Pantheon artifact repository local_path is unavailable; "
-                    "using Pantheon because the task also has Pantheon artifacts"
-                ),
-            }
-            repository_id = "pantheon"
-            repository_root = pantheon_root
-    repository_root = repository_root.resolve(strict=False)
+    repository_root, repository_path_metadata = _done_delivery_repository_root(
+        config, task, repository_id
+    )
     repository_slug_value = repository_slug(config, repository_id)
     branch = run_git_command(
         ["rev-parse", "--abbrev-ref", "HEAD"],
@@ -2726,12 +2890,22 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         "repository_slug": repository_slug_value,
         "branch": branch,
         "git_clean_required": settings["require_git_clean"],
+        "canonical_status_root": str(STATUS_ROOT.resolve()),
+        "canonical_status_root_source": STATUS_ROOT_ENV,
+        "roots_separated": repository_root != STATUS_ROOT.resolve(),
+        **repository_path_metadata,
     }
     command_metadata = status_command_metadata()
     if command_metadata:
         delivery["status_command_runtime"] = command_metadata
-    if repository_fallback is not None:
-        delivery["repository_fallback"] = repository_fallback
+    if repository_path_metadata["repository_path_source"] == "worker_lease":
+        binding = getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", {})
+        expected_branch = str(binding.get("workspace_branch") or "").strip()
+        if expected_branch and branch != expected_branch:
+            raise SystemExit(
+                "Cannot finalize task: delivery branch does not match worker lease "
+                f"({branch} != {expected_branch})."
+            )
 
     if settings["require_commit_hash"]:
         commit_hash = run_git_command(

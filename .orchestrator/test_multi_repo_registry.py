@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -14,7 +15,29 @@ class MultiRepoRegistryTests(unittest.TestCase):
         self.assertEqual(repo["display_name"], "execute-plans")
         self.assertEqual(repo["repo"], "ajoe734/execute-plans")
         self.assertEqual(repo["default_branch"], "dev")
-        self.assertEqual(repo["resolved_local_path"], multi_repo_registry.resolve_path("../execute-plans"))
+        self.assertEqual(
+            repo["resolved_local_path"],
+            (Path(multi_repo_registry.__file__).resolve().parents[1] / "../code/execute-plans").resolve(),
+        )
+
+    def test_relative_repository_path_is_anchored_to_status_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            status_root = Path(directory) / "pantheon-status"
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "execute_plans": {"local_path": "../delivery/execute-plans"}
+                    }
+                },
+            }
+
+            repo = multi_repo_registry.resolve_repository(config, "execute_plans")
+
+        self.assertEqual(
+            repo["resolved_local_path"],
+            (status_root / "../delivery/execute-plans").resolve(),
+        )
 
     def test_execute_plans_artifact_prefix_routes_to_sibling_repo(self) -> None:
         artifact = "execute-plans/e2e/dummy.spec.ts"

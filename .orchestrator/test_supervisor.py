@@ -14,6 +14,7 @@ import ast
 import inspect
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -377,6 +378,153 @@ def planner_decision(
     )
 
 
+class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
+    @staticmethod
+    def _git(cwd: Path, *args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return proc.stdout.strip()
+
+    def test_execute_plans_task_gets_execute_plans_worktree_and_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon"
+            execute_root = root / "execute-plans"
+            status_root.mkdir()
+            execute_root.mkdir()
+            self._git(execute_root, "init", "-b", "dev")
+            self._git(execute_root, "config", "user.name", "Test")
+            self._git(execute_root, "config", "user.email", "test@example.com")
+            (execute_root / "README.md").write_text("execute plans\n", encoding="utf-8")
+            self._git(execute_root, "add", "README.md")
+            self._git(execute_root, "commit", "-m", "initial")
+            self._git(
+                execute_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/execute-plans.git",
+            )
+            head = self._git(execute_root, "rev-parse", "HEAD")
+            self._git(execute_root, "update-ref", "refs/remotes/origin/dev", head)
+            self._git(
+                execute_root,
+                "branch",
+                "task/AGORA-FE-CANDIDATE-20260813",
+                head,
+            )
+            (execute_root / "README.md").write_text(
+                "execute plans current dev\n", encoding="utf-8"
+            )
+            self._git(execute_root, "add", "README.md")
+            self._git(execute_root, "commit", "-m", "advance dev")
+            current_dev_head = self._git(execute_root, "rev-parse", "HEAD")
+            self._git(
+                execute_root,
+                "update-ref",
+                "refs/remotes/origin/dev",
+                current_dev_head,
+            )
+
+            config = config_fixture(status_root)
+            config.update(
+                {
+                    "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                    "github_bus": {"repo": "ajoe734/pantheon"},
+                    "worker_worktrees": {
+                        "enabled": True,
+                        "root": str(root / "worker-worktrees"),
+                        "base_ref": "origin/dev",
+                        "reuse_existing": True,
+                        "execution_reasons": [supervisor.REASON_OWNED_READY],
+                    },
+                    "coordination": {
+                        "repositories": {
+                            "execute_plans": {"local_path": str(execute_root)}
+                        }
+                    },
+                }
+            )
+            task = task_fixture("AGORA-FE-CANDIDATE-20260813")
+            task["artifacts"] = [
+                "execute-plans/src/agora/components/CandidateReviewDrawer.tsx"
+            ]
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=str(task["id"]),
+                reason=supervisor.REASON_OWNED_READY,
+                context_files=["AI_COLLABORATION_GUIDE.md"],
+                target_files=list(task["artifacts"]),
+                metadata={"task": task, "task_generation": 1},
+            )
+            state: dict[str, object] = {"worker_worktrees": {"leases": {}}}
+
+            with (
+                mock.patch.object(
+                    supervisor, "_worker_base_ref_precondition", return_value=(True, None)
+                ),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, error = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-agora",
+                    target_agent="Codex",
+                )
+
+            self.assertTrue(ok, error)
+            workspace = Path(str(request.metadata["workspace_path"]))
+            self.assertEqual(
+                workspace.parent.name,
+                "execute-plans",
+            )
+            self.assertEqual(request.metadata["workspace_repository_id"], "execute_plans")
+            self.assertEqual(request.metadata["workspace_source_root"], str(execute_root))
+            self.assertEqual(request.metadata["workspace_base_ref"], "origin/dev")
+            self.assertEqual(self._git(workspace, "rev-parse", "--show-toplevel"), str(workspace))
+            self.assertEqual(self._git(workspace, "rev-parse", "HEAD"), current_dev_head)
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+            lease = state["worker_worktrees"]["leases"][str(task["id"])]
+            self.assertEqual(lease["repository_id"], "execute_plans")
+            self.assertEqual(lease["source_root"], str(execute_root))
+            self.assertIn("Cross-repository delivery authority", request.message)
+            self.assertEqual(
+                request.metadata["workspace_target_files"],
+                ["src/agora/components/CandidateReviewDrawer.tsx"],
+            )
+            replay_request = supervisor.request_from_snapshot(
+                supervisor.request_snapshot(request)
+            )
+            with mock.patch.object(supervisor, "write_activity_log"):
+                replay_ok, replay_error = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    replay_request,
+                    queue_event_id="evt-agora-replay",
+                    target_agent="Codex",
+                )
+            self.assertTrue(replay_ok, replay_error)
+            self.assertEqual(
+                replay_request.metadata["workspace_repository_id"], "execute_plans"
+            )
+            with mock.patch.object(supervisor, "write_activity_log"):
+                cleaned = supervisor.cleanup_inactive_worker_worktrees(config, state)
+            self.assertTrue(cleaned)
+            self.assertFalse(workspace.exists())
+            self.assertNotIn(
+                str(task["id"]), state["worker_worktrees"]["leases"]
+            )
+
+
 class RuntimeConfigurationContractTests(unittest.TestCase):
     def test_repo_config_uses_one_capacity_and_account_schema(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
@@ -405,6 +553,19 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "agents.codex.max_parallel"):
             supervisor.validate_provider_accounts(config)
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 0)
+
+    def test_repo_codex_slots_inherit_logical_lane_capacity(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text())
+        for agent_id in ("codex", "codex2"):
+            with self.subTest(agent_id=agent_id):
+                lane = supervisor.delivery_lane_for_agent(config, agent_id)
+                self.assertTrue(lane.endpoints)
+                self.assertTrue(all(endpoint.enabled for endpoint in lane.endpoints))
+                self.assertTrue(
+                    all(endpoint.account_id for endpoint in lane.endpoints)
+                )
+                for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
+                    self.assertNotIn("max_parallel", config["agents"][slot_id])
 
     def test_retired_capacity_fields_fail_closed(self) -> None:
         for retired in (
@@ -1150,6 +1311,144 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex2")
         self.assertEqual(persist.call_args.kwargs["expected_owner"], "Codex")
+
+    def test_terminal_static_endpoint_reassigns_without_waiting_forever(self) -> None:
+        task = task_fixture(reviewer="Human/Ops")
+        self.config["agents"]["codex"]["provider"] = "missing-provider"
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex2": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    }
+                },
+                "accounts": {
+                    "codex2_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    }
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor, "persist_task_reassignment", return_value=True
+            ) as persist,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex2")
+        self.assertIn(
+            "configured_no_delivery_endpoint",
+            persist.call_args.kwargs["message"],
+        )
+
+    def test_configured_fallback_cycle_exhausts_remaining_healthy_roster(self) -> None:
+        task = task_fixture(reviewer="Human/Ops")
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "codex",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "codex",
+            "account": "claude-account",
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"][
+            "claude-account"
+        ] = 1
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                    "claude": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "claude_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor, "persist_task_reassignment", return_value=True
+            ) as persist,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Claude")
+
+    def test_terminal_assignment_demands_health_for_unknown_fallback(self) -> None:
+        task = task_fixture(reviewer="Human/Ops")
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "codex",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "codex",
+            "account": "claude-account",
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"][
+            "claude-account"
+        ] = 1
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    }
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    }
+                },
+            },
+        }
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            state,
+            {"tasks": [task]},
+            [],
+            live_total=0,
+        )
+        self.assertIn(
+            {"scope": "endpoint", "id": "claude"},
+            plan["health_refresh_targets"],
+        )
 
     def test_terminal_pause_reopens_stale_blocked_assignment_for_normal_dispatch(self) -> None:
         task = task_fixture(status="blocked", reviewer="Human/Ops")
