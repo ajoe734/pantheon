@@ -7,7 +7,6 @@ GitHub is the mobile-friendly approval surface for Pantheon.
 - `ai-status.json` remains the local source of truth.
 - `.orchestrator/github_bus.py` mirrors review and blocked tasks into GitHub.
 - GitHub Mobile is used for PR review, approvals, retries, and unblock commands.
-- The same bus now also mirrors `.coordination/*.yaml` feature handoffs into coordination issues for cross-repo delivery.
 
 ## Phase 1
 
@@ -36,14 +35,6 @@ Commands supported on ops issues:
 - `/status TASK-ID`
 - `/resume AGENT`
 - `/recheck TASK-ID`
-
-Commands supported on coordination issues:
-
-- `/dispatch pantheon-bff F-xxx`
-- `/dispatch front-ui F-xxx`
-- `/needs-runtime F-xxx`
-- `/contract-ready F-xxx`
-- `/approve-engine F-xxx`
 
 ## Phase 3
 

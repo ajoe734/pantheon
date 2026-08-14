@@ -12,7 +12,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from common import config_status_root, to_bool
+from common import config_status_root
 
 
 DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
@@ -54,13 +54,6 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
         "responses_dir": ".coordination/responses",
     },
 }
-
-
-def coordination_enabled(config: dict[str, Any]) -> bool:
-    coord_cfg = config.get("coordination")
-    if coord_cfg is None:
-        return False
-    return to_bool(coord_cfg.get("enabled", True))
 
 
 def coordination_config(config: dict[str, Any]) -> dict[str, Any]:

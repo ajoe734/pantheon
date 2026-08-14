@@ -235,38 +235,37 @@ class GitHubBusCommandTests(unittest.TestCase):
         )
         self.assertEqual(bus_state["poll_cursors"]["issue_comments"], 2)
 
-    def test_poll_coordination_issue_comments_batches_with_cursor(self) -> None:
-        self.config["github_bus"]["poll_batch_sizes"] = {"coordination_comments": 2}
-        bus_state = {
-            "processed_comment_ids": [],
-            "poll_cursors": {"coordination_comments": 0},
+    def test_bus_state_migrates_retired_coordination_issue_cache(self) -> None:
+        config = {"paths": {"github_bus_state": "/tmp/github-bus-state.json"}}
+        legacy_state = {
+            "tasks": {},
+            "poll_cursors": {
+                "pr_reviews": 4,
+                "issue_comments": 2,
+                "coordination_comments": 7,
+            },
             "coordination": {
-                "ajoe734/pantheon:F-001": {"repo": "ajoe734/pantheon", "issue": {"number": 31}},
-                "ajoe734/pantheon:F-002": {"repo": "ajoe734/pantheon", "issue": {"number": 32}},
-                "ajoe734/front-ai-trading-system:F-003": {
-                    "repo": "ajoe734/front-ai-trading-system",
-                    "issue": {"number": 33},
+                "ajoe734/pantheon:F-001": {
+                    "repo": "ajoe734/pantheon",
+                    "issue": {"number": 31},
                 },
             },
         }
 
-        with mock.patch.object(github_bus, "gh_json", return_value=[]) as gh_json:
-            changed = github_bus.poll_coordination_issue_comments(
-                self.config,
-                bus_state,
-                {"tasks": []},
-                runtime_state={},
-            )
+        with mock.patch.object(github_bus, "load_json", return_value=legacy_state):
+            bus_state = github_bus.load_bus_state(config)
 
-        self.assertFalse(changed)
-        self.assertEqual(
-            [call.args[0][-1] for call in gh_json.call_args_list],
-            [
-                "repos/ajoe734/pantheon/issues/31/comments?per_page=100",
-                "repos/ajoe734/pantheon/issues/32/comments?per_page=100",
-            ],
-        )
-        self.assertEqual(bus_state["poll_cursors"]["coordination_comments"], 2)
+        self.assertNotIn("coordination", bus_state)
+        self.assertNotIn("coordination_comments", bus_state["poll_cursors"])
+        self.assertEqual(bus_state["poll_cursors"]["pr_reviews"], 4)
+        self.assertEqual(bus_state["poll_cursors"]["issue_comments"], 2)
+
+        with mock.patch.object(github_bus, "write_json") as write_json:
+            github_bus.save_bus_state(config, bus_state)
+
+        persisted = write_json.call_args.args[1]
+        self.assertNotIn("coordination", persisted)
+        self.assertNotIn("coordination_comments", persisted["poll_cursors"])
 
     def test_upsert_review_pr_create_uses_create_label_flags(self) -> None:
         config = {
@@ -910,14 +909,13 @@ class PrReconciliationCandidateTests(unittest.TestCase):
         config["github_bus"] = {"repo": "ajoe734/pantheon"}
         status = {"tasks": [{"id": "SUP-H", "status": "in_progress"}]}
         bus_state = {"tasks": {}}
-        runtime_state = {}
 
         with (
             mock.patch.object(github_bus, "remote_branch_head_sha", return_value="cafef00d"),
             mock.patch.object(github_bus, "upsert_review_pr", return_value=True) as upsert_review_pr,
             mock.patch.object(github_bus, "upsert_ops_issue", return_value=False),
         ):
-            changed = github_bus.sync_outbound(config, bus_state, status, runtime_state, "ajoe734/pantheon")
+            changed = github_bus.sync_outbound(config, bus_state, status, "ajoe734/pantheon")
 
         self.assertTrue(changed)
         upsert_review_pr.assert_called_once()
