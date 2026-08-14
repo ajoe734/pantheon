@@ -285,7 +285,15 @@ class _SidecarTransport:
     def __call__(self, request: urllib.request.Request, timeout: float | None = None):
         path = urllib.parse.urlsplit(request.full_url).path
         headers = dict(request.header_items())
-        response = self.client.request(
+
+        if "/api/research-orchestrator/" in path:
+            from fastapi.testclient import TestClient
+            from services.research.main import app as res_app
+            target_client = TestClient(res_app)
+        else:
+            target_client = self.client
+
+        response = target_client.request(
             request.get_method(), path, content=request.data, headers=headers
         )
         self.exchanges.append(
@@ -304,7 +312,8 @@ class _SidecarTransport:
                 dict(response.headers),
                 io.BytesIO(response.content),
             )
-        return _TransportResponse(response.content)
+        return _TransportResponse(response.content, status=response.status_code, headers=dict(response.headers))
+
 
     @property
     def statuses(self) -> list[int]:
@@ -312,8 +321,10 @@ class _SidecarTransport:
 
 
 class _TransportResponse:
-    def __init__(self, body: bytes) -> None:
+    def __init__(self, body: bytes, status: int = 200, headers: dict[str, str] | None = None) -> None:
         self._body = body
+        self.status = status
+        self.headers = headers or {}
 
     def __enter__(self) -> "_TransportResponse":
         return self
@@ -323,6 +334,7 @@ class _TransportResponse:
 
     def read(self) -> bytes:
         return self._body
+
 
 
 def _agora_record(

@@ -1,7 +1,8 @@
 """Policy-learning candidate handoff module.
 
 Hands off processed shadow imitation candidates from policy-learning to the
-Research experiment authority (services/research/experiment_candidate_intake.py).
+Research experiment authority (services/research/experiment_candidate_intake.py)
+via HTTP endpoint or direct intake.
 """
 
 from __future__ import annotations
@@ -10,11 +11,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from services.research.experiment_candidate_intake import (
-    ExperimentCandidateIntakeReceipt,
-    intake_imitation_candidate,
+from research_candidate_client import (
+    ResearchCandidateClientError,
+    ResearchCandidateClientReceipt,
+    post_imitation_candidate_intake_http,
 )
-from services.research.store import ResearchOrchestratorStore
 
 
 class CandidateHandoffError(ValueError):
@@ -32,7 +33,7 @@ class CandidateHandoffResult:
     experiment_run_id: str
     status: str
     handoff_at: str
-    receipt: ExperimentCandidateIntakeReceipt
+    receipt: ResearchCandidateClientReceipt
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -48,10 +49,12 @@ class CandidateHandoffResult:
 def handoff_candidate_to_experiment_authority(
     candidate: Dict[str, Any],
     *,
-    research_store: Optional[ResearchOrchestratorStore] = None,
+    research_url: Optional[str] = None,
     timestamp: Optional[str] = None,
 ) -> CandidateHandoffResult:
     """Hand off a processed imitation candidate to Research experiment authority.
+
+    Calls Research HTTP intake & readback endpoint. Fail-closed on HTTP/readback failure.
 
     Updates the candidate dict in-place with:
     - experiment_task_id
@@ -73,20 +76,22 @@ def handoff_candidate_to_experiment_authority(
 
     now = timestamp or _utc_now_iso()
 
-    # Perform intake into Research
-    receipt = intake_imitation_candidate(candidate, store=research_store, timestamp=now)
+    try:
+        http_receipt = post_imitation_candidate_intake_http(candidate, research_url=research_url)
+    except ResearchCandidateClientError as exc:
+        raise CandidateHandoffError(f"HTTP intake failed: {exc}") from exc
 
     # Attach receipt to candidate
-    candidate["experiment_task_id"] = receipt.task_id
-    candidate["experiment_run_id"] = receipt.run_id
+    candidate["experiment_task_id"] = http_receipt.task_id
+    candidate["experiment_run_id"] = http_receipt.run_id
     candidate["handoff_status"] = "completed"
     candidate["handoff_at"] = now
 
     return CandidateHandoffResult(
         candidate_id=candidate_id,
-        experiment_task_id=receipt.task_id,
-        experiment_run_id=receipt.run_id,
+        experiment_task_id=http_receipt.task_id,
+        experiment_run_id=http_receipt.run_id,
         status="completed",
         handoff_at=now,
-        receipt=receipt,
+        receipt=http_receipt,
     )
