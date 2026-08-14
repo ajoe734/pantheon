@@ -25,20 +25,20 @@
 |---|---|---|---|---|---|
 | W1 | `L12-CURRENT-ALPHA-ADMISSION-20260814` | pantheon | Claude | Antigravity | — |
 | W1 | `L12-CURRENT-TEACHING-IDENTITY-20260814` | pantheon | Antigravity | Claude | — |
-| W1 | `L12-CURRENT-CONSULTATION-WIRING-20260814` | pantheon | Claude | Antigravity | — |
-| W1 | `L12-CURRENT-DEPLOYMENT-AUTH-20260814` | pantheon | Antigravity | Claude | — |
-| W1 | `L12-CURRENT-AGORA-HANDOFF-CUTOVER-20260814` | pantheon | Claude | Antigravity | — |
-| W1 | `L12-CURRENT-CAPITAL-ARTIFACT-20260814` | pantheon | Claude | Antigravity | — |
-| W1 | `L12-CURRENT-BFF-TRUTH-20260814` | pantheon | Antigravity | Claude | — |
+| W1 | `L12-CURRENT-CONSULTATION-WIRING-20260814` | pantheon | Claude2 | Antigravity2 | — |
+| W1 | `L12-CURRENT-DEPLOYMENT-AUTH-20260814` | pantheon | Antigravity2 | Claude2 | — |
+| W1 | `L12-CURRENT-AGORA-HANDOFF-CUTOVER-20260814` | pantheon | Claude | Antigravity2 | — |
+| W1 | `L12-CURRENT-CAPITAL-ARTIFACT-20260814` | pantheon | Claude2 | Antigravity | — |
+| W1 | `L12-CURRENT-BFF-TRUTH-20260814` | pantheon | Antigravity2 | Claude | — |
 | W1 | `L12-CURRENT-FE-TRUTH-20260814` | execute-plans | Antigravity | Claude | — |
-| W2 | `L12-CURRENT-IMITATION-HTTP-20260814` | pantheon | Antigravity | Claude | Agora cutover |
+| W2 | `L12-CURRENT-IMITATION-HTTP-20260814` | pantheon | Antigravity | Claude2 | Agora cutover |
 | W3 | `L12-CURRENT-COMPOSE-INTEGRATION-20260814` | pantheon | Claude | Antigravity | Teaching, Consultation, Deployment, Agora, Imitation, Capital, BFF |
-| W4 | `L12-CURRENT-E2E-RESEARCH-20260814` | pantheon | Claude | Antigravity | Alpha, Teaching, Compose |
-| W4 | `L12-CURRENT-E2E-HUMAN-LEARNING-20260814` | pantheon | Antigravity | Claude | Consultation, Agora, Imitation, Compose |
+| W4 | `L12-CURRENT-E2E-RESEARCH-20260814` | pantheon | Claude2 | Antigravity2 | Alpha, Teaching, Compose |
+| W4 | `L12-CURRENT-E2E-HUMAN-LEARNING-20260814` | pantheon | Antigravity2 | Claude2 | Consultation, Agora, Imitation, Compose |
 | W4 | `L12-CURRENT-E2E-RUNTIME-20260814` | pantheon | Claude | Antigravity | Deployment, Capital, BFF, Compose |
 | W5 | `L12-CURRENT-CROSS-LOOP-E2E-20260814` | pantheon | Antigravity | Claude | three E2E groups, FE truth |
-| W6 | `L12-CURRENT-LEGACY-RETIRE-20260814` | pantheon | Claude | Antigravity | cross-loop E2E |
-| W7 | `L12-CURRENT-HOSTED-ACCEPT-20260814` | pantheon | Antigravity | Claude | cross-loop E2E, legacy retire, existing Agora hosted acceptance |
+| W6 | `L12-CURRENT-LEGACY-RETIRE-20260814` | pantheon | Claude2 | Antigravity2 | cross-loop E2E |
+| W7 | `L12-CURRENT-HOSTED-ACCEPT-20260814` | pantheon | Antigravity2 | Claude2 | cross-loop E2E, legacy retire, existing Agora hosted acceptance |
 
 完整 objective、scope、out-of-scope、acceptance、validation、rollout 與 rollback 位於
 `execution-tasks-current-2026-08-14.json`，該 JSON 是 materialization 的唯一 task-spec
