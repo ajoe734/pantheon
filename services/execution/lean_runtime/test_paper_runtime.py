@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -10,7 +11,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from services.execution.lean_runtime.paper_runtime import (
     _Handler,
@@ -1260,6 +1261,35 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(event["metadata"]["engine_bridge_commit"], "abc1234")
         self.assertEqual(event["metadata"]["context_source"], "launch_manifest")
 
+    def test_runtime_telemetry_emitter_authenticates_ingest_tenant(self):
+        identity = replace(
+            self._identity(),
+            telemetry_url="http://telemetry.test",
+        )
+        response = MagicMock()
+        response.__enter__.return_value.status = 202
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TELEMETRY_SERVICE_TOKEN": "telemetry-service-secret",
+                "PANTHEON_TENANT_ID": "tenant-paper",
+            },
+        ):
+            emitter = RuntimeTelemetryEmitter(
+                identity,
+                _FakeBindingResolver(self._binding()),
+            )
+        with patch("urllib.request.urlopen", return_value=response) as urlopen:
+            emitted = emitter.emit_heartbeat()
+
+        self.assertTrue(emitted)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.get_header("Authorization"),
+            "Bearer telemetry-service-secret",
+        )
+        self.assertEqual(request.get_header("X-tenant-id"), "tenant-paper")
+
     def test_runtime_telemetry_emitter_carries_binding_effective_boundary(self):
         binding = self._binding()
         binding["effective_at"] = "2026-07-14T10:00:00Z"
@@ -1824,6 +1854,175 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertIsNotNone(
             service.snapshot()["lifecycle_outbox"]["delivery_error"]
         )
+
+    def test_start_does_not_synchronously_replay_lifecycle_backlog(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        with (
+            patch.object(service, "_run_loop", return_value=None),
+            patch.object(
+                service,
+                "_flush_lifecycle_outbox",
+                side_effect=AssertionError("startup must not replay synchronously"),
+            ),
+        ):
+            service.start()
+            service.stop()
+
+    def test_start_emits_heartbeat_before_background_lifecycle_replay(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+        calls = []
+
+        with (
+            patch.object(
+                service,
+                "_maybe_emit_heartbeat",
+                side_effect=lambda: calls.append("heartbeat"),
+            ),
+            patch.object(
+                service,
+                "_run_loop",
+                side_effect=lambda: calls.append("replay") or True,
+            ),
+        ):
+            service.start()
+            service.stop()
+
+        self.assertEqual(calls[:2], ["heartbeat", "replay"])
+
+    def test_lifecycle_replay_does_not_block_runtime_snapshot(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+        replay_started = threading.Event()
+        release_replay = threading.Event()
+
+        def slow_replay():
+            replay_started.set()
+            release_replay.wait(timeout=2)
+            return True
+
+        with patch.object(service, "_flush_lifecycle_outbox", side_effect=slow_replay):
+            worker = threading.Thread(target=service.drain_once)
+            worker.start()
+            self.assertTrue(replay_started.wait(timeout=1))
+            started = time.monotonic()
+            snapshot = service.snapshot()
+            elapsed = time.monotonic() - started
+            release_replay.set()
+            worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(snapshot["runtime_package"], "paper_execution_runtime")
+        self.assertLess(elapsed, 0.25)
+
+    def test_dedicated_heartbeat_continues_while_replay_is_blocked(self):
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+        replay_started = threading.Event()
+        release_replay = threading.Event()
+
+        def slow_replay():
+            replay_started.set()
+            release_replay.wait(timeout=3)
+            return True
+
+        with (
+            patch.dict(
+                os.environ,
+                {"PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS": "1"},
+            ),
+            patch.object(service, "_flush_lifecycle_outbox", side_effect=slow_replay),
+        ):
+            service.start()
+            self.assertTrue(replay_started.wait(timeout=1))
+            time.sleep(1.2)
+            heartbeat_count = sum(
+                event.get("event_type") == "heartbeat" for event in telemetry.events
+            )
+            release_replay.set()
+            service.stop()
+
+        self.assertGreaterEqual(heartbeat_count, 2)
+
+    def test_lifecycle_replay_batches_remote_acks_into_one_durable_write(self):
+        class PendingTelemetry(_FakeTelemetryEmitter):
+            def emit_payload(self, payload):
+                return False
+
+        binding = self._binding()
+        signal = self._canonical_signal(binding, "bounded-replay")
+        first = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([signal]),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+            telemetry_emitter=PendingTelemetry(),
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+        first.drain_once()
+        first._consumer.flush_rebalance(signal["run_id"], first._algo)
+        self.assertEqual(first.snapshot()["lifecycle_outbox"]["pending_count"], 7)
+
+        replay = _FakeTelemetryEmitter()
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_LIFECYCLE_REPLAY_BATCH_SIZE": "3"},
+        ):
+            restarted = PaperRuntimeService(
+                store=InMemoryPendingSignalStore(),
+                identity=self._identity(),
+                runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+                telemetry_emitter=replay,
+                poll_interval_seconds=3600,
+                max_batch_size=10,
+            )
+        restarted._ensure_lifecycle_outbox_ready()
+        with patch.object(
+            restarted._lifecycle_outbox,
+            "_write_state",
+            wraps=restarted._lifecycle_outbox._write_state,
+        ) as write_state:
+            restarted.drain_once()
+
+        lifecycle_events = [
+            event
+            for event in replay.events
+            if event.get("event_type")
+            in {"signal_generation", "trade_decision", "risk_evaluation"}
+        ]
+        self.assertEqual(len(lifecycle_events), 3)
+        self.assertEqual(
+            restarted.snapshot()["lifecycle_outbox"]["pending_count"],
+            4,
+        )
+        self.assertEqual(write_state.call_count, 1)
 
     def test_lifecycle_outbox_exact_pending_readmission_is_idempotent(self):
         class PendingTelemetry(_FakeTelemetryEmitter):

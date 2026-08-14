@@ -21,10 +21,14 @@ DISPATCH_REASON_PRIORITIES = {
     REASON_OWNED_READY: 3,
 }
 
+# A successful launch may advance a ``todo`` task to ``in_progress`` exactly
+# once. Resume and finalize launches are already represented by the durable
+# worker/queue receipt and must not write a lifecycle no-op back to task truth.
+# Such writes update ``last_update``, which is part of the dispatch signature;
+# the supervisor would otherwise invalidate its own event key and turn a short
+# worker exit into an immediate orphan/re-dispatch loop.
 DISPATCH_STATUS_ACTIONS = {
     REASON_OWNED_READY: ("start", {"todo"}),
-    REASON_OWNED_FINALIZE: ("note", {"review_approved"}),
-    REASON_OWNED_IN_PROGRESS: ("progress", {"in_progress"}),
 }
 
 DEFAULT_REVIEW_STATUSES = ["review"]

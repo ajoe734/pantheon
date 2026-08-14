@@ -891,6 +891,58 @@ class DurableQueueContractTests(unittest.TestCase):
         Visitor().visit(tree)
         self.assertEqual(callers, {"process_queue"})
 
+    def test_owned_ready_dispatch_prepares_the_only_canonical_launch_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = config_fixture(Path(tmpdir))
+            task = task_fixture(status="todo")
+            event = supervisor.build_dispatch_event(
+                task,
+                "Codex",
+                supervisor.REASON_OWNED_READY,
+                {"TASK-1": task},
+            )
+            event["target_display_name"] = "Codex"
+
+            mutation = supervisor.prepare_dispatched_task_status_mutation(
+                config,
+                event,
+                run_id="run-ready",
+                workspace_path=Path(tmpdir) / "task-worktree",
+                task_map={"TASK-1": task},
+            )
+
+        self.assertIsNotNone(mutation)
+        self.assertEqual(mutation["command"], "start")
+        self.assertEqual(mutation["expected_statuses"], ["todo"])
+
+    def test_resume_and_finalize_dispatch_receipts_do_not_mutate_task_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = config_fixture(Path(tmpdir))
+            cases = (
+                ("in_progress", supervisor.REASON_OWNED_IN_PROGRESS),
+                ("review_approved", supervisor.REASON_OWNED_FINALIZE),
+            )
+            for status, reason in cases:
+                with self.subTest(status=status, reason=reason):
+                    task = task_fixture(status=status)
+                    event = supervisor.build_dispatch_event(
+                        task,
+                        "Codex",
+                        reason,
+                        {"TASK-1": task},
+                    )
+                    event["target_display_name"] = "Codex"
+
+                    mutation = supervisor.prepare_dispatched_task_status_mutation(
+                        config,
+                        event,
+                        run_id=f"run-{status}",
+                        workspace_path=Path(tmpdir) / "task-worktree",
+                        task_map={"TASK-1": task},
+                    )
+
+                    self.assertIsNone(mutation)
+
     def test_planner_reservation_queue_reload_and_delivery_preserve_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = config_fixture(Path(tmpdir))
