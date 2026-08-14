@@ -1,41 +1,55 @@
 # Pantheon 十二循環程式碼盤點與最小閉環設計
 
-日期：2026-08-13
+日期：2026-08-14
 
-狀態：設計基線與 governed execution catalog 已建立；materialization evidence 另由
-canonical task state 與 supervisor receipt 保存
+狀態：2026-08-13 文件已降級為 historical planning baseline；最新 current truth 為
+`CURRENT_GAP_2026-08-14.md`，current execution catalog 為
+`execution-tasks-current-2026-08-14.json`。16/16 tasks 已 canonical materialized，
+supervisor 已開始派給 Claude／Antigravity auto-workers。2026-08-14 第一波 delivery 後發現的
+四個 gate 以 `CURRENT_BLOCKER_RECONCILIATION_2026-08-14.md` 為唯一 unblock truth。
 
 ## 本次結論
 
-以最新 `pantheon/dev` 程式碼逐條對照
-`LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md` 後，目前不能宣稱 12 個循環全部正常：
+以 `pantheon/dev` `7ecef96e97a8de4f8bb6acd7d6c572104478c50b` 的程式碼、compose
+wiring、測試與 dev runtime 逐條對照 `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md` 後：
 
-- 3 個循環有直接阻斷：Alpha Replication、Consultation、BFF Health Monitoring。
-- 6 個循環只有部分閉環：Source Ingestion、Persona Teaching、Agora Evidence、
-  Human Imitation、Capital Execution、Evolution。
-- 3 個循環未找到明確程式阻斷，但仍缺真實整合 E2E：Strategy Distillation、
-  Promotion/Deployment、Telemetry/Reconciliation。
+- 8 個循環有直接功能或架構阻斷。
+- 4 個循環只有部分閉環。
 - 0 個循環具備本輪要求的真實整合 E2E 證明。
 - Management 管理系統不能正確呈現上述真相。
 
 ## 文件
 
+- [CURRENT_GAP_2026-08-14.md](CURRENT_GAP_2026-08-14.md)：**唯一 current gap 與下一步
+  最小開發設計**；逐循環程式碼真相、dev runtime 反證、疊床架屋汰除清單、舊 R4
+  適用性、E2E 缺口與可平行 slices。
+- [CURRENT_EXECUTION_TASKS_2026-08-14.md](CURRENT_EXECUTION_TASKS_2026-08-14.md)：
+  16-task 去重後 DAG、owner/reviewer、平行 wave 與 materialization evidence 規則。
+- [execution-tasks-current-2026-08-14.json](execution-tasks-current-2026-08-14.json)：
+  **唯一 current machine-readable execution catalog**。
+- [materialization-receipt-current-2026-08-14.json](materialization-receipt-current-2026-08-14.json)：
+  canonical 16-task readback、supervisor dispatch receipt 與兩次未寫入 task-state 的 bridge
+  failure evidence。
+- [CURRENT_BLOCKER_RECONCILIATION_2026-08-14.md](CURRENT_BLOCKER_RECONCILIATION_2026-08-14.md)：
+  Teaching／FE／Imitation 原 task reopen 與 Consultation 原 PR closeout；不重建後段 DAG。
+- [execution-task-current-imitation-entrypoint-2026-08-14.json](execution-task-current-imitation-entrypoint-2026-08-14.json)：
+  原 Imitation immutable scope 漏掉 `main.py` 後的唯一 supplemental execution task。
 - [GAP_REPORT.md](GAP_REPORT.md)：逐循環程式碼現況、根因、錯誤設計、缺失開發、
-  缺失驗證、廢棄／誤導內容與舊計畫適用性。
+  缺失驗證、廢棄／誤導內容與舊計畫適用性。**Historical；不得當 current truth。**
 - [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)：替代錯誤設計的最小可用系統設計、資料與
-  權威邊界、相依順序、檔案範圍、驗收與回復策略，供下一階段轉成 execution tasks。
+  權威邊界、相依順序、檔案範圍、驗收與回復策略。**Historical。**
 - [EXECUTION_TASKS.md](EXECUTION_TASKS.md)：18-task 最大平行 DAG、各 task scope、驗收、
-  rollout/rollback 與舊計畫去重。
+  rollout/rollback 與舊計畫去重。**Historical；不可整包重送。**
 - [execution-tasks.json](execution-tasks.json)：供 supervisor materialization 的機器可讀
-  execution catalog。
+  execution catalog。**Historical；不是新的 supervisor input。**
 
 ## 基線與邊界
 
-- Pantheon 程式碼基線：`refs/remotes/origin/dev`
-  `3307552b55af75850dab1d50e58cef9f86e10b53`。本機另有同名的舊
-  `refs/heads/origin/dev`，本次沒有使用該歧義 ref。
+- Pantheon current gap 程式碼基線：`refs/remotes/origin/dev`
+  `768eba39b35d4e9c53beaef22fe7bf841b8f5e45`。
 - Management 前端程式碼基線：`execute-plans/dev`
-  `3ee9f962a36626f085e2ca1c088b3ce4b4d08e6f`。
+  `da50ceee0ba1c6965954b26fb1f69a8b7b0b33d5`（local remote-tracking
+  `origin/dev`；本次未修改前端 repository）。
 - 規格真相：`LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`。
 - 只處理 Pantheon 12 個產品循環與 Management 的循環真相呈現。
 - 不把 Supervisor V2、fleet dispatch、task-state governance 當成第 13 個產品循環，
@@ -62,5 +76,7 @@ catalog `implemented`、PR merged 或 hosted bundle 存在，均不能單獨代�
 
 ## 後續使用規則
 
-後續以 `execution-tasks.json` 為唯一新工作 catalog。舊 28-task DAG 與 2026-08-08
-minimum closure task IDs 不得直接重送或原地改寫；它們只作 historical input。
+後續以 `CURRENT_GAP_2026-08-14.md` 與 `execution-tasks-current-2026-08-14.json`
+為唯一 current planning/materialization truth。此目錄的舊 `execution-tasks.json`、舊
+28-task DAG 與 2026-08-08 minimum closure task IDs 不得直接重送或原地改寫；它們只作
+historical input。
