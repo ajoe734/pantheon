@@ -55,7 +55,7 @@ class ExplainDispatchV2Tests(unittest.TestCase):
             "schema": {"tasks_path": "tasks", "task_id_field": "id"},
         }
 
-    def decide(self, task, state=None):
+    def decide(self, task, state=None, status=None):
         runtime_state = state or {
             "seen_event_keys": {},
             "workers": {},
@@ -81,7 +81,7 @@ class ExplainDispatchV2Tests(unittest.TestCase):
             runtime_state,
             task["id"],
             target_agent_filter=task.get("owner") or task.get("reviewer"),
-            status={"tasks": [task]},
+            status=status or {"tasks": [task]},
             live_total=0,
         )
 
@@ -110,6 +110,34 @@ class ExplainDispatchV2Tests(unittest.TestCase):
         self.assertEqual(
             result["agents"]["Codex"]["first_blocking_gate"],
             "lane_capacity_reached",
+        )
+
+    def test_dependency_terminal_fact_matches_planner_readiness(self) -> None:
+        task = {
+            "id": "T2-TERMINAL",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+            "depends_on": ["ARCHIVED-DEP"],
+        }
+        result = self.decide(
+            task,
+            status={
+                "tasks": [task],
+                "terminal_facts": {
+                    "ARCHIVED-DEP": {
+                        "status": "done",
+                        "terminal_outcome": "completed",
+                        "generation": 1,
+                    }
+                },
+            },
+        )
+
+        self.assertFalse(result["agents"]["Codex"]["blocked"])
+        self.assertEqual(
+            result["agents"]["Codex"]["candidate_reason"],
+            supervisor.REASON_OWNED_IN_PROGRESS,
         )
 
     def test_script_is_only_a_snapshot_adapter(self) -> None:

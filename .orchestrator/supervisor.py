@@ -12153,7 +12153,11 @@ def dispatch_ready_tasks(
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
-    task_map = {str(task.get(task_id_field)): task for task in tasks}
+    # The candidate list stays active-only, while dependency resolution also
+    # consumes compact terminal facts from the same authoritative projection.
+    # Building a second tasks-only map here made archived dependencies appear
+    # missing even after their terminal facts were migrated.
+    task_map = task_index_from_status(config, status)
     task_resolver = task_resolver_for_config(config, task_map)
     active_statuses = normalized_status_set(settings.get("active_worker_statuses"), [])
     _active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
@@ -12545,7 +12549,7 @@ def explain_dispatch_for_task(
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
-    task_map = {str(task.get(task_id_field)): task for task in tasks}
+    task_map = task_index_from_status(config, status)
     task = task_map.get(task_id)
     if task is None:
         return {"task_id": task_id, "error": f"Task {task_id} not found", "agents": {}}
