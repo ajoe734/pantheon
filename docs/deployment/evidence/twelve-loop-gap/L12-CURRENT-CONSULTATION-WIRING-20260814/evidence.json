@@ -1,0 +1,328 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-CURRENT-CONSULTATION-WIRING-20260814 component review gate.",
+    "note": "Owner evidence over the current Consultation provider, downstream acknowledgement, replay, DLQ, and functional-health wiring.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CONSULTATION-WIRING-20260814/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Reviewer may append the exact-head verdict and CI readback before approval; no owner mutation is allowed after approval.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-14T08:11:31Z",
+    "evidence_cut_semantics": "Reviewer-bound component evidence manifest recording Antigravity2 independent review verdict on head f9fedaf5ba73fd7ac84ca799aea82fae6f67ed45; PR #4893.",
+    "id": "L12-CURRENT-CONSULTATION-WIRING-20260814",
+    "overall_admission": "review_approved",
+    "owner": "Codex",
+    "phase": "W1-component",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CONSULTATION-WIRING-20260814/evidence.json",
+    "reviewer": "Antigravity2",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-CURRENT-CONSULTATION-WIRING-20260814",
+    "title": "Wire the existing consultation executor to provider and handoff owners"
+  },
+  "authorities": {
+    "actual_state": [
+      "OpenClaw Consultation contribution endpoint",
+      "Consultation workflow executor health record",
+      "ConsultMemo",
+      "ConsultGateHandoff acknowledgement"
+    ],
+    "desired_state": [
+      "ConsultRequest",
+      "qualified provider contribution",
+      "downstream governance handoff acknowledgement"
+    ],
+    "task_packet": "PR #4889 docs/04/pantheon_twelve_loop_code_gap_2026-08-13/execution-tasks-current-2026-08-14.json"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex for the executor-side provider client, functional-health semantics, OpenClaw contribution boundary, and current component acceptance.",
+    "composes_with": [
+      "L12-CURRENT-COMPOSE-INTEGRATION-20260814 for provider URL/token, downstream handoff URL/token, ASGI entrypoint, and health-file activation",
+      "L12-CURRENT-E2E-HUMAN-LEARNING-20260814 for deployed human-learning readback"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CONSULTATION-WIRING-20260814/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CONSULTATION-WIRING-20260814/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/consultation/provider.py",
+      "services/consultation/workflow_executor.py",
+      "services/consultation/tests/test_current_provider_handoff.py",
+      "services/openclaw-gateway-adapter/consultation_provider.py"
+    ],
+    "not_changing": "docker-compose.yml, Consultation domain stores/API routes, governance decision authority, any second workflow/queue, broker authority, or live capital authority.",
+    "owned_layer": "Authenticated Consultation-to-OpenClaw provider contract, fail-closed downstream acknowledgement requirement, completed contribution replay, DLQ recovery, and executor functional-health projection."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "task_branch",
+        "sha": "4097bf6f2632d77527a787e12f49cc4f430c2e31",
+        "subject": "L12-CURRENT-CONSULTATION-WIRING-20260814: anchor wiring"
+      },
+      {
+        "delivery_state": "task_branch",
+        "sha": "8f0784ae31ffe79342baf8f82a72fdb3b6574ee7",
+        "subject": "L12-CURRENT-CONSULTATION-WIRING-20260814: wire app"
+      },
+      {
+        "delivery_state": "task_branch",
+        "sha": "f9fedaf5ba73fd7ac84ca799aea82fae6f67ed45",
+        "subject": "L12-CURRENT-CONSULTATION-WIRING-20260814: add evidence"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "f9fedaf5ba73fd7ac84ca799aea82fae6f67ed45",
+      "number": 4893,
+      "url": "https://github.com/ajoe734/pantheon/pull/4893"
+    },
+    "required_checks": [
+      {
+        "conclusion": "pending_pull_request",
+        "event": "pull_request",
+        "head_sha": "f9fedaf5ba73fd7ac84ca799aea82fae6f67ed45",
+        "workflow": "Branch CI Gate"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/consultation",
+        "conclusion": "63 passed, 11 warnings in 43.45s",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/openclaw-gateway-adapter/test_main.py",
+        "conclusion": "115 passed, 1 warning, 18 subtests passed in 27.32s",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/consultation/tests/test_current_provider_handoff.py services/consultation/test_workflow_executor.py",
+        "conclusion": "14 passed in 19.09s",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m py_compile services/consultation/provider.py services/consultation/workflow_executor.py services/openclaw-gateway-adapter/consultation_provider.py services/consultation/tests/test_current_provider_handoff.py",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "PATH=$(dirname .venv-pantheon/bin/python):$PATH PYTHON=.venv-pantheon/bin/python scripts/run-acceptance.sh smoke",
+        "conclusion": "stage0 validate and stage0 baseline passed",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-08-14T07:57:53Z",
+    "validated_base_sha": "768eba39b35d4e9c53beaef22fe7bf841b8f5e45",
+    "validated_head_sha": "8f0784ae31ffe79342baf8f82a72fdb3b6574ee7"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "The single compose writer is L12-CURRENT-COMPOSE-INTEGRATION-20260814."
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "status": "component_verified",
+      "reason": "Real local HTTP boundaries verified provider bearer identity, service actor identity, tenant identity, and downstream acknowledgement identity."
+    },
+    "public_bff_base_url": "not_applicable_internal_component",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "This component task does not claim hosted publication."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "component_readback": "Real local ASGI/HTTP services produced one published ConsultMemo and one acknowledged ConsultGateHandoff, then recovered an exact replay without another provider or handoff call.",
+      "hosted_activation_owner": "L12-CURRENT-COMPOSE-INTEGRATION-20260814 and L12-CURRENT-E2E-HUMAN-LEARNING-20260814",
+      "status": "component_verified_hosted_pending"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "The provider endpoint durably replays a completed response for the same request fingerprint and Idempotency-Key.",
+        "A second executor state store recovered the acknowledged handoff without another provider invocation, memo, or downstream handoff call."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "A wrong provider bearer token returns a typed non-retryable blocked envelope before an OpenClaw turn.",
+        "A missing downstream handoff URL blocks work, prevents self-acknowledgement, degrades functional health, and reaches the bounded dead-letter state."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "The provider response is bound to the request and tenant identities before it can create the single published ConsultMemo.",
+        "The downstream sink must acknowledge the exact durable handoff_id before Consultation persists status=acknowledged and completes the work item."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Legacy executor recovery covers crashes after each durable phase and remained green in the 63-test Consultation suite.",
+        "Current acceptance reconstructs executor-local state after terminal acknowledgement and recovers by Consultation authority readback without duplicate effects."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Rollback is to pause the executor while the durable blocked/dead-letter backlog remains visible and functional health remains degraded.",
+        "Operator DLQ replay after configuring the downstream owner reuses the saved contribution and idempotent domain records, then restores a current last_success_at."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the task worktree and local loopback service boundaries were exercised; compose and hosted environments were not mutated.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "The provider prompt and metadata explicitly grant no approval, deployment, broker, capital, or mutation authority; the executor remains advisory.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "The internal provider route requires the configured bearer token and exact Consultation service actor before invoking OpenClaw.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "The provider route rejects a tenant header or nested ConsultRequest identity that differs from the provider envelope; the executor validates returned tenant/request identities again.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Reviewer Antigravity2 verified PR #4893 at head f9fedaf5ba73fd7ac84ca799aea82fae6f67ed45 and approved the consultation wiring implementation and tests; handed off to Claude for independent review and merge.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/openclaw-gateway-adapter/consultation_provider.py",
+        "services/consultation/provider.py",
+        "services/consultation/tests/test_current_provider_handoff.py::test_current_provider_publishes_one_memo_and_replays_acknowledgement"
+      ],
+      "id": "AC1",
+      "statement": "Provider contribution produces one published ConsultMemo.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/consultation/workflow_executor.py",
+        "services/consultation/tests/test_current_provider_handoff.py::test_current_provider_publishes_one_memo_and_replays_acknowledgement",
+        "services/consultation/tests/test_current_provider_handoff.py::test_missing_handoff_owner_degrades_health_until_dlq_replay"
+      ],
+      "id": "AC2",
+      "statement": "Downstream handoff acknowledgement is durable and replay-safe.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/consultation/workflow_executor.py::update_functional_health",
+        "services/consultation/tests/test_current_provider_handoff.py::test_missing_handoff_owner_degrades_health_until_dlq_replay"
+      ],
+      "id": "AC3",
+      "statement": "DLQ and last_success drive functional health.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "compose_activation": {
+      "blocking_for_this_task": false,
+      "containment": "Without provider and downstream owner URLs/tokens, requests remain blocked or dead-lettered and functional health stays degraded.",
+      "description": "The default dev compose still needs to select consultation_provider:app, inject provider/handoff identities, and check the executor health file.",
+      "expiry": "When L12-CURRENT-COMPOSE-INTEGRATION-20260814 completes.",
+      "owner": "L12-CURRENT-COMPOSE-INTEGRATION-20260814",
+      "recheck_trigger": "Before default dev compose activation.",
+      "severity": "medium"
+    },
+    "hosted_human_learning_readback": {
+      "blocking_for_this_task": false,
+      "containment": "This task claims component maturity only; no deployed loop closure is asserted.",
+      "description": "A deployed Teaching/Research to Consultation to next-consumer identity chain remains unproved.",
+      "expiry": "When L12-CURRENT-E2E-HUMAN-LEARNING-20260814 completes.",
+      "owner": "L12-CURRENT-E2E-HUMAN-LEARNING-20260814",
+      "recheck_trigger": "After compose integration merges.",
+      "severity": "informational"
+    },
+    "provider_invocation_in_doubt": {
+      "blocking_for_this_task": false,
+      "containment": "A crash after claiming but before persisting the provider response fails closed as replay-in-doubt instead of invoking OpenClaw twice; the Consultation backlog and degraded health remain durable.",
+      "description": "In-doubt provider claims require operator reconciliation of the adapter replay database before retry.",
+      "expiry": "When a governed adapter replay-reconciliation operation is introduced or operational recovery is exercised.",
+      "owner": "OpenClaw gateway adapter operations",
+      "recheck_trigger": "After any adapter crash during a Consultation provider turn.",
+      "severity": "medium"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CONSULTATION-WIRING-20260814/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CONSULTATION-WIRING-20260814/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CONSULTATION-WIRING-20260814/evidence.json",
+    "normalized_hosted_readback": {
+      "component_http_boundaries_verified": true,
+      "hosted_activation_claimed": false,
+      "independent_review_recorded": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "implementation_8f0784ae_consultation_provider_client": "357926358bd53d21d100a1bff99888b66b3f25e8107ef4defa5b8152e898aa95",
+      "implementation_8f0784ae_current_acceptance": "ca88bcbe596d1d0aeb0ddc44a789ef7d7893c10ab31f91cceb39892b0ae2b6f4",
+      "implementation_8f0784ae_openclaw_endpoint": "31cfb688668a2534293689d7552e00dcb795da835f2077001d3bbd75f9fad83d",
+      "implementation_8f0784ae_workflow_executor": "8c9f8a227ef545baa59b3b1b17db5055a7c7ecbdeac5c01170d75855350ce2d8"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-14T07:57:53Z",
+      "reference": "task/L12-CURRENT-CONSULTATION-WIRING-20260814",
+      "sequence": 1,
+      "sha": "8f0784ae31ffe79342baf8f82a72fdb3b6574ee7",
+      "status": "ready_for_review"
+    },
+    {
+      "actor": "Antigravity2",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-08-14T08:11:31Z",
+      "reference": "refs/tags/pantheon-review/approve/f9fedaf5ba73fd7ac84ca799aea82fae6f67ed45",
+      "sequence": 2,
+      "sha": "f9fedaf5ba73fd7ac84ca799aea82fae6f67ed45",
+      "status": "review_approved"
+    }
+  ]
+}
