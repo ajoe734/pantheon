@@ -841,8 +841,11 @@ def process_claimed_candidate(claim: Dict[str, Any]) -> Dict[str, Any]:
             candidate["updated_at"] = timestamp
         else:
             _apply_processed_result(candidate, result, lineage, timestamp)
-            with contextlib.suppress(Exception):
+            try:
                 handoff_candidate_to_experiment_authority(candidate, timestamp=timestamp)
+            except CandidateHandoffError as exc:
+                candidate["handoff_status"] = "failed"
+                candidate["handoff_error"] = str(exc)
 
     try:
         return store.settle_candidate(candidate, lease_token=lease_token)
@@ -1391,11 +1394,7 @@ def handoff_candidate_endpoint(
     """Hand off a processed imitation candidate to Research experiment authority."""
     candidate = _tenant_candidate(candidate_id, authority)
     try:
-        # If HTTP research_url is set or active, use_http=True; if connection fails or in local test without server, fallback to in-memory intake
-        try:
-            result = handoff_candidate_to_experiment_authority(candidate, use_http=True)
-        except CandidateHandoffError:
-            result = handoff_candidate_to_experiment_authority(candidate, use_http=False)
+        result = handoff_candidate_to_experiment_authority(candidate)
         store.put_candidate(candidate)
         return result.to_dict()
     except CandidateHandoffError as exc:

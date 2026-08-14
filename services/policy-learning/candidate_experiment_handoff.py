@@ -13,13 +13,9 @@ from typing import Any, Dict, Optional
 
 from research_candidate_client import (
     ResearchCandidateClientError,
+    ResearchCandidateClientReceipt,
     post_imitation_candidate_intake_http,
 )
-from services.research.experiment_candidate_intake import (
-    ExperimentCandidateIntakeReceipt,
-    intake_imitation_candidate,
-)
-from services.research.store import ResearchOrchestratorStore
 
 
 class CandidateHandoffError(ValueError):
@@ -37,7 +33,7 @@ class CandidateHandoffResult:
     experiment_run_id: str
     status: str
     handoff_at: str
-    receipt: ExperimentCandidateIntakeReceipt
+    receipt: ResearchCandidateClientReceipt
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -53,12 +49,12 @@ class CandidateHandoffResult:
 def handoff_candidate_to_experiment_authority(
     candidate: Dict[str, Any],
     *,
-    research_store: Optional[ResearchOrchestratorStore] = None,
     research_url: Optional[str] = None,
     timestamp: Optional[str] = None,
-    use_http: bool = True,
 ) -> CandidateHandoffResult:
     """Hand off a processed imitation candidate to Research experiment authority.
+
+    Calls Research HTTP intake & readback endpoint. Fail-closed on HTTP/readback failure.
 
     Updates the candidate dict in-place with:
     - experiment_task_id
@@ -80,38 +76,23 @@ def handoff_candidate_to_experiment_authority(
 
     now = timestamp or _utc_now_iso()
 
-    if use_http and research_store is None:
-        try:
-            http_receipt = post_imitation_candidate_intake_http(candidate, research_url=research_url)
-            receipt = intake_imitation_candidate(candidate, store=None, timestamp=now)
-            # Override task_id and run_id from HTTP receipt if different
-            receipt = ExperimentCandidateIntakeReceipt(
-                task_id=http_receipt.task_id,
-                run_id=http_receipt.run_id,
-                experiment_task=receipt.experiment_task,
-                experiment_run=receipt.experiment_run,
-                candidate_id=candidate_id,
-                status=http_receipt.status or "intaken",
-                created_at=http_receipt.created_at or now,
-            )
-        except ResearchCandidateClientError as exc:
-            raise CandidateHandoffError(f"HTTP intake failed: {exc}") from exc
-    else:
-        # Perform intake into Research via direct function/store
-        receipt = intake_imitation_candidate(candidate, store=research_store, timestamp=now)
+    try:
+        http_receipt = post_imitation_candidate_intake_http(candidate, research_url=research_url)
+    except ResearchCandidateClientError as exc:
+        raise CandidateHandoffError(f"HTTP intake failed: {exc}") from exc
 
     # Attach receipt to candidate
-    candidate["experiment_task_id"] = receipt.task_id
-    candidate["experiment_run_id"] = receipt.run_id
+    candidate["experiment_task_id"] = http_receipt.task_id
+    candidate["experiment_run_id"] = http_receipt.run_id
     candidate["handoff_status"] = "completed"
     candidate["handoff_at"] = now
 
     return CandidateHandoffResult(
         candidate_id=candidate_id,
-        experiment_task_id=receipt.task_id,
-        experiment_run_id=receipt.run_id,
+        experiment_task_id=http_receipt.task_id,
+        experiment_run_id=http_receipt.run_id,
         status="completed",
         handoff_at=now,
-        receipt=receipt,
+        receipt=http_receipt,
     )
 
