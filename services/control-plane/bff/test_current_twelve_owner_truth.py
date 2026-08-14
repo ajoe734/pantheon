@@ -33,19 +33,10 @@ HEADERS = {
     )
 }
 
-EXPECTED_CANONICAL_OWNERS: dict[str, str] = {
+EXPECTED_IMPLEMENTED_CONTROLLERS: dict[str, str] = {
     "source_ingestion": "source-ingestion-controller",
     "strategy_distillation": "strategy-distillation-controller",
     "alpha_replication": "alpha-replication-controller",
-    "persona_teaching": "persona-teaching-controller",
-    "agora_interaction_evidence": "agora-interaction-controller",
-    "human_imitation_shadow_evaluation": "policy-learning-controller",
-    "consultation": "consultation-workflow-controller",
-    "promotion_deployment": "deployment-saga-controller",
-    "capital_pool_execution": "paper-fleet-reconciler",
-    "telemetry_reconciliation": "telemetry-reconciliation-controller",
-    "evolution": "evolution-decision-controller",
-    "bff_health_monitoring": "bff-health-monitor",
 }
 
 
@@ -109,7 +100,10 @@ def _build_valid_controller_row(
 ) -> Dict[str, Any]:
     timestamp = now or datetime.now(timezone.utc)
     heartbeat = heartbeat_at or timestamp
-    expected_name = controller_name or EXPECTED_CANONICAL_OWNERS.get(loop_id, f"{loop_id}-controller")
+    expected_name = (
+        controller_name
+        or EXPECTED_IMPLEMENTED_CONTROLLERS.get(loop_id, f"{loop_id}-controller")
+    )
     row: Dict[str, Any] = {
         "loop_id": loop_id,
         "tenant_id": TENANT_ID,
@@ -170,34 +164,44 @@ class TestTwelveOwnerCatalogContract:
 
         assert len(canonical_ids) == 12
         assert set(canonical_ids) == set(conformance.CANONICAL_LOOP_IDS)
-        assert canonical_ids == list(EXPECTED_CANONICAL_OWNERS)
 
         for loop in loops:
             loop_id = loop["loop_id"]
-            expected_owner = EXPECTED_CANONICAL_OWNERS[loop_id]
 
             # Owner declaration
             owner = loop["owner"]
-            assert owner["current_controller_owner"] == expected_owner, (
-                f"{loop_id} current_controller_owner is {owner.get('current_controller_owner')!r}, "
-                f"expected {expected_owner!r}"
-            )
             assert owner["authoritative_write_owner"], f"{loop_id} missing authoritative_write_owner"
             assert owner["service_or_doc"], f"{loop_id} missing service_or_doc"
+            assert owner["domain"], f"{loop_id} missing domain"
 
-            # Controller contract completeness
             contract = loop["controller_contract"]
-            assert contract["status"] == "implemented", f"{loop_id} status is {contract.get('status')}"
-            assert contract["controller_name"] == expected_owner, f"{loop_id} controller_name mismatch"
-            assert contract["desired_state_query"], f"{loop_id} missing desired_state_query"
-            assert contract["actual_state_query"], f"{loop_id} missing actual_state_query"
-            assert contract["restart_behavior"], f"{loop_id} missing restart_behavior"
-            assert contract["liveness_metric"] == "last_heartbeat_at", f"{loop_id} liveness_metric mismatch"
-            assert contract["idempotency_key"], f"{loop_id} missing idempotency_key"
-            assert contract["duplicate_event_policy"], f"{loop_id} missing duplicate_event_policy"
+            if loop_id in EXPECTED_IMPLEMENTED_CONTROLLERS:
+                expected_owner = EXPECTED_IMPLEMENTED_CONTROLLERS[loop_id]
+                assert owner["current_controller_owner"] == expected_owner, (
+                    f"{loop_id} current_controller_owner is {owner.get('current_controller_owner')!r}, "
+                    f"expected {expected_owner!r}"
+                )
+                assert contract["status"] == "implemented", f"{loop_id} status is {contract.get('status')}"
+                assert contract["controller_name"] == expected_owner, f"{loop_id} controller_name mismatch"
+                assert contract["desired_state_query"], f"{loop_id} missing desired_state_query"
+                assert contract["actual_state_query"], f"{loop_id} missing actual_state_query"
+                assert contract["restart_behavior"], f"{loop_id} missing restart_behavior"
+                assert contract["liveness_metric"] == "last_heartbeat_at", f"{loop_id} liveness_metric mismatch"
+                assert contract["idempotency_key"], f"{loop_id} missing idempotency_key"
+                assert contract["duplicate_event_policy"], f"{loop_id} missing duplicate_event_policy"
+            else:
+                assert owner["current_controller_owner"] is None, (
+                    f"{loop_id} declared current_controller_owner without implemented controller"
+                )
+                assert contract["status"] == "not_implemented", f"{loop_id} status is {contract.get('status')}"
+                assert contract["controller_name"] is None, f"{loop_id} controller_name must be null"
+                assert contract["desired_state_query"] is None, f"{loop_id} desired_state_query must be null"
+                assert contract["actual_state_query"] is None, f"{loop_id} actual_state_query must be null"
+                assert contract["restart_behavior"] is None, f"{loop_id} restart_behavior must be null"
+                assert contract["liveness_metric"] is None, f"{loop_id} liveness_metric must be null"
 
             # Maturity bounds
-            assert loop["maturity"]["current"] in {"api-only", "manual"}, (
+            assert loop["maturity"]["current"] in {"api-only", "manual", "scheduled"}, (
                 f"{loop_id} maturity ceiling exceeded: {loop['maturity']['current']}"
             )
 
@@ -220,11 +224,11 @@ class TestTwelveOwnerCatalogContract:
         assert len(items) == 13
 
         coverage = payload["meta"]["catalog"]["controller_contract_coverage"]
-        assert coverage["declared_controller_count"] == 12
-        assert coverage["no_declared_controller_count"] == 1
+        assert coverage["declared_controller_count"] == 3
+        assert coverage["no_declared_controller_count"] == 10
         assert coverage["incomplete_contract_loop_ids"] == []
 
-        for loop_id, expected_name in EXPECTED_CANONICAL_OWNERS.items():
+        for loop_id, expected_name in EXPECTED_IMPLEMENTED_CONTROLLERS.items():
             item = items[loop_id]
             declaration = item["controller_contract_declaration"]
             assert declaration["status"] == "implemented"
@@ -232,6 +236,24 @@ class TestTwelveOwnerCatalogContract:
             assert declaration["contract_complete"] is True
             assert declaration["missing_contract_fields"] == []
             assert item["owner"]["current_controller_owner"] == expected_name
+
+        for loop_id in [
+            "persona_teaching",
+            "agora_interaction_evidence",
+            "human_imitation_shadow_evaluation",
+            "consultation",
+            "promotion_deployment",
+            "capital_pool_execution",
+            "telemetry_reconciliation",
+            "evolution",
+            "bff_health_monitoring",
+        ]:
+            item = items[loop_id]
+            declaration = item["controller_contract_declaration"]
+            assert declaration["status"] == "not_implemented"
+            assert declaration["controller_implemented"] is False
+            assert declaration["contract_complete"] is False
+            assert item["owner"]["current_controller_owner"] is None
 
 
 class TestDegradedAndUnobservedProjection:
@@ -251,11 +273,15 @@ class TestDegradedAndUnobservedProjection:
             assert live_status["is_reconciled"] is False, f"{loop_id} claimed is_reconciled"
             assert live_status["has_live_evidence"] is False, f"{loop_id} claimed has_live_evidence"
 
-            if loop_id in EXPECTED_CANONICAL_OWNERS:
+            if loop_id in EXPECTED_IMPLEMENTED_CONTROLLERS:
                 assert item["controller"]["status"] == "implemented"
                 assert item["controller_health"]["status"] == "unobserved"
                 assert item["controller_health"]["current_record_accepted"] is False
                 assert item["controller_health"]["rejection_reason"] is not None
+            else:
+                assert item["controller"]["status"] == "not_implemented"
+                assert item["controller_health"]["status"] == "not_implemented"
+                assert item["controller_health"]["current_record_accepted"] is False
 
     def test_stale_heartbeat_is_rejected_as_degraded(self) -> None:
         now = datetime.now(timezone.utc)
@@ -299,14 +325,14 @@ class TestDegradedAndUnobservedProjection:
     def test_controller_identity_mismatch_is_rejected(self) -> None:
         now = datetime.now(timezone.utc)
         row = _build_valid_controller_row(
-            "consultation",
+            "source_ingestion",
             now=now,
             controller_name="wrong-rogue-controller",
         )
-        store = {"consultation": row}
+        store = {"source_ingestion": row}
 
         with _scoped_health_client(loop_health_store=store) as client:
-            response = client.get("/bff/v5/loop-health/consultation", headers=HEADERS)
+            response = client.get("/bff/v5/loop-health/source_ingestion", headers=HEADERS)
 
         assert response.status_code == 200, response.text
         data = response.json()["data"]
@@ -319,14 +345,14 @@ class TestDegradedAndUnobservedProjection:
     def test_degraded_reported_status_cannot_claim_live(self) -> None:
         now = datetime.now(timezone.utc)
         row = _build_valid_controller_row(
-            "capital_pool_execution",
+            "alpha_replication",
             now=now,
             status="degraded",
         )
-        store = {"capital_pool_execution": row}
+        store = {"alpha_replication": row}
 
         with _scoped_health_client(loop_health_store=store) as client:
-            response = client.get("/bff/v5/loop-health/capital_pool_execution", headers=HEADERS)
+            response = client.get("/bff/v5/loop-health/alpha_replication", headers=HEADERS)
 
         assert response.status_code == 200, response.text
         data = response.json()["data"]
@@ -396,7 +422,7 @@ class TestWorkerFunctionalHealthOverridesProcessReadyz:
     def test_loop_health_read_model_rejects_record_with_degraded_worker_health(self) -> None:
         now = datetime.now(timezone.utc)
         row = _build_valid_controller_row(
-            "telemetry_reconciliation",
+            "source_ingestion",
             now=now,
             status="healthy",
             worker_health={
@@ -405,10 +431,10 @@ class TestWorkerFunctionalHealthOverridesProcessReadyz:
                 "reason": "database replication lag > 30s",
             },
         )
-        store = {"telemetry_reconciliation": row}
+        store = {"source_ingestion": row}
 
         with _scoped_health_client(loop_health_store=store) as client:
-            response = client.get("/bff/v5/loop-health/telemetry_reconciliation", headers=HEADERS)
+            response = client.get("/bff/v5/loop-health/source_ingestion", headers=HEADERS)
 
         assert response.status_code == 200, response.text
         data = response.json()["data"]
@@ -429,14 +455,14 @@ class TestTaskArchiveLivenessRejection:
             "ai-task-archive/tasks/L12-TRUTH-001.json",
         ]
         row = _build_valid_controller_row(
-            "evolution",
+            "source_ingestion",
             now=now,
             evidence_refs=archive_refs,
         )
-        store = {"evolution": row}
+        store = {"source_ingestion": row}
 
         with _scoped_health_client(loop_health_store=store) as client:
-            response = client.get("/bff/v5/loop-health/evolution", headers=HEADERS)
+            response = client.get("/bff/v5/loop-health/source_ingestion", headers=HEADERS)
 
         assert response.status_code == 200, response.text
         data = response.json()["data"]

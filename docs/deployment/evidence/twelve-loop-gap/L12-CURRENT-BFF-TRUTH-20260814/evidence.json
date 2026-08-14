@@ -9,7 +9,7 @@
         "services/control-plane/bff/test_loop_inventory_read_model_contract.py#test_loop_catalog_controller_contract_matches_runtime_implementation"
       ],
       "id": "AC1",
-      "statement": "Catalog declares one existing owner contract for each canonical loop with complete desired/actual state queries, restart behavior, and liveness metrics.",
+      "statement": "Catalog declares one existing owner contract for each canonical loop with accurate controller implementation status and owner domain bindings.",
       "status": "pass"
     },
     {
@@ -54,7 +54,7 @@
   "behavioral_proof": {
     "duplicate_safety": {
       "proof": [
-        "All twelve controller contracts in loop-catalog.registry.json declare complete idempotency_key and duplicate_event_policy configurations.",
+        "Implemented controller contracts in loop-catalog.registry.json declare complete idempotency_key and duplicate_event_policy configurations.",
         "Read models deduplicate health and inventory items by loop_id, tenant_id, and environment."
       ],
       "status": "pass"
@@ -76,7 +76,7 @@
     },
     "restart_and_recovery": {
       "proof": [
-        "All 12 loop catalog entries define restart_behavior specifying how each controller restores state from durable stores upon restart.",
+        "Implemented loop catalog entries define restart_behavior specifying how each controller restores state from durable stores upon restart.",
         "Downstream health monitor maintains SQLite WAL persistence for incidents and outbox deliveries across restarts."
       ],
       "status": "pass"

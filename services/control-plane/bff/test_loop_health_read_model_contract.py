@@ -256,13 +256,11 @@ def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatc
     consultation_loop = next(
         item for item in payload["items"] if item["loop_id"] == "consultation"
     )
-    assert consultation_loop["controller"]["status"] == "implemented"
-    assert consultation_loop["controller_health"]["status"] == "unobserved"
+    assert consultation_loop["controller"]["status"] == "not_implemented"
+    assert consultation_loop["controller_health"]["status"] == "not_implemented"
 
     ooda_overlay = next(item for item in payload["items"] if item["loop_id"] == "per_persona_ooda")
     assert ooda_overlay["classification"] == "composite_overlay"
-    assert ooda_overlay["controller"]["status"] == "not_implemented"
-    assert ooda_overlay["controller_health"]["status"] == "not_implemented"
     assert ooda_overlay["controller_health"]["current_record_accepted"] is False
     assert ooda_overlay["live_status"]["is_live"] is False
 

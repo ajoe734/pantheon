@@ -427,7 +427,7 @@
         "domain": "persona_control_plane",
         "service_or_doc": "services/training-session",
         "authoritative_write_owner": "teaching session and persona mutation gate stores",
-        "current_controller_owner": "persona-teaching-controller"
+        "current_controller_owner": null
       },
       "trigger_model": {
         "primary": "user-driven",
@@ -466,14 +466,14 @@
         "rationale": "Teaching routes exist, but async evaluation and persona mutation gates are not owned by a durable worker."
       },
       "controller_contract": {
-        "status": "implemented",
-        "controller_name": "persona-teaching-controller",
-        "desired_state_query": "teaching sessions waiting for preview, evaluation, or gated commit",
-        "actual_state_query": "teaching workflow stage and persona-affecting commit status",
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
         "idempotency_key": "planned: teaching_session_id + stage + expected_version",
         "duplicate_event_policy": "planned: duplicate preview or eval ticks must reuse the same stage record or no-op",
-        "restart_behavior": "Reload durable session and evaluation state from database; incomplete evaluations are resumed or marked failed after timeout.",
-        "liveness_metric": "last_heartbeat_at",
+        "restart_behavior": null,
+        "liveness_metric": null,
         "operator_truth_projection": "planned: LOOP-AUTO-KNOW-003 and LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {
@@ -533,7 +533,7 @@
         "domain": "agora_control_plane",
         "service_or_doc": "services/control-plane/specs/agora",
         "authoritative_write_owner": "Agora interaction evidence and governed dataset stores",
-        "current_controller_owner": "agora-interaction-controller"
+        "current_controller_owner": null
       },
       "trigger_model": {
         "primary": "command-driven",
@@ -575,14 +575,14 @@
         "rationale": "Interaction capture exists, but dataset extraction and learning-evidence routing are not a governed background loop."
       },
       "controller_contract": {
-        "status": "implemented",
-        "controller_name": "agora-interaction-controller",
-        "desired_state_query": "captured interactions requiring dataset extraction, handoff creation, or learning-evidence routing",
-        "actual_state_query": "extraction and handoff status for each interaction evidence record",
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
         "idempotency_key": "planned: interaction_id + extraction_kind + target_dataset",
         "duplicate_event_policy": "planned: duplicate interaction events must not duplicate training examples or handoffs",
-        "restart_behavior": "Reload pending interaction evidence and handoff outbox from durable store; resume unclaimed handoffs idempotently.",
-        "liveness_metric": "last_heartbeat_at",
+        "restart_behavior": null,
+        "liveness_metric": null,
         "operator_truth_projection": "planned: LOOP-AUTO-KNOW-004 and LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {
@@ -642,7 +642,7 @@
         "domain": "policy_learning",
         "service_or_doc": "services/policy-learning",
         "authoritative_write_owner": "policy learning proposal and shadow candidate stores",
-        "current_controller_owner": "policy-learning-controller"
+        "current_controller_owner": null
       },
       "trigger_model": {
         "primary": "batch/scheduled",
@@ -684,14 +684,14 @@
         "rationale": "Policy-learning boundaries exist, but trace-to-dataset-to-eval-to-candidate flow is not scheduled or reconciled."
       },
       "controller_contract": {
-        "status": "implemented",
-        "controller_name": "policy-learning-controller",
-        "desired_state_query": "trace datasets due for imitation, shadow evaluation, or rapid eval",
-        "actual_state_query": "latest imitation and shadow eval result per governed dataset",
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
         "idempotency_key": "planned: dataset_version_id + evaluation_profile + candidate_policy",
         "duplicate_event_policy": "planned: duplicate scheduled ticks must not create duplicate candidates for the same dataset version",
-        "restart_behavior": "Reload scheduled job queue and active evaluations from store; re-claim unacknowledged training runs.",
-        "liveness_metric": "last_heartbeat_at",
+        "restart_behavior": null,
+        "liveness_metric": null,
         "operator_truth_projection": "planned: LOOP-AUTO-KNOW-005 and LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {
@@ -753,7 +753,7 @@
         "domain": "consultation",
         "service_or_doc": "services/consultation",
         "authoritative_write_owner": "consult request, memo, transcript, and handoff stores",
-        "current_controller_owner": "consultation-workflow-controller"
+        "current_controller_owner": null
       },
       "trigger_model": {
         "primary": "on-demand event-driven",
@@ -794,14 +794,14 @@
         "rationale": "Consultation state, transcript, memo, and outbox stores exist, but workflow execution and handoff consumption are not durable."
       },
       "controller_contract": {
-        "status": "implemented",
-        "controller_name": "consultation-workflow-controller",
-        "desired_state_query": "consult requests waiting for participants, memo generation, or governance handoff",
-        "actual_state_query": "workflow stage and handoff consumption status per consult request",
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
         "idempotency_key": "planned: consult_request_id + workflow_stage + participant_role",
         "duplicate_event_policy": "planned: duplicate workflow events must not duplicate participant work or handoffs",
-        "restart_behavior": "Reload pending consultation workflows from database; re-dispatch pending memo generations idempotently.",
-        "liveness_metric": "last_heartbeat_at",
+        "restart_behavior": null,
+        "liveness_metric": null,
         "operator_truth_projection": "planned: LOOP-AUTO-KNOW-006 and LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {
@@ -861,7 +861,7 @@
         "domain": "governance_deployment",
         "service_or_doc": "services/control-plane/governance",
         "authoritative_write_owner": "approval, deployment plan, saga, and runtime binding stores",
-        "current_controller_owner": "deployment-saga-controller"
+        "current_controller_owner": null
       },
       "trigger_model": {
         "primary": "command-driven async saga",
@@ -902,14 +902,14 @@
         "rationale": "Approval, deployment plan, saga models, and runtime-manager authority exist, but no always-on saga dispatcher closes plan-to-binding feedback."
       },
       "controller_contract": {
-        "status": "implemented",
-        "controller_name": "deployment-saga-controller",
-        "desired_state_query": "approved deployment plans requiring saga dispatch into runtime-manager",
-        "actual_state_query": "saga progress, runtime binding status, and retry or DLQ reason per deployment plan",
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
         "idempotency_key": "planned: deployment_plan_id + artifact_snapshot_id + target_stage",
         "duplicate_event_policy": "planned: duplicate outbox events must not create duplicate runtime bindings",
-        "restart_behavior": "Reload active deployment sagas and outbox queues; resume pending runtime manager bindings with step idempotency.",
-        "liveness_metric": "last_heartbeat_at",
+        "restart_behavior": null,
+        "liveness_metric": null,
         "operator_truth_projection": "planned: LOOP-AUTO-DEP-004 and LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {
@@ -984,7 +984,7 @@
         "domain": "runtime_manager",
         "service_or_doc": "services/runtime-manager",
         "authoritative_write_owner": "runtime binding and supervised runtime worker stores",
-        "current_controller_owner": "paper-fleet-reconciler"
+        "current_controller_owner": null
       },
       "trigger_model": {
         "primary": "continuous runtime loop",
@@ -1026,14 +1026,14 @@
         "rationale": "Runtime execution has historical governed-paper evidence, but active bindings are not guaranteed to reconcile into exactly one supervised worker with restart, stop, and signal isolation."
       },
       "controller_contract": {
-        "status": "implemented",
-        "controller_name": "paper-fleet-reconciler",
-        "desired_state_query": "active paper and canary RuntimeBinding records from runtime-manager",
-        "actual_state_query": "worker, session, heartbeat, and signal isolation status per active binding",
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
         "idempotency_key": "planned: runtime_binding_id + runtime_stage + policy_version",
         "duplicate_event_policy": "planned: duplicate fleet ticks must converge to exactly one worker per active binding",
-        "restart_behavior": "Reload active runtime bindings and supervised process inventory; reconcile orphan sessions and restart dead workers.",
-        "liveness_metric": "last_heartbeat_at",
+        "restart_behavior": null,
+        "liveness_metric": null,
         "operator_truth_projection": "planned: LOOP-AUTO-RT-005 and LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {
@@ -1114,7 +1114,7 @@
         "domain": "telemetry_incident",
         "service_or_doc": "services/telemetry",
         "authoritative_write_owner": "telemetry, drift report, incident, and reconciliation stores",
-        "current_controller_owner": "telemetry-reconciliation-controller"
+        "current_controller_owner": null
       },
       "trigger_model": {
         "primary": "event-driven telemetry plus scheduled reconciliation",
@@ -1155,14 +1155,14 @@
         "rationale": "Telemetry ingest is mature, but reconciliation, drift report, incident creation, postmortem, and evolution handoff are not an automatic end-to-end chain."
       },
       "controller_contract": {
-        "status": "implemented",
-        "controller_name": "telemetry-reconciliation-controller",
-        "desired_state_query": "bindings and telemetry streams due for reconciliation or incident-triggered analysis",
-        "actual_state_query": "latest telemetry, reconciliation, drift report, and incident linkage per binding/runtime",
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
         "idempotency_key": "planned: binding_id + runtime_id + telemetry_window + reconciliation_kind",
         "duplicate_event_policy": "planned: duplicate telemetry and duplicate reconciliation ticks must not duplicate incidents",
-        "restart_behavior": "Reload telemetry stream offsets and reconciliation checkpoint state; re-evaluate drift windows idempotently.",
-        "liveness_metric": "last_heartbeat_at",
+        "restart_behavior": null,
+        "liveness_metric": null,
         "operator_truth_projection": "planned: LOOP-AUTO-TEL-005 and LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {
@@ -1245,7 +1245,7 @@
         "domain": "evolution",
         "service_or_doc": "services/evolution",
         "authoritative_write_owner": "EvolutionDecision and governed action dispatch stores",
-        "current_controller_owner": "evolution-decision-controller"
+        "current_controller_owner": null
       },
       "trigger_model": {
         "primary": "threshold-triggered plus daily sweep",
@@ -1287,14 +1287,14 @@
         "rationale": "Evolution decision lifecycle exists, but threshold sweeps, incident/postmortem proposal generation, and approved-action dispatch are incomplete."
       },
       "controller_contract": {
-        "status": "implemented",
-        "controller_name": "evolution-decision-controller",
-        "desired_state_query": "resolved incidents, postmortems, and thresholds requiring missing evolution proposals or dispatch",
-        "actual_state_query": "proposed, reviewed, approved, dispatched, and executed evolution stages per target",
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
         "idempotency_key": "planned: evolution_target_id + incident_cluster_id + observation_window",
         "duplicate_event_policy": "planned: duplicate postmortem or sweep ticks must converge to one active decision per target",
-        "restart_behavior": "Reload active evolution decisions and cooldown timers; resume pending action dispatches without duplicate proposals.",
-        "liveness_metric": "last_heartbeat_at",
+        "restart_behavior": null,
+        "liveness_metric": null,
         "operator_truth_projection": "planned: LOOP-AUTO-EVO-005 and LOOP-AUTO-BFF-001"
       },
       "evidence_profile": {
@@ -1377,7 +1377,7 @@
         "domain": "bff",
         "service_or_doc": "services/control-plane/bff",
         "authoritative_write_owner": "BFF health metrics, telemetry, and incident signal stores",
-        "current_controller_owner": "bff-health-monitor"
+        "current_controller_owner": null
       },
       "trigger_model": {
         "primary": "continuous health check",
@@ -1418,14 +1418,14 @@
         "rationale": "BFF aggregates health and read models, but no continuous monitor writes authoritative telemetry and incident signals for operator truth."
       },
       "controller_contract": {
-        "status": "implemented",
-        "controller_name": "bff-health-monitor",
-        "desired_state_query": "required downstream probes, service-level objectives, and expected operator truth projections",
-        "actual_state_query": "controller health, last success, last failure, downstream status, and evidence per loop",
+        "status": "not_implemented",
+        "controller_name": null,
+        "desired_state_query": null,
+        "actual_state_query": null,
         "idempotency_key": "planned: probe_target + interval_window + failure_signature",
         "duplicate_event_policy": "planned: duplicate probes must dedupe telemetry and incident signals by target and window",
-        "restart_behavior": "Reload durable probe state, incident mappings, and delivery outbox from SQLite WAL; resume pending telemetry deliveries.",
-        "liveness_metric": "last_heartbeat_at",
+        "restart_behavior": null,
+        "liveness_metric": null,
         "operator_truth_projection": "planned: LOOP-AUTO-BFF-001 through LOOP-AUTO-BFF-004"
       },
       "evidence_profile": {
