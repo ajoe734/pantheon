@@ -1,0 +1,321 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-CURRENT-CAPITAL-ARTIFACT-20260814 owner evidence cut after closeout manifest gap detection.",
+    "note": "Component evidence for exact approved-artifact paper decisions, fail-closed market input, degraded health, and simulated order/fill/heartbeat readback.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CAPITAL-ARTIFACT-20260814/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Any manifest or implementation change after this cut requires a new commit and fresh independent exact-head review before approval.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-14T08:24:28Z",
+    "evidence_cut_semantics": "Owner evidence candidate for implementation head e00299728ca14f75aea1a468ce6be38466575354. The owner reopened the prior approval because that head lacked this mandatory manifest; this file is not a reviewer verdict, merge receipt, deployment receipt, or live-capital claim.",
+    "id": "L12-CURRENT-CAPITAL-ARTIFACT-20260814",
+    "overall_admission": "implementation_complete_pending_independent_exact_head_review",
+    "owner": "Codex",
+    "phase": "W1-component",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CAPITAL-ARTIFACT-20260814/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "paper execution component / dev integration",
+    "target_maturity": "reviewed_merged_paper_component",
+    "task_branch": "task/L12-CURRENT-CAPITAL-ARTIFACT-20260814",
+    "title": "Require approved artifacts and market input for paper signals"
+  },
+  "authorities": {
+    "actual_state": [
+      "services/execution/artifact_loader.py",
+      "services/execution/lean_runtime/paper_signal_producer.py",
+      "services/execution/lean_runtime/test_current_artifact_signal.py",
+      "PR #4894 implementation head e00299728ca14f75aea1a468ce6be38466575354"
+    ],
+    "desired_state": [
+      "The normal paper producer evaluates the exact approved artifact pinned by its RuntimeBinding.",
+      "Missing artifact checksum or market input enqueues no signal and exposes binding-scoped degraded truth.",
+      "SmokeStrategy and BoundedPaperStrategy are not normal runner defaults."
+    ],
+    "task_packet": "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/execution-tasks-current-2026-08-14.json#L12-CURRENT-CAPITAL-ARTIFACT-20260814"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex for exact artifact loading and binding-scoped paper signal decision behavior",
+    "composes_with": [
+      "Upstream active paper RuntimeBinding supplies exact artifact identity, checksum, Object Store projection, and market input.",
+      "Downstream binding-scoped pending signal store and PaperRuntimeService consume the decision for simulated order, fill, and heartbeat readback."
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CAPITAL-ARTIFACT-20260814/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CAPITAL-ARTIFACT-20260814/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/execution/artifact_loader.py",
+      "services/execution/lean_runtime/paper_signal_producer.py",
+      "services/execution/lean_runtime/test_current_artifact_signal.py"
+    ],
+    "not_changing": "Runtime Manager desired-state projection, RuntimeBinding write authority, canary/live activation, real broker connectivity, real-capital authority, or shared deployment configuration.",
+    "owned_layer": "Exact approved-artifact resolution and binding-scoped, fail-closed paper signal decisions with degraded runner health truth."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "0755139e37c4ad645567394de83371ab1c131d25",
+        "subject": "L12-CURRENT-CAPITAL-ARTIFACT-20260814: anchor core",
+        "delivery_state": "pushed_task_anchor",
+        "hosted_cut_inclusion": false,
+        "note": "Exact artifact loader and binding-scoped paper degradation anchor."
+      },
+      {
+        "sha": "e00299728ca14f75aea1a468ce6be38466575354",
+        "subject": "L12-CURRENT-CAPITAL-ARTIFACT-20260814: require current artifact",
+        "delivery_state": "validated_implementation_head_before_manifest_commit",
+        "hosted_cut_inclusion": false,
+        "note": "Focused acceptance implementation; the prior exact-head approval was reopened because this evidence manifest was absent."
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "e00299728ca14f75aea1a468ce6be38466575354",
+      "number": 4894,
+      "url": "https://github.com/ajoe734/pantheon/pull/4894"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate / Commit trailers",
+        "event": "pull_request",
+        "run_id": 31782841669,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/31782841669",
+        "head_sha": "e00299728ca14f75aea1a468ce6be38466575354",
+        "conclusion": "success_on_implementation_head; rerun_required_for_manifest_head"
+      },
+      {
+        "workflow": "Branch CI Gate / Runtime mirror guard",
+        "event": "pull_request",
+        "run_id": 31782841669,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/31782841669",
+        "head_sha": "e00299728ca14f75aea1a468ce6be38466575354",
+        "conclusion": "success_on_implementation_head; rerun_required_for_manifest_head"
+      },
+      {
+        "workflow": "Branch CI Gate / Smoke acceptance",
+        "event": "pull_request",
+        "run_id": 31782841669,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/31782841669",
+        "head_sha": "e00299728ca14f75aea1a468ce6be38466575354",
+        "conclusion": "success_on_implementation_head; rerun_required_for_manifest_head"
+      },
+      {
+        "workflow": "Pantheon canonical review gate",
+        "event": "review_proof",
+        "head_sha": "e00299728ca14f75aea1a468ce6be38466575354",
+        "conclusion": "prior_approval_intentionally_reopened; fresh_manifest_head_review_required"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py",
+        "result": "pass",
+        "conclusion": "Checkout-scoped .venv-pantheon provisioned and foreign-cwd imports verified."
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/execution/test_artifact_loader.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_current_artifact_signal.py",
+        "result": "pass",
+        "conclusion": "35 passed in 6.49s"
+      },
+      {
+        "command": "python3 -m py_compile services/execution/artifact_loader.py services/execution/lean_runtime/paper_signal_producer.py services/execution/lean_runtime/test_current_artifact_signal.py",
+        "result": "pass",
+        "conclusion": "exit 0"
+      },
+      {
+        "command": "git diff --check",
+        "result": "pass",
+        "conclusion": "exit 0"
+      }
+    ],
+    "validated_at": "2026-08-14T08:24:28Z",
+    "validated_base_sha": "49a729973870cd3caee32fbfc1ccefd725e42a1f",
+    "validated_head_sha": "e00299728ca14f75aea1a468ce6be38466575354"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "paper execution component / dev integration",
+    "public_bff_base_url": "not_applicable_internal_paper_execution_component",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "No hosted publication is claimed by this W1 component task."
+    },
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "No runtime deployment or shared configuration change is in scope."
+    },
+    "identity_admission": {
+      "status": "not_applicable",
+      "reason": "The task proves exact binding and artifact identities in focused component acceptance; it does not claim a hosted deployment identity."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "This task requires declared in-process paper order/fill/heartbeat readback and does not claim hosted deployment evidence.",
+      "proof": "CurrentArtifactSignalTest::test_approved_artifact_drives_order_fill_and_heartbeat records the simulated runtime terminal readback."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "not_changed",
+      "proof": [
+        "This task does not change pending-signal deduplication; CurrentArtifactStrategy emits a binding-scoped monotonically sequenced decision identifier into the existing validated queue path."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass",
+      "proof": [
+        "Missing artifact checksum produces artifact_unavailable, leaves queue depth zero, and records the binding in degraded_bindings.",
+        "Missing market input produces market_input_missing, leaves queue depth zero, and records the binding in degraded_bindings.",
+        "The normal runner health file reports degraded, enqueued_signal_count=0, and the exact degraded binding when artifact truth is unavailable."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "proof": [
+        "The decision retains binding, runtime, pool, artifact, tenant, environment, run, and trade-journey correlation identities.",
+        "The approved-artifact acceptance drains the binding-scoped signal into PaperRuntimeService and reads back heartbeat, order_submitted, and paper_fill_simulated events."
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "bounded_source_readback",
+      "proof": [
+        "Each producer process reconstructs CurrentArtifactStrategy and re-evaluates exact artifact and market-input availability on its next binding tick; unavailable durable inputs remain degraded with zero enqueue and no hardcoded fallback."
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass",
+      "proof": [
+        "Operational rollback is to pause the paper producer; no fixed BUY/SELL strategy is restored as the normal runner.",
+        "Missing or contradicted decision inputs compensate by emitting zero signals and preserving explicit degraded truth."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "CurrentArtifactStrategy requires paper mode; canary/live activation and shared deployment configuration are outside this change."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No frontend files or hosted UI behavior changed."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No authentication or operator approval surface changed."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Signals and simulated fills retain is_real_order=false and is_real_capital=false; acceptance asserts submitted_to_broker=false."
+    },
+    "rbac": {
+      "status": "not_applicable",
+      "proof": "No authorization contract or route changed."
+    },
+    "tenant_isolation": {
+      "status": "not_applicable",
+      "proof": "The existing binding tenant/environment identity is preserved; this task does not alter tenant storage or authorization boundaries."
+    },
+    "two_person_approval": {
+      "status": "pass",
+      "proof": "Owner Codex and reviewer Antigravity are distinct. Antigravity conducted an independent exact-head review of implementation and evidence manifest 0fd13846ccee6518530a502db4340e15ed40bfec, validated all unit tests, schemas, and trailers, and recorded formal review approval."
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/execution/lean_runtime/test_current_artifact_signal.py::CurrentArtifactSignalTest::test_missing_artifact_checksum_enqueues_zero_and_reports_degraded",
+        "services/execution/lean_runtime/test_current_artifact_signal.py::CurrentArtifactSignalTest::test_missing_market_input_enqueues_zero_and_reports_degraded",
+        "services/execution/lean_runtime/test_current_artifact_signal.py::CurrentArtifactSignalTest::test_missing_artifact_health_is_degraded_with_zero_signals"
+      ],
+      "id": "AC1",
+      "statement": "Missing artifact checksum or market input enqueues zero signals and reports degraded truth.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/execution/lean_runtime/test_current_artifact_signal.py::CurrentArtifactSignalTest::test_two_exact_artifacts_drive_different_non_hardcoded_decisions",
+        "services/execution/lean_runtime/test_current_artifact_signal.py::CurrentArtifactSignalTest::test_approved_artifact_drives_order_fill_and_heartbeat"
+      ],
+      "id": "AC2",
+      "statement": "Approved exact artifacts produce deterministic, non-hardcoded decisions and one approved path reaches simulated order, fill, and heartbeat readback.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/execution/lean_runtime/test_current_artifact_signal.py::CurrentArtifactSignalTest::test_default_runner_uses_current_artifact_not_smoke"
+      ],
+      "id": "AC3",
+      "statement": "SmokeStrategy and BoundedPaperStrategy are not normal runner defaults.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "independent_exact_head_review_pending": {
+      "blocking_for_this_task": false,
+      "containment": "Independent exact-head review passed for 0fd13846ccee6518530a502db4340e15ed40bfec. Final reviewer commit and evidence hash update bound before governed approval.",
+      "description": "Reviewed and approved by Antigravity.",
+      "expiry": "Resolved at reviewer approval cut",
+      "owner": "Codex and Antigravity",
+      "recheck_trigger": "PR #4894 merge state",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CAPITAL-ARTIFACT-20260814/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CAPITAL-ARTIFACT-20260814/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-CAPITAL-ARTIFACT-20260814/evidence.json",
+    "normalized_hosted_readback": {
+      "hosted_activation_claimed": false,
+      "in_process_paper_runtime_readback": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "2026-08-14T08:24:28Z": {
+        "services/execution/artifact_loader.py": "1785c9aeabe0a46558de4b6d7dfffa913e0f593006020d352b0dbec2577169da",
+        "services/execution/lean_runtime/paper_signal_producer.py": "6b73402f246b194a5ceee88e6345a89101b2bbe0a3e6e65e0d8316dfbe31f755",
+        "services/execution/lean_runtime/test_current_artifact_signal.py": "b2b87c8b0a26c2efe300749d4d21cc391b07c94adebefae7bd82de2d39db4944"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-14T08:24:28Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4894",
+      "sequence": 1,
+      "sha": "e00299728ca14f75aea1a468ce6be38466575354",
+      "status": "ready_for_independent_exact_head_review_after_manifest_commit"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "reviewer_exact_head_approved",
+      "recorded_at": "2026-08-14T08:34:30Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4894",
+      "sequence": 2,
+      "sha": "0fd13846ccee6518530a502db4340e15ed40bfec",
+      "status": "approved_by_reviewer"
+    }
+  ]
+}
