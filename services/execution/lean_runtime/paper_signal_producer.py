@@ -21,6 +21,12 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
+from services.execution.artifact_loader import (
+    ArtifactLoadError,
+    ArtifactLoader,
+    ExecutionMode,
+)
+
 from services.worker_health import healthcheck as check_worker_health
 from services.worker_health import write_health
 from services.trade_journey.correlation_envelope import (
@@ -119,10 +125,12 @@ class SmokeStrategy:
 
 
 class BoundedPaperStrategy:
-    """First-class bounded paper strategy.
+    """Explicit smoke/profile-only bounded paper strategy.
 
     Generates identity-complete decision dictionary carrying tenant, persona,
     binding, runtime, and pool identities, asserting simulated order constraints.
+    The deployable runner never selects this strategy unless the operator sets
+    ``PAPER_SIGNAL_STRATEGY=smoke``.
     """
 
     def __init__(self, *, quantity: float = 7, symbol: str = "AAPL.US") -> None:
@@ -229,6 +237,284 @@ class BoundedPaperStrategy:
         return decision
 
 
+class SignalDecisionUnavailable(RuntimeError):
+    """A binding cannot produce a governed paper decision on this tick."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        self.code = str(code)
+        self.detail = str(detail)
+        super().__init__(f"{self.code}: {self.detail}")
+
+
+class CurrentArtifactStrategy:
+    """Evaluate the exact approved artifact pinned by the current binding.
+
+    This is the normal paper runner strategy.  It has no BUY/SELL fallback: an
+    unavailable artifact, identity mismatch, invalid checksum, or absent market
+    snapshot yields a degraded binding tick and zero queued signals.
+    """
+
+    _SUPPORTED_INTERPRETER = (
+        "services.registry.strategy_artifact:evaluate_strategy_action"
+    )
+
+    def __init__(self) -> None:
+        self._seq = 0
+
+    def __call__(self, binding: Any, now_iso: str) -> dict[str, Any]:
+        b_dict = _binding_dict_from_obj(binding)
+        binding_id = _required_binding_text(b_dict, "binding_id")
+        metadata = (
+            b_dict.get("metadata")
+            if isinstance(b_dict.get("metadata"), Mapping)
+            else {}
+        )
+        artifact_id = _required_binding_text(b_dict, "artifact_id")
+        artifact_version = _required_binding_text(b_dict, "artifact_version")
+        strategy_id = str(
+            b_dict.get("strategy_id") or metadata.get("strategy_id") or ""
+        ).strip()
+        if not strategy_id:
+            raise SignalDecisionUnavailable(
+                "artifact_identity_missing",
+                f"binding {binding_id} has no strategy_id for artifact projection",
+            )
+
+        object_store = b_dict.get("object_store") or metadata.get("object_store")
+        if object_store is None:
+            raise SignalDecisionUnavailable(
+                "artifact_store_missing",
+                f"binding {binding_id} has no Object Store artifact projection",
+            )
+
+        expected_checksum = b_dict.get("artifact_checksum")
+        if expected_checksum is None:
+            expected_checksum = metadata.get("artifact_checksum")
+        try:
+            loaded = ArtifactLoader.from_runtime(object_store).load_exact(
+                registry_id=artifact_id,
+                strategy_id=strategy_id,
+                version=artifact_version,
+                execution_mode=ExecutionMode.PAPER,
+                expected_checksum=expected_checksum,
+            )
+            payload = loaded.json_payload()
+        except ArtifactLoadError as exc:
+            raise SignalDecisionUnavailable(
+                "artifact_unavailable",
+                f"binding {binding_id} cannot load its approved artifact: {exc}",
+            ) from exc
+
+        strategy_artifact = payload.get("strategy_artifact", payload)
+        if not isinstance(strategy_artifact, Mapping):
+            raise SignalDecisionUnavailable(
+                "artifact_payload_invalid",
+                f"binding {binding_id} artifact payload has no StrategyArtifact object",
+            )
+        self._validate_artifact_identity(
+            strategy_artifact,
+            binding_id=binding_id,
+            artifact_id=artifact_id,
+            artifact_version=artifact_version,
+            strategy_id=strategy_id,
+        )
+
+        algorithm_ref = strategy_artifact.get("algorithm_ref")
+        interpreter = (
+            str(algorithm_ref.get("logic_interpreter") or "").strip()
+            if isinstance(algorithm_ref, Mapping)
+            else ""
+        )
+        if interpreter != self._SUPPORTED_INTERPRETER:
+            raise SignalDecisionUnavailable(
+                "artifact_interpreter_unsupported",
+                f"binding {binding_id} requested unsupported interpreter {interpreter!r}",
+            )
+
+        market_input = _market_input_for_binding(b_dict, metadata)
+        closes = market_input["closes"]
+        try:
+            from services.registry.strategy_artifact import (
+                StrategyArtifactValidationError,
+                evaluate_strategy_action,
+                validate_strategy_artifact,
+            )
+
+            validate_strategy_artifact(strategy_artifact)
+        except (StrategyArtifactValidationError, ValueError, TypeError) as exc:
+            raise SignalDecisionUnavailable(
+                "artifact_payload_invalid",
+                f"binding {binding_id} StrategyArtifact validation failed: {exc}",
+            ) from exc
+        try:
+            action = evaluate_strategy_action(strategy_artifact, closes)
+        except (StrategyArtifactValidationError, ValueError, TypeError) as exc:
+            raise SignalDecisionUnavailable(
+                "market_input_invalid",
+                f"binding {binding_id} market input cannot be evaluated: {exc}",
+            ) from exc
+
+        parameters = strategy_artifact["parameters"]
+        quantity = parameters.get("order_quantity")
+        quantity_type = str(parameters.get("quantity_type") or "").strip().upper()
+        if isinstance(quantity, bool) or not isinstance(quantity, (int, float)) or quantity <= 0:
+            raise SignalDecisionUnavailable(
+                "artifact_payload_invalid",
+                f"binding {binding_id} artifact requires positive numeric order_quantity",
+            )
+        if not quantity_type:
+            raise SignalDecisionUnavailable(
+                "artifact_payload_invalid",
+                f"binding {binding_id} artifact requires quantity_type",
+            )
+
+        symbol = _strategy_symbol(b_dict, strategy_artifact, market_input)
+        tenant_id = str(
+            b_dict.get("tenant_id")
+            or metadata.get("tenant_id")
+            or os.getenv("PANTHEON_TENANT_ID", "default")
+        ).strip()
+        environment = str(
+            b_dict.get("environment")
+            or b_dict.get("deployment_stage")
+            or b_dict.get("deployment_mode")
+            or metadata.get("environment")
+            or "paper"
+        ).strip().lower()
+        if environment != "paper":
+            raise SignalDecisionUnavailable(
+                "binding_mode_invalid",
+                f"binding {binding_id} is {environment!r}, expected 'paper'",
+            )
+
+        self._seq += 1
+        persona_capital_binding_id = b_dict.get("persona_capital_binding_id")
+        direction = "SHORT" if action == "SELL" else "LONG"
+        return {
+            "decision_id": f"dec-{binding_id}-{now_iso}-{self._seq}",
+            "strategy_id": strategy_id,
+            "timestamp": now_iso,
+            "symbol": symbol,
+            "action": action,
+            "direction": direction,
+            "quantity": quantity,
+            "quantity_type": quantity_type,
+            "binding_id": binding_id,
+            "runtime_id": _required_binding_text(b_dict, "runtime_id"),
+            "capital_pool_id": _required_binding_text(b_dict, "capital_pool_id"),
+            "run_id": f"run-{binding_id}-{now_iso}-{self._seq}",
+            "tenant_id": tenant_id,
+            "environment": environment,
+            "source_worker": "paper-signal-producer",
+            "metadata": {
+                "tenant_id": tenant_id,
+                "environment": environment,
+                "persona_capital_binding_id": persona_capital_binding_id,
+                "capital_pool_id": b_dict["capital_pool_id"],
+                "artifact_id": artifact_id,
+                "artifact_version": artifact_version,
+                "artifact_checksum": loaded.metadata["checksum"],
+                "artifact_registry_id": loaded.metadata["registry_id"],
+                "artifact_interpreter": interpreter,
+                "market_input_ref": market_input.get("source_ref"),
+                "market_input_observed_at": market_input.get("observed_at"),
+                "is_real_order": False,
+                "is_real_capital": False,
+            },
+        }
+
+    @staticmethod
+    def _validate_artifact_identity(
+        artifact: Mapping[str, Any],
+        *,
+        binding_id: str,
+        artifact_id: str,
+        artifact_version: str,
+        strategy_id: str,
+    ) -> None:
+        expected = {
+            "artifact_id": artifact_id,
+            "version": artifact_version,
+            "strategy_id": strategy_id,
+        }
+        for field, expected_value in expected.items():
+            actual = str(artifact.get(field) or "").strip()
+            if actual != expected_value:
+                raise SignalDecisionUnavailable(
+                    "artifact_identity_mismatch",
+                    f"binding {binding_id} expected {field}={expected_value!r}, got {actual or None!r}",
+                )
+
+
+def _required_binding_text(binding: Mapping[str, Any], field: str) -> str:
+    value = str(binding.get(field) or "").strip()
+    if not value:
+        binding_id = str(binding.get("binding_id") or "<unknown>")
+        raise SignalDecisionUnavailable(
+            "binding_identity_missing",
+            f"binding {binding_id} has no {field}",
+        )
+    return value
+
+
+def _market_input_for_binding(
+    binding: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    raw = binding.get("market_input") or metadata.get("market_input")
+    if raw is None:
+        closes = binding.get("recent_closes") or metadata.get("recent_closes")
+        if closes is not None:
+            raw = {
+                "closes": closes,
+                "source_ref": binding.get("market_input_ref")
+                or metadata.get("market_input_ref")
+                or "runtime-binding:recent_closes",
+            }
+    if not isinstance(raw, Mapping):
+        binding_id = str(binding.get("binding_id") or "<unknown>")
+        raise SignalDecisionUnavailable(
+            "market_input_missing",
+            f"binding {binding_id} has no market_input.closes snapshot",
+        )
+    closes = raw.get("closes")
+    if (
+        not isinstance(closes, Sequence)
+        or isinstance(closes, (str, bytes))
+        or not closes
+    ):
+        binding_id = str(binding.get("binding_id") or "<unknown>")
+        raise SignalDecisionUnavailable(
+            "market_input_missing",
+            f"binding {binding_id} has no market_input.closes snapshot",
+        )
+    return {
+        "closes": list(closes),
+        "symbol": raw.get("symbol"),
+        "source_ref": raw.get("source_ref"),
+        "observed_at": raw.get("observed_at"),
+    }
+
+
+def _strategy_symbol(
+    binding: Mapping[str, Any],
+    strategy_artifact: Mapping[str, Any],
+    market_input: Mapping[str, Any],
+) -> str:
+    symbol = str(market_input.get("symbol") or binding.get("symbol") or "").strip()
+    parameters = strategy_artifact.get("parameters")
+    symbols = parameters.get("symbols") if isinstance(parameters, Mapping) else None
+    if not symbol and isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
+        symbol = str(symbols[0] if symbols else "").strip()
+    if not symbol:
+        binding_id = str(binding.get("binding_id") or "<unknown>")
+        raise SignalDecisionUnavailable(
+            "market_input_missing",
+            f"binding {binding_id} has no market symbol",
+        )
+    return symbol
+
+
 def _binding_dict_from_obj(binding: Any) -> dict[str, Any]:
     if isinstance(binding, dict):
         return binding
@@ -326,15 +612,33 @@ class PaperSignalProducer:
     def __init__(self, store_for: Callable[[Any], Any], strategy: Any) -> None:
         self._store_for = store_for
         self._strategy = strategy
+        self._degraded_by_binding: dict[str, str] = {}
+
+    @property
+    def degraded_bindings(self) -> dict[str, str]:
+        """Return binding-scoped reasons that prevented the latest tick."""
+
+        return dict(self._degraded_by_binding)
 
     def produce(self, binding: Any, now_iso: str) -> int:
         """Emit + enqueue signals for one binding; return the count enqueued."""
         b_dict = _binding_dict_from_obj(binding)
         binding_id = b_dict["binding_id"]
-        store = self._store_for(binding)
 
         # Generate strategy output
-        out = self._strategy(binding, now_iso)
+        try:
+            out = self._strategy(binding, now_iso)
+        except SignalDecisionUnavailable as exc:
+            self._degraded_by_binding[binding_id] = str(exc)
+            log.warning(
+                "paper_signal_producer degraded binding %s: %s",
+                binding_id,
+                exc,
+            )
+            return 0
+
+        self._degraded_by_binding.pop(binding_id, None)
+        store = self._store_for(binding)
 
         enqueued = 0
         if isinstance(out, list):
@@ -403,6 +707,14 @@ class PaperSignalProducer:
 
     def tick(self, bindings: Sequence[Any], now_iso: str) -> dict[str, int]:
         """Produce for every binding; return {binding_id: enqueued_count}."""
+        binding_ids = {
+            _binding_dict_from_obj(binding)["binding_id"] for binding in bindings
+        }
+        self._degraded_by_binding = {
+            binding_id: reason
+            for binding_id, reason in self._degraded_by_binding.items()
+            if binding_id in binding_ids
+        }
         return {
             _binding_dict_from_obj(b)["binding_id"]: self.produce(b, now_iso)
             for b in bindings
@@ -515,6 +827,20 @@ def _require_paper_only_configuration() -> None:
         )
 
 
+def _runner_strategy() -> Any:
+    """Resolve the deployable strategy profile without a hard-coded signal path."""
+
+    profile = os.getenv("PAPER_SIGNAL_STRATEGY", "artifact").strip().lower()
+    if profile in {"artifact", "current-artifact", "current_artifact"}:
+        return CurrentArtifactStrategy()
+    if profile == "smoke":
+        return BoundedPaperStrategy()
+    raise ValueError(
+        "PAPER_SIGNAL_STRATEGY must be 'artifact' (default) or explicit 'smoke'; "
+        f"got {profile!r}."
+    )
+
+
 def healthcheck() -> int:
     """Validate a recent successful paper-only producer tick."""
 
@@ -554,7 +880,7 @@ def main() -> int:  # pragma: no cover
         raise ValueError("PAPER_PRODUCER_MAX_TICKS must be >= 0")
     health_file = os.getenv("PAPER_PRODUCER_HEALTH_FILE", "").strip()
     producer = PaperSignalProducer(
-        store_for=_redis_store_factory(signal_store_url), strategy=BoundedPaperStrategy()
+        store_for=_redis_store_factory(signal_store_url), strategy=_runner_strategy()
     )
     log.info("paper_signal_producer started; interval=%.0fs", interval)
     health: dict[str, Any] = {
@@ -567,6 +893,8 @@ def main() -> int:  # pragma: no cover
         "last_failure_reason": None,
         "active_binding_count": 0,
         "enqueued_signal_count": 0,
+        "degraded_binding_count": 0,
+        "degraded_bindings": {},
         "execution_mode": "paper",
         "live_capital_enabled": False,
         "live_order_submission_enabled": False,
@@ -601,11 +929,22 @@ def main() -> int:  # pragma: no cover
                     )
 
             counts = producer.tick(bindings, now_iso) if bindings else {}
-            health["status"] = "ok"
-            health["last_success_at"] = now_iso
-            health["last_failure_reason"] = None
+            degraded_bindings = producer.degraded_bindings
+            if degraded_bindings:
+                health["status"] = "degraded"
+                health["last_failure_at"] = now_iso
+                health["last_failure_reason"] = "; ".join(
+                    f"{binding_id}: {reason}"
+                    for binding_id, reason in sorted(degraded_bindings.items())
+                )
+            else:
+                health["status"] = "ok"
+                health["last_success_at"] = now_iso
+                health["last_failure_reason"] = None
             health["active_binding_count"] = len(bindings)
             health["enqueued_signal_count"] = sum(counts.values())
+            health["degraded_binding_count"] = len(degraded_bindings)
+            health["degraded_bindings"] = degraded_bindings
         except Exception as exc:
             log.warning("paper_signal_producer tick failed: %s", exc)
             health["status"] = "degraded"
@@ -613,6 +952,8 @@ def main() -> int:  # pragma: no cover
             health["last_failure_reason"] = str(exc)
             health["active_binding_count"] = 0
             health["enqueued_signal_count"] = 0
+            health["degraded_binding_count"] = 0
+            health["degraded_bindings"] = {}
         health["ticks"] = tick
         health["last_tick_at"] = now_iso
         write_health(health_file, health)

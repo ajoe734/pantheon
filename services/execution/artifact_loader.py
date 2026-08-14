@@ -36,6 +36,21 @@ class LoadedArtifact:
     projection: ObjectStoreProjection
     artifact_path: str | None = None
 
+    def json_payload(self) -> dict[str, Any]:
+        """Decode the checksum-verified payload as one JSON object."""
+
+        try:
+            decoded = json.loads(self.payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ArtifactLoadError(
+                "Artifact payload must be a UTF-8 JSON object for strategy execution."
+            ) from exc
+        if not isinstance(decoded, dict):
+            raise ArtifactLoadError(
+                "Artifact payload must decode to a JSON object for strategy execution."
+            )
+        return decoded
+
 
 class LeanObjectStoreAdapter:
     """
@@ -62,6 +77,8 @@ class LeanObjectStoreAdapter:
         return runtime_or_store
 
     def contains_key(self, key: str) -> bool:
+        if isinstance(self._store, Mapping):
+            return key in self._store
         contains = _resolve_method(self._store, ("ContainsKey", "contains_key"))
         if contains is not None:
             return bool(contains(key))
@@ -72,6 +89,21 @@ class LeanObjectStoreAdapter:
             return False
 
     def read_json(self, key: str) -> dict[str, Any] | None:
+        if isinstance(self._store, Mapping):
+            payload = self._store[key]
+            if isinstance(payload, Mapping):
+                return dict(payload)
+            if isinstance(payload, bytes):
+                payload = payload.decode("utf-8")
+            if isinstance(payload, str):
+                try:
+                    decoded = json.loads(payload)
+                except json.JSONDecodeError:
+                    return None
+                if isinstance(decoded, Mapping):
+                    return dict(decoded)
+            return None
+
         read_json = _resolve_method(self._store, ("ReadJson", "read_json"))
         if read_json is None:
             return None
@@ -86,6 +118,15 @@ class LeanObjectStoreAdapter:
         return None
 
     def read_text(self, key: str) -> str:
+        if isinstance(self._store, Mapping):
+            payload = self._store[key]
+            if isinstance(payload, str):
+                return payload
+            if isinstance(payload, bytes):
+                return payload.decode("utf-8")
+            if isinstance(payload, Mapping):
+                return json.dumps(dict(payload))
+
         read = _resolve_method(self._store, ("Read", "read"))
         if read is not None:
             payload = read(key)
@@ -98,6 +139,15 @@ class LeanObjectStoreAdapter:
         return payload.decode("utf-8")
 
     def read_bytes(self, key: str) -> bytes:
+        if isinstance(self._store, Mapping):
+            payload = self._store[key]
+            if isinstance(payload, bytes):
+                return payload
+            if isinstance(payload, str):
+                return payload.encode("utf-8")
+            if isinstance(payload, Mapping):
+                return json.dumps(dict(payload)).encode("utf-8")
+
         read_bytes = _resolve_method(self._store, ("ReadBytes", "read_bytes"))
         if read_bytes is not None:
             payload = read_bytes(key)
@@ -234,6 +284,60 @@ class ArtifactLoader:
             artifact_path=artifact_path,
         )
 
+    def load_exact(
+        self,
+        *,
+        registry_id: str,
+        strategy_id: str,
+        version: str,
+        execution_mode: ExecutionMode | str,
+        expected_checksum: str | None = None,
+    ) -> LoadedArtifact:
+        """Load the exact artifact pinned by a runtime binding.
+
+        Object Store keys are strategy/version scoped, while RuntimeBinding pins
+        the registry artifact id.  Both identities therefore have to match before
+        a payload may cross into strategy evaluation.
+        """
+
+        expected_registry_id = str(registry_id).strip()
+        expected_strategy_id = str(strategy_id).strip()
+        expected_version = str(version).strip()
+        if not expected_registry_id:
+            raise ArtifactLoadError("Runtime binding artifact_id is required.")
+        if not expected_strategy_id:
+            raise ArtifactLoadError("Runtime binding strategy_id is required.")
+        if not expected_version:
+            raise ArtifactLoadError("Runtime binding artifact_version is required.")
+
+        loaded = self.load(
+            expected_strategy_id,
+            expected_version,
+            execution_mode,
+        )
+        actual_registry_id = str(loaded.metadata.get("registry_id") or "").strip()
+        if actual_registry_id != expected_registry_id:
+            raise ArtifactLoadError(
+                "Artifact registry_id mismatch: "
+                f"expected {expected_registry_id}, got {actual_registry_id or None}."
+            )
+
+        if expected_checksum is not None:
+            pinned_checksum = str(expected_checksum).strip()
+            if not pinned_checksum:
+                raise ArtifactLoadError(
+                    "Runtime binding artifact_checksum must not be blank when provided."
+                )
+            metadata_checksum = str(loaded.metadata.get("checksum") or "").strip()
+            if _normalized_checksum(metadata_checksum) != _normalized_checksum(
+                pinned_checksum
+            ):
+                raise ArtifactLoadError(
+                    "Runtime binding artifact_checksum mismatch: "
+                    f"expected {pinned_checksum}, got {metadata_checksum or None}."
+                )
+        return loaded
+
     def _read_metadata(self, key: str) -> dict[str, Any]:
         if not self._store.contains_key(key):
             raise ArtifactLoadError(f"Object Store metadata key not found: {key}")
@@ -337,6 +441,13 @@ class ArtifactLoader:
                 "Artifact checksum verification failed: "
                 f"expected {expected_checksum}, got sha256:{actual_digest}"
             )
+
+
+def _normalized_checksum(value: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized.startswith("sha256:"):
+        normalized = normalized.split(":", 1)[1]
+    return normalized
 
 
 def _resolve_method(target: Any, candidates: tuple[str, ...]) -> Any | None:
