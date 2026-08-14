@@ -53,6 +53,9 @@ from services.research.imitation.agora_dataset_source import (
 )
 from services.research.imitation.bc_trainer import train as train_bc
 from services.research.imitation.eval_metrics import evaluate as evaluate_policy
+from services.research.experiment_candidate_intake import (
+    ExperimentCandidateIntakeError,
+)
 from candidate_experiment_handoff import (
     CandidateHandoffError,
     handoff_candidate_to_experiment_authority,
@@ -841,8 +844,17 @@ def process_claimed_candidate(claim: Dict[str, Any]) -> Dict[str, Any]:
             candidate["updated_at"] = timestamp
         else:
             _apply_processed_result(candidate, result, lineage, timestamp)
-            with contextlib.suppress(Exception):
+            try:
                 handoff_candidate_to_experiment_authority(candidate, timestamp=timestamp)
+            except Exception as exc:
+                candidate["status"] = STATUS_FAILED
+                candidate["error_message"] = f"Experiment handoff failed: {exc}"
+                candidate["dataset_lineage"] = lineage
+                candidate["updated_at"] = timestamp
+                candidate.pop("handoff_status", None)
+                candidate.pop("experiment_task_id", None)
+                candidate.pop("experiment_run_id", None)
+                candidate.pop("handoff_at", None)
 
     try:
         return store.settle_candidate(candidate, lease_token=lease_token)
@@ -1394,8 +1406,10 @@ def handoff_candidate_endpoint(
         result = handoff_candidate_to_experiment_authority(candidate)
         store.put_candidate(candidate)
         return result.to_dict()
-    except CandidateHandoffError as exc:
+    except (CandidateHandoffError, ExperimentCandidateIntakeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Research handoff failed: {exc}")
 
 
 @app.post("/api/policy-learning/candidates/{candidate_id}/promote", status_code=409)
