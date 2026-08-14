@@ -60,7 +60,9 @@
       "statement": "Owner GET and mutation calls carry the required service identity and tenant.",
       "status": "pass",
       "evidence_refs": [
-        "services/deployment/test_outbox_consumer_worker.py::TestDeploymentHeaders::test_deployment_headers_attached_to_all_owner_calls"
+        "services/deployment/test_outbox_consumer_worker.py::TestAuthorityHeaderContract::test_deployment_headers_require_token_and_tenant",
+        "services/deployment/test_outbox_consumer_worker.py::TestAuthorityHeaderContract::test_deployment_headers_bearer_format_and_content_type",
+        "services/deployment/test_outbox_consumer_worker.py::TestAuthorityHeaderContract::test_all_owner_mutation_and_get_calls_carry_credentials"
       ]
     },
     {
@@ -86,8 +88,11 @@
       "statement": "Scope authority verification credentials to exact deployment origin and reject foreign URLs.",
       "status": "pass",
       "evidence_refs": [
-        "services/deployment/test_outbox_consumer_worker.py::TestDeploymentHeaders::test_fetch_authority_json_authenticates_deployment_urls",
-        "services/deployment/test_outbox_consumer_worker.py::TestDeploymentHeaders::test_fetch_authority_json_does_not_authenticate_foreign_origin_with_deployment_path"
+        "services/deployment/test_outbox_consumer_worker.py::TestAuthorityHeaderContract::test_fetch_authority_json_authenticates_deployment_urls",
+        "services/deployment/test_outbox_consumer_worker.py::TestAuthorityHeaderContract::test_fetch_authority_json_does_not_authenticate_foreign_origin_with_deployment_path",
+        "services/deployment/test_outbox_consumer_worker.py::TestAuthorityHeaderContract::test_cross_origin_redirect_strips_credentials",
+        "services/deployment/test_outbox_consumer_worker.py::TestAuthorityHeaderContract::test_same_origin_redirect_preserves_credentials",
+        "services/deployment/test_outbox_consumer_worker.py::TestAuthorityHeaderContract::test_fetch_authority_json_maps_http_errors"
       ]
     }
   ],
@@ -96,12 +101,12 @@
       {
         "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/deployment/test_outbox_consumer_worker.py",
         "result": "pass",
-        "conclusion": "75 passed in 11.15s"
+        "conclusion": "77 passed in 10.45s"
       },
       {
         "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/deployment/",
         "result": "pass",
-        "conclusion": "177 passed in 59.17s"
+        "conclusion": "179 passed in 57.01s"
       },
       {
         "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m py_compile services/deployment/outbox_consumer_worker.py services/deployment/test_outbox_consumer_worker.py",

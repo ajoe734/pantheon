@@ -2471,14 +2471,14 @@ class TestAuthorityHeaderContract:
 
         captured = []
 
-        def fake_urlopen(req, *args, **kwargs):
+        def fake_open(self, req, *args, **kwargs):
             captured.append(req)
             resp = MagicMock()
             resp.read.return_value = b'{"plan_id": "plan-1"}'
             resp.__enter__.return_value = resp
             return resp
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("urllib.request.OpenerDirector.open", fake_open):
             res_dep = worker._fetch_authority_json("http://deployment:8095/api/deployment/plans/plan-1", 5.0)
             res_gov = worker._fetch_authority_json("http://governance:8091/api/approvals/app-1", 5.0)
 
@@ -2495,14 +2495,14 @@ class TestAuthorityHeaderContract:
 
         captured = []
 
-        def fake_urlopen(req, *args, **kwargs):
+        def fake_open(self, req, *args, **kwargs):
             captured.append(req)
             resp = MagicMock()
             resp.read.return_value = b'{"status": "foreign"}'
             resp.__enter__.return_value = resp
             return resp
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("urllib.request.OpenerDirector.open", fake_open):
             # Foreign domain that includes /api/deployment/ in the path
             res_foreign = worker._fetch_authority_json("http://attacker.com/api/deployment/plans/plan-1", 5.0)
             # Foreign port on same hostname that includes /api/deployment/ in the path
@@ -2515,22 +2515,70 @@ class TestAuthorityHeaderContract:
         assert "Authorization" not in captured[1].headers
         assert "X-tenant-id" not in captured[1].headers
 
+    def test_cross_origin_redirect_strips_credentials(self, worker, monkeypatch):
+        monkeypatch.setenv("DEPLOYMENT_API_URL", "http://deployment:8095")
+        handler = worker._AuthorityRedirectHandler()
+        request = urllib.request.Request(
+            "http://deployment:8095/api/deployment/plans/1",
+            headers={
+                "Authorization": "Bearer sec-token",
+                "X-Tenant-Id": "tenant-x",
+                "Accept": "application/json",
+            },
+        )
+        redirected = handler.redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "http://attacker.com/leak",
+        )
+        assert redirected is not None
+        assert redirected.get_header("Authorization") is None
+        assert redirected.get_header("X-tenant-id") is None
+        assert redirected.get_header("Accept") == "application/json"
+
+    def test_same_origin_redirect_preserves_credentials(self, worker, monkeypatch):
+        monkeypatch.setenv("DEPLOYMENT_API_URL", "http://deployment:8095")
+        handler = worker._AuthorityRedirectHandler()
+        request = urllib.request.Request(
+            "http://deployment:8095/api/deployment/plans/1",
+            headers={
+                "Authorization": "Bearer sec-token",
+                "X-Tenant-Id": "tenant-x",
+                "Accept": "application/json",
+            },
+        )
+        redirected = handler.redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "http://deployment:8095/api/deployment/plans/1_redirected",
+        )
+        assert redirected is not None
+        assert redirected.get_header("Authorization") == "Bearer sec-token"
+        assert redirected.get_header("X-tenant-id") == "tenant-x"
+        assert redirected.get_header("Accept") == "application/json"
+
     def test_fetch_authority_json_maps_http_errors(self, worker, monkeypatch):
         monkeypatch.setenv("DEPLOYMENT_API_URL", "http://deployment:8095")
         monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "sec-token")
         monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-x")
 
-        def fake_403(*args, **kwargs):
+        def fake_403(self, req, *args, **kwargs):
             raise urllib.error.HTTPError("http://deployment:8095/api/deployment/plans/1", 403, "Forbidden", {}, None)
 
-        def fake_503(*args, **kwargs):
+        def fake_503(self, req, *args, **kwargs):
             raise urllib.error.HTTPError("http://deployment:8095/api/deployment/plans/1", 503, "Service Unavailable", {}, None)
 
-        with patch("urllib.request.urlopen", side_effect=fake_403):
+        with patch("urllib.request.OpenerDirector.open", fake_403):
             with pytest.raises(worker.DeployAuthorityError, match="HTTP 403"):
                 worker._fetch_authority_json("http://deployment:8095/api/deployment/plans/1", 5.0)
 
-        with patch("urllib.request.urlopen", side_effect=fake_503):
+        with patch("urllib.request.OpenerDirector.open", fake_503):
             with pytest.raises(worker.DeployAuthorityUnavailableError, match="HTTP 503"):
                 worker._fetch_authority_json("http://deployment:8095/api/deployment/plans/1", 5.0)
 

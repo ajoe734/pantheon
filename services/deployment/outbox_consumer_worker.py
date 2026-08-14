@@ -505,14 +505,41 @@ def _is_same_origin(url: str, base_url: str) -> bool:
     )
 
 
+class _AuthorityRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Revalidate origin on 30x redirects and strip credentials when leaving deployment origin."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Mapping[str, str],
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        absolute_url = urllib.parse.urljoin(req.full_url, newurl)
+        redirected = super().redirect_request(req, fp, code, msg, headers, absolute_url)
+        if redirected is not None:
+            deployment_url = os.getenv("DEPLOYMENT_API_URL", "http://127.0.0.1:8095").rstrip("/")
+            if not _is_same_origin(absolute_url, deployment_url):
+                for h in list(redirected.headers.keys()):
+                    if h.lower() in {"authorization", "x-tenant-id"}:
+                        redirected.headers.pop(h, None)
+                for h in list(redirected.unredirected_hdrs.keys()):
+                    if h.lower() in {"authorization", "x-tenant-id"}:
+                        redirected.unredirected_hdrs.pop(h, None)
+        return redirected
+
+
 def _fetch_authority_json(url: str, timeout_seconds: float) -> Mapping[str, Any]:
     deployment_url = os.getenv("DEPLOYMENT_API_URL", "http://127.0.0.1:8095").rstrip("/")
     headers = {"Accept": "application/json"}
     if _is_same_origin(url, deployment_url):
         headers.update(_deployment_headers())
     request = urllib.request.Request(url, headers=headers, method="GET")
+    opener = urllib.request.build_opener(_AuthorityRedirectHandler())
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        with opener.open(request, timeout=timeout_seconds) as response:
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         error_type = (
