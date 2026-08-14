@@ -8446,9 +8446,15 @@ def reconcile_unavailable_assignments(
     _pending_agents, pending_pairs, _pending_keys = outstanding_delivery_indexes(
         config, state, task_map=task_map
     )
-    busy_task_ids = {
-        task_id for task_id, _agent in active_pairs | pending_pairs if task_id
-    }
+    active_task_ids = {task_id for task_id, _agent in active_pairs if task_id}
+    pending_agents_by_task: dict[str, set[str]] = {}
+    for pending_task_id, pending_agent in pending_pairs:
+        if not pending_task_id:
+            continue
+        canonical_pending_agent = canonical_agent_name(config, pending_agent)
+        pending_agents_by_task.setdefault(pending_task_id, set()).add(
+            canonical_pending_agent or str(pending_agent).strip()
+        )
     eligible_owner_statuses = {"todo", "in_progress", "review_approved", "blocked"}
     review_statuses = normalized_status_set(
         ready_dispatch_settings(config).get("review_statuses"), ["review"]
@@ -8461,7 +8467,10 @@ def reconcile_unavailable_assignments(
             break
         task_id = str(task.get("id") or "").strip()
         task_status = str(task.get("status") or "").strip().lower()
-        if not task_id or task_id in busy_task_ids:
+        # A live worker still owns the task lease even if its latest health
+        # observation has become terminal.  Poll/reap that worker before
+        # changing the canonical assignment.
+        if not task_id or task_id in active_task_ids:
             continue
         if task_status == "blocked" and task_has_explicit_recovery_hold(status, task):
             continue
@@ -8486,6 +8495,22 @@ def reconcile_unavailable_assignments(
                 role = "owner"
                 unavailable_actor = owner
         if not role or not unavailable_reason:
+            continue
+
+        # A delivery intent normally makes a task busy.  The exception is an
+        # unleased intent targeting the exact actor that is now durably
+        # unavailable: keeping that intent busy would prevent the sole
+        # reassignment path from ever changing the assignment, while queue
+        # admission would keep the same intent pending forever.  Once the
+        # assignment is committed below, normal queue reconciliation retires
+        # the old generation-bound intent as stale.  A pending intent for any
+        # other actor still blocks recovery to avoid duplicate delivery.
+        unavailable_actor_key = unavailable_actor.casefold()
+        if any(
+            pending_actor.casefold() != unavailable_actor_key
+            for pending_actor in pending_agents_by_task.get(task_id, set())
+            if pending_actor
+        ):
             continue
 
         if role == "reviewer":
