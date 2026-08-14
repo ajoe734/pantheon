@@ -1627,6 +1627,139 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertEqual(persist.call_args.kwargs["new_owner"], "Codex2")
         self.assertEqual(persist.call_args.kwargs["expected_owner"], "Codex")
 
+    def test_terminal_pending_intent_does_not_block_reviewer_reassignment(self) -> None:
+        task = task_fixture(status="review", owner="Human/Ops", reviewer="Codex")
+        task["delivery_binding"] = {
+            "kind": "pull_request",
+            "pr": 42,
+            "head_sha": "a" * 40,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_REVIEW_READY,
+            {"TASK-1": task},
+        )
+        event.update(
+            {
+                "event_id": "evt-terminal-review",
+                "event_key": event["key"],
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "delivery_endpoint_id": "codex",
+                "message": "review",
+            }
+        )
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {
+                        "state": "unavailable",
+                        "reason_kind": "auth",
+                    },
+                    "codex2": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                },
+            },
+        }
+        with_queue_intents(state, event)
+        state["queue"]["events"]["evt-terminal-review"].update(
+            {
+                "status": "pending",
+                "last_wait_reason": "health_refresh_required",
+            }
+        )
+
+        def persist(_config: dict[str, object], **kwargs: object) -> bool:
+            task["reviewer"] = kwargs["new_reviewer"]
+            task["generation"] = int(task["generation"]) + 1
+            return True
+
+        with (
+            mock.patch.object(
+                supervisor, "load_status", return_value={"tasks": [task]}
+            ),
+            mock.patch.object(
+                supervisor,
+                "persist_task_reassignment",
+                side_effect=persist,
+            ) as persisted,
+        ):
+            self.assertTrue(
+                supervisor.reconcile_unavailable_assignments(self.config, state)
+            )
+            self.assertTrue(supervisor.reconcile_queue_intents(self.config, state))
+
+        self.assertEqual(persisted.call_args.kwargs["new_reviewer"], "Codex2")
+        record = state["queue"]["events"]["evt-terminal-review"]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+
+    def test_active_worker_still_blocks_terminal_reassignment(self) -> None:
+        task = task_fixture(reviewer="Human/Ops")
+        state = {
+            "workers": {
+                "run-active": {
+                    "run_id": "run-active",
+                    "task_id": "TASK-1",
+                    "agent_id": "codex",
+                    "status": "running",
+                }
+            },
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {
+                        "state": "unavailable",
+                        "reason_kind": "auth",
+                    },
+                    "codex2": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(
+                supervisor, "load_status", return_value={"tasks": [task]}
+            ),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+        ):
+            self.assertFalse(
+                supervisor.reconcile_unavailable_assignments(self.config, state)
+            )
+
+        persisted.assert_not_called()
+
     def test_terminal_static_endpoint_reassigns_without_waiting_forever(self) -> None:
         task = task_fixture(reviewer="Human/Ops")
         self.config["agents"]["codex"]["provider"] = "missing-provider"
