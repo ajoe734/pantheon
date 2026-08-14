@@ -2537,6 +2537,7 @@ class PaperRuntimeService:
         self._lock = threading.RLock()
         self._shutdown = threading.Event()
         self._thread: threading.Thread | None = None
+        self._heartbeat_thread: threading.Thread | None = None
         self._outbox_path = os.getenv("PANTHEON_OUTBOX_PATH") or "/data/runtime/outbox.jsonl"
         outbox_dir = os.path.dirname(self._outbox_path)
         if self._legacy_journey_publish_enabled and outbox_dir:
@@ -2596,6 +2597,12 @@ class PaperRuntimeService:
 
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="paper-runtime-loop")
         self._thread.start()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            daemon=True,
+            name="paper-runtime-heartbeat",
+        )
+        self._heartbeat_thread.start()
         self._emit_deploy_completed()
 
     def stop(self) -> None:
@@ -2603,6 +2610,8 @@ class PaperRuntimeService:
         self._outbox_event.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join(timeout=5)
         if self._outbox_thread is not None:
             self._outbox_thread.join(timeout=5)
 
@@ -2756,6 +2765,14 @@ class PaperRuntimeService:
         while not self._shutdown.is_set():
             self.drain_once()
             self._shutdown.wait(self._poll_interval_seconds)
+
+    def _heartbeat_loop(self) -> None:
+        interval = max(
+            1.0,
+            _as_float(os.getenv("PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS"), 15.0),
+        )
+        while not self._shutdown.wait(interval):
+            self._maybe_emit_heartbeat()
 
     @staticmethod
     def _signal_lifecycle_metadata(signal: Mapping[str, Any]) -> dict[str, Any]:
