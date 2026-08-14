@@ -95,4 +95,3 @@ def handoff_candidate_to_experiment_authority(
         handoff_at=now,
         receipt=http_receipt,
     )
-

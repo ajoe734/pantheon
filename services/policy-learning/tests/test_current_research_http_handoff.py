@@ -213,4 +213,3 @@ def test_http_intake_and_readback_error_handling():
         with pytest.raises(ResearchCandidateClientError) as exc_info:
             post_imitation_candidate_intake_http(candidate, research_url="http://research-svc:8200")
         assert "readback identity mismatch" in str(exc_info.value)
-

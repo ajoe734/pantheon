@@ -56,12 +56,20 @@ def test_app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClie
     test_store = PolicyLearningStore(data_dir=data_dir)
     monkeypatch.setattr(main_module, "store", test_store)
 
-    test_authority = AgoraDatasetAuthority(backend="memory", records=[])
+    test_authority = AgoraDatasetAuthority(
+        backend="memory",
+        records=[
+            _sample_dataset_version_record("dsv-admit-001"),
+            _sample_dataset_version_record("dsv-admit-002"),
+            _sample_dataset_version_record("dsv-admit-crash"),
+            _sample_dataset_version_record("dsv-no-promote"),
+        ],
+    )
     monkeypatch.setattr(main_module, "DATASET_AUTHORITY", test_authority)
 
     monkeypatch.setenv("POLICY_LEARNING_DATASET_MODE", "product")
     monkeypatch.setenv("POLICY_LEARNING_SERVICE_TOKEN", LOCAL_DEV_SERVICE_TOKEN)
-    monkeypatch.setenv("POLICY_LEARNING_SERVICE_TENANTS", f"{TEST_TENANT},tenant-other")
+    monkeypatch.setenv("POLICY_LEARNING_SERVICE_TENANTS", f"{TEST_TENANT},tenant-a,tenant-other")
 
     return TestClient(app)
 

@@ -53,6 +53,7 @@ def post_imitation_candidate_intake_http(
     candidate: Dict[str, Any],
     *,
     research_url: Optional[str] = None,
+    auth_headers: Optional[Dict[str, str]] = None,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> ResearchCandidateClientReceipt:
     """Send processed candidate to Research intake endpoint via HTTP.
@@ -68,6 +69,23 @@ def post_imitation_candidate_intake_http(
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
+    if auth_headers:
+        headers.update(auth_headers)
+
+    # Attach service authorization token if configured and not explicitly provided
+    if "Authorization" not in headers and "authorization" not in {k.lower() for k in headers}:
+        try:
+            from inbound_authority import service_token
+            token = service_token()
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+        except ImportError:
+            pass
+
+    # Attach tenant identity header if present on candidate and not explicitly provided
+    tenant_id = candidate.get("tenant_id") or (candidate.get("dataset_lineage") or {}).get("tenant_id")
+    if tenant_id and "X-Tenant-Id" not in headers and "x-tenant-id" not in {k.lower() for k in headers}:
+        headers["X-Tenant-Id"] = str(tenant_id)
 
     req = urllib.request.Request(
         intake_url,
@@ -109,11 +127,18 @@ def post_imitation_candidate_intake_http(
 
     # Perform exact readback verification via GET /api/research-orchestrator/runs/{run_id}
     readback_url = f"{base_url}/api/research-orchestrator/runs/{run_id}"
+    readback_headers = {"Accept": "application/json"}
+    if "Authorization" in headers:
+        readback_headers["Authorization"] = headers["Authorization"]
+    if "X-Tenant-Id" in headers:
+        readback_headers["X-Tenant-Id"] = headers["X-Tenant-Id"]
+
     readback_req = urllib.request.Request(
         readback_url,
-        headers={"Accept": "application/json"},
+        headers=readback_headers,
         method="GET",
     )
+
 
     try:
         with urllib.request.urlopen(readback_req, timeout=timeout_seconds) as rb_resp:
