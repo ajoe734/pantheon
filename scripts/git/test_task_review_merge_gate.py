@@ -188,6 +188,58 @@ class ApprovedPathTests(unittest.TestCase):
         self.assertFalse(decision.allow_merge)
         self.assertEqual(decision.reason, "declared_head_sha_mismatch")
 
+    def test_frozen_delivery_binding_precedes_stale_legacy_github_metadata(self) -> None:
+        decision = decide(
+            tasks=[
+                task_row(
+                    delivery_binding={"kind": "pull_request", **approval_binding()},
+                    review_binding=approval_binding(),
+                    github={
+                        "head_sha": "c" * 40,
+                        "head_branch": "task/ABC-001",
+                    },
+                )
+            ]
+        )
+
+        self.assertTrue(decision.allow_merge)
+        self.assertEqual(decision.reason, "exact_head_approved")
+
+    def test_review_binding_precedes_stale_legacy_github_for_migrated_task(self) -> None:
+        decision = decide(
+            tasks=[
+                task_row(
+                    review_binding=approval_binding(),
+                    github={
+                        "head_sha": "c" * 40,
+                        "head_branch": "task/ABC-001",
+                    },
+                )
+            ]
+        )
+
+        self.assertTrue(decision.allow_merge)
+        self.assertEqual(decision.reason, "exact_head_approved")
+
+    def test_artifact_delivery_binding_cannot_fall_back_to_legacy_pr_metadata(self) -> None:
+        decision = decide(
+            tasks=[
+                task_row(
+                    delivery_binding={
+                        "kind": "artifact_contract",
+                        "contract_sha256": "a" * 64,
+                    },
+                    github={
+                        "head_sha": "b" * 40,
+                        "head_branch": "task/ABC-001",
+                    },
+                )
+            ]
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "declared_head_sha_mismatch")
+
 
 class ApprovalBindingTests(unittest.TestCase):
     """The approval must name what it approved, and the gate must compare it.
