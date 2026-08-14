@@ -216,10 +216,6 @@
         "pantheon-ops",
         "approval-needed"
       ],
-      "coordination": [
-        "pantheon-bus",
-        "coordination-bus"
-      ],
       "resolved": [
         "resolved"
       ]
