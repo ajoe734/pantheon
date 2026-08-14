@@ -1,7 +1,8 @@
 """Policy-learning candidate handoff module.
 
 Hands off processed shadow imitation candidates from policy-learning to the
-Research experiment authority (services/research/experiment_candidate_intake.py).
+Research experiment authority (services/research/experiment_candidate_intake.py)
+via HTTP endpoint or direct intake.
 """
 
 from __future__ import annotations
@@ -10,6 +11,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from research_candidate_client import (
+    ResearchCandidateClientError,
+    post_imitation_candidate_intake_http,
+)
 from services.research.experiment_candidate_intake import (
     ExperimentCandidateIntakeReceipt,
     intake_imitation_candidate,
@@ -49,7 +54,9 @@ def handoff_candidate_to_experiment_authority(
     candidate: Dict[str, Any],
     *,
     research_store: Optional[ResearchOrchestratorStore] = None,
+    research_url: Optional[str] = None,
     timestamp: Optional[str] = None,
+    use_http: bool = True,
 ) -> CandidateHandoffResult:
     """Hand off a processed imitation candidate to Research experiment authority.
 
@@ -73,8 +80,25 @@ def handoff_candidate_to_experiment_authority(
 
     now = timestamp or _utc_now_iso()
 
-    # Perform intake into Research
-    receipt = intake_imitation_candidate(candidate, store=research_store, timestamp=now)
+    if use_http and research_store is None:
+        try:
+            http_receipt = post_imitation_candidate_intake_http(candidate, research_url=research_url)
+            receipt = intake_imitation_candidate(candidate, store=None, timestamp=now)
+            # Override task_id and run_id from HTTP receipt if different
+            receipt = ExperimentCandidateIntakeReceipt(
+                task_id=http_receipt.task_id,
+                run_id=http_receipt.run_id,
+                experiment_task=receipt.experiment_task,
+                experiment_run=receipt.experiment_run,
+                candidate_id=candidate_id,
+                status=http_receipt.status or "intaken",
+                created_at=http_receipt.created_at or now,
+            )
+        except ResearchCandidateClientError as exc:
+            raise CandidateHandoffError(f"HTTP intake failed: {exc}") from exc
+    else:
+        # Perform intake into Research via direct function/store
+        receipt = intake_imitation_candidate(candidate, store=research_store, timestamp=now)
 
     # Attach receipt to candidate
     candidate["experiment_task_id"] = receipt.task_id
@@ -90,3 +114,4 @@ def handoff_candidate_to_experiment_authority(
         handoff_at=now,
         receipt=receipt,
     )
+
