@@ -474,6 +474,7 @@ class PaperFleetReconciler:
         drain_timeout_seconds: Optional[float] = None,
         worker_script_path: Optional[str] = None,
         telemetry_api_url: Optional[str] = None,
+        telemetry_service_token: Optional[str] = None,
         source_ingest_url: Optional[str] = None,
         performance_mark_max_age_seconds: Optional[int] = None,
         performance_state_root: Optional[str] = None,
@@ -514,6 +515,11 @@ class PaperFleetReconciler:
             or os.getenv("PANTHEON_TELEMETRY_API_URL", "")
             or os.getenv("PANTHEON_TELEMETRY_URL", "")
         ).rstrip("/")
+        self._telemetry_service_token = (
+            telemetry_service_token
+            if telemetry_service_token is not None
+            else os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "")
+        ).strip()
         self._source_ingest_url = (
             source_ingest_url
             or os.getenv("PANTHEON_SOURCE_INGEST_URL", "")
@@ -1247,9 +1253,14 @@ class PaperFleetReconciler:
         try:
             import urllib.request
 
+            headers = {"Accept": "application/json"}
+            if self._telemetry_service_token:
+                headers["Authorization"] = (
+                    f"Bearer {self._telemetry_service_token}"
+                )
             req = urllib.request.Request(
                 f"{self._telemetry_url}/api/telemetry/runtime-summaries",
-                headers={"Accept": "application/json"},
+                headers=headers,
                 method="GET",
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
