@@ -6,6 +6,10 @@
 
 狀態：catalog frozen；16/16 canonical materialized；supervisor dispatch underway
 
+2026-08-14 delivery/review 後的四個 gate reconciliation 見
+`CURRENT_BLOCKER_RECONCILIATION_2026-08-14.md`。原 catalog 不改寫；只新增一筆用來承接
+原 immutable scope 漏掉 `services/policy-learning/main.py` 的 supplemental task。
+
 ## 去重結果
 
 - 舊 `L12-MFC-R4-*` 18-task catalog 已全數 terminal，不能重送；本 catalog 只補最新
