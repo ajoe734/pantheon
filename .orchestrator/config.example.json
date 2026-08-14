@@ -8,8 +8,6 @@
     "approval_queue": ".orchestrator/approval-queue.json",
     "sidecar_catalog": ".orchestrator/sidecar_catalog.json",
     "github_bus_state": ".orchestrator/github-bus-state.json",
-    "github_webhook_events": ".orchestrator/github-webhook-events.jsonl",
-    "github_relay_state": ".orchestrator/github-relay-state.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
@@ -216,10 +214,6 @@
         "pantheon-ops",
         "approval-needed"
       ],
-      "coordination": [
-        "pantheon-bus",
-        "coordination-bus"
-      ],
       "resolved": [
         "resolved"
       ]
@@ -248,25 +242,6 @@
     "templates": {
       "ops_issue": ".orchestrator/templates/github_ops_issue.md",
       "review_pr": ".orchestrator/templates/github_review_pr.md"
-    },
-    "phase3": {
-      "github_app": {
-        "enabled": false,
-        "app_id_env": "PANTHEON_GITHUB_APP_ID",
-        "private_key_env": "PANTHEON_GITHUB_APP_PRIVATE_KEY",
-        "installation_id_env": "PANTHEON_GITHUB_INSTALLATION_ID"
-      },
-      "webhook": {
-        "enabled": false,
-        "host": "127.0.0.1",
-        "port": 8776,
-        "secret_env": "PANTHEON_GITHUB_WEBHOOK_SECRET"
-      },
-      "cloud_relay": {
-        "enabled": false,
-        "url_env": "PANTHEON_GITHUB_RELAY_URL",
-        "token_env": "PANTHEON_GITHUB_RELAY_TOKEN"
-      }
     }
   },
   "schema": {

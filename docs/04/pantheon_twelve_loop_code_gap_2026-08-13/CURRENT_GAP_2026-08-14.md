@@ -128,8 +128,8 @@ Management 前端基線：`execute-plans/origin/dev`
 | `candidate_experiment_handoff.py` 直接 import `ResearchOrchestratorStore` | 跨服務直接寫另一 owner store；container 中甚至可能寫自己的本地預設路徑 | 以 existing Research HTTP client/readback 取代，然後刪除此 direct-store implementation | processed candidate 的 task/run 在 Research API readback 可見且 replay 不重複 |
 | `SmokeStrategy` / `BoundedPaperStrategy` 作 normal runner default | smoke BUY 被當正式 capital execution | normal runner 改為 artifact-required 後，移出 runtime default；只允許 explicit smoke fixture 使用 | 缺 artifact、checksum 或 market input 時 enqueue=0；approved artifact E2E 仍產生預期訊號 |
 | generic `/__health__` 作所有 BFF target default | readiness path 不同造成穩定 404 | 不作 accepted loop truth；每個已知 target 必須有 typed path。generic fallback 僅可供未列管 diagnostic，不得晉升 live truth | 所有 12 owner probe 均有明確 target/path/identity |
-| `verify_l12_minimum_functional_closure.py` 與 4-test harness | 12 cases 只 GET 不存在的 `/bff/v1/loops/inventory`，不觸發循環；fallback IDs、readback、anti-mock 與 correlated chain 皆可自我宣告通過 | 移除作為 closure gate；不要再包一層 verifier。真正 E2E 直接成為 gate | 新 deployed E2E 產出真實 trigger/output/readback/consumer identities |
-| `verify_product_v2_current_closure.py` | 只做 evidence directory audit，名稱會與 L12 產品閉環混淆 | 移出 L12 closure；改成明確 historical evidence inventory 或刪除未使用 caller | repo/CI caller 盤點完成 |
+| retired `verify_l12_minimum_functional_closure.py` 與 4-test harness | 12 cases 只 GET 不存在的 `/bff/v1/loops/inventory`，不觸發循環；fallback IDs、readback、anti-mock 與 correlated chain 皆可自我宣告通過 | 已移除，且不得再包一層 inventory verifier。真正 E2E 直接成為 gate | 新 deployed E2E 產出真實 trigger/output/readback/consumer identities |
+| retired `verify_product_v2_current_closure.py` | 只做 evidence directory audit，名稱會與 L12 產品閉環混淆 | 已移除；historical evidence 僅供調查，不能聲稱 closure | repo/CI caller 盤點完成 |
 | 2026-08-13 acceptance evidence 中互相矛盾的 report/markdown/trace | JSON 為 fail/connection refused，Markdown 與 trace 卻寫 passed | 整包標示 invalid historical evidence，不得再被 Management/closeout 讀取 | 新 evidence 只由一次 E2E run 原子產生 |
 | live loop catalog 中的舊 `LOOP-AUTO-*` execution task references | 計畫歷史混入產品現況 | 從 current runtime truth 移除，保留到 historical plan/archive | Management 不再把 task completion 當 liveness |
 
@@ -196,10 +196,10 @@ execution catalog。逐項適用性如下：
 
 ### 6.2 無效的 L12 acceptance
 
-`tests/integration/l12/test_verify_l12_harness.py` 只有 4 個 harness/static tests；
-`scripts/verify_l12_minimum_functional_closure.py` 的 12 cases 沒有真實 trigger，且打的是
+已移除的 `tests/integration/l12/test_verify_l12_harness.py` 只有 4 個 harness/static tests；
+已移除的 `scripts/verify_l12_minimum_functional_closure.py` 的 12 cases 沒有真實 trigger，且打的是
 不存在的 `/bff/v1/loops/inventory`。它不能回答任何一個循環是否運作，也不能回答跨循環
-是否閉環。
+是否閉環；現行 repo 不保留能宣稱 L12 closure 的本地 wrapper。
 
 ### 6.3 必須新增的真實測試
 
@@ -319,5 +319,5 @@ mechanism、一邊再加 repair layer。
 | Telemetry/Reconciliation workers | `services/telemetry/consumer.py`；`services/reconciliation-drift/scheduler_worker.py`；`services/reconciliation-drift/incident_listener.py` |
 | Evolution feedback auth | `services/postmortems/main.py`；`services/evolution/client.py`；`services/evolution/threshold_sweep_worker.py`；`services/evolution/dispatch_worker.py`；`docker-compose.yml` |
 | BFF generic health fallback | `services/control-plane/bff/downstream_health_monitor.py`；`services/control-plane/bff/loop_inventory.py`；`docker-compose.yml` |
-| 無效 closure gate | `scripts/verify_l12_minimum_functional_closure.py`；`tests/integration/l12/test_verify_l12_harness.py`；`scripts/verify_product_v2_current_closure.py` |
+| 已汰除的無效 closure gate | historical paths: `scripts/verify_l12_minimum_functional_closure.py`；`tests/integration/l12/test_verify_l12_harness.py`；`scripts/verify_product_v2_current_closure.py` |
 | Management 計數／分類 | `execute-plans/src/components/management/LoopTruthView.tsx`；`execute-plans/src/pages/management/V5Pages.tsx`；`execute-plans/src/lib/bff-v1/paths.ts` |

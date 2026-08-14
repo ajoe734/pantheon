@@ -1611,8 +1611,6 @@ def load_config() -> dict[str, Any]:
                 "state_file": str(ORCHESTRATOR_STATE_FILE),
                 "approval_queue": str(APPROVAL_QUEUE_FILE),
                 "github_bus_state": str(STATUS_ROOT / ".orchestrator" / "github-bus-state.json"),
-                "github_webhook_events": str(STATUS_ROOT / ".orchestrator" / "github-webhook-events.jsonl"),
-                "github_relay_state": str(STATUS_ROOT / ".orchestrator" / "github-relay-state.json"),
                 "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
             }
         )

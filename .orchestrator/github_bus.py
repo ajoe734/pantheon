@@ -18,7 +18,6 @@ from common import (
     config_path,
     load_config,
     load_json,
-    load_jsonl,
     load_status,
     render_template,
     run_command,
@@ -26,13 +25,9 @@ from common import (
     write_activity_log,
     write_json,
 )
-from cross_repo_issue_mapper import coordination_issue_body, coordination_issue_labels, coordination_issue_title
-from github_cloud_relay import pull_commands, push_status_digest
 from github_command_parser import GitHubCommand, parse_command
 from multi_repo_registry import (
-    coordination_enabled,
     matching_repo_id,
-    repository_slug,
     resolve_repository,
 )
 
@@ -75,14 +70,11 @@ def default_bus_state() -> dict[str, Any]:
         "last_error": None,
         "processed_review_ids": [],
         "processed_comment_ids": [],
-        "processed_webhook_deliveries": [],
         "poll_cursors": {
             "pr_reviews": 0,
             "issue_comments": 0,
-            "coordination_comments": 0,
         },
         "tasks": {},
-        "coordination": {},
     }
 
 
@@ -94,12 +86,15 @@ def load_bus_state(config: dict[str, Any]) -> dict[str, Any]:
     merged.setdefault("tasks", {})
     merged.setdefault("processed_review_ids", [])
     merged.setdefault("processed_comment_ids", [])
-    merged.setdefault("processed_webhook_deliveries", [])
     merged.setdefault("poll_cursors", {})
     merged["poll_cursors"].setdefault("pr_reviews", 0)
     merged["poll_cursors"].setdefault("issue_comments", 0)
-    merged["poll_cursors"].setdefault("coordination_comments", 0)
-    merged.setdefault("coordination", {})
+    # Retire legacy feature-issue and webhook delivery caches on read so the
+    # next normal state write completes their migration without retaining
+    # stale issue references or dead polling cursors.
+    merged.pop("processed_webhook_deliveries", None)
+    merged["poll_cursors"].pop("coordination_comments", None)
+    merged.pop("coordination", None)
     return merged
 
 
@@ -116,16 +111,12 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
         ):
             pruned_tasks[task_id] = entry
     state["tasks"] = pruned_tasks
-    pruned_coordination: dict[str, Any] = {}
-    for key, entry in (state.get("coordination") or {}).items():
-        issue = (entry or {}).get("issue") or {}
-        if any((issue.get("number"), issue.get("url"), entry.get("last_hash"))):
-            pruned_coordination[key] = entry
-    state["coordination"] = pruned_coordination
+    state.pop("coordination", None)
+    (state.get("poll_cursors") or {}).pop("coordination_comments", None)
     state["last_sync_at"] = utc_now()
     state["processed_review_ids"] = state.get("processed_review_ids", [])[-MAX_PROCESSED_IDS:]
     state["processed_comment_ids"] = state.get("processed_comment_ids", [])[-MAX_PROCESSED_IDS:]
-    state["processed_webhook_deliveries"] = state.get("processed_webhook_deliveries", [])[-MAX_PROCESSED_IDS:]
+    state.pop("processed_webhook_deliveries", None)
     write_json(config_path(config, "github_bus_state"), state)
 
 
@@ -372,22 +363,6 @@ def task_bus_entry(bus_state: dict[str, Any], task_id: str) -> dict[str, Any]:
     )
 
 
-def coordination_bus_key(repo: str, feature_id: str) -> str:
-    return f"{repo}:{feature_id}"
-
-
-def coordination_bus_entry(bus_state: dict[str, Any], repo: str, feature_id: str) -> dict[str, Any]:
-    return bus_state.setdefault("coordination", {}).setdefault(
-        coordination_bus_key(repo, feature_id),
-        {
-            "repo": repo,
-            "feature_id": feature_id,
-            "issue": None,
-            "last_hash": None,
-        },
-    )
-
-
 def build_template_body(config: dict[str, Any], template_key: str, variables: dict[str, Any]) -> str:
     template_rel = config.get("github_bus", {}).get("templates", {}).get(template_key)
     if not template_rel:
@@ -598,46 +573,6 @@ def _select_task_pr_evidence(
     return None, None, None
 
 
-def find_existing_coordination_issue(repo: str, feature_id: str) -> dict[str, Any] | None:
-    data = gh_json(
-        [
-            "issue",
-            "list",
-            "--repo",
-            repo,
-            "--state",
-            "open",
-            "--search",
-            f'"[CoordBus] {feature_id}" in:title',
-            "--json",
-            "number,title,url,state,labels",
-        ]
-    )
-    if isinstance(data, list) and data:
-        return data[0]
-    return None
-
-
-def issue_mutation_with_label_fallback(command: list[str]) -> subprocess.CompletedProcess[str]:
-    try:
-        return run_gh(command)
-    except GitHubBusError as exc:
-        message = str(exc).lower()
-        if "label" not in message:
-            raise
-        rebuilt: list[str] = []
-        skip_next = False
-        for item in command:
-            if skip_next:
-                skip_next = False
-                continue
-            if item in {"--label", "--add-label"}:
-                skip_next = True
-                continue
-            rebuilt.append(item)
-        return run_gh(rebuilt)
-
-
 def upsert_ops_issue(config: dict[str, Any], bus_state: dict[str, Any], repo: str, task: dict[str, Any], reason: str, details: str) -> bool:
     entry = task_bus_entry(bus_state, task["id"])
     issue_ref = entry.get("ops_issue")
@@ -717,80 +652,6 @@ def close_ops_issue(config: dict[str, Any], entry: dict[str, Any], task_id: str,
             "task_id": task_id,
             "message": reason,
             "github_url": issue_ref.get("url"),
-        },
-    )
-    return True
-
-
-def coordination_counterpart_links(bus_state: dict[str, Any], feature_id: str, current_repo: str) -> list[str]:
-    links: list[str] = []
-    for key, entry in (bus_state.get("coordination") or {}).items():
-        if not key.endswith(f":{feature_id}"):
-            continue
-        if entry.get("repo") == current_repo:
-            continue
-        issue = (entry or {}).get("issue") or {}
-        if issue.get("url"):
-            links.append(str(issue["url"]))
-    return links
-
-
-def upsert_coordination_issue(config: dict[str, Any], bus_state: dict[str, Any], repo: str, feature: dict[str, Any]) -> bool:
-    feature_id = str(feature.get("feature_id") or "").strip()
-    if not feature_id:
-        return False
-    entry = coordination_bus_entry(bus_state, repo, feature_id)
-    issue_ref = entry.get("issue")
-    title = coordination_issue_title(feature)
-    labels = coordination_issue_labels(config, feature)
-    body = coordination_issue_body(
-        feature,
-        repo_slug=repo,
-        counterpart_links=coordination_counterpart_links(bus_state, feature_id, repo),
-    )
-    issue_hash = json.dumps({"title": title, "body": body, "labels": labels}, ensure_ascii=False, sort_keys=True)
-    if entry.get("last_hash") == issue_hash and issue_ref:
-        return False
-
-    body_file = ensure_temp_body(body)
-    try:
-        if issue_ref and issue_ref.get("number"):
-            number = int(issue_ref["number"])
-            issue_mutation_with_label_fallback(
-                ["issue", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)]
-            )
-            issue = dict(issue_ref)
-        else:
-            found = find_existing_coordination_issue(repo, feature_id)
-            if found:
-                number = int(found["number"])
-                issue_mutation_with_label_fallback(
-                    ["issue", "edit", str(number), "--repo", repo, "--title", title, "--body-file", str(body_file), *edit_label_args(labels)]
-                )
-                issue = {"number": number, "url": found.get("url"), "title": title}
-            else:
-                proc = issue_mutation_with_label_fallback(
-                    ["issue", "create", "--repo", repo, "--title", title, "--body-file", str(body_file), *create_label_args(labels)]
-                )
-                url = (proc.stdout or "").strip().splitlines()[-1]
-                issue = {"number": parse_number_from_url(url), "url": url, "title": title}
-    finally:
-        body_file.unlink(missing_ok=True)
-
-    entry["issue"] = {
-        "number": issue.get("number"),
-        "url": issue.get("url"),
-        "title": title,
-        "state": "open",
-    }
-    entry["last_hash"] = issue_hash
-    write_activity_log(
-        config,
-        {
-            "type": "github_coordination_issue_synced",
-            "task_id": feature_id,
-            "message": f"GitHub coordination issue synced for {feature_id} in {repo}.",
-            "github_url": entry["issue"].get("url"),
         },
     )
     return True
@@ -1242,7 +1103,6 @@ def apply_bus_command(
     *,
     task: dict[str, Any] | None = None,
     issue_number: int | None = None,
-    runtime_state: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     task_id, target_task = resolve_task(status, command.target or (task or {}).get("id"), fallback_task=task)
     changed = False
@@ -1300,15 +1160,7 @@ def apply_bus_command(
         reply = f"Cleared cached GitHub sync hashes for `{task_id}`; it will be re-synced on the next poll."
         changed = True
     elif command.verb == "status":
-        feature = coordination_feature_summary(runtime_state or {}, command.args[-1] if command.args else task_id or "")
-        if feature and not target_task:
-            reply = (
-                f"Feature `{feature.get('feature_id')}` is `{feature.get('status')}`; "
-                f"labels={','.join(feature.get('state_labels') or []) or '-'}, "
-                f"worker=`{feature.get('worker_kind') or '-'}`, next={trim_text(feature.get('next_step') or '-', 120)}"
-            )
-        else:
-            reply = task_summary_line(target_task or task or {"id": task_id or "-", "status": "unknown", "owner": "-", "reviewer": "-", "next": "-"})
+        reply = task_summary_line(target_task or task or {"id": task_id or "-", "status": "unknown", "owner": "-", "reviewer": "-", "next": "-"})
     else:
         reply = f"Unsupported or incomplete command `{command.raw}`."
 
@@ -1353,41 +1205,11 @@ def process_issue_command(
     return changed
 
 
-def process_coordination_issue_command(
-    config: dict[str, Any],
-    bus_state: dict[str, Any],
-    status: dict[str, Any],
-    repo: str,
-    issue_number: int,
-    command: GitHubCommand,
-    actor: str,
-    runtime_state: dict[str, Any],
-) -> bool:
-    changed, reply_text = apply_bus_command(
-        config,
-        bus_state,
-        status,
-        repo,
-        command,
-        actor,
-        issue_number=issue_number,
-        runtime_state=runtime_state,
-    )
-    reply = f"{COMMENT_MARKER}\n{reply_text}"
-    if reply:
-        post_issue_comment(repo, issue_number, reply)
-    return changed
-
-
 def task_summary_line(task: dict[str, Any]) -> str:
     return (
         f"Task `{task.get('id')}` is `{task.get('status')}`; "
         f"owner=`{task.get('owner')}`, reviewer=`{task.get('reviewer')}`, next={trim_text(task.get('next') or '-', 120)}"
     )
-
-
-def coordination_feature_summary(runtime_state: dict[str, Any], feature_id: str) -> dict[str, Any] | None:
-    return (((runtime_state.get("coordination") or {}).get("features") or {}).get(feature_id) if runtime_state else None)
 
 
 def poll_issue_comments(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], repo: str) -> bool:
@@ -1440,63 +1262,6 @@ def poll_issue_comments(config: dict[str, Any], bus_state: dict[str, Any], statu
                 seen.add(key)
                 continue
             process_issue_command(config, bus_state, status, repo, int(number), task, command, actor)
-            seen.add(key)
-            changed = True
-    bus_state["processed_comment_ids"] = list(seen)
-    return changed
-
-
-def poll_coordination_issue_comments(
-    config: dict[str, Any],
-    bus_state: dict[str, Any],
-    status: dict[str, Any],
-    runtime_state: dict[str, Any],
-) -> bool:
-    changed = False
-    seen = set(bus_state.get("processed_comment_ids", []))
-    allowed = allowed_logins(config)
-    candidates = [
-        entry
-        for entry in (bus_state.get("coordination") or {}).values()
-        if str(entry.get("repo") or "").strip() and ((entry or {}).get("issue") or {}).get("number")
-    ]
-    cursors = bus_state.setdefault("poll_cursors", {})
-    batch, next_cursor = _poll_batch(
-        candidates,
-        cursor=int(cursors.get("coordination_comments", 0) or 0),
-        limit=poll_batch_size(config, "coordination_comments", 3),
-    )
-    cursors["coordination_comments"] = next_cursor
-
-    for entry in batch:
-        repo = str(entry.get("repo") or "").strip()
-        issue_ref = (entry or {}).get("issue") or {}
-        number = issue_ref.get("number")
-        if not repo or not number:
-            continue
-        comments = gh_json(["api", f"repos/{repo}/issues/{number}/comments?per_page=100"])
-        if not isinstance(comments, list):
-            continue
-        for comment in comments:
-            comment_id = comment.get("id")
-            if comment_id is None:
-                continue
-            key = comment_key("issue", comment_id)
-            if key in seen:
-                continue
-            body = comment.get("body") or ""
-            if COMMENT_MARKER in body:
-                seen.add(key)
-                continue
-            actor = ((comment.get("user") or {}).get("login") or "").strip()
-            if allowed and actor not in allowed:
-                seen.add(key)
-                continue
-            command = parse_command(body)
-            if not command:
-                seen.add(key)
-                continue
-            process_coordination_issue_command(config, bus_state, status, repo, int(number), command, actor, runtime_state)
             seen.add(key)
             changed = True
     bus_state["processed_comment_ids"] = list(seen)
@@ -1585,131 +1350,6 @@ def poll_pr_reviews(config: dict[str, Any], bus_state: dict[str, Any], status: d
     return changed
 
 
-def consume_webhook_events(
-    config: dict[str, Any],
-    bus_state: dict[str, Any],
-    status: dict[str, Any],
-    repo: str,
-    runtime_state: dict[str, Any],
-) -> bool:
-    path = config_path(config, "github_webhook_events")
-    if not path.exists():
-        return False
-
-    seen = set(bus_state.get("processed_webhook_deliveries", []))
-    changed = False
-    for event in load_jsonl(path):
-        delivery = event.get("delivery")
-        if not delivery or delivery in seen:
-            continue
-        kind = event.get("event")
-        payload = event.get("payload") or {}
-        if kind == "issue_comment":
-            issue = payload.get("issue") or {}
-            comment = payload.get("comment") or {}
-            actor = ((comment.get("user") or {}).get("login") or "").strip()
-            command = parse_command(comment.get("body") or "")
-            if command:
-                issue_number = issue.get("number")
-                task = None
-                for task_id, entry in bus_state.get("tasks", {}).items():
-                    issue_ref = entry.get("ops_issue") or {}
-                    if issue_ref.get("number") == issue_number:
-                        task = next((item for item in status.get("tasks", []) if item.get("id") == task_id), None)
-                        break
-                if task and issue_number:
-                    changed = process_issue_command(config, bus_state, status, repo, int(issue_number), task, command, actor) or changed
-                elif issue_number:
-                    for entry in (bus_state.get("coordination") or {}).values():
-                        issue_ref = (entry or {}).get("issue") or {}
-                        if issue_ref.get("number") != issue_number:
-                            continue
-                        changed = process_coordination_issue_command(
-                            config,
-                            bus_state,
-                            status,
-                            str(entry.get("repo") or repo),
-                            int(issue_number),
-                            command,
-                            actor,
-                            runtime_state,
-                        ) or changed
-                        break
-        elif kind == "pull_request_review":
-            review = payload.get("review") or {}
-            pr = payload.get("pull_request") or {}
-            actor = ((review.get("user") or {}).get("login") or "").strip()
-            pr_number = pr.get("number")
-            if pr_number:
-                for task_id, entry in bus_state.get("tasks", {}).items():
-                    review_ref = entry.get("review_pr") or {}
-                    if review_ref.get("number") != pr_number:
-                        continue
-                    task = next((item for item in status.get("tasks", []) if item.get("id") == task_id), None)
-                    if not task:
-                        continue
-                    state_value = str(review.get("state") or "").upper()
-                    body = trim_text(review.get("body"), 240)
-                    if state_value == "APPROVED":
-                        run_ai_status("approve", task_id, f"GitHub PR approved via webhook PR #{pr_number} by @{actor}.", actor=str(task.get("reviewer") or "").strip() or None)
-                        changed = True
-                    elif state_value == "CHANGES_REQUESTED":
-                        detail = f"GitHub PR requested changes via webhook PR #{pr_number} by @{actor}."
-                        if body:
-                            detail += f" {body}"
-                        run_ai_status("reopen", task_id, detail, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
-                        changed = True
-                    elif state_value == "COMMENTED":
-                        note = f"GitHub PR comment via webhook PR #{pr_number} by @{actor}."
-                        if body:
-                            note += f" {body}"
-                        run_ai_status("note", task_id, note, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
-                        changed = True
-                    break
-        seen.add(delivery)
-    bus_state["processed_webhook_deliveries"] = list(seen)
-    return changed
-
-
-def push_cloud_relay_digest(config: dict[str, Any], status: dict[str, Any], runtime_state: dict[str, Any], bus_state: dict[str, Any]) -> None:
-    digest = {
-        "objective": status.get("objective"),
-        "updated_at": status.get("updated_at"),
-        "task_counts": {
-            "review": sum(1 for task in status.get("tasks", []) if task.get("status") == "review"),
-            "blocked": sum(1 for task in status.get("tasks", []) if task.get("status") == "blocked"),
-            "in_progress": sum(1 for task in status.get("tasks", []) if task.get("status") == "in_progress"),
-        },
-        "worker_counts": {
-            "failed": sum(1 for worker in runtime_state.get("workers", {}).values() if worker.get("status") == "failed"),
-            "waiting_approval": sum(1 for worker in runtime_state.get("workers", {}).values() if worker.get("status") == "waiting_approval"),
-            "stalled": sum(1 for worker in runtime_state.get("workers", {}).values() if worker.get("status") == "stalled"),
-        },
-        "repo": bus_state.get("repo"),
-    }
-    push_status_digest(config, digest)
-
-
-def consume_cloud_relay_commands(
-    config: dict[str, Any],
-    bus_state: dict[str, Any],
-    status: dict[str, Any],
-    repo: str,
-    runtime_state: dict[str, Any],
-) -> bool:
-    changed = False
-    for item in pull_commands(config):
-        command = parse_command(item.get("command") or "")
-        if not command:
-            continue
-        actor = item.get("actor") or "relay"
-        task_id = command.target
-        task = next((entry for entry in status.get("tasks", []) if entry.get("id") == task_id), None) if task_id else None
-        command_changed, _ = apply_bus_command(config, bus_state, status, repo, command, actor, task=task, issue_number=None, runtime_state=runtime_state)
-        changed = command_changed or changed
-    return changed
-
-
 # Task states that never regain a task branch worth polling for a PR.
 _PR_RECONCILIATION_TERMINAL_STATUSES = frozenset({"done", "archived", "superseded"})
 
@@ -1763,7 +1403,7 @@ def _pr_reconciliation_candidates(
     return candidates
 
 
-def sync_outbound(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], runtime_state: dict[str, Any], repo: str) -> bool:
+def sync_outbound(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], repo: str) -> bool:
     changed = False
     blocked_tasks = {task.get("id"): task for task in status.get("tasks", []) if task.get("status") == "blocked"}
     review_tasks = _pr_reconciliation_candidates(config, bus_state, status)
@@ -1813,31 +1453,6 @@ def sync_outbound(config: dict[str, Any], bus_state: dict[str, Any], status: dic
     return changed
 
 
-def sync_coordination_outbound(config: dict[str, Any], bus_state: dict[str, Any], runtime_state: dict[str, Any]) -> bool:
-    if not coordination_enabled(config):
-        return False
-    changed = False
-    features = ((runtime_state.get("coordination") or {}).get("features") or {})
-    for feature in features.values():
-        for repo_id in feature.get("issue_repo_ids", []) or []:
-            slug = repository_slug(config, repo_id)
-            if not slug:
-                continue
-            try:
-                changed = upsert_coordination_issue(config, bus_state, slug, feature) or changed
-            except GitHubBusError as exc:
-                write_activity_log(
-                    config,
-                    {
-                        "type": "github_coordination_issue_failed",
-                        "task_id": feature.get("feature_id"),
-                        "message": trim_text(str(exc), 600),
-                        "github_repo": slug,
-                    },
-                )
-    return changed
-
-
 def should_skip_for_offline_backoff(config: dict[str, Any], bus_state: dict[str, Any]) -> bool:
     offline_until = _parse_iso(bus_state.get("offline_until"))
     if not offline_until:
@@ -1878,20 +1493,11 @@ def sync_github_bus(config: dict[str, Any], runtime_state: dict[str, Any]) -> bo
 
     try:
         changed = False
-        changed = sync_outbound(config, bus_state, status, runtime_state, repo) or changed
-        changed = sync_coordination_outbound(config, bus_state, runtime_state) or changed
-        status = load_status(config)
-        changed = consume_webhook_events(config, bus_state, status, repo, runtime_state) or changed
+        changed = sync_outbound(config, bus_state, status, repo) or changed
         status = load_status(config)
         changed = poll_pr_reviews(config, bus_state, status, repo) or changed
         status = load_status(config)
         changed = poll_issue_comments(config, bus_state, status, repo) or changed
-        status = load_status(config)
-        changed = poll_coordination_issue_comments(config, bus_state, status, runtime_state) or changed
-        status = load_status(config)
-        changed = consume_cloud_relay_commands(config, bus_state, status, repo, runtime_state) or changed
-        status = load_status(config)
-        push_cloud_relay_digest(config, status, runtime_state, bus_state)
         bus_state["offline_until"] = None
         bus_state["last_error"] = None
         save_bus_state(config, bus_state)
