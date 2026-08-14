@@ -512,6 +512,16 @@ def _strategy_symbol(
             "market_input_missing",
             f"binding {binding_id} has no market symbol",
         )
+    if (
+        isinstance(symbols, Sequence)
+        and not isinstance(symbols, (str, bytes))
+        and symbol not in symbols
+    ):
+        binding_id = str(binding.get("binding_id") or "<unknown>")
+        raise SignalDecisionUnavailable(
+            "market_input_invalid",
+            f"binding {binding_id} market symbol {symbol!r} is outside artifact symbols",
+        )
     return symbol
 
 
