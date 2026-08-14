@@ -10,7 +10,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from services.execution.lean_runtime.paper_runtime import (
     _Handler,
@@ -1259,6 +1259,35 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(event["metadata"]["engine_bridge_repo"], "ajoe734/pantheon-lean.git")
         self.assertEqual(event["metadata"]["engine_bridge_commit"], "abc1234")
         self.assertEqual(event["metadata"]["context_source"], "launch_manifest")
+
+    def test_runtime_telemetry_emitter_authenticates_ingest_tenant(self):
+        identity = replace(
+            self._identity(),
+            telemetry_url="http://telemetry.test",
+        )
+        response = MagicMock()
+        response.__enter__.return_value.status = 202
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TELEMETRY_SERVICE_TOKEN": "telemetry-service-secret",
+                "PANTHEON_TENANT_ID": "tenant-paper",
+            },
+        ):
+            emitter = RuntimeTelemetryEmitter(
+                identity,
+                _FakeBindingResolver(self._binding()),
+            )
+        with patch("urllib.request.urlopen", return_value=response) as urlopen:
+            emitted = emitter.emit_heartbeat()
+
+        self.assertTrue(emitted)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.get_header("Authorization"),
+            "Bearer telemetry-service-secret",
+        )
+        self.assertEqual(request.get_header("X-tenant-id"), "tenant-paper")
 
     def test_runtime_telemetry_emitter_carries_binding_effective_boundary(self):
         binding = self._binding()

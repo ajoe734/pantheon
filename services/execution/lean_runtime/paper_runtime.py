@@ -1708,6 +1708,12 @@ class RuntimeTelemetryEmitter:
         self._runtime_context = runtime_context
         self._url = str(self._identity.telemetry_url or os.getenv("PANTHEON_TELEMETRY_URL", "")).strip().rstrip("/")
         self._timeout = int(os.getenv("PANTHEON_TELEMETRY_TIMEOUT_SECONDS", "5"))
+        self._service_token = os.getenv(
+            "PANTHEON_TELEMETRY_SERVICE_TOKEN", ""
+        ).strip()
+        self._tenant_id = (
+            os.getenv("PANTHEON_TENANT_ID", "default").strip() or "default"
+        )
         self._enabled = bool(self._url)
         self._sent = 0
         self._failed = 0
@@ -1957,10 +1963,17 @@ class RuntimeTelemetryEmitter:
             self._failed += 1
             self._last_error = f"{type(exc).__name__}: {exc}"
             return False
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-Tenant-Id": self._tenant_id,
+        }
+        if self._service_token:
+            headers["Authorization"] = f"Bearer {self._service_token}"
         request = urllib.request.Request(
             f"{self._url}/api/telemetry/ingest",
             data=body,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
