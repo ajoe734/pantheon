@@ -1167,14 +1167,6 @@ def provider_account_id(config: dict[str, Any], provider: str | None) -> str:
     return normalize_agent_id(str(provider_cfg.get("account") or ""))
 
 
-def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
-    normalized = normalize_agent_id(agent_id or "")
-    if not normalized:
-        return ""
-    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
-    return normalize_agent_id(str(agent.get("provider") or ""))
-
-
 def agent_provider_key(config: dict[str, Any], agent_id: str | None) -> str:
     """Return the exact configured provider key for an agent.
 
