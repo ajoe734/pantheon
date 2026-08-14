@@ -523,18 +523,33 @@ def evaluate_runtime_health(
     loop_started = parse_utc_timestamp(supervisor.get("last_loop_started_at"))
     loop_finished = parse_utc_timestamp(supervisor.get("last_loop_finished_at"))
     loop_age = (now - successful_loop).total_seconds() if successful_loop is not None else None
-    loop_sequence_ok = bool(
+    completed_loop_is_current = bool(
         successful_loop is not None
         and loop_started is not None
         and loop_finished is not None
         and loop_started <= loop_finished == successful_loop
+    )
+    in_flight_after_success = bool(
+        successful_loop is not None
+        and loop_started is not None
+        and loop_finished is not None
+        and loop_started > loop_finished == successful_loop
+    )
+    loop_sequence_ok = bool(
+        (completed_loop_is_current or in_flight_after_success)
         and supervisor.get("last_loop_error") is None
         and loop_age is not None
         and 0 <= loop_age <= stall_after
     )
+    in_flight_cycle_age = (
+        (now - loop_started).total_seconds()
+        if in_flight_after_success and loop_started is not None
+        else None
+    )
     last_cycle = supervisor.get("last_cycle_metrics") if isinstance(supervisor.get("last_cycle_metrics"), dict) else {}
     cycle_elapsed = last_cycle.get("cycle_elapsed_seconds", supervisor.get("cycle_elapsed_seconds"))
     cycle_elapsed_value = float(cycle_elapsed) if isinstance(cycle_elapsed, (int, float)) else None
+    effective_cycle_elapsed = in_flight_cycle_age if in_flight_cycle_age is not None else cycle_elapsed_value
     dispatch_latency = supervisor.get("queue_to_start_latency_seconds")
     queue_to_start = last_cycle.get("queue_to_start") if isinstance(last_cycle.get("queue_to_start"), dict) else {}
     if isinstance(queue_to_start.get("max_seconds"), (int, float)):
@@ -550,12 +565,24 @@ def evaluate_runtime_health(
         check(
             "progress_fresh_successful_loop",
             loop_sequence_ok,
-            {"last_successful_loop_at": supervisor.get("last_successful_loop_at"), "age_seconds": loop_age, "max_age_seconds": stall_after},
+            {
+                "last_successful_loop_at": supervisor.get("last_successful_loop_at"),
+                "last_loop_started_at": supervisor.get("last_loop_started_at"),
+                "last_loop_finished_at": supervisor.get("last_loop_finished_at"),
+                "in_flight_after_success": in_flight_after_success,
+                "age_seconds": loop_age,
+                "max_age_seconds": stall_after,
+            },
         ),
         check(
             "progress_cycle_within_budget",
-            cycle_elapsed_value is not None and 0 <= cycle_elapsed_value <= max_cycle_elapsed,
-            {"cycle_elapsed_seconds": cycle_elapsed_value, "max_cycle_elapsed_seconds": max_cycle_elapsed},
+            effective_cycle_elapsed is not None and 0 <= effective_cycle_elapsed <= max_cycle_elapsed,
+            {
+                "cycle_elapsed_seconds": effective_cycle_elapsed,
+                "completed_cycle_elapsed_seconds": cycle_elapsed_value,
+                "in_flight": in_flight_after_success,
+                "max_cycle_elapsed_seconds": max_cycle_elapsed,
+            },
         ),
         check(
             "progress_dispatch_latency_within_budget",

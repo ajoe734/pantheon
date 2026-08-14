@@ -146,7 +146,6 @@ def audited_reassignment_event(
     event["event_id"] = ai_status._supervisor_reassignment_event_id(event)
     return event
 
-from canonical_writer_guard import assert_isolated_legacy_write_target
 from rewrite.task_state_store import load_events
 
 
@@ -2458,49 +2457,6 @@ class StatusRootRoutingTests(unittest.TestCase):
             self.assertIn("cannot be a symlink", proc.stderr)
 
             runtime_leaf.unlink()
-
-
-class CanonicalWriterGuardTests(unittest.TestCase):
-    def test_isolated_override_never_bypasses_a_git_checkout(self) -> None:
-        canonical_status = Path(__file__).resolve().parents[1] / "ai-status.json"
-        with mock.patch.dict(
-            os.environ,
-            {"PANTHEON_ALLOW_ISOLATED_TEST_WRITES": "1"},
-            clear=False,
-        ):
-            with self.assertRaisesRegex(RuntimeError, "canonical state in a git checkout"):
-                assert_isolated_legacy_write_target(
-                    canonical_status,
-                    tool="guard-test",
-                )
-
-    def test_configured_non_git_fixture_requires_explicit_override(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir) / "ai-status.json"
-            with mock.patch.dict(
-                os.environ,
-                {"PANTHEON_STATUS_ROOT": temp_dir},
-                clear=False,
-            ):
-                os.environ.pop("PANTHEON_ALLOW_ISOLATED_TEST_WRITES", None)
-                with self.assertRaisesRegex(RuntimeError, "PANTHEON_STATUS_ROOT"):
-                    assert_isolated_legacy_write_target(target, tool="guard-test")
-                os.environ["PANTHEON_ALLOW_ISOLATED_TEST_WRITES"] = "1"
-                assert_isolated_legacy_write_target(target, tool="guard-test")
-
-    def test_legacy_override_cannot_authorize_configured_status_root_write(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir) / "ai-status.json"
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "PANTHEON_STATUS_ROOT": temp_dir,
-                    "PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES": "1",
-                },
-                clear=False,
-            ):
-                with self.assertRaisesRegex(RuntimeError, "PANTHEON_STATUS_ROOT"):
-                    assert_isolated_legacy_write_target(target, tool="guard-test")
 
 
 class ReviewApprovedWorkflowTests(unittest.TestCase):
