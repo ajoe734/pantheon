@@ -119,6 +119,18 @@ services:
       # store.
       CONSULTATION_AUTH_REQUIRED: ${CONSULTATION_AUTH_REQUIRED:-true}
       CONSULTATION_SERVICE_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
+      CONSULTATION_API_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      CONSULTATION_PROVIDER_URL: http://openclaw-gateway-adapter:8104/api/openclaw-adapter/consultation/contributions
+      CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
+      CONSULTATION_PROVIDER_SERVICE_ACTOR: consultation-workflow-executor
+      # The executor fails closed until the existing downstream owner exposes
+      # the acknowledgement contract required by workflow_executor.py. Keep
+      # this explicit (and empty by default) rather than naming a fake sink.
+      CONSULTATION_HANDOFF_SINK_URL: ${CONSULTATION_HANDOFF_SINK_URL:-}
+      CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-}
+      CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE: /data/consultation/workflow-health.json
+      CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS:-15}
     volumes:
       - consultation-data:/data/consultation
     ports:
@@ -126,11 +138,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      openclaw-gateway-adapter:
+        condition: service_healthy
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8096'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+          "python -c \"import json,os,sys,time,urllib.request; port=os.environ.get('PORT','8096'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz',timeout=5).read(); p=os.environ['CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE']; h=json.load(open(p,encoding='utf-8')); f=h.get('functional_health') or {}; age=time.time()-os.path.getmtime(p); sys.exit(0 if f.get('ready') is True and int(f.get('blocked_count') or 0)==0 and int(f.get('dead_letter_count') or 0)==0 and age<=90 else 1)\"",
         ]
       interval: 10s
       timeout: 5s
@@ -209,16 +223,18 @@ services:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "-m", "services.source_ingestion.controller_worker"]
-    restart: "no"
-    # Opt-in, bounded, and non-restarting. The deploy gate requires a finite
-    # tick count and an exact HTTPS host allowlist before enabling this profile.
-    profiles: ["source-ingest-scheduler"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    # This same controller is the sole durable owner. Operators retain an
+    # explicit bounded smoke with `docker compose run --rm -e
+    # SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 source-ingest-scheduler`; there is
+    # no second scheduler service or profile-only production owner.
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
       SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
       SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS: ${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}
-      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}
       SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS: ${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}
       SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS: ${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}
       SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
@@ -516,8 +532,11 @@ services:
       TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT: ${TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT:-10}
       TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS:-30}
       TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH: ${TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH:-/data/training-session/preview-worker-alive}
-      TRAINING_SESSION_WORKER_TOKEN: ${TRAINING_SESSION_WORKER_TOKEN:-pantheon-local-training-session-worker}
+      # HS256 dev service JWT signed by the API's published local/dev secret.
+      # Hosted environments override both the verifier secret and this token.
+      TRAINING_SESSION_WORKER_TOKEN: ${TRAINING_SESSION_WORKER_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGxvd2VkX3RlbmFudHMiOlsiKiJdLCJyb2xlcyI6WyJ0cmFpbmluZy1zZXJ2aWNlIl0sInNlcnZpY2UiOiJ0cmFpbmluZy1zZXNzaW9uLXByZXZpZXctd29ya2VyIiwic3ViIjoidHJhaW5pbmctc2Vzc2lvbi1wcmV2aWV3LXdvcmtlciJ9.eb4LoU20NsZEfH8VYjhl1xyOaa37bzzg7yC-D87Uu2g}
       TRAINING_SESSION_TENANT_ID: ${TRAINING_SESSION_TENANT_ID:-default}
+      TRAINING_SESSION_WORKER_SERVICE_ID: training-session-preview-worker
     volumes:
       - training-session-data:/data/training-session
     depends_on:
@@ -601,6 +620,8 @@ services:
     stop_grace_period: 30s
     environment:
       POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
+      AGORA_BFF_URL: http://operator-bff:8001
+      RESEARCH_SERVICE_URL: http://research-orchestrator-svc:8101
       SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS: ${SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS:-3600}
       SHADOW_EVAL_SCHEDULER_MAX_TICKS: ${SHADOW_EVAL_SCHEDULER_MAX_TICKS:-0}
       SHADOW_EVAL_TYPE: ${SHADOW_EVAL_TYPE:-shadow}
@@ -785,6 +806,8 @@ services:
       # environment; strict auth is the dev-stack default.
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
+      CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
+      CONSULTATION_PROVIDER_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
     volumes:
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
@@ -957,6 +980,9 @@ services:
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       PANTHEON_TELEMETRY_SERVICE_TENANTS: ${PANTHEON_TELEMETRY_SERVICE_TENANTS:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
+      PANTHEON_TELEMETRY_AUTH_MODE: ${PANTHEON_TELEMETRY_AUTH_MODE:-strict}
+      PANTHEON_TELEMETRY_JWT_SECRET: ${PANTHEON_TELEMETRY_JWT_SECRET:-pantheon-local-telemetry-jwt-secret}
+      PANTHEON_TELEMETRY_INFRA_PRODUCERS: ${PANTHEON_TELEMETRY_INFRA_PRODUCERS:-control-plane-bff}
       PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED: ${PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED:-false}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       TELEMETRY_STARTUP_TIMEOUT_SECONDS: ${TELEMETRY_STARTUP_TIMEOUT_SECONDS:-240}
@@ -1033,6 +1059,8 @@ services:
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
       EVOLUTION_URL: http://evolution:8093
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
+      EVOLUTION_DEFAULT_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-pantheon-default}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
@@ -1151,6 +1179,15 @@ services:
       PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/lifecycle-projection/current/loop_runs.json
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
+      # Every configured owner URL has an exact existing health route. This
+      # disables the generic /__health__ guess that returned deterministic
+      # 404s for FastAPI owners and preserves component identity in emitted
+      # telemetry/incidents.
+      PANTHEON_BFF_HEALTH_TARGETS_JSON: >-
+        [{"name":"runtime-manager","url":"http://runtime-manager:8081","health_path":"/readyz","component_kind":"runtime-owner-api"},{"name":"paper-fleet-reconciler","url":"http://paper-fleet-reconciler:8011","health_path":"/readyz","component_kind":"capital-worker-api"},{"name":"governance","url":"http://governance:8082","health_path":"/readyz","component_kind":"governance-owner-api"},{"name":"promotion","url":"http://promotion:8089","health_path":"/readyz","component_kind":"promotion-owner-api"},{"name":"deployment","url":"http://deployment:8095","health_path":"/readyz","component_kind":"deployment-owner-api"},{"name":"capital","url":"http://capital:8092","health_path":"/readyz","component_kind":"capital-owner-api"},{"name":"evolution","url":"http://evolution:8093","health_path":"/readyz","component_kind":"evolution-owner-api"},{"name":"incidents","url":"http://incidents:8090","health_path":"/readyz","component_kind":"incident-owner-api"},{"name":"postmortems","url":"http://postmortems:8091","health_path":"/readyz","component_kind":"postmortem-owner-api"},{"name":"telemetry","url":"http://telemetry:8083","health_path":"/readyz","component_kind":"telemetry-owner-api"},{"name":"lineage-read","url":"http://lineage-read:8094","health_path":"/readyz","component_kind":"lineage-owner-api"},{"name":"registry","url":"http://registry:8087","health_path":"/readyz","component_kind":"registry-owner-api"},{"name":"consultation","url":"http://consultation-svc:8096","health_path":"/readyz","component_kind":"consultation-owner-api"},{"name":"source-ingest","url":"http://source-ingest:8097","health_path":"/readyz","component_kind":"source-owner-api"},{"name":"search","url":"http://search-svc:8098","health_path":"/readyz","component_kind":"search-owner-api"},{"name":"training-session","url":"http://training-session-svc:8099","health_path":"/readyz","component_kind":"teaching-owner-api"},{"name":"policy-learning","url":"http://policy-learning-svc:8100","health_path":"/readyz","component_kind":"imitation-owner-api"},{"name":"research-orchestrator","url":"http://research-orchestrator-svc:8101","health_path":"/readyz","component_kind":"research-owner-api"},{"name":"research-worker-gateway","url":"http://research-worker-gateway-svc:8103","health_path":"/readyz","component_kind":"research-worker-api"},{"name":"reconciliation-drift","url":"http://reconciliation-drift-svc:8102","health_path":"/readyz","component_kind":"reconciliation-owner-api"},{"name":"memory","url":"http://memory:8086","health_path":"/readyz","component_kind":"memory-owner-api"},{"name":"openclaw-gateway-adapter","url":"http://openclaw-gateway-adapter:8104","health_path":"/readyz","component_kind":"provider-adapter"},{"name":"persona","url":"http://persona:8002","health_path":"/readyz","component_kind":"persona-owner-api"}]
+      PANTHEON_BFF_HEALTH_TENANT_ID: ${PANTHEON_BFF_HEALTH_TENANT_ID:-default}
+      PANTHEON_BFF_HEALTH_PRODUCER: control-plane-bff
+      PANTHEON_BFF_HEALTH_TELEMETRY_JWT: ${PANTHEON_BFF_HEALTH_TELEMETRY_JWT:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGxvd2VkX3Byb2R1Y2VycyI6WyJjb250cm9sLXBsYW5lLWJmZiJdLCJhbGxvd2VkX3RlbmFudHMiOlsiZGVmYXVsdCJdLCJyb2xlcyI6WyJzZXJ2aWNlIl0sInN1YiI6ImNvbnRyb2wtcGxhbmUtYmZmLWhlYWx0aC1tb25pdG9yIn0.TZkqEl8uk3ob5HmKsN8Ce8YzRVEs1B6K4ic7wm1tFl8}
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       # One bounded PPL-ALLOC-009 acceptance producer. Keep false except for
       # the exact governed paper proof run; closeout must restore false.
@@ -1721,7 +1758,7 @@ services:
       DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID: ${DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID:-}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
-      PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-pantheon-local-deployment-consumer}
+      PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-deployment-outbox-consumer:deployment_consumer}
       PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-default}
       PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
@@ -1737,8 +1774,11 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "python -c 'import os,sys,time;p=sys.argv[1];sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<=float(sys.argv[2]) else 1)' ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-/tmp/deployment-outbox-consumer-health.json} ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS:-120}",
+          "CMD",
+          "python",
+          "-m",
+          "services.deployment.outbox_consumer_worker",
+          "healthcheck",
         ]
       interval: 30s
       timeout: 5s
@@ -1956,6 +1996,7 @@ services:
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
+      PAPER_SIGNAL_STRATEGY: ${PAPER_SIGNAL_STRATEGY:-artifact}
       PAPER_PRODUCER_HEALTH_FILE: ${PAPER_PRODUCER_HEALTH_FILE:-/tmp/paper-signal-producer-health.json}
       PANTHEON_LIVE_BROKER_ENABLED: "false"
       PANTHEON_CANARY_EXECUTION_ENABLED: "false"
