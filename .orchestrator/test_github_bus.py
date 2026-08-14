@@ -267,6 +267,24 @@ class GitHubBusCommandTests(unittest.TestCase):
         self.assertNotIn("coordination", persisted)
         self.assertNotIn("coordination_comments", persisted["poll_cursors"])
 
+    def test_bus_state_migrates_retired_webhook_delivery_cache(self) -> None:
+        config = {"paths": {"github_bus_state": "/tmp/github-bus-state.json"}}
+        legacy_state = {
+            "tasks": {},
+            "processed_webhook_deliveries": ["delivery-1"],
+        }
+
+        with mock.patch.object(github_bus, "load_json", return_value=legacy_state):
+            bus_state = github_bus.load_bus_state(config)
+
+        self.assertNotIn("processed_webhook_deliveries", bus_state)
+
+        with mock.patch.object(github_bus, "write_json") as write_json:
+            github_bus.save_bus_state(config, bus_state)
+
+        persisted = write_json.call_args.args[1]
+        self.assertNotIn("processed_webhook_deliveries", persisted)
+
     def test_upsert_review_pr_create_uses_create_label_flags(self) -> None:
         config = {
             "github_bus": {

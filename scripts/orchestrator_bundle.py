@@ -41,8 +41,6 @@ ORCHESTRATOR_EXCLUDES = {
     "config.json",
     "config.local.json",
     "github-bus-state.json",
-    "github-relay-state.json",
-    "github-webhook-events.jsonl",
     "logs",
     "metrics",
     "provider_capabilities.json",
