@@ -38,6 +38,12 @@ def test_default_root_stack_uses_binding_scoped_paper_fleet() -> None:
     assert telemetry_token == (
         "${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}"
     )
+    tenant = services["paper-fleet-reconciler"]["environment"][
+        "PANTHEON_TENANT_ID"
+    ]
+    assert services["telemetry"]["environment"][
+        "PANTHEON_TELEMETRY_SERVICE_TENANTS"
+    ] == "${PANTHEON_TELEMETRY_SERVICE_TENANTS:-" + tenant + "}"
 
 
 def test_dev_deploy_retires_static_worker_and_verifies_fleet() -> None:

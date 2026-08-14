@@ -991,6 +991,7 @@ class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
         recon = PaperFleetReconciler(
             telemetry_api_url="http://telemetry.test",
             telemetry_service_token="telemetry-service-secret",
+            telemetry_tenant_id="tenant-paper",
             leader_store=_unit_leader_store(),
         )
         with patch("urllib.request.urlopen", return_value=response) as urlopen:
@@ -1002,6 +1003,7 @@ class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
             request.get_header("Authorization"),
             "Bearer telemetry-service-secret",
         )
+        self.assertEqual(request.get_header("X-tenant-id"), "tenant-paper")
         self.assertIsNone(recon.snapshot()["monitoring_last_error"])
 
     def test_worker_start_opens_monitoring_session(self) -> None:
