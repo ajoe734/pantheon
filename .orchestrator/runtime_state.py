@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import stat
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 from common import (
-    RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID as _LOCK_PROTOCOL_ID,
-    RUNTIME_TASK_AUDIT_LOCK_ORDER as _LOCK_ORDER,
-    RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION as _LOCK_PROTOCOL_VERSION,
     activity_audit_lock_file,
     approval_tool_input_preview,
     approval_tool_input_signature,
@@ -28,9 +24,6 @@ from common import (
 )
 
 
-RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_VERSION = _LOCK_PROTOCOL_VERSION
-RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID = _LOCK_PROTOCOL_ID
-RUNTIME_TASK_AUDIT_LOCK_ORDER = _LOCK_ORDER
 RUNTIME_ADMISSION_SOURCE_IDS = (
     "runtime_state",
     "approval_queue",
@@ -45,16 +38,6 @@ RUNTIME_ADMISSION_CONFLICT_STATUSES = {
     "stalled",
     "admitted",
 }
-RUNTIME_ADMISSION_TERMINAL_WORKER_STATUSES = {
-    "completed",
-    "failed",
-    "superseded",
-    "reassigned",
-    "retried",
-    "done",
-}
-
-
 class RuntimeStateSchemaError(ValueError):
     """Raised when an ordinary V2 restart cannot safely read its cache."""
 
@@ -809,37 +792,6 @@ def save_approval_state(config: dict[str, Any], state: dict[str, Any]) -> None:
         )
 
 
-def _canonical_json_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-
-
-def _canonical_sha256(value: Any) -> str:
-    return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
-
-
-def _strict_json_object(raw: bytes, *, source: str) -> dict[str, Any]:
-    def reject_duplicate_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate key in {source}: {key}")
-            result[key] = value
-        return result
-
-    value = json.loads(
-        raw.decode("utf-8", errors="strict"),
-        object_pairs_hook=reject_duplicate_pairs,
-    )
-    if not isinstance(value, dict):
-        raise ValueError(f"{source} must be an object")
-    return value
-
-
 def _read_canonical_runtime_source(path: Path, *, source_id: str) -> bytes:
     """Read one regular runtime leaf without ever following a leaf symlink."""
 
@@ -905,249 +857,3 @@ def _write_runtime_json_unlocked(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
     ).encode("utf-8")
     _write_runtime_bytes_unlocked(path, serialized, source_id=source_id)
-
-
-def _strict_runtime_sources(
-    config: dict[str, Any],
-) -> tuple[
-    dict[str, bytes],
-    dict[str, str],
-    dict[str, Any] | None,
-    list[dict[str, Any]] | None,
-    dict[str, Any] | None,
-    str | None,
-]:
-    key_by_source = {
-        "runtime_state": "state_file",
-        "approval_queue": "approval_queue",
-    }
-    paths = {
-        source_id: config_path(config, key_by_source[source_id])
-        for source_id in RUNTIME_ADMISSION_SOURCE_IDS
-    }
-    bodies: dict[str, bytes] = {}
-    source_sha256: dict[str, str] = {}
-    source_error: str | None = None
-    for source_id in RUNTIME_ADMISSION_SOURCE_IDS:
-        path = paths[source_id]
-        try:
-            body = _read_canonical_runtime_source(path, source_id=source_id)
-        except (
-            FileNotFoundError,
-            IsADirectoryError,
-            PermissionError,
-            OSError,
-            RuntimeError,
-        ):
-            body = b""
-            source_error = source_error or "runtime_source_invalid"
-        bodies[source_id] = body
-        source_sha256[source_id] = hashlib.sha256(body).hexdigest()
-        if not body.strip():
-            source_error = source_error or "runtime_source_invalid"
-
-    if source_error:
-        return bodies, source_sha256, None, None, None, source_error
-
-    try:
-        runtime = _strict_json_object(
-            bodies["runtime_state"], source="runtime_state"
-        )
-        if (
-            runtime.get("version") != 2
-            or not isinstance(runtime.get("workers"), dict)
-            or not isinstance(runtime.get("queue"), dict)
-            or (runtime.get("queue") or {}).get("version") != 2
-            or not isinstance((runtime.get("queue") or {}).get("events"), dict)
-            or any(
-                not isinstance(worker, dict)
-                or not isinstance(worker.get("task_id"), str)
-                or not str(worker.get("task_id") or "").strip()
-                for worker in runtime["workers"].values()
-            )
-            or any(
-                not isinstance(record, dict)
-                or not isinstance(record.get("intent"), dict)
-                for record in runtime["queue"]["events"].values()
-            )
-        ):
-            raise ValueError("runtime state schema")
-
-        events = queue_events(runtime)
-        if any(
-            not isinstance(event.get("event_id"), str)
-            or not str(event.get("event_id") or "").strip()
-            or not isinstance(event.get("task_id"), str)
-            or not str(event.get("task_id") or "").strip()
-            for event in events
-        ):
-            raise ValueError("runtime queue intent schema")
-
-        approvals = _strict_json_object(
-            bodies["approval_queue"], source="approval_queue"
-        )
-        if (
-            approvals.get("version") != 2
-            or not isinstance(approvals.get("pending"), list)
-            or not isinstance(approvals.get("history"), list)
-            or any(
-                not isinstance(item, dict)
-                or not isinstance(item.get("task_id"), str)
-                or not str(item.get("task_id") or "").strip()
-                for item in approvals["pending"]
-            )
-            or any(not isinstance(item, dict) for item in approvals["history"])
-        ):
-            raise ValueError("approval queue schema")
-    except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
-        return bodies, source_sha256, None, None, None, "runtime_source_invalid"
-    return bodies, source_sha256, runtime, events, approvals, None
-
-
-def _runtime_conflicts(
-    runtime: dict[str, Any],
-    events: list[dict[str, Any]],
-    approvals: dict[str, Any],
-    task_ids: set[str],
-) -> list[dict[str, str]]:
-    conflicts: list[dict[str, str]] = []
-
-    def add(source_id: str, task_id: str, status: str, record_id: str) -> None:
-        normalized = str(status or "").strip().lower()
-        if normalized not in RUNTIME_ADMISSION_CONFLICT_STATUSES:
-            return
-        conflicts.append(
-            {
-                "source_id": source_id,
-                "task_id": task_id,
-                "status": normalized,
-                "record_id": record_id,
-            }
-        )
-
-    for run_key, worker in runtime["workers"].items():
-        task_id = str(worker.get("task_id") or "").strip()
-        if task_id not in task_ids:
-            continue
-        run_id = str(worker.get("run_id") or run_key or "<missing-run-id>")
-        status = str(worker.get("status") or "").strip().lower()
-        add("runtime_state", task_id, status, run_id)
-        if (
-            isinstance(worker.get("execution_admission"), dict)
-            and status not in RUNTIME_ADMISSION_TERMINAL_WORKER_STATUSES
-        ):
-            add("runtime_state", task_id, "admitted", run_id)
-
-    queue_records = runtime["queue"]["events"]
-    for event in events:
-        task_id = str(event["task_id"]).strip()
-        if task_id not in task_ids:
-            continue
-        event_id = str(event["event_id"]).strip()
-        record = queue_records.get(event_id)
-        status = str(event.get("status") or "").strip().lower()
-        if not status and isinstance(record, dict):
-            status = str(record.get("status") or "").strip().lower()
-        add("runtime_state", task_id, status or "queued", f"queue:{event_id}")
-
-    for index, item in enumerate(approvals["pending"]):
-        task_id = str(item.get("task_id") or "").strip()
-        if task_id not in task_ids:
-            continue
-        approval_id = str(
-            item.get("approval_id")
-            or item.get("request_id")
-            or item.get("tool_use_id")
-            or item.get("worker_run_id")
-            or f"pending:{index}"
-        )
-        status = str(item.get("status") or "waiting_approval").strip().lower()
-        if status not in RUNTIME_ADMISSION_CONFLICT_STATUSES:
-            status = "waiting_approval"
-        add("approval_queue", task_id, status, approval_id)
-
-    unique = {
-        (item["source_id"], item["task_id"], item["status"], item["record_id"]): item
-        for item in conflicts
-    }
-    return [unique[key] for key in sorted(unique)]
-
-
-def _ordered_task_ids(
-    task_ids: Iterable[str] | str | None,
-) -> tuple[list[str], str | None]:
-    if isinstance(task_ids, str):
-        raw: list[Any] = [task_ids]
-    elif task_ids is None:
-        raw = []
-    else:
-        try:
-            raw = list(task_ids)
-        except TypeError:
-            raw = []
-    if not raw:
-        return [], "task_ids_empty"
-    if any(not isinstance(value, str) or not value.strip() for value in raw):
-        return [str(value or "").strip() for value in raw], "task_ids_invalid"
-    ordered = [value.strip() for value in raw]
-    if len(set(ordered)) != len(ordered):
-        return ordered, "task_ids_duplicate"
-    return ordered, None
-
-
-@contextmanager
-def tasks_runtime_admission_guard(
-    config: dict[str, Any],
-    task_ids: Iterable[str] | str | None,
-    *,
-    strict: bool,
-    shared: bool,
-    nonblocking: bool,
-):
-    """Hold one strict runtime snapshot while a nested task transaction acts."""
-
-    ordered_ids, input_error = _ordered_task_ids(task_ids)
-    # Source leaves are parsed through O_NOFOLLOW below.  Deferring their
-    # content/leaf verdict until after the stable sidecar is held preserves the
-    # admission decision contract (``runtime_source_invalid``) while ordinary
-    # runtime writers continue to reject such leaves before entering.
-    with _runtime_state_sidecar_lock(
-        config,
-        shared=shared,
-        nonblocking=nonblocking,
-        validate_data_leaves=False,
-    ):
-        (
-            _bodies,
-            source_sha256,
-            runtime,
-            events,
-            approvals,
-            source_error,
-        ) = _strict_runtime_sources(config)
-        conflicts: list[dict[str, str]] = []
-        if source_error is None and runtime is not None and events is not None and approvals is not None:
-            conflicts = _runtime_conflicts(
-                runtime,
-                events,
-                approvals,
-                set(ordered_ids),
-            )
-        reason_id = input_error or source_error or "clear"
-        if reason_id == "clear" and strict is not True:
-            reason_id = "strict_required"
-        if reason_id == "clear" and conflicts:
-            reason_id = "target_has_runtime_admission"
-        decision = {
-            "schema_version": 1,
-            "protocol_id": RUNTIME_TASK_AUDIT_LOCK_PROTOCOL_ID,
-            "strict": strict,
-            "lock_mode": "shared" if shared else "exclusive",
-            "task_ids": ordered_ids,
-            "source_sha256": source_sha256,
-            "conflicts": conflicts,
-            "allowed": reason_id == "clear" and not conflicts,
-            "reason_id": reason_id,
-            "snapshot_sha256": _canonical_sha256(source_sha256),
-        }
-        yield decision

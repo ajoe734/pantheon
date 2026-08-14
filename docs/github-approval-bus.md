@@ -7,7 +7,6 @@ GitHub is the mobile-friendly approval surface for Pantheon.
 - `ai-status.json` remains the local source of truth.
 - `.orchestrator/github_bus.py` mirrors review and blocked tasks into GitHub.
 - GitHub Mobile is used for PR review, approvals, retries, and unblock commands.
-- The same bus now also mirrors `.coordination/*.yaml` feature handoffs into coordination issues for cross-repo delivery.
 
 ## Phase 1
 
@@ -37,29 +36,10 @@ Commands supported on ops issues:
 - `/resume AGENT`
 - `/recheck TASK-ID`
 
-Commands supported on coordination issues:
-
-- `/dispatch pantheon-bff F-xxx`
-- `/dispatch front-ui F-xxx`
-- `/needs-runtime F-xxx`
-- `/contract-ready F-xxx`
-- `/approve-engine F-xxx`
-
-## Phase 3
-
-Implemented as deployable interfaces:
-
-1. `github_webhook_server.py` receives GitHub webhook events into `.orchestrator/github-webhook-events.jsonl`
-2. `github_cloud_relay.py` can push digests and pull remote commands
-3. `github_bus.py` consumes webhook events and cloud relay commands through the same apply path
-4. config includes GitHub App, webhook, and cloud relay settings under `github_bus.phase3`
-
 ## Files
 
 - `.orchestrator/github_bus.py`
 - `.orchestrator/github_command_parser.py`
-- `.orchestrator/github_webhook_server.py`
-- `.orchestrator/github_cloud_relay.py`
 - `.orchestrator/github-bus-state.json`
 - `.orchestrator/templates/github_ops_issue.md`
 - `.orchestrator/templates/github_review_pr.md`
@@ -71,8 +51,6 @@ Implemented as deployable interfaces:
 See `.orchestrator/config.json`:
 
 - `paths.github_bus_state`
-- `paths.github_webhook_events`
-- `paths.github_relay_state`
 - `github_bus.enabled`
 - `github_bus.delivery_base_branches`
 - `github_bus.reviewers`
@@ -80,9 +58,6 @@ See `.orchestrator/config.json`:
 - `github_bus.templates`
 - `branch_workflow.dev_branch`
 - `branch_workflow.task_branch_prefix`
-- `github_bus.phase3.github_app`
-- `github_bus.phase3.webhook`
-- `github_bus.phase3.cloud_relay`
 
 ## Operational Notes
 

@@ -1611,8 +1611,6 @@ def load_config() -> dict[str, Any]:
                 "state_file": str(ORCHESTRATOR_STATE_FILE),
                 "approval_queue": str(APPROVAL_QUEUE_FILE),
                 "github_bus_state": str(STATUS_ROOT / ".orchestrator" / "github-bus-state.json"),
-                "github_webhook_events": str(STATUS_ROOT / ".orchestrator" / "github-webhook-events.jsonl"),
-                "github_relay_state": str(STATUS_ROOT / ".orchestrator" / "github-relay-state.json"),
                 "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
             }
         )
@@ -4232,7 +4230,10 @@ def detect_truth_mismatches(
             task_status == "review_approved"
             and (
                 isinstance(task.get(APPROVAL_BINDING_KEY), Mapping)
-                or task_has_pr_review_target(task)
+                or (
+                    isinstance(task.get(DELIVERY_BINDING_KEY), Mapping)
+                    and task.get(DELIVERY_BINDING_KEY, {}).get("kind") == "pull_request"
+                )
             )
             and not github_review_bridge_evidence_matches(task)
         ):
@@ -6367,48 +6368,7 @@ GITHUB_REVIEW_MODES = {
 def _delivery_contract_payload(task: Mapping[str, Any]) -> dict[str, Any]:
     """Return the immutable work contract a non-PR reviewer must inspect."""
 
-    def normalized_list(value: Any) -> list[str]:
-        if not isinstance(value, list):
-            return []
-        return sorted(
-            {
-                str(item).strip()
-                for item in value
-                if str(item).strip()
-            }
-        )
-
-    return {
-        "task_id": str(task.get("id") or "").strip(),
-        "task_generation": int(task.get("generation", 1) or 1),
-        "repository_id": str(
-            task.get("repository_id") or task.get("target_repo") or ""
-        ).strip(),
-        "artifacts": normalized_list(task.get("artifacts")),
-        "required_artifacts": normalized_list(task.get("required_artifacts")),
-        "acceptance": normalized_list(task.get("acceptance")),
-    }
-
-
-def _declared_pr_binding(task: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Read a packet-declared PR identity; never infer it from an archive."""
-
-    for key in ("source_ref", "github"):
-        payload = task.get(key)
-        if not isinstance(payload, Mapping):
-            continue
-        raw_pr = str(payload.get("pr") or payload.get("pull_request") or "").strip().lstrip("#")
-        head_sha = str(payload.get("head_sha") or "").strip().lower()
-        if raw_pr.isdigit() and int(raw_pr) > 0 and APPROVAL_HEAD_SHA_RE.fullmatch(head_sha):
-            return {
-                "pr": int(raw_pr),
-                "head_sha": head_sha,
-                "head_branch": str(payload.get("head_branch") or "").strip()
-                or f"task/{str(task.get('id') or '').strip()}",
-                "base": str(payload.get("base") or DEFAULT_APPROVAL_BASE_BRANCH).strip()
-                or DEFAULT_APPROVAL_BASE_BRANCH,
-            }
-    return None
+    return dict(task_machine.delivery_contract_payload(task))
 
 
 def _validated_pr_binding(binding: Mapping[str, Any], task_id: str) -> dict[str, Any]:
@@ -6442,21 +6402,30 @@ def resolve_handoff_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any]:
             "REVIEW_PR and REVIEW_HEAD_SHA must be supplied together for a PR handoff"
         )
     if explicit_pr:
-        binding = resolve_approval_binding(
-            dict(task),
-            warn_if_unbound=False,
-            repository=None,
-            use_delivery_binding=False,
-        )
-        return {"kind": "pull_request", **_validated_pr_binding(binding, task_id)}
+        return {
+            "kind": "pull_request",
+            **_validated_pr_binding(
+                {
+                    "pr": os.environ.get("REVIEW_PR", "").strip().lstrip("#"),
+                    "head_sha": os.environ.get("REVIEW_HEAD_SHA", "").strip(),
+                    "head_branch": (
+                        os.environ.get("REVIEW_HEAD_BRANCH", "").strip()
+                        or f"task/{task_id}"
+                    ),
+                    "base": (
+                        os.environ.get("REVIEW_BASE", "").strip()
+                        or DEFAULT_APPROVAL_BASE_BRANCH
+                    ),
+                },
+                task_id,
+            ),
+        }
 
-    declared = _declared_pr_binding(task)
-    if declared is not None:
-        return {"kind": "pull_request", **declared}
-    if task_has_pr_review_target(task):
+    if requires_pr_delivery_binding(task):
         raise SystemExit(
             f"{task_id} requires a PR delivery binding at handoff. Set REVIEW_PR "
-            "and REVIEW_HEAD_SHA after pushing the reviewed branch."
+            "and REVIEW_HEAD_SHA after pushing the delivery branch; historical "
+            "source_ref/github metadata is not a reviewable delivery identity."
         )
     contract = _delivery_contract_payload(task)
     return {
@@ -6474,9 +6443,10 @@ def validate_delivery_binding_for_approval(
 
     delivery = task.get(DELIVERY_BINDING_KEY)
     if not isinstance(delivery, Mapping):
-        # Old task rows are reconciled explicitly; do not manufacture a second
-        # migration/fallback path here.
-        return
+        raise SystemExit(
+            f"{task.get('id') or 'task'} has no handoff delivery binding; reopen "
+            "and hand off the current delivery before review."
+        )
     kind = str(delivery.get("kind") or "").strip()
     task_id = str(task.get("id") or "").strip()
     if kind == "pull_request":
@@ -6504,66 +6474,15 @@ def validate_delivery_binding_for_approval(
     raise SystemExit(f"{task_id} has an unknown delivery binding kind: {kind}")
 
 
-def discover_open_pr_binding(
-    repository: str, *, head_branch: str, base_branch: str
-) -> dict[str, Any] | None:
-    """Independently ask GitHub whether an open PR exists at this exact head
-    branch, rather than trusting task metadata.
-
-    `source_ref`/`github` fields on a task record are legacy one-off
-    dispatch-provenance markers written by ad-hoc `dispatch_*.py` batch
-    task-creation scripts -- never by the normal assign/handoff/approve flow.
-    `task_has_pr_review_target`'s metadata check therefore silently misses the
-    overwhelming majority of real, PR-backed tasks, degrading the exact-head
-    binding safety gate to "only enforced when the reviewer happens to
-    remember REVIEW_PR/REVIEW_HEAD_SHA on their own" -- confirmed live: of 55
-    open task-branch PRs, 20 backing tasks had no such metadata, and at least
-    12 of those had never been through a bound approval at all.
-    SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808.
-    """
-    result = run_gh_json_command(
-        [
-            "pr", "view", head_branch,
-            "--repo", repository,
-            "--json", "number,headRefOid,baseRefName,state",
-        ]
-    )
-    if not isinstance(result, Mapping):
-        return None
-    if str(result.get("state") or "").upper() != "OPEN":
-        return None
-    pr_number = result.get("number")
-    head_sha = str(result.get("headRefOid") or "").strip().lower()
-    if not isinstance(pr_number, int) or pr_number <= 0:
-        return None
-    if not APPROVAL_HEAD_SHA_RE.match(head_sha):
-        return None
-    return {
-        "pr": pr_number,
-        "head_sha": head_sha,
-        "head_branch": head_branch,
-        "base": str(result.get("baseRefName") or "").strip() or base_branch,
-    }
-
-
 def resolve_approval_binding(
     task: dict[str, Any],
-    *,
-    warn_if_unbound: bool = True,
-    repository: str | None = None,
-    use_delivery_binding: bool = True,
 ) -> dict[str, Any]:
-    """Bind an approval to the exact pull-request head the reviewer inspected.
+    """Read the delivery identity frozen at handoff for approval.
 
-    `scripts/git/task_review_merge_gate.py` compares these identities against
-    the PR standing at merge time.  Without them an approval is only a
-    timestamp, and a timestamp cannot tell an unchanged head from a head that
-    was replaced with an *older* commit -- which is a head no reviewer saw.
-
-    A PR-backed task therefore refuses an unbound approval. Not every task
-    produces a PR, so non-PR tasks may still approve without a binding; when
-    requested, they receive a warning that a later merge gate would fail
-    closed with `approval_head_binding_missing`.
+    Review never discovers or infers a delivery identity.  That would let a
+    reviewer approve one head while later closeout sees a different head.
+    Every reviewable task therefore arrives from handoff with one immutable
+    PR or artifact contract, and reopening is the only way to replace it.
     """
 
     task_id = str(task.get("id") or "").strip()
@@ -6575,130 +6494,73 @@ def resolve_approval_binding(
     head_branch = (
         os.environ.get("REVIEW_HEAD_BRANCH", "").strip() or f"task/{task_id}"
     )
-
-    owner = str(task.get("owner") or "").strip().casefold()
-    reviewer = str(task.get("reviewer") or "").strip().casefold()
-    independent = bool(reviewer) and reviewer != owner
-
-    delivery = task.get(DELIVERY_BINDING_KEY)
-    if use_delivery_binding and isinstance(delivery, Mapping):
-        kind = str(delivery.get("kind") or "").strip()
-        if kind == "pull_request":
-            persisted = _validated_pr_binding(delivery, task_id)
-            if raw_pr or raw_head:
-                explicit = _validated_pr_binding(
-                    {
-                        "pr": raw_pr,
-                        "head_sha": raw_head,
-                        "head_branch": head_branch,
-                        "base": base_branch,
-                    },
-                    task_id,
-                )
-                if explicit != persisted:
-                    raise SystemExit(
-                        f"{task_id} supplied review head does not match its handoff delivery binding; "
-                        "reopen and hand off the new PR head first."
-                    )
-            return persisted
-        if kind == "artifact_contract":
-            if raw_pr or raw_head:
-                raise SystemExit(
-                    f"{task_id} is artifact-bound at handoff and cannot receive a PR review binding "
-                    "without a new handoff."
-                )
-            return {}
-        raise SystemExit(f"{task_id} has an unknown delivery binding kind: {kind}")
-
-    if not raw_pr and not raw_head:
-        discovered = (
-            discover_open_pr_binding(
-                repository, head_branch=head_branch, base_branch=base_branch
-            )
-            if repository
-            else None
-        )
-        if discovered is not None:
-            print(
-                f"note: {task_id} approval auto-bound to PR #{discovered['pr']} at "
-                f"exact head {discovered['head_sha'][:12]} (REVIEW_PR/REVIEW_HEAD_SHA "
-                "were not supplied; discovered live from GitHub because task metadata "
-                "does not reliably record the delivery PR).",
-                file=sys.stderr,
-            )
-            return discovered
-        if independent and task_has_pr_review_target(task):
-            raise SystemExit(
-                f"{task_id} is PR-backed but approve has no exact reviewed-head "
-                "binding. Set REVIEW_PR and REVIEW_HEAD_SHA; internal activity "
-                "approval alone is not a GitHub review gate."
-            )
-        if independent and warn_if_unbound:
-            print(
-                f"warning: {task_id} is approved without a reviewed-head binding. "
-                "If this task has a PR, the review-before-merge gate will refuse to "
-                "merge it (approval_head_binding_missing). Re-approve with "
-                "REVIEW_PR=<pr-number> and REVIEW_HEAD_SHA=<40-hex head oid> "
-                f"(optionally REVIEW_BASE, default {DEFAULT_APPROVAL_BASE_BRANCH!r}).",
-                file=sys.stderr,
-            )
-        return {}
-
-    if not raw_pr:
+    if raw_head and not raw_pr:
         raise SystemExit(
             "REVIEW_HEAD_SHA was supplied without REVIEW_PR; both are required."
         )
-    if not raw_head:
+    if raw_pr and not raw_head:
         raise SystemExit(
             "REVIEW_PR was supplied without REVIEW_HEAD_SHA; both are required."
         )
-    if not raw_pr.isdigit() or int(raw_pr) <= 0:
+    if raw_pr and (not raw_pr.isdigit() or int(raw_pr) <= 0):
         raise SystemExit(f"REVIEW_PR must be a positive PR number, got {raw_pr!r}")
-    if not APPROVAL_HEAD_SHA_RE.match(raw_head):
+    if raw_head and not APPROVAL_HEAD_SHA_RE.fullmatch(raw_head):
         raise SystemExit(
             f"REVIEW_HEAD_SHA must be a full 40-hex commit oid, got {raw_head!r}. "
             "An abbreviated sha cannot be compared exactly."
         )
 
-    return {
-        "pr": int(raw_pr),
-        "head_sha": raw_head.lower(),
-        "head_branch": head_branch,
-        "base": base_branch,
-    }
-
-
-def task_has_pr_review_target(task: Mapping[str, Any]) -> bool:
-    """Return whether durable task metadata identifies a delivery PR."""
-
     delivery = task.get(DELIVERY_BINDING_KEY)
-    if isinstance(delivery, Mapping) and str(delivery.get("kind") or "") == "pull_request":
-        return True
-    if isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
-        return True
-    for key in ("source_ref", "github"):
-        payload = task.get(key)
-        if not isinstance(payload, Mapping):
-            continue
-        raw_pr = payload.get("pr") or payload.get("pull_request")
-        if isinstance(raw_pr, int) and raw_pr > 0:
-            return True
-        text = str(raw_pr or "").strip().lstrip("#")
-        if text.isdigit() and int(text) > 0:
-            return True
-    # New task packets already carry an explicit delivery contract before a PR
-    # exists.  Treating those fields as non-PR work lets a reviewer approve a
-    # timestamp first and only later discover that finalization needs an exact
-    # head.  Reuse the existing artifact contract instead of adding another
-    # task-state flag.
+    if not isinstance(delivery, Mapping):
+        raise SystemExit(
+            f"{task_id} has no handoff delivery binding; reopen and hand off "
+            "the current delivery before approval."
+        )
+    kind = str(delivery.get("kind") or "").strip()
+    if kind == "pull_request":
+        persisted = _validated_pr_binding(delivery, task_id)
+        if raw_pr or raw_head:
+            explicit = _validated_pr_binding(
+                {
+                    "pr": raw_pr,
+                    "head_sha": raw_head,
+                    "head_branch": head_branch,
+                    "base": base_branch,
+                },
+                task_id,
+            )
+            if explicit != persisted:
+                raise SystemExit(
+                    f"{task_id} supplied review head does not match its handoff delivery binding; "
+                    "reopen and hand off the new PR head first."
+                )
+        return persisted
+    if kind == "artifact_contract":
+        if raw_pr or raw_head:
+            raise SystemExit(
+                f"{task_id} is artifact-bound at handoff and cannot receive a PR review binding "
+                "without a new handoff."
+            )
+        return {}
+    raise SystemExit(f"{task_id} has an unknown delivery binding kind: {kind}")
+
+
+def requires_pr_delivery_binding(task: Mapping[str, Any]) -> bool:
+    """Whether the current task contract requires a pull-request delivery.
+
+    Historical ``source_ref`` and ``github`` fields are provenance, never a
+    future delivery identity.
+    """
+
     required_artifacts = task.get("required_artifacts")
-    if isinstance(required_artifacts, list):
-        for artifact in required_artifacts:
-            normalized = " ".join(str(artifact or "").casefold().split())
-            if normalized in {"pr", "pull request", "merge sha"}:
-                return True
-            if "exact-head" in normalized or "pull request" in normalized:
-                return True
+    if not isinstance(required_artifacts, list):
+        return False
+    for artifact in required_artifacts:
+        normalized = " ".join(str(artifact or "").casefold().split())
+        if normalized in {"pr", "pull request", "merge sha"}:
+            return True
+        if "exact-head" in normalized or "pull request" in normalized:
+            return True
     return False
 
 
@@ -6885,7 +6747,7 @@ def prepare_external_mutation_preflight(
         config = load_config()
         repository_id = task_primary_repository_id(config, task)
         repository_slug_value = repository_slug(config, repository_id)
-        binding = resolve_approval_binding(task, repository=repository_slug_value)
+        binding = resolve_approval_binding(task)
         validate_delivery_binding_for_approval(task, binding)
         if review_file and binding and (
             not repository_slug_value
@@ -6949,15 +6811,11 @@ def prepare_external_mutation_preflight(
                 or os.environ.get("REVIEW_HEAD_SHA", "").strip()
             )
             if explicit_binding:
-                binding = resolve_approval_binding(task, warn_if_unbound=False)
+                binding = resolve_approval_binding(task)
+            elif isinstance(task.get(DELIVERY_BINDING_KEY), Mapping):
+                binding = resolve_approval_binding(task)
             elif isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
                 binding = dict(task[APPROVAL_BINDING_KEY])
-            elif task_has_pr_review_target(task):
-                raise SystemExit(
-                    f"{task_id} is PR-backed but reviewer reopen has no exact-head "
-                    "binding. Set REVIEW_PR and REVIEW_HEAD_SHA so the rejection "
-                    "also closes the GitHub review gate."
-                )
             if binding:
                 bridge_result = bridge_github_review_decision(
                     task,

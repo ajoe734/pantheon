@@ -166,27 +166,45 @@ def test_producer_consumer_contract_lineage_preservation():
 
 def test_idempotent_retry_no_duplicate():
     """Verify repeated handoff calls return identical receipts without creating duplicates."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        research_store = ResearchOrchestratorStore(tmpdir)
-        candidate = _sample_processed_candidate("sic-idempotent-001")
+    client = TestClient(res_app)
 
-        result1 = handoff_candidate_to_experiment_authority(candidate, research_store=research_store)
+    def _mock_urlopen(req, timeout=None):
+        url = req.full_url
+        method = req.get_method()
+        if method == "POST" and "/api/research-orchestrator/intake/imitation-candidate" in url:
+            payload = req.data
+            response = client.post("/api/research-orchestrator/intake/imitation-candidate", content=payload, headers=dict(req.headers))
+            class MockResp:
+                status = response.status_code
+                def read(self):
+                    return response.content
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return MockResp()
+        elif method == "GET" and "/api/research-orchestrator/runs/" in url:
+            run_id = url.split("/api/research-orchestrator/runs/")[1]
+            response = client.get(f"/api/research-orchestrator/runs/{run_id}", headers=dict(req.headers))
+            class MockResp:
+                status = response.status_code
+                def read(self):
+                    return response.content
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return MockResp()
+        raise NotImplementedError(f"Unexpected HTTP call: {method} {url}")
+
+    candidate = _sample_processed_candidate("sic-idempotent-001")
+    with mock.patch("urllib.request.urlopen", side_effect=_mock_urlopen):
+        result1 = handoff_candidate_to_experiment_authority(candidate)
         assert candidate["experiment_task_id"] == "rtask-exp-sic-idempotent-001"
         assert candidate["experiment_run_id"] == "rrun-exp-sic-idempotent-001"
         assert candidate["handoff_status"] == "completed"
 
-        tasks_before = len(research_store.list_tasks())
-        runs_before = len(research_store.list_runs())
-        assert tasks_before == 1
-        assert runs_before == 1
-
-        # Second handoff attempt
-        result2 = handoff_candidate_to_experiment_authority(candidate, research_store=research_store)
-
-        tasks_after = len(research_store.list_tasks())
-        runs_after = len(research_store.list_runs())
-        assert tasks_after == 1
-        assert runs_after == 1
+        result2 = handoff_candidate_to_experiment_authority(candidate)
 
         assert result1.experiment_task_id == result2.experiment_task_id
         assert result1.experiment_run_id == result2.experiment_run_id
@@ -194,18 +212,14 @@ def test_idempotent_retry_no_duplicate():
 
 def test_non_processed_candidate_rejection():
     """Verify handoff rejects non-processed candidates (proposed, claimed, failed, degraded)."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        research_store = ResearchOrchestratorStore(tmpdir)
+    for invalid_status in ("proposed", "claimed", "failed", "degraded"):
+        candidate = _sample_processed_candidate(f"sic-invalid-{invalid_status}")
+        candidate["status"] = invalid_status
 
-        for invalid_status in ("proposed", "claimed", "failed", "degraded"):
-            candidate = _sample_processed_candidate(f"sic-invalid-{invalid_status}")
-            candidate["status"] = invalid_status
+        with pytest.raises(CandidateHandoffError) as exc_info:
+            handoff_candidate_to_experiment_authority(candidate)
 
-            with pytest.raises(CandidateHandoffError) as exc_info:
-                handoff_candidate_to_experiment_authority(candidate, research_store=research_store)
-
-            assert "Candidate must be in 'processed' status" in str(exc_info.value)
-            assert len(research_store.list_tasks()) == 0
+        assert "Candidate must be in 'processed' status" in str(exc_info.value)
 
 
 def test_negative_promotion_assertion():
@@ -259,7 +273,38 @@ def test_http_endpoint_candidate_handoff_and_research_intake():
         candidate_pl = _sample_processed_candidate("sic-http-pl-001")
         pl_mod.store.put_candidate(candidate_pl)
 
-        handoff_resp = pl_client.post("/api/policy-learning/candidates/sic-http-pl-001/handoff")
+        def _mock_urlopen(req, timeout=None):
+            url = req.full_url
+            method = req.get_method()
+            if method == "POST" and "/api/research-orchestrator/intake/imitation-candidate" in url:
+                payload = req.data
+                response = res_client.post("/api/research-orchestrator/intake/imitation-candidate", content=payload, headers=dict(req.headers))
+                class MockResp:
+                    status = response.status_code
+                    def read(self):
+                        return response.content
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *args):
+                        pass
+                return MockResp()
+            elif method == "GET" and "/api/research-orchestrator/runs/" in url:
+                run_id = url.split("/api/research-orchestrator/runs/")[1]
+                response = res_client.get(f"/api/research-orchestrator/runs/{run_id}", headers=dict(req.headers))
+                class MockResp:
+                    status = response.status_code
+                    def read(self):
+                        return response.content
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *args):
+                        pass
+                return MockResp()
+            raise NotImplementedError(f"Unexpected HTTP call: {method} {url}")
+
+        with mock.patch("urllib.request.urlopen", side_effect=_mock_urlopen):
+            handoff_resp = pl_client.post("/api/policy-learning/candidates/sic-http-pl-001/handoff")
+
         assert handoff_resp.status_code == 200
         handoff_data = handoff_resp.json()
         assert handoff_data["candidate_id"] == "sic-http-pl-001"

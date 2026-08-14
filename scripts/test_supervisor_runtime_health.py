@@ -215,13 +215,56 @@ def test_fresh_identity_and_lock_do_not_compensate_for_stale_heartbeat(tmp_path:
 def test_health_does_not_reimplement_dispatch_admission(tmp_path: Path) -> None:
     fixture = healthy_fixture(tmp_path)
     fixture["state"]["workers"] = {}
-    fixture["state"]["queue"] = {"events": {}}
+    fixture["state"]["queue"] = {"version": 2, "events": {}}
     write_json(fixture["state_path"], fixture["state"])
 
     report = evaluate(tmp_path, fixture)
 
     assert report["dimensions"]["progress"]["healthy"] is True
     assert report["healthy"] is True
+
+
+def test_health_accepts_fresh_success_while_next_cycle_is_in_flight(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    fixture["state"]["supervisor"].update(
+        {
+            "last_heartbeat_at": "2026-08-11T18:29:55Z",
+            "last_loop_started_at": "2026-08-11T18:29:55Z",
+            "last_loop_finished_at": "2026-08-11T18:29:50Z",
+            "last_successful_loop_at": "2026-08-11T18:29:50Z",
+            "last_loop_error": None,
+        }
+    )
+    write_json(fixture["state_path"], fixture["state"])
+
+    report = evaluate(tmp_path, fixture)
+
+    assert report["dimensions"]["progress"]["healthy"] is True
+    progress = next(
+        item
+        for item in report["checks"]
+        if item["name"] == "progress_fresh_successful_loop"
+    )
+    assert progress["in_flight_after_success"] is True
+
+
+def test_health_rejects_an_in_flight_cycle_that_exceeds_its_budget(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    fixture["state"]["supervisor"].update(
+        {
+            "last_heartbeat_at": "2026-08-11T18:29:55Z",
+            "last_loop_started_at": "2026-08-11T18:28:00Z",
+            "last_loop_finished_at": "2026-08-11T18:27:59Z",
+            "last_successful_loop_at": "2026-08-11T18:27:59Z",
+            "last_loop_error": None,
+        }
+    )
+    write_json(fixture["state_path"], fixture["state"])
+
+    report = evaluate(tmp_path, fixture)
+
+    assert report["dimensions"]["progress"]["healthy"] is False
+    assert "progress_cycle_within_budget" in failed_checks(report)
 
 
 def test_wrong_runtime_root_fails_identity_even_when_process_is_live(tmp_path: Path) -> None:

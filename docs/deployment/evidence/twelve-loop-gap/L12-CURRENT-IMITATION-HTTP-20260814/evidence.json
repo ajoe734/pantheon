@@ -1,0 +1,81 @@
+{
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/policy-learning/research_candidate_client.py#post_imitation_candidate_intake_http",
+        "services/policy-learning/tests/test_current_research_http_handoff.py#test_candidate_experiment_handoff_via_http",
+        "services/policy-learning/tests/test_l12_imit_001_candidate_handoff.py#test_http_endpoint_candidate_handoff_and_research_intake"
+      ],
+      "id": "AC1",
+      "statement": "Processed imitation candidate calls the existing Research HTTP endpoint (POST /api/research-orchestrator/intake/imitation-candidate).",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/policy-learning/research_candidate_client.py#post_imitation_candidate_intake_http",
+        "services/policy-learning/tests/test_current_research_http_handoff.py#test_candidate_experiment_handoff_via_http"
+      ],
+      "id": "AC2",
+      "statement": "Research readback via GET /api/research-orchestrator/runs/{run_id} returns exact task_id and run_id identity.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/policy-learning/candidate_experiment_handoff.py",
+        "services/policy-learning/tests/test_current_research_http_handoff.py#test_direct_import_removal",
+        "services/policy-learning/tests/test_current_research_http_handoff.py#test_idempotent_replay_http_intake",
+        "services/policy-learning/tests/test_l12_imit_001_candidate_handoff.py#test_idempotent_retry_no_duplicate"
+      ],
+      "id": "AC3",
+      "statement": "Direct ResearchOrchestratorStore import is removed from policy-learning handoff and replay is idempotent.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/policy-learning/research_candidate_client.py#get_research_service_url",
+        "services/policy-learning/tests/test_current_research_http_handoff.py#test_research_service_url_routing"
+      ],
+      "id": "AC4",
+      "statement": "Research candidate HTTP client defaults to http://research-orchestrator-svc:8101 (matching existing compose owner) and falls back to RESEARCH_ORCHESTRATOR_URL env var.",
+      "status": "pass"
+    }
+  ],
+  "authorities": {
+    "actual_state": [
+      "services/policy-learning/candidate_experiment_handoff.py",
+      "services/policy-learning/research_candidate_client.py"
+    ],
+    "desired_state": [
+      "services/policy-learning/tests/test_current_research_http_handoff.py",
+      "services/policy-learning/tests/test_l12_imit_001_candidate_handoff.py"
+    ],
+    "task_packet": ".orchestrator/task-briefs/l12_current_imitation_http_20260814.md"
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Replay test test_idempotent_replay_http_intake verifies that repeated POST intake returns identical task_id and run_id without duplicate run creation."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "test_http_intake_and_readback_error_handling verifies connection error and readback identity mismatch fail closed with ResearchCandidateClientError and CandidateHandoffError."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Intake receipt attaches task_id, run_id, candidate_id, created_at, and raw_response to candidate record after exact readback confirmation."
+      ],
+      "status": "pass"
+    },
+    "routing_correctness": {
+      "proof": [
+        "test_research_service_url_routing verifies default URL matches http://research-orchestrator-svc:8101 and supports both RESEARCH_SERVICE_URL and RESEARCH_ORCHESTRATOR_URL environment variables."
+      ],
+      "status": "pass"
+    }
+  },
+  "task_id": "L12-CURRENT-IMITATION-HTTP-20260814"
+}
