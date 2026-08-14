@@ -285,6 +285,23 @@ def _runtime_controller_record_qualified(
         or record.get("last_heartbeat_at")
         or ""
     ).strip()
+
+    # Worker functional health overrides process readiness
+    worker_functional_health = _dict_or_empty(
+        record.get("worker_health")
+        or record.get("functional_health")
+        or raw_health.get("worker_health")
+        or raw_health.get("functional_health")
+    )
+    if worker_functional_health:
+        if worker_functional_health.get("ready") is False or worker_functional_health.get("ok") is False:
+            return False
+        wf_status = str(worker_functional_health.get("status") or "").strip().lower()
+        if wf_status in {"degraded", "unhealthy", "failed", "down", "error", "unavailable"}:
+            return False
+    if record.get("ready") is False or raw_health.get("ready") is False or record.get("functional_ready") is False:
+        return False
+
     return bool(
         reported_status in _ACCEPTED_CONTROLLER_HEALTH_STATUSES
         and expected_name
@@ -772,8 +789,31 @@ def _project_controller_health(
         or ""
     ).strip()
     expected_controller_name = str(controller.get("controller_name") or "").strip()
+    worker_functional_health = _dict_or_empty(
+        health_record.get("worker_health")
+        or health_record.get("functional_health")
+        or raw_health.get("worker_health")
+        or raw_health.get("functional_health")
+    )
+    functional_degraded = bool(
+        worker_functional_health.get("ready") is False
+        or worker_functional_health.get("ok") is False
+        or str(worker_functional_health.get("status") or "").strip().lower() in {
+            "degraded",
+            "unhealthy",
+            "failed",
+            "down",
+            "error",
+            "unavailable",
+        }
+        or health_record.get("ready") is False
+        or raw_health.get("ready") is False
+        or health_record.get("functional_ready") is False
+    )
     if current_record_accepted:
         rejection_reason = None
+    elif functional_degraded:
+        rejection_reason = "worker functional health is degraded despite process readiness"
     elif not contract_accepts_runtime_record:
         rejection_reason = "catalog controller contract is not implemented"
     elif len(evidence_bases) > 1:
