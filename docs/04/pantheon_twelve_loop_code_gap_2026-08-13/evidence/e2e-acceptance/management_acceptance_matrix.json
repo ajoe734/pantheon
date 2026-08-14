@@ -1,0 +1,155 @@
+[
+  {
+    "endpoint": "/bff/v5/loop-inventory",
+    "description": "Authenticated list of all 13 catalog loop entries",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "items_count": 13
+    }
+  },
+  {
+    "endpoint": "/bff/v5/loop-health",
+    "description": "Authenticated list of loop health records with multi-level truth hierarchy",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "items_count": 13
+    }
+  },
+  {
+    "endpoint": "/bff/v5/loop-inventory/source_ingestion",
+    "description": "Authenticated single loop inventory detail for source_ingestion",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "loop_id": "source_ingestion"
+    }
+  },
+  {
+    "endpoint": "/bff/v5/loop-inventory/nonexistent_loop_id",
+    "description": "Unknown loop ID returns 404 Not Found error envelope",
+    "expected_status": 404,
+    "actual_status": 404,
+    "passed": true,
+    "details": {
+      "error": {
+        "code": "RESOURCE_NOT_FOUND",
+        "i18nKey": "errors.RESOURCE_NOT_FOUND",
+        "message": "Loop inventory entry not found",
+        "retryable": false,
+        "userActionable": true,
+        "details": {
+          "reason": "Loop inventory entry nonexistent_loop_id does not exist",
+          "precondition_failed": null,
+          "suggestion": null
+        }
+      },
+      "meta": {
+        "correlationId": "ce965c7d-ba91-489e-9d44-bda4ebf2b27e"
+      }
+    }
+  },
+  {
+    "endpoint": "/bff/v5/loop-inventory (no auth)",
+    "description": "Unauthenticated access returns 401 AUTH_REQUIRED",
+    "expected_status": 401,
+    "actual_status": 401,
+    "passed": true,
+    "details": {
+      "code": "AUTH_REQUIRED",
+      "i18nKey": "errors.AUTH_REQUIRED",
+      "message": "Unauthorized: missing Bearer token",
+      "retryable": false,
+      "userActionable": true,
+      "details": {
+        "reason": "401",
+        "precondition_failed": null,
+        "suggestion": "Re-authenticate with a valid JWT bearer token"
+      }
+    }
+  },
+  {
+    "endpoint": "/bff/management/data-sources",
+    "description": "Data Sources Management",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "status_code": 200
+    }
+  },
+  {
+    "endpoint": "/bff/management/permissions",
+    "description": "Permissions Management",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "status_code": 200
+    }
+  },
+  {
+    "endpoint": "/bff/management/memory-governance",
+    "description": "Memory Governance Management",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "status_code": 200
+    }
+  },
+  {
+    "endpoint": "/bff/management/consult-rules",
+    "description": "Consult Rules Management",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "status_code": 200
+    }
+  },
+  {
+    "endpoint": "/bff/lineage",
+    "description": "Lineage Read Endpoint",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "status_code": 200
+    }
+  },
+  {
+    "endpoint": "/bff/workflows",
+    "description": "Workflows Management",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "status_code": 200
+    }
+  },
+  {
+    "endpoint": "/bff/hooks",
+    "description": "Hooks Registry",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "status_code": 200
+    }
+  },
+  {
+    "endpoint": "/bff/knowledge",
+    "description": "Knowledge Inbox",
+    "expected_status": 200,
+    "actual_status": 200,
+    "passed": true,
+    "details": {
+      "status_code": 200
+    }
+  }
+]
