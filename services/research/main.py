@@ -14,6 +14,7 @@ from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.registry.split_api import RegistryService
 from services.registry.storage import get_store as get_registry_store
+from services.research.alpha_replication.admission import ReplicationAdmissionStore
 from services.research.experiments import (
     ExperimentRegistryWritebackError,
     ExperimentRun,
@@ -115,11 +116,16 @@ def _gateway_url() -> str:
     return os.getenv("RESEARCH_WORKER_GATEWAY_URL", "http://research-worker-gateway-svc:8103")
 
 
+def _alpha_replication_data_dir() -> str:
+    return os.getenv("ALPHA_REPLICATION_DATA_DIR", "data/alpha-replication")
+
+
 DATA_DIR = _data_dir()
 MAX_ACTIVE_RUNS = _max_active_runs()
 PRODUCTION_ADAPTERS_ALLOWED = _production_adapters_allowed()
 OFFLINE_GATE_ENABLED = _offline_gate_enabled()
 GATEWAY_URL = _gateway_url()
+ALPHA_REPLICATION_DATA_DIR = _alpha_replication_data_dir()
 STORE_BACKEND = os.getenv("RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND", "jsonl").strip().lower() or "jsonl"
 PERSISTENCE_POSTURE = require_persistence_posture("research-orchestrator")
 
@@ -276,6 +282,7 @@ app = FastAPI(title="Pantheon Research Orchestrator Service", version="0.1.0")
 store = build_research_orchestrator_store(DATA_DIR)
 def get_store() -> ResearchOrchestratorStore:
     return store
+alpha_replication_admission_store = ReplicationAdmissionStore(ALPHA_REPLICATION_DATA_DIR)
 register_fastapi_health_routes(
     app,
     "research-orchestrator",
@@ -651,6 +658,30 @@ def intake_imitation_candidate_endpoint(payload: Dict[str, Any]) -> Dict[str, An
         return receipt.to_dict()
     except ExperimentCandidateIntakeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/research-orchestrator/alpha-replication/admissions", status_code=201)
+def create_alpha_replication_admission(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Admit a reviewed StrategySpec into the existing Alpha Replication controller.
+
+    Delegates to the existing ReplicationAdmissionStore; the controller already
+    reads admitted (tenant_id, strategy_spec_id) pairs from that store, so no
+    second queue is introduced here. Replaying an identical, already-admitted
+    payload returns the original admission instead of creating a duplicate.
+    """
+    try:
+        return alpha_replication_admission_store.create_admission(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/research-orchestrator/alpha-replication/admissions/{tenant_id}/{strategy_spec_id}")
+def get_alpha_replication_admission(tenant_id: str, strategy_spec_id: str) -> Dict[str, Any]:
+    """Read back the exact admitted ReplicationAdmission identity, if any."""
+    admission = alpha_replication_admission_store.get_admission(tenant_id, strategy_spec_id)
+    if admission is None:
+        raise HTTPException(status_code=404, detail="alpha replication admission not found")
+    return admission
 
 
 @app.get("/api/research-orchestrator/tasks")
