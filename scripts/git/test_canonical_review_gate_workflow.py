@@ -269,7 +269,7 @@ class WorkflowDispatchContractTests(unittest.TestCase):
         pull_request = self.triggers["pull_request"]
         self.assertEqual(
             set(pull_request["types"]),
-            {"opened", "synchronize", "reopened", "ready_for_review"},
+            {"opened", "synchronize", "reopened", "ready_for_review", "labeled"},
         )
 
     def test_gate_step_prefers_dispatch_inputs_and_falls_back_to_the_pr(self) -> None:

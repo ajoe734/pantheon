@@ -44,6 +44,7 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+      - labeled
     branches:
       - dev
       - master
