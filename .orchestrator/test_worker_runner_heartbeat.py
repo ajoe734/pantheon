@@ -251,6 +251,84 @@ class TestCoordinationRootValidation(unittest.TestCase):
             heartbeat_payload = json.loads(heartbeat.read_text(encoding="utf-8"))
             self.assertEqual(heartbeat_payload["status_command_runtime"]["command_root"], str(central.resolve()))
 
+    def test_relative_provider_command_is_bound_to_command_runtime(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-command-root-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "execute-plans-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+
+            provider = central / ".orchestrator" / "bin" / "test-provider"
+            provider.parent.mkdir(parents=True, exist_ok=True)
+            provider.write_text("#!/bin/sh\necho provider-cwd=$PWD\n", encoding="utf-8")
+            provider.chmod(0o755)
+            subprocess.run(["git", "add", ".orchestrator/bin/test-provider"], cwd=central, check=True)
+            subprocess.run(
+                ["git", "commit", "-q", "-m", "add provider fixture"],
+                cwd=central,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "update-ref", "refs/remotes/origin/dev", "HEAD"],
+                cwd=central,
+                check=True,
+            )
+            _write_status(central)
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            env = os.environ.copy()
+            for key in list(env.keys()):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
+            env.update(
+                {
+                    "PANTHEON_STATUS_ROOT": str(central),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                    "ORCH_WORKSPACE_PATH": str(worktree),
+                }
+            )
+            env.update(_command_runtime_env(central))
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "antigravity-20260814T000000Z-test",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    ".orchestrator/bin/test-provider",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            self.assertIn(f"provider-cwd={worktree}", proc.stdout)
+            runner_status = json.loads(status.read_text(encoding="utf-8"))
+            self.assertEqual(runner_status["status"], "completed")
+            self.assertEqual(runner_status["command"][0], str(provider.resolve()))
+
+    def test_relative_provider_command_cannot_escape_command_runtime(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-command-escape-") as temp_dir:
+            root = Path(temp_dir)
+            command_root = root / "command-root"
+            command_root.mkdir()
+
+            with self.assertRaisesRegex(RuntimeError, "parent directory references"):
+                wr.bind_relative_command_to_runtime(
+                    ["../outside-provider", "--prompt", "test"],
+                    command_root,
+                )
+
     def test_heartbeat_binds_task_roles_and_run_id(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-roles-") as temp_dir:
             root = Path(temp_dir)
