@@ -34,6 +34,15 @@ not create a PR, request a reviewer, wait for a canonical reviewer attestation,
 or treat this work as product delivery merely because the files live in this
 repository.
 
+If protected-branch checks can only be published by GitHub Actions from a pull
+request event, the chatbox may create a **mechanical** PR labelled
+`delivery:tooling` solely to carry those checks and merge it itself after they
+pass. That PR is not a product review: it must not request or wait for a
+reviewer, canonical attestation, review-proof tag, or additional approval.
+The chatbox must not manufacture any of those artifacts. Once the required
+checks pass, it merges the exact validated head to `dev` and reports that the
+PR was a branch-protection transport constraint.
+
 This exception covers the supervisor, `.orchestrator/`, development scripts,
 development workflows, and their focused tests and documentation. It preserves
 clean-worktree, scope, validation, commit-trailer, and current-`dev` rebase
