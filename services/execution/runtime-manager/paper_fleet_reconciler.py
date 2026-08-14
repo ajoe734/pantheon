@@ -475,6 +475,7 @@ class PaperFleetReconciler:
         worker_script_path: Optional[str] = None,
         telemetry_api_url: Optional[str] = None,
         telemetry_service_token: Optional[str] = None,
+        telemetry_tenant_id: Optional[str] = None,
         source_ingest_url: Optional[str] = None,
         performance_mark_max_age_seconds: Optional[int] = None,
         performance_state_root: Optional[str] = None,
@@ -519,6 +520,11 @@ class PaperFleetReconciler:
             telemetry_service_token
             if telemetry_service_token is not None
             else os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "")
+        ).strip()
+        self._telemetry_tenant_id = (
+            telemetry_tenant_id
+            if telemetry_tenant_id is not None
+            else os.getenv("PANTHEON_TENANT_ID", "default")
         ).strip()
         self._source_ingest_url = (
             source_ingest_url
@@ -1253,7 +1259,10 @@ class PaperFleetReconciler:
         try:
             import urllib.request
 
-            headers = {"Accept": "application/json"}
+            headers = {
+                "Accept": "application/json",
+                "X-Tenant-Id": self._telemetry_tenant_id,
+            }
             if self._telemetry_service_token:
                 headers["Authorization"] = (
                     f"Bearer {self._telemetry_service_token}"
