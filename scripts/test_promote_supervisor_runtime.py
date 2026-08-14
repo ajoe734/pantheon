@@ -12,6 +12,11 @@ import pytest
 import promote_supervisor_runtime as promotion
 
 
+@pytest.fixture(autouse=True)
+def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(promotion, "COMMAND_RUNTIME_PARENT", tmp_path / "command-runtimes")
+
+
 def _git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=root, check=True, capture_output=True, text=True
@@ -19,13 +24,14 @@ def _git(root: Path, *args: str) -> str:
 
 
 def _candidate(tmp_path: Path) -> tuple[Path, Path]:
-    candidate = tmp_path / "candidate"
+    candidate = tmp_path / "candidate-stage"
     status_root = tmp_path / "status"
     candidate.mkdir()
     status_root.mkdir()
     (candidate / ".orchestrator").mkdir()
     (candidate / "scripts").mkdir()
     (status_root / ".git").mkdir()
+    (status_root / ".orchestrator").mkdir()
     (status_root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
     config_source = Path(__file__).resolve().parents[1] / ".orchestrator" / "config.json"
     (candidate / ".orchestrator" / "config.json").write_bytes(config_source.read_bytes())
@@ -40,7 +46,12 @@ def _candidate(tmp_path: Path) -> tuple[Path, Path]:
     _git(candidate, "add", ".")
     _git(candidate, "commit", "-m", "v2")
     _git(candidate, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
-    return candidate, status_root
+    head = _git(candidate, "rev-parse", "HEAD")
+    runtime_parent = tmp_path / "command-runtimes"
+    runtime_parent.mkdir()
+    runtime = runtime_parent / head
+    candidate.rename(runtime)
+    return runtime, status_root
 
 
 def test_render_v2_config_requires_one_clean_authoritative_source(tmp_path: Path) -> None:
@@ -64,6 +75,19 @@ def test_render_v2_config_requires_one_clean_authoritative_source(tmp_path: Path
     ]
 
 
+def test_render_rejects_a_clean_staging_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    monkeypatch.setattr(promotion, "COMMAND_RUNTIME_PARENT", tmp_path / "other-runtimes")
+
+    with pytest.raises(ValueError, match="command-runtimes/<HEAD>"):
+        promotion.render_v2_config(
+            candidate,
+            status_root=status_root,
+            live_config_path=tmp_path / "runtime" / "live.json",
+            python_executable=Path(sys.executable),
+        )
+
+
 def test_render_rejects_non_authoritative_candidate_before_stopping_runtime(
     tmp_path: Path,
 ) -> None:
@@ -74,6 +98,9 @@ def test_render_rejects_non_authoritative_candidate_before_stopping_runtime(
     config_path.write_text(json.dumps(config), encoding="utf-8")
     _git(candidate, "add", ".orchestrator/config.json")
     _git(candidate, "commit", "-m", "invalid")
+    updated_candidate = candidate.parent / _git(candidate, "rev-parse", "HEAD")
+    candidate.rename(updated_candidate)
+    candidate = updated_candidate
 
     with pytest.raises(ValueError, match="must be 'authoritative'"):
         promotion.render_v2_config(
@@ -178,8 +205,44 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
     assert events == ["stop", "launch"]
     installed = json.loads(live_config.read_text(encoding="utf-8"))
     assert installed["task_state_store"]["mode"] == "authoritative"
+    assert json.loads((status_root / ".orchestrator" / "approval-queue.json").read_text(encoding="utf-8"))["version"] == 2
     assert not hasattr(promotion, "migrate_task_state_store_v2")
     assert not hasattr(promotion, "PromotionTransaction")
+
+
+def test_status_root_replacement_stops_pid_from_installed_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    old_status_root = tmp_path / "old-status"
+    (old_status_root / ".git").mkdir(parents=True)
+    (old_status_root / ".orchestrator").mkdir()
+    (old_status_root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
+    old_state = old_status_root / ".orchestrator" / "state.json"
+    old_state.write_text("{}\n", encoding="utf-8")
+    old_pid = old_state.parent / "supervisor.pid"
+    old_pid.write_text("73\n", encoding="utf-8")
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir()
+    live_config.write_text(json.dumps({"paths": {"state_file": str(old_state)}}), encoding="utf-8")
+    stopped: list[Path] = []
+    monkeypatch.setattr(
+        promotion,
+        "stop_existing_supervisor",
+        lambda path, *, timeout_seconds: stopped.append(path) or 73,
+    )
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", lambda *_args, **_kwargs: 74)
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "launched"
+    assert stopped == [old_pid]
 
 
 def test_launch_failure_is_reported_without_a_rollback_path(

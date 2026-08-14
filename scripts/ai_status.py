@@ -6348,6 +6348,19 @@ def task_has_pr_review_target(task: Mapping[str, Any]) -> bool:
         text = str(raw_pr or "").strip().lstrip("#")
         if text.isdigit() and int(text) > 0:
             return True
+    # New task packets already carry an explicit delivery contract before a PR
+    # exists.  Treating those fields as non-PR work lets a reviewer approve a
+    # timestamp first and only later discover that finalization needs an exact
+    # head.  Reuse the existing artifact contract instead of adding another
+    # task-state flag.
+    required_artifacts = task.get("required_artifacts")
+    if isinstance(required_artifacts, list):
+        for artifact in required_artifacts:
+            normalized = " ".join(str(artifact or "").casefold().split())
+            if normalized in {"pr", "pull request", "merge sha"}:
+                return True
+            if "exact-head" in normalized or "pull request" in normalized:
+                return True
     return False
 
 

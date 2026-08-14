@@ -18,6 +18,24 @@ domains:
     removable_after_product_release: false
     acceptance: "deployment manifest plus post-deploy probes"
 
+runtime_roots:
+  command_runtime:
+    path: "/home/lupin/pantheon-ci-deploy/command-runtimes/<exact-commit-sha>"
+    authority: "immutable supervisor source only"
+    must_not_contain: ["runtime state", "queue", "approvals", "canonical projection"]
+  coordination_root:
+    path: "/home/lupin/pantheon-ci-deploy/coordination-root"
+    authority: "development-tool canonical projection, leases, queue, approvals, and archive"
+    required: ["Git worktree", "ai-status.json", ".orchestrator/"]
+  staging_root:
+    path: "/home/lupin/pantheon-ci-deploy/dev-root"
+    authority: "mutable source staging only"
+    must_not_be: ["supervisor command root", "coordination root", "product runtime cwd"]
+  product_root:
+    path: "/home/lupin/pantheon"
+    authority: "product source only"
+    must_not_contain: ["supervisor PID", "supervisor state", "task queue", "approval queue"]
+
 components:
   - id: supervisor-and-taskstore
     domain: development_tooling

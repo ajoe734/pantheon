@@ -12,17 +12,12 @@ CANONICAL_RUNTIME_PARENT = "/home/lupin/pantheon-ci-deploy/command-runtimes"
 
 
 def _git(cwd: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip()
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
-def _seed_remote(tmp_path: Path) -> tuple[Path, Path, str]:
+def _seed_remote(tmp_path: Path) -> tuple[Path, Path]:
     remote = tmp_path / "remote.git"
     seed = tmp_path / "seed"
     remote.mkdir()
@@ -31,43 +26,42 @@ def _seed_remote(tmp_path: Path) -> tuple[Path, Path, str]:
     _git(seed, "init", "-b", "dev")
     _git(seed, "config", "user.email", "test@example.invalid")
     _git(seed, "config", "user.name", "Pantheon Test")
+    (seed / ".orchestrator").mkdir()
+    (seed / "scripts").mkdir()
+    (seed / ".orchestrator" / "supervisor.py").write_text("# V2\n", encoding="utf-8")
     (seed / "version.txt").write_text("one\n", encoding="utf-8")
-    _git(seed, "add", "version.txt")
-    _git(seed, "commit", "-m", "first")
-    first = _git(seed, "rev-parse", "HEAD")
-    _git(seed, "remote", "add", "origin", str(remote))
-    _git(seed, "push", "-u", "origin", "dev")
-    return remote, seed, first
-
-
-def _install_runtime_stubs(seed: Path) -> str:
-    (seed / ".orchestrator").mkdir(exist_ok=True)
-    (seed / "scripts").mkdir(exist_ok=True)
-    (seed / ".orchestrator" / "supervisor.py").write_text("", encoding="utf-8")
     (seed / "scripts" / "provision_live_supervisor_config.py").write_text(
-        "import sys\nsys.exit(0)\n",
-        encoding="utf-8",
+        "import sys\nsys.exit(0)\n", encoding="utf-8"
     )
     promotion = seed / "scripts" / "promote-supervisor-runtime.sh"
     promotion.write_text(
         "#!/usr/bin/env bash\n"
-        "printf '%s\\n' \"$@\" >\"$SYNC_PROMOTION_ARGS_FILE\"\n"
-        "exit \"${SYNC_PROMOTION_EXIT:-0}\"\n",
+        "printf '%s\\n' \"$@\" >\"$SYNC_PROMOTION_ARGS_FILE\"\n",
         encoding="utf-8",
     )
     promotion.chmod(0o755)
-    _git(seed, "add", ".orchestrator/supervisor.py", "scripts")
-    _git(seed, "commit", "-m", "add runtime handoff stubs")
-    _git(seed, "push", "origin", "dev")
-    return _git(seed, "rev-parse", "HEAD")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-m", "runtime")
+    _git(seed, "remote", "add", "origin", str(remote))
+    _git(seed, "push", "-u", "origin", "dev")
+    return remote, seed
 
 
-def _advance(seed: Path, value: str) -> str:
-    (seed / "version.txt").write_text(f"{value}\n", encoding="utf-8")
+def _advance(seed: Path) -> str:
+    (seed / "version.txt").write_text("two\n", encoding="utf-8")
     _git(seed, "add", "version.txt")
-    _git(seed, "commit", "-m", f"advance {value}")
+    _git(seed, "commit", "-m", "advance")
     _git(seed, "push", "origin", "dev")
     return _git(seed, "rev-parse", "HEAD")
+
+
+def _coordination_root(tmp_path: Path) -> Path:
+    root = tmp_path / "coordination"
+    root.mkdir()
+    _git(root, "init", "-b", "dev")
+    (root / ".orchestrator").mkdir()
+    (root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
+    return root
 
 
 def _patched_sync_script(tmp_path: Path, runtime_parent: Path) -> Path:
@@ -76,7 +70,6 @@ def _patched_sync_script(tmp_path: Path, runtime_parent: Path) -> Path:
         f'COMMAND_RUNTIME_PARENT="{CANONICAL_RUNTIME_PARENT}"',
         f'COMMAND_RUNTIME_PARENT="{runtime_parent}"',
     )
-    assert str(runtime_parent) in source
     script.write_text(source, encoding="utf-8")
     script.chmod(0o755)
     return script
@@ -86,17 +79,13 @@ def _run_sync(
     script: Path,
     dev_root: Path,
     live_config: Path,
-    *,
-    pid_file: Path,
+    coordination_root: Path,
     promotion_args: Path,
-    promotion_exit: int = 0,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env["PANTHEON_SUPERVISOR_PID"] = str(pid_file)
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
-    env["SYNC_PROMOTION_EXIT"] = str(promotion_exit)
     return subprocess.run(
-        ["bash", str(script), str(dev_root), str(live_config)],
+        ["bash", str(script), str(dev_root), str(live_config), str(coordination_root)],
         cwd=REPO_ROOT,
         env=env,
         check=False,
@@ -105,342 +94,87 @@ def _run_sync(
     )
 
 
-def test_sync_updates_origin_dev_when_remote_fetch_config_tracks_only_master(
-    tmp_path: Path,
-) -> None:
-    remote, seed, first = _seed_remote(tmp_path)
+def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_path: Path) -> None:
+    remote, seed = _seed_remote(tmp_path)
     dev_root = tmp_path / "dev-root"
     _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    _git(
-        dev_root,
-        "config",
-        "remote.origin.fetch",
-        "+refs/heads/master:refs/remotes/origin/master",
-    )
-    second = _advance(seed, "two")
-    assert _git(dev_root, "rev-parse", "origin/dev") == first
+    target = _advance(seed)
+    runtime_parent = tmp_path / "command-runtimes"
+    script = _patched_sync_script(tmp_path, runtime_parent)
+    coordination = _coordination_root(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    promotion_args = tmp_path / "promotion-args.txt"
 
-    env = os.environ.copy()
-    env["SYNC_REF"] = "origin/dev"
-    env["PANTHEON_SUPERVISOR_PID"] = str(tmp_path / "no-supervisor.pid")
-    result = subprocess.run(
-        ["bash", str(SYNC_SCRIPT), str(dev_root), str(tmp_path / "no-live-config.json")],
-        cwd=REPO_ROOT,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    result = _run_sync(script, dev_root, live_config, coordination, promotion_args)
 
-    assert "behind origin/dev by 1" in result.stdout
-    assert _git(dev_root, "rev-parse", "origin/dev") == second
-    assert _git(dev_root, "rev-parse", "HEAD") == second
+    candidate = runtime_parent / target
+    assert result.returncode == 0, result.stderr
+    assert _git(dev_root, "rev-parse", "HEAD") == target
+    assert _git(candidate, "rev-parse", "HEAD") == target
+    assert promotion_args.read_text(encoding="utf-8").splitlines() == [
+        "--promote",
+        "--repo",
+        str(candidate),
+        "--status-root",
+        str(coordination),
+        "--live-config",
+        str(live_config),
+    ]
+    source = SYNC_SCRIPT.read_text(encoding="utf-8")
+    assert "PID_FILE=" not in source
+    assert "ACTIVE_ROOT" not in source
+    assert "/proc/$pid/cwd" not in source
 
 
-def test_sync_never_preprovisions_existing_config_without_incumbent(tmp_path: Path) -> None:
-    remote, _seed, _first = _seed_remote(tmp_path)
+def test_sync_rejects_staging_as_its_own_coordination_root(tmp_path: Path) -> None:
+    remote, _seed = _seed_remote(tmp_path)
     dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    script = _patched_sync_script(tmp_path, tmp_path / "command-runtimes")
+
+    result = _run_sync(
+        script,
+        dev_root,
+        tmp_path / "runtime" / "live.json",
+        dev_root,
+        tmp_path / "promotion-args.txt",
+    )
+
+    assert result.returncode == 1
+    assert "must not also be the coordination root" in result.stdout
+
+
+def test_sync_is_a_noop_when_installed_config_already_names_exact_candidate(tmp_path: Path) -> None:
+    remote, seed = _seed_remote(tmp_path)
+    dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    head = _git(seed, "rev-parse", "HEAD")
+    runtime_parent = tmp_path / "command-runtimes"
+    runtime_parent.mkdir()
+    candidate = runtime_parent / head
+    _git(runtime_parent, "clone", str(remote), str(candidate))
+    _git(candidate, "checkout", "--detach", head)
+    script = _patched_sync_script(tmp_path, runtime_parent)
+    coordination = _coordination_root(tmp_path)
     live_config = tmp_path / "runtime" / "live.json"
     live_config.parent.mkdir()
-    live_config.write_text('{"watchdog":{"supervisor_command":["preserve"]}}\n', encoding="utf-8")
-    before = live_config.read_bytes()
-    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-
-    env = os.environ.copy()
-    env["PANTHEON_SUPERVISOR_PID"] = str(tmp_path / "no-supervisor.pid")
-    result = subprocess.run(
-        ["bash", str(SYNC_SCRIPT), str(dev_root), str(live_config)],
-        cwd=REPO_ROOT,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert "promotion=no-incumbent" in result.stdout
-    assert live_config.read_bytes() == before
-
-
-def test_current_mutable_root_is_not_reset_or_signalled_before_bootstrap_handoff(
-    tmp_path: Path,
-) -> None:
-    remote, seed, _first = _seed_remote(tmp_path)
-    incumbent = _install_runtime_stubs(seed)
-    dev_root = tmp_path / "dev-root"
-    runtime_parent = tmp_path / "command-runtimes"
-    script = _patched_sync_script(tmp_path, runtime_parent)
-    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    target = _advance(seed, "candidate")
-    pid_file = tmp_path / "supervisor.pid"
-    promotion_args = tmp_path / "promotion-args.txt"
-    process = subprocess.Popen(["sleep", "60"], cwd=dev_root)
-    pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
-    try:
-        result = _run_sync(
-            script,
-            dev_root,
-            tmp_path / "live.json",
-            pid_file=pid_file,
-            promotion_args=promotion_args,
-        )
-        assert process.poll() is None
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
-
-    candidate = runtime_parent / target
-    assert result.returncode == 0, result.stderr
-    assert "ACTIVE_MUTABLE_ROOT_PROTECTED" in result.stdout
-    assert _git(dev_root, "rev-parse", "HEAD") == incumbent
-    assert _git(candidate, "rev-parse", "HEAD") == target
-    assert promotion_args.read_text(encoding="utf-8").splitlines() == [
-        "--promote",
-        "--repo",
-        str(candidate),
-    ]
-
-
-def test_split_immutable_root_is_untouched_and_uses_normal_promotion_handoff(
-    tmp_path: Path,
-) -> None:
-    remote, seed, _first = _seed_remote(tmp_path)
-    incumbent = _install_runtime_stubs(seed)
-    dev_root = tmp_path / "dev-root"
-    runtime_parent = tmp_path / "command-runtimes"
-    active_root = runtime_parent / incumbent
-    runtime_parent.mkdir()
-    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    _git(runtime_parent, "clone", "--branch", "dev", str(remote), str(active_root))
-    target = _advance(seed, "next")
-    script = _patched_sync_script(tmp_path, runtime_parent)
-    pid_file = tmp_path / "supervisor.pid"
-    promotion_args = tmp_path / "promotion-args.txt"
-    process = subprocess.Popen(["sleep", "60"], cwd=active_root)
-    pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
-    try:
-        result = _run_sync(
-            script,
-            dev_root,
-            tmp_path / "live.json",
-            pid_file=pid_file,
-            promotion_args=promotion_args,
-        )
-        assert process.poll() is None
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
-
-    candidate = runtime_parent / target
-    assert result.returncode == 0, result.stderr
-    assert "ACTIVE_ROOT_SPLIT_PROTECTED" in result.stdout
-    assert _git(active_root, "rev-parse", "HEAD") == incumbent
-    assert _git(candidate, "rev-parse", "HEAD") == target
-    assert promotion_args.read_text(encoding="utf-8").splitlines() == [
-        "--promote",
-        "--repo",
-        str(candidate),
-    ]
-
-
-def test_current_immutable_root_is_a_true_noop(tmp_path: Path) -> None:
-    remote, seed, _first = _seed_remote(tmp_path)
-    current = _install_runtime_stubs(seed)
-    dev_root = tmp_path / "dev-root"
-    runtime_parent = tmp_path / "command-runtimes"
-    active_root = runtime_parent / current
-    runtime_parent.mkdir()
-    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    _git(runtime_parent, "clone", "--branch", "dev", str(remote), str(active_root))
-    script = _patched_sync_script(tmp_path, runtime_parent)
-    pid_file = tmp_path / "supervisor.pid"
-    promotion_args = tmp_path / "promotion-args.txt"
-    process = subprocess.Popen(["sleep", "60"], cwd=active_root)
-    pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
-    try:
-        result = _run_sync(
-            script,
-            dev_root,
-            tmp_path / "live.json",
-            pid_file=pid_file,
-            promotion_args=promotion_args,
-        )
-        assert process.poll() is None
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
-
-    assert result.returncode == 0, result.stderr
-    assert "promotion=no-op-current-root" in result.stdout
-    assert not promotion_args.exists()
-    assert _git(active_root, "rev-parse", "HEAD") == current
-
-
-def test_promotion_handoff_failure_leaves_split_incumbent_alive(tmp_path: Path) -> None:
-    remote, seed, _first = _seed_remote(tmp_path)
-    incumbent = _install_runtime_stubs(seed)
-    dev_root = tmp_path / "dev-root"
-    runtime_parent = tmp_path / "command-runtimes"
-    active_root = runtime_parent / incumbent
-    runtime_parent.mkdir()
-    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    _git(runtime_parent, "clone", "--branch", "dev", str(remote), str(active_root))
-    _advance(seed, "rejected")
-    script = _patched_sync_script(tmp_path, runtime_parent)
-    pid_file = tmp_path / "supervisor.pid"
-    promotion_args = tmp_path / "promotion-args.txt"
-    process = subprocess.Popen(["sleep", "60"], cwd=active_root)
-    pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
-    try:
-        result = _run_sync(
-            script,
-            dev_root,
-            tmp_path / "live.json",
-            pid_file=pid_file,
-            promotion_args=promotion_args,
-            promotion_exit=9,
-        )
-        assert process.poll() is None
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
-
-    assert result.returncode == 1
-    assert "promotion handoff failed" in result.stdout
-    assert _git(active_root, "rev-parse", "HEAD") == incumbent
-
-
-def test_config_drift_on_current_runtime_fails_without_mutation_or_handoff(
-    tmp_path: Path,
-) -> None:
-    remote, seed, _first = _seed_remote(tmp_path)
-    (seed / "scripts").mkdir(exist_ok=True)
-    (seed / "scripts" / "check_config_drift.py").write_text(
-        "import json, sys\nprint(json.dumps({'drift':[{'path':'watchdog.enabled'}]}))\nsys.exit(1)\n",
+    live_config.write_text(
+        json.dumps(
+            {
+                "watchdog": {
+                    "supervisor_command": [
+                        "python3",
+                        str(candidate / ".orchestrator" / "supervisor.py"),
+                    ]
+                }
+            }
+        ),
         encoding="utf-8",
     )
-    _git(seed, "add", "scripts/check_config_drift.py")
-    _git(seed, "commit", "-m", "add drift probe")
-    _git(seed, "push", "origin", "dev")
-    current = _install_runtime_stubs(seed)
-    dev_root = tmp_path / "dev-root"
-    runtime_parent = tmp_path / "command-runtimes"
-    active_root = runtime_parent / current
-    runtime_parent.mkdir()
-    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    _git(runtime_parent, "clone", "--branch", "dev", str(remote), str(active_root))
-    live_config = tmp_path / "live.json"
-    live_config.write_text(json.dumps({"preserve": True}) + "\n", encoding="utf-8")
-    before = live_config.read_bytes()
-    script = _patched_sync_script(tmp_path, runtime_parent)
-    pid_file = tmp_path / "supervisor.pid"
     promotion_args = tmp_path / "promotion-args.txt"
-    process = subprocess.Popen(["sleep", "60"], cwd=active_root)
-    pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
-    try:
-        result = _run_sync(
-            script,
-            dev_root,
-            live_config,
-            pid_file=pid_file,
-            promotion_args=promotion_args,
-        )
-        assert process.poll() is None
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
 
-    assert result.returncode == 1
-    assert "CONFIG_DRIFT_REQUIRES_PROMOTION" in result.stdout
-    assert live_config.read_bytes() == before
-    assert not promotion_args.exists()
-
-
-def test_sync_cleans_only_scoped_dev_tool_residue(tmp_path: Path) -> None:
-    remote, seed, _first = _seed_remote(tmp_path)
-    _install_runtime_stubs(seed)
-    tracked_briefs = seed / ".orchestrator" / "task-briefs"
-    tracked_briefs.mkdir()
-    (tracked_briefs / "tracked.md").write_text("keep tracked\n", encoding="utf-8")
-    _git(seed, "add", ".orchestrator/task-briefs/tracked.md")
-    _git(seed, "commit", "-m", "add tracked task brief")
-    _git(seed, "push", "origin", "dev")
-    current = _git(seed, "rev-parse", "HEAD")
-
-    dev_root = tmp_path / "dev-root"
-    runtime_parent = tmp_path / "command-runtimes"
-    active_root = runtime_parent / current
-    runtime_parent.mkdir()
-    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    _git(runtime_parent, "clone", "--branch", "dev", str(remote), str(active_root))
-
-    stale_paths = [
-        dev_root / ".orchestrator" / "assistant-dev-packets" / "pending.json",
-        dev_root / ".orchestrator" / "evidence" / "stale.json",
-        dev_root / ".orchestrator" / "task-briefs" / "stale.md",
-        dev_root / ".orchestrator" / "status-derived-views.lock",
-        dev_root / ".orchestrator" / "supervisor.lock",
-    ]
-    for path in stale_paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("obsolete\n", encoding="utf-8")
-
-    preserved_paths = [
-        dev_root / ".env",
-        dev_root / "local-notes.txt",
-        dev_root / ".orchestrator" / "local-secret.env",
-    ]
-    for path in preserved_paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("preserve\n", encoding="utf-8")
-
-    script = _patched_sync_script(tmp_path, runtime_parent)
-    pid_file = tmp_path / "supervisor.pid"
-    promotion_args = tmp_path / "promotion-args.txt"
-    process = subprocess.Popen(["sleep", "60"], cwd=active_root)
-    pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
-    try:
-        result = _run_sync(
-            script,
-            dev_root,
-            tmp_path / "live.json",
-            pid_file=pid_file,
-            promotion_args=promotion_args,
-        )
-        assert process.poll() is None
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
+    result = _run_sync(script, dev_root, live_config, coordination, promotion_args)
 
     assert result.returncode == 0, result.stderr
-    assert "removed scoped development-tool residue" in result.stdout
-    assert all(not path.exists() for path in stale_paths)
-    assert all(path.exists() for path in preserved_paths)
-    tracked_brief = dev_root / ".orchestrator" / "task-briefs" / "tracked.md"
-    assert tracked_brief.exists()
-    assert tracked_brief.read_text(encoding="utf-8") == "keep tracked\n"
+    assert "promotion=no-op-current-runtime" in result.stdout
     assert not promotion_args.exists()
-
-
-def test_sync_preserves_residue_when_immutable_incumbent_is_unresolved(
-    tmp_path: Path,
-) -> None:
-    remote, _seed, _first = _seed_remote(tmp_path)
-    dev_root = tmp_path / "dev-root"
-    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    stale_lock = dev_root / ".orchestrator" / "supervisor.lock"
-    stale_lock.parent.mkdir()
-    stale_lock.write_text("unverified\n", encoding="utf-8")
-
-    env = os.environ.copy()
-    env["PANTHEON_SUPERVISOR_PID"] = str(tmp_path / "no-supervisor.pid")
-    result = subprocess.run(
-        ["bash", str(SYNC_SCRIPT), str(dev_root), str(tmp_path / "no-live.json")],
-        cwd=REPO_ROOT,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert "immutable incumbent is not independently bound" in result.stdout
-    assert stale_lock.read_text(encoding="utf-8") == "unverified\n"

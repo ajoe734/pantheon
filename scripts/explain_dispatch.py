@@ -90,10 +90,18 @@ def main() -> None:
     )
     parser.add_argument("task_id")
     parser.add_argument("--agent")
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="Exact live supervisor config; diagnostics never infer a template config.",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    config = bind_status_root_paths(load_config())
+    config_path = Path(args.config).expanduser().absolute()
+    if config_path.is_symlink() or not config_path.is_file():
+        parser.error(f"--config must name a regular config file: {config_path}")
+    config = bind_status_root_paths(load_config(config_path))
     try:
         state = load_orchestrator_state(config)
     except DispatchStateLoadError as exc:

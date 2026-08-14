@@ -26,9 +26,13 @@ already-integrity-checked internal approve path (owner != reviewer, exact
 head binding, etc.) -- CI does not need to re-derive any of that, only
 confirm the artifact it produced is present for this exact head.
 
+Product PRs require the exact-head review-proof tag.  Development-tooling PRs
+labelled `delivery:tooling` use the explicit Human/Ops delivery decision
+instead: they do not pretend to be product tasks or manufacture a proof tag.
+
 CLI:
   canonical_review_gate_ci.py --repo <owner/repo> --head-ref <branch> \
-    --head-sha <sha> [--target-url <url>] [--dry-run]
+    --head-sha <sha> [--delivery-class <product|tooling>] [--target-url <url>] [--dry-run]
 """
 
 from __future__ import annotations
@@ -48,6 +52,9 @@ from github_review_bridge import CANONICAL_REVIEW_CONTEXT, review_proof_tag_name
 
 DEFAULT_TASK_BRANCH_PREFIX = "task/"
 APPROVE_DECISION = "approve"
+PRODUCT_DELIVERY_CLASS = "product"
+TOOLING_DELIVERY_CLASS = "tooling"
+_DELIVERY_CLASSES = frozenset({PRODUCT_DELIVERY_CLASS, TOOLING_DELIVERY_CLASS})
 
 # GitHub's commit-status `description` field is truncated server-side at 140
 # characters; truncate ourselves so the stored payload and the API's stored
@@ -105,15 +112,33 @@ def build_status_payload(
     head_ref: str,
     repository: str,
     head_sha: str,
+    delivery_class: str = PRODUCT_DELIVERY_CLASS,
     task_branch_prefix: str = DEFAULT_TASK_BRANCH_PREFIX,
     target_url: str = "",
     lookup: TagLookup | None = None,
 ) -> dict[str, Any]:
-    """Pure-ish decision function: the only network call is the single tag
+    """Pure-ish decision function: product delivery makes one tag lookup;
+    tooling delivery is explicitly classified by the GitHub workflow label.
     lookup, injectable via `lookup` for tests. Always returns a payload --
     the entire point of this module is that this function is never allowed
     to return "nothing to post".
     """
+    if delivery_class not in _DELIVERY_CLASSES:
+        return {
+            "state": "failure",
+            "context": CANONICAL_REVIEW_CONTEXT,
+            "description": f"unknown delivery class {delivery_class!r}"[:_DESCRIPTION_LIMIT],
+            "target_url": target_url,
+        }
+
+    if delivery_class == TOOLING_DELIVERY_CLASS:
+        return {
+            "state": "success",
+            "context": CANONICAL_REVIEW_CONTEXT,
+            "description": "development tooling: Human/Ops direct delivery path"[:_DESCRIPTION_LIMIT],
+            "target_url": target_url,
+        }
+
     task_id = resolve_task_id(head_ref, prefix=task_branch_prefix)
     if task_id is None:
         return {
@@ -167,6 +192,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", required=True, help="owner/repo")
     parser.add_argument("--head-ref", required=True)
     parser.add_argument("--head-sha", required=True)
+    parser.add_argument(
+        "--delivery-class",
+        choices=sorted(_DELIVERY_CLASSES),
+        default=PRODUCT_DELIVERY_CLASS,
+        help="product requires a review-proof tag; tooling is Human/Ops direct delivery",
+    )
     parser.add_argument("--target-url", default="")
     parser.add_argument("--task-branch-prefix", default=DEFAULT_TASK_BRANCH_PREFIX)
     parser.add_argument(
@@ -183,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         head_ref=args.head_ref,
         repository=args.repo,
         head_sha=args.head_sha,
+        delivery_class=args.delivery_class,
         task_branch_prefix=args.task_branch_prefix,
         target_url=args.target_url,
     )

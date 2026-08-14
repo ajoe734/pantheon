@@ -143,6 +143,12 @@ class ExplainDispatchV2Tests(unittest.TestCase):
                 with self.assertRaises(explain_dispatch.DispatchStateLoadError):
                     explain_dispatch.load_orchestrator_state(config)
 
+    def test_cli_requires_an_explicit_config(self) -> None:
+        with mock.patch.object(sys, "argv", ["explain_dispatch.py", "T1"]):
+            with self.assertRaises(SystemExit) as raised:
+                explain_dispatch.main()
+        self.assertEqual(raised.exception.code, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
