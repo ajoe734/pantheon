@@ -198,7 +198,6 @@ def run_tick(
 ) -> dict[str, Any]:
     if heartbeat:
         heartbeat()
-    jobs = fetch_claimable_jobs(api_url=api_url, limit=limit, timeout_seconds=timeout_seconds)
     completed = 0
     replayed = 0
     reclaimed = 0
@@ -207,6 +206,40 @@ def run_tick(
     errors: list[str] = []
     job_ids: list[str] = []
     terminal_sessions: list[dict[str, Any]] = []
+
+    try:
+        jobs = fetch_claimable_jobs(api_url=api_url, limit=limit, timeout_seconds=timeout_seconds)
+    except urllib.error.HTTPError as exc:
+        failed += 1
+        detail = exc.read().decode("utf-8", errors="replace")
+        errors.append(f"fetch_claimable_jobs http_error={exc.code} {detail}")
+        return {
+            "jobs_found": 0,
+            "job_ids": [],
+            "completed": 0,
+            "replayed": 0,
+            "reclaimed": 0,
+            "retryable": 0,
+            "failed": failed,
+            "errors": errors,
+            "terminal_session_ids": [],
+            "terminal_sessions": [],
+        }
+    except urllib.error.URLError as exc:
+        failed += 1
+        errors.append(f"fetch_claimable_jobs url_error={exc.reason}")
+        return {
+            "jobs_found": 0,
+            "job_ids": [],
+            "completed": 0,
+            "replayed": 0,
+            "reclaimed": 0,
+            "retryable": 0,
+            "failed": failed,
+            "errors": errors,
+            "terminal_session_ids": [],
+            "terminal_sessions": [],
+        }
 
     for job in jobs:
         job_id = str(job.get("job_id") or "").strip()
