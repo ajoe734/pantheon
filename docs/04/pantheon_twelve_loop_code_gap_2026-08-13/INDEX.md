@@ -4,7 +4,8 @@
 
 狀態：2026-08-13 文件已降級為 historical planning baseline；最新 current truth 為
 `CURRENT_GAP_2026-08-14.md`，current execution catalog 為
-`execution-tasks-current-2026-08-14.json`。materialization receipt 待補。
+`execution-tasks-current-2026-08-14.json`。16/16 tasks 已 canonical materialized，
+supervisor 已開始派給 Claude／Antigravity auto-workers。
 
 ## 本次結論
 
@@ -25,6 +26,9 @@ wiring、測試與 dev runtime 逐條對照 `LOOP_TRIGGER_AND_CONCURRENCY_POLICY
   16-task 去重後 DAG、owner/reviewer、平行 wave 與 materialization evidence 規則。
 - [execution-tasks-current-2026-08-14.json](execution-tasks-current-2026-08-14.json)：
   **唯一 current machine-readable execution catalog**。
+- [materialization-receipt-current-2026-08-14.json](materialization-receipt-current-2026-08-14.json)：
+  canonical 16-task readback、supervisor dispatch receipt 與兩次未寫入 task-state 的 bridge
+  failure evidence。
 - [GAP_REPORT.md](GAP_REPORT.md)：逐循環程式碼現況、根因、錯誤設計、缺失開發、
   缺失驗證、廢棄／誤導內容與舊計畫適用性。**Historical；不得當 current truth。**
 - [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)：替代錯誤設計的最小可用系統設計、資料與

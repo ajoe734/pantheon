@@ -4,7 +4,7 @@
 
 來源：`CURRENT_GAP_2026-08-14.md`
 
-狀態：catalog frozen for governed materialization；receipt 待補
+狀態：catalog frozen；16/16 canonical materialized；supervisor dispatch underway
 
 ## 去重結果
 
@@ -58,5 +58,32 @@
 
 ## Materialization evidence
 
-本節只接受：signed packet ID/digest、processed supervisor receipt、canonical task IDs 與
-readback hash。Queue file 本身不代表 materialized，worker process 本身也不代表完成。
+2026-08-14T07:36:59Z 已透過 command runtime
+`768eba39b35d4e9c53beaef22fe7bf841b8f5e45` 的官方
+`scripts/human-ops-status.sh assign`，將 catalog 的 16/16 tasks 寫入 authoritative
+task-state。這是 AGENTS.md 允許的 canonical Human/Ops task command，不是手改 JSON，也
+不是 chatbox subagent。
+
+- catalog SHA-256：`4119f3b2759279182f3e131b46d9cef6ae733907ae61dbe6320f91307f259a33`
+- canonical readback：16 筆全數存在、generation 1、catalog digest 相同，初始狀態均為
+  `todo`；owner 各為 Claude、Claude2、Antigravity、Antigravity2 四筆。
+- supervisor readback：2026-08-14T07:38:37Z 已建立五個 isolated-worktree auto-worker
+  runs，Antigravity 兩筆、Antigravity2 兩筆、Claude 一筆，且五筆 canonical task 已轉為
+  `in_progress`。其餘 tasks 依 provider capacity 與 declared DAG 留在 `todo` 等待 supervisor，
+  沒有由 chatbox 手動啟動。
+- machine-readable receipt：
+  `materialization-receipt-current-2026-08-14.json`。
+
+先前兩次 dev bridge 嘗試均為 **0 canonical rows**，不是本次 materialization truth：
+
+1. `pkt-l12-current-clean-closure-20260814-v1` 在 live supervisor 缺少
+   `BRIDGE_SIGNING_PUBLIC_KEYS_JSON` 時被 verifier 拒絕。
+2. `pkt-l12-current-clean-closure-20260814-v2` 通過 signature verification，但因缺少由獨立
+   operator authority 發出的真實 MFA canonical-mutation receipt，被
+   source/operator-separation gate 拒絕。沒有偽造 authorization，也沒有再造 v3 packet。
+
+這兩點是 supervisor/dev-bridge mechanism gap，未混入 12 循環產品 execution tasks。後續
+若要修 bridge，應另出機制盤點與 task；不得靠改寫本 catalog 或 product task 繞過。
+
+本節只接受 processed canonical readback 與 supervisor worker receipt。Queue file 本身不
+代表 materialized，worker process 也只代表 implementation underway，不代表 12 循環完成。
