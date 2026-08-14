@@ -9,7 +9,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dispatch_policy import (
     DEFAULT_ACTIVE_WORKER_STATUSES,
     DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS,
-    DEFAULT_REVIEW_REDISPATCH_TERMINAL_WORKER_STATUSES,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_READY,
@@ -59,7 +58,6 @@ def test_ready_dispatch_settings_current_defaults() -> None:
     assert settings["owned_statuses"] == ["in_progress", "todo"]
     assert settings["dependency_done_statuses"] == ["done"]
     assert settings["worker_terminal_statuses"] == ["review", "done", "review_approved"]
-    assert settings["review_redispatch_terminal_worker_statuses"] == DEFAULT_REVIEW_REDISPATCH_TERMINAL_WORKER_STATUSES
     assert settings["active_worker_statuses"] == DEFAULT_ACTIVE_WORKER_STATUSES
     assert settings["max_dispatches_per_tick"] == 4
     assert settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS

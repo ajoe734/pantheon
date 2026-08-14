@@ -901,9 +901,6 @@
   "ready_dispatcher": {
     "enabled": true,
     "seen_event_history_limit": 2000,
-    "pending_handoff_statuses": [
-      "pending"
-    ],
     "review_statuses": [
       "review"
     ],

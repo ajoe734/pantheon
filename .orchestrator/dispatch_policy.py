@@ -37,7 +37,6 @@ DEFAULT_OWNED_STATUSES = ["in_progress", "todo"]
 DEFAULT_SIDECAR_ONLY_AGENTS: list[str] = []
 DEFAULT_DEPENDENCY_DONE_STATUSES = ["done"]
 DEFAULT_WORKER_TERMINAL_STATUSES = ["review", "done", "review_approved"]
-DEFAULT_REVIEW_REDISPATCH_TERMINAL_WORKER_STATUSES = ["completed", "failed"]
 DEFAULT_ACTIVE_WORKER_STATUSES = [
     "running",
     "waiting_approval",
@@ -76,10 +75,6 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("sidecar_only_agents", list(DEFAULT_SIDECAR_ONLY_AGENTS))
     settings.setdefault("dependency_done_statuses", list(DEFAULT_DEPENDENCY_DONE_STATUSES))
     settings.setdefault("worker_terminal_statuses", list(DEFAULT_WORKER_TERMINAL_STATUSES))
-    settings.setdefault(
-        "review_redispatch_terminal_worker_statuses",
-        list(DEFAULT_REVIEW_REDISPATCH_TERMINAL_WORKER_STATUSES),
-    )
     settings.setdefault("active_worker_statuses", list(DEFAULT_ACTIVE_WORKER_STATUSES))
     settings.setdefault("max_dispatches_per_tick", DEFAULT_MAX_DISPATCHES_PER_TICK)
     settings.setdefault("max_concurrent_workers", DEFAULT_MAX_CONCURRENT_WORKERS)

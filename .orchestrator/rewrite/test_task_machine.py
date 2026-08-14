@@ -62,6 +62,46 @@ class DispatchReasonTests(unittest.TestCase):
         )
 
 
+class DeliveryBindingTests(unittest.TestCase):
+    def test_pull_request_binding_requires_exact_identity(self) -> None:
+        task = {
+            "id": "TASK-1",
+            "generation": 2,
+            "delivery_binding": {
+                "kind": "pull_request",
+                "pr": 42,
+                "head_sha": "a" * 40,
+                "head_branch": "task/TASK-1",
+                "base": "dev",
+            },
+        }
+        self.assertTrue(task_machine.delivery_binding_is_current(task))
+        self.assertEqual(
+            task_machine.delivery_binding_digest(task),
+            task_machine.delivery_binding_digest(task),
+        )
+        task["delivery_binding"]["head_sha"] = "short"
+        self.assertFalse(task_machine.delivery_binding_is_current(task))
+        self.assertIsNone(task_machine.delivery_binding_digest(task))
+
+    def test_artifact_binding_is_invalidated_by_contract_change(self) -> None:
+        task = {
+            "id": "TASK-2",
+            "generation": 3,
+            "artifacts": ["src/a.py"],
+            "acceptance": ["test passes"],
+        }
+        contract = task_machine.delivery_contract_payload(task)
+        task["delivery_binding"] = {
+            "kind": "artifact_contract",
+            **contract,
+            "contract_sha256": task_machine._canonical_json_sha256(contract),
+        }
+        self.assertTrue(task_machine.delivery_binding_is_current(task))
+        task["artifacts"] = ["src/b.py"]
+        self.assertFalse(task_machine.delivery_binding_is_current(task))
+
+
 class StateTableTests(unittest.TestCase):
     def test_coerce_known(self) -> None:
         self.assertEqual(task_machine.coerce_state("in_progress"), TaskState.IN_PROGRESS)

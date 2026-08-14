@@ -1588,6 +1588,7 @@ def evaluate_task_delivery_admission(
             normalized_status_set(settings.get("dependency_done_statuses"), ["done"]),
         ),
         human_ops_hold=bool(str(task.get("waiting_for") or "").strip()),
+        review_binding_current=rewrite_task_machine.delivery_binding_is_current(task),
     )
     return rewrite_dispatch_admission.evaluate_dispatch_intent(
         task_intent,
@@ -1771,15 +1772,6 @@ def build_request(
         metadata.setdefault("dispatch_event_key", dispatch_event_key)
     if "task_generation" in event:
         metadata.setdefault("task_generation", event.get("task_generation"))
-    task_metadata = metadata.get("task")
-    review_redispatch = (
-        task_metadata.get("governed_review_redispatch")
-        if isinstance(task_metadata, dict)
-        else None
-    )
-    if isinstance(review_redispatch, dict):
-        metadata["governed_review_redispatch"] = dict(review_redispatch)
-        metadata["require_isolated_worktree"] = True
     model_preference = resolve_agent_model_preference(config, agent)
     if model_preference and "model_preference" not in metadata:
         metadata["model_preference"] = model_preference
@@ -7563,9 +7555,6 @@ def ownerless_in_progress_settings(config: dict[str, Any]) -> dict[str, Any]:
     )
     settings.setdefault("max_transitions_per_tick", 4)
     settings.setdefault("merge_search_limit", 200)
-    settings.setdefault("github_pr_lookup_enabled", True)
-    settings.setdefault("github_pr_lookup_timeout_seconds", 20)
-    settings.setdefault("github_pr_lookup_limit", 20)
     return settings
 
 
@@ -7715,322 +7704,12 @@ def worker_target_agent_display_name(config: dict[str, Any], worker: dict[str, A
     return ""
 
 
-def _repository_slug_from_remote(repo_root: Path) -> str | None:
-    """``owner/repo`` for the checkout whose history the evidence is read from.
-
-    Deriving it from ``origin`` rather than from configuration guarantees the PR
-    lookup asks about the same repository the ancestry checks ran against.
-    """
-    output = _git_capture(repo_root, ["config", "--get", "remote.origin.url"])
-    url = str(output or "").strip()
-    if not url:
-        return None
-    match = re.search(r"github\.com[:/]+([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", url)
-    if not match:
-        return None
-    return f"{match.group(1)}/{match.group(2)}"
-
-
-def _ownerless_pr_snapshot_identity(
-    config: dict[str, Any],
-    task_id: str,
-    task: dict[str, Any],
-    worker: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Immutable task/worker facts that bind one pre-lock PR lookup."""
-
-    owner = str(task.get("owner") or "").strip()
-    reviewer = str(task.get("reviewer") or "").strip()
-    dispatched_at = worker_dispatch_started_at(worker)
-    delivery_head = worker_delivery_head_commit(worker)
-    run_id = str(worker.get("run_id") or "").strip()
-    if (
-        str(task.get("status") or "").strip().lower() != "in_progress"
-        or not owner
-        or not reviewer
-        or owner == reviewer
-        or not run_id
-        or dispatched_at is None
-        or not delivery_head
-    ):
-        return None
-    return {
-        "task_id": task_id,
-        "task_status": "in_progress",
-        "owner": owner,
-        "reviewer": reviewer,
-        "worker_run_id": run_id,
-        "worker_status": str(worker.get("status") or "").strip().lower(),
-        "delivery_head": delivery_head,
-        "dispatched_at": _isoformat_utc(dispatched_at),
-        "branch": worker_task_branch(config, task_id),
-    }
-
-
-def prefetch_ownerless_merged_pr_snapshots(
-    config: dict[str, Any],
-    runtime_snapshot: dict[str, Any],
-) -> dict[str, dict[str, Any]]:
-    """Fetch squash-merge metadata before exclusive runtime admission.
-
-    The snapshot includes the exact task assignment and terminal worker
-    identity that justified the query. Locked reconciliation consumes records
-    only while all of those facts still match; a missing, failed, or stale
-    lookup is an explicit negative and never falls back to ``gh`` under lock.
-    """
-
-    settings = ownerless_in_progress_settings(config)
-    if (
-        not settings.get("enabled", True)
-        or not config.get("paths", {}).get("status_file")
-    ):
-        return {}
-    try:
-        status = load_status(config)
-    except (KeyError, RuntimeError, OSError):
-        return {}
-    tasks = task_index_from_status(config, status)
-    owner_reasons = {
-        str(value) for value in settings.get("owner_dispatch_reasons", [])
-    }
-    max_lookups = max(
-        1,
-        int(settings.get("max_transitions_per_tick", 4) or 1),
-    )
-    snapshots: dict[str, dict[str, Any]] = {}
-    for task_id, task in tasks.items():
-        if len(snapshots) >= max_lookups:
-            break
-        worker = latest_owner_worker_for_task(
-            runtime_snapshot,
-            task_id,
-            owner_reasons=owner_reasons,
-        )
-        if worker is None:
-            continue
-        identity = _ownerless_pr_snapshot_identity(
-            config,
-            task_id,
-            task,
-            worker,
-        )
-        if identity is None:
-            continue
-        # Only terminal successful deliveries can reach merged evidence. This
-        # avoids spending a network timeout on every live in-progress task.
-        if (
-            identity["worker_status"] != "completed"
-            or not worker_runner_succeeded(worker)
-        ):
-            continue
-        try:
-            repo_root = config_path(config, "status_file").parent
-        except (KeyError, TypeError):
-            continue
-        snapshots[task_id] = {
-            **identity,
-            "fetched_at": utc_now(),
-            # ``None`` is retained as an authoritative lookup failure. The
-            # locked phase must not reinterpret it as permission to retry.
-            "records": _merged_pull_requests_for_branch(
-                config,
-                repo_root,
-                identity["branch"],
-            ),
-        }
-    return snapshots
-
-
-def ownerless_pr_snapshot_is_current(
-    config: dict[str, Any],
-    task_id: str,
-    task: dict[str, Any],
-    worker: dict[str, Any],
-    snapshot: dict[str, Any],
-) -> bool:
-    identity = _ownerless_pr_snapshot_identity(config, task_id, task, worker)
-    if identity is None:
-        return False
-    return all(snapshot.get(key) == value for key, value in identity.items())
-
-
-def _merged_pull_requests_for_branch(
-    config: dict[str, Any],
-    repo_root: Path,
-    branch: str,
-) -> list[dict[str, Any]] | None:
-    """Authoritative merged-PR records for ``branch``, or ``None`` on any doubt.
-
-    Every failure mode -- gh missing, non-zero exit, timeout, unparseable JSON,
-    unknown repository -- returns ``None`` so an unanswered lookup can never be
-    read as a merged delivery.
-    """
-    settings = ownerless_in_progress_settings(config)
-    if not settings.get("github_pr_lookup_enabled", True):
-        return None
-    if not resolve_gh_binary():
-        return None
-    slug = _repository_slug_from_remote(repo_root)
-    if not slug:
-        return None
-    try:
-        timeout = float(settings.get("github_pr_lookup_timeout_seconds", 20) or 20)
-        limit = str(int(settings.get("github_pr_lookup_limit", 20) or 20))
-    except (TypeError, ValueError):
-        return None
-    try:
-        proc = run_gh_process(
-            [
-                "pr",
-                "list",
-                "--repo",
-                slug,
-                "--head",
-                branch,
-                "--state",
-                "merged",
-                "--limit",
-                limit,
-                "--json",
-                "number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url",
-            ],
-            timeout_seconds=timeout,
-        )
-    except (OSError, subprocess.TimeoutExpired, GitHubBusError):
-        return None
-    if proc.returncode != 0:
-        return None
-    try:
-        records = json.loads(proc.stdout or "[]")
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(records, list):
-        return None
-    return [record for record in records if isinstance(record, dict)]
-
-
-def squash_merged_delivery_metadata(
-    config: dict[str, Any],
-    task_id: str,
-    *,
-    delivery_head: str,
-    base_name: str,
-    base_ref: str,
-    since: str,
-    repo_root: Path,
-    merged_pull_requests: list[dict[str, Any]] | None = None,
-    allow_network_lookup: bool = True,
-) -> dict[str, Any] | None:
-    """Bind a squash-merged delivery through authoritative GitHub PR metadata.
-
-    A squash merge deliberately rewrites the delivery: the worker's head is not
-    and never will be an ancestor of the integration base, so git ancestry alone
-    can never recognise this shape. The live 2026-07-26 example is PR #4213,
-    whose head ``9e484e252`` squash-merged to ``0410a89f0`` on ``dev``.
-
-    The task branch name is only the *lookup key*; it is never the evidence. The
-    binding is:
-
-    * exactly one merged PR whose ``headRefOid`` equals this worker's delivery
-      head -- no match, or more than one, fails closed;
-    * ``baseRefName`` equal to the expected integration branch;
-    * ``mergedAt`` at or after the worker's dispatch;
-    * a ``mergeCommit`` that is present locally and an ancestor of the base ref;
-    * that merge commit itself carrying this task's ``Task-ID:`` trailer and
-      dated at or after the dispatch.
-
-    Provider prose and ``pr_url`` are never consulted, and a task id alone never
-    implies a squash.
-    """
-    normalized_task_id = str(task_id or "").strip()
-    head = str(delivery_head or "").strip().lower()
-    since_value = str(since or "").strip()
-    dispatched_at = _parse_iso_utc(since_value)
-    if not normalized_task_id or dispatched_at is None:
-        return None
-    if not re.fullmatch(r"[0-9a-f]{40,64}", head):
-        return None
-
-    branch = worker_task_branch(config, normalized_task_id)
-    records = (
-        _merged_pull_requests_for_branch(config, repo_root, branch)
-        if allow_network_lookup
-        else merged_pull_requests
-    )
-    if not records:
-        return None
-
-    matches = [
-        record
-        for record in records
-        if str(record.get("headRefOid") or "").strip().lower() == head
-    ]
-    if len(matches) != 1:
-        # No PR delivered this exact head, or the metadata is ambiguous about
-        # which one did. Either way there is nothing to bind to.
-        return None
-    pull_request = matches[0]
-
-    if str(pull_request.get("state") or "").strip().upper() != "MERGED":
-        return None
-    if str(pull_request.get("baseRefName") or "").strip() != str(base_name or "").strip():
-        return None
-    merged_at = _parse_iso_utc(str(pull_request.get("mergedAt") or ""))
-    if merged_at is None or merged_at < dispatched_at:
-        return None
-
-    merge_commit = pull_request.get("mergeCommit")
-    merge_oid = ""
-    if isinstance(merge_commit, dict):
-        merge_oid = str(merge_commit.get("oid") or "").strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{40,64}", merge_oid):
-        return None
-    if not _git_commit_is_ancestor(repo_root, merge_oid, base_ref):
-        return None
-
-    # The squashed commit on the base carries the trailer; --no-walk keeps the
-    # search on that commit itself instead of its whole ancestry.
-    output = _git_capture(
-        repo_root,
-        [
-            "log",
-            "--no-walk",
-            "--format=%H",
-            "--fixed-strings",
-            f"--grep=Task-ID: {normalized_task_id}",
-            f"--since={since_value}",
-            merge_oid,
-        ],
-    )
-    if output is None:
-        return None
-    commits = [line.strip() for line in str(output).splitlines() if line.strip()]
-    if not commits:
-        return None
-
-    return {
-        "base_ref": base_ref,
-        "commits": commits[:10],
-        "delivery_head": head,
-        "merge_commit": merge_oid,
-        "trailer_commits_since": since_value,
-        "delivery_shape": "squash_pr_metadata",
-        "pull_request_number": pull_request.get("number"),
-        "pull_request_url": pull_request.get("url"),
-        "pull_request_head_ref_oid": str(pull_request.get("headRefOid") or "").strip().lower(),
-        "pull_request_base_ref_name": pull_request.get("baseRefName"),
-        "pull_request_merged_at": _isoformat_utc(merged_at),
-    }
-
-
 def merged_delivery_commits(
     config: dict[str, Any],
     task_id: str,
     *,
     delivery_head: str,
     since: str,
-    merged_pull_requests: list[dict[str, Any]] | None = None,
-    allow_network_lookup: bool = True,
 ) -> dict[str, Any] | None:
     """Durable evidence that *this worker's* delivery already merged.
 
@@ -8040,23 +7719,9 @@ def merged_delivery_commits(
     trailer alone only proves the id was delivered at *some* point: a reopened
     or reassigned task still carries every commit from its earlier rounds.
 
-    Two delivery shapes are recognised, and each is bound to this exact worker:
-
-    ``merge_ancestry``
-        A merge-commit or fast-forward PR keeps the delivery head in history.
-        The head must be an ancestor of the integration base, and a ``Task-ID:``
-        trailer commit reachable from that head must be dated at or after
-        ``since`` (the worker's dispatch time). The merge commit that carried
-        the head into the base is recorded when there is one.
-
-    ``squash_pr_metadata``
-        A squash merge rewrites the head, so git ancestry can never see it. That
-        shape is bound through authoritative GitHub PR metadata instead -- see
-        ``squash_merged_delivery_metadata``. It is tried only after ancestry has
-        failed, and it is never inferred from a task id or from ``pr_url``.
-
-    Every git or metadata failure returns ``None``; absent linkage never reads
-    as merged.
+    A governed delivery must preserve its reviewed head in the integration
+    history.  Therefore only merge-commit/fast-forward ancestry is valid.
+    Every git failure returns ``None``; absent linkage never reads as merged.
     """
     normalized_task_id = str(task_id or "").strip()
     head = str(delivery_head or "").strip().lower()
@@ -8108,20 +7773,6 @@ def merged_delivery_commits(
             "delivery_shape": "merge_ancestry",
         }
 
-    for base_name, candidate in bases:
-        squashed = squash_merged_delivery_metadata(
-            config,
-            normalized_task_id,
-            delivery_head=head,
-            base_name=base_name,
-            base_ref=candidate,
-            since=since_value,
-            repo_root=repo_root,
-            merged_pull_requests=merged_pull_requests,
-            allow_network_lookup=allow_network_lookup,
-        )
-        if squashed:
-            return squashed
     return None
 
 
@@ -8148,16 +7799,9 @@ def task_branch_has_unmerged_commits(
 ) -> bool:
     """True when a surviving task branch carries work the delivery does not cover.
 
-    Two shapes both mean "not finished": the branch is ahead of the integration
-    base (unpushed or unmerged work), or the branch moved past the delivery head
-    the terminal worker was observed at (new work landed after that delivery).
-    A git failure is read as unmerged so a transport error cannot be mistaken
-    for a clean, fully merged branch.
-
-    ``base_ref`` is empty for a squash-merged delivery. A squash rewrites the
-    commits, so the original branch is legitimately never an ancestor of the
-    base and only movement past the delivery head is meaningful there; the merge
-    itself is proven by ``squash_merged_delivery_metadata`` instead.
+    A branch ahead of the integration base or delivery head still has unmerged
+    work.  Git failure is read as unmerged so transport uncertainty never turns
+    into a closeout claim.
     """
     branch = worker_task_branch(config, task_id)
     try:
@@ -8188,8 +7832,6 @@ def merged_owner_delivery_evidence(
     worker: dict[str, Any],
     *,
     owner: str,
-    merged_pull_requests: list[dict[str, Any]] | None = None,
-    allow_network_lookup: bool = True,
 ) -> dict[str, Any] | None:
     """Evidence that *this* owner's *this* delivery merged and nothing remains.
 
@@ -8230,28 +7872,18 @@ def merged_owner_delivery_evidence(
     if not delivery_head:
         return None
 
-    merged_kwargs: dict[str, Any] = {}
-    if not allow_network_lookup or merged_pull_requests is not None:
-        merged_kwargs = {
-            "merged_pull_requests": merged_pull_requests,
-            "allow_network_lookup": allow_network_lookup,
-        }
     merged = merged_delivery_commits(
         config,
         task_id,
         delivery_head=delivery_head,
         since=_isoformat_utc(dispatched_at),
-        **merged_kwargs,
     )
     if not merged:
         return None
-    delivery_shape = str(merged.get("delivery_shape") or "")
     if task_branch_has_unmerged_commits(
         config,
         task_id,
-        # A squash-merged branch is never an ancestor of the base by design, so
-        # only movement past the delivery head is meaningful for that shape.
-        "" if delivery_shape == "squash_pr_metadata" else str(merged.get("base_ref") or ""),
+        str(merged.get("base_ref") or ""),
         delivery_head=delivery_head,
     ):
         return None
@@ -8265,16 +7897,11 @@ def merged_owner_delivery_evidence(
         "last_commit_progress_at": _isoformat_utc(last_commit_progress_at),
         "runner_finished_at": worker.get("runner_finished_at"),
         "delivery_head_commit": delivery_head,
-        "delivery_shape": delivery_shape,
+        "delivery_shape": "merge_ancestry",
         "merged_base_ref": merged.get("base_ref"),
         "merge_commit": merged.get("merge_commit"),
         "merged_commits": merged.get("commits"),
         "trailer_commits_since": merged.get("trailer_commits_since"),
-        "pull_request_number": merged.get("pull_request_number"),
-        "pull_request_url": merged.get("pull_request_url"),
-        "pull_request_head_ref_oid": merged.get("pull_request_head_ref_oid"),
-        "pull_request_base_ref_name": merged.get("pull_request_base_ref_name"),
-        "pull_request_merged_at": merged.get("pull_request_merged_at"),
         # Recorded for the audit trail only. pr_url is scraped from provider
         # output and has been observed malformed and pointing at an unrelated
         # PR, so it is never a gate.
@@ -8357,8 +7984,6 @@ def _prepare_ownerless_review_handoff_locked(
 def reconcile_ownerless_in_progress_tasks(
     config: dict[str, Any],
     state: dict[str, Any],
-    *,
-    prefetched_merged_prs: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
     """Resolve ``in_progress`` tasks whose owner worker already terminated.
 
@@ -8414,27 +8039,11 @@ def reconcile_ownerless_in_progress_tasks(
             continue
         if str(worker.get("ownerless_reconciled_task_status") or "") == "review":
             continue
-        evidence_kwargs: dict[str, Any] = {}
-        if prefetched_merged_prs is not None:
-            snapshot = prefetched_merged_prs.get(task_id)
-            if not isinstance(snapshot, dict) or not ownerless_pr_snapshot_is_current(
-                config,
-                task_id,
-                task,
-                worker,
-                snapshot,
-            ):
-                continue
-            evidence_kwargs = {
-                "merged_pull_requests": snapshot.get("records"),
-                "allow_network_lookup": False,
-            }
         evidence = merged_owner_delivery_evidence(
             config,
             task_id,
             worker,
             owner=owner,
-            **evidence_kwargs,
         )
         if not evidence:
             continue
@@ -11591,6 +11200,14 @@ def task_execution_dispatch_candidate(
     )
     if decision is None:
         return None
+    if (
+        decision is rewrite_task_machine.DispatchReason.REVIEW_READY
+        and not rewrite_task_machine.delivery_binding_is_current(task)
+    ):
+        # A reviewer must receive one frozen PR/artifact contract.  A missing
+        # binding is a canonical recovery problem, not a reason to start a
+        # worker that cannot complete the review.
+        return None
     reasons = {
         rewrite_task_machine.DispatchReason.REVIEW_READY: REASON_REVIEW_READY,
         rewrite_task_machine.DispatchReason.OWNED_FINALIZE: REASON_OWNED_FINALIZE,
@@ -11617,105 +11234,6 @@ def dispatch_event_is_in_unchanged_cooldown(
         return False
     elapsed_seconds = (current_at - seen_at).total_seconds()
     return 0 <= elapsed_seconds < cooldown_seconds
-
-
-def pending_review_handoff(
-    config: dict[str, Any],
-    status: dict[str, Any],
-    *,
-    task_id: str,
-    reviewer: str,
-) -> dict[str, Any] | None:
-    schema = config.get("schema", {})
-    handoffs_path = schema.get("handoffs_path", "handoffs")
-    pending_statuses = normalized_status_set(
-        ready_dispatch_settings(config).get("pending_handoff_statuses"),
-        ["pending"],
-    )
-    matching = [
-        handoff
-        for handoff in status.get(handoffs_path, []) or []
-        if str(handoff.get("task_id") or "") == task_id
-        and str(handoff.get("to") or "") == reviewer
-        and str(handoff.get("status") or "").lower() in pending_statuses
-    ]
-    if not matching:
-        return None
-    return max(
-        matching,
-        key=lambda handoff: str(handoff.get("created_at") or ""),
-    )
-
-
-def terminal_review_worker_for_redispatch(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    *,
-    task_id: str,
-    reviewer: str,
-    event_key: str,
-    handoff: dict[str, Any],
-) -> dict[str, Any] | None:
-    settings = ready_dispatch_settings(config)
-    terminal_statuses = normalized_status_set(
-        settings.get("review_redispatch_terminal_worker_statuses"),
-        ["completed", "failed"],
-    )
-    handoff_created_at = _parse_iso_utc(str(handoff.get("created_at") or ""))
-    candidates: list[dict[str, Any]] = []
-    for worker in state.get("workers", {}).values():
-        if str(worker.get("task_id") or "") != task_id:
-            continue
-        if str(worker.get("status") or "").lower() not in terminal_statuses:
-            continue
-        if display_name_for(
-            config,
-            worker_logical_dispatch_agent_id(config, worker),
-        ) != reviewer:
-            continue
-        snapshot = worker.get("request_snapshot")
-        if not isinstance(snapshot, dict) or snapshot.get("reason") != REASON_REVIEW_READY:
-            continue
-        snapshot_metadata = snapshot.get("metadata")
-        snapshot_metadata = snapshot_metadata if isinstance(snapshot_metadata, dict) else {}
-        if isinstance(snapshot_metadata.get("governed_review_redispatch"), dict):
-            continue
-        if str(worker.get("review_redispatch_event_key") or "") == event_key:
-            continue
-        worker_event_key = str(snapshot_metadata.get("dispatch_event_key") or "")
-        if worker_event_key:
-            if worker_event_key != event_key:
-                continue
-        elif handoff_created_at is not None:
-            terminal_at = _parse_iso_utc(
-                str(worker.get("runner_finished_at") or worker.get("last_event_at") or "")
-            )
-            if terminal_at is None or terminal_at < handoff_created_at:
-                continue
-        candidates.append(worker)
-    if not candidates:
-        return None
-    return max(
-        candidates,
-        key=lambda worker: str(
-            worker.get("runner_finished_at") or worker.get("last_event_at") or ""
-        ),
-    )
-
-
-def mark_governed_review_redispatch(
-    event: dict[str, Any],
-    *,
-    worker: dict[str, Any],
-    handoff: dict[str, Any],
-) -> None:
-    event.setdefault("task", {})["governed_review_redispatch"] = {
-        "attempt": 1,
-        "parent_worker_run_id": worker.get("run_id"),
-        "parent_worker_status": worker.get("status"),
-        "handoff_created_at": handoff.get("created_at"),
-        "require_isolated_worktree": True,
-    }
 
 
 def agent_dispatch_loads(
@@ -11863,6 +11381,7 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_lookup: Tas
             "last_update": task.get("last_update"),
             "depends_on": list(task.get("depends_on", []) or []),
             "dependency_signature": task_dependency_signature(task, task_lookup),
+            "delivery_binding_digest": rewrite_task_machine.delivery_binding_digest(task),
         },
         sort_keys=True,
         ensure_ascii=True,
@@ -11890,6 +11409,7 @@ def build_dispatch_event(
         "helper_kind",
         "mutates_canonical",
         "auto_created_by",
+        "delivery_binding",
     ):
         if key in task:
             task_payload[key] = task.get(key)
@@ -11982,39 +11502,22 @@ def evaluate_dispatch_candidate(
     if event["key"] in pending_event_keys:
         return reject("duplicate_event", "The exact delivery intent already exists")
 
-    review_redispatch: tuple[dict[str, Any], dict[str, Any]] | None = None
+    if reason == REASON_REVIEW_READY and any(
+        str(record.get("event_key") or "") == event["key"]
+        for record in ((state.get("queue") or {}).get("events") or {}).values()
+        if isinstance(record, Mapping)
+    ):
+        return reject(
+            "review_binding_already_served",
+            "The current review binding already consumed its single delivery intent",
+        )
     if dispatch_event_is_in_unchanged_cooldown(
         seen_event_keys,
         event["key"],
         cooldown_seconds=cooldown_seconds,
         now=checked_at,
     ):
-        if reason != REASON_REVIEW_READY:
-            return reject("unchanged_cooldown", "The exact task generation is cooling down")
-        handoff = pending_review_handoff(
-            config,
-            status,
-            task_id=task_id,
-            reviewer=target_agent,
-        )
-        terminal_worker = (
-            terminal_review_worker_for_redispatch(
-                config,
-                state,
-                task_id=task_id,
-                reviewer=target_agent,
-                event_key=event["key"],
-                handoff=handoff,
-            )
-            if handoff is not None
-            else None
-        )
-        if handoff is None or terminal_worker is None:
-            return reject(
-                "unchanged_cooldown",
-                "Review cooldown has no one-shot exact-handoff redispatch evidence",
-            )
-        review_redispatch = (terminal_worker, handoff)
+        return reject("unchanged_cooldown", "The exact task generation is cooling down")
 
     return {
         "eligible": True,
@@ -12025,7 +11528,6 @@ def evaluate_dispatch_candidate(
         "priority": priority,
         "event": event,
         "delivery_endpoint_id": admission.endpoint_id,
-        "review_redispatch": review_redispatch,
     }
 
 
@@ -12321,10 +11823,6 @@ def dispatch_ready_tasks(
             task_id = str(task.get(task_id_field) or "")
             reason = str(decision["reason"])
             event = dict(decision["event"])
-            review_redispatch = decision.get("review_redispatch")
-            if review_redispatch is not None:
-                terminal_worker, handoff = review_redispatch
-                mark_governed_review_redispatch(event, worker=terminal_worker, handoff=handoff)
             queued = event_sink(config, event)
             if not queued:
                 continue
@@ -12471,38 +11969,6 @@ def reserve_dispatch_plan(
             event["context_files"] = worker_execution_context_files(task_id)
         if not _queue_delivery_event_locked(config, state, event):
             continue
-        task_payload = event.get("task")
-        redispatch = (
-            task_payload.get("governed_review_redispatch")
-            if isinstance(task_payload, dict)
-            else None
-        )
-        if isinstance(redispatch, dict):
-            parent_run_id = str(redispatch.get("parent_worker_run_id") or "")
-            terminal_worker = next(
-                (
-                    worker
-                    for worker in (state.get("workers") or {}).values()
-                    if str(worker.get("run_id") or "") == parent_run_id
-                ),
-                None,
-            )
-            if isinstance(terminal_worker, dict):
-                terminal_worker["review_redispatch_event_key"] = event_key
-                terminal_worker["review_redispatched_at"] = planned_at
-                write_activity_log(
-                    config,
-                    {
-                        "type": "review_worker_redispatched",
-                        "task_id": task_id,
-                        "target_agent": target_agent,
-                        "worker_run_id": parent_run_id,
-                        "message": "Redispatched an interrupted governed review once.",
-                        "handoff_created_at": redispatch.get("handoff_created_at"),
-                        "event_key": event_key,
-                        "workspace_mode": "isolated_worktree",
-                    },
-                )
         pending_keys.add(event_key)
         pending_task_ids.add(task_id)
         pending_pairs.add((task_id, agent_id))
@@ -12637,7 +12103,6 @@ def explain_dispatch_for_task(
                 {
                     "candidate_reason": decision["reason"],
                     "candidate_priority": decision["priority"],
-                    "review_redispatch": bool(decision.get("review_redispatch")),
                     "verdict": "eligible for the sole delivery queue",
                 }
             )
@@ -12729,7 +12194,6 @@ def apply_post_dispatch_maintenance(
     state: dict[str, Any],
     *,
     delivery_health_observations: Iterable[Mapping[str, Any]],
-    ownerless_pr_snapshots: dict[str, dict[str, Any]],
     task_state_projection_snapshot: dict[str, Any] | None,
     assistant_dev_bridge_snapshot: dict[str, Any] | None,
     quiet: bool,
@@ -12754,7 +12218,6 @@ def apply_post_dispatch_maintenance(
         reconcile_ownerless_in_progress_tasks(
             config,
             state,
-            prefetched_merged_prs=ownerless_pr_snapshots,
         )
     ) or changed
     changed = bool(maybe_auto_commit_archive(config, state)) or changed
@@ -12959,15 +12422,6 @@ def run_once(
             maintenance_runtime_snapshot,
             quiet=quiet,
         )
-        ownerless_pr_snapshots = _safe_phase(
-            "prefetch_ownerless_merged_pr_snapshots",
-            prefetch_ownerless_merged_pr_snapshots,
-            config,
-            maintenance_runtime_snapshot,
-            quiet=quiet,
-        )
-        if not isinstance(ownerless_pr_snapshots, dict):
-            ownerless_pr_snapshots = {}
         github_bus_changed = bool(
             _safe_phase(
                 "sync_github_bus",
@@ -12987,7 +12441,6 @@ def run_once(
                     config,
                     state,
                     delivery_health_observations=delivery_health_observations,
-                    ownerless_pr_snapshots=ownerless_pr_snapshots,
                     task_state_projection_snapshot=task_state_projection_snapshot,
                     assistant_dev_bridge_snapshot=bridge_snapshot,
                     quiet=quiet,
