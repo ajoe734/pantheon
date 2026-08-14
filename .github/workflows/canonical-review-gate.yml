@@ -44,6 +44,7 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+      - labeled
     branches:
       - dev
       - master
@@ -96,6 +97,7 @@ jobs:
           REPO: ${{ github.repository }}
           HEAD_REF: ${{ github.event.inputs.head_ref || github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.inputs.head_sha || github.event.pull_request.head.sha }}
+          DELIVERY_CLASS: ${{ contains(github.event.pull_request.labels.*.name, 'delivery:tooling') && 'tooling' || 'product' }}
           TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           # Exit 1 means the fail-closed required status was published because
@@ -108,6 +110,7 @@ jobs:
             --repo "$REPO" \
             --head-ref "$HEAD_REF" \
             --head-sha "$HEAD_SHA" \
+            --delivery-class "$DELIVERY_CLASS" \
             --target-url "$TARGET_URL" || gate_rc=$?
           if [[ "$gate_rc" -ne 0 && "$gate_rc" -ne 1 ]]; then
             exit "$gate_rc"

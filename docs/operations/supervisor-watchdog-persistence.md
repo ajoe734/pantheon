@@ -41,24 +41,22 @@ watchdog ticks, not the oneshot cgroup teardown, govern that child.
 Do not treat tmux or dashboard uptime as supervisor health. The dashboard can
 remain up while the supervisor and auto workers are dead.
 
-## Intentional Deployment Restarts
+## Replacement Layout
 
-`scripts/sync-dev-root.sh` records a short-lived restart intent before it sends
-`SIGTERM` to a live supervisor after a code or config update. The intent is
-bound to both the old supervisor PID and the full target commit SHA. If the
-intent cannot be written durably, sync fails closed and leaves the running
-supervisor untouched.
+Supervisor replacement has no incumbent compatibility or rollback path.  The
+only accepted topology is:
 
-On the next unhealthy probe, a valid intent lets the watchdog bypass an open
-crash-loop circuit and the ordinary restart budget. Resource-pressure gates
-still take precedence. A successful handoff consumes the intent, closes the
-old crash circuit with an audit reason, and records the event in
-`intentional_restart_attempts`; it does not add a crash-budget attempt. Stale,
-malformed, or PID-mismatched intents do not authorize a restart.
+- immutable command source: `/home/lupin/pantheon-ci-deploy/command-runtimes/<exact-commit-sha>`;
+- stable development-tool coordination worktree:
+  `/home/lupin/pantheon-ci-deploy/coordination-root`;
+- mutable staging checkout: `/home/lupin/pantheon-ci-deploy/dev-root`.
 
-The default intent file is next to the canonical runtime state at
-`supervisor-restart-intent.json`, not in the deploy checkout. Its default TTL is
-300 seconds.
+`sync-dev-root.sh` never reads `/proc/<pid>/cwd` or a product-root PID file to
+infer authority. It refreshes staging, materializes the exact command runtime,
+then invokes the promoter with the explicit coordination root. The promoter
+reads an existing installed config only to locate the incumbent PID during a
+status-root replacement; it creates and validates the approval marker before
+TERM, installs the V2 config, and launches the exact runtime.
 
 ## Install
 
@@ -68,18 +66,19 @@ Preferred install:
 python3 scripts/supervisor_watchdog_install.py --method auto --start-now
 ```
 
-When the supervisor command checkout and canonical status checkout are
-different, pin the generated live config explicitly. Relative config paths are
-not safe for this split-root topology:
+Create the coordination worktree before the first replacement. It must be a
+Git worktree containing the current authoritative `ai-status.json` projection
+and `.orchestrator/` directory. Then use explicit roots; neither `dev-root`
+nor the product checkout is valid for runtime coordination:
 
 ```bash
-python3 scripts/provision_live_supervisor_config.py \
-  --repo-config /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/config.json \
-  --live-config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
-  --command-root /home/lupin/pantheon-ci-deploy/dev-root \
-  --status-root /home/lupin/pantheon
+COORDINATION_ROOT=/home/lupin/pantheon-ci-deploy/coordination-root
+bash scripts/sync-dev-root.sh \
+  /home/lupin/pantheon-ci-deploy/dev-root \
+  /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  "$COORDINATION_ROOT"
 python3 scripts/supervisor_watchdog_install.py \
-  --repo /home/lupin/pantheon-ci-deploy/dev-root \
+  --repo /home/lupin/pantheon-ci-deploy/command-runtimes/<exact-commit-sha> \
   --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
   --method auto \
   --start-now
@@ -91,14 +90,13 @@ the watchdog writer and `supervisor_runtime_health.py` reader on the same files;
 relative watchdog paths would otherwise resolve beneath the immutable command
 checkout and make a healthy persistent loop appear unmonitored.
 
-The dev root deployment performs these commands automatically after the root
-stack validations pass. It fails the deployment unless the user-systemd timer
+The deployment runbook must fail the replacement unless the user-systemd timer
 (or cron fallback), watchdog probe, singleton supervisor, and canonical
 heartbeat all become healthy. For user systemd it also enables and verifies
 login linger, so the timer starts after a reboot without requiring an
 interactive login.
 
-Before the watchdog starts, split-root config provisioning also creates the
+Before the old supervisor is stopped, split-root promotion also creates the
 ignored canonical `.orchestrator/approval-queue.json` marker when it is absent.
 Creation is exclusive and owner-only; an existing valid v2 queue is validated
 and preserved byte-for-byte so pending or historical approvals are never reset.

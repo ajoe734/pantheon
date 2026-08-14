@@ -26,7 +26,7 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
     runtime_root.mkdir(parents=True)
     state_path = status_root / ".orchestrator" / "state.json"
     status_path = status_root / "ai-status.json"
-    provider_path = status_root / ".orchestrator" / "provider-capabilities.json"
+    approval_queue_path = status_root / ".orchestrator" / "approval-queue.json"
     queue_path = status_root / ".orchestrator" / "event-queue.jsonl"
     event_log = repo / "runtime" / "task-state-events.jsonl"
     head_path = event_log.with_name(f"{event_log.name}.head.json")
@@ -44,7 +44,7 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
         "paths": {
             "state_file": str(state_path),
             "status_file": str(status_path),
-            "provider_capabilities": str(provider_path),
+            "approval_queue": str(approval_queue_path),
             "event_queue": str(queue_path),
         },
         "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
@@ -126,7 +126,7 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
     write_json(config_path, config)
     write_json(state_path, state)
     write_json(status_path, status)
-    write_json(provider_path, {"providers": {"codex": {"auth_ready": True}}})
+    write_json(approval_queue_path, {"version": 2, "pending": [], "history": []})
     write_json(head_path, {"sequence": 7, "state": status})
     queue_path.parent.mkdir(parents=True, exist_ok=True)
     queue_path.write_text(json.dumps({"event_id": "evt-1", "task_id": "TASK-1"}) + "\n", encoding="utf-8")
@@ -138,7 +138,7 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
         "state_path": state_path,
         "status": status,
         "status_path": status_path,
-        "provider_path": provider_path,
+        "approval_queue_path": approval_queue_path,
         "runtime_root": runtime_root,
         "process": process,
         "status_root": status_root,
@@ -212,7 +212,7 @@ def test_fresh_identity_and_lock_do_not_compensate_for_stale_heartbeat(tmp_path:
     assert "progress_heartbeat_fresh" in failed_checks(report)
 
 
-def test_fresh_heartbeat_without_runnable_backlog_service_is_not_progress(tmp_path: Path) -> None:
+def test_health_does_not_reimplement_dispatch_admission(tmp_path: Path) -> None:
     fixture = healthy_fixture(tmp_path)
     fixture["state"]["workers"] = {}
     fixture["state"]["queue"] = {"events": {}}
@@ -220,8 +220,8 @@ def test_fresh_heartbeat_without_runnable_backlog_service_is_not_progress(tmp_pa
 
     report = evaluate(tmp_path, fixture)
 
-    assert report["dimensions"]["progress"]["healthy"] is False
-    assert "progress_runnable_backlog_serviced" in failed_checks(report)
+    assert report["dimensions"]["progress"]["healthy"] is True
+    assert report["healthy"] is True
 
 
 def test_wrong_runtime_root_fails_identity_even_when_process_is_live(tmp_path: Path) -> None:
@@ -234,14 +234,14 @@ def test_wrong_runtime_root_fails_identity_even_when_process_is_live(tmp_path: P
     assert "identity_command_root_exact" in failed_checks(report)
 
 
-def test_readiness_requires_provider_registry_access(tmp_path: Path) -> None:
+def test_readiness_requires_worker_coordination_marker(tmp_path: Path) -> None:
     fixture = healthy_fixture(tmp_path)
-    fixture["provider_path"].unlink()
+    fixture["approval_queue_path"].unlink()
 
     report = evaluate(tmp_path, fixture)
 
     assert report["dimensions"]["readiness"]["healthy"] is False
-    assert "readiness_provider_registry_accessible" in failed_checks(report)
+    assert "readiness_approval_queue_marker_accessible" in failed_checks(report)
 
 
 def test_require_watchdog_accepts_fresh_lock_contention_probe(tmp_path: Path) -> None:
