@@ -58,6 +58,27 @@ before routing work to the new target.
 
 ## Historical Verified Dev Deployment
 
+Verified on 2026-08-14 (Twelve-Loop Closeout / Wave 6):
+
+- Backend/BFF repo: `ajoe734/pantheon`
+- Backend/BFF branch: `dev`
+- Backend/BFF merge commit:
+  `e01e49f032aa2877a56114e047ce56ef854c30c8` (PR #4876)
+- Frontend repo: `ajoe734/execute-plans`
+- Frontend branch: `dev`
+- Frontend merge commit:
+  `88b8a74e8cd1785f3ca144f4588a33f4506583e5` (PR #565)
+- Frontend dev VM document root: `/var/www/pantheon-dev-fe/`
+- Frontend deployment manifest:
+  `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json`
+  reports `app=execute-plans`, `sourceBranch=dev`,
+  `sourceRef=88b8a74e8cd1785f3ca144f4588a33f4506583e5`,
+  `bffCommit=e01e49f032aa2877a56114e047ce56ef854c30c8`,
+  `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`,
+  `VITE_BFF_REAL_WRITES=false`, `VITE_BFF_ALLOW_DEV_STUB_WRITES=false`.
+- Rollback candidate release preserved at:
+  `/var/www/pantheon-dev-fe-releases/20260726T072219Z-6a8d2d9b4f72-gate-30192097967-30192435033-1-887536`.
+
 Verified on 2026-06-11:
 
 - Backend/BFF repo: `ajoe734/pantheon`
@@ -84,24 +105,6 @@ Verified on 2026-06-11:
 If an agent sees a different Lovable bundle, that is not the Pantheon dev FE.
 Validate the Pantheon-owned host and the GitHub commits above before changing
 code.
-
-## Current Observed Deployment Warning
-
-At 2026-07-13 13:35 UTC the Pantheon-owned frontend host served
-`sourceBranch=dev` at commit
-`12b78ef210e535cd4a3d80358f78b44c9396e588`, matching the then-current remote
-`dev` head. Its manifest still reported `VITE_BFF_REAL_WRITES=true` and
-`VITE_BFF_ALLOW_DEV_STUB_WRITES=true`, while BFF `/health` reported only
-`version=0.2.0` and no git SHA or image identity. The release-workflow audit
-also found that the live symlink could change before probes and a failed probe
-had no automatic restoration of the prior release. The observed deployment is
-therefore current but not an accepted safe product baseline.
-
-Before the next product closeout, the release workflow must gate the exact
-candidate SHA before deployment, probe the candidate before switching, reject
-out-of-order deployments, switch atomically, and automatically restore and
-re-probe the prior SHA after a post-switch failure. The hosted manifest must
-show safe write defaults and exact FE and BFF build identities.
 
 ## Required Frontend Build Env
 

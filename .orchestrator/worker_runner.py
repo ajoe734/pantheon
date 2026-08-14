@@ -355,6 +355,61 @@ def validate_status_command_runtime() -> dict[str, str]:
     }
 
 
+def bind_relative_command_to_runtime(command: list[str], command_root: Path) -> list[str]:
+    """Bind path-based provider commands to the validated command runtime.
+
+    The worker's delivery cwd may belong to a different repository.  A
+    configured wrapper such as ``.orchestrator/bin/agy`` is command-runtime
+    code, so resolving it after switching to the delivery cwd would either
+    fail or execute an unrelated file from that repository.  Bare command
+    names remain PATH-resolved and absolute commands retain their existing
+    authority boundary.
+    """
+
+    if not command:
+        raise RuntimeError("worker command cannot be empty")
+
+    executable = str(command[0] or "").strip()
+    if not executable:
+        raise RuntimeError("worker command executable cannot be empty")
+
+    configured_path = Path(os.path.expanduser(executable))
+    has_path_separator = os.sep in executable or bool(os.altsep and os.altsep in executable)
+    if configured_path.is_absolute() or not has_path_separator:
+        return list(command)
+
+    root = Path(command_root)
+    if not root.is_absolute():
+        raise RuntimeError(f"validated command root must be absolute: {root}")
+    root = root.resolve()
+
+    candidate = root / configured_path
+    symlink_component = _first_symlink_component(candidate)
+    if symlink_component is not None:
+        raise RuntimeError(
+            "relative worker command cannot include a symlink component: "
+            f"{symlink_component}"
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError(
+            f"relative worker command is missing from command runtime: {candidate}"
+        ) from exc
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"relative worker command escapes command runtime: {candidate}"
+        ) from exc
+    if not resolved.is_file():
+        raise RuntimeError(f"relative worker command is not a file: {resolved}")
+    if not os.access(resolved, os.X_OK):
+        raise RuntimeError(f"relative worker command is not executable: {resolved}")
+
+    return [str(resolved), *command[1:]]
+
+
 import re as _re
 
 
@@ -444,6 +499,10 @@ def main(argv: list[str] | None = None) -> int:
     heartbeat_path = raw_heartbeat_path.resolve()
     status_path = raw_status_path.resolve()
     command_runtime = validate_status_command_runtime()
+    command = bind_relative_command_to_runtime(
+        command,
+        Path(command_runtime["command_root"]),
+    )
     if workspace_path:
         try:
             os.chdir(workspace_path)

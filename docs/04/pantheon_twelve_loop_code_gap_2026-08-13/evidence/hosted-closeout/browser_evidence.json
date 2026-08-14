@@ -1,0 +1,40 @@
+{
+  "tested_at": "2026-08-14T00:57:58.425Z",
+  "fe_host": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+  "bff_host": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+  "unauthenticated_view": {
+    "url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/management/loops",
+    "title": "Pantheon Management Console",
+    "auth_boundary_enforced": true,
+    "screenshot": "screenshots/loops_unauthenticated.png"
+  },
+  "error_state_view": {
+    "url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/nonexistent-loop-page-12345",
+    "renders_not_found": true,
+    "screenshot": "screenshots/not_found_error.png"
+  },
+  "authenticated_view": {
+    "url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/management/loops",
+    "title": "Pantheon Management Console",
+    "api_check": {
+      "status": 200,
+      "itemsCount": 13,
+      "loopIds": [
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring",
+        "per_persona_ooda"
+      ]
+    },
+    "screenshot": "screenshots/loops_authenticated.png"
+  }
+}
