@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
+import time
 import urllib.error
 from pathlib import Path
 from typing import Any
@@ -2343,3 +2345,482 @@ class TestMain:
         content = json.loads(Path(health_file).read_text("utf-8"))
         assert content["ticks"] == 2
         assert content["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# L12-CURRENT-DEPLOYMENT-AUTH-20260814 Authority Header Contract Tests
+# ---------------------------------------------------------------------------
+
+
+class TestAuthorityHeaderContract:
+    def test_deployment_headers_require_token_and_tenant(self, worker, monkeypatch):
+        monkeypatch.delenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", raising=False)
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-test")
+        with pytest.raises(RuntimeError, match="PANTHEON_DEPLOYMENT_SERVICE_TOKEN is required"):
+            worker._deployment_headers()
+
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "token-test")
+        monkeypatch.delenv("PANTHEON_DEPLOYMENT_TENANT_ID", raising=False)
+        with pytest.raises(RuntimeError, match="PANTHEON_DEPLOYMENT_TENANT_ID is required"):
+            worker._deployment_headers()
+
+    def test_deployment_headers_bearer_format_and_content_type(self, worker, monkeypatch):
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "raw-token")
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-alpha")
+        headers = worker._deployment_headers(json_body=True)
+        assert headers["Authorization"] == "Bearer raw-token"
+        assert headers["X-Tenant-Id"] == "tenant-alpha"
+        assert headers["Content-Type"] == "application/json"
+        assert headers["Accept"] == "application/json"
+
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "Bearer already-bearer")
+        headers_get = worker._deployment_headers(json_body=False)
+        assert headers_get["Authorization"] == "Bearer already-bearer"
+        assert "Content-Type" not in headers_get
+
+    def test_all_owner_mutation_and_get_calls_carry_credentials(self, worker, monkeypatch):
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "test-svc-token")
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "test-tenant-id")
+
+        captured_requests = []
+
+        def fake_urlopen(req, *args, **kwargs):
+            captured_requests.append(req)
+            resp = MagicMock()
+            if req.full_url.endswith("/claim") or req.full_url.endswith("/inbox"):
+                resp.read.return_value = b"[]"
+            else:
+                resp.read.return_value = b'{"status": "ok"}'
+            resp.__enter__.return_value = resp
+            return resp
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            worker.fetch_pending_outbox(
+                api_url="http://deployment:8095",
+                consumer_name="worker-1",
+            )
+            worker.fetch_applied_inbox(
+                api_url="http://deployment:8095",
+                consumer_name="worker-1",
+                aggregate_id="saga-1",
+            )
+            worker.consume_event(
+                api_url="http://deployment:8095",
+                event_id="evt-1",
+                consumer_name="worker-1",
+            )
+            worker.record_delivery_failure(
+                api_url="http://deployment:8095",
+                event_id="evt-1",
+                consumer_name="worker-1",
+                reason="timeout",
+                retryable=True,
+                max_attempts=3,
+                retry_delay_seconds=30,
+            )
+            worker.fetch_saga(api_url="http://deployment:8095", saga_id="saga-1")
+            worker.fetch_plan(api_url="http://deployment:8095", plan_id="plan-1")
+            worker.fetch_projection(api_url="http://deployment:8095", plan_id="plan-1")
+            worker.update_plan_status(
+                api_url="http://deployment:8095",
+                plan_id="plan-1",
+                status="executing",
+            )
+            worker.finalize_compensation(
+                api_url="http://deployment:8095",
+                saga_id="saga-1",
+                note="failure",
+                terminal_status="rolled_back",
+            )
+            worker.run_compatibility_check(
+                api_url="http://deployment:8095",
+                capital_pool_id="pool-1",
+                sponsor_persona_id="persona-1",
+                target_stage="paper",
+            )
+            worker.record_binding_created(
+                api_url="http://deployment:8095",
+                saga_id="saga-1",
+                binding_id="rb-1",
+                runtime_id="rt-1",
+                note="created",
+            )
+            worker.record_runtime_active(
+                api_url="http://deployment:8095",
+                saga_id="saga-1",
+                binding_id="rb-1",
+                runtime_id="rt-1",
+                note="active",
+            )
+            worker.record_saga_failure(
+                api_url="http://deployment:8095",
+                saga_id="saga-1",
+                reason="error",
+                failed_step="runtime_active",
+            )
+
+        assert len(captured_requests) == 13
+        for req in captured_requests:
+            assert req.headers.get("Authorization") == "Bearer test-svc-token"
+            assert req.headers.get("X-tenant-id") == "test-tenant-id"
+
+    def test_fetch_authority_json_authenticates_deployment_urls(self, worker, monkeypatch):
+        monkeypatch.setenv("DEPLOYMENT_API_URL", "http://deployment:8095")
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "sec-token")
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-x")
+
+        captured = []
+
+        def fake_urlopen(req, *args, **kwargs):
+            captured.append(req)
+            resp = MagicMock()
+            resp.read.return_value = b'{"plan_id": "plan-1"}'
+            resp.__enter__.return_value = resp
+            return resp
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            res_dep = worker._fetch_authority_json("http://deployment:8095/api/deployment/plans/plan-1", 5.0)
+            res_gov = worker._fetch_authority_json("http://governance:8091/api/approvals/app-1", 5.0)
+
+        assert res_dep == {"plan_id": "plan-1"}
+        assert captured[0].headers.get("Authorization") == "Bearer sec-token"
+        assert captured[0].headers.get("X-tenant-id") == "tenant-x"
+        assert "Authorization" not in captured[1].headers
+        assert "X-tenant-id" not in captured[1].headers
+
+    def test_fetch_authority_json_does_not_authenticate_foreign_origin_with_deployment_path(self, worker, monkeypatch):
+        monkeypatch.setenv("DEPLOYMENT_API_URL", "http://deployment:8095")
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "sec-token")
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-x")
+
+        captured = []
+
+        def fake_urlopen(req, *args, **kwargs):
+            captured.append(req)
+            resp = MagicMock()
+            resp.read.return_value = b'{"status": "foreign"}'
+            resp.__enter__.return_value = resp
+            return resp
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            # Foreign domain that includes /api/deployment/ in the path
+            res_foreign = worker._fetch_authority_json("http://attacker.com/api/deployment/plans/plan-1", 5.0)
+            # Foreign port on same hostname that includes /api/deployment/ in the path
+            res_foreign_port = worker._fetch_authority_json("http://deployment:9999/api/deployment/plans/plan-1", 5.0)
+
+        assert res_foreign == {"status": "foreign"}
+        assert res_foreign_port == {"status": "foreign"}
+        assert "Authorization" not in captured[0].headers
+        assert "X-tenant-id" not in captured[0].headers
+        assert "Authorization" not in captured[1].headers
+        assert "X-tenant-id" not in captured[1].headers
+
+    def test_fetch_authority_json_maps_http_errors(self, worker, monkeypatch):
+        monkeypatch.setenv("DEPLOYMENT_API_URL", "http://deployment:8095")
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "sec-token")
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-x")
+
+        def fake_403(*args, **kwargs):
+            raise urllib.error.HTTPError("http://deployment:8095/api/deployment/plans/1", 403, "Forbidden", {}, None)
+
+        def fake_503(*args, **kwargs):
+            raise urllib.error.HTTPError("http://deployment:8095/api/deployment/plans/1", 503, "Service Unavailable", {}, None)
+
+        with patch("urllib.request.urlopen", side_effect=fake_403):
+            with pytest.raises(worker.DeployAuthorityError, match="HTTP 403"):
+                worker._fetch_authority_json("http://deployment:8095/api/deployment/plans/1", 5.0)
+
+        with patch("urllib.request.urlopen", side_effect=fake_503):
+            with pytest.raises(worker.DeployAuthorityUnavailableError, match="HTTP 503"):
+                worker._fetch_authority_json("http://deployment:8095/api/deployment/plans/1", 5.0)
+
+
+# ---------------------------------------------------------------------------
+# L12-CURRENT-DEPLOYMENT-AUTH-20260814 Health Tests (Idle Success & 403)
+# ---------------------------------------------------------------------------
+
+
+class TestHealthcheckAndTruthfulHealth:
+    def test_healthcheck_returns_zero_on_healthy_consumer(self, worker, tmp_path):
+        health_path = str(tmp_path / "health.json")
+        worker._write_health(
+            health_path,
+            {
+                "consumer_name": "deployment-outbox-consumer",
+                "status": "ok",
+                "ticks": 5,
+                "last_success": "2026-08-14T10:00:00Z",
+                "consecutive_errors": 0,
+            },
+        )
+        assert worker.healthcheck(health_file=health_path, consumer_name="deployment-outbox-consumer") == 0
+
+    def test_healthcheck_returns_zero_on_idle_success(self, worker, tmp_path):
+        health_path = str(tmp_path / "health.json")
+        worker._write_health(
+            health_path,
+            {
+                "consumer_name": "deployment-outbox-consumer",
+                "status": "ok",
+                "ticks": 1,
+                "last_success": "2026-08-14T10:00:00Z",
+                "last_idle_success": "2026-08-14T10:00:00Z",
+                "consecutive_errors": 0,
+            },
+        )
+        assert worker.healthcheck(health_file=health_path, consumer_name="deployment-outbox-consumer") == 0
+
+    def test_healthcheck_fails_when_unconfigured_or_missing(self, worker, tmp_path):
+        assert worker.healthcheck(health_file="", consumer_name="test") == 1
+        assert worker.healthcheck(health_file=str(tmp_path / "nonexistent.json"), consumer_name="test") == 1
+
+    def test_healthcheck_fails_on_status_not_ok_or_zero_ticks(self, worker, tmp_path):
+        health_path = str(tmp_path / "health.json")
+        worker._write_health(
+            health_path,
+            {
+                "consumer_name": "test",
+                "status": "starting",
+                "ticks": 0,
+                "last_success": None,
+            },
+        )
+        assert worker.healthcheck(health_file=health_path, consumer_name="test") == 1
+
+    def test_healthcheck_fails_on_zero_success_streak(self, worker, tmp_path):
+        health_path = str(tmp_path / "health.json")
+        worker._write_health(
+            health_path,
+            {
+                "consumer_name": "test",
+                "status": "degraded",
+                "ticks": 3,
+                "last_success": None,
+                "consecutive_errors": 3,
+                "last_failure_reason": "HTTP 403 Forbidden",
+            },
+        )
+        assert worker.healthcheck(health_file=health_path, consumer_name="test") == 1
+
+    def test_healthcheck_fails_on_consecutive_errors_even_if_previously_succeeded(self, worker, tmp_path):
+        health_path = str(tmp_path / "health.json")
+        worker._write_health(
+            health_path,
+            {
+                "consumer_name": "test",
+                "status": "degraded",
+                "ticks": 10,
+                "last_success": "2026-08-14T09:00:00Z",
+                "consecutive_errors": 2,
+                "last_failure_reason": "connection timeout",
+            },
+        )
+        assert worker.healthcheck(health_file=health_path, consumer_name="test") == 1
+
+    def test_healthcheck_fails_on_stale_heartbeat(self, worker, tmp_path):
+        health_path = str(tmp_path / "health.json")
+        worker._write_health(
+            health_path,
+            {
+                "consumer_name": "test",
+                "status": "ok",
+                "ticks": 5,
+                "last_success": "2026-08-14T10:00:00Z",
+                "consecutive_errors": 0,
+            },
+        )
+        file_mtime = os.path.getmtime(health_path)
+        assert worker.healthcheck(
+            health_file=health_path,
+            consumer_name="test",
+            max_age_seconds=10.0,
+            now=file_mtime + 50.0,
+        ) == 1
+
+    def test_main_resets_health_at_startup(self, worker, monkeypatch, tmp_path):
+        health_file = str(tmp_path / "health.json")
+        Path(health_file).write_text(json.dumps({"status": "ok", "ticks": 99}))
+
+        monkeypatch.setenv("DEPLOYMENT_API_URL", "http://localhost:8095")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS", "1")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS", "1")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", health_file)
+
+        records = [_outbox_record("evt-init-001")]
+        receipt = _inbox_receipt("evt-init-001", status="applied")
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=records),
+            patch.object(worker, "consume_event", return_value=receipt),
+            patch("time.sleep"),
+        ):
+            worker.main()
+
+        content = json.loads(Path(health_file).read_text("utf-8"))
+        assert content["ticks"] == 1
+        assert content["status"] == "ok"
+        assert content["total_consumed"] == 1
+
+    def test_main_transitions_to_degraded_on_403_and_fails_healthcheck(self, worker, monkeypatch, tmp_path):
+        health_file = str(tmp_path / "health.json")
+        monkeypatch.setenv("DEPLOYMENT_API_URL", "http://localhost:8095")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS", "1")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS", "1")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", health_file)
+
+        def _forbidden_claim(**_kwargs):
+            raise urllib.error.HTTPError(
+                "http://localhost:8095/api/deployment/outbox/claim",
+                403,
+                "Forbidden: invalid credentials",
+                {},
+                None,
+            )
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", side_effect=_forbidden_claim),
+            patch("time.sleep"),
+        ):
+            worker.main()
+
+        assert not Path(health_file).exists()
+        assert worker.healthcheck(health_file=health_file) == 1
+
+    def test_main_recovers_health_file_after_403(self, worker, monkeypatch, tmp_path):
+        health_file = str(tmp_path / "health.json")
+        monkeypatch.setenv("DEPLOYMENT_API_URL", "http://localhost:8095")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS", "1")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS", "2")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", health_file)
+
+        call_count = 0
+
+        def _flaky_claim(**_kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise urllib.error.HTTPError(
+                    "http://localhost:8095/api/deployment/outbox/claim",
+                    403,
+                    "Forbidden: invalid credentials",
+                    {},
+                    None,
+                )
+            return []
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", side_effect=_flaky_claim),
+            patch("time.sleep"),
+        ):
+            worker.main()
+
+        assert Path(health_file).exists()
+        content = json.loads(Path(health_file).read_text("utf-8"))
+        assert content["status"] == "ok"
+        assert content["ticks"] == 2
+        assert content["recovery_count"] == 1
+        assert content["last_recovered_at"] is not None
+        assert worker.healthcheck(health_file=health_file) == 0
+
+
+# ---------------------------------------------------------------------------
+# L12-CURRENT-DEPLOYMENT-AUTH-20260814 Saga Replay and Readback Tests
+# ---------------------------------------------------------------------------
+
+
+class TestSagaReplayAndReadback:
+    def test_approved_plan_full_lifecycle_and_exact_readback(self, worker, monkeypatch):
+        plan = _binding_plan()
+        saga = _binding_saga()
+        binding = _runtime_binding()
+        saga_id = saga["saga_id"]
+        plan_id = plan["plan_id"]
+        binding_id = binding["binding_id"]
+
+        # Step 1: runtime.binding.requested
+        evt1 = _outbox_record("evt-bind-001", sequence_no=1)
+        evt1["event"].update({"event_type": "runtime.binding.requested", "aggregate_id": saga_id})
+
+        mock_client = MagicMock()
+        mock_client.list_by_plan.return_value = []
+        mock_result = worker.DispatchResult(
+            outcome=worker.DispatchOutcome.SUCCESS,
+            binding_id=binding_id,
+            binding=binding,
+        )
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[evt1]),
+            patch.object(worker, "fetch_applied_inbox", return_value=[]),
+            patch.object(worker, "fetch_saga", return_value=saga),
+            patch.object(worker, "fetch_plan", return_value=plan),
+            patch.object(
+                worker,
+                "run_compatibility_check",
+                return_value={
+                    "ok": True,
+                    "persona_binding_id": "pcb-001",
+                    "persona_scope_ok": True,
+                    "allowed_deployment_scope": "paper",
+                },
+            ),
+            patch.object(worker, "dispatch_to_runtime_manager", return_value=mock_result),
+            patch.object(worker, "RuntimeManagerClient", return_value=mock_client),
+            patch.object(worker, "record_binding_created", return_value={"status": "ok"}) as mock_rec_bind,
+            patch.object(worker, "consume_event", return_value=_inbox_receipt("evt-bind-001", status="applied")),
+        ):
+            res1 = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
+            assert res1["consumed"] == 1
+            assert len(res1["errors"]) == 0
+            mock_rec_bind.assert_called_once()
+
+        # Step 2: runtime.load.requested
+        evt2 = _outbox_record("evt-load-001", sequence_no=2)
+        evt2["event"].update({
+            "event_type": "runtime.load.requested",
+            "aggregate_id": saga_id,
+            "payload": {"binding_id": binding_id},
+        })
+        saga["status"] = "awaiting_runtime_load"
+        saga["binding_id"] = binding_id
+
+        terminal_saga = _completed_saga(saga)
+        projection = _success_projection(terminal_saga, binding)
+
+        mock_client.get.return_value = binding
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[evt2]),
+            patch.object(worker, "fetch_applied_inbox", return_value=[_applied_receipt(1)]),
+            patch.object(worker, "fetch_saga", side_effect=[saga, terminal_saga]),
+            patch.object(worker, "fetch_projection", return_value=projection),
+            patch.object(worker, "RuntimeManagerClient", return_value=mock_client),
+            patch.object(worker, "record_runtime_active", return_value={"status": "ok"}) as mock_rec_act,
+            patch.object(worker, "consume_event", return_value=_inbox_receipt("evt-load-001", status="applied")),
+        ):
+            res2 = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
+            assert res2["consumed"] == 1
+            assert len(res2["errors"]) == 0
+            mock_rec_act.assert_called_once()
+
+    def test_replay_idempotency_on_completed_saga(self, worker):
+        saga_id = "saga-completed-001"
+        completed_saga = _binding_saga(
+            saga_id=saga_id,
+            plan_id="plan-001",
+            status="completed",
+            binding_id="rb-001",
+        )
+
+        evt = _outbox_record("evt-replay-001", sequence_no=1)
+        evt["event"].update({"event_type": "runtime.binding.requested", "aggregate_id": saga_id})
+
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[evt]),
+            patch.object(worker, "fetch_applied_inbox", return_value=[]),
+            patch.object(worker, "fetch_saga", return_value=completed_saga),
+            patch.object(worker, "consume_event", return_value=_inbox_receipt("evt-replay-001", status="applied")),
+            patch.object(worker, "dispatch_to_runtime_manager") as mock_dispatch,
+        ):
+            res = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
+            assert res["consumed"] == 1
+            mock_dispatch.assert_not_called()

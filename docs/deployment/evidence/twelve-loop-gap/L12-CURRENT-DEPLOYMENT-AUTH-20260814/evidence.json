@@ -1,0 +1,124 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "L12-CURRENT-DEPLOYMENT-AUTH-20260814",
+    "title": "Repair deployment consumer owner credentials and truthful health",
+    "phase": "W1-component",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-CURRENT-DEPLOYMENT-AUTH-20260814",
+    "merge_target": "dev",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-DEPLOYMENT-AUTH-20260814/evidence.json",
+    "overall_admission": "ready_for_independent_review"
+  },
+  "scope": {
+    "owned_layer": "Deployment outbox consumer authentication credentials (service token and tenant headers), scoped authority fetch origin verification, and truthful health reporting via successful/idle-success ticks and health file management.",
+    "not_changing": [
+      "second deployment dispatcher",
+      "new saga",
+      "docker-compose.yml"
+    ],
+    "composes_with": {
+      "upstream": "DeploymentPlan approvals and Saga requests",
+      "downstream": "RuntimeBinding active state and paper fleet reconciler"
+    },
+    "implementation_changed_files": [
+      "services/deployment/outbox_consumer_worker.py",
+      "services/deployment/test_outbox_consumer_worker.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-DEPLOYMENT-AUTH-20260814/evidence.json"
+    ]
+  },
+  "normal_path_proof": {
+    "mode": "deterministic, isolated in-process consumer integration and authority contract tests",
+    "trigger": "Outbox poll claim and event consumption with required service token, tenant headers, and truthful health ticks",
+    "event_sequence": [
+      "Outbox claim and event consumption requests attach Authorization Bearer and X-Tenant-Id headers",
+      "Deployment authority validation checks exact origin matching before attaching deployment credentials",
+      "Successful and idle-success poll ticks atomically write truthful ok status with tick count and last_success timestamp",
+      "403 Forbidden or delivery failure marks status degraded, unlinks health file, and fails semantic healthcheck"
+    ],
+    "terminal_readback": {
+      "healthcheck_exit_code": 0,
+      "health_status": "ok",
+      "auth_headers": {
+        "Authorization": "Bearer <service_token>",
+        "X-Tenant-Id": "<tenant_id>"
+      },
+      "foreign_origin_headers": {
+        "Authorization": "absent",
+        "X-Tenant-Id": "absent"
+      }
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Owner GET and mutation calls carry the required service identity and tenant.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/deployment/test_outbox_consumer_worker.py::TestDeploymentHeaders::test_deployment_headers_attached_to_all_owner_calls"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Approved plan produces exact RuntimeBinding readback.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/deployment/test_outbox_consumer_worker.py::TestSagaReplayAndReadback::test_approved_plan_full_lifecycle_and_exact_readback"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "403 or zero-success streak marks consumer unhealthy, and successful/idle-success ticks determine health.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/deployment/test_outbox_consumer_worker.py::TestHealthcheckAndTruthfulHealth::test_main_transitions_to_degraded_on_403_and_fails_healthcheck",
+        "services/deployment/test_outbox_consumer_worker.py::TestHealthcheckAndTruthfulHealth::test_main_recovers_health_file_after_403",
+        "services/deployment/test_outbox_consumer_worker.py::TestHealthcheckAndTruthfulHealth::test_healthcheck_fails_on_zero_success_streak"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Scope authority verification credentials to exact deployment origin and reject foreign URLs.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/deployment/test_outbox_consumer_worker.py::TestDeploymentHeaders::test_fetch_authority_json_authenticates_deployment_urls",
+        "services/deployment/test_outbox_consumer_worker.py::TestDeploymentHeaders::test_fetch_authority_json_does_not_authenticate_foreign_origin_with_deployment_path"
+      ]
+    }
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/deployment/test_outbox_consumer_worker.py",
+        "result": "pass",
+        "conclusion": "75 passed in 11.15s"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/deployment/",
+        "result": "pass",
+        "conclusion": "177 passed in 59.17s"
+      },
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m py_compile services/deployment/outbox_consumer_worker.py services/deployment/test_outbox_consumer_worker.py",
+        "result": "pass",
+        "conclusion": "exit 0"
+      }
+    ]
+  },
+  "safety": {
+    "no_live_capital": "pass; tests run against isolated mock endpoints and in-process fixtures with no live broker credentials.",
+    "runtime_binding_write_owner": "Runtime Manager remains the binding write authority; Deployment outbox consumer reads back active binding.",
+    "credential_scoping": "Bearer token and X-Tenant-Id are attached only to exact deployment owner origin requests.",
+    "truthful_health": "Health is driven by successful and idle-success ticks; failing and 403 ticks unlink the health file and mark the consumer degraded."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer": "Codex",
+    "required_review": "Independent exact-head review of credentials scoping, truthful health check, replay/readback tests, and evidence manifest."
+  }
+}

@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -490,6 +491,53 @@ def record_saga_failure(
     return json.loads(body) if body else {}
 
 
+def _is_same_origin(url: str, base_url: str) -> bool:
+    if not url or not base_url:
+        return False
+    target = urllib.parse.urlparse(url)
+    base = urllib.parse.urlparse(base_url)
+    if not base.netloc:
+        return url.startswith(base_url.rstrip("/"))
+    return (
+        target.scheme == base.scheme
+        and target.netloc == base.netloc
+        and (not base.path.rstrip("/") or target.path.startswith(base.path.rstrip("/")))
+    )
+
+
+def _fetch_authority_json(url: str, timeout_seconds: float) -> Mapping[str, Any]:
+    deployment_url = os.getenv("DEPLOYMENT_API_URL", "http://127.0.0.1:8095").rstrip("/")
+    headers = {"Accept": "application/json"}
+    if _is_same_origin(url, deployment_url):
+        headers.update(_deployment_headers())
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        error_type = (
+            DeployAuthorityUnavailableError
+            if exc.code in {408, 425, 429} or 500 <= exc.code <= 599
+            else DeployAuthorityError
+        )
+        raise error_type(f"authoritative read {url!r} returned HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise DeployAuthorityUnavailableError(
+            f"authoritative read {url!r} is unavailable: {getattr(exc, 'reason', exc)}"
+        ) from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise DeployAuthorityError(
+            f"authoritative read {url!r} did not return JSON"
+        ) from exc
+    if not isinstance(payload, Mapping):
+        raise DeployAuthorityError(
+            f"authoritative read {url!r} must return a JSON object"
+        )
+    return payload
+
+
 def verify_binding_deploy_authorities(
     *,
     saga: Mapping[str, Any],
@@ -568,6 +616,7 @@ def verify_binding_deploy_authorities(
         ),
         capital_base_url=os.getenv("PANTHEON_CAPITAL_API_URL", ""),
         timeout_seconds=timeout_seconds,
+        fetch_json=_fetch_authority_json,
         allowed_target_stages=(str(plan.get("target_stage") or ""),),
         allowed_registry_deployment_stages=(
             (str(plan.get("current_stage") or ""),)
@@ -1160,6 +1209,7 @@ def _execute_rollback_compensation(
                 ),
                 capital_base_url=os.getenv("PANTHEON_CAPITAL_API_URL", ""),
                 timeout_seconds=timeout_seconds,
+                fetch_json=_fetch_authority_json,
                 allowed_plan_statuses=("approved", "executing", "executed"),
             )
         except DeployAuthorityUnavailableError:
@@ -2568,12 +2618,108 @@ def run_poll(
     }
 
 
-def _write_health(path: str, state: dict[str, Any]) -> None:
+def _write_health(path: str, state: Mapping[str, Any]) -> None:
+    if not path:
+        return
     try:
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(state, fh, indent=2)
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(
+            f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        )
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(dict(state), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
     except OSError:
         pass
+    finally:
+        try:
+            temporary.unlink()
+        except (NameError, FileNotFoundError, OSError):
+            pass
+
+
+def healthcheck(
+    *,
+    health_file: str | None = None,
+    interval_seconds: float | None = None,
+    max_age_seconds: float | None = None,
+    consumer_name: str | None = None,
+    now: float | None = None,
+) -> int:
+    """Return zero only after a recent successful or idle-success tick without failures."""
+    path = health_file or os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", "")
+    name = consumer_name or os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_NAME", _CONSUMER_NAME)
+    interval = (
+        interval_seconds
+        if interval_seconds is not None
+        else float(os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS", "10"))
+    )
+    if not path:
+        print(f"{name} health file is not configured", file=sys.stderr)
+        return 1
+
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            state = json.load(fh)
+        mtime = os.path.getmtime(path)
+        current_time = time.time() if now is None else now
+        age_seconds = max(0.0, current_time - mtime)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"{name} health unavailable: {exc}", file=sys.stderr)
+        return 1
+
+    if not isinstance(state, dict):
+        print(f"{name} health payload is not an object", file=sys.stderr)
+        return 1
+
+    observed_name = state.get("consumer_name") or state.get("worker_name")
+    if observed_name != name:
+        print(
+            f"{name} health identity mismatch: consumer_name={observed_name!r}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if state.get("status") != "ok" or state.get("ticks", 0) < 1:
+        print(
+            f"{name} health is not ready: status={state.get('status')} ticks={state.get('ticks')}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not state.get("last_success"):
+        print(f"{name} health has zero recorded successes", file=sys.stderr)
+        return 1
+
+    if state.get("consecutive_errors", 0) > 0:
+        print(
+            f"{name} health has failing streak: consecutive_errors={state.get('consecutive_errors')}",
+            file=sys.stderr,
+        )
+        return 1
+
+    max_age = (
+        max_age_seconds
+        if max_age_seconds is not None
+        else float(
+            os.getenv(
+                "DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS",
+                str(max(60.0, interval * 3)),
+            )
+        )
+    )
+    if age_seconds > max_age:
+        print(
+            f"{name} health is stale: age_seconds={age_seconds:.1f} max_age_seconds={max_age}",
+            file=sys.stderr,
+        )
+        return 1
+
+    return 0
 
 
 def main() -> int:
@@ -2589,6 +2735,7 @@ def main() -> int:
 
     health: dict[str, Any] = {
         "consumer_name": consumer_name,
+        "worker_name": consumer_name,
         "aggregate_id": aggregate_id,
         "status": "starting",
         "total_consumed": 0,
@@ -2596,6 +2743,7 @@ def main() -> int:
         "total_errors": 0,
         "total_retry_scheduled": 0,
         "total_dead_lettered": 0,
+        "consecutive_errors": 0,
         "ticks": 0,
         "last_success": None,
         "last_failure": None,
@@ -2608,6 +2756,12 @@ def main() -> int:
             "retry_delay_seconds": retry_delay_seconds,
         },
     }
+
+    if health_file:
+        try:
+            Path(health_file).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     tick = 0
     while True:
@@ -2628,10 +2782,17 @@ def main() -> int:
             health["total_retry_scheduled"] += result["retry_scheduled"]
             health["total_dead_lettered"] += result["dead_lettered"]
             if result["errors"]:
+                failed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 health["total_errors"] += len(result["errors"])
+                health["consecutive_errors"] += len(result["errors"])
                 health["status"] = "degraded"
-                health["last_failure"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                health["last_failure"] = failed_at
                 health["last_failure_reason"] = "; ".join(result["errors"])
+                if health_file:
+                    try:
+                        Path(health_file).unlink(missing_ok=True)
+                    except OSError:
+                        pass
             else:
                 succeeded_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 if health["status"] == "degraded":
@@ -2639,16 +2800,25 @@ def main() -> int:
                     health["last_recovered_at"] = succeeded_at
                 health["status"] = "ok"
                 health["last_success"] = succeeded_at
+                health["consecutive_errors"] = 0
+                health["last_failure_reason"] = None
                 if result["events_found"] == 0:
                     health["last_idle_success"] = succeeded_at
-            if health_file:
-                _write_health(health_file, health)
+                if health_file:
+                    _write_health(health_file, health)
         except Exception as exc:  # noqa: BLE001
+            failed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             health["ticks"] = tick
             health["total_errors"] += 1
+            health["consecutive_errors"] += 1
             health["status"] = "degraded"
-            health["last_failure"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            health["last_failure"] = failed_at
             health["last_failure_reason"] = str(exc)
+            if health_file:
+                try:
+                    Path(health_file).unlink(missing_ok=True)
+                except OSError:
+                    pass
             result = {
                 "events_found": 0,
                 "consumed": 0,
@@ -2658,8 +2828,6 @@ def main() -> int:
                 "dead_lettered": 0,
                 "errors": [str(exc)],
             }
-            if health_file:
-                _write_health(health_file, health)
 
         print(
             json.dumps({"tick": tick, "health": health, "result": result}, sort_keys=True),
@@ -2672,4 +2840,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through compose/smoke.
+    if sys.argv[1:] == ["healthcheck"]:
+        raise SystemExit(healthcheck())
     raise SystemExit(main())
