@@ -8,7 +8,7 @@ from contextlib import nullcontext
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
 from common import canonical_task_state_lock_file, write_json as durable_write_json
@@ -1026,6 +1026,8 @@ class TaskResolver:
         *,
         status_root: str | Path | None = None,
         archive_tasks_dir: str | Path | None = None,
+        terminal_facts: Mapping[str, Mapping[str, Any]] | None = None,
+        allow_archive_lookup: bool = True,
     ) -> None:
         if isinstance(active_tasks, dict):
             self._active = {
@@ -1039,6 +1041,25 @@ class TaskResolver:
                 for task in (active_tasks or [])
                 if isinstance(task, dict) and normalize_task_id(task.get("id"))
             }
+        self._terminal_facts = {
+            normalize_task_id(task_id): {
+                "id": normalize_task_id(task_id),
+                "status": "done",
+                "terminal_outcome": str(fact.get("terminal_outcome") or "completed"),
+                **(
+                    {"generation": fact["generation"]}
+                    if isinstance(fact.get("generation"), int)
+                    else {}
+                ),
+            }
+            for task_id, fact in (terminal_facts or {}).items()
+            if normalize_task_id(task_id)
+            and isinstance(fact, Mapping)
+            and str(fact.get("status") or "done").strip().lower() == "done"
+            and str(fact.get("terminal_outcome") or "completed").strip().lower()
+            in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}
+        }
+        self._allow_archive_lookup = bool(allow_archive_lookup)
         if archive_tasks_dir is not None:
             self._archive_tasks_dir = Path(archive_tasks_dir).expanduser().resolve()
         elif status_root is not None:
@@ -1057,6 +1078,8 @@ class TaskResolver:
             return None
         if normalized in self._active:
             return "active"
+        if normalized in self._terminal_facts:
+            return "terminal_fact"
         if self.get(normalized) is not None:
             return "archive"
         return None
@@ -1068,6 +1091,11 @@ class TaskResolver:
         active = self._active.get(normalized)
         if active is not None:
             return deepcopy(active)
+        fact = self._terminal_facts.get(normalized)
+        if fact is not None:
+            return deepcopy(fact)
+        if not self._allow_archive_lookup:
+            return None
         if normalized not in self._archive_task_cache:
             self._archive_task_cache[normalized] = self._load_archived_task(normalized)
         cached = self._archive_task_cache.get(normalized)
@@ -1076,6 +1104,8 @@ class TaskResolver:
     def snapshot(self, task_id: str | None) -> dict[str, Any] | None:
         normalized = normalize_task_id(task_id)
         if not normalized or normalized in self._active:
+            return None
+        if not self._allow_archive_lookup:
             return None
         if normalized not in self._archive_snapshot_cache:
             self._archive_snapshot_cache[normalized] = self._load_archived_snapshot(normalized)

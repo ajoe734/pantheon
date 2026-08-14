@@ -60,17 +60,23 @@ jobs:
         run: |
           set -euo pipefail
           numbers_file="$RUNNER_TEMP/canonical-review-pr-numbers.txt"
+          # delivery:tooling PRs use the dedicated tooling review gate.  This
+          # diagnostic validates the product-only signed-review path, so it
+          # must not publish a misleading failure for an otherwise valid
+          # tooling delivery.
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
             gh api --paginate \
               "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
-              --jq '.[] | select(.base.ref == "dev" or .base.ref == "master") | .number' \
+              --jq '.[] | select(.base.ref == "dev" or .base.ref == "master") | select([.labels[].name] | index("delivery:tooling") | not) | .number' \
               > "$numbers_file"
           else
             if [[ ! "$EVENT_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
               echo "PR number must be a positive integer" >&2
               exit 1
             fi
-            printf '%s\n' "$EVENT_PR_NUMBER" > "$numbers_file"
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$EVENT_PR_NUMBER" \
+              --jq 'select([.labels[].name] | index("delivery:tooling") | not) | .number' \
+              > "$numbers_file"
           fi
           pr_numbers="$(
             jq -Rsc \

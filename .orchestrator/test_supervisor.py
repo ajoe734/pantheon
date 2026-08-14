@@ -132,6 +132,33 @@ class V2StartupCacheTests(unittest.TestCase):
             with mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
                 self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
 
+    def test_terminal_facts_satisfy_dependencies_without_archive_lookup(self) -> None:
+        config = config_fixture()
+        child = task_fixture(task_id="CHILD", depends_on=["MERGED-LEGACY"])
+        status = {
+            "tasks": [child],
+            "terminal_facts": {
+                "MERGED-LEGACY": {
+                    "status": "done",
+                    "terminal_outcome": "completed",
+                    "generation": 4,
+                    "recorded_at": "2026-08-14T00:00:00Z",
+                }
+            },
+        }
+
+        task_map = supervisor.task_index_from_status(config, status)
+        resolver = supervisor.task_resolver_for_config(config, task_map)
+
+        self.assertEqual(resolver.source("MERGED-LEGACY"), "active")
+        self.assertTrue(
+            supervisor.dependencies_satisfied(
+                child,
+                resolver,
+                {"done"},
+            )
+        )
+
     def test_reserved_phase_can_publish_launch_intent_after_state_reload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -141,10 +168,8 @@ class V2StartupCacheTests(unittest.TestCase):
                 "paths": {
                     "status_file": str(root / "ai-status.json"),
                     "state_file": str(runtime_root / "state.json"),
-                    "event_queue": str(runtime_root / "event-queue.jsonl"),
                 }
             }
-            (runtime_root / "event-queue.jsonl").write_text("", encoding="utf-8")
             runtime_state.save_runtime_state(config, runtime_state.default_state())
 
             def publish_intent(state: dict[str, object]) -> bool:
@@ -184,14 +209,51 @@ class V2StartupCacheTests(unittest.TestCase):
                 final_state["supervisor"]["runtime_phase_reservations"],
             )
 
+    def test_lost_reserved_phase_cannot_leave_a_detached_queue_intent(self) -> None:
+        """A CAS loser must leave neither a lease nor an untracked intent."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            runtime_state.save_runtime_state(config, runtime_state.default_state())
+            intent = {
+                "event_id": "evt-cas-loser",
+                "task_id": "TASK-CAS",
+                "task_generation": 1,
+                "event_key": "task-cas-v1",
+                "reason": supervisor.REASON_OWNED_READY,
+                "target_agent": "codex",
+            }
+
+            def mutate_scratch_then_advance_runtime(
+                scratch: dict[str, object],
+            ) -> bool:
+                runtime_state.store_queue_event(scratch, intent)
+                with runtime_state.runtime_state_update(config) as current:
+                    current["supervisor"]["last_heartbeat_at"] = "2026-08-14T12:00:00Z"
+                return True
+
+            with mock.patch.object(supervisor, "write_activity_log"):
+                self.assertFalse(
+                    supervisor._run_reserved_runtime_phase(
+                        config,
+                        "process_queue",
+                        mutate_scratch_then_advance_runtime,
+                    )
+                )
+            final_state = runtime_state.load_runtime_state(config)
+
+        self.assertNotIn("evt-cas-loser", final_state["queue"]["events"])
+        self.assertEqual(final_state["supervisor"]["last_heartbeat_at"], "2026-08-14T12:00:00Z")
+
 
 def config_fixture(root: Path | None = None) -> dict[str, object]:
     paths: dict[str, str] = {}
     if root is not None:
         paths = {
             "status_file": str(root / "ai-status.json"),
-            "event_queue": str(root / ".orchestrator" / "queue.jsonl"),
-            "runtime_state": str(root / ".orchestrator" / "supervisor.json"),
+            "state_file": str(root / ".orchestrator" / "supervisor.json"),
             "activity_log": str(root / "ai-activity-log.jsonl"),
             "provider_capabilities": str(root / ".orchestrator" / "providers.json"),
             "task_state_event_log": str(root / ".orchestrator" / "tasks.jsonl"),
@@ -325,6 +387,17 @@ def with_healthy_delivery_health(
     config: dict[str, object], state: dict[str, object]
 ) -> dict[str, object]:
     state.setdefault("delivery_health", healthy_delivery_health(config))
+    return state
+
+
+def with_queue_intents(
+    state: dict[str, object],
+    *events: dict[str, object],
+) -> dict[str, object]:
+    """Build a state-owned queue fixture without reviving external JSONL."""
+
+    for event in events:
+        runtime_state.store_queue_event(state, event)
     return state
 
 
@@ -783,7 +856,6 @@ class SharedPlannerContractTests(unittest.TestCase):
 
         appended: list[dict[str, object]] = []
         with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(
                 supervisor,
                 "load_status",
@@ -792,7 +864,7 @@ class SharedPlannerContractTests(unittest.TestCase):
             mock.patch.object(
                 supervisor,
                 "_queue_delivery_event_locked",
-                side_effect=lambda _config, event: appended.append(event) or True,
+                side_effect=lambda _config, _state, event: appended.append(event) or True,
             ),
         ):
             changed = supervisor.reserve_dispatch_plan(self.config, state, plan)
@@ -818,7 +890,6 @@ class SharedPlannerContractTests(unittest.TestCase):
             self.config, {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}}
         )
         with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(
                 supervisor,
                 "load_status",
@@ -974,7 +1045,7 @@ class DurableQueueContractTests(unittest.TestCase):
                 mock.patch.object(supervisor, "write_activity_log"),
             ):
                 self.assertTrue(supervisor.reserve_dispatch_plan(config, state, plan))
-            queued = supervisor.load_event_queue(config)
+            queued = runtime_state.queue_events(state)
             self.assertEqual(queued[0]["task_generation"], 7)
 
             with (
@@ -1033,7 +1104,7 @@ class DurableQueueContractTests(unittest.TestCase):
 
             with (
                 mock.patch.object(supervisor, "load_status", return_value=status),
-                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(supervisor, "queue_events", return_value=[]),
                 mock.patch.object(supervisor, "persist_task_reassignment", side_effect=persist),
                 mock.patch.object(
                     supervisor,
@@ -1054,7 +1125,7 @@ class DurableQueueContractTests(unittest.TestCase):
                 mock.patch.object(supervisor, "write_activity_log"),
             ):
                 self.assertTrue(supervisor.reserve_dispatch_plan(config, state, plan))
-            queued = supervisor.load_event_queue(config)
+            queued = runtime_state.queue_events(state)
             self.assertEqual(len(queued), 1)
             self.assertEqual(queued[0]["task_generation"], 2)
 
@@ -1120,6 +1191,7 @@ class DurableQueueContractTests(unittest.TestCase):
         state = with_healthy_delivery_health(
             self.config, {"workers": {}, "queue": {"events": {}}}
         )
+        with_queue_intents(state, self.event)
         request = supervisor.DeliveryRequest(
             agent_id="codex",
             provider="codex",
@@ -1130,7 +1202,7 @@ class DurableQueueContractTests(unittest.TestCase):
             metadata={"workspace_path": "/tmp/task-1"},
         )
         with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[self.event]),
+            mock.patch.object(supervisor, "queue_events", return_value=[self.event]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
             mock.patch.object(supervisor, "build_request", return_value=request),
             mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
@@ -1165,8 +1237,9 @@ class DurableQueueContractTests(unittest.TestCase):
         for label, health in (("missing", {}), ("stale", stale)):
             with self.subTest(label=label):
                 state = {"workers": {}, "queue": {"events": {}}, "delivery_health": health}
+                with_queue_intents(state, self.event)
                 with (
-                    mock.patch.object(supervisor, "load_event_queue", return_value=[self.event]),
+                    mock.patch.object(supervisor, "queue_events", return_value=[self.event]),
                     mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
                     mock.patch.object(
                         supervisor,
@@ -1205,6 +1278,7 @@ class DurableQueueContractTests(unittest.TestCase):
         state = with_healthy_delivery_health(
             self.config, {"workers": {}, "queue": {"events": {}}}
         )
+        with_queue_intents(state, self.event, second_event)
         def request_for_event(_config, event, agent_id_override=None):
             return supervisor.DeliveryRequest(
                 agent_id=agent_id_override or "codex",
@@ -1216,7 +1290,7 @@ class DurableQueueContractTests(unittest.TestCase):
                 metadata={"workspace_path": f"/tmp/{event['task_id'].lower()}"},
             )
         with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[self.event, second_event]),
+            mock.patch.object(supervisor, "queue_events", return_value=[self.event, second_event]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task, second_task]}),
             mock.patch.object(supervisor, "build_request", side_effect=request_for_event),
             mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
@@ -1231,13 +1305,14 @@ class DurableQueueContractTests(unittest.TestCase):
             supervisor.process_queue(self.config, state)
         launch.assert_called_once()
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
-        self.assertNotIn("evt-2", state["queue"]["events"])
+        self.assertEqual(state["queue"]["events"]["evt-2"]["status"], "queued")
 
     def test_assignment_change_invalidates_queued_event(self) -> None:
         changed_task = {**self.task, "owner": "Codex2"}
         state = {"workers": {}, "queue": {"events": {}}}
+        with_queue_intents(state, self.event)
         with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[self.event]),
+            mock.patch.object(supervisor, "queue_events", return_value=[self.event]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [changed_task]}),
             mock.patch.object(
                 supervisor,
@@ -1254,8 +1329,9 @@ class DurableQueueContractTests(unittest.TestCase):
     def test_nonplanner_queue_reason_is_never_launched(self) -> None:
         legacy_event = {**self.event, "reason": "github_retry"}
         state = {"workers": {}, "queue": {"events": {}}}
+        with_queue_intents(state, legacy_event)
         with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[legacy_event]),
+            mock.patch.object(supervisor, "queue_events", return_value=[legacy_event]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
             mock.patch.object(
                 supervisor,
@@ -1286,8 +1362,9 @@ class DurableQueueContractTests(unittest.TestCase):
         self.config["ready_dispatcher"]["max_concurrent_per_account"] = {
             "codex-account": 1
         }
+        with_queue_intents(state, self.event)
         with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[self.event]),
+            mock.patch.object(supervisor, "queue_events", return_value=[self.event]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
             mock.patch.object(
                 supervisor,
@@ -1313,8 +1390,9 @@ class DurableQueueContractTests(unittest.TestCase):
             },
             "queue": {"events": {}},
         })
+        with_queue_intents(state, self.event)
         with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[self.event]),
+            mock.patch.object(supervisor, "queue_events", return_value=[self.event]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
             mock.patch.object(
                 supervisor,
@@ -1343,7 +1421,7 @@ class DurableQueueContractTests(unittest.TestCase):
         self.assertEqual(record["status"], "started")
         launch.assert_called_once()
 
-    def test_pruned_orphan_does_not_cool_down_the_unserved_task(self) -> None:
+    def test_queued_intent_without_worker_is_not_reaped_as_an_orphan(self) -> None:
         event = {
             **self.event,
             "created_at": "2026-08-01T00:00:00Z",
@@ -1354,6 +1432,7 @@ class DurableQueueContractTests(unittest.TestCase):
             "queue": {
                 "events": {
                     "evt-1": {
+                        "intent": event,
                         "status": "queued",
                         "event_key": event_key,
                     }
@@ -1362,16 +1441,13 @@ class DurableQueueContractTests(unittest.TestCase):
             "seen_event_keys": {event_key: "2026-08-13T03:05:38Z"},
         }
         with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
-            mock.patch.object(supervisor, "save_event_queue") as save_queue,
             mock.patch.object(supervisor, "write_activity_log"),
         ):
-            self.assertTrue(supervisor.prune_event_queue(self.config, state))
+            self.assertFalse(supervisor.reconcile_queue_intents(self.config, state))
 
-        self.assertNotIn(event_key, state["seen_event_keys"])
-        self.assertEqual(state["queue"]["events"], {})
-        save_queue.assert_called_once_with(self.config, [])
+        self.assertEqual(state["seen_event_keys"][event_key], "2026-08-13T03:05:38Z")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["intent"], event)
 
     def test_due_retry_returns_to_queue_and_never_launches(self) -> None:
         due = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
@@ -1386,8 +1462,10 @@ class DurableQueueContractTests(unittest.TestCase):
                     "next_retry_at": due,
                 }
             },
-            "queue": {"events": {"evt-1": {"status": "retry_backoff"}}},
+            "queue": {"events": {}},
         }
+        with_queue_intents(state, self.event)
+        state["queue"]["events"]["evt-1"]["status"] = "retry_backoff"
         with (
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(
@@ -1439,7 +1517,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         }
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
             mock.patch.object(
                 supervisor,
                 "persist_task_reassignment",
@@ -1480,7 +1558,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         }
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
             mock.patch.object(
                 supervisor, "persist_task_reassignment", return_value=True
             ) as persist,
@@ -1538,7 +1616,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         }
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
             mock.patch.object(
                 supervisor, "persist_task_reassignment", return_value=True
             ) as persist,
@@ -1617,7 +1695,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         }
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
             mock.patch.object(
                 supervisor,
                 "persist_task_reassignment",
@@ -1649,7 +1727,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         state = {"workers": {}, "queue": {"events": {}}}
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
             mock.patch.object(supervisor, "persist_task_reassignment") as persist,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
@@ -1661,7 +1739,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         state = {"workers": {}, "queue": {"events": {}}}
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
             mock.patch.object(supervisor, "persist_task_reassignment") as persist,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
@@ -1673,7 +1751,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         state = {"workers": {}, "queue": {"events": {}}}
         with (
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
-            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
             mock.patch.object(supervisor, "persist_task_reassignment") as persist,
         ):
             changed = supervisor.reconcile_unavailable_assignments(self.config, state)
@@ -1735,10 +1813,10 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                 mock.patch.object(supervisor, "load_runtime_state", return_value=state),
                 mock.patch.object(supervisor, "save_runtime_state"),
                 mock.patch.object(supervisor, "reconcile_queue_records", return_value=False),
-                mock.patch.object(supervisor, "prune_event_queue", return_value=False),
+                mock.patch.object(supervisor, "reconcile_queue_intents", return_value=False),
                 mock.patch.object(supervisor, "trim_worker_history"),
                 mock.patch.object(supervisor, "trim_seen_events"),
-                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(supervisor, "queue_events", return_value=[]),
                 mock.patch.object(supervisor, "utc_now", return_value="2026-08-11T10:00:01Z"),
             ):
                 supervisor._finalize_runtime_cycle_locked(

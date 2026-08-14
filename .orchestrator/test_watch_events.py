@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 import watch_events
+import runtime_state
 
 
 class DeliveryQueueBookkeepingTests(unittest.TestCase):
@@ -110,11 +111,9 @@ class DeliveryQueueTransactionTests(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmpdir.cleanup)
         self.root = Path(self.tmpdir.name)
-        self.queue_path = self.root / "event-queue.jsonl"
         self.config = {
             "paths": {
                 "state_file": str(self.root / "state.json"),
-                "event_queue": str(self.queue_path),
                 "activity_log": str(self.root / "activity.jsonl"),
             },
             "agents": {
@@ -138,42 +137,35 @@ class DeliveryQueueTransactionTests(unittest.TestCase):
         }
 
     def test_queue_persists_exact_task_generation(self) -> None:
-        appended: list[dict] = []
+        state = runtime_state.default_state()
         with (
             mock.patch.object(watch_events, "render_wakeup_message", return_value="wake\n"),
-            mock.patch.object(
-                watch_events,
-                "_append_runtime_event_locked",
-                side_effect=lambda _config, payload: appended.append(payload),
-            ),
             mock.patch.object(watch_events, "write_activity_log"),
         ):
             self.assertTrue(
-                watch_events._queue_delivery_event_locked(self.config, self.event)
+                watch_events._queue_delivery_event_locked(self.config, state, self.event)
             )
-        self.assertEqual(appended[0]["task_generation"], 3)
-        self.assertEqual(appended[0]["metadata"]["task"]["generation"], 3)
+        stored = runtime_state.queue_events(state)
+        self.assertEqual(stored[0]["task_generation"], 3)
+        self.assertEqual(stored[0]["metadata"]["task"]["generation"], 3)
 
     def test_nonplanner_reason_is_not_appended(self) -> None:
         event = {**self.event, "reason": "manual_test"}
-        with mock.patch.object(
-            watch_events,
-            "_append_runtime_event_locked",
-            side_effect=AssertionError("invalid intent must not append"),
-        ):
-            self.assertFalse(watch_events._queue_delivery_event_locked(self.config, event))
-        self.assertFalse(self.queue_path.exists())
+        state = runtime_state.default_state()
+        self.assertFalse(watch_events._queue_delivery_event_locked(self.config, state, event))
+        self.assertEqual(runtime_state.queue_events(state), [])
 
-    def test_append_rejects_symlink_leaf(self) -> None:
+    def test_queue_write_does_not_touch_retired_external_queue_file(self) -> None:
         target = self.root / "outside.jsonl"
         target.write_text('{"operator": true}\n', encoding="utf-8")
-        self.queue_path.symlink_to(target)
+        retired_queue_path = self.root / "event-queue.jsonl"
+        retired_queue_path.symlink_to(target)
+        state = runtime_state.default_state()
         with (
             mock.patch.object(watch_events, "render_wakeup_message", return_value="wake\n"),
             mock.patch.object(watch_events, "write_activity_log"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
-                watch_events._queue_delivery_event_locked(self.config, self.event)
+            self.assertTrue(watch_events._queue_delivery_event_locked(self.config, state, self.event))
         self.assertEqual(target.read_text(encoding="utf-8"), '{"operator": true}\n')
 
 

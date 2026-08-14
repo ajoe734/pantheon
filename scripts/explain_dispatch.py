@@ -35,7 +35,6 @@ def bind_status_root_paths(config: dict[str, Any]) -> dict[str, Any]:
     for name in (
         "status_file",
         "state_file",
-        "event_queue",
         "approval_queue",
         "activity_log",
     ):

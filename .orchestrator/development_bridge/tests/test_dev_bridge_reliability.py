@@ -838,8 +838,8 @@ def test_full_supervisor_cycle_never_queues_partially_materialized_packet(
         packet_id=packet.packet_id,
         packet_digest=packet_digest(packet),
     ) is None
-    assert benchmark.supervisor_module.load_event_queue(config) == []
     runtime_state = benchmark.supervisor_module.load_runtime_state(config)
+    assert benchmark.supervisor_module.queue_events(runtime_state) == []
     assert runtime_state.get("workers", {}) == {}
 
 

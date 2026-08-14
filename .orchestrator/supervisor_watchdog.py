@@ -13,7 +13,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 THIS_DIR = Path(__file__).resolve().parent
 ROOT = THIS_DIR.parent
@@ -123,10 +123,40 @@ def watchdog_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("min_memory_available_mb", 512)
     settings.setdefault("max_load_1m", max(4.0, float(os.cpu_count() or 1) * 4.0))
     settings.setdefault("max_active_workers", 12)
-    settings.setdefault("supervisor_command", ["python3", "-u", ".orchestrator/supervisor.py", "--verbose"])
     settings.setdefault("contention_deadline_seconds", 2.0)
     settings.setdefault("intentional_restart_ttl_seconds", 300)
     return settings
+
+
+def supervisor_command_identity(settings: Mapping[str, Any]) -> tuple[list[str], Path]:
+    """Return the exact immutable runtime named by the live launch command.
+
+    The watchdog source checkout is deliberately irrelevant.  Its only launch
+    authority is the absolute ``watchdog.supervisor_command`` rendered into
+    the live config by provision_live_supervisor_config.
+    """
+
+    command = [
+        str(value)
+        for value in settings.get("supervisor_command") or []
+        if str(value).strip()
+    ]
+    if not command:
+        raise ValueError("watchdog.supervisor_command is required")
+    candidates = [
+        Path(value)
+        for value in command
+        if Path(value).name == "supervisor.py" and ".orchestrator" in Path(value).parts
+    ]
+    if len(candidates) != 1 or not candidates[0].is_absolute():
+        raise ValueError(
+            "watchdog.supervisor_command must name exactly one absolute "
+            ".orchestrator/supervisor.py runtime"
+        )
+    supervisor_path = candidates[0].resolve()
+    if supervisor_path.parent.name != ".orchestrator":
+        raise ValueError("watchdog supervisor command has an invalid runtime layout")
+    return command, supervisor_path.parent.parent
 
 
 def supervisor_pid_path(config: dict[str, Any]) -> Path:
@@ -523,14 +553,26 @@ def supervisor_root_report(
     roots makes that split visible as evidence rather than as a mystery.
     """
     settings = settings or watchdog_settings(config)
-    expected_root = str(resolve_repo_path(settings.get("supervisor_root"), str(ROOT)).resolve())
+    try:
+        _command, expected_runtime_root = supervisor_command_identity(settings)
+        expected_root: str | None = str(expected_runtime_root)
+        expected_root_error: str | None = None
+    except ValueError as exc:
+        # Observation may report an invalid launch declaration, but must never
+        # invent a root from the watchdog checkout.  start_supervisor itself
+        # rejects the same declaration before spawning anything.
+        expected_root = None
+        expected_root_error = str(exc)
     active_root, active_root_error = process_working_directory(pid, proc_root=proc_root)
     worker_roots, worker_root_error = scan_worker_runner_roots(proc_root)
     return {
         "expected_root": expected_root,
+        "expected_root_error": expected_root_error,
         "active_root": active_root,
         "active_root_error": active_root_error,
-        "split_from_expected": bool(active_root and active_root != expected_root),
+        "split_from_expected": bool(
+            expected_root and active_root and active_root != expected_root
+        ),
         "worker_runner_roots": sorted(worker_roots),
         "worker_runner_root_error": worker_root_error,
         "split_from_worker_runners": bool(
@@ -928,7 +970,7 @@ def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: date
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     log_path = log_dir / f"supervisor-watchdog-restart-{stamp}.log"
-    command = [str(value) for value in settings.get("supervisor_command") or ["python3", "-u", ".orchestrator/supervisor.py", "--verbose"]]
+    command, runtime_root = supervisor_command_identity(settings)
     # Pin the supervisor's archive/status root to the configured status file's
     # repo, regardless of where the supervisor module lives on disk. The
     # supervisor runs from the dev-root checkout but operates on the canonical
@@ -939,7 +981,7 @@ def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: date
     env = supervisor_restart_environment(dict(os.environ))
     base_ref = status_command_base_ref(config)
     runtime_identity = validate_status_command_runtime(
-        ROOT.resolve(),
+        runtime_root,
         expected_remote=status_command_expected_remote(config),
         base_ref=base_ref,
         require_merged=False,
@@ -963,7 +1005,7 @@ def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: date
     with log_path.open("ab") as log_handle:
         process = subprocess.Popen(
             command,
-            cwd=ROOT,
+            cwd=runtime_root,
             stdin=subprocess.DEVNULL,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
