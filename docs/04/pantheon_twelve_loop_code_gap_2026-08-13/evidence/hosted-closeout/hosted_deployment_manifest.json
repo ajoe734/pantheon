@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "app": "execute-plans",
+  "environment": "pantheon-dev-fe",
+  "repository": "ajoe734/execute-plans",
+  "profile": "read-only",
+  "pairId": "l12-mfc-r4-hosted-closeout-20260814-exact-pair",
+  "commit": "88b8a74e8cd1785f3ca144f4588a33f4506583e5",
+  "sourceBranch": "dev",
+  "sourceRef": "88b8a74e8cd1785f3ca144f4588a33f4506583e5",
+  "frontendSha": "88b8a74e8cd1785f3ca144f4588a33f4506583e5",
+  "frontend": {
+    "repository": "ajoe734/execute-plans",
+    "commitSha": "88b8a74e8cd1785f3ca144f4588a33f4506583e5"
+  },
+  "bffHost": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+  "bffCommit": "e01e49f032aa2877a56114e047ce56ef854c30c8",
+  "bffSourceCommitSha": "e01e49f032aa2877a56114e047ce56ef854c30c8",
+  "bffCommitEvidence": true,
+  "bff": {
+    "baseUrl": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "sourceCommitSha": "e01e49f032aa2877a56114e047ce56ef854c30c8",
+    "sourceCommitKnown": true
+  },
+  "gate": {
+    "task": "L12-MFC-R4-HOSTED-CLOSE-001",
+    "e2ePr": 4876,
+    "fePr": 565
+  },
+  "buildMode": {
+    "VITE_BFF_MODE": "live",
+    "VITE_BFF_FALLBACK": "strict",
+    "VITE_BFF_REAL_WRITES": "false",
+    "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+    "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+  },
+  "deploymentState": "accepted",
+  "releaseName": "20260814T005600Z-88b8a74e8cd1-l12-mfc-r4-hosted-closeout",
+  "deployedAt": "2026-08-14T00:56:00Z",
+  "previousCommit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
+  "previousReleaseName": "20260726T072219Z-6a8d2d9b4f72-gate-30192097967-30192435033-1-887536",
+  "deploymentProfile": "read-only",
+  "emergencyOverride": {
+    "enabled": false,
+    "actor": null,
+    "reasonSha256": null
+  },
+  "acceptedAt": "2026-08-14T00:56:00Z",
+  "probes": {
+    "candidatePreSwitch": "passed",
+    "postSwitch": "passed",
+    "rollbackRequired": false
+  }
+}
