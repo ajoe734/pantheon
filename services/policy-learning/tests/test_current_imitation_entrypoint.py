@@ -51,6 +51,38 @@ SERVICE_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = SERVICE_DIR.parents[1]
 
 
+def _mock_research_http_urlopen(req, timeout=None):
+    from services.research.main import app as res_app
+    client = TestClient(res_app)
+    url = req.full_url
+    method = req.get_method()
+    if method == "POST" and "/api/research-orchestrator/intake/imitation-candidate" in url:
+        payload = req.data
+        response = client.post("/api/research-orchestrator/intake/imitation-candidate", content=payload, headers=dict(req.headers))
+        class MockResp:
+            status = response.status_code
+            def read(self):
+                return response.content
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+        return MockResp()
+    elif method == "GET" and "/api/research-orchestrator/runs/" in url:
+        run_id = url.split("/api/research-orchestrator/runs/")[1]
+        response = client.get(f"/api/research-orchestrator/runs/{run_id}", headers=dict(req.headers))
+        class MockResp:
+            status = response.status_code
+            def read(self):
+                return response.content
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+        return MockResp()
+    raise NotImplementedError(f"Unexpected HTTP call: {method} {url}")
+
+
 def _load_service_module(data_dir: str):
     for key in list(sys.modules):
         if "test_current_imitation_entrypoint_main" in key:
@@ -222,7 +254,8 @@ def test_successful_research_handoff_permits_worker_settlement():
         _seed_candidate_in_backlog(svc, "cand-success-001", "dsv-imit-003", "tenant-a")
 
         # Run worker cycle with normal (successful) handoff
-        result = svc.run_worker_cycle(worker_id="w-success", batch_size=5, tenant_id="tenant-a")
+        with mock.patch("urllib.request.urlopen", side_effect=_mock_research_http_urlopen):
+            result = svc.run_worker_cycle(worker_id="w-success", batch_size=5, tenant_id="tenant-a")
 
         assert result["claimed_count"] == 1
         assert result["processed_count"] == 1
@@ -295,7 +328,8 @@ def test_failure_and_replay_lifecycle_with_no_completed_mutation_on_failure():
             assert retry_fail_data.get("handoff_status") != "completed"
 
         # 4. Replay when Research handoff succeeds
-        replay_ok_resp = client.post("/api/policy-learning/worker/dlq/cand-replay-001/replay")
+        with mock.patch("urllib.request.urlopen", side_effect=_mock_research_http_urlopen):
+            replay_ok_resp = client.post("/api/policy-learning/worker/dlq/cand-replay-001/replay")
         assert replay_ok_resp.status_code == 200
         replay_ok_data = replay_ok_resp.json()
         assert replay_ok_data["status"] == "processed"
@@ -404,7 +438,8 @@ def test_direct_handoff_endpoint_error_handling_and_no_store_mutation():
         assert stored3.get("handoff_status") != "completed"
 
         # 4. Successful handoff -> HTTP 200 and store updated
-        resp4 = client.post(f"/api/policy-learning/candidates/{candidate_proc['candidate_id']}/handoff")
+        with mock.patch("urllib.request.urlopen", side_effect=_mock_research_http_urlopen):
+            resp4 = client.post(f"/api/policy-learning/candidates/{candidate_proc['candidate_id']}/handoff")
         assert resp4.status_code == 200
         data4 = resp4.json()
         assert data4["status"] == "completed"
