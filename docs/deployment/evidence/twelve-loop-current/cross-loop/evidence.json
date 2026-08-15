@@ -1,0 +1,64 @@
+{
+  "schema_version": "pantheon.l12.cross-loop.review-evidence.v2",
+  "task_id": "L12-CURRENT-CROSS-LOOP-E2E-20260814",
+  "status": "passed_ready_for_independent_review",
+  "owner": "Human/Ops",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "base_branch": "dev",
+  "implementation": {
+    "test_file": "tests/integration/l12/test_current_cross_loop_deployed_e2e.py",
+    "execution_mode": "deployed_http_only",
+    "per_owner_tenant_headers": true,
+    "all_owner_tokens_required": true,
+    "writes_checked_in_evidence": false,
+    "mock_app_removed": true,
+    "in_process_store_removed": true,
+    "five_cases": [
+      "research_to_runtime",
+      "human_learning",
+      "health_incident",
+      "concurrency",
+      "management_identity"
+    ]
+  },
+  "acceptance": {
+    "real_service_boundaries": "The suite requires explicit deployed HTTP origins for Research, Runtime, Policy Learning, Telemetry, Incidents, Evolution, and BFF.",
+    "exact_identity": "Every case fails unless the next owner readback contains the exact ID emitted by the preceding owner.",
+    "concurrency": "Each Research task/run replay pair is released simultaneously from two threads with an identical idempotency key, then owner lists must contain exactly one task and one run.",
+    "management": "Exact IDs are supplied only through operator context, never in the question. The assertion waits for status=completed, requires provider_status.used=true with no fallback, and inspects only Management answer, sources, and evidence refs.",
+    "failure": "The first failed case is written atomically to an operator-selected temporary output and is never patched around."
+  },
+  "validation": [
+    {
+      "command": "python3 -m py_compile tests/integration/l12/test_current_cross_loop_deployed_e2e.py",
+      "result": "pass"
+    },
+    {
+      "command": "PANTHEON_L12_CROSS_LOOP_DEPLOYED_E2E=1 ... python -m pytest -q tests/integration/l12/test_current_cross_loop_deployed_e2e.py",
+      "result": "5 passed in 35.12s against seven real HTTP owners; Management completed with OpenClaw provider used"
+    },
+    {
+      "command": "git diff --check",
+      "result": "pass"
+    }
+  ],
+  "superseded_evidence": {
+    "prior_status": "invalid",
+    "reason": "The prior report was produced by create_cross_loop_mock_app and did not cross any product service boundary.",
+    "reusable_as_product_truth": false
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "local Pantheon dev compose",
+    "expected_sha": "cfd85bfc29a618dcb3bf0238e051a087055cca00",
+    "boundary_count": 16,
+    "http_statuses": {
+      "200": 10,
+      "201": 4,
+      "202": 2
+    },
+    "live_capital_enabled": false,
+    "run_report": "docs/deployment/evidence/twelve-loop-current/cross-loop/run-report.json"
+  }
+}
