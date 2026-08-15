@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Non-repairing service-bound verifier for the complete Agora Product Journey v2.
+"""Non-repairing in-process verifier for the complete Agora Product Journey v2.
 
 Validates the full backend lifecycle:
   1. Operator identity & audience-filtered capabilities
@@ -110,6 +110,12 @@ class AgoraJourneyVerifier:
         verbose: bool = False,
     ):
         _ensure_sys_paths()
+        if mode != "in-process":
+            raise ValueError(
+                "verify_agora_product_journey supports only mode='in-process'; "
+                "use verify_agora_current_hosted_acceptance.py with real hosted evidence "
+                "for hosted qualification"
+            )
         self.mode = mode
         self.bff_url = bff_url or os.environ.get("PANTHEON_BFF_BASE_URL", "http://127.0.0.1:8000")
         self.policy_learning_url = policy_learning_url or os.environ.get("POLICY_LEARNING_BASE_URL", "http://127.0.0.1:8001")
@@ -1028,7 +1034,7 @@ class AgoraJourneyVerifier:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify Agora Backend Product Journey v2")
-    parser.add_argument("--mode", choices=["in-process", "live", "mock"], default="in-process", help="Execution mode")
+    parser.add_argument("--mode", choices=["in-process"], default="in-process", help="Execution mode")
     parser.add_argument("--bff-url", type=str, default=None, help="Agora BFF Base URL")
     parser.add_argument("--policy-learning-url", type=str, default=None, help="Policy Learning Base URL")
     parser.add_argument("--consultation-url", type=str, default=None, help="Consultation Base URL")

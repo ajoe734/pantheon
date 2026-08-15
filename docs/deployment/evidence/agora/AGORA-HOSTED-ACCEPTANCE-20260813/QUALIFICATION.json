@@ -1,30 +1,9 @@
 {
-  "program_id": "agora-product-correction-20260813",
+  "schema_version": "pantheon.agora.hosted-qualification-invalidation.v1",
   "task_id": "AGORA-HOSTED-ACCEPTANCE-20260813",
-  "qualification_status": "PASSED",
-  "verified_at": "2026-08-15T08:07:16Z",
-  "exact_pair": {
-    "pair_id": "6fa352b178b9ba6611210e52ba9d5700ff75cc916056573c748d2f4acea5c438",
-    "backend_sha": "b146968e615bdb5e6dcd07997265a5df3db0388f",
-    "frontend_sha": "0a1df3300d09bc98b3c45d9558839e217b2c2ff4",
-    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
-    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
-    "deployment_profile": "accepted",
-    "write_mode": "safe_defaults_enforced",
-    "strict_auth": true,
-    "contract_family": "agora.v2"
-  },
-  "contracts": {
-    "capability_manifest_sha256": "92ed24a99fb40c60c1e10c31b7923bcc03a89268ab31e6779a63dd4dbb64b9ff",
-    "bundle_index_sha256": "a1aafe05463548dca37b6d6cd8fb8d3e1b3db88c217c02c0282828d57adf95fd",
-    "openapi_delta_sha256": "8b0d3d2b217ca9eb360e13894ee43b941518b66fc68a3d9fb8b80ee4582c6d7c"
-  },
-  "gates_summary": {
-    "total_gates": 6,
-    "executed_gates": 6,
-    "passed_gates": 6,
-    "failed_gates": 0,
-    "duration_ms": 1054.84,
-    "verified_at": "2026-08-15T08:07:16Z"
-  }
+  "qualification_status": "INVALIDATED",
+  "original_mode": "simulated-hosted",
+  "invalidated_at": "2026-08-15T08:43:00Z",
+  "reason": "No real hosted exact-pair acceptance was executed.",
+  "superseded_by_task_id": "AGORA-HOSTED-REAL-ACCEPTANCE-20260815"
 }
