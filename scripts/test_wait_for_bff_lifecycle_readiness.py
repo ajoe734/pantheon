@@ -667,7 +667,7 @@ def test_root_exact_waiter_is_revision_bound_and_bounded() -> None:
     )[1].split("\n}", 1)[0]
     assert "scripts/wait_for_bff_lifecycle_readiness.py" in helper
     assert '--expected-deployment-sha "${PANTHEON_DEPLOY_SHA}"' in helper
-    assert "--initial-timeout-seconds 120" in helper
+    assert "--initial-timeout-seconds 600" in helper
     assert "--recovery-extension-seconds 180" in helper
     assert "--stalled-timeout-seconds 45" in helper
     assert "--exact-evidence-max-age-seconds 30" in helper

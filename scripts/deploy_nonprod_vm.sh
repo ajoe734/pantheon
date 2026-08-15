@@ -786,10 +786,13 @@ curl_with_retry() {
 wait_for_exact_bff_lifecycle_readiness() {
   local url="$1"
 
-  # Full root replacements have taken up to 213 seconds to move from process
-  # liveness through exact trusted recovery to accepted live truth on the dev
-  # VM. Keep the ordinary restart budget at 120 seconds and grant only trusted
-  # monotonic recovery a bounded 180-second extension (300 seconds total).
+  # Full root replacements must re-stamp the lifecycle bundle when the
+  # deployment SHA changes. The current hosted state is about 3 GiB and the
+  # fail-closed atomic republish has taken about 8 minutes before the exact SHA
+  # becomes observable. Give that deployment-pending phase a bounded 600-second
+  # window; acceptance still requires the exact SHA and accepted live truth.
+  # Once exact trusted recovery is observable, grant only monotonic recovery a
+  # bounded 180-second extension (780 seconds total).
   # If an exact/live projector briefly becomes generally unavailable during
   # dependency warm-up, retain that exact evidence for at most 30 seconds and
   # require /livez or /bff/version to keep proving the same running target.
@@ -799,7 +802,7 @@ wait_for_exact_bff_lifecycle_readiness() {
   python3 scripts/wait_for_bff_lifecycle_readiness.py \
     --url "$url" \
     --expected-deployment-sha "${PANTHEON_DEPLOY_SHA}" \
-    --initial-timeout-seconds 120 \
+    --initial-timeout-seconds 600 \
     --recovery-extension-seconds 180 \
     --stalled-timeout-seconds 45 \
     --poll-interval-seconds 2 \
