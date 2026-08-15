@@ -15,9 +15,13 @@ Routes:
   POST /bff/agora/dataset-worker/dlq/{evidence_id}/replay — replay a failed DLQ item
   GET  /bff/agora/dataset-worker/handoffs               — list dataset handoffs
   POST /bff/agora/dataset-worker/handoffs/{handoff_id}/ack — acknowledge handoff
+  GET  /internal/agora/dataset-handoffs                  — tenant-scoped service drain
+  POST /internal/agora/dataset-handoffs/{handoff_id}/ack — service acknowledgement
 """
 from __future__ import annotations
 
+import hmac
+import os
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -47,6 +51,8 @@ _NO_PROMOTE_PROOF = "agora_observe_learn_only"
 _NO_RUNTIME_MUTATION_PROOF = "agora_evidence_extract_only"
 
 _STORE: Optional[AgoraDatasetStore] = None
+_SERVICE_ACTOR = "policy-learning-agora-handoff-drainer"
+_LOCAL_SERVICE_TOKEN = "pantheon-local-agora-handoff-service-token"
 
 
 def _default_store() -> AgoraDatasetStore:
@@ -132,6 +138,70 @@ def create_dataset_extraction_router(
                 precondition_failed="agora_user_scope",
                 details_extra=exc.details,
             )
+
+    def _service_tenant_scope(
+        authorization: Optional[str],
+        service_actor: Optional[str],
+        requested_tenant_id: Optional[str],
+    ) -> tuple[str, str]:
+        """Authenticate the non-user Agora-to-policy-learning boundary."""
+
+        expected_token = str(os.getenv("AGORA_HANDOFF_SERVICE_TOKEN") or "").strip()
+        expected_actor = str(
+            os.getenv("AGORA_HANDOFF_ALLOWED_SERVICE_ACTOR") or _SERVICE_ACTOR
+        ).strip()
+        allowed_tenants = {
+            item.strip()
+            for item in str(
+                os.getenv("AGORA_HANDOFF_SERVICE_TENANTS") or ""
+            ).split(",")
+            if item.strip()
+        }
+        posture = str(
+            os.getenv("PANTHEON_PERSISTENCE_POSTURE")
+            or os.getenv("PANTHEON_ENV")
+            or "dev"
+        ).strip().lower()
+        enforced = posture in {
+            "stage",
+            "staging",
+            "staging-live",
+            "prod",
+            "production",
+        } or posture.startswith(("staging", "prod"))
+        if (
+            not expected_token
+            or not expected_actor
+            or not allowed_tenants
+            or (enforced and expected_token == _LOCAL_SERVICE_TOKEN)
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="Agora handoff service boundary is not safely configured",
+            )
+        scheme, _, supplied_token = str(authorization or "").partition(" ")
+        if (
+            scheme.lower() != "bearer"
+            or not supplied_token
+            or not hmac.compare_digest(supplied_token, expected_token)
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Agora handoff service credential is invalid",
+            )
+        actor = str(service_actor or "").strip()
+        if actor != expected_actor:
+            raise HTTPException(
+                status_code=403,
+                detail="Agora handoff service actor is outside authority",
+            )
+        tenant_id = str(requested_tenant_id or "").strip()
+        if not tenant_id or tenant_id not in allowed_tenants:
+            raise HTTPException(
+                status_code=403,
+                detail="Agora handoff tenant is outside service authority",
+            )
+        return actor, tenant_id
 
     def _raise_idempotency_conflict(exc: Exception) -> None:
         ErrorCode = _error_code()
@@ -559,6 +629,111 @@ def create_dataset_extraction_router(
             "idempotent": not acknowledged,
             "data": handoff,
             "meta": _meta(audience=f"tenant:{scope.tenant_id}:user:{scope.user_id}"),
+        }
+
+    # ------------------------------------------------------------------
+    # Dedicated service boundary. These routes intentionally do not call
+    # extract_identity: a policy worker is not an Agora browser user and must
+    # not invent a user_id merely to reach tenant-owned handoffs.
+    # ------------------------------------------------------------------
+    @router.get("/internal/agora/dataset-handoffs")
+    def get_tenant_dataset_handoffs(
+        authorization: Optional[str] = Header(default=None),
+        service_actor: Optional[str] = Header(
+            default=None,
+            alias="X-Pantheon-Service-Actor",
+        ),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    ) -> Dict[str, Any]:
+        actor, tenant_id = _service_tenant_scope(
+            authorization,
+            service_actor,
+            x_tenant_id,
+        )
+        items = store.list_handoffs_for_tenant(
+            tenant_id=tenant_id,
+            pending_only=True,
+        )
+        return {
+            "status": "success",
+            "items": items,
+            "total": len(items),
+            "meta": _meta(
+                audience=f"tenant:{tenant_id}:service:{actor}",
+                pending_only=True,
+            ),
+        }
+
+    @router.post("/internal/agora/dataset-handoffs/{handoff_id}/ack")
+    def acknowledge_tenant_dataset_handoff(
+        handoff_id: str,
+        body: HandoffAcknowledgementRequest,
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(
+            default=None,
+            alias="Idempotency-Key",
+        ),
+        service_actor: Optional[str] = Header(
+            default=None,
+            alias="X-Pantheon-Service-Actor",
+        ),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    ) -> Dict[str, Any]:
+        actor, tenant_id = _service_tenant_scope(
+            authorization,
+            service_actor,
+            x_tenant_id,
+        )
+        resolved_key = _require_idempotency_key(idempotency_key)
+        if resolved_key != f"ack-{handoff_id}":
+            ErrorCode = _error_code()
+            raise bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "Idempotency-Key does not match the Agora handoff identity",
+                "invalid_handoff_idempotency_key",
+            )
+        digest = acknowledgement_request_digest(
+            handoff_id=handoff_id,
+            acknowledgement_id=body.acknowledgement_id,
+            dataset_version_id=body.dataset_version_id,
+            downstream_ref=body.downstream_ref,
+        )
+        try:
+            handoff, acknowledged = store.acknowledge_handoff_for_tenant(
+                handoff_id,
+                tenant_id=tenant_id,
+                acknowledgement_id=body.acknowledgement_id,
+                dataset_version_id=body.dataset_version_id,
+                downstream_ref=body.downstream_ref,
+                acknowledged_by=actor,
+                request_digest=digest,
+                acknowledged_at=utc_now(),
+            )
+        except IdempotencyConflictError as exc:
+            _raise_idempotency_conflict(exc)
+        except HandoffConflictError as exc:
+            ErrorCode = _error_code()
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                str(exc),
+                "AGORA_DATASET_VERSION_MISMATCH",
+                precondition_failed="dataset_version_match",
+            )
+        if handoff is None:
+            ErrorCode = _error_code()
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Dataset handoff not found",
+                handoff_id,
+            )
+        return {
+            "status": "acknowledged" if acknowledged else "exists",
+            "idempotent": not acknowledged,
+            "data": handoff,
+            "meta": _meta(audience=f"tenant:{tenant_id}:service:{actor}"),
         }
 
     return router

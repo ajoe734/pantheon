@@ -61,6 +61,7 @@ SERVICE_TOKEN_ENV = "POLICY_LEARNING_SERVICE_TOKEN"
 API_TOKEN_ENV = "POLICY_LEARNING_API_TOKEN"
 TENANT_ENV = "POLICY_LEARNING_AGORA_TENANT_ID"
 AGORA_BFF_URL_ENV = agora_handoff_drainer.AGORA_BFF_URL_ENV
+AGORA_SERVICE_TOKEN_ENV = agora_handoff_drainer.AGORA_SERVICE_TOKEN_ENV
 INTAKE_BATCH_SIZE_ENV = "SHADOW_EVAL_INTAKE_BATCH_SIZE"
 _WORKER_NAME = "policy-learning-shadow-eval-scheduler"
 
@@ -135,6 +136,23 @@ def require_caller_configuration() -> tuple[str, str]:
             f"set {', '.join(missing)}"
         )
     return token, tenant_id
+
+
+def require_intake_configuration() -> tuple[str, str, str]:
+    """Return distinct Agora-bound and policy-learning-bound credentials."""
+
+    policy_token, tenant_id = require_caller_configuration()
+    agora_token = _env_text(AGORA_SERVICE_TOKEN_ENV)
+    if not agora_token:
+        raise SchedulerConfigurationError(
+            "The shadow-eval scheduler cannot reach the Agora handoff boundary; "
+            f"set {AGORA_SERVICE_TOKEN_ENV}"
+        )
+    if agora_token == policy_token:
+        raise SchedulerConfigurationError(
+            f"{AGORA_SERVICE_TOKEN_ENV} and {SERVICE_TOKEN_ENV} must be distinct"
+        )
+    return policy_token, agora_token, tenant_id
 
 
 def request_headers(tenant_id: str) -> dict[str, str]:
@@ -278,7 +296,8 @@ def run_intake_cycle(
     agora_url: str,
     policy_learning_url: str,
     tenant_id: str,
-    token: str,
+    agora_token: str,
+    policy_learning_token: str,
     batch_size: int = DEFAULT_BATCH_SIZE,
     timeout_seconds: float = 10.0,
 ) -> dict[str, Any]:
@@ -302,7 +321,8 @@ def run_intake_cycle(
         agora_url=agora_url,
         policy_learning_url=policy_learning_url,
         tenant_id=tenant_id,
-        token=token,
+        agora_token=agora_token,
+        policy_learning_token=policy_learning_token,
         batch_size=batch_size,
         timeout_seconds=timeout_seconds,
     )
@@ -329,7 +349,7 @@ def main() -> int:
     interval_seconds = _env_int("SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS", 3600, minimum=1)
     max_ticks = _env_int("SHADOW_EVAL_SCHEDULER_MAX_TICKS", 0, minimum=0)
     try:
-        token, tenant_id = require_caller_configuration()
+        token, agora_token, tenant_id = require_intake_configuration()
     except SchedulerConfigurationError as exc:
         print(
             json.dumps({"status": "error", "reason": "scheduler_unconfigured", "detail": str(exc)}),
@@ -369,7 +389,8 @@ def main() -> int:
                 agora_url=agora_url,
                 policy_learning_url=api_url,
                 tenant_id=tenant_id,
-                token=token,
+                agora_token=agora_token,
+                policy_learning_token=token,
                 batch_size=intake_batch_size,
             )
             if result.get("status") == "error":

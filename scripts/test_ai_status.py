@@ -5449,6 +5449,104 @@ class ArchiveWorkflowTests(unittest.TestCase):
             ["REG-100"],
         )
 
+    def _write_legacy_dependency_snapshot(
+        self,
+        legacy_tasks_dir: Path,
+        *,
+        task_id: str = "REG-100",
+        generation: int = 4,
+    ) -> Path:
+        legacy_tasks_dir.mkdir(parents=True, exist_ok=True)
+        path = task_archive.archive_task_path_in_dir(task_id, legacy_tasks_dir)
+        path.write_text(
+            json.dumps(
+                {
+                    "id": task_id,
+                    "title": "Legacy completed dependency",
+                    "status": "done",
+                    "terminal_outcome": "completed",
+                    "generation": generation,
+                    "archived_at": "2026-04-13T23:59:00Z",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_archive_migrate_imports_only_required_legacy_dependency(self) -> None:
+        legacy_tasks_dir = self._test_root / "legacy-archive" / "tasks"
+        self._write_legacy_dependency_snapshot(legacy_tasks_dir)
+        self._write_legacy_dependency_snapshot(
+            legacy_tasks_dir,
+            task_id="UNRELATED-200",
+        )
+        self.state["tasks"] = [deepcopy(self.state["tasks"][1])]
+        self.state[ai_status.TERMINAL_FACTS_KEY] = {}
+
+        with mock.patch.object(ai_status, "append_log") as append_log:
+            ai_status.command_archive_migrate(
+                self.state,
+                [str(legacy_tasks_dir)],
+            )
+
+        self.assertEqual(
+            self.state[ai_status.TERMINAL_FACTS_KEY]["REG-100"],
+            {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 4,
+                "recorded_at": "2026-04-13T23:59:00Z",
+            },
+        )
+        self.assertNotIn(
+            "UNRELATED-200",
+            self.state[ai_status.TERMINAL_FACTS_KEY],
+        )
+        snapshots = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"]
+        self.assertEqual([item["task_id"] for item in snapshots], ["REG-100"])
+        self.assertTrue(ai_status._status_archive_snapshot_is_valid(snapshots[0]))
+        self.assertEqual(
+            append_log.call_args.args[0]["legacy_archive_tasks_dir"],
+            str(legacy_tasks_dir),
+        )
+
+    def test_archive_migrate_rejects_legacy_filename_identity_mismatch(self) -> None:
+        legacy_tasks_dir = self._test_root / "legacy-archive" / "tasks"
+        path = self._write_legacy_dependency_snapshot(
+            legacy_tasks_dir,
+            task_id="DIFFERENT-200",
+        )
+        expected_path = task_archive.archive_task_path_in_dir(
+            "REG-100",
+            legacy_tasks_dir,
+        )
+        path.rename(expected_path)
+        self.state["tasks"] = [deepcopy(self.state["tasks"][1])]
+        self.state[ai_status.TERMINAL_FACTS_KEY] = {}
+
+        with self.assertRaisesRegex(RuntimeError, "does not match expected"):
+            ai_status.command_archive_migrate(
+                self.state,
+                [str(legacy_tasks_dir)],
+            )
+
+        self.assertEqual(self.state[ai_status.TERMINAL_FACTS_KEY], {})
+        self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, self.state)
+
+    def test_archive_migrate_rejects_legacy_archive_symlink(self) -> None:
+        legacy_tasks_dir = self._test_root / "legacy-archive" / "tasks"
+        self._write_legacy_dependency_snapshot(legacy_tasks_dir)
+        symlink = self._test_root / "legacy-tasks-link"
+        symlink.symlink_to(legacy_tasks_dir, target_is_directory=True)
+
+        with self.assertRaisesRegex(SystemExit, "symlink component"):
+            ai_status.command_archive_migrate(self.state, [str(symlink)])
+
+    def test_archive_migrate_rejects_multiple_legacy_roots(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "Usage: archive_migrate"):
+            ai_status.command_archive_migrate(self.state, ["/one", "/two"])
+
     def _write_modern_archive_with_absolute_review_file(
         self,
         *,

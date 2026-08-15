@@ -58,7 +58,8 @@ class TestAgoraHandoffDrainer(unittest.TestCase):
             agora_url="http://agora-bff:8000",
             policy_learning_url="http://policy-learning:8100",
             tenant_id="tenant-test",
-            token="test-token",
+            agora_token="agora-test-token",
+            policy_learning_token="policy-test-token",
         )
 
         self.assertEqual(res["status"], "ok")

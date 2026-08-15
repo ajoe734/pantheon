@@ -1391,6 +1391,108 @@ class AgoraDatasetStore:
             ).fetchall()
             return [self._handoff_row(row) for row in rows]
 
+    def list_handoffs_for_tenant(
+        self,
+        *,
+        tenant_id: str,
+        pending_only: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """List service-consumable handoffs across users in one tenant.
+
+        Browser routes remain user-private.  This tenant-wide read exists only
+        for the dedicated policy-learning service boundary, whose caller is
+        authenticated and tenant-bound by the router before reaching the
+        store.
+        """
+
+        if self.backend == "memory":
+            with self._lock:
+                items = [
+                    dict(handoff)
+                    for handoff in self._handoffs.values()
+                    if handoff["tenant_id"] == tenant_id
+                    and (
+                        not pending_only
+                        or handoff.get("ack_status") != "acknowledged"
+                    )
+                ]
+                return sorted(
+                    items,
+                    key=lambda item: str(item.get("created_at") or ""),
+                    reverse=True,
+                )
+        pending_sql = " AND ack_status <> 'acknowledged'" if pending_only else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT handoff_id, tenant_id, user_id, dataset_version_id,
+                       dataset_kind, evidence_ids, summary, authority_limit,
+                       ack_status, acknowledgement_id, ack_request_digest,
+                       downstream_ref, acknowledged_by, acknowledged_at, created_at
+                FROM {self._handoffs_table}
+                WHERE tenant_id = %s{pending_sql}
+                ORDER BY created_at DESC
+                """,
+                (tenant_id,),
+            ).fetchall()
+            return [self._handoff_row(row) for row in rows]
+
+    def acknowledge_handoff_for_tenant(
+        self,
+        handoff_id: str,
+        *,
+        tenant_id: str,
+        acknowledgement_id: str,
+        dataset_version_id: str,
+        downstream_ref: Any,
+        acknowledged_by: str,
+        request_digest: str,
+        acknowledged_at: str,
+    ) -> Tuple[Optional[Dict[str, Any]], bool]:
+        """Acknowledge an exact handoff without impersonating its end user."""
+
+        if self.backend == "memory":
+            with self._lock:
+                matches = [
+                    handoff
+                    for handoff in self._handoffs.values()
+                    if handoff["tenant_id"] == tenant_id
+                    and handoff["handoff_id"] == handoff_id
+                ]
+                if len(matches) > 1:
+                    raise HandoffConflictError(
+                        "handoff_id is not unique inside the tenant boundary"
+                    )
+                user_id = str(matches[0]["user_id"]) if matches else ""
+        else:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT user_id
+                    FROM {self._handoffs_table}
+                    WHERE tenant_id = %s AND handoff_id = %s
+                    """,
+                    (tenant_id, handoff_id),
+                ).fetchall()
+            if len(rows) > 1:
+                raise HandoffConflictError(
+                    "handoff_id is not unique inside the tenant boundary"
+                )
+            user_id = str(rows[0][0]) if rows else ""
+        if not user_id:
+            return None, False
+        return self.acknowledge_handoff(
+            handoff_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            acknowledgement_id=acknowledgement_id,
+            dataset_version_id=dataset_version_id,
+            downstream_ref=downstream_ref,
+            acknowledged_by=acknowledged_by,
+            request_digest=request_digest,
+            acknowledged_at=acknowledged_at,
+        )
+
     def acknowledge_handoff(
         self,
         handoff_id: str,

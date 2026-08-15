@@ -34,6 +34,9 @@ Routes
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import logging
 import os
 import sys
@@ -130,6 +133,9 @@ STORE_PATH     = os.path.join(DATA_DIR, "approval_decisions.json")
 FREEZE_ORDER_STORE_PATH = os.path.join(DATA_DIR, "freeze_orders.json")
 ROLLBACK_STORE_PATH = os.path.join(DATA_DIR, "rollbacks.json")
 HUMAN_GATE_STORE_PATH = os.path.join(DATA_DIR, "human_gate_decisions.json")
+CONSULTATION_HANDOFF_STORE_PATH = os.path.join(
+    DATA_DIR, "consultation_handoffs.json"
+)
 
 STORE_BACKEND = os.getenv("GOVERNANCE_STORE_BACKEND", "json").strip().lower() or "json"
 PERSISTENCE_POSTURE = require_persistence_posture("governance")
@@ -152,6 +158,14 @@ human_gate_record_store: GovernanceRecordStore = build_governance_record_store(
         "governance.human_gate_decisions",
     ),
     id_fields=("decision_id",),
+)
+consultation_handoff_store: GovernanceRecordStore = build_governance_record_store(
+    CONSULTATION_HANDOFF_STORE_PATH,
+    table=os.getenv(
+        "GOVERNANCE_CONSULTATION_HANDOFF_STORE_TABLE",
+        "governance.consultation_handoffs",
+    ),
+    id_fields=("handoff_id",),
 )
 human_gate_api = SignoffAPI(
     store=GovernanceHumanGateDecisionStore(human_gate_record_store)
@@ -179,6 +193,7 @@ register_fastapi_health_routes(
         "freeze_order_count": len(freeze_order_store.list_all()),
         "rollback_count": len(rollback_store.list_all()),
         "human_gate_count": len(human_gate_record_store.list_all()),
+        "consultation_handoff_count": len(consultation_handoff_store.list_all()),
     },
     details=lambda: {
         "data_dir": DATA_DIR,
@@ -186,6 +201,7 @@ register_fastapi_health_routes(
         "freeze_order_store_path": FREEZE_ORDER_STORE_PATH,
         "rollback_store_path": ROLLBACK_STORE_PATH,
         "human_gate_store_path": HUMAN_GATE_STORE_PATH,
+        "consultation_handoff_store_path": CONSULTATION_HANDOFF_STORE_PATH,
         "store_backend": STORE_BACKEND,
         "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
     },
@@ -327,6 +343,126 @@ def _utc_now() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Routes — Consultation advisory handoff intake
+# ---------------------------------------------------------------------------
+
+@app.post(
+    "/api/governance/consultation-handoffs",
+    response_model=Dict[str, Any],
+    summary="Durably acknowledge a reviewed Consultation handoff",
+)
+def accept_consultation_handoff(
+    response: Response,
+    body: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    service_actor: Optional[str] = Header(
+        None,
+        alias="X-Pantheon-Service-Actor",
+    ),
+    tenant_header: Optional[str] = Header(None, alias="X-Pantheon-Tenant-Id"),
+) -> Dict[str, Any]:
+    actor, authorized_tenant = _authenticate_consultation_handoff_service(
+        authorization=authorization,
+        service_actor=service_actor,
+        tenant_id=tenant_header,
+    )
+    tenant_id = _required_string(body.get("tenant_id"), "tenant_id")
+    request_id = _required_string(body.get("request_id"), "request_id")
+    handoff = body.get("handoff")
+    if tenant_id != authorized_tenant:
+        raise HTTPException(
+            status_code=403,
+            detail="Consultation handoff payload tenant does not match authority",
+        )
+    if not isinstance(handoff, dict):
+        raise HTTPException(status_code=422, detail="handoff must be an object")
+    handoff_id = _required_string(handoff.get("handoff_id"), "handoff.handoff_id")
+    handoff_request_id = _required_string(
+        handoff.get("request_id"),
+        "handoff.request_id",
+    )
+    handoff_tenant = str(handoff.get("tenant_id") or tenant_id).strip()
+    target_gate = _required_string(handoff.get("target_gate"), "handoff.target_gate")
+    if (
+        handoff_request_id != request_id
+        or handoff_tenant != tenant_id
+    ):
+        raise HTTPException(status_code=422, detail="Invalid Consultation handoff identity")
+    if not (
+        target_gate.startswith("consultation.")
+        and target_gate.endswith(".reviewed")
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="handoff.target_gate must be a reviewed Consultation gate",
+        )
+    expected_idempotency_key = (
+        f"consultation-handoff:{tenant_id}:{handoff_id}"
+    )
+    if str(idempotency_key or "") != expected_idempotency_key:
+        raise HTTPException(
+            status_code=422,
+            detail="Consultation handoff idempotency key is invalid",
+        )
+
+    request_digest = hashlib.sha256(
+        json.dumps(
+            body,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    record = {
+        "handoff_id": handoff_id,
+        "tenant_id": tenant_id,
+        "request_id": request_id,
+        "source_actor": actor,
+        "idempotency_key": expected_idempotency_key,
+        "request_digest": request_digest,
+        "target_gate": target_gate,
+        "memo_ids": _string_list(
+            handoff.get("memo_ids"),
+            "handoff.memo_ids",
+            required=True,
+        ),
+        "evidence_refs": _string_list(
+            handoff.get("evidence_refs", []),
+            "handoff.evidence_refs",
+        ),
+        "audit_refs": _string_list(
+            handoff.get("audit_refs", []),
+            "handoff.audit_refs",
+        ),
+        "trace_id": _required_string(handoff.get("trace_id"), "handoff.trace_id"),
+        "handoff": dict(handoff),
+        "acknowledged_at": _utc_now(),
+        "consumer_ref": "governance-consultation-handoff",
+    }
+    inserted, canonical = consultation_handoff_store.insert_if_absent(record)
+    if not inserted and (
+        canonical.get("request_digest") != request_digest
+        or canonical.get("idempotency_key") != expected_idempotency_key
+        or canonical.get("tenant_id") != tenant_id
+        or canonical.get("source_actor") != actor
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Consultation handoff identity already has different content",
+        )
+    response.status_code = 201 if inserted else 200
+    if inserted:
+        _emit_consultation_handoff_event(canonical)
+    return {
+        "acknowledged": True,
+        "handoff_id": handoff_id,
+        "consumer_ref": str(canonical["consumer_ref"]),
+        "idempotent": not inserted,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Routes — freeze-order and rollback write models
 # ---------------------------------------------------------------------------
 
@@ -441,6 +577,70 @@ def _authenticate_governance_write(
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
+def _authenticate_consultation_handoff_service(
+    *,
+    authorization: Optional[str],
+    service_actor: Optional[str],
+    tenant_id: Optional[str],
+) -> tuple[str, str]:
+    """Authenticate the narrow machine-to-machine handoff boundary.
+
+    Consultation delivery is not a browser/user operation and must not depend
+    on BFF or Governance user JWT configuration.  The dedicated credential is
+    accepted only on this intake route and is additionally bound to an exact
+    service actor and an explicit tenant allowlist.
+    """
+
+    expected_token = str(os.getenv("CONSULTATION_HANDOFF_TOKEN") or "").strip()
+    expected_actor = str(
+        os.getenv("CONSULTATION_HANDOFF_ALLOWED_SERVICE_ACTOR")
+        or "consultation-workflow-executor"
+    ).strip()
+    allowed_tenants = {
+        item.strip()
+        for item in str(
+            os.getenv("CONSULTATION_HANDOFF_ALLOWED_TENANTS") or ""
+        ).split(",")
+        if item.strip()
+    }
+    if (
+        not expected_token
+        or not expected_actor
+        or not allowed_tenants
+        or (
+            PERSISTENCE_POSTURE.enforced
+            and expected_token == "pantheon-local-consultation-handoff-token"
+        )
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Consultation handoff service boundary is not safely configured",
+        )
+    scheme, _, supplied_token = str(authorization or "").partition(" ")
+    if (
+        scheme.lower() != "bearer"
+        or not supplied_token
+        or not hmac.compare_digest(supplied_token, expected_token)
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Consultation handoff service credential is invalid",
+        )
+    actor = str(service_actor or "").strip()
+    if actor != expected_actor:
+        raise HTTPException(
+            status_code=403,
+            detail="Consultation handoff service actor is outside authority",
+        )
+    tenant = str(tenant_id or "").strip()
+    if not tenant or tenant not in allowed_tenants:
+        raise HTTPException(
+            status_code=403,
+            detail="Consultation handoff tenant is outside service authority",
+        )
+    return actor, tenant
+
+
 def _resolve_trusted_actor(
     body: Dict[str, Any],
     ctx: AuthContext,
@@ -508,6 +708,49 @@ def _emit_human_gate_event(
         )
     except Exception as exc:
         log.warning("Human-gate audit write failed: %s", exc)
+
+
+def _required_string(value: Any, field: str) -> str:
+    result = str(value or "").strip()
+    if not result:
+        raise HTTPException(status_code=422, detail=f"{field} is required")
+    return result
+
+
+def _string_list(value: Any, field: str, *, required: bool = False) -> List[str]:
+    if not isinstance(value, list):
+        raise HTTPException(status_code=422, detail=f"{field} must be a list")
+    result = [str(item).strip() for item in value]
+    if any(not item for item in result):
+        raise HTTPException(
+            status_code=422,
+            detail=f"{field} cannot contain empty values",
+        )
+    if required and not result:
+        raise HTTPException(status_code=422, detail=f"{field} must not be empty")
+    return result
+
+
+def _emit_consultation_handoff_event(record: Dict[str, Any]) -> None:
+    try:
+        audit_store.append_event(
+            event_type="consultation_handoff_acknowledged",
+            decision_id=str(record["handoff_id"]),
+            actor_id=str(record["source_actor"]),
+            actor_role="consultation_handoff",
+            target_type="consultation_gate",
+            target_id=str(record["target_gate"]),
+            detail={
+                "tenant_id": record["tenant_id"],
+                "request_id": record["request_id"],
+                "memo_ids": record["memo_ids"],
+                "evidence_refs": record["evidence_refs"],
+                "audit_refs": record["audit_refs"],
+                "trace_id": record["trace_id"],
+            },
+        )
+    except Exception as exc:
+        log.warning("Consultation handoff audit write failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
