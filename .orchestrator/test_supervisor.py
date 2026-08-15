@@ -2305,6 +2305,75 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         finally:
             supervisor._CYCLE_METRICS.reset(token)
 
+    def test_exhausted_transient_worker_blocks_task_without_new_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            config["worker_retry"] = {"enabled": True, "max_attempts": 1}
+            task = task_fixture(status="in_progress")
+            status = {"tasks": [task], "blockers": []}
+            worker = self._owner_worker(generation=1)
+            worker["retry_count"] = 1
+            state = with_healthy_delivery_health(
+                config,
+                {
+                    "workers": {"run-owner": worker},
+                    "queue": {
+                        "events": {
+                            "evt-owner": {
+                                "intent": {
+                                    "event_id": "evt-owner",
+                                    "task_id": "TASK-1",
+                                    "task_generation": 1,
+                                },
+                                "status": "started",
+                            }
+                        }
+                    },
+                },
+            )
+
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "detect_worker_failure",
+                    return_value="Error: timeout waiting for response",
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "classify_worker_failure",
+                    return_value={"kind": "transient", "label": "transient", "transient": True},
+                ),
+                mock.patch.object(supervisor, "write_failure_evidence", return_value="failure-ref"),
+                mock.patch.object(supervisor, "maybe_rotate_provider_model", return_value="exhausted"),
+                mock.patch.object(
+                    supervisor,
+                    "schedule_retry_from_worker_failure",
+                    return_value=(False, False),
+                ),
+                mock.patch.object(supervisor, "record_delivery_health_failure"),
+                mock.patch.object(supervisor, "load_status", return_value=status),
+                mock.patch.object(supervisor, "write_status"),
+                mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "canonical_task_state_lock_file") as task_lock,
+            ):
+                task_lock.return_value.__enter__.return_value = None
+                outcome = supervisor.poll_worker_failure_stage(config, state, worker)
+
+            self.assertEqual(outcome, {"changed": True, "stop": True})
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(state["queue"]["events"]["evt-owner"]["status"], "failed")
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(status["blockers"][0]["blocker_kind"], "worker_retry_exhausted")
+            self.assertEqual(
+                status["status_activity_outbox"]["events"][0]["type"],
+                "task_worker_retry_exhausted_blocked",
+            )
+            plan = supervisor.build_dispatch_plan(config, state, status, [], live_total=0)
+            self.assertEqual(plan["events"], [])
+
     def test_source_has_no_retired_control_planes(self) -> None:
         source = inspect.getsource(supervisor)
         retired_symbols = (

@@ -279,61 +279,12 @@ def _bounded_cycle_metrics_snapshot(*, finished_monotonic: float) -> dict[str, A
                 int(cadence.get("skipped_deadlines_before_start", 0)),
             ),
         }
-    queue_latency = metrics.get("queue_to_start")
-    if isinstance(queue_latency, dict) and int(queue_latency.get("count", 0)) > 0:
-        count = int(queue_latency["count"])
-        total = float(queue_latency.get("total_seconds", 0.0))
-        snapshot["queue_to_start"] = {
-            "count": count,
-            "average_seconds": round(total / count, 3),
-            "max_seconds": round(float(queue_latency.get("max_seconds", 0.0)), 3),
-        }
     if "runtime_lock_hold_seconds" in metrics:
         snapshot["runtime_lock_hold_seconds"] = round(
             max(0.0, float(metrics["runtime_lock_hold_seconds"])),
             3,
         )
     return snapshot
-
-
-def record_queue_to_start_latency(
-    state: dict[str, Any],
-    event: Mapping[str, Any],
-    *,
-    started_at: datetime,
-) -> float | None:
-    """Publish bounded queue latency without retaining task/event payloads."""
-
-    queued_at = None
-    for field in ("created_at", "issued_at", "queued_at", "ts"):
-        queued_at = _parse_iso_utc(str(event.get(field) or ""))
-        if queued_at is not None:
-            break
-    if queued_at is None:
-        return None
-    latency = max(
-        0.0,
-        (started_at.astimezone(timezone.utc) - queued_at.astimezone(timezone.utc)).total_seconds(),
-    )
-    supervisor_state = state.setdefault("supervisor", {})
-    supervisor_state["queue_to_start_latency_seconds"] = round(latency, 3)
-    supervisor_state["queue_to_start_latency_peak_seconds"] = round(
-        max(
-            latency,
-            float(supervisor_state.get("queue_to_start_latency_peak_seconds", 0.0)),
-        ),
-        3,
-    )
-    metrics = _CYCLE_METRICS.get()
-    if isinstance(metrics, dict):
-        row = metrics.setdefault(
-            "queue_to_start",
-            {"count": 0, "total_seconds": 0.0, "max_seconds": 0.0},
-        )
-        row["count"] = int(row.get("count", 0)) + 1
-        row["total_seconds"] = float(row.get("total_seconds", 0.0)) + latency
-        row["max_seconds"] = max(float(row.get("max_seconds", 0.0)), latency)
-    return latency
 
 
 SESSION_ID_PATTERNS = [
@@ -3545,21 +3496,12 @@ def process_queue(
                 or record.get("run_id") != active_run_id
                 or record.get("lease_owner") != active_run_id
             ):
-                observed_started_at = (
-                    _parse_iso_utc(str(active_worker.get("lease_acquired_at") or ""))
-                    or datetime.now(timezone.utc)
-                )
                 record["status"] = desired_status
                 record["run_id"] = active_run_id
                 record["lease_owner"] = active_run_id
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
-                record_queue_to_start_latency(
-                    state,
-                    event,
-                    started_at=observed_started_at,
-                )
                 sync_dispatched_task_status(
                     config,
                     event,
@@ -3831,11 +3773,6 @@ def process_queue(
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
         record["processed_at"] = _isoformat_utc(queue_started_at)
         record.pop("last_wait_reason", None)
-        record_queue_to_start_latency(
-            state,
-            event,
-            started_at=queue_started_at,
-        )
         sync_dispatched_task_status(
             config,
             event,
@@ -9083,6 +9020,7 @@ def poll_worker_failure_stage(
         finalize_queue_event_record(config, state, worker, "failed", failure_reason)
         return {"changed": True, "stop": True}
 
+    retry_exhausted = False
     if (
         failure_kind in {"transient", "capacity", "capacity_retryable"}
     ):
@@ -9094,6 +9032,10 @@ def poll_worker_failure_stage(
         )
         if handled:
             return {"changed": bool(retry_changed), "stop": True}
+        retry = worker_retry_settings(config, worker.get("provider"))
+        retry_exhausted = worker_retry_attempt_index(worker) >= int(
+            retry.get("max_attempts", 5)
+        )
 
     worker["status"] = "failed"
     worker["last_error"] = summarized_reason
@@ -9113,6 +9055,12 @@ def poll_worker_failure_stage(
         },
     )
     finalize_queue_event_record(config, state, worker, "failed", summarized_reason)
+    if retry_exhausted:
+        record_retry_exhausted_worker_terminal_outcome(
+            config,
+            worker,
+            reason=summarized_reason,
+        )
     return {"changed": True, "stop": True}
 
 
@@ -10319,13 +10267,15 @@ def schedule_missing_process_retry(
     return True
 
 
-def _prepare_missing_worker_terminal_outcome_locked(
+def _prepare_worker_terminal_outcome_locked(
     config: dict[str, Any],
     worker: dict[str, Any],
     *,
     reason: str,
+    blocker_kind: str,
+    activity_type: str,
 ) -> dict[str, Any] | None:
-    """Move an open task to a durable blocked outcome after process loss."""
+    """Move an open task to its one durable, operator-actionable outcome."""
 
     if not config.get("paths", {}).get("status_file"):
         return None
@@ -10366,7 +10316,6 @@ def _prepare_missing_worker_terminal_outcome_locked(
     if expected_actor and worker_actor and worker_actor != expected_actor:
         return None
 
-    blocker_kind = "missing_worker_terminal"
     if any(
         str(blocker.get("task_id") or "") == task_id
         and str(blocker.get("status") or "") == "open"
@@ -10378,20 +10327,20 @@ def _prepare_missing_worker_terminal_outcome_locked(
     timestamp = utc_now()
     waiting_for = expected_actor or worker_actor or provider
     message = (
-        f"Supervisor recorded terminal missing-worker outcome for task={task_id}, "
+        f"Supervisor recorded terminal worker outcome for task={task_id}, "
         f"run={run_id}, provider={provider}: {reason} Retry budget was exhausted "
         f"or the request could not be reconstructed; task moved from "
         f"{previous_status} to blocked. Confirm the failure, then reopen or "
         f"reassign through scripts/ai-status.sh."
     )
     event = {
-        "event_id": "supervisor-missing-worker-terminal-"
+        "event_id": f"supervisor-{blocker_kind}-"
         + hashlib.sha256(
             f"{task_id}\0{run_id}\0{provider}\0{reason}".encode("utf-8")
         ).hexdigest(),
         "ts": timestamp,
         "agent": "Orchestrator",
-        "type": "task_missing_worker_blocked",
+        "type": activity_type,
         "task_id": task_id,
         "target_agent": waiting_for,
         "provider": provider,
@@ -10407,7 +10356,7 @@ def _prepare_missing_worker_terminal_outcome_locked(
     try:
         task["status"] = rewrite_task_machine.transition(
             previous_status,
-            rewrite_task_machine.TaskAction.BLOCK,
+            rewrite_task_machine.TaskAction.BLOCK.value,
         ).value
     except rewrite_task_machine.TransitionError:
         return None
@@ -10431,17 +10380,19 @@ def _prepare_missing_worker_terminal_outcome_locked(
         }
     )
     status["status_activity_outbox"] = composed_outbox
-    write_status(config, status, source="supervisor-missing-worker-outcome")
+    write_status(config, status, source="supervisor-worker-terminal-outcome")
     return event
 
 
-def record_missing_worker_terminal_outcome(
+def record_worker_terminal_outcome(
     config: dict[str, Any],
     worker: dict[str, Any],
     *,
     reason: str,
+    blocker_kind: str,
+    activity_type: str,
 ) -> dict[str, Any] | None:
-    """Persist and publish the terminal task outcome for a missing worker."""
+    """Persist and publish one terminal worker outcome through task authority."""
 
     if not config.get("paths", {}).get("status_file"):
         return None
@@ -10451,10 +10402,12 @@ def record_missing_worker_terminal_outcome(
         shared=False,
         nonblocking=False,
     ):
-        event = _prepare_missing_worker_terminal_outcome_locked(
+        event = _prepare_worker_terminal_outcome_locked(
             config,
             worker,
             reason=reason,
+            blocker_kind=blocker_kind,
+            activity_type=activity_type,
         )
     if event is None:
         return None
@@ -10462,7 +10415,7 @@ def record_missing_worker_terminal_outcome(
     write_activity_log(
         config,
         {
-            "type": event["type"],
+            "type": activity_type,
             "provider": event["provider"],
             "task_id": event["task_id"],
             "message": event["message"],
@@ -10473,6 +10426,40 @@ def record_missing_worker_terminal_outcome(
         },
     )
     return event
+
+
+def record_missing_worker_terminal_outcome(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    reason: str,
+) -> dict[str, Any] | None:
+    """Persist the existing terminal outcome for an unrecoverable worker."""
+
+    return record_worker_terminal_outcome(
+        config,
+        worker,
+        reason=reason,
+        blocker_kind="missing_worker_terminal",
+        activity_type="task_missing_worker_blocked",
+    )
+
+
+def record_retry_exhausted_worker_terminal_outcome(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    reason: str,
+) -> dict[str, Any] | None:
+    """Stop a transient delivery loop once its configured retry budget is spent."""
+
+    return record_worker_terminal_outcome(
+        config,
+        worker,
+        reason=reason,
+        blocker_kind="worker_retry_exhausted",
+        activity_type="task_worker_retry_exhausted_blocked",
+    )
 
 
 def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:

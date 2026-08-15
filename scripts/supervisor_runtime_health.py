@@ -311,7 +311,6 @@ def evaluate_runtime_health(
     now: datetime | None = None,
     max_heartbeat_age: float | None = None,
     max_cycle_elapsed: float | None = None,
-    max_dispatch_latency: float | None = None,
     require_watchdog: bool = False,
     max_watchdog_age: float = 180.0,
     expected_command_root: Path | None = None,
@@ -517,8 +516,6 @@ def evaluate_runtime_health(
         max_heartbeat_age = float(configured_watchdog.get("heartbeat_stale_seconds", max(900.0, poll_interval * 3.0)))
     if max_cycle_elapsed is None:
         max_cycle_elapsed = float(configured_supervisor.get("cycle_budget_seconds", stall_after))
-    if max_dispatch_latency is None:
-        max_dispatch_latency = float(configured_supervisor.get("dispatch_latency_budget_seconds", stall_after))
     successful_loop = parse_utc_timestamp(supervisor.get("last_successful_loop_at"))
     loop_started = parse_utc_timestamp(supervisor.get("last_loop_started_at"))
     loop_finished = parse_utc_timestamp(supervisor.get("last_loop_finished_at"))
@@ -550,11 +547,6 @@ def evaluate_runtime_health(
     cycle_elapsed = last_cycle.get("cycle_elapsed_seconds", supervisor.get("cycle_elapsed_seconds"))
     cycle_elapsed_value = float(cycle_elapsed) if isinstance(cycle_elapsed, (int, float)) else None
     effective_cycle_elapsed = in_flight_cycle_age if in_flight_cycle_age is not None else cycle_elapsed_value
-    dispatch_latency = supervisor.get("queue_to_start_latency_seconds")
-    queue_to_start = last_cycle.get("queue_to_start") if isinstance(last_cycle.get("queue_to_start"), dict) else {}
-    if isinstance(queue_to_start.get("max_seconds"), (int, float)):
-        dispatch_latency = queue_to_start["max_seconds"]
-    dispatch_latency_value = float(dispatch_latency) if isinstance(dispatch_latency, (int, float)) else None
     progress_checks = [
         check("progress_heartbeat_present", heartbeat is not None, {"last_heartbeat_at": supervisor.get("last_heartbeat_at")}),
         check(
@@ -583,11 +575,6 @@ def evaluate_runtime_health(
                 "in_flight": in_flight_after_success,
                 "max_cycle_elapsed_seconds": max_cycle_elapsed,
             },
-        ),
-        check(
-            "progress_dispatch_latency_within_budget",
-            dispatch_latency_value is None or 0 <= dispatch_latency_value <= max_dispatch_latency,
-            {"dispatch_latency_seconds": dispatch_latency_value, "max_dispatch_latency_seconds": max_dispatch_latency},
         ),
         check(
             "progress_supervisor_not_degraded",
@@ -666,7 +653,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config-path", default=None, help="Path to the exact live supervisor config.")
     parser.add_argument("--max-heartbeat-age", type=float, default=None)
     parser.add_argument("--max-cycle-elapsed", type=float, default=None)
-    parser.add_argument("--max-dispatch-latency", type=float, default=None)
     parser.add_argument("--require-watchdog", action="store_true")
     parser.add_argument("--max-watchdog-age", type=float, default=180.0)
     parser.add_argument("--json", action="store_true", help="Print machine-readable output.")
@@ -681,7 +667,6 @@ def main() -> int:
         config_path_arg=Path(args.config_path).expanduser().absolute() if args.config_path else None,
         max_heartbeat_age=args.max_heartbeat_age,
         max_cycle_elapsed=args.max_cycle_elapsed,
-        max_dispatch_latency=args.max_dispatch_latency,
         require_watchdog=args.require_watchdog,
         max_watchdog_age=args.max_watchdog_age,
     )
