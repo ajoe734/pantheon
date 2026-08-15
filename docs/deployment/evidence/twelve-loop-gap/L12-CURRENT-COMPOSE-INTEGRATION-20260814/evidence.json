@@ -1,0 +1,307 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-CURRENT-COMPOSE-INTEGRATION-20260814 integration review gate.",
+    "note": "Owner evidence for the single default Compose integration of the existing current twelve-loop services.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-COMPOSE-INTEGRATION-20260814/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "The independent reviewer must record a formal verdict in this manifest and bind the final evidence-bearing PR head before approval; no owner mutation is allowed after approval.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-15T05:06:08Z",
+    "evidence_cut_semantics": "Owner validation of anchor 59767f186d69aeae2148fd00ee4e1a160d56ba25 against dev 6f25c1c99e690741c08dcc8c3cdf06e1d2a564a6; reviewer must bind the final evidence-bearing PR head.",
+    "id": "L12-CURRENT-COMPOSE-INTEGRATION-20260814",
+    "overall_admission": "ready_for_independent_review",
+    "owner": "Codex",
+    "phase": "W3-integration",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-COMPOSE-INTEGRATION-20260814/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-CURRENT-COMPOSE-INTEGRATION-20260814",
+    "title": "Wire the existing twelve-loop owners in one compose integration"
+  },
+  "authorities": {
+    "actual_state": [
+      "One default durable Source controller",
+      "Authenticated Teaching, Consultation, Deployment, Agora, Imitation, Evolution, telemetry, and BFF owner boundaries",
+      "Typed readiness and worker-health targets for existing owner services"
+    ],
+    "desired_state": [
+      "Exactly one Compose owner per loop",
+      "Governance durable Consultation acknowledgement sink",
+      "Separate Agora BFF and policy-learning service authorities",
+      "Fail-closed functional health and no live-capital authority"
+    ],
+    "task_packet": "Canonical task L12-CURRENT-COMPOSE-INTEGRATION-20260814 and task-scoped brief"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex owns only root docker-compose.yml wiring and its focused structural acceptance; component services retain their existing write authorities.",
+    "composes_with": [
+      "PR #4922 merge 6f25c1c99e690741c08dcc8c3cdf06e1d2a564a6 for Governance Consultation acknowledgement and separate Agora authorities",
+      "Merged current Source, Teaching, Deployment, Capital, Evolution, telemetry, BFF, and loop-worker component contracts",
+      "Downstream current twelve-loop E2E and hosted readback tasks"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-COMPOSE-INTEGRATION-20260814/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-COMPOSE-INTEGRATION-20260814/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "docker-compose.yml",
+      "scripts/test_current_l12_compose_wiring.py"
+    ],
+    "not_changing": "Component product code, supervisor tooling, canonical task-state files, hosted deployment, broker execution, or live-capital authority.",
+    "owned_layer": "Root Compose activation, cross-service URL/token/actor/tenant identities, typed health targets, Evolution feedback credentials, and structural owner-matrix acceptance."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "task_branch",
+        "sha": "59767f186d69aeae2148fd00ee4e1a160d56ba25",
+        "subject": "L12-CURRENT-COMPOSE-INTEGRATION-20260814: anchor wiring"
+      }
+    ],
+    "required_checks": [
+      {
+        "conclusion": "pending_evidence_head_pr",
+        "event": "pull_request",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "pending_independent_review",
+        "event": "pull_request",
+        "workflow": "Canonical Review Gate"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "docker compose config >/dev/null",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_current_l12_compose_wiring.py",
+        "conclusion": "6 passed in 1.45s",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/consultation/tests/test_current_provider_handoff.py services/governance/test_consultation_handoff.py",
+        "conclusion": "7 passed, 1 warning in 7.39s",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/policy-learning/tests/test_agora_handoff_drainer.py services/policy-learning/tests/test_current_agora_handoff_cutover.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py",
+        "conclusion": "26 passed, 1 warning in 11.59s",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_current_l12_compose_wiring.py scripts/test_agora_compat_manifest.py scripts/test_validate_loop_worker_manifest_matrix.py services/deployment/test_outbox_consumer_worker.py services/control-plane/bff/test_downstream_health_monitor.py services/telemetry/test_infrastructure_health_ingest.py",
+        "conclusion": "174 passed in 61.82s",
+        "result": "pass"
+      },
+      {
+        "command": "PATH=$(pwd)/.venv-pantheon/bin:$PATH PYTHON=$(pwd)/.venv-pantheon/bin/python scripts/run-acceptance.sh smoke",
+        "conclusion": "stage0 validate and baseline passed",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD && python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "conclusion": "exit 0",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-08-15T05:06:08Z",
+    "validated_base_sha": "6f25c1c99e690741c08dcc8c3cdf06e1d2a564a6",
+    "validated_head_sha": "59767f186d69aeae2148fd00ee4e1a160d56ba25"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "conclusion": "compose_render_verified",
+      "reason": "This integration task owns repository Compose wiring; hosted rollout and E2E readback remain downstream."
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "reason": "Structural and component tests verified exact service URLs, distinct credentials, actor identities, tenants, and truthful health targets.",
+      "status": "reconciled"
+    },
+    "public_bff_base_url": "not_applicable_predeploy",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "No hosted deployment or publish cut is claimed by this task."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "component_readback": "Rendered Compose and 213 focused/component checks proved the default owner matrix, real Governance handoff sink, separate Agora authorities, and health identities without starting a hosted stack.",
+      "hosted_activation_owner": "Downstream current twelve-loop E2E and deployment lanes",
+      "status": "compose_reconciled_hosted_pending"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "The default render contains one Source controller command and one named owner for every declared loop worker.",
+        "Agora and Consultation component tests preserve idempotent acknowledgement and exact handoff identity across replay."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Consultation health requires fresh functional health with zero blocked and dead-letter work.",
+        "Deployment uses its semantic worker healthcheck and policy-learning health degrades when its distinct Agora intake authority cannot complete."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Consultation provider and Governance handoff credentials share exact configured tokens while preserving separate service actors and tenant identity.",
+        "Agora BFF and policy-learning credentials are explicitly distinct and point to their separate existing owners."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Durable controllers use unless-stopped with unbounded production tick defaults while bounded smoke remains an explicit override of the same owner.",
+        "Consultation, Deployment, policy-learning, and health-monitor tests exercised durable replay or fresh health-file recovery semantics."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "A failing consumer can be disabled while its owning service remains degraded and durable work stays visible.",
+        "The change introduces no parallel owner; rollback is the single Compose integration commit with live-capital defaults still false."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the task worktree, Compose rendering, and local test processes were exercised; no deployed environment was mutated.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "PANTHEON_LIVE_BROKER_ENABLED and PANTHEON_CANARY_EXECUTION_ENABLED remain false; no broker or capital credential is added.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Teaching uses a role-bearing JWT; Consultation and Agora use exact dedicated service actors and distinct bearer credentials.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "Consultation, Governance, policy-learning, Agora BFF, telemetry, and BFF health wiring share explicit tenant scopes accepted by their existing contracts.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner evidence is committed before review; assigned reviewer Antigravity must inspect and bind the final PR head.",
+      "status": "pending_independent_review"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "docker-compose.yml::source-ingest-scheduler",
+        "scripts/test_current_l12_compose_wiring.py::test_source_controller_is_the_single_default_durable_owner"
+      ],
+      "id": "AC1",
+      "statement": "Source controller is default-on durable while bounded one-shot remains an explicit override of the same owner.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "scripts/test_current_l12_compose_wiring.py::test_teaching_worker_and_agora_service_boundaries_are_exact",
+        "scripts/test_current_l12_compose_wiring.py::test_consultation_provider_and_functional_health_are_explicit"
+      ],
+      "id": "AC2",
+      "statement": "Teaching, Consultation, Deployment, Agora, Imitation, and Evolution use their existing owner endpoints and service identities.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "scripts/test_current_l12_compose_wiring.py::test_bff_health_registry_uses_real_typed_paths_and_telemetry_identity",
+        "docker compose config"
+      ],
+      "id": "AC3",
+      "statement": "Typed health targets use real readiness or worker-health paths and render successfully.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "scripts/test_current_l12_compose_wiring.py::test_default_owner_services_are_not_hidden_behind_profiles"
+      ],
+      "id": "AC4",
+      "statement": "Default Compose render has exactly one declared owner per current loop.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "hosted_readback": {
+      "blocking_for_this_task": false,
+      "containment": "This manifest claims reconciled Compose integration only; no hosted maturity is asserted.",
+      "description": "A deployed twelve-loop readback remains owned by downstream E2E and deployment tasks.",
+      "expiry": "When the downstream current twelve-loop E2E delivery records hosted readback.",
+      "owner": "downstream current twelve-loop E2E delivery",
+      "recheck_trigger": "After this Compose integration merges and deploys.",
+      "severity": "informational"
+    },
+    "legacy_source_profile_test": {
+      "blocking_for_this_task": false,
+      "containment": "The task-scoped acceptance and canonical task contract are authoritative for the new default-on integration; no source component file is changed here.",
+      "description": "services/source_ingestion/test_compose_activation.py still asserts the superseded profile-only one-shot Compose contract and fails on the intended default-on owner.",
+      "expiry": "When the Source component owner reconciles its legacy Compose assertion with the current integration contract.",
+      "owner": "Source component test owner",
+      "recheck_trigger": "Any Source component test-maintenance task or broad pytest gate expansion.",
+      "severity": "medium"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-COMPOSE-INTEGRATION-20260814/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-COMPOSE-INTEGRATION-20260814/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-COMPOSE-INTEGRATION-20260814/evidence.json",
+    "normalized_hosted_readback": {
+      "component_contracts_verified": true,
+      "compose_render_verified": true,
+      "hosted_activation_claimed": false,
+      "independent_review_recorded": false
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "compose_59767f186": "03e95b7b0cee5bb88d953a76ab9fd8bd0ec4540e6238567980ba1f536733a70a",
+      "focused_acceptance_59767f186": "6bb90d1b761abcf8347ed253186b306c39bb4804d9a893e2c425570a618ed5c6"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-15T05:06:08Z",
+      "reference": "task/L12-CURRENT-COMPOSE-INTEGRATION-20260814",
+      "sequence": 1,
+      "sha": "59767f186d69aeae2148fd00ee4e1a160d56ba25",
+      "status": "ready_for_independent_review"
+    }
+  ]
+}
