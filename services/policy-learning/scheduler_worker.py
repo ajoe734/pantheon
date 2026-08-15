@@ -312,9 +312,9 @@ def run_intake_cycle(
     acknowledges each handoff exactly once rather than repeatedly.
 
     A short ``timeout_seconds`` default keeps one unreachable-BFF tick from
-    stalling the scheduler loop; an unreachable BFF degrades to zero
-    processed for this tick rather than raising, matching
-    ``agora_handoff_drainer.process_drainer_cycle``'s own contract.
+    stalling the scheduler loop. An unreachable or unauthorized BFF returns
+    an explicit error result so scheduler health degrades instead of treating
+    an unknown queue as a successful empty queue.
     """
 
     return agora_handoff_drainer.process_drainer_cycle(
@@ -393,11 +393,14 @@ def main() -> int:
                 policy_learning_token=token,
                 batch_size=intake_batch_size,
             )
-            if result.get("status") == "error":
+            intake_status = str(result.get("status") or "error")
+            if intake_status != "ok":
                 last_failure = result
+            if intake_status == "error":
                 cycle: dict[str, Any] = {"status": "skipped", "reason": "intake_failed"}
             else:
-                last_success = result
+                if intake_status == "ok":
+                    last_success = result
                 cycle = run_claim_cycle(
                     api_url=api_url,
                     worker=worker,
@@ -410,7 +413,7 @@ def main() -> int:
             result = last_failure
             cycle = {"status": "skipped", "reason": "intake_exception"}
 
-        tick_failed = result.get("status") == "error"
+        tick_failed = result.get("status") != "ok"
         cycle_failed = cycle.get("status") in {"error", "skipped", "degraded"}
         health["ticks"] = tick
         health["last_tick_at"] = _utc_now()

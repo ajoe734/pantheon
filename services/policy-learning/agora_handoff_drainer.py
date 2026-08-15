@@ -46,6 +46,10 @@ class DrainerConfigurationError(RuntimeError):
     """The drainer worker is missing required environment configuration."""
 
 
+class DrainerRequestError(RuntimeError):
+    """The Agora handoff owner could not provide a valid pending-work view."""
+
+
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
     value = int(os.getenv(name, str(default)))
     if value < minimum:
@@ -163,10 +167,19 @@ def fetch_pending_handoffs(
     headers = request_headers(tenant_id, token, service_actor=SERVICE_ACTOR)
     res = _http_request(url, method="GET", headers=headers, timeout_seconds=timeout_seconds)
     if res.get("status") == "error":
-        _logger.warning("Failed to fetch Agora handoffs: %s", res)
-        return []
-    items = res.get("items") or []
-    return [item for item in items if not item.get("acknowledged")]
+        raise DrainerRequestError(f"Failed to fetch Agora handoffs: {res}")
+    items = res.get("items")
+    if not isinstance(items, list):
+        raise DrainerRequestError(
+            "Agora handoff response must contain an items array"
+        )
+    return [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and not item.get("acknowledged")
+        and item.get("ack_status") != "acknowledged"
+    ]
 
 
 def post_handoff_to_policy_learning(
@@ -241,12 +254,21 @@ def process_drainer_cycle(
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     """One drainer cycle: fetch pending -> ingest to policy-learning -> ack on Agora."""
-    pending = fetch_pending_handoffs(
-        agora_url,
-        tenant_id,
-        agora_token,
-        timeout_seconds=timeout_seconds,
-    )
+    try:
+        pending = fetch_pending_handoffs(
+            agora_url,
+            tenant_id,
+            agora_token,
+            timeout_seconds=timeout_seconds,
+        )
+    except DrainerRequestError as exc:
+        return {
+            "status": "error",
+            "reason": "agora_handoff_fetch_failed",
+            "detail": str(exc),
+            "processed_count": 0,
+            "acked_count": 0,
+        }
     if not pending:
         return {"status": "ok", "processed_count": 0, "acked_count": 0}
 
@@ -272,6 +294,19 @@ def process_drainer_cycle(
 
         processed_count += 1
         candidate_id = str(ingest_res.get("candidate_id") or "")
+        if not candidate_id:
+            processed_count -= 1
+            errors.append(
+                {
+                    "handoff_id": handoff_id,
+                    "step": "ingest",
+                    "error": {
+                        "status": "error",
+                        "detail": "policy-learning response has no candidate_id",
+                    },
+                }
+            )
+            continue
 
         ack_res = acknowledge_agora_handoff(
             agora_url,
@@ -282,7 +317,7 @@ def process_drainer_cycle(
             token=agora_token,
             timeout_seconds=timeout_seconds,
         )
-        if ack_res.get("status") == "error":
+        if ack_res.get("status") not in {"acknowledged", "exists"}:
             errors.append({"handoff_id": handoff_id, "step": "ack", "error": ack_res})
         else:
             acked_count += 1

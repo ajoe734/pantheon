@@ -231,6 +231,50 @@ def test_scheduler_health_requires_recent_successful_fail_closed_tick(
     assert state["production_training"] == "fail_closed"
 
 
+def test_scheduler_health_degrades_when_handoff_intake_is_partial(
+    tmp_path: Path,
+) -> None:
+    scheduler = _load_scheduler_module()
+    health_file = tmp_path / "shadow-eval-degraded-health.json"
+    degraded = {
+        "status": "degraded",
+        "processed_count": 1,
+        "acked_count": 0,
+        "errors": [{"step": "ack", "detail": "BFF unavailable"}],
+    }
+
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "POLICY_LEARNING_SERVICE_TOKEN": "test-token",
+            "AGORA_HANDOFF_SERVICE_TOKEN": "agora-test-token",
+            "POLICY_LEARNING_AGORA_TENANT_ID": "tenant-health",
+            "SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS": "1",
+            "SHADOW_EVAL_SCHEDULER_MAX_TICKS": "1",
+            "SHADOW_EVAL_SCHEDULER_HEALTH_FILE": str(health_file),
+        },
+        clear=False,
+    ), mock.patch.object(
+        scheduler,
+        "run_recovery",
+        return_value={"status": "ok", "reset_count": 0},
+    ), mock.patch.object(
+        scheduler,
+        "run_intake_cycle",
+        return_value=degraded,
+    ), mock.patch.object(
+        scheduler,
+        "run_claim_cycle",
+        return_value={"status": "ok", "processed_count": 1},
+    ):
+        assert scheduler.main() == 0
+
+    state = json.loads(health_file.read_text(encoding="utf-8"))
+    assert state["status"] == "degraded"
+    assert state["last_failure_at"] is not None
+    assert state["last_success_at"] is None
+
+
 # ---------------------------------------------------------------------------
 # /api/policy-learning/shadow-eval-tick endpoint tests
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ from agora_dataset_authority import (
     AgoraDatasetAuthority,
 )
 from agora_handoff_drainer import process_drainer_cycle
+from agora_handoff_drainer import DrainerRequestError
 
 
 class TestAgoraDatasetAuthorityScannerToggle(unittest.TestCase):
@@ -67,6 +68,43 @@ class TestAgoraHandoffDrainer(unittest.TestCase):
         self.assertEqual(res["acked_count"], 1)
         mock_post.assert_called_once()
         mock_ack.assert_called_once()
+
+    @patch("agora_handoff_drainer.fetch_pending_handoffs")
+    def test_fetch_failure_is_not_reported_as_empty_success(
+        self,
+        mock_fetch: MagicMock,
+    ) -> None:
+        mock_fetch.side_effect = DrainerRequestError("BFF rejected service token")
+
+        res = process_drainer_cycle(
+            agora_url="http://agora-bff:8000",
+            policy_learning_url="http://policy-learning:8100",
+            tenant_id="tenant-test",
+            agora_token="agora-test-token",
+            policy_learning_token="policy-test-token",
+        )
+
+        self.assertEqual(res["status"], "error")
+        self.assertEqual(res["reason"], "agora_handoff_fetch_failed")
+        self.assertEqual(res["processed_count"], 0)
+
+    def test_configuration_refuses_cross_service_token_reuse(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AGORA_HANDOFF_SERVICE_TOKEN": "same-token",
+                "POLICY_LEARNING_SERVICE_TOKEN": "same-token",
+                "POLICY_LEARNING_AGORA_TENANT_ID": "tenant-test",
+            },
+            clear=False,
+        ):
+            from agora_handoff_drainer import (
+                DrainerConfigurationError,
+                require_drainer_configuration,
+            )
+
+            with self.assertRaises(DrainerConfigurationError):
+                require_drainer_configuration()
 
 
 if __name__ == "__main__":
