@@ -1,0 +1,65 @@
+{
+  "schema_version": "pantheon.agora.hosted-service-proof-review.v1",
+  "task": {
+    "id": "AGORA-HOSTED-SERVICE-PROOF-20260815",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "review_file": "docs/deployment/evidence/agora/AGORA-HOSTED-SERVICE-PROOF-20260815/evidence.json"
+  },
+  "status": "ready_for_independent_review",
+  "scope": {
+    "owned_layer": "Hosted HTTPS Agora service proof, exact-pair identity checks, controlled dev BFF recreation, and redacted evidence production.",
+    "changed_files": [
+      ".github/workflows/agora-hosted-acceptance.yml",
+      "scripts/probe_agora_hosted_service_journey.py",
+      "scripts/test_probe_agora_hosted_service_journey.py",
+      "docs/deployment/evidence/agora/AGORA-HOSTED-SERVICE-PROOF-20260815/"
+    ],
+    "not_changing": [
+      "Agora BFF product routers or persistence implementations",
+      "execute-plans frontend source",
+      "shared nonprod deployment workflow",
+      "production or live-capital authority",
+      "supervisor or canonical task-state implementation"
+    ]
+  },
+  "hosted_evidence_contract": {
+    "workflow": ".github/workflows/agora-hosted-acceptance.yml",
+    "service_schema": "pantheon.agora.hosted-service-journey-evidence.v1",
+    "restart_schema": "pantheon.agora.hosted-restart-evidence.v1",
+    "required_properties": [
+      "successful GitHub Actions run at the same BFF SHA served by /bff/version",
+      "frontend deployment.json bound to that exact BFF SHA and expected frontend SHA",
+      "fourteen passed stages with a positive authenticated HTTPS request count",
+      "distinct strict operator and peer identity fingerprints",
+      "actual BFF container recreation with distinct redacted before/after instance fingerprints",
+      "PostgreSQL workshop, governance, and dataset resource readback after readiness returns",
+      "redacted JSON artifacts uploaded from the successful exact-head run"
+    ],
+    "failure_policy": "Missing, simulated, in-process, stale, non-HTTPS, mismatched-head, same-instance, or unredacted evidence is unqualified and must not close this task."
+  },
+  "owner_validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m pytest -q scripts/test_probe_agora_hosted_service_journey.py",
+        "result": "8 passed",
+        "scope": "HTTP-only probe, exact-pair guard, redaction, and recreated-instance failure controls"
+      },
+      {
+        "command": "python3 -m py_compile scripts/probe_agora_hosted_service_journey.py scripts/test_probe_agora_hosted_service_journey.py && git diff --check",
+        "result": "passed",
+        "scope": "Python syntax and whitespace"
+      }
+    ],
+    "hosted_workflow_run": "pending_after_reviewed_exact-head PR merges and the matching dev FE/BFF pair is deployed"
+  },
+  "reviewer_checklist": [
+    "Confirm the probe imports no product application, TestClient, or in-process store.",
+    "Confirm every passing artifact is produced only by the named hosted workflow and is bound to its successful exact head.",
+    "Confirm the lease guard surrounds the remote state change and --force-recreate is used instead of docker compose restart.",
+    "Confirm the workflow never prints or uploads raw client secrets, user subjects, container IDs, request bodies, or response bodies.",
+    "Confirm an actual successful run is attached before final owner closeout; implementation review alone is not runtime acceptance."
+  ]
+}

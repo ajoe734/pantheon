@@ -132,6 +132,7 @@ def _default_transport(
 @dataclass
 class ProbeConfig:
     bff_base_url: str
+    fe_base_url: str
     expected_bff_sha: str
     expected_fe_sha: str
     tenant_id: str
@@ -150,6 +151,7 @@ class ProbeConfig:
 
     def validate(self) -> None:
         self.bff_base_url = canonical_origin(self.bff_base_url)
+        self.fe_base_url = canonical_origin(self.fe_base_url)
         self.expected_bff_sha = require_sha(self.expected_bff_sha, "expected_bff_sha")
         self.expected_fe_sha = require_sha(self.expected_fe_sha, "expected_fe_sha")
         if not self.tenant_id or not self.foreign_tenant_id or self.tenant_id == self.foreign_tenant_id:
@@ -271,7 +273,7 @@ class HostedAgoraJourney:
         self._subjects[name] = subject
         return data
 
-    def _version_guard(self) -> None:
+    def _pair_guard(self) -> None:
         response = self.transport(
             "GET",
             f"{self.config.bff_base_url}/bff/version",
@@ -287,9 +289,28 @@ class HostedAgoraJourney:
             or posture.get("auth_stub") is not False
         ):
             raise ProbeFailure("public BFF identity is not the expected strict-auth deployment")
+        manifest_response = self.transport(
+            "GET",
+            f"{self.config.fe_base_url}/deployment.json",
+            {"Accept": "application/json", "Cache-Control": "no-store"},
+            None,
+            self.config.request_timeout_seconds,
+        )
+        manifest = self._expect(manifest_response, {200}, "public frontend deployment manifest")
+        frontend = manifest.get("frontend") if isinstance(manifest.get("frontend"), Mapping) else {}
+        bff = manifest.get("bff") if isinstance(manifest.get("bff"), Mapping) else {}
+        frontend_sha = manifest.get("commit") or manifest.get("frontendSha") or frontend.get("commitSha")
+        manifest_bff_sha = manifest.get("bffCommit") or manifest.get("bffSourceCommitSha") or bff.get("sourceCommitSha")
+        bff_host = str(manifest.get("bffHost") or bff.get("baseUrl") or "").rstrip("/")
+        if (
+            frontend_sha != self.config.expected_fe_sha
+            or manifest_bff_sha != self.config.expected_bff_sha
+            or bff_host != self.config.bff_base_url
+        ):
+            raise ProbeFailure("public frontend manifest is not bound to the exact deployed FE/BFF pair")
 
     def run(self) -> dict[str, Any]:
-        self._version_guard()
+        self._pair_guard()
         operator = self._login("operator", self.config.operator_client_id, self.config.operator_client_secret)
         peer = self._login("peer", self.config.peer_client_id, self.config.peer_client_secret)
         viewer = self._login("viewer", self.config.viewer_client_id, self.config.viewer_client_secret)
@@ -547,7 +568,7 @@ class HostedAgoraJourney:
                 "backend_sha": self.config.expected_bff_sha,
                 "frontend_sha": self.config.expected_fe_sha,
                 "bff_url": self.config.bff_base_url,
-                "fe_url": os.environ.get("AGORA_HOSTED_FE_BASE_URL", "").rstrip("/"),
+                "fe_url": self.config.fe_base_url,
             },
             "producer": {
                 "kind": "github-actions",
@@ -597,7 +618,7 @@ class HostedAgoraJourney:
             raise ProbeFailure("actual BFF recreation must provide distinct before and after instance IDs")
         if not resource_ids or any(not value for value in resource_ids.values()):
             raise ProbeFailure("restart evidence requires all durable resource identifiers")
-        self._version_guard()
+        self._pair_guard()
         operator = self._login("operator", self.config.operator_client_id, self.config.operator_client_secret)
         stage = Stage("restart_readback")
         identity = self._identity(stage, "operator", operator)
@@ -616,7 +637,7 @@ class HostedAgoraJourney:
                 "backend_sha": self.config.expected_bff_sha,
                 "frontend_sha": self.config.expected_fe_sha,
                 "bff_url": self.config.bff_base_url,
-                "fe_url": os.environ.get("AGORA_HOSTED_FE_BASE_URL", "").rstrip("/"),
+                "fe_url": self.config.fe_base_url,
             },
             "producer": {
                 "kind": "github-actions",
@@ -641,6 +662,22 @@ class HostedAgoraJourney:
             "post_restart_operations": stage.operations,
         })
 
+    def operator_identity(self) -> dict[str, str]:
+        """Return an unlogged, workflow-local subject for the VM seed helper.
+
+        This is deliberately a short-lived coordination file, not an evidence
+        artifact.  The uploaded service and restart artifacts always redact the
+        subject with ``fingerprint``.
+        """
+        self._pair_guard()
+        operator = self._login("operator", self.config.operator_client_id, self.config.operator_client_secret)
+        stage = Stage("identity_scope")
+        identity = self._identity(stage, "operator", operator)
+        return {
+            "operator_user_id": str(identity.get("user_id") or identity.get("operator_id") or ""),
+            "tenant_id": self.config.tenant_id,
+        }
+
 
 def _env(name: str) -> str:
     value = os.environ.get(name, "")
@@ -652,6 +689,7 @@ def _env(name: str) -> str:
 def _config_from_args(args: argparse.Namespace) -> ProbeConfig:
     return ProbeConfig(
         bff_base_url=args.bff_base_url,
+        fe_base_url=args.fe_base_url,
         expected_bff_sha=args.expected_bff_sha,
         expected_fe_sha=args.expected_fe_sha,
         tenant_id=args.tenant_id,
@@ -677,8 +715,9 @@ def _write_output(path: Path, artifact: Mapping[str, Any]) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("journey", "restart-evidence"))
+    parser.add_argument("command", choices=("journey", "restart-evidence", "operator-identity"))
     parser.add_argument("--bff-base-url", required=True)
+    parser.add_argument("--fe-base-url", required=True)
     parser.add_argument("--expected-bff-sha", required=True)
     parser.add_argument("--expected-fe-sha", required=True)
     parser.add_argument("--tenant-id", required=True)
@@ -716,12 +755,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         journey = HostedAgoraJourney(_config_from_args(args))
         if args.command == "journey":
             artifact = journey.run()
-        else:
+        elif args.command == "restart-evidence":
             artifact = journey.restart_evidence(
                 before_instance_id=str(args.before_instance_id or ""),
                 after_instance_id=str(args.after_instance_id or ""),
                 resource_ids=_resource_ids(args.resource_id),
             )
+        else:
+            artifact = journey.operator_identity()
         _write_output(args.output, artifact)
     except ProbeFailure as exc:
         print(f"agora hosted service proof failed: {exc}", file=sys.stderr)
