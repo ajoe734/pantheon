@@ -41,13 +41,24 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     owner = SERVICES["source-ingest-scheduler"]
 
     assert "profiles" not in owner
-    assert owner["restart"] == "unless-stopped"
+    assert (
+        owner["restart"]
+        == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
+    )
     assert owner["stop_grace_period"] == "30s"
     assert owner["command"] == [
         "python",
         "-m",
         "services.source_ingestion.controller_worker",
     ]
+    assert (
+        owner["environment"]["SOURCE_INGEST_CONTROLLER_MODE"]
+        == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
+    )
+    assert (
+        owner["environment"]["SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL"]
+        == "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-scheduled_tick}"
+    )
     assert (
         owner["environment"]["SOURCE_INGEST_CONTROLLER_MAX_TICKS"]
         == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"

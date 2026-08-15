@@ -266,6 +266,20 @@ class JsonlConfiguredConnectorStore:
             self._reload_unlocked()
             return list(self._configs.values())
 
+    def read_snapshot(self) -> tuple[list[ConfiguredConnector], dict[str, dict[str, Any]]]:
+        """Read configured connectors and their fetch states in one replay."""
+
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+            configs = list(self._configs.values())
+            fetch_states = {
+                config.connector.connector_id: self._fetch_state_unlocked(
+                    config.connector.connector_id
+                )
+                for config in configs
+            }
+            return configs, fetch_states
+
     def get_fetch_state(self, connector_id: str) -> dict[str, Any]:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked()

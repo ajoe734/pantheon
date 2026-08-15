@@ -81,6 +81,24 @@ def test_provider_examples_share_configured_fetch_contract(tmp_path) -> None:
     }
 
 
+def test_configured_connector_snapshot_reads_configs_and_fetch_states_together(tmp_path) -> None:
+    store = JsonlConfiguredConnectorStore(tmp_path / "connector_config.jsonl")
+    providers = example_provider_catalog()[:2]
+    for provider in providers:
+        store.upsert_config(provider.connector(), provider.fetch_config())
+    updated_connector_id = providers[0].connector().connector_id
+    store.record_fetch_attempt(updated_connector_id, success=True)
+
+    configs, fetch_states = store.read_snapshot()
+
+    connector_ids = {config.connector.connector_id for config in configs}
+    assert connector_ids == {provider.connector().connector_id for provider in providers}
+    assert fetch_states[updated_connector_id]["attempts"] == 1
+    assert fetch_states[updated_connector_id]["successful_attempts"] == 1
+    untouched_connector_id = providers[1].connector().connector_id
+    assert fetch_states[untouched_connector_id]["attempts"] == 0
+
+
 def test_fetch_config_validation_rejects_unsafe_urls_secrets_and_overlarge_payloads(tmp_path) -> None:
     store = JsonlConfiguredConnectorStore(tmp_path / "connector_config.jsonl")
     connector = SourceConnector(
