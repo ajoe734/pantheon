@@ -490,7 +490,6 @@ export function renderAgentLanes(status, agentStates) {
         <span class="chip">可開工 ${agent.ready_count || 0}</span>
         <span class="chip">等前置 ${agent.waiting_count || 0}</span>
         <span class="chip">已批准 ${agent.approved_count || 0}</span>
-        ${Number.isFinite(agent.target_workload) ? `<span class="chip">目標 ${agent.target_workload}%</span>` : ""}
       </div>
       ${focusTasks ? `<ul class="note-list compact">${focusTasks}</ul>` : ""}
       <p class="lane-copy">下一步：${truncate(agent.next, 120)}</p>

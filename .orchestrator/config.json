@@ -162,58 +162,42 @@
     "enabled": true,
     "owner_fallbacks": {
       "Claude": [
-        "Codex",
-        "Codex2"
+        "Claude2"
       ],
       "Claude2": [
-        "Codex",
-        "Codex2"
+        "Claude"
       ],
       "Antigravity": [
-        "Codex",
-        "Codex2"
+        "Antigravity2"
       ],
       "Antigravity2": [
-        "Codex",
-        "Codex2"
+        "Antigravity"
       ],
       "Codex": [
         "Codex2"
       ],
       "Codex2": [
         "Codex"
-      ],
-      "Copilot": [
-        "Codex",
-        "Codex2"
       ]
     },
     "reviewer_fallbacks": {
       "Claude": [
-        "Codex",
-        "Codex2"
+        "Claude2"
       ],
       "Claude2": [
-        "Codex",
-        "Codex2"
+        "Claude"
       ],
       "Antigravity": [
-        "Codex",
-        "Codex2"
+        "Antigravity2"
       ],
       "Antigravity2": [
-        "Codex",
-        "Codex2"
+        "Antigravity"
       ],
       "Codex": [
         "Codex2"
       ],
       "Codex2": [
         "Codex"
-      ],
-      "Copilot": [
-        "Codex",
-        "Codex2"
       ]
     },
     "max_reassignments_per_cycle": 4
@@ -226,31 +210,7 @@
     "command_timeout_seconds": 8,
     "poll_interval_seconds": 30,
     "repo": "ajoe734/pantheon",
-    "default_branch": "master",
     "offline_backoff_seconds": 300,
-    "auto_request_reviewers": true,
-    "close_resolved_issues": true,
-    "labels": {
-      "review": [
-        "pantheon-bus",
-        "pantheon-review"
-      ],
-      "ops": [
-        "pantheon-bus",
-        "pantheon-ops",
-        "approval-needed"
-      ],
-      "resolved": [
-        "resolved"
-      ]
-    },
-    "commands": [
-      "/approve",
-      "/deny",
-      "/retry",
-      "/recheck",
-      "/status"
-    ],
     "reviewers": {
       "Claude": [
         "ajoe734"
@@ -264,11 +224,7 @@
       "Copilot": [
         "ajoe734"
       ]
-    },
-    "templates": {
-      "ops_issue": ".orchestrator/templates/github_ops_issue.md",
-      "review_pr": ".orchestrator/templates/github_review_pr.md"
-    }
+  }
   },
   "schema": {
     "tasks_path": "tasks",
@@ -906,15 +862,6 @@
       "retry_backoff",
       "stalled"
     ],
-    "target_workload": {
-      "Claude": 5,
-      "Claude2": 5,
-      "Antigravity": 30,
-      "Antigravity2": 30,
-      "Codex": 5,
-      "Codex2": 6,
-      "Copilot": 0
-    },
     "max_dispatches_per_tick": 10,
     "max_active_workers_per_task": 1,
     "max_concurrent_per_account": {

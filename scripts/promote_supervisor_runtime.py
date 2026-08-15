@@ -131,7 +131,7 @@ def _pid_path(rendered: Mapping[str, Any]) -> Path:
 def _incumbent_pid_path(live_config_path: Path, rendered: Mapping[str, Any]) -> Path:
     """Read the incumbent PID location only from its installed config.
 
-    Status-root migration is an ordinary V2 replacement: command source and
+    Status-root replacement is an ordinary V2 operation: command source and
     coordination state may both change together.  The prior config is the
     only durable identity for the process to stop; process cwd and a global
     product-root PID file are not authority.
