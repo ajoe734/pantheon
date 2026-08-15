@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from threading import Barrier
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -227,6 +228,45 @@ class TestCanonicalReferenceValidator(unittest.TestCase):
             validator.validate_incident(_make_incident())
         self.assertIn("is before RuntimeBinding 'binding-001' effective_at", str(ctx.exception))
 
+    def test_telemetry_event_limit_rejects_before_owner_lookups(self):
+        class _NeverCalledLookup:
+            def __getattr__(self, name):
+                raise AssertionError(f"owner lookup must not run: {name}")
+
+        validator = CanonicalReferenceValidator(
+            binding_lookup=_NeverCalledLookup(),
+            telemetry_lookup=_NeverCalledLookup(),
+        )
+
+        with self.assertRaises(CanonicalReferenceError) as ctx:
+            validator.validate_incident(
+                _make_incident(
+                    telemetry_event_ids=[f"evt-{index}" for index in range(9)]
+                )
+            )
+
+        self.assertIn("canonical validation limit of 8", str(ctx.exception))
+
+    def test_multiple_telemetry_traces_use_one_parallel_batch(self):
+        barrier = Barrier(2, timeout=2)
+
+        class _ParallelTelemetryLookup:
+            def runtime_binding_projection(self, binding_id: str):
+                return _binding_projection(target_id=binding_id)
+
+            def telemetry_event_trace(self, event_id: str):
+                barrier.wait()
+                return _event_trace(target_id=event_id)
+
+        validator = CanonicalReferenceValidator(
+            binding_lookup=_FakeBindingLookup(_binding_record()),
+            telemetry_lookup=_ParallelTelemetryLookup(),
+        )
+
+        validator.validate_incident(
+            _make_incident(telemetry_event_ids=["evt-001", "evt-002"])
+        )
+
 
 class TestTelemetryLineageLookupAuthority(unittest.TestCase):
     def test_http_lookup_sends_service_token_and_tenant(self):
@@ -251,7 +291,26 @@ class TestTelemetryLineageLookupAuthority(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_header("Authorization"), "Bearer incident-telemetry-token")
         self.assertEqual(request.get_header("X-tenant-id"), "tenant-a")
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 45)
         self.assertEqual(result, {"target_id": "binding-001"})
+
+    def test_http_lookup_honors_configured_timeout(self):
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self):
+                return b'{"target_id":"binding-001"}'
+
+        with patch.dict("os.environ", {"PANTHEON_TELEMETRY_TIMEOUT_SECONDS": "73"}):
+            lookup = _TelemetryLineageLookup(base_url="http://telemetry:8083")
+        with patch("urllib.request.urlopen", return_value=_Response()) as urlopen:
+            lookup.runtime_binding_projection("binding-001")
+
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 73)
 
 
 if __name__ == "__main__":
