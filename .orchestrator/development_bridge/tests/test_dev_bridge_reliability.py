@@ -806,7 +806,7 @@ def test_full_supervisor_cycle_never_queues_partially_materialized_packet(
         ),
         patch.object(
             benchmark.supervisor_module,
-            "weighted_dispatch_agent_ids",
+            "dispatch_loop_agent_ids",
             return_value=["codex"],
         ),
         patch.object(

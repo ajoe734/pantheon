@@ -43,6 +43,25 @@ components:
       - .orchestrator/
       - scripts/ai_status.py
       - scripts/human-ops-status.sh
+      - scripts/component_boundary.py
+      - scripts/test_component_boundary.py
+      - scripts/check_config_drift.py
+      - scripts/test_check_config_drift.py
+      - scripts/promote_supervisor_runtime.py
+      - scripts/provision_live_supervisor_config.py
+      - scripts/supervisor_runtime_health.py
+      - scripts/supervisor_watchdog.py
+      - scripts/supervisor_watchdog_*
+      - scripts/approval_*
+      - scripts/migrate_v2_runtime_queue.py
+      - scripts/orchestrator_bundle.py
+      - scripts/test_orchestrator_bundle.py
+      - scripts/test_ai_status.py
+      - scripts/dev/
+      - docs-site/js/dashboard-*.js
+      - docs/02-architecture/component-boundary.yaml
+      - docs/02-architecture/development-tooling-product-boundary.md
+      - docs/orchestrator-portability.md
       - ai-task-archive/
     runtime_required: false
     removal_condition: "all engineering tasks archived and no worker/lease remains"

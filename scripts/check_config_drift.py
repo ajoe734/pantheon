@@ -27,7 +27,6 @@ from pathlib import Path
 CRITICAL_FLAGS: tuple[str, ...] = (
     "ready_dispatcher.enabled",
     "ready_dispatcher.sidecar_only_agents",
-    "ready_dispatcher.target_workload",
     "ready_dispatcher.max_dispatches_per_tick",
     "ready_dispatcher.max_active_workers_per_task",
     "ready_dispatcher.max_concurrent_per_account",
