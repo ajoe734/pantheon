@@ -1909,7 +1909,27 @@ verify_dev_evolution_daily_sweep() {
   for attempt in $(seq 1 30); do
     logs="$("${compose[@]}" logs --no-color --since=10m evolution-daily-sweep-scheduler 2>&1 || true)"
     if printf '%s\n' "$logs" | grep -Fq '"tick":'; then
-      status="$(curl -fsS http://127.0.0.1:18093/api/evolution/sweep-status 2>/dev/null || true)"
+      # The Evolution API is authenticated in the default Compose topology.
+      # Resolve its existing token and tenant inside the container so neither
+      # credential is expanded into the host command line or deployment logs.
+      status="$("${compose[@]}" exec -T evolution python -c '
+import os
+import urllib.request
+
+token = os.environ.get("EVOLUTION_AUTH_TOKEN", "").strip()
+tenant_id = os.environ.get("EVOLUTION_DEFAULT_TENANT_ID", "").strip()
+headers = {}
+if token:
+    headers["Authorization"] = f"Bearer {token}"
+if tenant_id:
+    headers["X-Tenant-Id"] = tenant_id
+request = urllib.request.Request(
+    "http://127.0.0.1:8093/api/evolution/sweep-status",
+    headers=headers,
+)
+with urllib.request.urlopen(request, timeout=5) as response:
+    print(response.read().decode("utf-8"))
+' 2>/dev/null || true)"
       if python3 -c '
 import json
 import sys
