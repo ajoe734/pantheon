@@ -1999,6 +1999,239 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
 
 
 class RuntimeAndFailureSemanticsTests(unittest.TestCase):
+    @staticmethod
+    def _owner_worker(*, generation: int) -> dict[str, object]:
+        worker = {
+            "run_id": "run-owner",
+            "task_id": "TASK-1",
+            "task_generation": generation,
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "queue_event_id": "evt-owner",
+            "status": "running",
+            "lease_acquired_at": "2026-08-15T04:00:00Z",
+            "pid": 1234,
+            "pid_start_ticks": 5678,
+            "request_snapshot": {
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "task_generation": generation,
+                "metadata": {"task_generation": generation},
+            },
+        }
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id="TASK-1",
+            worker_run_id="run-owner",
+            queue_event_id="evt-owner",
+            pid=1234,
+            pid_start_ticks=5678,
+        )
+        return worker
+
+    @staticmethod
+    def _exact_lifecycle_event(
+        worker: dict[str, object],
+        *,
+        event_type: str,
+    ) -> dict[str, object]:
+        return {
+            "event_id": f"event-{event_type}",
+            "task_id": "TASK-1",
+            "type": event_type,
+            "ts": "2026-08-15T04:01:00Z",
+            "status_command": {
+                "worker_lease": supervisor.worker_process_identity(worker)
+            },
+        }
+
+    def test_review_handoff_cannot_preserve_a_stale_worker_generation(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="review") | {"generation": 2}
+        worker = self._owner_worker(generation=1)
+        state = {
+            "workers": {"run-owner": worker},
+            "queue": {
+                "events": {
+                    "evt-owner": {
+                        "intent": {"event_id": "evt-owner"},
+                        "status": "started",
+                    }
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                config,
+                state,
+                worker,
+                run_id="run-owner",
+                task_map={"TASK-1": task},
+                active_worker_statuses={"running"},
+                alive=True,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        terminate.assert_called_once_with(worker)
+        self.assertEqual(worker["status"], "superseded")
+        self.assertEqual(
+            state["queue"]["events"]["evt-owner"]["status"],
+            "completed",
+        )
+        self.assertNotIn("governance_lease_guard", worker)
+
+    def test_review_handoff_preserves_the_current_worker_generation(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="review")
+        worker = self._owner_worker(generation=1)
+        state = {
+            "workers": {"run-owner": worker},
+            "queue": {
+                "events": {
+                    "evt-owner": {
+                        "intent": {"event_id": "evt-owner"},
+                        "status": "started",
+                    }
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+            ) as terminate,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                config,
+                state,
+                worker,
+                run_id="run-owner",
+                task_map={"TASK-1": task},
+                active_worker_statuses={"running"},
+                alive=True,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": False})
+        terminate.assert_not_called()
+        self.assertEqual(worker["status"], "running")
+        self.assertEqual(
+            worker["governance_lease_guard"]["reason_code"],
+            "canonical_review_handoff",
+        )
+
+    def test_owner_handoff_ends_the_exact_worker_that_emitted_it(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="review")
+        worker = self._owner_worker(generation=1)
+        state = {
+            "workers": {"run-owner": worker},
+            "queue": {
+                "events": {
+                    "evt-owner": {
+                        "intent": {"event_id": "evt-owner"},
+                        "status": "started",
+                    }
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                config,
+                state,
+                worker,
+                run_id="run-owner",
+                task_map={"TASK-1": task},
+                active_worker_statuses={"running"},
+                alive=True,
+                governance_activity_events=[
+                    self._exact_lifecycle_event(worker, event_type="handoff")
+                ],
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        terminate.assert_called_once_with(worker)
+        self.assertEqual(worker["status"], "superseded")
+        self.assertNotIn("governance_lease_guard", worker)
+
+    def test_reviewer_reopen_ends_the_exact_worker_that_emitted_it(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="in_progress")
+        worker = self._owner_worker(generation=1)
+        worker.update(
+            {
+                "run_id": "run-reviewer",
+                "agent_id": "codex2",
+                "logical_agent_id": "codex2",
+                "queue_event_id": "evt-reviewer",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+        )
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id="TASK-1",
+            worker_run_id="run-reviewer",
+            queue_event_id="evt-reviewer",
+            pid=1234,
+            pid_start_ticks=5678,
+        )
+        state = {
+            "workers": {"run-reviewer": worker},
+            "queue": {
+                "events": {
+                    "evt-reviewer": {
+                        "intent": {"event_id": "evt-reviewer"},
+                        "status": "started",
+                    }
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "terminate_worker_process_generation",
+                return_value=True,
+            ) as terminate,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                config,
+                state,
+                worker,
+                run_id="run-reviewer",
+                task_map={"TASK-1": task},
+                active_worker_statuses={"running"},
+                alive=True,
+                governance_activity_events=[
+                    self._exact_lifecycle_event(worker, event_type="reopen")
+                ],
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        terminate.assert_called_once_with(worker)
+        self.assertEqual(worker["status"], "superseded")
+        self.assertNotIn("governance_lease_guard", worker)
+
     def test_run_once_orders_launch_before_slow_maintenance(self) -> None:
         source = inspect.getsource(supervisor.run_once)
         self.assertLess(source.index('"dispatch_plan_transaction"'), source.index('"sync_github_bus"'))

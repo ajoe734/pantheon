@@ -134,6 +134,18 @@ def _submit(
     return resp.status_code, resp.json()
 
 
+def _service_headers(
+    *,
+    token: str = "agora-handoff-test-token",
+    tenant_id: str = "tenant-test",
+) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-Pantheon-Service-Actor": "policy-learning-agora-handoff-drainer",
+        "X-Tenant-Id": tenant_id,
+    }
+
+
 # ---------------------------------------------------------------------------
 # POST /bff/agora/interaction-evidence (admit-only)
 # ---------------------------------------------------------------------------
@@ -541,6 +553,124 @@ class TestDownstreamHandoffAcknowledgement:
             headers={"Idempotency-Key": "ack-viewer-key"},
         )
         assert denied.status_code == 403
+
+
+class TestInternalTenantHandoffBoundary:
+    def test_service_drains_all_tenant_users_without_user_impersonation(
+        self,
+        monkeypatch,
+    ) -> None:
+        store = AgoraDatasetStore()
+        user_a = _make_client(
+            store,
+            identity=_identity(user_id="user-a", tenant_id="tenant-test"),
+        )
+        user_b = _make_client(
+            store,
+            identity=_identity(user_id="user-b", tenant_id="tenant-test"),
+        )
+        for client, evidence_id in (
+            (user_a, "ev-service-user-a"),
+            (user_b, "ev-service-user-b"),
+        ):
+            status, _ = _submit(
+                client,
+                evidence_id=evidence_id,
+                idempotency_key=f"key-{evidence_id}",
+                process_worker=True,
+            )
+            assert status == 201
+
+        monkeypatch.setenv(
+            "AGORA_HANDOFF_SERVICE_TOKEN",
+            "agora-handoff-test-token",
+        )
+        monkeypatch.setenv(
+            "AGORA_HANDOFF_ALLOWED_SERVICE_ACTOR",
+            "policy-learning-agora-handoff-drainer",
+        )
+        monkeypatch.setenv("AGORA_HANDOFF_SERVICE_TENANTS", "tenant-test")
+
+        service_view = user_a.get(
+            "/internal/agora/dataset-handoffs",
+            headers=_service_headers(),
+        )
+        assert service_view.status_code == 200
+        handoffs = service_view.json()["items"]
+        assert {item["user_id"] for item in handoffs} == {"user-a", "user-b"}
+        assert user_a.get("/bff/agora/dataset-worker/handoffs").json()[
+            "total"
+        ] == 1
+
+        selected = next(item for item in handoffs if item["user_id"] == "user-b")
+        ack = user_a.post(
+            f"/internal/agora/dataset-handoffs/{selected['handoff_id']}/ack",
+            json={
+                "acknowledgement_id": "ack-policy-candidate-1",
+                "dataset_version_id": selected["dataset_version_id"],
+                "downstream_ref": {
+                    "service": "policy-learning",
+                    "candidate_id": "candidate-1",
+                },
+            },
+            headers={
+                **_service_headers(),
+                "Idempotency-Key": f"ack-{selected['handoff_id']}",
+            },
+        )
+        assert ack.status_code == 200
+        assert ack.json()["data"]["acknowledged_by"] == (
+            "policy-learning-agora-handoff-drainer"
+        )
+        remaining = user_a.get(
+            "/internal/agora/dataset-handoffs",
+            headers=_service_headers(),
+        ).json()["items"]
+        assert [item["user_id"] for item in remaining] == ["user-a"]
+
+    def test_service_boundary_rejects_policy_token_and_cross_tenant(
+        self,
+        monkeypatch,
+    ) -> None:
+        client = _make_client(AgoraDatasetStore())
+        monkeypatch.setenv(
+            "AGORA_HANDOFF_SERVICE_TOKEN",
+            "agora-handoff-test-token",
+        )
+        monkeypatch.setenv("AGORA_HANDOFF_SERVICE_TENANTS", "tenant-test")
+
+        wrong_credential = client.get(
+            "/internal/agora/dataset-handoffs",
+            headers=_service_headers(token="policy-learning-token"),
+        )
+        assert wrong_credential.status_code == 401
+
+        cross_tenant = client.get(
+            "/internal/agora/dataset-handoffs",
+            headers=_service_headers(tenant_id="tenant-other"),
+        )
+        assert cross_tenant.status_code == 403
+
+    def test_service_boundary_rejects_published_token_in_staging(
+        self,
+        monkeypatch,
+    ) -> None:
+        client = _make_client(AgoraDatasetStore())
+        monkeypatch.setenv("PANTHEON_PERSISTENCE_POSTURE", "staging")
+        monkeypatch.setenv(
+            "AGORA_HANDOFF_SERVICE_TOKEN",
+            "replace-me-agora-handoff-service-token",
+        )
+        monkeypatch.setenv("AGORA_HANDOFF_SERVICE_TENANTS", "tenant-test")
+
+        response = client.get(
+            "/internal/agora/dataset-handoffs",
+            headers=_service_headers(
+                token="replace-me-agora-handoff-service-token",
+            ),
+        )
+
+        assert response.status_code == 503
 
 
 # ---------------------------------------------------------------------------
