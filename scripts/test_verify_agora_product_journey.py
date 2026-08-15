@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 for subpath in [
     "",
@@ -33,6 +35,11 @@ from scripts.verify_agora_product_journey import (
     AgoraVerificationError,
     JourneyVerificationReport,
 )
+
+
+def test_live_mode_is_rejected_instead_of_running_in_process_under_a_hosted_label() -> None:
+    with pytest.raises(ValueError, match="only mode='in-process'"):
+        AgoraJourneyVerifier(mode="live", strict=True)
 
 
 def test_verifier_full_positive_run() -> None:
