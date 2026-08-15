@@ -10,31 +10,31 @@
     {
       "authority_readback": null,
       "case_index": 1,
-      "completed_at": "2026-08-15T05:43:43Z",
+      "completed_at": "2026-08-15T05:53:56Z",
       "first_failed_boundary": "source.owner_compose_identity",
       "last_successful_boundary": null,
       "loop_id": "source_ingestion",
       "next_consumer": null,
       "owner": null,
-      "started_at": "2026-08-15T05:43:42Z",
+      "started_at": "2026-08-15T05:53:55Z",
       "status": "failed",
       "successful_boundaries": [],
       "terminal_output": null,
       "trigger": null
     }
   ],
-  "completed_at": "2026-08-15T05:43:43Z",
-  "compose_project": "l12currente2e",
+  "completed_at": "2026-08-15T05:53:56Z",
+  "compose_project": "l12research814",
   "first_failure": {
     "boundary": "source.owner_compose_identity",
     "case_index": 1,
-    "detail": "Compose owner source-ingest-scheduler did not reach a stable healthy identity: {\"compose_service\":\"source-ingest-scheduler\",\"container_id\":\"7afa12411608e58316aae710103010d5c54cb3251382473460c64226211e536b\",\"health\":\"unhealthy\",\"image_id\":\"sha256:164551d064099c0d32254fde9a56f92babb2aa4eb05b332f750a03379d8a9e8f\",\"image_revision\":null,\"restart_count\":10,\"state\":\"restarting\"}",
+    "detail": "Compose owner source-ingest-scheduler did not reach a stable healthy identity: {\"compose_service\":\"source-ingest-scheduler\",\"container_id\":\"ee5f5faf9c27bce936860c47bcedd53581e219b5d14e4a3137e0ca9bc7d57ec2\",\"health\":\"starting\",\"image_id\":\"sha256:c3b26ec1cfc77095821d834960d169a7dac64b6a735a15532a5b60f39fc2ff2f\",\"image_revision\":null,\"restart_count\":4,\"state\":\"running\"}",
     "last_successful_boundary": null,
     "loop_id": "source_ingestion"
   },
-  "git_sha": "7247681da966d8bfe0cb725a0a930429117daccf",
+  "git_sha": "1212a92e4d4c736fa0121a3cd10ed1af5f361de3",
   "schema_version": "pantheon.l12.research-loops.deployed-e2e.v1",
-  "started_at": "2026-08-15T05:43:42Z",
+  "started_at": "2026-08-15T05:53:55Z",
   "status": "failed",
   "task_id": "L12-CURRENT-E2E-RESEARCH-20260814"
 }

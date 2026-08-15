@@ -6,8 +6,8 @@
     "owner": "Codex",
     "reviewer": "Antigravity2",
     "base_branch": "dev",
-    "base_sha": "814b3b69ebb3dfe2611f1d675a5f9150230f5087",
-    "validated_head_sha": "7247681da966d8bfe0cb725a0a930429117daccf",
+    "base_sha": "1da09567bdef6bccec88c5e725487a0805142b56",
+    "validated_head_sha": "1212a92e4d4c736fa0121a3cd10ed1af5f361de3",
     "task_branch": "task/L12-CURRENT-E2E-RESEARCH-20260814",
     "review_file": "docs/deployment/evidence/twelve-loop-current/research-loops/evidence.json",
     "overall_admission": "ready_for_independent_review",
@@ -30,15 +30,15 @@
   "implementation_delivery": {
     "anchor_commits": [
       {
-        "sha": "1d315bc8ca397300dcdd4f034324eac3a9a030cf",
+        "sha": "b1f022f7e26b2ea22c70b8b900d6cc68f2ab540c",
         "subject": "L12-CURRENT-E2E-RESEARCH-20260814: anchor e2e"
       },
       {
-        "sha": "76287cfa7938d36f3e3d0f5b55ed72547b441b55",
+        "sha": "36e4508ed2b99f46157eee35622db8b5b351f9e4",
         "subject": "L12-CURRENT-E2E-RESEARCH-20260814: anchor deployed tests"
       },
       {
-        "sha": "7247681da966d8bfe0cb725a0a930429117daccf",
+        "sha": "558d0c949a31238c91b1a0100e5e87628ea3efa9",
         "subject": "L12-CURRENT-E2E-RESEARCH-20260814: anchor owner stability"
       }
     ],
@@ -54,7 +54,7 @@
     ]
   },
   "validation": {
-    "validated_at": "2026-08-15T05:45:32Z",
+    "validated_at": "2026-08-15T05:54:01Z",
     "commands": [
       {
         "command": "python3 -m py_compile tests/integration/l12/test_current_research_loops_deployed_e2e.py",
@@ -67,39 +67,40 @@
         "conclusion": "1 anti-fixture assertion passed; 4 deployed cases skipped without opt-in"
       },
       {
-        "command": "docker compose -p l12currente2e -f docker-compose.yml -f /tmp/l12-current-e2e-compose.override.yml up -d --build source-ingest-scheduler strategy-distillation-worker alpha-replication-worker training-session-preview-worker",
+        "command": "docker compose -p l12research814 -f docker-compose.yml -f /tmp/l12-research-814-compose.override.yml up -d --build source-ingest-scheduler strategy-distillation-worker alpha-replication-worker training-session-preview-worker",
         "result": "pass",
         "conclusion": "isolated task-SHA services and their declared dependencies started"
       },
       {
-        "command": "PANTHEON_L12_RESEARCH_E2E=1 PANTHEON_L12_COMPOSE_PROJECT=l12currente2e ... pytest -q tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+        "command": "PANTHEON_L12_RESEARCH_E2E=1 PANTHEON_L12_COMPOSE_PROJECT=l12research814 ... pytest -q tests/integration/l12/test_current_research_loops_deployed_e2e.py",
         "result": "fail_closed_as_observed",
         "conclusion": "1 deployed case failed at the first owner boundary; 1 anti-fixture assertion passed; 3 downstream cases not reached"
       }
     ]
   },
   "deployed_observation": {
-    "environment": "isolated local Compose project l12currente2e",
-    "source_revision": "7247681da966d8bfe0cb725a0a930429117daccf",
+    "environment": "unique isolated local Compose project l12research814",
+    "source_revision": "1212a92e4d4c736fa0121a3cd10ed1af5f361de3",
     "run_report": "docs/deployment/evidence/twelve-loop-current/research-loops/run-report.json",
     "status": "failed_at_first_boundary",
     "first_failure": {
       "loop_id": "source_ingestion",
       "boundary": "source.owner_compose_identity",
       "compose_service": "source-ingest-scheduler",
-      "container_id": "7afa12411608e58316aae710103010d5c54cb3251382473460c64226211e536b",
-      "image_id": "sha256:164551d064099c0d32254fde9a56f92babb2aa4eb05b332f750a03379d8a9e8f",
-      "state": "restarting",
-      "health": "unhealthy",
-      "restart_count": 10,
+      "container_id": "ee5f5faf9c27bce936860c47bcedd53581e219b5d14e4a3137e0ca9bc7d57ec2",
+      "image_id": "sha256:c3b26ec1cfc77095821d834960d169a7dac64b6a735a15532a5b60f39fc2ff2f",
+      "state": "running",
+      "health": "starting",
+      "restart_count": 4,
       "exit_code": 1,
+      "post_failure_inspect_state": "restarting/unhealthy",
       "root_cause": "The default reconcile_and_pull controller received SOURCE_INGEST_CONTROLLER_MAX_TICKS=0, while controller_worker requires a value between 1 and 24 for that mode."
     },
     "bounded_failure_behavior": {
       "source_trigger_written": false,
       "repair_task_written": false,
       "downstream_cases_executed": false,
-      "report_size_bytes": 1579
+      "report_size_bytes": 1575
     },
     "cleanup": {
       "isolated_project_removed": true,
@@ -156,7 +157,7 @@
   "integrity": {
     "algorithm": "sha256",
     "manifest_checksum_file": "docs/deployment/evidence/twelve-loop-current/research-loops/evidence.sha256",
-    "run_report_checksum": "7c19fad330a91dae0a9e57a6ff2c7042d52fdd6f34c130915cbf4deb55b0a6ce",
+    "run_report_checksum": "76fad9cd54987583e8d38d4e568822d5c9c68f646dfbcd8c4aea45cec9ce8bf1",
     "test_module_checksum": "48b713d0f0ba098a9d98ff2b94d9883144a7377ab29f5d88a9d2b994ce1fc078",
     "self_hashing": false
   },
@@ -165,8 +166,8 @@
       "sequence": 1,
       "actor": "Codex",
       "kind": "owner_evidence_ready",
-      "recorded_at": "2026-08-15T05:45:32Z",
-      "sha": "7247681da966d8bfe0cb725a0a930429117daccf",
+      "recorded_at": "2026-08-15T05:54:01Z",
+      "sha": "1212a92e4d4c736fa0121a3cd10ed1af5f361de3",
       "status": "ready_for_independent_review"
     }
   ]
