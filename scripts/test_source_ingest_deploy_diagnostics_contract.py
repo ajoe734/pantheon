@@ -123,6 +123,10 @@ def test_default_source_owner_is_unbounded_reconcile_only() -> None:
     assert 'SOURCE_INGEST_CONTROLLER_MODE=$(shell_quote "${SOURCE_REFRESH_CONTROLLER_MODE}")' in deploy
     assert 'SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=$(shell_quote "${SOURCE_REFRESH_TRUTH_LEVEL}")' in deploy
     assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY=$(shell_quote "${SOURCE_REFRESH_RESTART_POLICY}")' in deploy
+    assert 'info "source_refresh_controller_mode=${SOURCE_REFRESH_CONTROLLER_MODE}"' in deploy
+    assert 'info "source_refresh_truth_level=${SOURCE_REFRESH_TRUTH_LEVEL}"' in deploy
+    assert 'info "source_refresh_max_ticks=${SOURCE_REFRESH_MAX_TICKS}"' in deploy
+    assert 'info "source_refresh_restart_policy=${SOURCE_REFRESH_RESTART_POLICY}"' in deploy
 
     start = deploy.index("validate_source_refresh_profile() {")
     end = deploy.index("\n}\n\ncurl_with_retry()", start)
