@@ -560,7 +560,6 @@ EOF
                     "delivery_mode": "claude_cli",
                     "runtime": {"cli": "claude", "home": "~/.claude2"},
                 },
-                "gemini": {},
                 "codex": {},
                 "copilot": {},
             },
@@ -580,7 +579,6 @@ EOF
             mock.patch.object(provider_permissions, "_workspace_settings", return_value={}),
             mock.patch.object(provider_permissions, "_find_extension", side_effect=fake_find_extension),
             mock.patch.object(provider_permissions, "_claude_local_settings", return_value={"permissions": {"defaultMode": "acceptEdits"}}),
-            mock.patch.object(provider_permissions, "_gemini_settings", return_value={}),
             mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
             mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
             mock.patch.object(
@@ -589,7 +587,6 @@ EOF
                 return_value={
                     "claudeCode.initialPermissionMode": "acceptEdits",
                     "claudeCode.allowDangerouslySkipPermissions": False,
-                    "geminicodeassist.agentYoloMode": False,
                     "github.copilot.chat.backgroundAgent.enabled": False,
                     "github.copilot.chat.cloudAgent.enabled": False,
                     "github.copilot.chat.claudeAgent.enabled": False,
@@ -599,18 +596,6 @@ EOF
                 provider_permissions,
                 "desired_claude_local_settings",
                 return_value={"permissions": {"defaultMode": "acceptEdits"}},
-            ),
-            mock.patch.object(
-                provider_permissions,
-                "desired_gemini_settings",
-                return_value={
-                    "general": {"defaultApprovalMode": "auto_edit"},
-                    "security": {
-                        "enablePermanentToolApproval": True,
-                        "autoAddToPolicyByDefault": True,
-                        "disableYoloMode": False,
-                    },
-                },
             ),
             mock.patch.object(
                 provider_permissions,
@@ -729,103 +714,6 @@ EOF
             ],
         )
 
-    def test_provider_capabilities_include_custom_gemini_provider(self) -> None:
-        config = {
-            "paths": {
-                "status_file": ".orchestrator/ai-status.json",
-                "activity_log": "ai-activity-log.jsonl",
-                "current_work": "current-work.md",
-                "dashboard": "dashboard-bundle.json",
-                "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
-            },
-            "agents": {},
-            "providers": {
-                "gemini": {
-                    "delivery_mode": "gemini",
-                    "gemini": {"cli": "gemini"},
-                },
-                "gemini2": {
-                    "delivery_mode": "gemini",
-                    "gemini": {
-                        "cli": "gemini",
-                        "config_home": "~/.gemini2",
-                        "model": "gemini-2.5-flash-lite",
-                        "env": {"GOOGLE_CLOUD_PROJECT": "gemini2-project"},
-                    },
-                },
-                "claude": {},
-                "codex": {},
-                "copilot": {},
-            },
-        }
-
-        def fake_find_extension(prefix: str) -> tuple[Path | None, str | None]:
-            if prefix == "google.geminicodeassist":
-                return Path("/tmp/google.geminicodeassist-2.79.0"), "2.79.0"
-            return None, None
-
-        with (
-            mock.patch.object(provider_permissions, "_code_cli_info", return_value={}),
-            mock.patch.object(provider_permissions, "_workspace_settings", return_value={"geminicodeassist.agentYoloMode": False}),
-            mock.patch.object(provider_permissions, "_find_extension", side_effect=fake_find_extension),
-            mock.patch.object(provider_permissions, "_claude_local_settings", return_value={"permissions": {}}),
-            mock.patch.object(
-                provider_permissions,
-                "_gemini_settings",
-                return_value={
-                    "general": {"defaultApprovalMode": "auto_edit"},
-                    "security": {
-                        "enablePermanentToolApproval": True,
-                        "autoAddToPolicyByDefault": True,
-                        "disableYoloMode": False,
-                        "auth": {"selectedType": "oauth-personal"},
-                    },
-                },
-            ),
-            mock.patch.object(provider_permissions, "_gemini_auth_ready", return_value=True),
-            mock.patch.object(provider_permissions, "_gemini_selected_auth_type", return_value="oauth-personal"),
-            mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
-            mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
-            mock.patch.object(
-                provider_permissions,
-                "desired_workspace_settings",
-                return_value={
-                    "claudeCode.initialPermissionMode": "acceptEdits",
-                    "claudeCode.allowDangerouslySkipPermissions": False,
-                    "geminicodeassist.agentYoloMode": False,
-                    "github.copilot.chat.backgroundAgent.enabled": False,
-                    "github.copilot.chat.cloudAgent.enabled": False,
-                    "github.copilot.chat.claudeAgent.enabled": False,
-                },
-            ),
-            mock.patch.object(provider_permissions, "desired_claude_local_settings", return_value={"permissions": {"defaultMode": "acceptEdits"}}),
-            mock.patch.object(
-                provider_permissions,
-                "desired_gemini_settings",
-                return_value={
-                    "general": {"defaultApprovalMode": "auto_edit"},
-                    "security": {
-                        "enablePermanentToolApproval": True,
-                        "autoAddToPolicyByDefault": True,
-                        "disableYoloMode": False,
-                        "auth": {"selectedType": "oauth-personal"},
-                    },
-                },
-            ),
-            mock.patch.object(provider_permissions, "command_exists", side_effect=lambda cmd: "/usr/bin/gemini" if cmd == "gemini" else None),
-            mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
-        ):
-            report = provider_permissions.provider_capabilities(config)
-
-        self.assertIn("gemini2", report["providers"])
-        self.assertNotIn("qwen", report["providers"])
-        self.assertTrue(report["providers"]["gemini2"]["auth_ready"])
-        self.assertTrue(report["providers"]["gemini2"]["supports_auto_approve"])
-        self.assertEqual(report["providers"]["gemini2"]["paths"]["binary"], "/usr/bin/gemini")
-        self.assertEqual(report["providers"]["gemini2"]["paths"]["home"], os.path.expanduser("~/.gemini2"))
-        self.assertEqual(report["providers"]["gemini2"]["selected_model"], "gemini-2.5-flash-lite")
-        self.assertEqual(report["providers"]["gemini2"]["settings"]["gemini.model"], "gemini-2.5-flash-lite")
-        self.assertEqual(report["providers"]["gemini2"]["settings"]["env.GOOGLE_CLOUD_PROJECT"], "gemini2-project")
 
     def test_claude_auth_probe_refreshes_oauth_when_needed(self) -> None:
         with mock.patch.object(provider_permissions, "claude_auth_ready", return_value=True) as claude_auth_ready:
@@ -1436,7 +1324,6 @@ EOF
                 "codex": {"delivery_mode": "codex", "codex": {"cli": "codex"}},
                 "codex2": {"delivery_mode": "codex", "codex": {"cli": "codex"}},
                 "claude": {},
-                "gemini": {},
                 "copilot": {},
             },
         }
@@ -1463,8 +1350,6 @@ EOF
             mock.patch.object(provider_permissions, "_workspace_settings", return_value={}),
             mock.patch.object(provider_permissions, "_find_extension", return_value=(None, None)),
             mock.patch.object(provider_permissions, "_claude_local_settings", return_value={"permissions": {}}),
-            mock.patch.object(provider_permissions, "_gemini_settings", return_value={}),
-            mock.patch.object(provider_permissions, "_gemini_auth_ready", return_value=False),
             mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
             mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
             mock.patch.object(
@@ -1473,7 +1358,6 @@ EOF
                 return_value={
                     "claudeCode.initialPermissionMode": "acceptEdits",
                     "claudeCode.allowDangerouslySkipPermissions": False,
-                    "geminicodeassist.agentYoloMode": False,
                     "github.copilot.chat.backgroundAgent.enabled": False,
                     "github.copilot.chat.cloudAgent.enabled": False,
                     "github.copilot.chat.claudeAgent.enabled": False,
@@ -1483,18 +1367,6 @@ EOF
                 provider_permissions,
                 "desired_claude_local_settings",
                 return_value={"permissions": {"defaultMode": "acceptEdits"}},
-            ),
-            mock.patch.object(
-                provider_permissions,
-                "desired_gemini_settings",
-                return_value={
-                    "general": {"defaultApprovalMode": "auto_edit"},
-                    "security": {
-                        "enablePermanentToolApproval": True,
-                        "autoAddToPolicyByDefault": True,
-                        "disableYoloMode": False,
-                    },
-                },
             ),
             mock.patch.object(
                 provider_permissions,
@@ -1534,7 +1406,6 @@ EOF
                     },
                 },
                 "claude": {},
-                "gemini": {},
                 "codex": {},
                 "copilot": {},
             },
@@ -1556,8 +1427,6 @@ EOF
             mock.patch.object(provider_permissions, "_workspace_settings", return_value={}),
             mock.patch.object(provider_permissions, "_find_extension", return_value=(None, None)),
             mock.patch.object(provider_permissions, "_claude_local_settings", return_value={"permissions": {}}),
-            mock.patch.object(provider_permissions, "_gemini_settings", return_value={}),
-            mock.patch.object(provider_permissions, "_gemini_auth_ready", return_value=False),
             mock.patch.object(provider_permissions, "_custom_agents_info", return_value={}),
             mock.patch.object(provider_permissions, "_relevant_extensions", return_value=[]),
             mock.patch.object(
@@ -1566,25 +1435,12 @@ EOF
                 return_value={
                     "claudeCode.initialPermissionMode": "acceptEdits",
                     "claudeCode.allowDangerouslySkipPermissions": False,
-                    "geminicodeassist.agentYoloMode": False,
                     "github.copilot.chat.backgroundAgent.enabled": False,
                     "github.copilot.chat.cloudAgent.enabled": False,
                     "github.copilot.chat.claudeAgent.enabled": False,
                 },
             ),
             mock.patch.object(provider_permissions, "desired_claude_local_settings", return_value={"permissions": {"defaultMode": "acceptEdits"}}),
-            mock.patch.object(
-                provider_permissions,
-                "desired_gemini_settings",
-                return_value={
-                    "general": {"defaultApprovalMode": "auto_edit"},
-                    "security": {
-                        "enablePermanentToolApproval": True,
-                        "autoAddToPolicyByDefault": True,
-                        "disableYoloMode": False,
-                    },
-                },
-            ),
             mock.patch.object(provider_permissions, "command_exists", side_effect=lambda cmd: "/usr/bin/agy" if cmd == "agy" else None),
             mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
             mock.patch.object(provider_permissions, "_antigravity_auth_probe", side_effect=fake_antigravity_probe),

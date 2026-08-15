@@ -53,7 +53,6 @@ components:
       - scripts/supervisor_watchdog.py
       - scripts/supervisor_watchdog_*
       - scripts/approval_*
-      - scripts/migrate_v2_runtime_queue.py
       - scripts/orchestrator_bundle.py
       - scripts/test_orchestrator_bundle.py
       - scripts/test_ai_status.py
@@ -65,15 +64,6 @@ components:
       - ai-task-archive/
     runtime_required: false
     removal_condition: "all engineering tasks archived and no worker/lease remains"
-
-  - id: assistant-dev-bridge
-    domain: development_tooling
-    paths:
-      - .orchestrator/development_bridge/
-      - scripts/*assistant_dev_task_packet.py
-    runtime_required: false
-    removal_condition: "no external development-task ingress is required"
-    boundary: "local transport only; excluded from every product container and deployment"
 
   - id: business-bff-and-services
     domain: product_runtime
@@ -112,7 +102,6 @@ components:
 
 cross_domain_contracts:
   - "development_tooling -> product_runtime: no runtime dependency"
-  - "assistant-dev-bridge -> supervisor-and-taskstore: local task transport only"
   - "delivery -> product_runtime: exact source identity and live probes"
   - "product_runtime -> development_tooling: forbidden"
 

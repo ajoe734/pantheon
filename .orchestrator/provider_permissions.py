@@ -34,8 +34,6 @@ from common import (
 WORKSPACE_SETTINGS_PATH = ROOT / ".vscode" / "settings.json"
 CLAUDE_LOCAL_SETTINGS_PATH = ROOT / ".claude" / "settings.local.json"
 CLAUDE_LOCAL_EXAMPLE_PATH = ROOT / ".claude" / "settings.local.example.json"
-GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
-GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
 CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 EXTENSIONS_DIR = Path.home() / ".vscode-server" / "extensions"
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
@@ -126,31 +124,6 @@ def _workspace_settings() -> dict[str, Any]:
 def _claude_local_settings() -> dict[str, Any]:
     return load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
 
-
-def _gemini_home(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
-    provider = ((config or {}).get("providers", {}).get(provider_id, {}) or {}).get("gemini", {}) or {}
-    home = str(provider.get("config_home") or provider.get("home") or "").strip()
-    return Path(os.path.expanduser(home)) if home else Path.home()
-
-
-def _gemini_settings_path(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
-    return _gemini_home(config, provider_id) / ".gemini" / "settings.json"
-
-
-def _gemini_oauth_creds_path(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
-    return _gemini_home(config, provider_id) / ".gemini" / "oauth_creds.json"
-
-
-def _gemini_runtime_env(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, str]:
-    env = dict(os.environ)
-    provider = (config or {}).get("providers", {}).get(provider_id, {}) or {}
-    for block_name in ("runtime", "gemini"):
-        block = provider.get(block_name, {}) or {}
-        for key, value in (block.get("env", {}) or {}).items():
-            if value is None:
-                continue
-            env[str(key)] = os.path.expanduser(str(value))
-    return env
 
 
 def _codex_runtime_env(config: dict[str, Any] | None = None, provider_id: str = "codex") -> dict[str, str]:
@@ -243,9 +216,6 @@ def _codex_config_path(config: dict[str, Any] | None = None, provider_id: str = 
 def _codex_auth_path(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
     return _codex_home(config, provider_id) / "auth.json"
 
-
-def _gemini_settings(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, Any]:
-    return load_json(_gemini_settings_path(config, provider_id), default={}) or {}
 
 
 def _truthy_env(name: str, env: dict[str, str] | None = None) -> bool:
@@ -588,56 +558,6 @@ def _codex_probe_ready(
         return False, compact_error or "Codex auth probe returned unexpected output.", "unexpected_output"
     return True, None, "ready"
 
-
-def _gemini_env_auth_type(env: dict[str, str] | None = None) -> str | None:
-    if _truthy_env("GOOGLE_GENAI_USE_GCA", env):
-        return "oauth-personal"
-    if _truthy_env("GEMINI_CLI_USE_COMPUTE_ADC", env):
-        return "compute-default-credentials"
-    if _truthy_env("GOOGLE_GENAI_USE_VERTEXAI", env):
-        return "vertex-ai"
-    source = env if env is not None else os.environ
-    if source.get("GEMINI_API_KEY"):
-        return "gemini-api-key"
-    return None
-
-
-def _gemini_selected_auth_type(
-    settings: dict[str, Any],
-    *,
-    oauth_creds_path: Path = GEMINI_OAUTH_CREDS_PATH,
-    env: dict[str, str] | None = None,
-) -> str | None:
-    return (
-        _gemini_env_auth_type(env)
-        or settings.get("security", {}).get("auth", {}).get("selectedType")
-        or ("oauth-personal" if oauth_creds_path.exists() else None)
-    )
-
-
-def _gemini_auth_ready(
-    settings: dict[str, Any],
-    *,
-    oauth_creds_path: Path = GEMINI_OAUTH_CREDS_PATH,
-    env: dict[str, str] | None = None,
-) -> bool:
-    source = env if env is not None else os.environ
-    auth_type = _gemini_selected_auth_type(settings, oauth_creds_path=oauth_creds_path, env=source)
-    if auth_type == "oauth-personal":
-        return oauth_creds_path.exists()
-    if auth_type == "gemini-api-key":
-        return bool(source.get("GEMINI_API_KEY"))
-    if auth_type == "vertex-ai":
-        return bool(
-            source.get("GOOGLE_API_KEY")
-            or (source.get("GOOGLE_CLOUD_PROJECT") and source.get("GOOGLE_CLOUD_LOCATION"))
-        )
-    if auth_type == "compute-default-credentials":
-        if source.get("GOOGLE_APPLICATION_CREDENTIALS"):
-            return True
-        gcloud = command_exists("gcloud")
-        return bool(gcloud) and run_command([gcloud, "auth", "application-default", "print-access-token"]).returncode == 0
-    return False
 
 
 def _codex_auth_metadata(config: dict[str, Any], provider_id: str, env: dict[str, str]) -> dict[str, Any]:
@@ -1282,19 +1202,6 @@ def probe_provider_auth(
     if delivery_mode == "antigravity":
         binary = _configured_provider_binary(config, provider_key, "antigravity", "agy")
         return _antigravity_auth_probe(config, provider_key, binary, force=force)
-    if delivery_mode == "gemini":
-        settings = _gemini_settings(config, provider_key)
-        oauth_creds_path = _gemini_oauth_creds_path(config, provider_key)
-        env = _gemini_runtime_env(config, provider_key)
-        ready = _gemini_auth_ready(settings, oauth_creds_path=oauth_creds_path, env=env)
-        return _auth_probe_record(
-            provider_key,
-            "gemini",
-            ready=ready,
-            method="gemini_auth_material",
-            error=None if ready else "Gemini CLI authentication material is not ready.",
-            status="ready" if ready else "auth_material_missing",
-        )
     if delivery_mode in {"copilot", "copilot_local"}:
         gh_binary = command_exists(provider.get("cloud", {}).get("cli") or "gh")
         ready = _copilot_auth_ready(gh_binary)
@@ -1340,7 +1247,6 @@ def _custom_agents_info() -> dict[str, Any]:
 def _relevant_extensions() -> list[dict[str, Any]]:
     prefixes = [
         "anthropic.claude-code",
-        "google.geminicodeassist",
         "openai.chatgpt",
         "github.copilot-chat",
     ]
@@ -1476,7 +1382,6 @@ def _verified_claude_hooks() -> dict[str, Any]:
 
 def desired_workspace_settings(config: dict[str, Any]) -> dict[str, Any]:
     claude_approval = config.get("providers", {}).get("claude", {}).get("approval", {})
-    gemini_approval = config.get("providers", {}).get("gemini", {}).get("approval", {})
     return {
         "claudeCode.initialPermissionMode": claude_approval.get("workspace_permission_mode", "acceptEdits"),
         "claudeCode.allowDangerouslySkipPermissions": to_bool(claude_approval.get("allow_dangerous_skip", False)),
@@ -1487,8 +1392,6 @@ def desired_workspace_settings(config: dict[str, Any]) -> dict[str, Any]:
             claude_approval.get("copilot_allow_dangerous_skip", False)
         ),
         "github.copilot.chat.reviewAgent.enabled": True,
-        "geminicodeassist.enable": True,
-        "geminicodeassist.agentYoloMode": to_bool(gemini_approval.get("workspace_agent_yolo_mode", False)),
     }
 
 
@@ -1533,35 +1436,6 @@ def desired_claude_local_settings(config: dict[str, Any], current: dict[str, Any
         merged_hooks[event] = merged
     return {**existing, "permissions": next_permissions, "hooks": merged_hooks}
 
-
-def desired_gemini_settings(config: dict[str, Any], provider_id: str = "gemini") -> dict[str, Any]:
-    approval = config.get("providers", {}).get(provider_id, {}).get("approval", {})
-    gemini_runtime = config.get("providers", {}).get(provider_id, {}).get("gemini", {}) or {}
-    model = str(gemini_runtime.get("model") or "").strip()
-    approval_mode = str(approval.get("default_approval_mode", "auto_edit") or "auto_edit")
-    settings_approval_mode = "auto_edit" if approval_mode == "yolo" else approval_mode
-    auth_type = _gemini_selected_auth_type(
-        _gemini_settings(config, provider_id),
-        oauth_creds_path=_gemini_oauth_creds_path(config, provider_id),
-        env=_gemini_runtime_env(config, provider_id),
-    )
-    security: dict[str, Any] = {
-        "enablePermanentToolApproval": to_bool(approval.get("enable_permanent_tool_approval", True)),
-        "autoAddToPolicyByDefault": to_bool(approval.get("auto_add_to_policy_by_default", True)),
-        "disableYoloMode": to_bool(approval.get("disable_yolo_mode", False)),
-        "disableAlwaysAllow": to_bool(approval.get("disable_always_allow", False)),
-    }
-    if auth_type:
-        security["auth"] = {"selectedType": auth_type}
-    desired = {
-        "general": {
-            "defaultApprovalMode": settings_approval_mode,
-        },
-        "security": security,
-    }
-    if model:
-        desired["model"] = {"name": model}
-    return desired
 
 
 def _claude_provider_report(
@@ -1645,79 +1519,6 @@ def _claude_provider_report(
         report["account_identity"] = auth_probe.get("account_identity")
     return report
 
-
-def _gemini_provider_report(
-    config: dict[str, Any],
-    *,
-    provider_id: str,
-    gemini_path: Path | None,
-    gemini_version: str | None,
-    workspace_settings: dict[str, Any],
-    gemini_applied: bool,
-) -> dict[str, Any]:
-    provider_config = (config.get("providers", {}).get(provider_id, {}) or {})
-    gemini_runtime = provider_config.get("gemini", {}) or {}
-    runtime_approval_mode = (provider_config.get("approval", {}) or {}).get("default_approval_mode")
-    selected_model = str(gemini_runtime.get("model") or "").strip() or None
-    provider_binary = _configured_provider_binary(config, provider_id, "gemini", "gemini")
-    provider_settings = _gemini_settings(config, provider_id)
-    oauth_creds_path = _gemini_oauth_creds_path(config, provider_id)
-    runtime_env = _gemini_runtime_env(config, provider_id)
-    auth_ready = _gemini_auth_ready(provider_settings, oauth_creds_path=oauth_creds_path, env=runtime_env)
-    auth_type = _gemini_selected_auth_type(provider_settings, oauth_creds_path=oauth_creds_path, env=runtime_env)
-    installed = bool(gemini_path or provider_binary)
-    notes = [
-        "Verified CLI approval flags and settings schema from the locally installed Gemini CLI package.",
-        "YOLO can be enabled either per-run with CLI flags or through the VS Code extension setting.",
-        "Gemini CLI non-interactive auth requires either a selected auth type in ~/.gemini/settings.json or one of the documented environment-variable auth paths.",
-    ]
-    if provider_id != "gemini":
-        notes.append(f"Provider `{provider_id}` uses its configured Gemini CLI home/env profile when provided.")
-    return {
-        "installed": installed,
-        "host_layer": "VS Code extension + CLI" if gemini_path and provider_binary else ("CLI" if provider_binary else "VS Code extension"),
-        "delivery_mode": (config.get("providers", {}).get(provider_id, {}) or {}).get("delivery_mode", "gemini"),
-        "approval_mode": runtime_approval_mode
-        or provider_settings.get("general", {}).get("defaultApprovalMode")
-        or "default",
-        "persistent_allow_supported": True,
-        "default_auto_approve_supported": True,
-        "full_access_supported": True,
-        "per_tool_allow_supported": True,
-        "local_cli_worker_supported": bool(provider_binary and auth_ready),
-        "vscode_link_supported": bool(gemini_path),
-        "cloud_agent_supported": False,
-        "supports_auto_approve": bool(provider_binary and auth_ready),
-        "supports_defer_resume": False,
-        "supported_models": [selected_model] if selected_model else [],
-        "selected_model": selected_model,
-        "auth_ready": auth_ready,
-        "applied": gemini_applied,
-        "verified": "verified" if installed else "unavailable",
-        "version": gemini_version,
-        "paths": {
-            "extension": str(gemini_path) if gemini_path else None,
-            "binary": provider_binary,
-            "workspace_settings": str(WORKSPACE_SETTINGS_PATH),
-            "home": str(_gemini_home(config, provider_id)),
-            "cli_settings": str(_gemini_settings_path(config, provider_id)),
-            "oauth_creds": str(oauth_creds_path) if oauth_creds_path.exists() else None,
-        },
-        "settings": {
-            "geminicodeassist.agentYoloMode": _workspace_setting(workspace_settings, "geminicodeassist.agentYoloMode"),
-            "general.defaultApprovalMode": provider_settings.get("general", {}).get("defaultApprovalMode"),
-            "runtime.defaultApprovalMode": runtime_approval_mode,
-            "security.enablePermanentToolApproval": provider_settings.get("security", {}).get("enablePermanentToolApproval"),
-            "security.autoAddToPolicyByDefault": provider_settings.get("security", {}).get("autoAddToPolicyByDefault"),
-            "security.disableYoloMode": provider_settings.get("security", {}).get("disableYoloMode"),
-            "security.auth.selectedType": auth_type,
-            "gemini.model": selected_model,
-            "env.GOOGLE_CLOUD_PROJECT": runtime_env.get("GOOGLE_CLOUD_PROJECT"),
-            "env.GOOGLE_CLOUD_PROJECT_ID": runtime_env.get("GOOGLE_CLOUD_PROJECT_ID"),
-            "env.GOOGLE_CLOUD_LOCATION": runtime_env.get("GOOGLE_CLOUD_LOCATION"),
-        },
-        "notes": notes,
-    }
 
 
 def _antigravity_provider_report(
@@ -1838,22 +1639,15 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     code_cli = _code_cli_info()
     workspace_settings = _workspace_settings()
     claude_path, claude_version = _find_extension("anthropic.claude-code")
-    gemini_path, gemini_version = _find_extension("google.geminicodeassist")
     openai_path, openai_version = _find_extension("openai.chatgpt")
     copilot_path, copilot_version = _find_extension("github.copilot-chat")
     claude_local = _claude_local_settings()
-    gemini_settings = _gemini_settings(config, "gemini")
-    gemini_env = _gemini_runtime_env(config, "gemini")
-    gemini_auth_ready = _gemini_auth_ready(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"), env=gemini_env)
-    gemini_auth_type = _gemini_selected_auth_type(gemini_settings, oauth_creds_path=_gemini_oauth_creds_path(config, "gemini"), env=gemini_env)
     custom_agents = _custom_agents_info()
 
     claude_permissions = claude_local.get("permissions", {})
     desired_workspace = desired_workspace_settings(config)
     desired_claude = desired_claude_local_settings(config, current=claude_local)
-    desired_gemini = desired_gemini_settings(config, "gemini")
     codex_binary = command_exists("codex")
-    gemini_binary = _configured_provider_binary(config, "gemini", "gemini", "gemini")
     copilot_binary = _configured_provider_binary(config, "copilot", "local", "copilot")
     gh_binary = command_exists(config.get("providers", {}).get("copilot", {}).get("cloud", {}).get("cli") or "gh")
     gh_version = _gh_version(gh_binary)
@@ -1861,7 +1655,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     copilot_auth_ready = _copilot_auth_ready(gh_binary)
     copilot_settings = config.get("providers", {}).get("copilot", {})
     copilot_model_preference = copilot_settings.get("model_preference", {})
-    gemini_installed = bool(gemini_path or gemini_binary)
     copilot_installed = bool(copilot_path or copilot_binary or gh_binary)
 
     claude_applied = (
@@ -1871,21 +1664,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         and claude_permissions.get("defaultMode") == desired_claude["permissions"]["defaultMode"]
         and bool(claude_local.get("hooks", {}).get("PreToolUse"))
     )
-    gemini_applied = (
-        _workspace_setting(workspace_settings, "geminicodeassist.agentYoloMode") == desired_workspace["geminicodeassist.agentYoloMode"]
-        and gemini_settings.get("general", {}).get("defaultApprovalMode")
-        == desired_gemini["general"]["defaultApprovalMode"]
-        and gemini_settings.get("security", {}).get("enablePermanentToolApproval")
-        == desired_gemini["security"]["enablePermanentToolApproval"]
-        and gemini_settings.get("security", {}).get("autoAddToPolicyByDefault")
-        == desired_gemini["security"]["autoAddToPolicyByDefault"]
-        and (
-            not desired_gemini["security"].get("auth", {}).get("selectedType")
-            or gemini_settings.get("security", {}).get("auth", {}).get("selectedType")
-            == desired_gemini["security"]["auth"]["selectedType"]
-        )
-    )
-
     codex_profile = config.get("providers", {}).get("codex", {}).get("codex", {})
     codex_applied = (
         codex_profile.get("ask_for_approval", "never") == "never"
@@ -1907,18 +1685,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                     provider_id
                     for provider_id, settings in (config.get("providers", {}) or {}).items()
                     if provider_id != "claude" and (settings or {}).get("delivery_mode") == "claude_cli"
-                ],
-            ]
-        )
-    )
-    gemini_provider_ids = list(
-        dict.fromkeys(
-            [
-                "gemini",
-                *[
-                    provider_id
-                    for provider_id, settings in (config.get("providers", {}) or {}).items()
-                    if provider_id != "gemini" and (settings or {}).get("delivery_mode") == "gemini"
                 ],
             ]
         )
@@ -2044,17 +1810,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 )
                 for provider_id in claude_provider_ids
             },
-            **{
-                provider_id: _gemini_provider_report(
-                    config,
-                    provider_id=provider_id,
-                    gemini_path=gemini_path,
-                    gemini_version=gemini_version,
-                    workspace_settings=workspace_settings,
-                    gemini_applied=gemini_applied if provider_id == "gemini" else True,
-                )
-                for provider_id in gemini_provider_ids
-            },
             **_antigravity_provider_reports(config, antigravity_provider_ids),
             **{provider_id: codex_provider_report(provider_id) for provider_id in codex_provider_ids},
             "copilot": {
@@ -2169,7 +1924,6 @@ def desired_sync_state(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {
         "workspace_settings": desired_workspace_settings(config),
         "claude_local_settings": desired_claude_local_settings(config, current=_claude_local_settings()),
-        "gemini_settings": desired_gemini_settings(config),
     }
 
 
@@ -2186,28 +1940,8 @@ def apply_claude_local_settings(config: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 
-def apply_gemini_settings(config: dict[str, Any]) -> dict[str, Any]:
-    current = _gemini_settings()
-    desired = desired_gemini_settings(config)
-    merged_security = {**current.get("security", {}), **desired.get("security", {})}
-    if desired.get("security", {}).get("auth"):
-        merged_security["auth"] = {
-            **current.get("security", {}).get("auth", {}),
-            **desired["security"]["auth"],
-        }
-    updated = {
-        "general": {**current.get("general", {}), **desired.get("general", {})},
-        "security": merged_security,
-    }
-    if desired.get("model"):
-        updated["model"] = {**current.get("model", {}), **desired["model"]}
-    GEMINI_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    write_json(GEMINI_SETTINGS_PATH, updated)
-    return updated
-
-
 def backup_targets(config: dict[str, Any]) -> list[Path]:
-    return [WORKSPACE_SETTINGS_PATH, CLAUDE_LOCAL_SETTINGS_PATH, GEMINI_SETTINGS_PATH]
+    return [WORKSPACE_SETTINGS_PATH, CLAUDE_LOCAL_SETTINGS_PATH]
 
 
 def latest_backup_dir() -> Path | None:

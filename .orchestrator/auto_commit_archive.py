@@ -11,8 +11,7 @@ Background:
   forever (the OPS-ARCHIVE-BACKFILL-001 incident).
 
 What this script does:
-  1. Detects flat terminal ``ai-task-archive/tasks/*.json`` records,
-     nested non-terminal assistant dev-bridge admission records, and
+  1. Detects flat terminal ``ai-task-archive/tasks/*.json`` records and
      ``.orchestrator/task-briefs/*.md`` files that are untracked in the main
      worktree, plus a modified ``ai-task-archive/index.json``.
   2. If trigger conditions are met (>= MIN_FILES pending OR oldest file
@@ -60,9 +59,6 @@ MIN_FILES = 5
 MIN_AGE_SECONDS = 4 * 3600
 STALE_LOCK_SECONDS = 3600
 TERMINAL_ARCHIVE_PREFIX = "ai-task-archive/tasks/"
-BRIDGE_ADMISSION_PREFIX = (
-    "ai-task-archive/tasks/assistant-dev-bridge-admissions/"
-)
 TASK_BRIEF_PREFIX = ".orchestrator/task-briefs/"
 
 
@@ -75,16 +71,10 @@ def _run(cmd: list[str], *, cwd: Path | None = None, check: bool = True) -> subp
 
 
 def detect_pending() -> dict[str, object]:
-    """Return pending files split by terminal/non-terminal semantics.
-
-    ``--untracked-files=all`` is intentional: without it git collapses a new
-    admission directory to one porcelain entry, and the copy loop later sees a
-    directory instead of individual files.
-    """
+    """Return pending terminal archives and task briefs."""
 
     briefs: list[str] = []
     archives: list[str] = []
-    admissions: list[str] = []
     out = _run(
         [
             "git",
@@ -101,9 +91,7 @@ def detect_pending() -> dict[str, object]:
         if not line.startswith("?? "):
             continue
         path = line[3:].strip()
-        if path.startswith(BRIDGE_ADMISSION_PREFIX) and path.endswith(".json"):
-            admissions.append(path)
-        elif path.startswith(TASK_BRIEF_PREFIX) and path.endswith(".md"):
+        if path.startswith(TASK_BRIEF_PREFIX) and path.endswith(".md"):
             briefs.append(path)
         elif path.startswith(TERMINAL_ARCHIVE_PREFIX) and path.endswith(".json"):
             remainder = path[len(TERMINAL_ARCHIVE_PREFIX) :]
@@ -119,7 +107,6 @@ def detect_pending() -> dict[str, object]:
     return {
         "briefs": briefs,
         "archives": archives,
-        "admissions": admissions,
         "index_modified": index_modified,
     }
 
@@ -127,14 +114,13 @@ def detect_pending() -> dict[str, object]:
 def should_trigger(pending: dict[str, object]) -> tuple[bool, str]:
     briefs = pending["briefs"]  # type: ignore[index]
     archives = pending["archives"]  # type: ignore[index]
-    admissions = pending.get("admissions", [])  # type: ignore[assignment]
-    total = len(briefs) + len(archives) + len(admissions)
+    total = len(briefs) + len(archives)
     if total == 0 and not pending["index_modified"]:
         return False, "no pending files"
     if total >= MIN_FILES:
         return True, f"pending file count {total} >= {MIN_FILES}"
     oldest = float("inf")
-    for f in [*briefs, *archives, *admissions]:
+    for f in [*briefs, *archives]:
         p = ROOT / str(f)
         try:
             oldest = min(oldest, p.stat().st_mtime)
@@ -197,9 +183,8 @@ def release_lock() -> None:
 def _build_commit_message(task_id: str, pending: dict[str, object]) -> str:
     briefs = pending["briefs"]  # type: ignore[index]
     archives = pending["archives"]  # type: ignore[index]
-    admissions = pending.get("admissions", [])  # type: ignore[assignment]
     idx = 1 if pending["index_modified"] else 0
-    total = len(briefs) + len(archives) + len(admissions) + idx
+    total = len(briefs) + len(archives) + idx
     # Subject capped at 72 chars by check_commit_trailers.py.
     # task_id alone is ~40 chars; keep description very tight.
     lines = [
@@ -212,7 +197,6 @@ def _build_commit_message(task_id: str, pending: dict[str, object]) -> str:
         "",
         "Backfilled:",
         f"- {len(archives)} ai-task-archive/tasks/*.json terminal task records",
-        f"- {len(admissions)} non-terminal assistant dev-bridge admission records",
         f"- {len(briefs)} .orchestrator/task-briefs/*.md generated briefs",
         f"- {idx} ai-task-archive/index.json (recent_terminal_ids + counts bump)",
         "",
@@ -246,7 +230,6 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
     files: list[str] = []
     files.extend(str(b) for b in pending["briefs"])  # type: ignore[arg-type]
     files.extend(str(a) for a in pending["archives"])  # type: ignore[arg-type]
-    files.extend(str(a) for a in pending.get("admissions", []))  # type: ignore[arg-type]
     if pending["index_modified"]:
         files.append("ai-task-archive/index.json")
     if not files:

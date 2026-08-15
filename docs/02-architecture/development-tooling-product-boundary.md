@@ -24,9 +24,7 @@ It owns:
 - development-tooling health and dispatch evidence.
 
 Primary components are `.orchestrator/`, `ai-task-archive/`,
-`scripts/ai_status.py`, and `scripts/human-ops-status.sh`. The local task-packet
-transport lives at `.orchestrator/development_bridge/`; it is excluded from the
-product container build context.
+`scripts/ai_status.py`, and `scripts/human-ops-status.sh`.
 
 There is no hosted development ingress. The product BFF neither defines nor
 imports task-packet, dev-doc, supervisor-status, or repair-worktree modules.
@@ -36,8 +34,8 @@ or health-check the supervisor or dashboard.
 
 Product login, product control mode, and product readiness are not prerequisites
 for local canonical task maintenance. There is no product-hosted development
-bridge route. Local Human/Ops maintenance and local task-packet transport are
-the only development-task ingress paths.
+bridge route. Local Human/Ops maintenance is the only development-task ingress
+path.
 
 Development-tooling success means that tasks can be stored and dispatched. It
 does not mean that the product has been built, deployed, or accepted.
@@ -83,8 +81,8 @@ two domains but does not become their authority.
    separate results. Never collapse them into one `healthy` or `done` claim.
 2. Local canonical task mutation uses local Human/Ops tooling. Do not route it
    through product authentication or product control mode.
-3. Local development tooling may submit task packets, but canonical validation
-   and materialization remain in development tooling.
+3. The supervisor consumes only canonical tasks already maintained by local
+   Human/Ops tooling; it does not accept task packets or drain a local inbox.
 4. Product acceptance requires exact hosted identities plus live product
    readiness and scenario verification. Static evidence-presence checks are
    insufficient.
@@ -125,7 +123,5 @@ ready to remove it, use the `removal_order` in the boundary manifest:
 4. rerun live product readiness, hosted scenarios, and exact identity checks.
 
 The BFF business APIs, source ingestion, lifecycle projector, product services,
-frontend, and delivery acceptance remain. The local dev bridge is removed with
-development tooling because it transports engineering work; it is not a
-product API. Historical task/review evidence may be retained as an archive,
-but it is not loaded by the product runtime.
+frontend, and delivery acceptance remain. Historical task/review evidence may
+be retained as an archive, but it is not loaded by the product runtime.

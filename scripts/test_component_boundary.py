@@ -34,10 +34,19 @@ class ComponentBoundaryTests(unittest.TestCase):
         self.assertFalse(result["tooling_only"])
         self.assertEqual(result["domains"], ["development_tooling", "product_runtime"])
 
-    def test_unknown_path_is_reported_without_becoming_product_runtime(self) -> None:
+    def test_unknown_path_is_not_tooling_only(self) -> None:
         result = component_boundary.classify_paths(self.manifest, ["README.md"])
-        self.assertTrue(result["tooling_only"])
+        self.assertFalse(result["tooling_only"])
+        self.assertTrue(result["product_touched"])
         self.assertEqual(result["unknown_paths"], ["README.md"])
+
+    def test_unclassified_service_path_is_not_tooling_only(self) -> None:
+        result = component_boundary.classify_paths(
+            self.manifest,
+            ["services/control-plane/router/main.py"],
+        )
+        self.assertFalse(result["tooling_only"])
+        self.assertTrue(result["product_touched"])
 
 
 if __name__ == "__main__":

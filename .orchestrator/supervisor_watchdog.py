@@ -49,40 +49,6 @@ ACTIVE_WORKER_STATUSES = {
     "stalled",
 }
 
-SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES = (
-    "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
-)
-SUPERVISOR_FORBIDDEN_AUTHORITY_ENV_NAMES = (
-    "BRIDGE_SIGNING_PRIVATE_KEY",
-    "BRIDGE_SIGNING_KEY",
-    "BRIDGE_SIGNING_KEY_ID",
-)
-
-
-def supervisor_restart_environment(source: dict[str, str]) -> dict[str, str]:
-    """Build the final supervisor environment with verifier-only authority."""
-
-    env = dict(source)
-    for name in SUPERVISOR_FORBIDDEN_AUTHORITY_ENV_NAMES:
-        env.pop(name, None)
-    for name in SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES:
-        raw = str(env.get(name) or "").strip()
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"{name} must be valid JSON") from exc
-        if not isinstance(payload, dict) or not payload or any(
-            not isinstance(key, str)
-            or not key.strip()
-            or not isinstance(value, str)
-            or not value.strip()
-            for key, value in payload.items()
-        ):
-            raise ValueError(f"{name} must be a non-empty public-key map")
-        env[name] = raw
-    return env
-
-
 def parse_utc_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -978,7 +944,7 @@ def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: date
     # its own module location and resolves freshly-archived task dependencies as
     # "missing", stalling ready-dispatch down to a single self-claiming worker.
     # See docs/decisions/supervisor-status-root-split-brain-2026-06-09.md.
-    env = supervisor_restart_environment(dict(os.environ))
+    env = dict(os.environ)
     base_ref = status_command_base_ref(config)
     runtime_identity = validate_status_command_runtime(
         runtime_root,

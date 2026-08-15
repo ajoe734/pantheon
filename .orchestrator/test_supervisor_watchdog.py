@@ -791,10 +791,6 @@ class SupervisorWatchdogTests(unittest.TestCase):
             return _FakeProc()
 
         now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
-        authority_env = {
-            "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": '{"bridge":"public"}',
-            "BRIDGE_SIGNING_PRIVATE_KEY": "must-not-leak",
-        }
         runtime_identity = {
             "root": "/immutable/runtime",
             "source_sha": "a" * 40,
@@ -802,7 +798,6 @@ class SupervisorWatchdogTests(unittest.TestCase):
             "base_ref": "origin/dev",
         }
         with (
-            mock.patch.dict(os.environ, authority_env, clear=False),
             mock.patch.object(
                 supervisor_watchdog,
                 "validate_status_command_runtime",
@@ -820,35 +815,11 @@ class SupervisorWatchdogTests(unittest.TestCase):
             str(status_file.parent),
         )
         self.assertEqual(captured["env"].get("PYTHONDONTWRITEBYTECODE"), "1")
-        self.assertEqual(
-            captured["env"].get("BRIDGE_SIGNING_PUBLIC_KEYS_JSON"),
-            authority_env["BRIDGE_SIGNING_PUBLIC_KEYS_JSON"],
-        )
-        self.assertNotIn("BRIDGE_SIGNING_PRIVATE_KEY", captured["env"])
         self.assertEqual(captured["env"].get("PANTHEON_COMMAND_ROOT"), "/immutable/runtime")
         self.assertEqual(captured["env"].get("PANTHEON_COMMAND_RUNTIME_SHA"), "a" * 40)
         self.assertEqual(captured["env"].get("PANTHEON_COMMAND_REMOTE"), "ajoe734/pantheon")
         self.assertEqual(captured["env"].get("PANTHEON_COMMAND_BASE_REF"), "origin/dev")
         self.assertEqual(captured["cwd"], runtime_root)
-
-    def test_start_supervisor_rejects_missing_public_verifier_environment(self) -> None:
-        now = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
-        self.config["watchdog"]["supervisor_command"] = [
-            "python3",
-            str(Path("/immutable/runtime/.orchestrator/supervisor.py")),
-        ]
-        missing = {
-            "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": "",
-        }
-        with (
-            mock.patch.dict(os.environ, missing, clear=False),
-            mock.patch.object(supervisor_watchdog.subprocess, "Popen") as popen,
-            self.assertRaisesRegex(ValueError, "valid JSON|public-key map"),
-        ):
-            supervisor_watchdog.start_supervisor(
-                self.config, self.config["watchdog"], now
-            )
-        popen.assert_not_called()
 
     def test_supervisor_lock_held_true_when_locked(self) -> None:
         self.hold_lock()

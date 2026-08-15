@@ -29,7 +29,7 @@ reconciliation record.
 
 For current frontend hosting, read
 `docs/frontend/execute-plans-dev-hosting.md`. For Management AI/OpenClaw dev
-work, read `docs/operations/management-ai-openclaw-dev-bridge.md`. The older
+work, read `docs/02-architecture/development-tooling-product-boundary.md`. The older
 Lovable lane and `front-ai-trading-system` references below remain historical
 context only.
 

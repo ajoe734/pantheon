@@ -77,7 +77,9 @@ def classify_paths(manifest: dict[str, Any], paths: list[str]) -> dict[str, Any]
             unknown.append(path)
         classified.append({"path": path, "components": matches})
     domains = sorted({match["domain"] for item in classified for match in item["components"]})
-    product_touched = "product_runtime" in domains
+    # Unknown source is never safe to classify as tooling-only: skipping the
+    # product lane for an unowned service path would be a CI fail-open.
+    product_touched = "product_runtime" in domains or bool(unknown)
     return {
         "paths": classified,
         "unknown_paths": unknown,

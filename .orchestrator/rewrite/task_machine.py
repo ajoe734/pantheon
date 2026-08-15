@@ -246,6 +246,49 @@ def assignment_activity_event(
     }
 
 
+def assignment_activity_event_matches(event: Mapping[str, object]) -> bool:
+    """Return whether *event* is the canonical Orchestrator reassignment audit.
+
+    Both the supervisor's live-worker guard and ``ai_status`` closeout use this
+    exact record.  Keeping the verifier next to its builder prevents those
+    consumers from accepting different generations or event-id formats.
+    """
+
+    if (
+        str(event.get("agent") or "").strip() != "Orchestrator"
+        or str(event.get("type") or "").strip() != "task_reassigned"
+    ):
+        return False
+    try:
+        old_generation = int(event.get("old_generation"))
+        generation = int(event.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    if old_generation < 1 or generation != old_generation + 1:
+        return False
+    required = (
+        "task_id",
+        "ts",
+        "old_owner",
+        "new_owner",
+        "old_reviewer",
+        "new_reviewer",
+        "message",
+    )
+    if any(not str(event.get(field) or "").strip() for field in required):
+        return False
+    payload = (
+        f"{event.get('task_id')}\0{event.get('ts')}\0"
+        f"{event.get('old_owner')}\0{event.get('new_owner')}\0"
+        f"{event.get('old_reviewer')}\0{event.get('new_reviewer')}\0"
+        f"{old_generation}\0{generation}\0{event.get('message')}"
+    )
+    event_id = "supervisor-task-reassigned-" + hashlib.sha256(
+        payload.encode("utf-8")
+    ).hexdigest()
+    return str(event.get("event_id") or "") == event_id
+
+
 # The one lifecycle table used by canonical commands.  Self-transitions are
 # present only for commands that update progress without changing lifecycle.
 _COMMAND_TRANSITIONS: dict[tuple[TaskState, TaskAction], TaskState] = {
