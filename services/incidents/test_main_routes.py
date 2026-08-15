@@ -25,7 +25,11 @@ from fastapi.testclient import TestClient
 
 from services.incident.incident import IncidentConcurrencyError, IncidentStore
 from services.incident.reference_validation import CanonicalReferenceError
-from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
+from services.incidents.consumer import (
+    IncidentConsumerError,
+    ThresholdTelemetryIncidentConsumer,
+    build_incident_from_drift_report,
+)
 
 # The route module constructs CanonicalReferenceValidator at import time.  These
 # tests replace that validator with an in-memory accept/reject double before
@@ -536,6 +540,24 @@ def test_consume_drift_report_route_creates_incident_case():
     assert body["reconciliation_ids"] == ["drift-report-001", "recon-run-001"]
     assert body["incident_cluster_id"] == "drift:rolling_drawdown_multiple"
     assert len(store.list_incidents()) == 1
+
+
+def test_drift_report_rejects_multiple_telemetry_events():
+    payload = _drift_report_payload(
+        telemetry_event_ids=["evt-drift-001", "evt-drift-002"],
+        evidence_refs=[
+            "telemetry_event:evt-drift-001",
+            "telemetry_event:evt-drift-002",
+            "drift_report:drift-report-001",
+            "reconciliation_record:recon-run-001",
+        ],
+    )
+
+    with pytest.raises(
+        IncidentConsumerError,
+        match="exactly one telemetry_event_id",
+    ):
+        build_incident_from_drift_report(payload)
 
 
 def test_consume_drift_report_route_dedupes_by_binding_runtime_cluster():

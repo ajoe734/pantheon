@@ -40,6 +40,36 @@ def _load_service_module():
                 pass
 
 
+def test_incident_post_honors_configured_timeout() -> None:
+    module = _load_service_module()
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"incident_id":"inc-timeout-test"}'
+
+    with mock.patch.dict(
+        "os.environ",
+        {"PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS": "71"},
+    ), mock.patch.object(
+        module.urllib.request,
+        "urlopen",
+        return_value=_Response(),
+    ) as urlopen:
+        result = module._post_json(
+            "http://incidents:8090/api/incidents/consume-drift-report",
+            {"drift_report": {"drift_report_id": "drift-timeout-test"}},
+        )
+
+    assert result == {"incident_id": "inc-timeout-test"}
+    assert urlopen.call_args.kwargs["timeout"] == 71.0
+
+
 def test_reconciliation_drift_generates_summary_status_and_alert_handoff() -> None:
     module = _load_service_module()
     client = TestClient(module.app)
