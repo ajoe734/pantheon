@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
+CANONICAL_TASK_STATE_IDENTITY_ENV = "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
@@ -555,6 +556,105 @@ def config_status_root(config: dict[str, Any]) -> Path:
     return ROOT.resolve()
 
 
+def canonical_task_state_identity_for_paths(
+    *,
+    status_root: Path,
+    event_log: Path,
+) -> dict[str, Any]:
+    """Describe the one V2 state domain without relocating its journal.
+
+    The canonical projection and archive intentionally live below the
+    coordination root, while the append-only journal lives in the external
+    runtime directory.  They are nevertheless one state domain and every
+    status-command environment carries this exact binding.
+    """
+
+    root = _assert_no_symlink_components(status_root, source="canonical status root")
+    journal = _assert_no_symlink_components(event_log, source="task-state event log")
+    status_file = root / "ai-status.json"
+    archive_root = root / "ai-task-archive"
+    if journal == root or root in journal.parents:
+        raise RuntimeError(
+            "task-state event log must remain outside the canonical status root"
+        )
+    payload = {
+        "schema_version": 1,
+        "status_root": str(root),
+        "status_file": str(status_file),
+        "archive_root": str(archive_root),
+        "event_log": str(journal),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {**payload, "identity_sha256": hashlib.sha256(encoded).hexdigest()}
+
+
+def canonical_task_state_identity(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the live V2 projection/journal/archive identity from config."""
+
+    status_root = config_status_root(dict(config))
+    status_file = config_path(dict(config), "status_file").resolve()
+    if status_file != status_root / "ai-status.json":
+        raise RuntimeError(
+            "authoritative task-state status_file must be canonical "
+            f"ai-status.json: {status_file}"
+        )
+    store = config.get("task_state_store")
+    if not isinstance(store, Mapping):
+        raise RuntimeError("authoritative task-state store configuration is required")
+    mode = str(store.get("mode") or "").strip().lower()
+    if mode != "authoritative":
+        raise RuntimeError("task_state_store.mode must be authoritative")
+    raw_event_log = str(store.get("event_log") or "").strip()
+    if not raw_event_log:
+        raise RuntimeError("authoritative task-state store requires an event_log")
+    event_log = Path(os.path.expanduser(raw_event_log))
+    if not event_log.is_absolute():
+        raise RuntimeError(
+            "authoritative task-state store requires a provisioned absolute event_log"
+        )
+    return canonical_task_state_identity_for_paths(
+        status_root=status_root,
+        event_log=event_log,
+    )
+
+
+def canonical_task_state_identity_from_environment(
+    *,
+    status_root: Path,
+    event_log: Path,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Validate the supervisor-issued binding for one status command.
+
+    This is deliberately an integrity binding, not another policy source: the
+    supervisor renders it from the live config and status commands only verify
+    that their root, archive and journal still match that one identity.
+    """
+
+    env = environment if environment is not None else os.environ
+    raw = str(env.get(CANONICAL_TASK_STATE_IDENTITY_ENV) or "").strip()
+    if not raw:
+        raise RuntimeError(
+            f"{CANONICAL_TASK_STATE_IDENTITY_ENV} is required in authoritative mode"
+        )
+    try:
+        supplied = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"{CANONICAL_TASK_STATE_IDENTITY_ENV} must be valid JSON"
+        ) from exc
+    expected = canonical_task_state_identity_for_paths(
+        status_root=status_root,
+        event_log=event_log,
+    )
+    if not isinstance(supplied, dict) or supplied != expected:
+        raise RuntimeError(
+            "canonical task-state identity mismatch between status root, archive root, "
+            "and event log"
+        )
+    return expected
+
+
 def resolved_coordinator_status_root(config: dict[str, Any]) -> Path:
     env_val = os.environ.get("PANTHEON_STATUS_ROOT")
     if env_val and env_val.strip():
@@ -746,29 +846,15 @@ def task_state_store_runtime_env(config: Mapping[str, Any]) -> dict[str, str]:
     The rendered live config is the only source of this binding.
     """
 
-    store = config.get("task_state_store")
-    if not isinstance(store, Mapping):
-        raise RuntimeError("authoritative task-state store configuration is required")
-    mode = str(store.get("mode") or "").strip().lower()
-    if mode != "authoritative":
-        raise RuntimeError("task_state_store.mode must be authoritative")
-    raw_event_log = str(store.get("event_log") or "").strip()
-    if not raw_event_log:
-        raise RuntimeError("authoritative task-state store requires an event_log")
-    event_log = Path(os.path.expanduser(raw_event_log))
-    # The repo config contains a relative deployment template. Only a live,
-    # provisioned absolute runtime path is safe to expose to status commands.
-    if not event_log.is_absolute():
-        raise RuntimeError(
-            "authoritative task-state store requires a provisioned absolute event_log"
-        )
-    event_log = _assert_no_symlink_components(
-        event_log,
-        source="task-state event log",
-    )
+    identity = canonical_task_state_identity(config)
     return {
-        TASK_STATE_STORE_MODE_ENV: mode,
-        TASK_STATE_EVENT_LOG_ENV: str(event_log),
+        TASK_STATE_STORE_MODE_ENV: "authoritative",
+        TASK_STATE_EVENT_LOG_ENV: str(identity["event_log"]),
+        CANONICAL_TASK_STATE_IDENTITY_ENV: json.dumps(
+            identity,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
     }
 
 
