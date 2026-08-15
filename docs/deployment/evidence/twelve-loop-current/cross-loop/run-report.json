@@ -1,0 +1,201 @@
+{
+  "boundaries": [
+    {
+      "ended_at": "2026-08-15T09:43:32Z",
+      "method": "GET",
+      "path": "/api/research-orchestrator/runs/rrun-20260815-003",
+      "service": "research",
+      "started_at": "2026-08-15T09:43:32Z",
+      "status": 200
+    },
+    {
+      "ended_at": "2026-08-15T09:43:32Z",
+      "method": "GET",
+      "path": "/api/research-orchestrator/runs/rrun-20260815-003/artifacts",
+      "service": "research",
+      "started_at": "2026-08-15T09:43:32Z",
+      "status": 200
+    },
+    {
+      "ended_at": "2026-08-15T09:43:32Z",
+      "method": "GET",
+      "path": "/api/runtime-bindings/rb-b9820afd5075453ca991a956c6ebb3ab",
+      "service": "runtime",
+      "started_at": "2026-08-15T09:43:32Z",
+      "status": 200
+    },
+    {
+      "ended_at": "2026-08-15T09:43:32Z",
+      "method": "GET",
+      "path": "/api/policy-learning/candidates",
+      "service": "policy_learning",
+      "started_at": "2026-08-15T09:43:32Z",
+      "status": 200
+    },
+    {
+      "ended_at": "2026-08-15T09:43:32Z",
+      "method": "GET",
+      "path": "/api/research-orchestrator/runs/rrun-20260815-002",
+      "service": "research",
+      "started_at": "2026-08-15T09:43:32Z",
+      "status": 200
+    },
+    {
+      "ended_at": "2026-08-15T09:43:32Z",
+      "method": "GET",
+      "path": "/api/telemetry/events/telemetry-cross-loop-direct-20260815f",
+      "service": "telemetry",
+      "started_at": "2026-08-15T09:43:32Z",
+      "status": 200
+    },
+    {
+      "ended_at": "2026-08-15T09:43:32Z",
+      "method": "GET",
+      "path": "/api/incidents/inc-drift-b3f03a3faa48",
+      "service": "incidents",
+      "started_at": "2026-08-15T09:43:32Z",
+      "status": 200
+    },
+    {
+      "ended_at": "2026-08-15T09:43:32Z",
+      "method": "GET",
+      "path": "/api/evolution/proposals/evo-cross-loop-b3f03a3faa48-20260815",
+      "service": "evolution",
+      "started_at": "2026-08-15T09:43:32Z",
+      "status": 200
+    },
+    {
+      "ended_at": "2026-08-15T09:43:33Z",
+      "method": "POST",
+      "path": "/api/research-orchestrator/tasks",
+      "service": "research",
+      "started_at": "2026-08-15T09:43:32Z",
+      "status": 201
+    },
+    {
+      "ended_at": "2026-08-15T09:43:33Z",
+      "method": "POST",
+      "path": "/api/research-orchestrator/tasks",
+      "service": "research",
+      "started_at": "2026-08-15T09:43:32Z",
+      "status": 201
+    },
+    {
+      "ended_at": "2026-08-15T09:43:33Z",
+      "method": "POST",
+      "path": "/api/research-orchestrator/tasks/rtask-20260815-002/runs",
+      "service": "research",
+      "started_at": "2026-08-15T09:43:33Z",
+      "status": 201
+    },
+    {
+      "ended_at": "2026-08-15T09:43:33Z",
+      "method": "POST",
+      "path": "/api/research-orchestrator/tasks/rtask-20260815-002/runs",
+      "service": "research",
+      "started_at": "2026-08-15T09:43:33Z",
+      "status": 201
+    },
+    {
+      "ended_at": "2026-08-15T09:43:33Z",
+      "method": "GET",
+      "path": "/api/research-orchestrator/tasks",
+      "service": "research",
+      "started_at": "2026-08-15T09:43:33Z",
+      "status": 200
+    },
+    {
+      "ended_at": "2026-08-15T09:43:33Z",
+      "method": "GET",
+      "path": "/api/research-orchestrator/runs",
+      "service": "research",
+      "started_at": "2026-08-15T09:43:33Z",
+      "status": 200
+    },
+    {
+      "ended_at": "2026-08-15T09:43:40Z",
+      "method": "POST",
+      "path": "/bff/management/nl/ask",
+      "service": "bff",
+      "started_at": "2026-08-15T09:43:33Z",
+      "status": 202
+    },
+    {
+      "ended_at": "2026-08-15T09:44:07Z",
+      "method": "POST",
+      "path": "/bff/management/nl/ask",
+      "service": "bff",
+      "started_at": "2026-08-15T09:43:42Z",
+      "status": 202
+    }
+  ],
+  "cases": {
+    "concurrency": {
+      "assertions": {
+        "one_owner": true,
+        "one_run_action": true,
+        "one_task_action": true
+      },
+      "ids": {
+        "research_run_id": "rrun-20260815-006",
+        "research_task_id": "rtask-20260815-002"
+      },
+      "owner": "cross-loop-e2e-owner-74ffa267906d",
+      "status": "passed"
+    },
+    "health_incident": {
+      "ids": {
+        "evolution_decision_id": "evo-cross-loop-b3f03a3faa48-20260815",
+        "incident_id": "inc-drift-b3f03a3faa48",
+        "telemetry_event_id": "telemetry-cross-loop-direct-20260815f"
+      },
+      "status": "passed"
+    },
+    "human_learning": {
+      "ids": {
+        "candidate_id": "sic-b2cf4d712baaae47f55c67b061676249",
+        "research_run_id": "rrun-20260815-002"
+      },
+      "status": "passed"
+    },
+    "management_identity": {
+      "ids": {
+        "resolved_ids": [
+          "artifact-persona-paper-2e9cd844c09cfde5ca5d",
+          "evo-cross-loop-b3f03a3faa48-20260815",
+          "inc-drift-b3f03a3faa48",
+          "rb-b9820afd5075453ca991a956c6ebb3ab",
+          "rrun-20260815-002",
+          "rrun-20260815-003",
+          "rrun-20260815-006",
+          "rtask-20260815-002",
+          "sic-b2cf4d712baaae47f55c67b061676249",
+          "telemetry-cross-loop-direct-20260815f"
+        ]
+      },
+      "management_message_id": "mnl-1c0e2a96e2594ed7",
+      "management_status": "completed",
+      "provider": "openclaw",
+      "provider_used": true,
+      "status": "passed"
+    },
+    "research_to_runtime": {
+      "ids": {
+        "artifact_id": "artifact-persona-paper-2e9cd844c09cfde5ca5d",
+        "research_run_id": "rrun-20260815-003",
+        "runtime_binding_id": "rb-b9820afd5075453ca991a956c6ebb3ab"
+      },
+      "status": "passed"
+    }
+  },
+  "completed_at": "2026-08-15T09:44:07Z",
+  "environment": "deployed_http_readback",
+  "error": null,
+  "expected_sha": "cfd85bfc29a618dcb3bf0238e051a087055cca00",
+  "first_failed_boundary": null,
+  "live_capital_enabled": false,
+  "schema_version": "pantheon.l12.cross-loop.deployed-e2e.v2",
+  "started_at": "2026-08-15T09:43:32Z",
+  "status": "passed",
+  "task_id": "L12-CURRENT-CROSS-LOOP-E2E-20260814"
+}

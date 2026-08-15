@@ -522,8 +522,12 @@ def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    timeout_seconds = float(os.getenv("PANTHEON_INCIDENTS_API_TIMEOUT_SECONDS", "90"))
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310 - service URL is operator configured.
+        with urllib.request.urlopen(  # noqa: S310 - service URL is operator configured.
+            request,
+            timeout=timeout_seconds,
+        ) as response:
             body = response.read().decode("utf-8")
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:

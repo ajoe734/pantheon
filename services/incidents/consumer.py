@@ -485,8 +485,10 @@ def build_incident_from_drift_report(payload: Mapping[str, Any]) -> IncidentCase
     runtime_id = _required_str("runtime_id", _first_value(payload, keys=("runtime_id", "runtime_ref")))
     cluster_id = _drift_incident_cluster_id(payload)
     telemetry_event_ids = _drift_telemetry_event_ids(payload)
-    if not telemetry_event_ids:
-        raise IncidentConsumerError("drift report must link at least one telemetry_event_id")
+    if len(telemetry_event_ids) != 1:
+        raise IncidentConsumerError(
+            "drift report must link exactly one telemetry_event_id"
+        )
 
     reconciliation_ids = _drift_reconciliation_ids(payload)
     if report_id not in reconciliation_ids:

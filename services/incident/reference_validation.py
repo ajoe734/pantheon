@@ -14,6 +14,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,7 @@ except ImportError:  # pragma: no cover - defensive fallback
 _DEFAULT_LINEAGE_CORPUS_PATH = (
     _SERVICES_DIR / "registry" / "lineage" / "lin001a_benchmark_corpus.json"
 )
+_MAX_TELEMETRY_EVENT_IDS_PER_INCIDENT = 8
 
 
 class CanonicalReferenceError(ValueError):
@@ -116,7 +118,7 @@ class _TelemetryLineageLookup:
         self._timeout_seconds = int(
             timeout_seconds
             if timeout_seconds is not None
-            else os.getenv("PANTHEON_TELEMETRY_TIMEOUT_SECONDS", "5")
+            else os.getenv("PANTHEON_TELEMETRY_TIMEOUT_SECONDS", "45")
         )
         self._corpus_path = Path(
             corpus_path
@@ -210,6 +212,14 @@ class CanonicalReferenceValidator:
 
     def validate_incident(self, incident: IncidentCase) -> None:
         errors: list[str] = []
+        telemetry_event_ids = list(incident.telemetry_event_ids)
+        if len(telemetry_event_ids) > _MAX_TELEMETRY_EVENT_IDS_PER_INCIDENT:
+            raise CanonicalReferenceError(
+                [
+                    "telemetry_event_ids exceeds the canonical validation limit "
+                    f"of {_MAX_TELEMETRY_EVENT_IDS_PER_INCIDENT}"
+                ]
+            )
         binding = self.binding_lookup.get_binding(incident.binding_id) if self.binding_lookup else None
         if binding is None:
             errors.append(
@@ -237,8 +247,22 @@ class CanonicalReferenceValidator:
                         f"lineage_ref {incident.lineage_ref!r} is absent from the canonical lineage projection for binding {incident.binding_id!r}"
                     )
 
-        for event_id in incident.telemetry_event_ids:
-            trace = self.telemetry_lookup.telemetry_event_trace(event_id) if self.telemetry_lookup else None
+        traces: list[Optional[dict[str, Any]]]
+        if self.telemetry_lookup and telemetry_event_ids:
+            with ThreadPoolExecutor(
+                max_workers=len(telemetry_event_ids),
+                thread_name_prefix="incident-lineage",
+            ) as pool:
+                traces = list(
+                    pool.map(
+                        self.telemetry_lookup.telemetry_event_trace,
+                        telemetry_event_ids,
+                    )
+                )
+        else:
+            traces = [None] * len(telemetry_event_ids)
+
+        for event_id, trace in zip(telemetry_event_ids, traces):
             if trace is None:
                 errors.append(
                     f"telemetry_event_id {event_id!r} does not resolve through the canonical telemetry lineage path"
