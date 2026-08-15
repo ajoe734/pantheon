@@ -1,0 +1,180 @@
+{
+  "task_id": "L12-CURRENT-CROSS-LOOP-E2E-20260814",
+  "executed_at": "2026-08-15T07:13:40Z",
+  "status": "passed",
+  "cases": {
+    "research_to_runtime": {
+      "case_name": "research_to_runtime",
+      "status": "passed",
+      "ids": {
+        "spec_id": "spec-c80beeb2",
+        "deployment_id": "dep-03a570ee"
+      },
+      "assertions": {
+        "spec_approved": true,
+        "deployment_active": true,
+        "spec_id_correlated": true
+      },
+      "details": {
+        "spec": {
+          "spec_id": "spec-c80beeb2",
+          "tenant_id": "default",
+          "name": "alpha_momentum_v1",
+          "checksum": "sha256:111222333",
+          "status": "approved",
+          "created_at": "2026-08-15T07:13:40Z"
+        },
+        "deployment": {
+          "deployment_id": "dep-03a570ee",
+          "spec_id": "spec-c80beeb2",
+          "tenant_id": "default",
+          "status": "active",
+          "target_environment": "paper",
+          "promoted_at": "2026-08-15T07:13:40Z"
+        }
+      }
+    },
+    "human_learning": {
+      "case_name": "human_learning",
+      "status": "passed",
+      "ids": {
+        "evidence_id": "ev-058cd812",
+        "candidate_id": "cand-9eb4aa43",
+        "run_id": "rrun-78c4d437"
+      },
+      "assertions": {
+        "evidence_match_rate_valid": true,
+        "candidate_passed": true,
+        "research_run_completed": true,
+        "candidate_id_correlated": true
+      },
+      "details": {
+        "evidence": {
+          "evidence_id": "ev-058cd812",
+          "tenant_id": "default",
+          "dataset_version_id": "dsv-c7fa409b",
+          "action_match_rate": 0.96,
+          "created_at": "2026-08-15T07:13:41Z"
+        },
+        "candidate": {
+          "candidate_id": "cand-9eb4aa43",
+          "tenant_id": "default",
+          "evidence_id": "ev-058cd812",
+          "status": "passed",
+          "created_at": "2026-08-15T07:13:41Z"
+        },
+        "run": {
+          "run_id": "rrun-78c4d437",
+          "tenant_id": "default",
+          "candidate_id": "cand-9eb4aa43",
+          "task_id": "rtask-rrun-78c4d437",
+          "status": "completed",
+          "created_at": "2026-08-15T07:13:41Z"
+        }
+      }
+    },
+    "health_incident": {
+      "case_name": "health_incident",
+      "status": "passed",
+      "ids": {
+        "event_id": "telem-4539731a",
+        "incident_id": "inc-4827a69a",
+        "proposal_id": "prop-dd152263"
+      },
+      "assertions": {
+        "event_ingested": true,
+        "incident_open": true,
+        "proposal_pending": true,
+        "incident_id_correlated": true
+      },
+      "details": {
+        "telemetry": {
+          "event_id": "telem-4539731a",
+          "tenant_id": "default",
+          "event_type": "drift_detected",
+          "metric_name": "slippage",
+          "value": 0.08,
+          "created_at": "2026-08-15T07:13:41Z"
+        },
+        "incident": {
+          "incident_id": "inc-4827a69a",
+          "tenant_id": "default",
+          "event_id": "telem-4539731a",
+          "severity": "high",
+          "status": "open",
+          "created_at": "2026-08-15T07:13:41Z"
+        },
+        "proposal": {
+          "proposal_id": "prop-dd152263",
+          "tenant_id": "default",
+          "incident_id": "inc-4827a69a",
+          "action": "reduce_position_limit",
+          "status": "pending_review",
+          "created_at": "2026-08-15T07:13:41Z"
+        }
+      }
+    },
+    "concurrency": {
+      "case_name": "concurrency",
+      "status": "passed",
+      "ids": {
+        "resource_id": "res-lock-f94f8b64",
+        "owner_1": "worker-alpha",
+        "owner_2": "worker-beta"
+      },
+      "assertions": {
+        "owner_1_acquired": true,
+        "owner_2_rejected": true,
+        "no_duplicate_owner": true
+      },
+      "details": {
+        "lock_1": {
+          "acquired": true,
+          "lock": {
+            "resource_id": "res-lock-f94f8b64",
+            "owner_id": "worker-alpha",
+            "acquired_at": "2026-08-15T07:13:41Z"
+          }
+        },
+        "lock_2": {
+          "acquired": false,
+          "reason": "lock_held",
+          "current_owner": "worker-alpha"
+        }
+      }
+    },
+    "management_identity": {
+      "case_name": "management_identity",
+      "status": "passed",
+      "ids": {
+        "spec_id": "spec-c2d2e79e",
+        "correlation_id": "spec-c2d2e79e"
+      },
+      "assertions": {
+        "nl_status_success": true,
+        "entity_resolved": true,
+        "correlation_id_matched": true
+      },
+      "details": {
+        "management_response": {
+          "query": "What is the status of strategy spec spec-c2d2e79e?",
+          "correlation_id": "spec-c2d2e79e",
+          "tenant_id": "default",
+          "resolved_entities": {
+            "strategy_specs": {
+              "spec_id": "spec-c2d2e79e",
+              "tenant_id": "default",
+              "name": "spec_corr-ref-020ff791",
+              "checksum": "sha256:555666777",
+              "status": "approved",
+              "created_at": "2026-08-15T07:13:41Z"
+            }
+          },
+          "answer": "Correlated management state for query reference: spec-c2d2e79e",
+          "status": "success"
+        }
+      }
+    }
+  },
+  "error": null
+}
