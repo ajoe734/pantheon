@@ -17,7 +17,6 @@ from common import (
     config_path,
     durable_write_bytes,
     load_json,
-    load_jsonl,
     stable_sidecar_lock,
     utc_now,
     write_json,
@@ -176,7 +175,7 @@ def normalize_v2_runtime_cache(
             if not allow_legacy_queue_records:
                 raise RuntimeStateSchemaError(
                     "runtime cache contains legacy queue records without embedded intents; "
-                    "run the offline V2 queue migration before starting the supervisor"
+                    "restore a valid V2 queue snapshot before starting the supervisor"
                 )
         elif not isinstance(intent, dict):
             raise RuntimeStateSchemaError(
@@ -651,75 +650,6 @@ def store_queue_event(state: dict[str, Any], event: Mapping[str, Any]) -> bool:
         record["event_key"] = event_key
     events[event_id] = record
     return True
-
-
-def migrate_legacy_event_queue_into_runtime_state(
-    config: dict[str, Any],
-    *,
-    legacy_event_queue_path: Path,
-) -> dict[str, int]:
-    """One-time offline V2 migration from the retired JSONL queue.
-
-    The caller must have stopped the supervisor and workers.  Normal runtime
-    paths never read this file: it is only a bounded source for converting an
-    already-existing V2 cache before the state-only queue is enabled.
-    """
-
-    path = legacy_event_queue_path.expanduser().absolute()
-    legacy_events = load_jsonl(path)
-    by_id: dict[str, dict[str, Any]] = {}
-    for raw_event in legacy_events:
-        if not isinstance(raw_event, dict):
-            raise RuntimeStateSchemaError("legacy queue contains a non-object event")
-        event_id = str(raw_event.get("event_id") or "").strip()
-        task_id = str(raw_event.get("task_id") or "").strip()
-        if not event_id or not task_id or event_id in by_id:
-            raise RuntimeStateSchemaError("legacy queue has invalid or duplicate event ids")
-        event = deepcopy(raw_event)
-        event["event_id"] = event_id
-        by_id[event_id] = event
-
-    with runtime_state_lock(config, shared=False):
-        raw = load_json(config_path(config, "state_file"), default=None)
-        state = normalize_v2_runtime_cache(
-            raw,
-            allow_legacy_queue_records=True,
-        )
-        records = state.setdefault("queue", {}).setdefault("events", {})
-        imported = 0
-        discarded_terminal_records = 0
-        for event_id, record in list(records.items()):
-            if not isinstance(record, dict):
-                records.pop(event_id, None)
-                continue
-            if isinstance(record.get("intent"), dict):
-                continue
-            event = by_id.pop(str(event_id), None)
-            status = str(record.get("status") or "").lower()
-            if event is None:
-                if status in RUNTIME_ADMISSION_CONFLICT_STATUSES:
-                    raise RuntimeStateSchemaError(
-                        "legacy runtime queue has an active record without a matching intent: "
-                        f"{event_id}"
-                    )
-                records.pop(event_id, None)
-                discarded_terminal_records += 1
-                continue
-            record["intent"] = event
-            record.setdefault("event_key", event.get("event_key"))
-            imported += 1
-        for event_id, event in by_id.items():
-            if store_queue_event(state, event):
-                imported += 1
-        state["queue"]["version"] = 2
-        _save_runtime_state_unlocked(
-            config,
-            normalize_v2_runtime_cache(state),
-        )
-    return {
-        "imported_intents": imported,
-        "discarded_terminal_records": discarded_terminal_records,
-    }
 
 
 def default_approval_state() -> dict[str, Any]:

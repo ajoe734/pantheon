@@ -68,7 +68,6 @@ export function defaultDashboardBundle() {
         chair_review: { running: 0, pending: 0, queued: 0 },
       },
       lanes: {},
-      dispatch_targets: {},
     },
     execution_summary: {
       ready_now: 0,
@@ -683,25 +682,8 @@ function finiteCount(value, fallback = 0) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
-function mergeDispatchTarget(targets, key, capacity, source) {
-  if (!key) return;
-  const current = targets.get(key);
-  const normalizedCapacity = Math.max(0, finiteCount(capacity, 0));
-  if (!current || normalizedCapacity > current.capacity) {
-    targets.set(key, { capacity: normalizedCapacity, source });
-  }
-}
-
 export function buildWorkerCapacity(status, orchState, dashboardBundle = null, approvalQueue = null) {
   const runtime = dashboardBundle?.runtime_summary || {};
-  const dispatchTargets = new Map();
-
-  for (const [name, target] of Object.entries(runtime.dispatch_targets || {})) {
-    mergeDispatchTarget(dispatchTargets, workerLaneKey(name), target, "dispatch target");
-  }
-  for (const [name, target] of Object.entries(status?.workload || {})) {
-    mergeDispatchTarget(dispatchTargets, workerLaneKey(name), target, "workload target");
-  }
 
   const workers = normalizeWorkerRecords(orchState, status);
   const queueEvents = normalizeDispatchQueue(orchState, status);
@@ -711,7 +693,6 @@ export function buildWorkerCapacity(status, orchState, dashboardBundle = null, a
   const runtimeLaneKeys = Object.keys(runtimeLanes).map(workerLaneKey).filter(Boolean);
 
   const laneKeys = new Set([
-    ...dispatchTargets.keys(),
     ...(status?.agents || []).map((agent) => workerLaneKey(agent.name)),
     ...workers.map((worker) => workerLaneKey(worker.logical_agent_id || worker.provider || worker.agent_id)),
     ...queueEvents.map((event) => workerLaneKey(event.logical_agent_id || event.provider || event.agent_id)),
@@ -729,7 +710,6 @@ export function buildWorkerCapacity(status, orchState, dashboardBundle = null, a
     const laneQueue = queueEvents.filter((event) => workerLaneKey(event.logical_agent_id || event.provider || event.agent_id) === key);
     const pause = pauses.find((item) => workerLaneKey(item.provider) === key) || null;
     const ownedRows = activeWork.rows.filter((row) => workerLaneKey(row.task.owner) === key);
-    const target = dispatchTargets.get(key) || null;
     const runtimeLane = runtimeLaneByKey.get(key) || {};
     const workerRunning = laneWorkers.filter((worker) => worker.bucket === "running" && worker.is_live_runtime !== false).length;
     const workerPending = laneWorkers.filter((worker) => worker.bucket === "pending" && worker.is_live_runtime !== false).length;
@@ -745,7 +725,7 @@ export function buildWorkerCapacity(status, orchState, dashboardBundle = null, a
       finiteCount(runtimeLane.failed, 0)
     );
     const queued = Math.max(laneQueue.length, finiteCount(runtimeLane.queued, 0));
-    const capacity = target ? target.capacity : Math.max(running + pending + queued, ownedRows.length);
+    const capacity = Math.max(running + pending + queued, ownedRows.length);
     const liveOccupied = running + pending;
     const queueBlocked = laneQueue.filter((event) => queueWaitReason(event)).length;
     const activeTaskIds = ownedRows.map((row) => row.task.id);
@@ -1267,7 +1247,6 @@ export function deriveAgentState(status, orchState) {
       live_running_count: liveRunningWorkers.length,
       live_pending_count: livePendingWorkers.length,
       transition_count: transitionWorkers.length,
-      target_workload: Number.isFinite(Number(status?.workload?.[agent.name])) ? Number(status.workload[agent.name]) : null,
     };
   });
 }

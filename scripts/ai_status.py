@@ -160,6 +160,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "sync",
         "archive_migrate",
         "archive_correct_review_file",
+        "record_terminal_fact",
     }
 )
 DEV_BRIDGE_CONSUMED_KEY = "consumed_dev_bridge_packets"
@@ -993,52 +994,42 @@ KNOWN_AGENTS = {
     "Claude": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude-execution-control",
-        "target_workload": 5,
     },
     "Claude2": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude2-execution-control",
-        "target_workload": 5,
     },
     "Antigravity": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity2": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity2-research-runtime",
-        "target_workload": 5,
     },
     "Gemini": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini-research-runtime",
-        "target_workload": 5,
     },
     "Gemini2": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini2-research-runtime",
-        "target_workload": 5,
     },
     "Codex": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 35,
     },
     "Codex2": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 35,
     },
     "Copilot": {
         "capability_lane": ["research-ingest", "external-search", "spec-review", "critique"],
         "default_branch": "feat/copilot-research-critique",
-        "target_workload": 5,
     },
     "Human/Ops": {
         "capability_lane": ["human-gate", "operations", "signoff"],
         "default_branch": "human/ops",
-        "target_workload": 0,
     },
 }
 
@@ -1451,7 +1442,6 @@ def default_state() -> dict[str, Any]:
         # after the richer, human-facing archive snapshot has been written.
         # The archive is deliberately not consulted by scheduling.
         TERMINAL_FACTS_KEY: {},
-        "workload": {name: meta["target_workload"] for name, meta in KNOWN_AGENTS.items()},
     }
 
 
@@ -1982,11 +1972,13 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     # this compact fact in the TaskStore even after recovery removes the active
     # terminal row.
     record_terminal_fact(state, task, recorded_at=str(snapshot["archived_at"]))
+
     _queue_status_archive_snapshot(state, snapshot)
     # Retain the terminal row and its references until the archive and rebuilt
     # index are durable. Recovery removes them in the same final status write
     # that clears this outbox, so readers never observe a vanished task.
     return snapshot
+
 
 
 def archive_terminal_tasks_in_state(state: dict[str, Any], *, archived_at: str | None = None) -> list[str]:
@@ -2144,6 +2136,7 @@ def backfill_dependency_terminal_facts_from_archive(
             _queue_status_archive_snapshot(state, snapshot)
         backfilled.append(dependency_id)
     return backfilled
+
 
 
 def _canonical_json_sha256(value: Any) -> str:
@@ -3536,7 +3529,6 @@ def recompute_workload(state: dict[str, Any]) -> None:
         if task["status"] in {"in_progress", "review", "blocked"}:
             bucket["active"] += 1
 
-    state["workload"] = {name: KNOWN_AGENTS[name]["target_workload"] for name in KNOWN_AGENTS}
     state["workload_summary"] = summary
 
 
@@ -4575,8 +4567,6 @@ def build_dashboard_bundle(
         if worker.get("status") == "failed":
             lane["failed"] += 1
 
-    dispatch_targets = {name: meta["target_workload"] for name, meta in KNOWN_AGENTS.items()}
-
     sprint_started_at_value = str(state.get("sprint_started_at") or "").strip() or None
     completed_in_sprint, superseded_in_sprint = count_terminal_since(sprint_started_at_value)
 
@@ -4609,7 +4599,6 @@ def build_dashboard_bundle(
             "pending_workers": sum(1 for worker in live_workers if worker.get("bucket") == "pending"),
             "mismatch_count": len(mismatches),
             "lanes": lanes,
-            "dispatch_targets": dispatch_targets,
         },
         "execution_summary": {
             "ready_now": ready_now,
@@ -7116,6 +7105,7 @@ def command_sync(state: dict[str, Any], _args: list[str]) -> None:
 
 
 
+
 def command_archive_migrate(state: dict[str, Any], args: list[str]) -> None:
     if len(args) > 1:
         raise SystemExit(
@@ -7150,6 +7140,55 @@ def command_archive_migrate(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+
+def command_record_terminal_fact(state: dict[str, Any], args: list[str]) -> None:
+    """Record one verified historical terminal dependency without archive lookup.
+
+    This is a local Human/Ops repair primitive for a coordination root that
+    was initialized after completed work.  It never changes an active row and
+    cannot reopen or rewrite a recorded fact.
+    """
+
+    if current_actor() != "Human/Ops":
+        raise SystemExit("Only local Human/Ops may record a terminal fact")
+    if len(args) != 3:
+        raise SystemExit(
+            "Usage: record_terminal_fact <task-id> <generation> <completed|superseded>"
+        )
+    task_id = str(args[0] or "").strip()
+    try:
+        generation = int(args[1])
+    except (TypeError, ValueError) as exc:
+        raise SystemExit("Terminal fact generation must be a positive integer") from exc
+    outcome = str(args[2] or "").strip().lower()
+    if not task_id or generation < 1 or outcome not in {"completed", "superseded"}:
+        raise SystemExit("Terminal fact fields are invalid")
+    if get_task(state, task_id) is not None:
+        raise SystemExit(
+            f"Cannot record terminal fact for active task {task_id}; transition its canonical row instead"
+        )
+    normalize_terminal_facts(state)
+    existing = state[TERMINAL_FACTS_KEY].get(task_id)
+    fact = record_terminal_fact(
+        state,
+        {
+            "id": task_id,
+            "generation": generation,
+            "status": "done",
+            "terminal_outcome": outcome,
+        },
+    )
+    if existing is None:
+        append_log(
+            {
+                "ts": fact["recorded_at"],
+                "agent": current_actor(),
+                "type": "terminal_fact_recorded",
+                "task_id": task_id,
+                "message": f"Recorded historical terminal dependency fact ({outcome}, generation {generation})",
+                **local_human_ops_audit_fields(),
+            }
+        )
 def validate_archive_review_file_target(task_id: str, review_file: str) -> tuple[str, str]:
     normalized = task_archive_module.normalize_archive_review_file(review_file)
     candidate = ROOT / normalized
@@ -7985,6 +8024,60 @@ def verify_signed_dev_bridge_packet(
         }
 
 
+def validate_dev_bridge_batch_dependency_closure(
+    state: Mapping[str, Any], batch: Mapping[str, Any]
+) -> None:
+    """Require every new dependency to be canonical at the batch boundary.
+
+    Scheduler reads never fall back to the human archive.  The bridge must
+    therefore reject a packet whose dependency is neither an active task, a
+    durable terminal fact, nor another row in this same atomic packet.
+    """
+
+    active_ids = {
+        str(task.get("id") or "").strip()
+        for task in (state.get("tasks") or [])
+        if isinstance(task, Mapping) and str(task.get("id") or "").strip()
+    }
+    terminal_ids = {
+        str(task_id).strip()
+        for task_id in (state.get(TERMINAL_FACTS_KEY) or {})
+        if str(task_id).strip()
+    }
+    batch_ids = {
+        str(row.get("task_id") or "").strip()
+        for row in (batch.get("tasks") or [])
+        if isinstance(row, Mapping) and str(row.get("task_id") or "").strip()
+    }
+    for row in batch.get("tasks") or []:
+        if not isinstance(row, Mapping):
+            raise SystemExit("Dev bridge materialize batch row is invalid")
+        task_id = str(row.get("task_id") or "").strip()
+        bridge = ((row.get("task_metadata") or {}).get("dev_bridge") or {})
+        task_spec = bridge.get("task_spec") if isinstance(bridge, Mapping) else None
+        dependencies = task_spec.get("depends_on") if isinstance(task_spec, Mapping) else None
+        if not isinstance(dependencies, list):
+            raise SystemExit(
+                f"Dev bridge task {task_id or '(unknown)'} has invalid dependency declaration"
+            )
+        missing = sorted(
+            {
+                dependency
+                for dependency in (str(item or "").strip() for item in dependencies)
+                if dependency
+                and dependency != task_id
+                and dependency not in active_ids
+                and dependency not in terminal_ids
+                and dependency not in batch_ids
+            }
+        )
+        if missing:
+            raise SystemExit(
+                f"Dev bridge task {task_id} has unresolved canonical dependencies: "
+                + ", ".join(missing)
+            )
+
+
 @contextmanager
 def dev_bridge_materialize_mutation_environment(row: Mapping[str, Any], actor: str):
     """Bind one packet task row's signed metadata for exactly one assign call."""
@@ -8174,6 +8267,7 @@ def main(argv: list[str]) -> int:
         "supersede": command_supersede,
         "approve": command_approve,
         "archive_migrate": command_archive_migrate,
+        "record_terminal_fact": command_record_terminal_fact,
         "archive_correct_review_file": command_archive_correct_review_file,
         "attach_proof_ownership": command_attach_proof_ownership,
         "sync": command_sync,
@@ -8244,6 +8338,7 @@ def main(argv: list[str]) -> int:
                 with authoritative_task_state_transaction():
                     state = load_state()
                     verify_signed_dev_bridge_packet(batch, state=state)
+                    validate_dev_bridge_batch_dependency_closure(state, batch)
                 # Receipt, archive, activity and dashboard projections are
                 # audit-only for packet materialization. Do not recover them
                 # inside this command: recovery would add an unrelated journal

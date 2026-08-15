@@ -1176,6 +1176,41 @@ class SupervisorDispatchBatchTests(unittest.TestCase):
         )
 
 
+class TerminalFactRepairTests(unittest.TestCase):
+    def test_local_human_ops_records_missing_historical_terminal_dependency(self) -> None:
+        state = ai_status.default_state()
+        state["tasks"] = []
+        with (
+            mock.patch.object(ai_status, "current_actor", return_value="Human/Ops"),
+            mock.patch.object(ai_status, "append_log") as append_log,
+        ):
+            ai_status.command_record_terminal_fact(
+                state, ["HISTORICAL-DONE", "2", "completed"]
+            )
+
+        fact = state[ai_status.TERMINAL_FACTS_KEY]["HISTORICAL-DONE"]
+        self.assertEqual(fact["generation"], 2)
+        self.assertEqual(fact["terminal_outcome"], "completed")
+        self.assertEqual(append_log.call_args.args[0]["type"], "terminal_fact_recorded")
+
+    def test_terminal_fact_rejects_active_task_collision(self) -> None:
+        state = ai_status.default_state()
+        state["tasks"] = [
+            {
+                "id": "ACTIVE-TASK",
+                "generation": 1,
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "status": "todo",
+            }
+        ]
+        with mock.patch.object(ai_status, "current_actor", return_value="Human/Ops"):
+            with self.assertRaisesRegex(SystemExit, "active task"):
+                ai_status.command_record_terminal_fact(
+                    state, ["ACTIVE-TASK", "1", "completed"]
+                )
+
+
 class DevBridgeMaterializeBatchTests(unittest.TestCase):
     """Covers SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811.
 
@@ -1227,14 +1262,21 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             source="test-bootstrap",
         )
 
-    def _task_spec(self, task_id: str, *, owner: str = "Codex", reviewer: str = "Antigravity") -> dict[str, Any]:
+    def _task_spec(
+        self,
+        task_id: str,
+        *,
+        owner: str = "Codex",
+        reviewer: str = "Antigravity",
+        depends_on: list[str] | None = None,
+    ) -> dict[str, Any]:
         return {
             "id": task_id,
             "title": f"Title for {task_id}",
             "owner": owner,
             "reviewer": reviewer,
             "phase": "Canonical Task Materialization",
-            "depends_on": [],
+            "depends_on": list(depends_on or []),
             "artifacts": ["docs/deployment/evidence/" + task_id + "/"],
             "acceptance": ["Do the thing"],
             "summary": f"Summary for {task_id}",
@@ -1248,8 +1290,14 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         packet_digest: str | None = None,
         owner: str = "Codex",
         reviewer: str = "Antigravity",
+        depends_on: list[str] | None = None,
     ) -> dict[str, Any]:
-        spec = self._task_spec(task_id, owner=owner, reviewer=reviewer)
+        spec = self._task_spec(
+            task_id,
+            owner=owner,
+            reviewer=reviewer,
+            depends_on=depends_on,
+        )
         spec_hash = hashlib.sha256(
             json.dumps(spec, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
         ).hexdigest()
@@ -1439,6 +1487,35 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         task_ids = {task["id"] for task in state.get("tasks", [])}
         self.assertNotIn("BATCH-PARTIAL-ONE", task_ids)
         self.assertNotIn("BATCH-PARTIAL-TWO", task_ids)
+
+    def test_batch_rejects_dependency_missing_from_canonical_state(self) -> None:
+        packet_id = "pkt-batch-missing-dependency-20260815T000000Z"
+        row = self._task_row(
+            "BATCH-DEPENDENCY-ONE",
+            packet_id=packet_id,
+            depends_on=["TERMINAL-FACT-NOT-PRESENT"],
+        )
+        payload = self._payload_path([row], packet_id=packet_id, packet_digest="unused")
+
+        with self.assertRaisesRegex(SystemExit, "unresolved canonical dependencies"):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+
+    def test_batch_accepts_dependency_in_same_atomic_packet(self) -> None:
+        packet_id = "pkt-batch-closed-dependency-20260815T000000Z"
+        root = self._task_row("BATCH-ROOT", packet_id=packet_id)
+        child = self._task_row(
+            "BATCH-CHILD",
+            packet_id=packet_id,
+            depends_on=["BATCH-ROOT"],
+        )
+        payload = self._payload_path([root, child], packet_id=packet_id, packet_digest="unused")
+
+        self.assertEqual(self._run_main(payload), 0)
+        state = ai_status.load_state()
+        self.assertIsNotNone(ai_status.get_task(state, "BATCH-ROOT"))
+        self.assertIsNotNone(ai_status.get_task(state, "BATCH-CHILD"))
 
     def test_exact_duplicate_retry_is_idempotent(self) -> None:
         packet_id = "pkt-batch-retry-20260811T000000Z"
@@ -5367,6 +5444,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
     def tearDown(self) -> None:
         _teardown_test_isolation(self)
 
+
     def test_archive_migrate_moves_terminal_tasks_out_of_active_state(self) -> None:
         ai_status.command_archive_migrate(self.state, [])
 
@@ -5546,6 +5624,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
     def test_archive_migrate_rejects_multiple_legacy_roots(self) -> None:
         with self.assertRaisesRegex(SystemExit, "Usage: archive_migrate"):
             ai_status.command_archive_migrate(self.state, ["/one", "/two"])
+
 
     def _write_modern_archive_with_absolute_review_file(
         self,
@@ -6600,7 +6679,6 @@ class HumanOpsAgentTests(unittest.TestCase):
         self.assertEqual(human_ops["status"], "blocked")
         self.assertEqual(human_ops["current_task_ids"], ["PROD-WRITES-001-V2"])
         self.assertEqual(ai_status.get_agent(state, "Claude")["status"], "idle")
-        self.assertEqual(state["workload"]["Human/Ops"], 0)
         self.assertEqual(state["workload_summary"]["Human/Ops"]["blocked"], 1)
 
 
@@ -7233,8 +7311,7 @@ class PortableStateRenderingTests(unittest.TestCase):
 
         self.assertNotIn("focus_mode", bundle)
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
-        self.assertEqual(bundle["runtime_summary"]["dispatch_targets"]["Codex"], 35)
-        self.assertEqual(bundle["runtime_summary"]["dispatch_targets"]["Gemini"], 5)
+        self.assertNotIn("dispatch_targets", bundle["runtime_summary"])
         self.assertEqual(bundle["execution_summary"]["ready_now"], 0)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
         self.assertEqual(bundle["execution_summary"]["in_review"], 1)
