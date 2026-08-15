@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any, Callable, Collection, Mapping
 from urllib.error import HTTPError, URLError
@@ -84,8 +85,17 @@ def _required_text(source: Mapping[str, Any], key: str, label: str) -> str:
     return value
 
 
-def _fetch_json(url: str, timeout_seconds: float) -> Mapping[str, Any]:
-    request = Request(url, headers={"Accept": "application/json"}, method="GET")
+def _fetch_json(
+    url: str,
+    timeout_seconds: float,
+    *,
+    headers: Mapping[str, str] | None = None,
+) -> Mapping[str, Any]:
+    request = Request(
+        url,
+        headers={"Accept": "application/json", **dict(headers or {})},
+        method="GET",
+    )
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
             raw = response.read().decode("utf-8")
@@ -111,6 +121,26 @@ def _fetch_json(url: str, timeout_seconds: float) -> Mapping[str, Any]:
             f"authoritative read {url!r} must return a JSON object"
         )
     return payload
+
+
+def _deployment_request_headers() -> dict[str, str]:
+    token = (
+        os.getenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN")
+        or os.getenv("PANTHEON_DEPLOYMENT_AUTH_TOKEN")
+        or ""
+    ).strip()
+    tenant_id = os.getenv("PANTHEON_DEPLOYMENT_TENANT_ID", "").strip()
+    if bool(token) != bool(tenant_id):
+        raise DeployAuthorityUnavailableError(
+            "deployment authority token and tenant must be configured together"
+        )
+    if not token:
+        return {}
+    authorization = token if token.lower().startswith("bearer ") else f"Bearer {token}"
+    return {
+        "Authorization": authorization,
+        "X-Tenant-Id": tenant_id,
+    }
 
 
 def _parse_time(value: str, label: str) -> datetime:
@@ -201,6 +231,13 @@ def verify_deploy_authorities(
     )
 
     fetch = fetch_json or _fetch_json
+    deployment_fetch = fetch
+    if fetch_json is None:
+        deployment_headers = _deployment_request_headers()
+
+        def deployment_fetch(url: str, timeout: float) -> Mapping[str, Any]:
+            return _fetch_json(url, timeout, headers=deployment_headers)
+
     deployment_proof_url = (
         f"{deployment_url}/api/deployment/plans/{quote(plan_id, safe='')}"
     )
@@ -227,7 +264,7 @@ def verify_deploy_authorities(
     persona_binding_proof_url = (
         f"{capital_url}/api/bindings/{quote(persona_capital_binding_id, safe='')}"
     )
-    plan = fetch(deployment_proof_url, timeout_seconds)
+    plan = deployment_fetch(deployment_proof_url, timeout_seconds)
     registry_payload = fetch(registry_proof_url, timeout_seconds)
     approval = fetch(approval_proof_url, timeout_seconds)
     capital_pool = fetch(capital_pool_proof_url, timeout_seconds)

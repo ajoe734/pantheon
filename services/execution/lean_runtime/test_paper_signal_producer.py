@@ -227,8 +227,8 @@ class TestPaperSignalProducer(unittest.TestCase):
 
     @patch("urllib.request.urlopen")
     def test_fetch_eligible_paper_bindings(self, mock_urlopen) -> None:
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
+        desired_response = MagicMock()
+        desired_response.read.return_value = json.dumps({
             "bindings": [
                 {
                     "binding_id": "rb-1",
@@ -243,12 +243,37 @@ class TestPaperSignalProducer(unittest.TestCase):
             ],
             "excluded": []
         }).encode("utf-8")
-        mock_urlopen.return_value.__enter__.return_value = mock_response
+        detail_response = MagicMock()
+        detail_response.read.return_value = json.dumps(
+            {
+                "artifact_id": "artifact-1",
+                "artifact_version": "1.0.0",
+                "binding_id": "rb-1",
+                "metadata": {"strategy_id": "strategy-1"},
+                "status": "active",
+            }
+        ).encode("utf-8")
+        desired_context = MagicMock()
+        desired_context.__enter__.return_value = desired_response
+        detail_context = MagicMock()
+        detail_context.__enter__.return_value = detail_response
+        mock_urlopen.side_effect = [desired_context, detail_context]
 
         bindings = fetch_eligible_paper_bindings("http://runtime-manager:8081", "token-xyz")
         self.assertEqual(len(bindings), 1)
         self.assertEqual(bindings[0]["binding_id"], "rb-1")
         self.assertEqual(bindings[0]["status"], "active")
+        self.assertEqual(bindings[0]["metadata"]["strategy_id"], "strategy-1")
+        self.assertEqual(mock_urlopen.call_count, 2)
+        detail_request = mock_urlopen.call_args_list[1].args[0]
+        self.assertEqual(
+            detail_request.full_url,
+            "http://runtime-manager:8081/api/runtime-bindings/rb-1",
+        )
+        self.assertEqual(
+            detail_request.get_header("Authorization"),
+            "Bearer token-xyz",
+        )
 
     def test_health_requires_recent_paper_only_tick(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

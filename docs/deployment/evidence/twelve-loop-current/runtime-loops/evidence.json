@@ -1,0 +1,222 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "L12-CURRENT-E2E-RUNTIME-20260814",
+    "title": "Add deployed E2E for Deployment Capital Telemetry Evolution and BFF health",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "base_branch": "dev",
+    "base_sha": "3a7a4714ce9fe24a36414a7644158ad28b4938b0",
+    "validated_head_sha": "64e516f748afdd436e39ab284d4426ad7901bcf2",
+    "task_branch": "task/L12-CURRENT-E2E-RUNTIME-20260814",
+    "review_file": "docs/deployment/evidence/twelve-loop-current/runtime-loops/evidence.json",
+    "overall_admission": "ready_for_independent_review",
+    "product_loop_closure_claimed": true,
+    "claim_boundary": "isolated current Compose deployment; no hosted or production claim"
+  },
+  "scope": {
+    "owned_layer": "Deployed loops 8-12 proof, exact deployment-authority authentication, full RuntimeBinding hydration for artifact signals, and incident-to-telemetry canonical read authority.",
+    "not_changing": "Live-capital authority, live broker or Shioaji sandbox gates, runtime strategy semantics, automatic repair dispatch, hosted deployment, or canonical task state files.",
+    "implementation_files": [
+      "docker-compose.yml",
+      "services/runtime-manager/deploy_authority.py",
+      "services/runtime-manager/test_deploy_authority.py",
+      "services/execution/lean_runtime/paper_signal_producer.py",
+      "services/execution/lean_runtime/test_paper_signal_producer.py",
+      "services/incident/reference_validation.py",
+      "services/incident/test_reference_validation.py",
+      "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py"
+    ],
+    "evidence_files": [
+      "docs/deployment/evidence/twelve-loop-current/runtime-loops/README.md",
+      "docs/deployment/evidence/twelve-loop-current/runtime-loops/run-report.json",
+      "docs/deployment/evidence/twelve-loop-current/runtime-loops/run-report.sha256",
+      "docs/deployment/evidence/twelve-loop-current/runtime-loops/evidence.json",
+      "docs/deployment/evidence/twelve-loop-current/runtime-loops/evidence.sha256"
+    ]
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "742d5233b37aeff61ab9adec8f7a2b3ab9e4e6fe",
+        "subject": "L12-CURRENT-E2E-RUNTIME-20260814: anchor deployed suite"
+      },
+      {
+        "sha": "4789c1ec26b56b20f69441f3f058fd362cc0f2cb",
+        "subject": "L12-CURRENT-E2E-RUNTIME-20260814: anchor deploy auth handoff"
+      },
+      {
+        "sha": "a4def2a87477474472d4473dd90a914f4c44a3d7",
+        "subject": "L12-CURRENT-E2E-RUNTIME-20260814: anchor authority client"
+      },
+      {
+        "sha": "38ca4f88e21a885b60f5b2563b49829783d3c47d",
+        "subject": "L12-CURRENT-E2E-RUNTIME-20260814: anchor producer hydration"
+      },
+      {
+        "sha": "41be7be59178c25f1428334fad74bf906b1b5bd3",
+        "subject": "L12-CURRENT-E2E-RUNTIME-20260814: anchor incident auth"
+      },
+      {
+        "sha": "6da8ca5528324493fbc5b3f501a3976095588281",
+        "subject": "L12-CURRENT-E2E-RUNTIME-20260814: anchor runtime proof"
+      },
+      {
+        "sha": "64e516f748afdd436e39ab284d4426ad7901bcf2",
+        "subject": "L12-CURRENT-E2E-RUNTIME-20260814: anchor recovery retry"
+      }
+    ],
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "conclusion": "pending_evidence_head_pr"
+      },
+      {
+        "workflow": "Canonical Review Gate",
+        "conclusion": "pending_independent_exact_head_review"
+      }
+    ]
+  },
+  "validation": {
+    "validated_at": "2026-08-15T06:44:12Z",
+    "commands": [
+      {
+        "command": "python -m pytest -q services/runtime-manager/test_deploy_authority.py",
+        "result": "pass",
+        "conclusion": "37 passed"
+      },
+      {
+        "command": "python -m pytest -q services/execution/lean_runtime/test_paper_signal_producer.py",
+        "result": "pass",
+        "conclusion": "9 passed"
+      },
+      {
+        "command": "python -m pytest -q services/incident/test_reference_validation.py services/incidents/test_main_routes.py",
+        "result": "pass",
+        "conclusion": "57 passed"
+      },
+      {
+        "command": "python -m pytest -q tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+        "result": "pass",
+        "conclusion": "7 skipped without explicit deployed opt-in"
+      },
+      {
+        "command": "DATABASE_URL=postgresql://pantheon_app:***@127.0.0.1:32432/pantheon scripts/db_migrate.sh",
+        "result": "pass",
+        "conclusion": "14 of 14 migrations passed against the isolated database"
+      },
+      {
+        "command": "PANTHEON_L12_DEPLOYED_E2E=1 PANTHEON_L12_EXPECTED_SHA=64e516f748afdd436e39ab284d4426ad7901bcf2 ... pytest -q tests/integration/l12/test_current_runtime_loops_deployed_e2e.py -vv",
+        "result": "pass",
+        "conclusion": "7 passed in 81.54 seconds"
+      }
+    ]
+  },
+  "deployed_observation": {
+    "environment": "unique isolated local Compose project l12currentruntimee2e",
+    "source_revision": "64e516f748afdd436e39ab284d4426ad7901bcf2",
+    "run_report": "docs/deployment/evidence/twelve-loop-current/runtime-loops/run-report.json",
+    "status": "passed",
+    "started_at": "2026-08-15T06:42:51Z",
+    "ended_at": "2026-08-15T06:44:12Z",
+    "identity": {
+      "oci_revision_services": [
+        "broker",
+        "deployment",
+        "deployment-outbox-consumer",
+        "operator-bff",
+        "paper-fleet-reconciler",
+        "paper-signal-producer",
+        "runtime-manager",
+        "telemetry"
+      ],
+      "compose_source_head_services": [
+        "evolution",
+        "incidents",
+        "reconciliation-drift-svc"
+      ]
+    },
+    "loop_chain": {
+      "deployment_plan_id": "plan-l12-positive-2949cd0ce5",
+      "runtime_binding_id": "rb-00d6aa0ed31a4ef8abd5cfca851bb897",
+      "paper_fill_event_id": "167e2244-a952-407b-a199-f03c3cf33c8c",
+      "drift_report_id": "drift-167e2244-a952-407b-a199-f03c3cf33c8c",
+      "incident_id": "inc-drift-515631c13f5c",
+      "evolution_decision_id": "evo-sweep-inc-drift-515631c13f5c"
+    },
+    "negative_cases": {
+      "missing_artifact_checksum": "binding degraded and binding-scoped queue depth remained zero",
+      "typed_worker_failure": "fleet target unhealthy while Runtime Manager target stayed ready; worker recovered"
+    },
+    "cleanup": {
+      "isolated_project_removed": true,
+      "isolated_containers_removed": true,
+      "isolated_volumes_removed": true,
+      "other_compose_projects_mutated": false
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "All five loop cases consume one approved artifact and preserve its exact RuntimeBinding identity.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-current/runtime-loops/run-report.json#cases",
+        "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py::RuntimeChain"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "A deployed paper runtime event produces DriftReport and IncidentCase readback, then a proposal-only EvolutionDecision.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-current/runtime-loops/run-report.json#cases/loop_10_telemetry_reconciliation_incident",
+        "docs/deployment/evidence/twelve-loop-current/runtime-loops/run-report.json#cases/loop_11_evolution_decision"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "BFF typed health distinguishes fleet worker failure from Runtime Manager API readiness.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-current/runtime-loops/run-report.json#cases/loop_12_bff_typed_health",
+        "docs/deployment/evidence/twelve-loop-current/runtime-loops/run-report.json#cases/negative_typed_worker_failure"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "A binding whose artifact projection lacks checksum fails closed without producing a signal.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-current/runtime-loops/run-report.json#cases/negative_missing_artifact_checksum"
+      ]
+    }
+  ],
+  "security_and_safety": {
+    "no_live_capital": true,
+    "no_real_order": true,
+    "live_broker_enabled": false,
+    "shioaji_sandbox_enabled": false,
+    "no_production_or_hosted_mutation": true,
+    "no_secret_in_report": true,
+    "no_automatic_repair": true,
+    "independent_review": "pending Antigravity exact-head review"
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "manifest_checksum_file": "docs/deployment/evidence/twelve-loop-current/runtime-loops/evidence.sha256",
+    "run_report_checksum": "29624603f088ee456de29f8739d5eeb0caaa4d727c7be7f5f44b0b0260566360",
+    "test_module_checksum": "40e3ddd7a4e8622919b10fe8e172de68a68420a83a459c479bfa848aa82d1a38",
+    "self_hashing": false
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-15T06:44:12Z",
+      "sha": "64e516f748afdd436e39ab284d4426ad7901bcf2",
+      "status": "ready_for_independent_review"
+    }
+  ]
+}

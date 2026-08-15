@@ -93,6 +93,8 @@ class _TelemetryLineageLookup:
         base_url: Optional[str] = None,
         timeout_seconds: Optional[int] = None,
         corpus_path: Optional[str | Path] = None,
+        service_token: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> None:
         env_base_url = (
             base_url
@@ -100,6 +102,17 @@ class _TelemetryLineageLookup:
             or os.getenv("PANTHEON_TELEMETRY_BASE_URL", "")
         ).strip().rstrip("/")
         self._base_url = env_base_url
+        self._service_token = (
+            service_token
+            if service_token is not None
+            else os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "")
+        ).strip()
+        self._tenant_id = (
+            tenant_id
+            if tenant_id is not None
+            else os.getenv("PANTHEON_TENANT_ID", "")
+            or os.getenv("PANTHEON_BFF_TENANT_ID", "")
+        ).strip()
         self._timeout_seconds = int(
             timeout_seconds
             if timeout_seconds is not None
@@ -127,9 +140,14 @@ class _TelemetryLineageLookup:
 
     def _query_http(self, query_family: str, **params: str) -> Optional[dict[str, Any]]:
         route = self._route_for(query_family, **params)
+        headers = {"Accept": "application/json"}
+        if self._service_token:
+            headers["Authorization"] = f"Bearer {self._service_token}"
+        if self._tenant_id:
+            headers["X-Tenant-Id"] = self._tenant_id
         req = urllib.request.Request(
             f"{self._base_url}{route}",
-            headers={"Accept": "application/json"},
+            headers=headers,
             method="GET",
         )
         try:

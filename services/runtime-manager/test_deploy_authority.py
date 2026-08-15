@@ -448,6 +448,53 @@ def test_http_authority_failures_distinguish_retryable_from_rejected(
     assert type(raised.value) is expected_type
 
 
+def test_deployment_authority_read_sends_service_token_and_tenant(monkeypatch):
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"plan_id":"plan-authenticated"}'
+
+    def read(request, *, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "runtime:service")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-runtime")
+    monkeypatch.setattr(authority, "urlopen", read)
+
+    headers = authority._deployment_request_headers()
+    result = authority._fetch_json(
+        "http://deployment:8095/api/deployment/plans/plan-authenticated",
+        2.0,
+        headers=headers,
+    )
+
+    assert result == {"plan_id": "plan-authenticated"}
+    assert captured["timeout"] == 2.0
+    assert captured["request"].get_header("Authorization") == "Bearer runtime:service"
+    assert captured["request"].get_header("X-tenant-id") == "tenant-runtime"
+
+
+def test_deployment_authority_auth_configuration_fails_closed_when_partial(monkeypatch):
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "runtime:service")
+    monkeypatch.delenv("PANTHEON_DEPLOYMENT_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("PANTHEON_DEPLOYMENT_TENANT_ID", raising=False)
+
+    with pytest.raises(
+        authority.DeployAuthorityUnavailableError,
+        match="token and tenant must be configured together",
+    ):
+        authority._deployment_request_headers()
+
+
 def test_missing_authority_urls_fail_closed():
     request, *_ = _facts()
 
