@@ -35,6 +35,7 @@ TERMINAL_OUTCOME_COMPLETED = "completed"
 TERMINAL_OUTCOME_SUPERSEDED = "superseded"
 DEFAULT_RECENT_LIMIT = 20
 ARCHIVE_CORRECTION_VERSION = 1
+STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 2
 WORKER_WORKTREE_PREFIX = "/tmp/pantheon-worker-worktrees/pantheon"
 
 
@@ -655,23 +656,87 @@ def _is_status_archive_snapshot_valid(snapshot: Any) -> bool:
     return True
 
 
-def validate_status_archive_outbox(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {
+def status_archive_outbox_payload(
+    snapshots: list[dict[str, Any]],
+    *,
+    archive_root: str,
+) -> dict[str, Any]:
+    """Build the sole durable archive-outbox contract.
+
+    ``ai_status`` owns lifecycle mutation; this module owns the shared archive
+    snapshot/index contract that both the writer and index rebuilder need.
+    """
+
+    snapshot_sha256s = {
+        str(snapshot["task_id"]): _canonical_json_sha256(snapshot)
+        for snapshot in snapshots
+    }
+    binding = {
+        "archive_root": archive_root,
+        "snapshots": snapshots,
+        "snapshot_sha256s": snapshot_sha256s,
+    }
+    return {
+        "schema_version": STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION,
+        "transaction_id": "ai-status-archive-tx-" + _canonical_json_sha256(binding),
+        **binding,
+    }
+
+
+def validate_status_archive_outbox(
+    value: Any,
+    *,
+    expected_archive_root: str | None = None,
+) -> dict[str, Any]:
+    """Validate a receipt-bearing archive intent, upgrading v1 in flight."""
+
+    if not isinstance(value, dict):
+        raise RuntimeError("status archive outbox schema is not exact")
+    if set(value) == {"schema_version", "transaction_id", "snapshots"} and value.get(
+        "schema_version"
+    ) == 1:
+        snapshots = value.get("snapshots")
+        if not isinstance(snapshots, list):
+            raise RuntimeError("legacy status archive outbox is invalid")
+        root = expected_archive_root or str(ARCHIVE_DIR.expanduser().resolve())
+        return status_archive_outbox_payload(deepcopy(snapshots), archive_root=root)
+
+    required = {
         "schema_version",
         "transaction_id",
+        "archive_root",
         "snapshots",
-    }:
+        "snapshot_sha256s",
+    }
+    if set(value) != required:
         raise RuntimeError("status archive outbox schema is not exact")
     snapshots = value.get("snapshots")
+    snapshot_sha256s = value.get("snapshot_sha256s")
     if (
-        value.get("schema_version") != 1
+        value.get("schema_version") != STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION
+        or not isinstance(value.get("archive_root"), str)
+        or not value["archive_root"].strip()
+        or expected_archive_root is not None
+        and value["archive_root"] != expected_archive_root
         or not isinstance(snapshots, list)
         or not snapshots
         or any(not _is_status_archive_snapshot_valid(snapshot) for snapshot in snapshots)
         or len({str(snapshot["task_id"]) for snapshot in snapshots}) != len(snapshots)
+        or not isinstance(snapshot_sha256s, dict)
     ):
         raise RuntimeError("status archive outbox contract is invalid")
-    expected_id = "ai-status-archive-tx-" + _canonical_json_sha256(snapshots)
+    expected_digests = {
+        str(snapshot["task_id"]): _canonical_json_sha256(snapshot)
+        for snapshot in snapshots
+    }
+    if snapshot_sha256s != expected_digests:
+        raise RuntimeError("status archive outbox snapshot digest mismatch")
+    binding = {
+        "archive_root": value["archive_root"],
+        "snapshots": snapshots,
+        "snapshot_sha256s": snapshot_sha256s,
+    }
+    expected_id = "ai-status-archive-tx-" + _canonical_json_sha256(binding)
     if value.get("transaction_id") != expected_id:
         raise RuntimeError("status archive outbox digest mismatch")
     return value

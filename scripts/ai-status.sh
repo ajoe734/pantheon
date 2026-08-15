@@ -27,6 +27,8 @@ if [[ "$REPO_TASK_STATE_MODE" == "authoritative" ]]; then
     || fail_closed "PANTHEON_TASK_STATE_STORE_MODE=authoritative is required by the installed command runtime"
   [[ "${PANTHEON_TASK_STATE_EVENT_LOG:-}" = /* ]] \
     || fail_closed "PANTHEON_TASK_STATE_EVENT_LOG must be an absolute path in authoritative mode"
+  [[ -n "${PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON:-}" ]] \
+    || fail_closed "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON is required in authoritative mode"
 fi
 
 first_symlink_component() {

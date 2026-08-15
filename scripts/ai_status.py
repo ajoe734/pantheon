@@ -94,6 +94,7 @@ from rewrite.task_state_store import (
 from rewrite import task_machine
 from common import (
     ActivityAuditInvariantError,
+    CANONICAL_TASK_STATE_IDENTITY_ENV,
     DuplicateActivityJSONKeyError,
     WORKER_PROCESS_GENERATION_PREFIX,
     WORKER_PROCESS_GENERATION_SCHEMA_VERSION,
@@ -111,6 +112,7 @@ from common import (
     read_regular_file_bytes,
     strict_activity_json_loads,
     utc_now as iso_now,
+    canonical_task_state_identity_from_environment,
     validate_status_command_runtime,
     validated_activity_event_digests_unlocked,
     worker_process_generation_id,
@@ -129,8 +131,10 @@ LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1
 STATUS_ACTIVITY_OUTBOX_KEY = "status_activity_outbox"
 STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
 STATUS_ARCHIVE_OUTBOX_KEY = "status_archive_outbox"
-STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 1
+STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = task_archive_module.STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION
 TERMINAL_FACTS_KEY = "terminal_facts"
+ARCHIVE_RECEIPTS_KEY = "archive_receipts"
+ARCHIVE_RECEIPT_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
 SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
@@ -159,6 +163,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "supersede",
         "sync",
         "archive_correct_review_file",
+        "archive_reconcile",
         "record_terminal_fact",
     }
 )
@@ -1441,6 +1446,9 @@ def default_state() -> dict[str, Any]:
         # after the richer, human-facing archive snapshot has been written.
         # The archive is deliberately not consulted by scheduling.
         TERMINAL_FACTS_KEY: {},
+        # A receipt is created only after the rich archive snapshot and index
+        # have both been read back from this canonical root.
+        ARCHIVE_RECEIPTS_KEY: {},
     }
 
 
@@ -1460,6 +1468,17 @@ def _validate_task_state_projection_binding(store_mode: str) -> None:
         raise RuntimeError(
             f"{store_mode} task-state projection binding mismatch: "
             f"STATUS_FILE {actual} != STATUS_ROOT projection {expected}"
+        )
+    # Unit-level callers may bind temporary module globals without a process
+    # status root. Real commands always require PANTHEON_STATUS_ROOT before
+    # they enter this path, and therefore must carry the issued identity.
+    if store_mode == "authoritative" and (
+        str(os.environ.get(STATUS_ROOT_ENV) or "").strip()
+        or str(os.environ.get(CANONICAL_TASK_STATE_IDENTITY_ENV) or "").strip()
+    ):
+        canonical_task_state_identity_from_environment(
+            status_root=STATUS_ROOT,
+            event_log=_task_state_event_path(store_mode),
         )
 
 
@@ -1490,6 +1509,7 @@ def load_state() -> dict[str, Any]:
         sync_canonical_document_metadata(state)
         normalize_state_agents(state)
         normalize_terminal_facts(state)
+        normalize_archive_receipts(state)
         return state
     try:
         payload = read_regular_file_bytes(
@@ -1504,6 +1524,7 @@ def load_state() -> dict[str, Any]:
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     normalize_terminal_facts(state)
+    normalize_archive_receipts(state)
     return state
 
 
@@ -1893,6 +1914,119 @@ def has_terminal_fact(state: Mapping[str, Any], task_id: str) -> bool:
     return isinstance(facts, Mapping) and str(task_id or "").strip() in facts
 
 
+def normalize_archive_receipts(state: dict[str, Any]) -> None:
+    """Validate archive write receipts retained with terminal facts.
+
+    Receipts are part of the canonical task projection, not a second archive
+    index.  They prove which root was read back before an outbox was cleared;
+    an old terminal fact is valid without one and is explicitly reported as
+    needing reconciliation.
+    """
+
+    raw = state.get(ARCHIVE_RECEIPTS_KEY)
+    if raw in (None, {}):
+        state[ARCHIVE_RECEIPTS_KEY] = {}
+        return
+    if not isinstance(raw, dict):
+        raise RuntimeError("archive_receipts must be an object")
+    facts = state.get(TERMINAL_FACTS_KEY)
+    if not isinstance(facts, Mapping):
+        raise RuntimeError("archive_receipts requires terminal_facts")
+    normalized: dict[str, dict[str, str | int]] = {}
+    required = {
+        "schema_version",
+        "archive_root",
+        "snapshot_sha256",
+        "index_sha256",
+        "recorded_at",
+    }
+    for raw_task_id, raw_receipt in raw.items():
+        task_id = str(raw_task_id or "").strip()
+        if (
+            not task_id
+            or task_id not in facts
+            or not isinstance(raw_receipt, Mapping)
+            or set(raw_receipt) != required
+            or raw_receipt.get("schema_version") != ARCHIVE_RECEIPT_SCHEMA_VERSION
+        ):
+            raise RuntimeError("archive_receipts contains an invalid entry")
+        archive_root = str(raw_receipt.get("archive_root") or "").strip()
+        snapshot_sha256 = str(raw_receipt.get("snapshot_sha256") or "").strip()
+        index_sha256 = str(raw_receipt.get("index_sha256") or "").strip()
+        recorded_at = str(raw_receipt.get("recorded_at") or "").strip()
+        if (
+            not archive_root
+            or not recorded_at
+            or not re.fullmatch(r"[0-9a-f]{64}", snapshot_sha256)
+            or not re.fullmatch(r"[0-9a-f]{64}", index_sha256)
+        ):
+            raise RuntimeError("archive_receipt fields are invalid")
+        normalized[task_id] = {
+            "schema_version": ARCHIVE_RECEIPT_SCHEMA_VERSION,
+            "archive_root": archive_root,
+            "snapshot_sha256": snapshot_sha256,
+            "index_sha256": index_sha256,
+            "recorded_at": recorded_at,
+        }
+    state[ARCHIVE_RECEIPTS_KEY] = normalized
+
+
+def _archive_root_identity() -> str:
+    assert_task_archive_root_binding()
+    return str(task_archive_module.ARCHIVE_DIR.expanduser().resolve())
+
+
+def _archive_receipt_for_snapshot(
+    *,
+    archive_root: str,
+    snapshot: Mapping[str, Any],
+    index: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": ARCHIVE_RECEIPT_SCHEMA_VERSION,
+        "archive_root": archive_root,
+        "snapshot_sha256": _canonical_json_sha256(snapshot),
+        "index_sha256": _canonical_json_sha256(index),
+        "recorded_at": iso_now(),
+    }
+
+
+def terminal_archive_projection(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return terminal facts with their current archive availability.
+
+    The rich archive may be lost or pending reconciliation without invalidating
+    the compact dependency fact.  Exposing that distinction prevents a
+    completed task from becoming an "Unknown task" in management views.
+    """
+
+    normalize_terminal_facts(state)
+    normalize_archive_receipts(state)
+    facts = state[TERMINAL_FACTS_KEY]
+    receipts = state[ARCHIVE_RECEIPTS_KEY]
+    rows: list[dict[str, Any]] = []
+    for task_id in sorted(facts):
+        snapshot = archived_task_snapshot(task_id)
+        receipt = receipts.get(task_id)
+        snapshot_sha256 = (
+            _canonical_json_sha256(snapshot) if isinstance(snapshot, Mapping) else None
+        )
+        receipt_matches = bool(
+            isinstance(receipt, Mapping)
+            and snapshot_sha256
+            and receipt.get("archive_root") == _archive_root_identity()
+            and receipt.get("snapshot_sha256") == snapshot_sha256
+        )
+        rows.append(
+            {
+                "task_id": task_id,
+                **deepcopy(facts[task_id]),
+                "archive_missing": snapshot is None,
+                "archive_receipt_valid": receipt_matches,
+            }
+        )
+    return rows
+
+
 def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any], *, archived_at: str | None = None) -> dict[str, Any]:
     assert_task_archive_root_binding()
     task_id = str(task.get("id") or "").strip()
@@ -1943,7 +2077,12 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
     snapshots: list[dict[str, Any]] = []
     if pending not in (None, {}, []):
-        snapshots = list(_validate_status_archive_outbox(pending)["snapshots"])
+        snapshots = list(
+            task_archive_module.validate_status_archive_outbox(
+                pending,
+                expected_archive_root=_archive_root_identity(),
+            )["snapshots"]
+        )
     same_task = [
         item
         for item in snapshots
@@ -1956,12 +2095,10 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
         raise RuntimeError(f"archive outbox payload conflict: {task_id}")
     if not same_task:
         snapshots.append(snapshot)
-    state[STATUS_ARCHIVE_OUTBOX_KEY] = {
-        "schema_version": STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION,
-        "transaction_id": "ai-status-archive-tx-"
-        + _canonical_json_sha256(snapshots),
-        "snapshots": snapshots,
-    }
+    state[STATUS_ARCHIVE_OUTBOX_KEY] = task_archive_module.status_archive_outbox_payload(
+        snapshots,
+        archive_root=_archive_root_identity(),
+    )
     # Retain the terminal row and its references until the archive and rebuilt
     # index are durable. Recovery removes them in the same final status write
     # that clears this outbox, so readers never observe a vanished task.
@@ -2093,29 +2230,6 @@ def _active_activity_event_digests_unlocked(
     return result
 
 
-def _validate_status_archive_outbox(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {
-        "schema_version",
-        "transaction_id",
-        "snapshots",
-    }:
-        raise RuntimeError("status archive outbox schema is not exact")
-    snapshots = value.get("snapshots")
-    if (
-        value.get("schema_version") != STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION
-        or not isinstance(snapshots, list)
-        or not snapshots
-        or any(not _status_archive_snapshot_is_valid(snapshot) for snapshot in snapshots)
-        or len({str(snapshot["task_id"]) for snapshot in snapshots})
-        != len(snapshots)
-    ):
-        raise RuntimeError("status archive outbox contract is invalid")
-    expected_id = "ai-status-archive-tx-" + _canonical_json_sha256(snapshots)
-    if value.get("transaction_id") != expected_id:
-        raise RuntimeError("status archive outbox digest mismatch")
-    return value
-
-
 def _status_archive_snapshot_is_valid(snapshot: Any) -> bool:
     if not isinstance(snapshot, dict) or set(snapshot) != {
         "version",
@@ -2161,20 +2275,33 @@ def recover_status_archive_outbox(state: dict[str, Any]) -> bool:
     if pending in (None, {}, []):
         return False
     assert_task_archive_root_binding()
-    pending = _validate_status_archive_outbox(pending)
+    pending = task_archive_module.validate_status_archive_outbox(
+        pending,
+        expected_archive_root=_archive_root_identity(),
+    )
+    state[STATUS_ARCHIVE_OUTBOX_KEY] = pending
     for expected in pending["snapshots"]:
-        actual = archive_task_snapshot(
-            deepcopy(expected["task"]),
-            handoffs=deepcopy(expected["handoffs"]),
-            blockers=deepcopy(expected["blockers"]),
-            archived_at=str(expected["archived_at"]),
-            recent_limit=task_archive_recent_limit(),
-        )
-        if _canonical_json_sha256(actual) != _canonical_json_sha256(expected):
+        # A receipt repair may intentionally queue an already-existing rich
+        # snapshot (including a governed correction context). Do not rebuild a
+        # second shape from its task row; verify the exact stored bytes first.
+        actual = archived_task_snapshot(str(expected["task_id"]))
+        if actual is None:
+            actual = archive_task_snapshot(
+                deepcopy(expected["task"]),
+                handoffs=deepcopy(expected["handoffs"]),
+                blockers=deepcopy(expected["blockers"]),
+                archived_at=str(expected["archived_at"]),
+                recent_limit=task_archive_recent_limit(),
+            )
+        actual_digest = _canonical_json_sha256(actual)
+        if actual_digest != pending["snapshot_sha256s"][expected["task_id"]]:
             raise RuntimeError(
                 f"status archive outbox readback mismatch: {expected['task_id']}"
             )
-    rebuild_archive_index(recent_limit=task_archive_recent_limit())
+    rebuilt_index = rebuild_archive_index(recent_limit=task_archive_recent_limit())
+    readback_index = load_archive_index()
+    if _canonical_json_sha256(readback_index) != _canonical_json_sha256(rebuilt_index):
+        raise RuntimeError("status archive index readback mismatch")
     _status_archive_fault("rebuild")
     archived_ids = {str(item["task_id"]) for item in pending["snapshots"]}
     active_by_id = {
@@ -2200,6 +2327,16 @@ def recover_status_archive_outbox(state: dict[str, Any]) -> bool:
             state,
             expected["task"],
             recorded_at=str(expected["archived_at"]),
+        )
+    normalize_archive_receipts(state)
+    archive_root = str(pending["archive_root"])
+    receipts = state[ARCHIVE_RECEIPTS_KEY]
+    for expected in pending["snapshots"]:
+        task_id = str(expected["task_id"])
+        receipts[task_id] = _archive_receipt_for_snapshot(
+            archive_root=archive_root,
+            snapshot=expected,
+            index=readback_index,
         )
     state["tasks"] = [
         task
@@ -4277,6 +4414,7 @@ def build_dashboard_bundle(
     task_map = resolver.active_task_map()
     archive_index = load_archive_index()
     archive_counts = archive_index.get("counts", {}) if isinstance(archive_index.get("counts"), dict) else {}
+    terminal_projection = terminal_archive_projection(state)
     recent_terminal_tasks = orchestrator.get("recent_terminal_tasks")
     if not isinstance(recent_terminal_tasks, list):
         recent_terminal_tasks = recent_terminal_summaries(limit=task_archive_recent_limit())
@@ -4311,6 +4449,13 @@ def build_dashboard_bundle(
     review_approved = 0
     done = int(archive_counts.get("completed") or 0)
     superseded = int(archive_counts.get(TASK_TERMINAL_SUPERSEDED) or 0)
+    for terminal in terminal_projection:
+        if not terminal["archive_missing"]:
+            continue
+        if terminal["terminal_outcome"] == TASK_TERMINAL_SUPERSEDED:
+            superseded += 1
+        else:
+            done += 1
     for task in state.get("tasks", []):
         status = str(task.get("status") or "").lower()
         if status == "todo" and all(dependency_is_satisfied(resolver, dep_id) for dep_id in task.get("depends_on", [])):
@@ -4454,6 +4599,10 @@ def build_dashboard_bundle(
             "recent_terminal_ids": archive_index.get("recent_terminal_ids") or [],
             "recent_terminal_tasks": recent_terminal_tasks,
             "bff_consol_archived_ids": bff_consol_archived_ids,
+            "terminal_facts": terminal_projection,
+            "archive_missing_task_ids": [
+                item["task_id"] for item in terminal_projection if item["archive_missing"]
+            ],
         },
         "dispatch_policy": dispatch_policy,
         "worker_task_links": worker_task_links,
@@ -4541,6 +4690,7 @@ def sync_all(
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     normalize_terminal_facts(state)
+    normalize_archive_receipts(state)
     validate_state(state)
     normalize_handoffs(state)
     recompute_agents(state)
@@ -6982,6 +7132,123 @@ def command_record_terminal_fact(state: dict[str, Any], args: list[str]) -> None
                 **local_human_ops_audit_fields(),
             }
         )
+
+
+def _read_reconciliation_snapshot(source_tasks_dir: Path, task_id: str) -> dict[str, Any] | None:
+    if Path(task_id).name != task_id or task_id in {".", ".."}:
+        raise SystemExit(f"Terminal fact has unsafe task id for archive reconciliation: {task_id}")
+    candidate = source_tasks_dir / f"{task_id}.json"
+    if not candidate.exists():
+        return None
+    if candidate.is_symlink() or not candidate.is_file():
+        raise SystemExit(f"Archive reconciliation source is not a regular file: {candidate}")
+    try:
+        snapshot = json.loads(task_archive_module.read_task_archive_file_safe(candidate))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Archive reconciliation source is unreadable: {candidate}: {exc}") from exc
+    try:
+        task_archive_module.validate_archive_snapshot(snapshot)
+    except RuntimeError as exc:
+        raise SystemExit(
+            f"Archive reconciliation source has an invalid snapshot: {candidate}: {exc}"
+        ) from exc
+    return snapshot
+
+
+def _snapshot_matches_terminal_fact(
+    snapshot: Mapping[str, Any],
+    fact: Mapping[str, Any],
+    *,
+    task_id: str,
+) -> bool:
+    task = snapshot.get("task")
+    if not isinstance(task, Mapping):
+        return False
+    return (
+        str(snapshot.get("task_id") or "") == task_id
+        and str(snapshot.get("terminal_outcome") or "")
+        == str(fact.get("terminal_outcome") or "")
+        and task_assignment_generation(task) == int(fact.get("generation") or 0)
+    )
+
+
+def command_archive_reconcile(state: dict[str, Any], args: list[str]) -> None:
+    """Reconcile rich snapshots only for already-canonical terminal facts.
+
+    This deliberately does not bulk-copy a former status root.  The current
+    TaskStore terminal facts select the only records that may be imported;
+    every selected source snapshot must match its fact exactly and enters via
+    the normal receipt-bearing archive outbox.
+    """
+
+    if current_actor() != "Human/Ops":
+        raise SystemExit("Only local Human/Ops may reconcile a terminal archive")
+    if len(args) != 1:
+        raise SystemExit("Usage: archive_reconcile <absolute-source-archive-tasks-dir>")
+    raw_source = Path(os.path.expanduser(str(args[0] or "").strip()))
+    if not raw_source.is_absolute():
+        raise SystemExit("Archive reconciliation source must be an absolute tasks directory")
+    symlink_component = first_symlink_component(raw_source)
+    if symlink_component is not None:
+        raise SystemExit(
+            f"Archive reconciliation source cannot contain a symlink component: {symlink_component}"
+        )
+    source_tasks_dir = raw_source.resolve()
+    canonical_tasks_dir = task_archive_module.ARCHIVE_TASKS_DIR.expanduser().resolve()
+    if source_tasks_dir == canonical_tasks_dir:
+        raise SystemExit("Archive reconciliation source must not be the canonical archive root")
+    if not source_tasks_dir.is_dir():
+        raise SystemExit(f"Archive reconciliation source directory is missing: {source_tasks_dir}")
+
+    normalize_terminal_facts(state)
+    normalize_archive_receipts(state)
+    snapshots: list[dict[str, Any]] = []
+    missing_source_ids: list[str] = []
+    existing_ids: list[str] = []
+    for task_id, fact in sorted(state[TERMINAL_FACTS_KEY].items()):
+        canonical_snapshot = archived_task_snapshot(task_id)
+        source_snapshot = _read_reconciliation_snapshot(source_tasks_dir, task_id)
+        if source_snapshot is not None and not _snapshot_matches_terminal_fact(
+            source_snapshot, fact, task_id=task_id
+        ):
+            raise SystemExit(
+                f"Archive reconciliation source conflicts with canonical terminal fact: {task_id}"
+            )
+        if canonical_snapshot is not None:
+            if source_snapshot is not None and (
+                _canonical_json_sha256(canonical_snapshot)
+                != _canonical_json_sha256(source_snapshot)
+            ):
+                raise SystemExit(
+                    f"Archive reconciliation source conflicts with canonical snapshot: {task_id}"
+                )
+            snapshots.append(canonical_snapshot)
+            existing_ids.append(task_id)
+        elif source_snapshot is not None:
+            snapshots.append(source_snapshot)
+        else:
+            missing_source_ids.append(task_id)
+
+    if snapshots:
+        state[STATUS_ARCHIVE_OUTBOX_KEY] = task_archive_module.status_archive_outbox_payload(
+            snapshots,
+            archive_root=_archive_root_identity(),
+        )
+    append_log(
+        {
+            "ts": iso_now(),
+            "agent": current_actor(),
+            "type": "terminal_archive_reconciled",
+            "message": "Reconciled canonical terminal archive snapshots from an explicitly selected former root.",
+            "source_archive_tasks_dir": str(source_tasks_dir),
+            "reconciled_task_ids": [str(snapshot["task_id"]) for snapshot in snapshots],
+            "existing_canonical_task_ids": existing_ids,
+            "missing_source_task_ids": missing_source_ids,
+            **local_human_ops_audit_fields(),
+        }
+    )
+
+
 def validate_archive_review_file_target(task_id: str, review_file: str) -> tuple[str, str]:
     normalized = task_archive_module.normalize_archive_review_file(review_file)
     candidate = ROOT / normalized
@@ -7342,7 +7609,9 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 1:
         raise SystemExit("Usage: show <task-id>")
     task_id = args[0]
-    active_task = get_task(state, task_id)
+    resolver = task_resolver(state)
+    source = resolver.source(task_id)
+    active_task = resolver.get(task_id) if source == "active" else None
     if active_task is not None:
         print(
             json.dumps(
@@ -7357,19 +7626,34 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
         return
 
     snapshot = archived_task_snapshot(task_id)
-    if snapshot is None:
-        raise SystemExit(f"Unknown task: {task_id}")
-    print(
-        json.dumps(
-            {
-                "source": "archive",
-                "snapshot_path": archive_display_path(archive_task_path(task_id)),
-                "snapshot": snapshot,
-            },
-            indent=2,
-            ensure_ascii=False,
+    if snapshot is not None:
+        print(
+            json.dumps(
+                {
+                    "source": "archive",
+                    "snapshot_path": archive_display_path(archive_task_path(task_id)),
+                    "snapshot": snapshot,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
         )
-    )
+        return
+    if source == "terminal_fact":
+        facts = state.get(TERMINAL_FACTS_KEY) or {}
+        print(
+            json.dumps(
+                {
+                    "source": "terminal_fact",
+                    "task": deepcopy(facts[task_id]),
+                    "archive_missing": True,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+    raise SystemExit(f"Unknown task: {task_id}")
 
 
 def _emit_fail_closed(error: ActivityAuditInvariantError) -> None:
@@ -8060,6 +8344,7 @@ def main(argv: list[str]) -> int:
         "supersede": command_supersede,
         "approve": command_approve,
         "record_terminal_fact": command_record_terminal_fact,
+        "archive_reconcile": command_archive_reconcile,
         "archive_correct_review_file": command_archive_correct_review_file,
         "attach_proof_ownership": command_attach_proof_ownership,
         "sync": command_sync,
