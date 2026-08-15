@@ -1,25 +1,59 @@
 {
-  "task_id": "L12-MFC-R4-E2E-ACCEPT-001",
-  "status": "review",
-  "owner": "Antigravity2",
-  "reviewer": "Antigravity",
-  "summary": "Executed full compose-bound 12-loop acceptance matrix, correlated OODA chain, and Management API/error states against the integrated stack.",
-  "scope": [
-    "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/evidence/e2e-acceptance"
+  "schema_version": "pantheon.l12.legacy-retirement.review-evidence.v1",
+  "task_id": "L12-CURRENT-LEGACY-RETIRE-20260814",
+  "status": "ready_for_independent_review",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "repository": "ajoe734/pantheon",
+  "base_branch": "dev",
+  "authority": {
+    "product_closure_evidence": false,
+    "product_liveness_evidence": false,
+    "compatibility_gate": false,
+    "purpose": "Audit record for retirement of superseded and contradictory acceptance claims only."
+  },
+  "retired_executable_gates": [
+    {
+      "path": "scripts/verify_l12_minimum_functional_closure.py",
+      "state": "absent_from_dev",
+      "retirement_commit": "979ff05cdbff89f7eba3cd7e414fd0bb649ded78"
+    },
+    {
+      "path": "scripts/verify_product_v2_current_closure.py",
+      "state": "absent_from_dev",
+      "retirement_commit": "979ff05cdbff89f7eba3cd7e414fd0bb649ded78"
+    },
+    {
+      "path": "tests/integration/l12/test_verify_l12_harness.py",
+      "state": "absent_from_dev",
+      "retirement_commit": "979ff05cdbff89f7eba3cd7e414fd0bb649ded78"
+    }
   ],
-  "validation": [
-    "12/12 loop trigger-terminal-readback-receipt cases verified against compose stack",
-    "1 correlated full OODA chain verified across all 12 loops",
-    "12-row Management loop-inventory, loop-health, and error states (401/404) verified",
-    "Exact merged SHAs recorded: Pantheon ea23bb3b6, Execute-Plans 88b8a74e"
+  "removed_claim_artifacts": [
+    "12_loop_cases.json",
+    "ACCEPTANCE_REPORT.md",
+    "correlated_trace.json",
+    "l12_acceptance_report.json",
+    "l12_verifier_report.json",
+    "l12_verifier_report.md",
+    "management_acceptance_matrix.json"
   ],
-  "pantheon_commit_sha": "ea23bb3b622b816a0d0dc47ed09830ebc72c0171",
-  "execute_plans_commit_sha": "88b8a74e8cd1785f3ca144f4588a33f4506583e5",
-  "report_artifacts": [
-    "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/evidence/e2e-acceptance/ACCEPTANCE_REPORT.md",
-    "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/evidence/e2e-acceptance/l12_acceptance_report.json",
-    "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/evidence/e2e-acceptance/12_loop_cases.json",
-    "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/evidence/e2e-acceptance/correlated_trace.json",
-    "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/evidence/e2e-acceptance/management_acceptance_matrix.json"
+  "replacement_gate": {
+    "task_id": "L12-CURRENT-CROSS-LOOP-E2E-20260814",
+    "delivery_commit": "8cdf5a3be1cf8145d4036e94ff33d8ade1feaa4f",
+    "delivery_pr": "https://github.com/ajoe734/pantheon/pull/4932",
+    "merge_commit": "a70dc12cdda39b7ac52e0515e1fae119a1f72723",
+    "closeout_commit": "184f47438210bb458487df9f4666e40ae734bc5a",
+    "closeout_merge_commit": "66de924a8f8eb8b30e2837487ae80865e5d810a5",
+    "review_proof": "pantheon-review/approve/8cdf5a3be1cf8145d4036e94ff33d8ade1feaa4f",
+    "evidence": "docs/deployment/evidence/twelve-loop-current/cross-loop/evidence.json",
+    "review": "docs/deployment/evidence/twelve-loop-current/cross-loop/review.md",
+    "run_report": "docs/deployment/evidence/twelve-loop-current/cross-loop/run-report.json"
+  },
+  "validation_plan": [
+    "repository caller search reports no executable or CI caller for the retired gates",
+    "GitHub workflow scan reports no retired-gate or superseded-evidence caller",
+    "replacement deployed E2E suite remains syntactically valid and its reviewed run evidence remains present",
+    "git diff --check"
   ]
 }
