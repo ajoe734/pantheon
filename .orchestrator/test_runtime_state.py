@@ -243,9 +243,8 @@ class LoadRuntimeStateTests(unittest.TestCase):
             4.25,
         )
         self.assertEqual(state["supervisor"]["cycle_elapsed_seconds"], 4.25)
-        self.assertEqual(
-            state["supervisor"]["queue_to_start_latency_seconds"], 0.5
-        )
+        self.assertNotIn("queue_to_start", state["supervisor"]["last_cycle_metrics"])
+        self.assertNotIn("queue_to_start_latency_seconds", state["supervisor"])
         self.assertNotIn("unrecognized_field", state["supervisor"])
 
     def test_load_runtime_state_preserves_watchdog_safe_mode(self) -> None:
