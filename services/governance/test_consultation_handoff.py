@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
 from services.governance import main
 from services.governance.record_store import JsonGovernanceRecordStore
+
+
 TOKEN = "consultation-handoff-test-token"
 
 
@@ -127,4 +131,29 @@ def test_handoff_rejects_wrong_idempotency_binding(tmp_path, monkeypatch) -> Non
     )
 
     assert response.status_code == 422
+    assert store.list_all() == []
+
+
+def test_handoff_rejects_published_token_in_enforced_posture(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    client, store = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "PERSISTENCE_POSTURE",
+        SimpleNamespace(enforced=True),
+    )
+    monkeypatch.setenv(
+        "CONSULTATION_HANDOFF_TOKEN",
+        "replace-me-consultation-handoff-token",
+    )
+
+    response = client.post(
+        "/api/governance/consultation-handoffs",
+        json=_payload(),
+        headers=_headers(token="replace-me-consultation-handoff-token"),
+    )
+
+    assert response.status_code == 503
     assert store.list_all() == []

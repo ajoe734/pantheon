@@ -124,11 +124,10 @@ services:
       CONSULTATION_PROVIDER_URL: http://openclaw-gateway-adapter:8104/api/openclaw-adapter/consultation/contributions
       CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
       CONSULTATION_PROVIDER_SERVICE_ACTOR: consultation-workflow-executor
-      # The executor fails closed until the existing downstream owner exposes
-      # the acknowledgement contract required by workflow_executor.py. Keep
-      # this explicit (and empty by default) rather than naming a fake sink.
-      CONSULTATION_HANDOFF_SINK_URL: ${CONSULTATION_HANDOFF_SINK_URL:-}
-      CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-}
+      # Dedicated machine boundary: this token is not a BFF/Governance user
+      # JWT and grants only durable advisory-handoff intake.
+      CONSULTATION_HANDOFF_SINK_URL: http://governance:8082/api/governance/consultation-handoffs
+      CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-pantheon-local-consultation-handoff-token}
       CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE: /data/consultation/workflow-health.json
       CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS:-15}
     volumes:
@@ -139,6 +138,8 @@ services:
       postgres:
         condition: service_healthy
       openclaw-gateway-adapter:
+        condition: service_healthy
+      governance:
         condition: service_healthy
     healthcheck:
       test:
@@ -633,10 +634,15 @@ services:
       # authorizes, so they are interpolated from the same variables.
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       POLICY_LEARNING_SERVICE_TOKEN: ${POLICY_LEARNING_SERVICE_TOKEN:-pantheon-local-policy-learning-service}
+      # This second credential is intentionally distinct: it can drain the
+      # operator-BFF handoff store but cannot call policy-learning APIs.
+      AGORA_HANDOFF_SERVICE_TOKEN: ${AGORA_HANDOFF_SERVICE_TOKEN:-pantheon-local-agora-handoff-service-token}
       POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}
       POLICY_LEARNING_AGORA_USER_ID: ${POLICY_LEARNING_AGORA_USER_ID:-}
     depends_on:
       policy-learning-svc:
+        condition: service_healthy
+      operator-bff:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "services/policy-learning/scheduler_worker.py", "healthcheck"]
@@ -942,6 +948,9 @@ services:
       PANTHEON_GOVERNANCE_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
       PANTHEON_GOVERNANCE_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor}
       PANTHEON_GOVERNANCE_MFA_VALUES: ${PANTHEON_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}
+      CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-pantheon-local-consultation-handoff-token}
+      CONSULTATION_HANDOFF_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
+      CONSULTATION_HANDOFF_ALLOWED_TENANTS: ${CONSULTATION_HANDOFF_ALLOWED_TENANTS:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
@@ -1105,6 +1114,11 @@ services:
       AGORA_DATASET_STORE_BACKEND: ${AGORA_DATASET_STORE_BACKEND:-postgres}
       AGORA_DATASET_STORE_DSN: ${AGORA_DATASET_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
+      # Policy-learning consumes pending handoffs through a tenant-bound
+      # internal service route, never through browser BFF JWT/user identity.
+      AGORA_HANDOFF_SERVICE_TOKEN: ${AGORA_HANDOFF_SERVICE_TOKEN:-pantheon-local-agora-handoff-service-token}
+      AGORA_HANDOFF_ALLOWED_SERVICE_ACTOR: policy-learning-agora-handoff-drainer
+      AGORA_HANDOFF_SERVICE_TENANTS: ${AGORA_HANDOFF_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}}
       AGORA_GOVERNANCE_STORE_BACKEND: ${AGORA_GOVERNANCE_STORE_BACKEND:-postgres}
       AGORA_GOVERNANCE_STORE_DSN: ${AGORA_GOVERNANCE_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_GOVERNANCE_STORE_SCHEMA: ${AGORA_GOVERNANCE_STORE_SCHEMA:-agora}

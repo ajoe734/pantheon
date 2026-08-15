@@ -65,7 +65,7 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS" in owner["environment"]
 
 
-def test_teaching_worker_uses_verified_jwt_and_agora_uses_one_owner_url() -> None:
+def test_teaching_worker_and_agora_service_boundaries_are_exact() -> None:
     teaching_api = _env("training-session-svc")
     teaching_worker = _env("training-session-preview-worker")
     teaching_token = _default(teaching_worker["TRAINING_SESSION_WORKER_TOKEN"])
@@ -94,6 +94,19 @@ def test_teaching_worker_uses_verified_jwt_and_agora_uses_one_owner_url() -> Non
     assert _default(policy_worker["POLICY_LEARNING_SERVICE_TOKEN"]) == (
         "pantheon-local-policy-learning-service"
     )
+    bff = _env("operator-bff")
+    assert policy_worker["AGORA_HANDOFF_SERVICE_TOKEN"] == bff[
+        "AGORA_HANDOFF_SERVICE_TOKEN"
+    ]
+    assert policy_worker["AGORA_HANDOFF_SERVICE_TOKEN"] != policy_worker[
+        "POLICY_LEARNING_SERVICE_TOKEN"
+    ]
+    assert bff["AGORA_HANDOFF_ALLOWED_SERVICE_ACTOR"] == (
+        "policy-learning-agora-handoff-drainer"
+    )
+    assert bff["AGORA_HANDOFF_SERVICE_TENANTS"] == (
+        "${AGORA_HANDOFF_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}}"
+    )
     assert policy_worker["AGORA_BFF_URL"] == "http://operator-bff:8001"
     assert policy_worker["RESEARCH_SERVICE_URL"] == (
         "http://research-orchestrator-svc:8101"
@@ -121,15 +134,25 @@ def test_consultation_provider_and_functional_health_are_explicit() -> None:
     assert consultation["depends_on"]["openclaw-gateway-adapter"]["condition"] == (
         "service_healthy"
     )
+    governance_env = _env("governance")
+    assert consultation["depends_on"]["governance"]["condition"] == (
+        "service_healthy"
+    )
+    assert consultation_env["CONSULTATION_HANDOFF_SINK_URL"] == (
+        "http://governance:8082/api/governance/consultation-handoffs"
+    )
+    assert consultation_env["CONSULTATION_HANDOFF_TOKEN"] == governance_env[
+        "CONSULTATION_HANDOFF_TOKEN"
+    ]
+    assert governance_env["CONSULTATION_HANDOFF_ALLOWED_SERVICE_ACTOR"] == (
+        "consultation-workflow-executor"
+    )
 
     healthcheck = " ".join(consultation["healthcheck"]["test"])
     assert "CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE" in healthcheck
     assert "functional_health" in healthcheck
     assert "blocked_count" in healthcheck
     assert "dead_letter_count" in healthcheck
-    assert consultation_env["CONSULTATION_HANDOFF_SINK_URL"] == (
-        "${CONSULTATION_HANDOFF_SINK_URL:-}"
-    )
 
 
 def test_deployment_capital_and_evolution_use_component_contracts() -> None:

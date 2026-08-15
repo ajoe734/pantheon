@@ -609,7 +609,11 @@ def _authenticate_consultation_handoff_service(
         or not allowed_tenants
         or (
             PERSISTENCE_POSTURE.enforced
-            and expected_token == "pantheon-local-consultation-handoff-token"
+            and expected_token
+            in {
+                "pantheon-local-consultation-handoff-token",
+                "replace-me-consultation-handoff-token",
+            }
         )
     ):
         raise HTTPException(

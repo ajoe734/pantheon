@@ -201,6 +201,7 @@ def test_scheduler_health_requires_recent_successful_fail_closed_tick(
         "os.environ",
         {
             "POLICY_LEARNING_SERVICE_TOKEN": "test-token",
+            "AGORA_HANDOFF_SERVICE_TOKEN": "agora-test-token",
             "POLICY_LEARNING_AGORA_TENANT_ID": "tenant-health",
             "SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS": "1",
             "SHADOW_EVAL_SCHEDULER_MAX_TICKS": "1",
@@ -213,7 +214,7 @@ def test_scheduler_health_requires_recent_successful_fail_closed_tick(
         return_value={"status": "ok", "reset_count": 0},
     ), mock.patch.object(
         scheduler,
-        "run_tick",
+        "run_intake_cycle",
         return_value=success,
     ), mock.patch.object(
         scheduler,

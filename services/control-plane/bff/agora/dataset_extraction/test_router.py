@@ -651,6 +651,27 @@ class TestInternalTenantHandoffBoundary:
         )
         assert cross_tenant.status_code == 403
 
+    def test_service_boundary_rejects_published_token_in_staging(
+        self,
+        monkeypatch,
+    ) -> None:
+        client = _make_client(AgoraDatasetStore())
+        monkeypatch.setenv("PANTHEON_PERSISTENCE_POSTURE", "staging")
+        monkeypatch.setenv(
+            "AGORA_HANDOFF_SERVICE_TOKEN",
+            "replace-me-agora-handoff-service-token",
+        )
+        monkeypatch.setenv("AGORA_HANDOFF_SERVICE_TENANTS", "tenant-test")
+
+        response = client.get(
+            "/internal/agora/dataset-handoffs",
+            headers=_service_headers(
+                token="replace-me-agora-handoff-service-token",
+            ),
+        )
+
+        assert response.status_code == 503
+
 
 # ---------------------------------------------------------------------------
 # Privacy & Redaction in API

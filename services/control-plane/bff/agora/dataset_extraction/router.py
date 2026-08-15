@@ -53,6 +53,7 @@ _NO_RUNTIME_MUTATION_PROOF = "agora_evidence_extract_only"
 _STORE: Optional[AgoraDatasetStore] = None
 _SERVICE_ACTOR = "policy-learning-agora-handoff-drainer"
 _LOCAL_SERVICE_TOKEN = "pantheon-local-agora-handoff-service-token"
+_ENV_EXAMPLE_SERVICE_TOKEN = "replace-me-agora-handoff-service-token"
 
 
 def _default_store() -> AgoraDatasetStore:
@@ -173,7 +174,11 @@ def create_dataset_extraction_router(
             not expected_token
             or not expected_actor
             or not allowed_tenants
-            or (enforced and expected_token == _LOCAL_SERVICE_TOKEN)
+            or (
+                enforced
+                and expected_token
+                in {_LOCAL_SERVICE_TOKEN, _ENV_EXAMPLE_SERVICE_TOKEN}
+            )
         ):
             raise HTTPException(
                 status_code=503,
