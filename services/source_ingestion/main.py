@@ -1194,13 +1194,38 @@ def _latest_source_record_by_connector() -> dict[str, SourceRecord]:
 
 
 def _controller_connector_readbacks() -> list[dict[str, Any]]:
+    # Controller readback is fleet-wide. Point reads replay their JSONL stores
+    # for cross-process consistency, so doing them once per connector turns the
+    # endpoint into connector-count multiplied by journal-size work.
+    configs, fetch_states = connector_store.read_snapshot()
+    schedules = {
+        schedule.connector_id: schedule
+        for schedule in schedule_config_store.list_schedules()
+    }
+    snapshot = store.read_freshness_snapshot()
+    runs_by_connector: dict[str, list[Any]] = {}
+    for run in snapshot["runs"]:
+        connector_id = str(getattr(run, "connector_id", ""))
+        runs_by_connector.setdefault(connector_id, []).append(run)
+    receipts_by_connector: dict[str, list[IngestReceipt]] = {}
+    for receipt in snapshot["receipts"]:
+        receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
+    observed_at = datetime.now(timezone.utc)
     latest_by_connector = _latest_source_record_by_connector()
     readbacks: list[dict[str, Any]] = []
-    for config in sorted(connector_store.list_configs(), key=lambda item: item.connector.connector_id):
+    for config in sorted(configs, key=lambda item: item.connector.connector_id):
         connector = config.connector
         connector_id = connector.connector_id
-        schedule = schedule_config_store.get_schedule(connector_id)
-        freshness = _connector_freshness_summary(connector_id)
+        schedule = schedules.get(connector_id)
+        freshness = _connector_freshness_summary_from_snapshot(
+            connector_id,
+            connector_metadata=connector.metadata,
+            schedule=schedule,
+            watermark=snapshot["watermarks"].get(connector_id),
+            runs=runs_by_connector.get(connector_id, ()),
+            receipts=receipts_by_connector.get(connector_id, ()),
+            now=observed_at,
+        )
         health = source_health_store.get(connector_id)
         health_payload = health.to_dict() if health is not None else None
         if health_payload is not None:
@@ -1217,7 +1242,7 @@ def _controller_connector_readbacks() -> list[dict[str, Any]]:
                 "desired_state": dict(desired_state) if isinstance(desired_state, Mapping) else {},
                 "desired_state_sha256": reconciliation.get("desired_state_sha256"),
                 "schedule": schedule.to_dict() if schedule is not None else None,
-                "fetch_state": connector_store.get_fetch_state(connector_id),
+                "fetch_state": fetch_states[connector_id],
                 "freshness": freshness,
                 "latest_source_record": _source_record_readback(latest_by_connector.get(connector_id)),
                 "source_health": health_payload,

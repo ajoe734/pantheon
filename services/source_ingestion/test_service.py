@@ -178,6 +178,82 @@ def test_fleet_freshness_reads_each_store_once_at_production_scale(
     }
 
 
+def test_controller_readback_reads_each_store_once_at_production_scale(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, module = client
+    connector_count = 1_591
+    calls = {"configs": 0, "schedules": 0, "snapshot": 0, "records": 0}
+
+    class ConnectorStore:
+        def read_snapshot(self):
+            calls["configs"] += 1
+            configs = []
+            fetch_states = {}
+            for index in range(connector_count):
+                connector_id = f"connector-{index}"
+                connector = SimpleNamespace(
+                    connector_id=connector_id,
+                    metadata={},
+                    to_dict=lambda connector_id=connector_id: {
+                        "connector_id": connector_id
+                    },
+                )
+                configs.append(SimpleNamespace(connector=connector))
+                fetch_states[connector_id] = {
+                    "connector_id": connector_id,
+                    "attempts": 0,
+                }
+            return configs, fetch_states
+
+        def list_configs(self):
+            raise AssertionError("controller readback must not replay configs")
+
+        def get_config(self, _connector_id):
+            raise AssertionError("controller readback must not perform point config reads")
+
+        def get_fetch_state(self, _connector_id):
+            raise AssertionError("controller readback must not replay fetch state per connector")
+
+    class ScheduleStore:
+        def list_schedules(self):
+            calls["schedules"] += 1
+            return []
+
+        def get_schedule(self, _connector_id):
+            raise AssertionError("controller readback must not replay schedules per connector")
+
+    class IngestStore:
+        def read_freshness_snapshot(self):
+            calls["snapshot"] += 1
+            return {"runs": (), "receipts": (), "watermarks": {}}
+
+        def list_runs(self):
+            raise AssertionError("controller readback must not replay runs per connector")
+
+        def list_receipts(self, **_kwargs):
+            raise AssertionError("controller readback must not replay receipts per connector")
+
+        def get_watermark(self, _connector_id):
+            raise AssertionError("controller readback must not replay watermarks per connector")
+
+    class EvidenceRepository:
+        def list_source_records(self):
+            calls["records"] += 1
+            return []
+
+    monkeypatch.setattr(module, "connector_store", ConnectorStore())
+    monkeypatch.setattr(module, "schedule_config_store", ScheduleStore())
+    monkeypatch.setattr(module, "store", IngestStore())
+    monkeypatch.setattr(module, "evidence_repository", EvidenceRepository())
+
+    result = module._controller_connector_readbacks()
+
+    assert calls == {"configs": 1, "schedules": 1, "snapshot": 1, "records": 1}
+    assert len(result) == connector_count
+
+
 def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
     test_client, data_dir, module = client
     response = test_client.post(

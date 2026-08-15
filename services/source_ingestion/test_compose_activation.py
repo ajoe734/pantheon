@@ -68,18 +68,20 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
 
     controller = services["source-ingest-scheduler"]
     controller_env = _env_map(controller)
-    # Opt-in only and finite: third-party pulls cannot become an endless crawl.
-    assert controller["profiles"] == ["source-ingest-scheduler"]
-    assert controller["restart"] == "no"
+    # Default-on owner is an unbounded internal reconciler. Explicit bounded
+    # deployments override these four variables to enable finite provider pull.
+    assert "profiles" not in controller
+    assert controller["restart"] == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
     assert controller["command"] == ["python", "-m", "services.source_ingestion.controller_worker"]
     assert controller_env["SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
-    assert controller_env["SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL"] == "reconciled_live_proof"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_MODE"] == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL"] == "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-scheduled_tick}"
     assert controller_env["SOURCE_INGEST_CONTROLLER_STATE_PATH"] == "/data/source-ingest/controller_state.json"
     assert controller_env["SOURCE_INGEST_CONTROLLER_TOKEN_FILE"] == "/data/source-ingest/controller_token"
     assert controller_env["SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS"] == "${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}"
     assert controller_env["PANTHEON_TENANT_ID"] == "${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}"
     assert "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS" not in controller_env
-    assert controller_env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
     assert controller_env["SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"] == "${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}"
     assert controller_env["SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS"] == "${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}"
     assert controller_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"

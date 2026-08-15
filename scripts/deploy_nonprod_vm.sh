@@ -104,7 +104,23 @@ PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-
 DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}"
 SOURCE_REFRESH_EGRESS_MODE="${PANTHEON_EXTERNAL_EGRESS:-deny}"
 SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}"
-SOURCE_REFRESH_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
+SOURCE_REFRESH_SELECTED="false"
+case ",${DEV_COMPOSE_PROFILES}," in
+  *,source-ingest-scheduler,*) SOURCE_REFRESH_SELECTED="true" ;;
+esac
+if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
+  SOURCE_REFRESH_CONTROLLER_MODE="reconcile_and_pull"
+  SOURCE_REFRESH_TRUTH_LEVEL="reconciled_live_proof"
+  SOURCE_REFRESH_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
+  SOURCE_REFRESH_RESTART_POLICY="no"
+else
+  # The default owner is a durable internal reconciler. Provider egress stays
+  # available only through the explicit bounded profile above.
+  SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
+  SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"
+  SOURCE_REFRESH_MAX_TICKS="0"
+  SOURCE_REFRESH_RESTART_POLICY="unless-stopped"
+fi
 SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
 SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
 SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}"
@@ -445,7 +461,10 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_compose_profiles=${DEV_COMPOSE_PROFILES:-<default-safe>}"
   info "source_refresh_egress_mode=${SOURCE_REFRESH_EGRESS_MODE}"
   info "source_refresh_allowed_hosts_configured=$([[ -n "${SOURCE_REFRESH_ALLOWED_HOSTS}" ]] && echo true || echo false)"
+  info "source_refresh_controller_mode=${SOURCE_REFRESH_CONTROLLER_MODE}"
+  info "source_refresh_truth_level=${SOURCE_REFRESH_TRUTH_LEVEL}"
   info "source_refresh_max_ticks=${SOURCE_REFRESH_MAX_TICKS}"
+  info "source_refresh_restart_policy=${SOURCE_REFRESH_RESTART_POLICY}"
   info "source_refresh_max_concurrency=${SOURCE_REFRESH_MAX_CONCURRENCY}"
   info "source_refresh_max_records=${SOURCE_REFRESH_MAX_RECORDS}"
   info "management_ai_store_backend=${MANAGEMENT_AI_STORE_BACKEND:-}"
@@ -587,7 +606,10 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS=$(shell_quote "${SOURCE_REFRESH_EGRESS_MODE}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${SOURCE_REFRESH_ALLOWED_HOSTS}")"
+  command_prefix+=" SOURCE_INGEST_CONTROLLER_MODE=$(shell_quote "${SOURCE_REFRESH_CONTROLLER_MODE}")"
+  command_prefix+=" SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=$(shell_quote "${SOURCE_REFRESH_TRUTH_LEVEL}")"
   command_prefix+=" SOURCE_INGEST_CONTROLLER_MAX_TICKS=$(shell_quote "${SOURCE_REFRESH_MAX_TICKS}")"
+  command_prefix+=" SOURCE_INGEST_CONTROLLER_RESTART_POLICY=$(shell_quote "${SOURCE_REFRESH_RESTART_POLICY}")"
   command_prefix+=" SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=$(shell_quote "${SOURCE_REFRESH_MAX_CONCURRENCY}")"
   command_prefix+=" SOURCE_INGEST_MAX_RECORDS=$(shell_quote "${SOURCE_REFRESH_MAX_RECORDS}")"
   command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_REFRESH_CONNECTOR_ID}")"
@@ -634,9 +656,23 @@ validate_source_refresh_profile() {
       || error "external egress must remain deny when source-ingest-scheduler is not selected"
     [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
       || error "external host allowlist requires the bounded source-ingest-scheduler profile"
+    [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
+      || error "default source-ingest owner must use reconcile_only mode"
+    [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
+      || error "default source-ingest owner must use scheduled_tick truth"
+    [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0" ]] \
+      || error "default source-ingest owner must remain unbounded"
+    [[ "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "unless-stopped" ]] \
+      || error "default source-ingest owner must use unless-stopped restart policy"
     return 0
   fi
 
+  [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_and_pull" ]] \
+    || error "bounded source refresh requires reconcile_and_pull mode"
+  [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "reconciled_live_proof" ]] \
+    || error "bounded source refresh requires reconciled_live_proof truth"
+  [[ "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "no" ]] \
+    || error "bounded source refresh must not restart after its finite tick budget"
   [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" ]] \
     || error "source-ingest-scheduler requires PANTHEON_EXTERNAL_EGRESS=allowlist"
   [[ -n "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
@@ -1987,7 +2023,10 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
     PANTHEON_EXTERNAL_EGRESS="${PANTHEON_EXTERNAL_EGRESS:-deny}" \
     PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" \
-    SOURCE_INGEST_CONTROLLER_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}" \
+    SOURCE_INGEST_CONTROLLER_MODE="${SOURCE_INGEST_CONTROLLER_MODE}" \
+    SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL}" \
+    SOURCE_INGEST_CONTROLLER_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS}" \
+    SOURCE_INGEST_CONTROLLER_RESTART_POLICY="${SOURCE_INGEST_CONTROLLER_RESTART_POLICY}" \
     SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}" \
     SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}" \
     SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}" \
