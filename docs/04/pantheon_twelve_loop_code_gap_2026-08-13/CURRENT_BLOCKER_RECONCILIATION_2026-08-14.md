@@ -107,6 +107,21 @@ canonical approve；獨立重驗結果為 Consultation `63 passed`、OpenClaw ad
 `L12-CURRENT-CONSULTATION-WIRING-20260814-merged-closeout.md`；該檔合併 `dev` 後只走
 官方 `reconcile_merged_done`，不以 reassign、repair task 或第二個產品 PR 繞過。
 
+## Twelve-loop gap review merged-closeout evidence
+
+PR #4889 的 exact head `a9926d8f1828dfc737bb63f7b5178d4791afdcb1` 已完成獨立
+Claude review，並以 squash commit `899d83a849879e70e676f65adcf45b5a924614bb`
+合併至 `dev`。以下 metadata 固定該次已核准 delivery 的 task identity；這份 docs-only
+evidence 合併後只供 Human/Ops 執行 governed `reconcile_merged_done`，不得用來重開產品
+scope、修改 supervisor，或取代新的 exact-head 文件審查。
+
+# Task Brief: OPS-DOC-L12-CODE-GAP-20260814
+- Owner: Codex
+- Reviewer: Claude
+- Status: review_approved
+- Repository: ajoe734/pantheon
+- Delivery Commit: 899d83a849879e70e676f65adcf45b5a924614bb
+
 ## Out of scope
 
 - supervisor lifecycle／review dedupe 修復
