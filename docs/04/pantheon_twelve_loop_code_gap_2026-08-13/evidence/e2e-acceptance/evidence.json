@@ -50,10 +50,30 @@
     "review": "docs/deployment/evidence/twelve-loop-current/cross-loop/review.md",
     "run_report": "docs/deployment/evidence/twelve-loop-current/cross-loop/run-report.json"
   },
-  "validation_plan": [
-    "repository caller search reports no executable or CI caller for the retired gates",
-    "GitHub workflow scan reports no retired-gate or superseded-evidence caller",
-    "replacement deployed E2E suite remains syntactically valid and its reviewed run evidence remains present",
-    "git diff --check"
+  "validation": [
+    {
+      "command": "rg retired names and superseded evidence path across .github scripts services tests integrations",
+      "result": "pass: zero CI or production callers"
+    },
+    {
+      "command": "python -m py_compile tests/integration/l12/test_current_cross_loop_deployed_e2e.py",
+      "result": "pass"
+    },
+    {
+      "command": "python -m pytest -q tests/integration/l12/test_current_cross_loop_deployed_e2e.py",
+      "result": "5 skipped by the explicit deployed-environment guard; this worker received no deployed URL, token, or input variables"
+    },
+    {
+      "command": "jq assertions over docs/deployment/evidence/twelve-loop-current/cross-loop/run-report.json",
+      "result": "pass: independently reviewed deployed run remains status=passed with five cases, 16 HTTP boundaries, and live_capital_enabled=false"
+    },
+    {
+      "command": "git ancestry checks for retirement, replacement delivery, and replacement closeout merges",
+      "result": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "result": "pass"
+    }
   ]
 }
