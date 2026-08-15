@@ -158,7 +158,6 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "reconcile_merged_done",
         "supersede",
         "sync",
-        "archive_migrate",
         "archive_correct_review_file",
         "record_terminal_fact",
     }
@@ -1894,38 +1893,6 @@ def has_terminal_fact(state: Mapping[str, Any], task_id: str) -> bool:
     return isinstance(facts, Mapping) and str(task_id or "").strip() in facts
 
 
-def _queue_status_archive_snapshot(
-    state: dict[str, Any],
-    snapshot: dict[str, Any],
-) -> None:
-    """Queue one validated rich snapshot in the canonical archive outbox."""
-
-    snapshot = deepcopy(_validate_status_archive_snapshot(snapshot))
-    task_id = str(snapshot["task_id"])
-    pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
-    snapshots: list[dict[str, Any]] = []
-    if pending not in (None, {}, []):
-        snapshots = list(_validate_status_archive_outbox(pending)["snapshots"])
-    same_task = [
-        item
-        for item in snapshots
-        if str(item.get("task_id") or "") == task_id
-    ]
-    if same_task and any(
-        _canonical_json_sha256(item) != _canonical_json_sha256(snapshot)
-        for item in same_task
-    ):
-        raise RuntimeError(f"archive outbox payload conflict: {task_id}")
-    if not same_task:
-        snapshots.append(snapshot)
-    state[STATUS_ARCHIVE_OUTBOX_KEY] = {
-        "schema_version": STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION,
-        "transaction_id": "ai-status-archive-tx-"
-        + _canonical_json_sha256(snapshots),
-        "snapshots": snapshots,
-    }
-
-
 def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any], *, archived_at: str | None = None) -> dict[str, Any]:
     assert_task_archive_root_binding()
     task_id = str(task.get("id") or "").strip()
@@ -1973,170 +1940,32 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
     # terminal row.
     record_terminal_fact(state, task, recorded_at=str(snapshot["archived_at"]))
 
-    _queue_status_archive_snapshot(state, snapshot)
+    pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
+    snapshots: list[dict[str, Any]] = []
+    if pending not in (None, {}, []):
+        snapshots = list(_validate_status_archive_outbox(pending)["snapshots"])
+    same_task = [
+        item
+        for item in snapshots
+        if str(item.get("task_id") or "") == task_id
+    ]
+    if same_task and any(
+        _canonical_json_sha256(item) != _canonical_json_sha256(snapshot)
+        for item in same_task
+    ):
+        raise RuntimeError(f"archive outbox payload conflict: {task_id}")
+    if not same_task:
+        snapshots.append(snapshot)
+    state[STATUS_ARCHIVE_OUTBOX_KEY] = {
+        "schema_version": STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION,
+        "transaction_id": "ai-status-archive-tx-"
+        + _canonical_json_sha256(snapshots),
+        "snapshots": snapshots,
+    }
     # Retain the terminal row and its references until the archive and rebuilt
     # index are durable. Recovery removes them in the same final status write
     # that clears this outbox, so readers never observe a vanished task.
     return snapshot
-
-
-
-def archive_terminal_tasks_in_state(state: dict[str, Any], *, archived_at: str | None = None) -> list[str]:
-    archived_ids: list[str] = []
-    for task in list(state.get("tasks", [])):
-        if not is_terminal_task(task):
-            continue
-        snapshot = archive_terminal_task_from_state(state, task, archived_at=archived_at)
-        archived_ids.append(str(snapshot.get("task_id") or task.get("id") or ""))
-    return [task_id for task_id in archived_ids if task_id]
-
-
-def _validated_legacy_archive_tasks_dir(raw_path: str) -> Path:
-    candidate = Path(os.path.expanduser(str(raw_path or "").strip()))
-    if not candidate.is_absolute():
-        raise SystemExit("Legacy archive tasks directory must be an absolute path")
-    symlink_component = first_symlink_component(candidate)
-    if symlink_component is not None:
-        raise SystemExit(
-            "Legacy archive tasks directory cannot include a symlink component: "
-            f"{symlink_component}"
-        )
-    try:
-        resolved = candidate.resolve(strict=True)
-    except FileNotFoundError as exc:
-        raise SystemExit(
-            f"Legacy archive tasks directory does not exist: {candidate}"
-        ) from exc
-    if not resolved.is_dir():
-        raise SystemExit(
-            f"Legacy archive tasks directory is not a directory: {resolved}"
-        )
-    return resolved
-
-
-def _legacy_archive_snapshot(
-    task_id: str,
-    archive_tasks_dir: Path,
-) -> dict[str, Any] | None:
-    """Read and normalize one explicitly selected legacy archive snapshot."""
-
-    path = task_archive_module.archive_task_path_in_dir(task_id, archive_tasks_dir)
-    try:
-        payload = task_archive_module.read_task_archive_file_safe(path)
-    except FileNotFoundError:
-        return None
-    try:
-        source = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"legacy archive snapshot is invalid JSON: {task_id}"
-        ) from exc
-    task_archive_module.validate_archive_snapshot(
-        source,
-        filename_task_id=task_id,
-        outbox_snapshots={},
-    )
-    source_task = task_archive_module.task_from_archive_snapshot(source)
-    if not isinstance(source_task, dict):
-        raise RuntimeError(f"legacy archive snapshot has no task: {task_id}")
-    outcome = str(
-        source.get("terminal_outcome")
-        or source_task.get("terminal_outcome")
-        or "completed"
-    ).strip().lower()
-    task = deepcopy(source_task)
-    task["id"] = task_id
-    task["status"] = "done"
-    task["terminal_outcome"] = outcome
-    handoffs = source.get("handoffs", [])
-    blockers = source.get("blockers", [])
-    if not isinstance(handoffs, list) or not isinstance(blockers, list):
-        raise RuntimeError(
-            f"legacy archive snapshot has invalid related records: {task_id}"
-        )
-    snapshot = {
-        "version": 1,
-        "task_id": task_id,
-        "archived_at": str(source.get("archived_at") or "").strip(),
-        "terminal_status": "done",
-        "terminal_outcome": outcome,
-        "task": task,
-        "handoffs": deepcopy(handoffs),
-        "blockers": deepcopy(blockers),
-    }
-    return deepcopy(_validate_status_archive_snapshot(snapshot))
-
-
-def backfill_dependency_terminal_facts_from_archive(
-    state: dict[str, Any],
-    *,
-    legacy_archive_tasks_dir: Path | None = None,
-) -> list[str]:
-    """Restore only archived facts that active dependency edges require.
-
-    Terminal facts became the V2 scheduler's sole dependency authority.  A
-    cutover from a legacy projection can already have durable, validated task
-    archives while its new ``terminal_facts`` map is empty.  Scanning every
-    historical archive would inflate canonical state with unrelated history,
-    so the explicit Human/Ops archive migration backfills only missing IDs
-    referenced by currently active tasks.
-    """
-
-    normalize_terminal_facts(state)
-    active_tasks = [
-        task for task in state.get("tasks", []) if isinstance(task, Mapping)
-    ]
-    active_ids = {
-        str(task.get("id") or "").strip()
-        for task in active_tasks
-        if str(task.get("id") or "").strip()
-    }
-    facts = state[TERMINAL_FACTS_KEY]
-    dependency_ids = sorted(
-        {
-            str(dependency_id or "").strip()
-            for task in active_tasks
-            for dependency_id in (task.get("depends_on", []) or [])
-            if str(dependency_id or "").strip()
-        }
-        - active_ids
-        - set(facts)
-    )
-
-    backfilled: list[str] = []
-    for dependency_id in dependency_ids:
-        snapshot = archived_task_snapshot(dependency_id)
-        imported_legacy = False
-        if snapshot is None and legacy_archive_tasks_dir is not None:
-            snapshot = _legacy_archive_snapshot(
-                dependency_id,
-                legacy_archive_tasks_dir,
-            )
-            imported_legacy = snapshot is not None
-        if snapshot is None:
-            continue
-        archived_task = snapshot.get("task")
-        if not isinstance(archived_task, Mapping):
-            raise RuntimeError(
-                f"archived dependency snapshot has no task: {dependency_id}"
-            )
-        candidate = deepcopy(dict(archived_task))
-        candidate["id"] = dependency_id
-        candidate["status"] = "done"
-        candidate["terminal_outcome"] = snapshot["terminal_outcome"]
-        record_terminal_fact(
-            state,
-            candidate,
-            recorded_at=str(snapshot["archived_at"]),
-        )
-        if imported_legacy:
-            # Consolidate the rich audit record under the same current archive
-            # authority as the fact. Recovery durably writes this snapshot
-            # before the migration transaction removes the outbox.
-            _queue_status_archive_snapshot(state, snapshot)
-        backfilled.append(dependency_id)
-    return backfilled
-
 
 
 def _canonical_json_sha256(value: Any) -> str:
@@ -7105,42 +6934,6 @@ def command_sync(state: dict[str, Any], _args: list[str]) -> None:
 
 
 
-
-def command_archive_migrate(state: dict[str, Any], args: list[str]) -> None:
-    if len(args) > 1:
-        raise SystemExit(
-            "Usage: archive_migrate [absolute-legacy-archive-tasks-dir]"
-        )
-    legacy_archive_tasks_dir = (
-        _validated_legacy_archive_tasks_dir(args[0]) if args else None
-    )
-    archived_at = iso_now()
-    archived_ids = archive_terminal_tasks_in_state(state, archived_at=archived_at)
-    backfilled_dependency_ids = backfill_dependency_terminal_facts_from_archive(
-        state,
-        legacy_archive_tasks_dir=legacy_archive_tasks_dir,
-    )
-    append_log(
-        {
-            "ts": archived_at,
-            "agent": current_actor(),
-            "type": "archive_migrate",
-            "message": (
-                f"Archived {len(archived_ids)} terminal tasks from ai-status.json "
-                f"and backfilled {len(backfilled_dependency_ids)} active dependency facts."
-            ),
-            "task_ids": archived_ids,
-            "backfilled_dependency_ids": backfilled_dependency_ids,
-            "legacy_archive_tasks_dir": (
-                str(legacy_archive_tasks_dir)
-                if legacy_archive_tasks_dir is not None
-                else None
-            ),
-        }
-    )
-
-
-
 def command_record_terminal_fact(state: dict[str, Any], args: list[str]) -> None:
     """Record one verified historical terminal dependency without archive lookup.
 
@@ -8266,7 +8059,6 @@ def main(argv: list[str]) -> int:
         "reconcile_merged_done": command_reconcile_merged_done,
         "supersede": command_supersede,
         "approve": command_approve,
-        "archive_migrate": command_archive_migrate,
         "record_terminal_fact": command_record_terminal_fact,
         "archive_correct_review_file": command_archive_correct_review_file,
         "attach_proof_ownership": command_attach_proof_ownership,
