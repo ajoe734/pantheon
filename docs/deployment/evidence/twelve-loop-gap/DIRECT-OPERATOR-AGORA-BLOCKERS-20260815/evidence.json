@@ -1,0 +1,324 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "DIRECT-OPERATOR-AGORA-BLOCKERS-20260815 cross-loop component review gate.",
+    "note": "Owner evidence for the Consultation acknowledgement sink, tenant-scoped Agora handoff authority, and fail-closed policy-learning consumer.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/DIRECT-OPERATOR-AGORA-BLOCKERS-20260815/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "The independent reviewer must bind this manifest to the final evidence-bearing PR head before approval; no owner evidence mutation is allowed after approval.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-15T04:38:41Z",
+    "evidence_cut_semantics": "Owner validation of implementation head 726ea620f661887390668f665ced2b064b7a004a for PR #4922; the reviewer must use the final evidence-bearing PR head for the exact-head verdict.",
+    "id": "DIRECT-OPERATOR-AGORA-BLOCKERS-20260815",
+    "overall_admission": "ready_for_independent_review",
+    "owner": "Codex",
+    "phase": "direct-operator-component-repair",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/DIRECT-OPERATOR-AGORA-BLOCKERS-20260815/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev integration",
+    "target_maturity": "component_verified",
+    "task_branch": "task/DIRECT-OPERATOR-AGORA-BLOCKERS-20260815",
+    "title": "Repair Consultation and Agora cross-loop authorities"
+  },
+  "authorities": {
+    "actual_state": [
+      "Governance durable Consultation handoff acknowledgement store",
+      "Agora BFF tenant-scoped handoff lease and acknowledgement routes",
+      "Policy-learning Agora handoff drainer and scheduler health"
+    ],
+    "desired_state": [
+      "ConsultGateHandoff exact durable acknowledgement",
+      "Tenant-scoped Agora handoff consumption with distinct service authority",
+      "Fail-closed policy-learning intake and degraded-health projection"
+    ],
+    "task_packet": "Canonical task DIRECT-OPERATOR-AGORA-BLOCKERS-20260815 and PR #4922"
+  },
+  "scope": {
+    "authoritative_write_owner": "Governance owns Consultation acknowledgements; Agora BFF owns handoff leases and acknowledgements; policy-learning owns consumption state and health.",
+    "composes_with": [
+      "L12-CURRENT-COMPOSE-INTEGRATION-20260814 for root service activation and credentials",
+      "current Consultation and Agora component deliveries",
+      "downstream end-to-end dev integration evidence"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/DIRECT-OPERATOR-AGORA-BLOCKERS-20260815/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/DIRECT-OPERATOR-AGORA-BLOCKERS-20260815/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      ".env.example",
+      "services/control-plane/bff/agora/dataset_extraction/extractor.py",
+      "services/control-plane/bff/agora/dataset_extraction/router.py",
+      "services/control-plane/bff/agora/dataset_extraction/test_router.py",
+      "services/governance/main.py",
+      "services/governance/test_consultation_handoff.py",
+      "services/policy-learning/agora_handoff_drainer.py",
+      "services/policy-learning/scheduler_worker.py",
+      "services/policy-learning/tests/test_agora_handoff_drainer.py",
+      "services/policy-learning/tests/test_current_agora_handoff_cutover.py",
+      "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py"
+    ],
+    "not_changing": "Root docker-compose.yml, compose acceptance ownership, canonical task-state tooling, hosted deployment, broker execution, or live-capital authority.",
+    "owned_layer": "Durable and tenant-scoped Consultation-to-Governance and Agora-to-policy-learning authority contracts, exact acknowledgements, and failure health."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "task_branch",
+        "sha": "852e7ad1dbd5939a597b8e90eda76e5b2ba57ed2",
+        "subject": "DIRECT-OPERATOR-AGORA-BLOCKERS-20260815: repair cross-loop authorities"
+      },
+      {
+        "delivery_state": "task_branch",
+        "sha": "f02b4b3672daf504bab3a7b62b0995a99839d721",
+        "subject": "DIRECT-OPERATOR-AGORA-BLOCKERS-20260815: close compose authority wiring"
+      },
+      {
+        "delivery_state": "task_branch",
+        "sha": "b28ac8194b6fb171a2b5dc28d876b576669c36c6",
+        "subject": "DIRECT-OPERATOR-AGORA-BLOCKERS-20260815: harden handoff health"
+      },
+      {
+        "delivery_state": "task_branch_scope_reconciliation",
+        "sha": "726ea620f661887390668f665ced2b064b7a004a",
+        "subject": "DIRECT-OPERATOR-AGORA-BLOCKERS-20260815: merge latest dev"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "726ea620f661887390668f665ced2b064b7a004a",
+      "number": 4922,
+      "url": "https://github.com/ajoe734/pantheon/pull/4922"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "726ea620f661887390668f665ced2b064b7a004a",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "pending_final_evidence_head",
+        "event": "pull_request",
+        "workflow": "Canonical Review Gate"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/policy-learning/tests/test_agora_handoff_drainer.py services/policy-learning/tests/test_current_agora_handoff_cutover.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py",
+        "conclusion": "26 passed",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/agora/dataset_extraction/test_router.py",
+        "conclusion": "34 passed",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/governance/test_consultation_handoff.py",
+        "conclusion": "4 passed",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m py_compile <11 task Python files>",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "conclusion": "exit 0",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-08-15T04:38:41Z",
+    "validated_base_sha": "a3490842f1d8cd0308b4a317d6599d0786c338ee",
+    "validated_head_sha": "726ea620f661887390668f665ced2b064b7a004a"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "Root activation belongs to L12-CURRENT-COMPOSE-INTEGRATION-20260814."
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "status": "component_verified",
+      "reason": "Focused ASGI and worker tests verified distinct service tokens, exact actor identities, tenant isolation, lease ownership, and acknowledgement identity."
+    },
+    "public_bff_base_url": "not_applicable_internal_component",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "This repair does not claim hosted publication before compose integration."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "component_readback": "Local HTTP and worker tests exercised the durable Governance sink, Agora lease/ack routes, and policy-learning intake with fail-closed health.",
+      "hosted_activation_owner": "L12-CURRENT-COMPOSE-INTEGRATION-20260814 and downstream E2E delivery",
+      "status": "component_verified_hosted_pending"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Governance replays the same acknowledgement for an identical handoff and rejects an idempotency-key payload mismatch.",
+        "Policy-learning recovers a failed acknowledgement without creating a duplicate candidate."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Unknown or unauthorized handoff queues fail closed before consumption.",
+        "Partial acknowledgement and stale successful ticks project degraded scheduler health.",
+        "Repository-published staging or production placeholder tokens are rejected under enforced posture."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Governance requires the exact handoff id, tenant, service actor, and idempotency binding.",
+        "Policy-learning accepts success only when the acknowledgement names the exact leased handoff ids."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Durable Governance and Agora stores preserve acknowledgement and lease state across client reconstruction.",
+        "Policy-learning replays an unacknowledged lease in a later intake window without duplicating its candidate."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Operators can pause the consumer while unacknowledged leases remain visible and health remains degraded.",
+        "Root compose activation remains outside this PR, so component rollback does not require a production or live-capital mutation."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the task worktree and local test clients were exercised; no deployed environment was mutated.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "The task changes internal handoff authorities only and grants no broker, deployment, or capital authority.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Agora BFF and policy-learning credentials are distinct; routes require exact configured service actor and bearer identities.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "Tenant identity is required on handoff creation, lease, acknowledgement, and downstream intake boundaries.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner evidence is ready; independent Claude exact-head review remains required before merge.",
+      "status": "pending_independent_review"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "PR #4922",
+        "validation.commands"
+      ],
+      "id": "AC1",
+      "statement": "PR #4922 final evidence-bearing exact head passes required checks.",
+      "status": "pending_evidence_head_ci"
+    },
+    {
+      "evidence_refs": [
+        "task.reviewer",
+        "security_and_safety.two_person_approval"
+      ],
+      "id": "AC2",
+      "statement": "Independent Claude exact-head review publishes canonical proof and binds this review_file.",
+      "status": "pending_independent_review"
+    },
+    {
+      "evidence_refs": [
+        "implementation_delivery.pull_request"
+      ],
+      "id": "AC3",
+      "statement": "The reviewed PR merges to dev before the compose task resumes.",
+      "status": "pending_merge"
+    }
+  ],
+  "residual_risks": {
+    "compose_activation": {
+      "blocking_for_this_task": false,
+      "containment": "Component endpoints fail closed without configured downstream URLs and distinct credentials.",
+      "description": "Root compose activation and its structural acceptance remain owned by L12-CURRENT-COMPOSE-INTEGRATION-20260814.",
+      "expiry": "When the compose integration task merges and passes its own review.",
+      "owner": "L12-CURRENT-COMPOSE-INTEGRATION-20260814",
+      "recheck_trigger": "Before dev compose activation.",
+      "severity": "medium"
+    },
+    "hosted_readback": {
+      "blocking_for_this_task": false,
+      "containment": "This evidence claims component maturity only.",
+      "description": "A hosted Consultation-to-Governance-to-Agora-to-policy-learning readback is not part of this blocker repair.",
+      "expiry": "When downstream E2E integration is delivered.",
+      "owner": "downstream E2E delivery",
+      "recheck_trigger": "After compose integration deploys the repaired contracts.",
+      "severity": "informational"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/DIRECT-OPERATOR-AGORA-BLOCKERS-20260815/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/DIRECT-OPERATOR-AGORA-BLOCKERS-20260815/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/DIRECT-OPERATOR-AGORA-BLOCKERS-20260815/evidence.json",
+    "normalized_hosted_readback": {
+      "component_http_boundaries_verified": true,
+      "hosted_activation_claimed": false,
+      "independent_review_recorded": false
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "implementation_tree_diff_20260815": "57e440cc21bf23237e7ffe936a0ca60dfc888ffc9ee9517d577587bb41ba1986"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-08-15T04:38:41Z",
+      "reference": "task/DIRECT-OPERATOR-AGORA-BLOCKERS-20260815",
+      "review_file": "docs/deployment/evidence/twelve-loop-gap/DIRECT-OPERATOR-AGORA-BLOCKERS-20260815/evidence.json",
+      "reviewer": "Claude",
+      "sequence": 1,
+      "sha": "726ea620f661887390668f665ced2b064b7a004a",
+      "status": "ready_for_review"
+    }
+  ]
+}

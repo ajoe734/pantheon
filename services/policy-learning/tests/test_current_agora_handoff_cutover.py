@@ -99,6 +99,7 @@ class _FakeAgoraBff:
     def __init__(self) -> None:
         self.handoffs: dict[str, dict[str, Any]] = {}
         self.ack_attempts: list[str] = []
+        self.calls: list[dict[str, Any]] = []
         self.fail_ack_once_for: set[str] = set()
 
     def add(self, *, handoff_id: str, dataset_version_id: str, tenant_id: str) -> None:
@@ -109,13 +110,22 @@ class _FakeAgoraBff:
             "acknowledged": False,
         }
 
-    def handle(self, method: str, path: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        if method == "GET" and path.endswith("/handoffs"):
+    def handle(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any],
+        headers: dict[str, str],
+    ) -> tuple[int, dict[str, Any]]:
+        self.calls.append(
+            {"method": method, "path": path, "headers": dict(headers)}
+        )
+        if method == "GET" and path.endswith("/dataset-handoffs"):
             items = list(self.handoffs.values())
             return 200, {"status": "success", "items": items, "total": len(items)}
 
-        if method == "POST" and path.endswith("/ack") and "/handoffs/" in path:
-            handoff_id = path.split("/handoffs/", 1)[1].rsplit("/ack", 1)[0]
+        if method == "POST" and path.endswith("/ack") and "/dataset-handoffs/" in path:
+            handoff_id = path.split("/dataset-handoffs/", 1)[1].rsplit("/ack", 1)[0]
             self.ack_attempts.append(handoff_id)
             if handoff_id in self.fail_ack_once_for:
                 self.fail_ack_once_for.discard(handoff_id)
@@ -166,7 +176,12 @@ class _CombinedTransport:
         body = json.loads(request.data.decode("utf-8")) if request.data else {}
 
         if full_url.startswith(self.agora_url):
-            status, payload = self.fake_bff.handle(request.get_method(), path, body)
+            status, payload = self.fake_bff.handle(
+                request.get_method(),
+                path,
+                body,
+                dict(request.header_items()),
+            )
             if status >= 400:
                 raise urllib.error.HTTPError(
                     full_url, status, "error", {}, io.BytesIO(json.dumps(payload).encode("utf-8"))
@@ -275,6 +290,7 @@ def test_intake_claims_and_acks_handoff_exactly_once_across_two_windows() -> Non
 
         env = {
             "POLICY_LEARNING_SERVICE_TOKEN": "l12-imit-001-test-service-token",
+            "AGORA_HANDOFF_SERVICE_TOKEN": "l12-agora-handoff-test-token",
             "POLICY_LEARNING_AGORA_TENANT_ID": "tenant-a",
             "POLICY_LEARNING_API_URL": "http://policy-learning-svc.test",
             "AGORA_BFF_URL": agora_url,
@@ -290,6 +306,14 @@ def test_intake_claims_and_acks_handoff_exactly_once_across_two_windows() -> Non
         # Claimed and acknowledged exactly once even though two windows ran.
         assert fake_bff.ack_attempts == ["h-window-001"]
         assert fake_bff.handoffs["h-window-001"]["acknowledged"] is True
+        for call in fake_bff.calls:
+            headers = {key.lower(): value for key, value in call["headers"].items()}
+            assert headers["authorization"] == (
+                "Bearer l12-agora-handoff-test-token"
+            )
+            assert headers["x-pantheon-service-actor"] == (
+                "policy-learning-agora-handoff-drainer"
+            )
 
         handoff_posts = [
             call
@@ -347,7 +371,8 @@ def test_intake_replay_after_failed_ack_does_not_duplicate_candidate() -> None:
                 agora_url=agora_url,
                 policy_learning_url="http://policy-learning-svc.test",
                 tenant_id="tenant-a",
-                token="l12-imit-001-test-service-token",
+                agora_token="l12-agora-handoff-test-token",
+                policy_learning_token="l12-imit-001-test-service-token",
             )
             assert first["status"] == "degraded"
             assert first["processed_count"] == 1
@@ -365,7 +390,8 @@ def test_intake_replay_after_failed_ack_does_not_duplicate_candidate() -> None:
                 agora_url=agora_url,
                 policy_learning_url="http://policy-learning-svc.test",
                 tenant_id="tenant-a",
-                token="l12-imit-001-test-service-token",
+                agora_token="l12-agora-handoff-test-token",
+                policy_learning_token="l12-imit-001-test-service-token",
             )
             assert second["status"] == "ok"
             assert second["acked_count"] == 1
