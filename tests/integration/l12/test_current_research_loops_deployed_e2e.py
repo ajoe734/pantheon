@@ -151,7 +151,7 @@ class DeployedResearchHarness:
         argv.extend(args)
         return argv
 
-    def _service_identity(self, service: str) -> dict[str, Any]:
+    def _service_identity_snapshot(self, service: str) -> dict[str, Any]:
         output = self._command(self._compose_argv("ps", "-q", service))
         container_ids = [line.strip() for line in output.splitlines() if line.strip()]
         if len(container_ids) != 1:
@@ -169,10 +169,6 @@ class DeployedResearchHarness:
         health = str((state.get("Health") or {}).get("Status") or "not_declared")
         if labels.get("com.docker.compose.service") != service:
             raise RuntimeError(f"container label does not identify Compose service {service}")
-        if status != "running":
-            raise RuntimeError(f"Compose owner {service} is {status or 'unknown'}, not running")
-        if health not in {"healthy", "not_declared"}:
-            raise RuntimeError(f"Compose owner {service} health is {health}")
         image_id = str(record.get("Image") or "")
         image_revision = ""
         if image_id:
@@ -187,7 +183,30 @@ class DeployedResearchHarness:
             "image_revision": image_revision or None,
             "state": status,
             "health": health,
+            "restart_count": int(record.get("RestartCount") or 0),
         }
+
+    def _service_identity(self, service: str) -> dict[str, Any]:
+        deadline = time.monotonic() + min(self.timeout_seconds, 120)
+        last_identity: dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            last_identity = self._service_identity_snapshot(service)
+            if last_identity["state"] == "running" and last_identity["health"] in {
+                "healthy",
+                "not_declared",
+            }:
+                return last_identity
+            if (
+                last_identity["state"] in {"restarting", "exited", "dead"}
+                or last_identity["health"] == "unhealthy"
+                or int(last_identity["restart_count"]) >= 2
+            ):
+                break
+            time.sleep(self.poll_seconds)
+        raise RuntimeError(
+            f"Compose owner {service} did not reach a stable healthy identity: "
+            f"{_canonical_json(last_identity)}"
+        )
 
     def _http_json(
         self,
