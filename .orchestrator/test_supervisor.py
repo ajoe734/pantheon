@@ -159,6 +159,20 @@ class V2StartupCacheTests(unittest.TestCase):
             )
         )
 
+    def test_dispatch_key_ignores_observability_timestamp(self) -> None:
+        config = config_fixture()
+        task = task_fixture()
+        resolver = supervisor.task_resolver_for_config(config, {"TASK-1": task})
+        first = supervisor.ready_dispatch_signature(
+            task, supervisor.REASON_OWNED_READY, resolver
+        )
+        task["last_update"] = "2026-08-15T12:00:00Z"
+        second = supervisor.ready_dispatch_signature(
+            task, supervisor.REASON_OWNED_READY, resolver
+        )
+
+        self.assertEqual(first, second)
+
     def test_reserved_phase_can_publish_launch_intent_after_state_reload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -284,7 +298,6 @@ def config_fixture(root: Path | None = None) -> dict[str, object]:
             "review_statuses": ["review"],
             "finalize_statuses": ["review_approved"],
             "dependency_done_statuses": ["done"],
-            "target_workload": {"Codex": 1, "Codex2": 1},
             "unchanged_task_cooldown_seconds": 0,
             "worker_os_duplicate_guard": False,
         },

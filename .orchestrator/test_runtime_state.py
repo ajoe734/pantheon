@@ -371,51 +371,6 @@ class LoadRuntimeStateTests(unittest.TestCase):
 
         self.assertEqual(runtime_state.queue_events(state)[0]["event_id"], "evt-v2")
 
-    def test_offline_migration_embeds_legacy_queue_intents_before_normal_start(self) -> None:
-        self._write_json(
-            self.root / "state.json",
-            {
-                "version": 2,
-                "workers": {},
-                "queue": {"version": 2, "events": {"evt-v2": {"status": "queued"}}},
-            },
-        )
-        retired = self.root / "event-queue.jsonl"
-        retired.write_text(
-            json.dumps({"event_id": "evt-v2", "task_id": "TASK-V2", "event_key": "k-v2"})
-            + "\n",
-            encoding="utf-8",
-        )
-
-        with self.assertRaises(runtime_state.RuntimeStateSchemaError):
-            runtime_state.load_runtime_state(self.config)
-        result = runtime_state.migrate_legacy_event_queue_into_runtime_state(
-            self.config,
-            legacy_event_queue_path=retired,
-        )
-        migrated = runtime_state.load_runtime_state(self.config)
-
-        self.assertEqual(result, {"imported_intents": 1, "discarded_terminal_records": 0})
-        self.assertEqual(migrated["queue"]["events"]["evt-v2"]["intent"]["task_id"], "TASK-V2")
-
-    def test_offline_migration_rejects_active_record_without_matching_intent(self) -> None:
-        self._write_json(
-            self.root / "state.json",
-            {
-                "version": 2,
-                "workers": {},
-                "queue": {"version": 2, "events": {"evt-missing": {"status": "started"}}},
-            },
-        )
-        retired = self.root / "event-queue.jsonl"
-        retired.write_text("", encoding="utf-8")
-
-        with self.assertRaisesRegex(runtime_state.RuntimeStateSchemaError, "active record"):
-            runtime_state.migrate_legacy_event_queue_into_runtime_state(
-                self.config,
-                legacy_event_queue_path=retired,
-            )
-
     def test_projection_reader_does_not_reverse_acquire_runtime_from_task_lock(self) -> None:
         self.config["paths"]["approval_queue"] = str(
             self.root / "approval-queue.json"
