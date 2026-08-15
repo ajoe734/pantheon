@@ -28,7 +28,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
 import task_archive
+import common
 from common import rotate_activity_log_unlocked
+
+
+def _canonical_state_identity_json(status_root: Path, event_log: Path) -> str:
+    return json.dumps(
+        common.canonical_task_state_identity_for_paths(
+            status_root=status_root,
+            event_log=event_log,
+        ),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 class HumanOpsStatusWrapperTests(unittest.TestCase):
@@ -454,6 +466,31 @@ class TaskStateAuthorityModeTests(unittest.TestCase):
             json.loads(self._test_status_file.read_text(encoding="utf-8")),
             third,
         )
+
+    def test_authoritative_store_rejects_mismatched_state_domain_identity(self) -> None:
+        journal = (
+            self._test_root.parent
+            / f"{self._test_root.name}-runtime"
+            / "task-state-events.jsonl"
+        )
+        state = {"sprint": "authoritative", "tasks": []}
+        ai_status.append_state_commit(journal, state, source="fixture")
+        wrong_journal = journal.with_name("other-task-state-events.jsonl")
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PANTHEON_STATUS_ROOT": str(self._test_root),
+                ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: str(journal),
+                common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(
+                    self._test_root,
+                    wrong_journal,
+                ),
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "canonical task-state identity mismatch"):
+                ai_status.load_state()
 
     def test_derived_views_skip_a_stale_projection(self) -> None:
         current = {"tasks": [{"id": "STATE-VIEW", "status": "review"}]}
@@ -2060,6 +2097,10 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "PANTHEON_COMMAND_BASE_REF": "origin/dev",
                     "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
                     "PANTHEON_TASK_STATE_EVENT_LOG": str(task_state_event_log),
+                    common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(
+                        central,
+                        task_state_event_log,
+                    ),
                 }
             )
 
@@ -5659,6 +5700,44 @@ class ArchiveWorkflowTests(unittest.TestCase):
         self.assertIn('"task_id": "REG-100"', rendered)
         self.assertIn("ai-task-archive/tasks", rendered)
 
+    def test_show_retains_terminal_fact_when_rich_archive_is_missing(self) -> None:
+        self.state["tasks"] = []
+        self.state[ai_status.TERMINAL_FACTS_KEY] = {
+            "REG-100": {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 3,
+                "recorded_at": "2026-04-14T02:00:00Z",
+            }
+        }
+        with (
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            ai_status.command_show(self.state, ["REG-100"])
+
+        rendered = json.loads(stdout.getvalue())
+        self.assertEqual(rendered["source"], "terminal_fact")
+        self.assertTrue(rendered["archive_missing"])
+        self.assertEqual(rendered["task"]["generation"], 3)
+
+    def test_terminal_projection_reports_missing_archive_without_losing_fact(self) -> None:
+        self.state["tasks"] = []
+        self.state[ai_status.TERMINAL_FACTS_KEY] = {
+            "REG-100": {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 3,
+                "recorded_at": "2026-04-14T02:00:00Z",
+            }
+        }
+        with mock.patch.object(ai_status, "archived_task_snapshot", return_value=None):
+            projection = ai_status.terminal_archive_projection(self.state)
+
+        self.assertEqual(projection[0]["task_id"], "REG-100")
+        self.assertTrue(projection[0]["archive_missing"])
+        self.assertFalse(projection[0]["archive_receipt_valid"])
+
     def test_read_only_main_fails_closed_without_recovering_pending_outbox(self) -> None:
         class NullLock:
             def __enter__(self):
@@ -5874,7 +5953,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
                 json.dumps(state, indent=2) + "\n",
                 encoding="utf-8",
             )
-            event_log = status_root / "runtime" / "task-state-events.jsonl"
+            event_log = Path(tmpdir).parent / f"{Path(tmpdir).name}-runtime" / "task-state-events.jsonl"
             ai_status.append_state_commit(event_log, state, source="test-fixture")
             before = status_file.read_bytes()
             env = os.environ.copy()
@@ -5894,6 +5973,10 @@ class ArchiveWorkflowTests(unittest.TestCase):
                     "PANTHEON_STATUS_ROOT": str(status_root),
                     ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
                     ai_status.TASK_STATE_EVENT_LOG_ENV: str(event_log),
+                    common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(
+                        status_root,
+                        event_log,
+                    ),
                 }
             )
 
@@ -5938,7 +6021,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
                 json.dumps(self.state, indent=2) + "\n",
                 encoding="utf-8",
             )
-            event_log = status_root / "runtime" / "task-state-events.jsonl"
+            event_log = Path(tmpdir).parent / f"{Path(tmpdir).name}-runtime" / "task-state-events.jsonl"
             ai_status.append_state_commit(event_log, self.state, source="test-fixture")
             before = status_file.read_bytes()
             entered = context.Event()
@@ -5966,6 +6049,10 @@ class ArchiveWorkflowTests(unittest.TestCase):
                     "PANTHEON_STATUS_ROOT": str(status_root),
                     ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
                     ai_status.TASK_STATE_EVENT_LOG_ENV: str(event_log),
+                    common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(
+                        status_root,
+                        event_log,
+                    ),
                 }
             )
             try:
@@ -8101,8 +8188,10 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
             self.assertNotIn("terminal_outcome", first["task"])
             self.assertEqual(
                 pending["transaction_id"],
-                "ai-status-archive-tx-"
-                + ai_status._canonical_json_sha256(pending["snapshots"]),
+                task_archive.status_archive_outbox_payload(
+                    pending["snapshots"],
+                    archive_root=str(archive_dir.resolve()),
+                )["transaction_id"],
             )
 
             pending_state = deepcopy(state)
@@ -8461,6 +8550,67 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         )
         self.assertEqual(index["counts"]["total"], 1)
         self.assertEqual(index["recent_terminal_ids"], ["LOCK-ONE"])
+        receipt = final[ai_status.ARCHIVE_RECEIPTS_KEY]["LOCK-ONE"]
+        self.assertEqual(receipt["archive_root"], str((self.root / "ai-task-archive").resolve()))
+        self.assertEqual(
+            receipt["snapshot_sha256"],
+            ai_status._canonical_json_sha256(archived),
+        )
+        self.assertEqual(
+            receipt["index_sha256"],
+            ai_status._canonical_json_sha256(index),
+        )
+
+    def test_archive_reconcile_imports_only_matching_terminal_fact(self) -> None:
+        state = self._fixture_state()
+        terminal = deepcopy(state["tasks"][0])
+        terminal.update({"status": "done", "terminal_outcome": "completed", "generation": 2})
+        state["tasks"] = []
+        ai_status.record_terminal_fact(
+            state,
+            terminal,
+            recorded_at="2026-07-14T00:03:00Z",
+        )
+        former_tasks = self.root / "former-root" / "ai-task-archive" / "tasks"
+        former_tasks.mkdir(parents=True)
+        snapshot = {
+            "version": 1,
+            "task_id": "LOCK-ONE",
+            "archived_at": "2026-07-14T00:03:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": terminal,
+            "handoffs": [],
+            "blockers": [],
+        }
+        (former_tasks / "LOCK-ONE.json").write_text(
+            json.dumps(snapshot, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        # An unreferenced legacy record must not be copied merely because it
+        # shares the former archive directory.
+        (former_tasks / "UNOWNED-LEGACY.json").write_text(
+            json.dumps({**snapshot, "task_id": "UNOWNED-LEGACY", "task": {**terminal, "id": "UNOWNED-LEGACY"}}) + "\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            ai_status.command_archive_reconcile(state, [str(former_tasks)])
+        pending = state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]
+        self.assertEqual([item["task_id"] for item in pending["snapshots"]], ["LOCK-ONE"])
+        self._write_state(state)
+        self.assertTrue(ai_status.recover_status_archive_outbox(state))
+
+        archived = json.loads(
+            (self.root / "ai-task-archive" / "tasks" / "LOCK-ONE.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(archived, snapshot)
+        self.assertFalse(
+            (self.root / "ai-task-archive" / "tasks" / "UNOWNED-LEGACY.json").exists()
+        )
+        self.assertIn("LOCK-ONE", state[ai_status.ARCHIVE_RECEIPTS_KEY])
 
     def test_existing_archive_conflict_or_legacy_shape_preserves_active_task(self) -> None:
         # 1. Version 1 snapshot, no conflict (identical)

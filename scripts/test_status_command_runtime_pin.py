@@ -18,6 +18,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / ".orchestrator"))
 
 from rewrite.task_state_store import append_state_commit
+from common import (
+    CANONICAL_TASK_STATE_IDENTITY_ENV,
+    canonical_task_state_identity_for_paths,
+)
 
 
 class StatusCommandRuntimePinTests(unittest.TestCase):
@@ -154,6 +158,7 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
                 pid_start_ticks=pid_start_ticks,
             ),
             "workspace_path": str(worktree),
+            "workspace_repository_id": "pantheon",
             "status_root": str(status_root),
             "status_command_runtime": runtime,
             "request_snapshot": {
@@ -161,6 +166,7 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
                     "task_generation": 1,
                     "workspace_task_id": workspace_task_id,
                     "workspace_path": str(worktree),
+                    "workspace_repository_id": "pantheon",
                     "status_root": str(status_root),
                     "status_command_runtime": runtime,
                 }
@@ -171,6 +177,7 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             "workspace_task_id": workspace_task_id,
             "branch": f"task/{task_id}",
             "path": str(worktree),
+            "repository_id": "pantheon",
             "status_root": str(status_root),
             "last_queue_event_id": f"evt-{run_id}",
             "last_target_agent": "Codex2",
@@ -185,10 +192,21 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
     ) -> None:
         workers: dict[str, object] = {}
         leases: dict[str, object] = {}
+        queue_events: dict[str, object] = {}
         for workspace_task_id, record in records:
             worker = record["worker"]
             assert isinstance(worker, dict)
             workers[str(worker["run_id"])] = worker
+            queue_event_id = str(worker["queue_event_id"])
+            queue_events[queue_event_id] = {
+                "status": "started",
+                "run_id": str(worker["run_id"]),
+                "intent": {
+                    "event_id": queue_event_id,
+                    "task_id": str(worker["task_id"]),
+                    "task_generation": int(worker["task_generation"]),
+                },
+            }
             lease = record.get("lease")
             if isinstance(lease, dict):
                 leases[workspace_task_id] = lease
@@ -196,7 +214,7 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             "version": 2,
             "workers": workers,
             "worker_worktrees": {"leases": leases},
-            "queue": {"events": {}},
+            "queue": {"version": 2, "events": queue_events},
         }
         path = status_root / ".orchestrator" / "state.json"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,8 +288,9 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
         for key in list(env.keys()):
             if key.startswith("PANTHEON_STATUS_COMMAND_") or key.startswith(
                 "PANTHEON_TASK_STATE_"
-            ):
+            ) or key == CANONICAL_TASK_STATE_IDENTITY_ENV:
                 env.pop(key)
+        event_log = self._task_state_event_log(status_root)
         env.update(
             {
                 "AI_NAME": "Codex2",
@@ -286,8 +305,14 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
                 "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
                 "PANTHEON_COMMAND_BASE_REF": "origin/dev",
                 "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
-                "PANTHEON_TASK_STATE_EVENT_LOG": str(
-                    self._task_state_event_log(status_root)
+                "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+                CANONICAL_TASK_STATE_IDENTITY_ENV: json.dumps(
+                    canonical_task_state_identity_for_paths(
+                        status_root=status_root,
+                        event_log=event_log,
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
                 ),
             }
         )
@@ -374,6 +399,14 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             )
             env["PANTHEON_TASK_STATE_STORE_MODE"] = "authoritative"
             env["PANTHEON_TASK_STATE_EVENT_LOG"] = str(root / "runtime" / "events.jsonl")
+            env[CANONICAL_TASK_STATE_IDENTITY_ENV] = json.dumps(
+                canonical_task_state_identity_for_paths(
+                    status_root=status_root,
+                    event_log=Path(env["PANTHEON_TASK_STATE_EVENT_LOG"]),
+                ),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             accepted = subprocess.run(
                 ["bash", str(command_root / "scripts" / "ai-status.sh"), "show", "TASK-1"],
                 cwd=worktree,
