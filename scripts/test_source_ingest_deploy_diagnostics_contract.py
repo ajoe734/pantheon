@@ -87,6 +87,9 @@ def test_bounded_source_refresh_profile_is_fail_closed() -> None:
     gate = deploy[start:end]
 
     assert 'PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist"' in gate
+    assert 'SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_and_pull"' in gate
+    assert 'SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "reconciled_live_proof"' in gate
+    assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "no"' in gate
     assert "requires a reviewed exact host allowlist" in gate
     assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS >= 1" in gate
     assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS <= 24" in gate
@@ -108,6 +111,26 @@ def test_bounded_source_refresh_profile_is_fail_closed() -> None:
         if line.strip().startswith('PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-')
     )
     assert "source-ingest-scheduler" not in default_profiles
+
+
+def test_default_source_owner_is_unbounded_reconcile_only() -> None:
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"' in deploy
+    assert 'SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"' in deploy
+    assert 'SOURCE_REFRESH_MAX_TICKS="0"' in deploy
+    assert 'SOURCE_REFRESH_RESTART_POLICY="unless-stopped"' in deploy
+    assert 'SOURCE_INGEST_CONTROLLER_MODE=$(shell_quote "${SOURCE_REFRESH_CONTROLLER_MODE}")' in deploy
+    assert 'SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=$(shell_quote "${SOURCE_REFRESH_TRUTH_LEVEL}")' in deploy
+    assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY=$(shell_quote "${SOURCE_REFRESH_RESTART_POLICY}")' in deploy
+
+    start = deploy.index("validate_source_refresh_profile() {")
+    end = deploy.index("\n}\n\ncurl_with_retry()", start)
+    gate = deploy[start:end]
+    assert 'SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only"' in gate
+    assert 'SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick"' in gate
+    assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0"' in gate
+    assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "unless-stopped"' in gate
 
 
 def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
