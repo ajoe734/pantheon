@@ -1306,60 +1306,6 @@ def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settin
     )
 
 
-def dispatch_weight_mapping(settings: dict[str, Any] | None) -> dict[str, Any]:
-    settings = settings or {}
-    mapping = settings.get("target_workload") or settings.get("agent_workload_weights") or {}
-    return mapping if isinstance(mapping, dict) else {}
-
-
-def dispatch_weight_for_agent(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
-    mapping = dispatch_weight_mapping(settings)
-    if not mapping:
-        return 1
-    normalized = normalize_agent_id(agent_id or "")
-    display_name = display_name_for(config, normalized)
-    for key in (display_name, normalized):
-        if key in mapping:
-            try:
-                return max(0, int(mapping[key]))
-            except (TypeError, ValueError):
-                return 0
-    return 0
-
-
-def weighted_dispatch_agent_ids(config: dict[str, Any], settings: dict[str, Any] | None = None) -> list[str]:
-    settings = settings or ready_dispatch_settings(config)
-    base_agent_ids = dispatch_loop_agent_ids(config)
-    if not dispatch_weight_mapping(settings):
-        return base_agent_ids
-
-    weighted = [
-        (agent_id, dispatch_weight_for_agent(config, agent_id, settings))
-        for agent_id in base_agent_ids
-    ]
-    weighted = [(agent_id, weight) for agent_id, weight in weighted if weight > 0]
-    if not weighted:
-        return base_agent_ids
-
-    divisor = 0
-    for _agent_id, weight in weighted:
-        divisor = weight if divisor == 0 else math.gcd(divisor, weight)
-    normalized = [(agent_id, max(1, weight // max(1, divisor))) for agent_id, weight in weighted]
-    total = sum(weight for _agent_id, weight in normalized)
-    current = {agent_id: 0 for agent_id, _weight in normalized}
-    sequence: list[str] = []
-    for _ in range(total):
-        for agent_id, weight in normalized:
-            current[agent_id] += weight
-        selected = max(
-            normalized,
-            key=lambda item: (current[item[0]], item[1], -base_agent_ids.index(item[0])),
-        )[0]
-        sequence.append(selected)
-        current[selected] -= total
-    return sequence
-
-
 def delivery_health_settings(config: Mapping[str, Any]) -> dict[str, int]:
     """Return the single timing policy for cached delivery evidence.
 
@@ -2444,63 +2390,6 @@ def _restore_reused_index_split(worktree_path: Path, paths: list[str]) -> bool:
     return proc.returncode == 0
 
 
-def _anchor_commit_task_wip(worktree_path: Path, task_id: str | None, branch: str) -> tuple[bool, str]:
-    """Anchor-commit a reused worktree's own uncommitted WIP on its task branch.
-
-    Called when a reused worktree -- located by matching this task's branch --
-    still carries real tracked/staged changes after every orchestrator-managed
-    auto-restore (scratch, index-split). That is almost always a prior worker
-    run for THIS task that was superseded/SIGTERMed before it could commit
-    (supersession has no commit grace period). Because the worktree is checked
-    out on the task's own branch, the dirt is the task's work, so committing it
-    preserves the work and clears the dirty-tree condition that otherwise
-    re-blocks dispatch every supervisor tick (jamming the whole agent). The
-    resumed worker run merges base and finalizes from this anchor.
-
-    Bypasses local commit hooks (--no-verify) for deterministic, non-interactive
-    success, but writes the required Pantheon trailers so the eventual finalize
-    PR still passes the Commit-trailers check.
-    """
-    head = subprocess.run(
-        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
-        cwd=worktree_path, capture_output=True, text=True, check=False,
-    )
-    current = (head.stdout or "").strip()
-    if current != branch:
-        return False, f"branch_mismatch:{current or 'detached'}"
-    add = subprocess.run(
-        ["git", "add", "-A"], cwd=worktree_path, capture_output=True, text=True, check=False,
-    )
-    if add.returncode != 0:
-        return False, "git_add_failed"
-    tid = str(task_id or "").strip() or "TASK"
-    subject = bound_commit_subject(tid, "anchor recovered worktree WIP")
-    message = (
-        f"{subject}\n\n"
-        "Auto-anchor by the supervisor worktree-lease guard. A prior worker run\n"
-        "for this task was superseded/killed before committing, leaving real\n"
-        "uncommitted changes in its isolated worktree. Committing them on the\n"
-        "task's own branch preserves the work and clears the dirty-tree block\n"
-        "that otherwise re-jams dispatch every tick. The resumed worker run\n"
-        "merges base and finalizes from here.\n\n"
-        "LLM-Agent: supervisor\n"
-        f"Task-ID: {tid}\n"
-        "Reviewer: local\n"
-    )
-    commit = subprocess.run(
-        ["git", "commit", "--no-verify", "-q", "-m", message],
-        cwd=worktree_path, capture_output=True, text=True, check=False,
-    )
-    if commit.returncode != 0:
-        details = (commit.stderr or commit.stdout or "").strip().splitlines()
-        return False, "commit_failed:" + (details[0] if details else "unknown")
-    rev = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=worktree_path, capture_output=True, text=True, check=False,
-    )
-    return True, (rev.stdout or "").strip() or "ok"
-
-
 def _refresh_reused_worker_worktree(
     repo_root: Path,
     worktree_path: Path,
@@ -2559,20 +2448,10 @@ def _refresh_reused_worker_worktree(
                 return False, "skipped_dirty_worktree"
             classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
             if classification == "real":
-                # All orchestrator-managed auto-restores ran and the worktree is
-                # still dirty: the remaining changes are this task's own
-                # uncommitted WIP (the worktree was located by its task branch),
-                # typically a superseded run killed before it could commit.
-                # Anchor-commit it on the task branch instead of jamming dispatch
-                # every tick; the resumed worker merges base and finalizes from
-                # the anchor. Fall back to blocking only if the anchor cannot be
-                # made safely (wrong branch / git failure).
-                if not branch:
-                    return False, "skipped_dirty_worktree"
-                anchored, anchor_detail = _anchor_commit_task_wip(worktree_path, task_id, branch)
-                if not anchored:
-                    return False, "skipped_dirty_worktree"
-                return True, f"autoanchored_{anchor_detail}"
+                # The supervisor owns leases, not source authorship.  Preserve
+                # worker WIP and wait for the task's normal delivery path to
+                # reconcile it; never synthesize a commit or reviewer identity.
+                return False, "skipped_dirty_worktree"
             if classification == "clean":
                 scratch_paths = []
         # Only orchestrator-managed scratch is dirty: restore it and reuse the
@@ -5076,9 +4955,9 @@ def sidecar_only_agent_names(config: dict[str, Any]) -> set[str]:
 def agent_is_known(config: dict[str, Any], agent_name: str | None) -> bool:
     """True if the name maps to an agent in the roster (display name or id).
 
-    A task owner/reviewer that is NOT in the roster (e.g. a stale "Gemini2"
-    left by an old dispatch script after the gemini->antigravity migration) can
-    never run, so it must be treated as unable-to-take and reassigned.
+    A task owner/reviewer that is not in the roster is a stale historical
+    assignment. It can never run, so it must be treated as unable-to-take and
+    reassigned.
     """
     name = str(agent_name or "").strip()
     if not name:
@@ -11395,7 +11274,6 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_lookup: Tas
             "reason": reason,
             "owner": task.get("owner"),
             "reviewer": task.get("reviewer"),
-            "last_update": task.get("last_update"),
             "depends_on": list(task.get("depends_on", []) or []),
             "dependency_signature": task_dependency_signature(task, task_lookup),
             "delivery_binding_digest": rewrite_task_machine.delivery_binding_digest(task),
@@ -11744,11 +11622,11 @@ def dispatch_ready_tasks(
     sequence = (
         [normalize_agent_id(agent_id) for agent_id in agent_ids_override if normalize_agent_id(agent_id)]
         if agent_ids_override
-        else weighted_dispatch_agent_ids(config, settings)
+        else dispatch_loop_agent_ids(config)
     )
     dispatch_state = state.setdefault("ready_dispatcher", {})
     try:
-        cursor = int(dispatch_state.get("weighted_cursor", 0))
+        cursor = int(dispatch_state.get("dispatch_cursor", 0))
     except (TypeError, ValueError):
         cursor = 0
     if sequence:
@@ -11756,7 +11634,6 @@ def dispatch_ready_tasks(
         agent_ids = sequence[cursor:] + sequence[:cursor]
     else:
         agent_ids = []
-    weighted = bool(dispatch_weight_mapping(settings)) and not agent_ids_override
     considered = 0
     dispatches = 0
     refresh_demands = state.setdefault("delivery_health_refresh_demands", [])
@@ -11834,8 +11711,7 @@ def dispatch_ready_tasks(
             )
 
         candidates.sort(key=lambda item: item[:2])
-        occurrence_limit = 1 if weighted else available_slots
-        occurrence_limit = min(occurrence_limit, max_dispatches - dispatches)
+        occurrence_limit = min(available_slots, max_dispatches - dispatches)
         for _, _, task, decision in candidates[:occurrence_limit]:
             task_id = str(task.get(task_id_field) or "")
             reason = str(decision["reason"])
@@ -11857,7 +11733,7 @@ def dispatch_ready_tasks(
             dispatches += 1
 
     if sequence and considered and not agent_ids_override:
-        dispatch_state["weighted_cursor"] = (cursor + considered) % len(sequence)
+        dispatch_state["dispatch_cursor"] = (cursor + considered) % len(sequence)
     return changed
 
 
@@ -11895,14 +11771,14 @@ def build_dispatch_plan(
             refresh_targets.append(target)
     dispatcher_state = scratch.get("ready_dispatcher")
     cursor = (
-        dispatcher_state.get("weighted_cursor")
+        dispatcher_state.get("dispatch_cursor")
         if isinstance(dispatcher_state, dict)
         else None
     )
     return {
         "planned_at": utc_now(),
         "events": events,
-        "weighted_cursor": cursor,
+        "dispatch_cursor": cursor,
         "live_total": max(0, int(live_total)),
         "health_refresh_targets": refresh_targets,
     }
@@ -11997,11 +11873,11 @@ def reserve_dispatch_plan(
         state.setdefault("seen_event_keys", {})[event_key] = planned_at
         changed = True
 
-    cursor = plan.get("weighted_cursor")
+    cursor = plan.get("dispatch_cursor")
     if cursor is not None:
         dispatcher_state = state.setdefault("ready_dispatcher", {})
-        if dispatcher_state.get("weighted_cursor") != cursor:
-            dispatcher_state["weighted_cursor"] = cursor
+        if dispatcher_state.get("dispatch_cursor") != cursor:
+            dispatcher_state["dispatch_cursor"] = cursor
             changed = True
     return changed
 
@@ -12075,7 +11951,7 @@ def explain_dispatch_for_task(
     if global_block:
         result["global_block_reason"] = global_block
 
-    agent_ids = list(weighted_dispatch_agent_ids(config, settings))
+    agent_ids = list(dispatch_loop_agent_ids(config))
     for agent_id in (config.get("agents", {}) or {}):
         if agent_id not in agent_ids:
             agent_ids.append(agent_id)

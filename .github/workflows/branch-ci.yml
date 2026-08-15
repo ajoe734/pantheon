@@ -212,14 +212,13 @@ jobs:
           python3 scripts/dev/provision_python_distribution.py \
             --mode current --allow-system-interpreter
 
-      # The packaging contract plus the four-mode AC2 acceptance
-      # (OPS-L12-PYTHON-PACKAGING-PROVISION-001). Both are meaningful only once
-      # the distribution is installed, which the step above just did.
-      - name: Packaging contract and telemetry import acceptance
+      # This is a packaging check for this repository's distribution. Product
+      # telemetry imports belong to the product-runtime gate, not every tooling
+      # change.
+      - name: Packaging contract
         run: |
           python3 -m pytest -q \
-            scripts/dev/test_provision_python_distribution.py \
-            services/telemetry/test_discovery_imports.py
+            scripts/dev/test_provision_python_distribution.py
 
   smoke:
     name: Smoke acceptance
@@ -231,6 +230,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -244,8 +244,36 @@ jobs:
           if [[ -f requirements-dev.txt ]]; then
             pip install -r requirements-dev.txt || true
           fi
+          # The tooling smoke imports canonical signature and boundary helpers.
+          # Keep these explicit: requirements.txt intentionally does not pull
+          # product service dependencies into a tooling-only change.
+          python3 -m pip install cryptography pyyaml
 
-      - name: Run smoke gate
+      - name: Classify changed components
+        id: boundary
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [[ -n "$BASE_SHA" && "$BASE_SHA" != "0000000000000000000000000000000000000000" ]] \
+            && git cat-file -e "${BASE_SHA}^{commit}"; then
+            classification="$(python3 scripts/component_boundary.py --base "$BASE_SHA" --head "$HEAD_SHA" --json)"
+          else
+            classification="$(python3 scripts/component_boundary.py --base "${HEAD_SHA}~1" --head "$HEAD_SHA" --json)"
+          fi
+          echo "$classification"
+          tooling_only="$(CLASSIFICATION="$classification" python3 -c 'import json, os; print(str(json.loads(os.environ["CLASSIFICATION"])["tooling_only"]).lower())')"
+          echo "tooling_only=$tooling_only" >> "$GITHUB_OUTPUT"
+
+      - name: Run tooling smoke gate
+        if: steps.boundary.outputs.tooling_only == 'true'
+        run: |
+          PYTHONPATH=.orchestrator python3 -m unittest \
+            test_supervisor test_runtime_state test_approval_queue test_github_bus \
+            scripts.test_ai_status scripts.test_check_config_drift scripts.test_component_boundary
+
+      - name: Run product or mixed smoke gate
+        if: steps.boundary.outputs.tooling_only != 'true'
         run: |
           if [[ -x scripts/run-acceptance.sh ]]; then
             ./scripts/run-acceptance.sh smoke
