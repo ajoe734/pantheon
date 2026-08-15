@@ -56,7 +56,6 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
             "poll_interval_seconds": 30,
             "stall_after_seconds": 120,
             "cycle_budget_seconds": 60,
-            "dispatch_latency_budget_seconds": 45,
         },
         "providers": {"codex": {"enabled": True}},
     }
@@ -71,7 +70,6 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
             "lifecycle": "running",
             "last_cycle_metrics": {
                 "cycle_elapsed_seconds": 10.0,
-                "queue_to_start": {"count": 1, "average_seconds": 2.0, "max_seconds": 2.0},
             },
             "task_state_projection": {
                 "mode": "authoritative",
@@ -222,6 +220,34 @@ def test_health_does_not_reimplement_dispatch_admission(tmp_path: Path) -> None:
 
     assert report["dimensions"]["progress"]["healthy"] is True
     assert report["healthy"] is True
+
+
+def test_health_ignores_retired_queue_latency_samples(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    fixture["state"]["supervisor"].update(
+        {
+            "queue_to_start_latency_seconds": 1953.978,
+            "queue_to_start_latency_peak_seconds": 1953.978,
+            "last_cycle_metrics": {
+                "cycle_elapsed_seconds": 10.0,
+                "queue_to_start": {
+                    "count": 3,
+                    "average_seconds": 993.0,
+                    "max_seconds": 1953.978,
+                },
+            },
+        }
+    )
+    write_json(fixture["state_path"], fixture["state"])
+
+    report = evaluate(tmp_path, fixture)
+
+    assert report["healthy"] is True
+    assert "progress_dispatch_latency_within_budget" not in failed_checks(report)
+    assert all(
+        check["name"] != "progress_dispatch_latency_within_budget"
+        for check in report["dimensions"]["progress"]["checks"]
+    )
 
 
 def test_health_accepts_fresh_success_while_next_cycle_is_in_flight(tmp_path: Path) -> None:

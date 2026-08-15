@@ -105,8 +105,6 @@ def default_state() -> dict[str, Any]:
             "last_cycle_metrics": {},
             "cycle_elapsed_seconds": None,
             "cycle_elapsed_peak_seconds": 0.0,
-            "queue_to_start_latency_seconds": None,
-            "queue_to_start_latency_peak_seconds": 0.0,
             "runtime_lock_hold_seconds": None,
             "runtime_lock_hold_peak_seconds": 0.0,
             "runtime_lock_hold_exceeded": False,
@@ -255,6 +253,12 @@ def normalize_v2_runtime_cache(
     state["supervisor"].setdefault("last_loop_finished_at", None)
     state["supervisor"].setdefault("last_loop_duration_ms", None)
     state["supervisor"].setdefault("last_loop_error", None)
+    last_cycle_metrics = state["supervisor"].get("last_cycle_metrics")
+    if isinstance(last_cycle_metrics, dict):
+        # Queue dwell was retired as a process-health signal.  Drop a stale
+        # sample on the next ordinary V2 cache write rather than carrying it
+        # forward indefinitely after the source change.
+        last_cycle_metrics.pop("queue_to_start", None)
     reservations = state["supervisor"].get("runtime_phase_reservations")
     state["supervisor"]["runtime_phase_reservations"] = (
         reservations if isinstance(reservations, dict) else {}
