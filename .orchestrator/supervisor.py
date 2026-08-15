@@ -7054,6 +7054,13 @@ def active_worker_governance_lease_decision(
         activity_events,
         event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
     )
+    if status_event_matches_worker_process(latest_lifecycle, worker):
+        return {
+            "action": "terminate",
+            "reason_code": "exact_worker_lifecycle_transition",
+            "source_event_id": latest_lifecycle.get("event_id"),
+            "source_event_type": latest_lifecycle.get("type"),
+        }
     if task is None:
         if (
             latest_lifecycle is not None
@@ -9275,6 +9282,9 @@ def poll_worker_assignment_stage(
     """Apply redelivery and current-assignment lease rules."""
     changed = False
     task = task_map.get(str(worker.get("task_id") or ""))
+    generation_fence_crossed = isinstance(
+        task, Mapping
+    ) and not worker_matches_current_task_generation(worker, task)
     handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
     lease_guard_decision: dict[str, Any] | None = None
     if handoff_status is not None:
@@ -9301,28 +9311,38 @@ def poll_worker_assignment_stage(
                         },
                     ) or changed
                     return {"changed": changed, "stop": True}
-            else:
+            elif not generation_fence_crossed:
                 producer_event = _latest_task_governance_event(
                     worker,
                     governance_activity_events,
                     event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
                 )
+                producer_event_matches_process = status_event_matches_worker_process(
+                    producer_event,
+                    worker,
+                )
                 lease_guard_decision = {
-                    "action": "preserve",
-                    "reason_code": "canonical_review_handoff",
+                    "action": (
+                        "terminate"
+                        if producer_event_matches_process
+                        else "preserve"
+                    ),
+                    "reason_code": (
+                        "exact_worker_lifecycle_transition"
+                        if producer_event_matches_process
+                        else "canonical_review_handoff"
+                    ),
                     "source_event_id": producer_event.get("event_id") if producer_event else None,
                     "source_event_type": producer_event.get("type") if producer_event else None,
-                    "producer_event_matches_process": status_event_matches_worker_process(
-                        producer_event,
-                        worker,
-                    ),
+                    "producer_event_matches_process": producer_event_matches_process,
                 }
-                changed = record_worker_governance_lease_guard(
-                    config,
-                    worker,
-                    task,
-                    lease_guard_decision,
-                ) or changed
+                if lease_guard_decision["action"] == "preserve":
+                    changed = record_worker_governance_lease_guard(
+                        config,
+                        worker,
+                        task,
+                        lease_guard_decision,
+                    ) or changed
         if not alive or handoff_status in normalized_status_set(
             ready_dispatch_settings(config).get("dependency_done_statuses"),
             ["done"],
@@ -9351,11 +9371,21 @@ def poll_worker_assignment_stage(
     if worker.get("queue_event_id") and not worker_matches_current_assignment(config, worker, task_map):
         if worker.get("status") == "superseded":
             return {"changed": False, "stop": True}
-        decision = lease_guard_decision or active_worker_governance_lease_decision(
-            config,
-            worker,
-            task,
-            activity_events=governance_activity_events,
+        decision = (
+            {
+                "action": "terminate",
+                "reason_code": "task_generation_fence",
+                "source_event_id": None,
+                "source_event_type": None,
+            }
+            if generation_fence_crossed
+            else lease_guard_decision
+            or active_worker_governance_lease_decision(
+                config,
+                worker,
+                task,
+                activity_events=governance_activity_events,
+            )
         )
         if alive and decision["action"] != "terminate":
             changed = record_worker_governance_lease_guard(
@@ -11200,24 +11230,8 @@ def worker_matches_current_assignment(
     task = task_map.get(task_id)
     if not task:
         return False
-    snapshot = worker.get("request_snapshot") or {}
-    snapshot_metadata = snapshot.get("metadata") if isinstance(snapshot, dict) else {}
-    if not isinstance(snapshot_metadata, dict):
-        snapshot_metadata = {}
-    raw_bound_generations = (
-        worker.get("task_generation"),
-        snapshot.get("task_generation") if isinstance(snapshot, dict) else None,
-        snapshot_metadata.get("task_generation"),
-    )
-    if any(
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or value < 1
-        for value in raw_bound_generations
-    ):
-        return False
-    bound_generations = {int(value) for value in raw_bound_generations}
-    if len(bound_generations) != 1 or task_generation(task) not in bound_generations:
+
+    if not worker_matches_current_task_generation(worker, task):
         return False
     agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
     candidate = task_execution_dispatch_candidate(
@@ -11235,6 +11249,32 @@ def worker_matches_current_assignment(
     if lease_reason in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}:
         return current_reason in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}
     return current_reason == lease_reason
+
+
+def worker_matches_current_task_generation(
+    worker: Mapping[str, Any],
+    task: Mapping[str, Any],
+) -> bool:
+    """Treat canonical task generation as the worker lease fencing token."""
+
+    snapshot = worker.get("request_snapshot") or {}
+    snapshot_metadata = snapshot.get("metadata") if isinstance(snapshot, dict) else {}
+    if not isinstance(snapshot_metadata, dict):
+        snapshot_metadata = {}
+    raw_bound_generations = (
+        worker.get("task_generation"),
+        snapshot.get("task_generation") if isinstance(snapshot, dict) else None,
+        snapshot_metadata.get("task_generation"),
+    )
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 1
+        for value in raw_bound_generations
+    ):
+        return False
+    bound_generations = {int(value) for value in raw_bound_generations}
+    return len(bound_generations) == 1 and task_generation(task) in bound_generations
 
 
 def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
