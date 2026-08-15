@@ -1,0 +1,351 @@
+name: Agora Hosted Service Proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      bff_base_url:
+        description: "Pantheon-owned dev BFF HTTPS origin"
+        required: true
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+        type: string
+      fe_base_url:
+        description: "Pantheon-owned dev frontend HTTPS origin"
+        required: true
+        default: "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+        type: string
+      expected_bff_sha:
+        description: "Exact current dev BFF commit SHA"
+        required: true
+        type: string
+      expected_fe_sha:
+        description: "Exact deployed execute-plans commit SHA"
+        required: true
+        type: string
+      tenant_id:
+        description: "Dev tenant for the proof-owned resources"
+        required: true
+        default: "pantheon-dev"
+        type: string
+      foreign_tenant_id:
+        description: "Different tenant used only for the negative control"
+        required: true
+        default: "pantheon-dev-forbidden-proof"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: agora-hosted-service-proof-dev
+  cancel-in-progress: false
+
+jobs:
+  hosted-service-proof:
+    name: Real BFF journey and recreated-instance readback
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 35
+    env:
+      BFF_BASE_URL: ${{ inputs.bff_base_url }}
+      FE_BASE_URL: ${{ inputs.fe_base_url }}
+      EXPECTED_BFF_SHA: ${{ inputs.expected_bff_sha }}
+      EXPECTED_FE_SHA: ${{ inputs.expected_fe_sha }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      FOREIGN_TENANT_ID: ${{ inputs.foreign_tenant_id }}
+      AGORA_HOSTED_OPERATOR_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+      AGORA_HOSTED_OPERATOR_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+      AGORA_HOSTED_PEER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
+      AGORA_HOSTED_PEER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
+      AGORA_HOSTED_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+      AGORA_HOSTED_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+      REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+      DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+      DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+      DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
+      GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+
+    steps:
+      - name: Checkout dispatched Pantheon revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require the exact current dev head and safe dev origins
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          [[ "${GITHUB_REF}" == "refs/heads/dev" ]]
+          [[ "${EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${EXPECTED_FE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${BFF_BASE_URL}" == "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io" ]]
+          [[ "${FE_BASE_URL}" == "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" ]]
+          git fetch --no-tags origin dev
+          [[ "$(git rev-parse HEAD)" == "${EXPECTED_BFF_SHA}" ]]
+          [[ "$(git rev-parse refs/remotes/origin/dev)" == "${EXPECTED_BFF_SHA}" ]]
+          [[ "${GITHUB_SHA}" == "${EXPECTED_BFF_SHA}" ]]
+          [[ -n "${AGORA_HOSTED_OPERATOR_CLIENT_SECRET}" ]]
+          [[ -n "${AGORA_HOSTED_PEER_CLIENT_SECRET}" ]]
+          [[ -n "${AGORA_HOSTED_VIEWER_CLIENT_SECRET}" ]]
+
+      - name: Run focused proof contract tests
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          python3 scripts/dev/provision_python_distribution.py
+          pantheon_py="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
+          "${pantheon_py}" -m pytest -q scripts/test_probe_agora_hosted_service_journey.py
+
+      - name: Checkout pinned dev lease controller
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/pantheon
+          ref: 9e564718da8c39199a4c311f1a667b74226e3428
+          path: .lease-controller
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Authenticate to Google Cloud via Workload Identity Federation
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
+          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-cloud-build@pantheon-lupin-dev-20260719.iam.gserviceaccount.com' }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Acquire shared dev environment lease
+        id: lease
+        env:
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "9e564718da8c39199a4c311f1a667b74226e3428" ]]
+          [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
+          [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
+          printf '%s  %s\n' \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+          lease_dir="$(mktemp -d "${RUNNER_TEMP}/agora-hosted-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
+          chmod 0700 "${lease_dir}"
+          state_file="${lease_dir}/state.json"
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" \
+            python3 "${controller}/scripts/dev_environment_lease.py" acquire \
+              --repository ajoe734/execute-plans \
+              --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment \
+              --mode qualification \
+              --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
+              --ttl-seconds 300 \
+              --wait-seconds 7200 \
+              --poll-seconds 5 \
+              --state-file "${state_file}" \
+              --expected-backend-sha "${EXPECTED_BFF_SHA}" \
+              --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          {
+            echo "state_file=${state_file}"
+            echo "pid_file=${lease_dir}/heartbeat.pid"
+            echo "identity_file=${lease_dir}/heartbeat-identity.json"
+            echo "failure_file=${lease_dir}/heartbeat-failure.json"
+            echo "shutdown_file=${lease_dir}/heartbeat-stop.json"
+            echo "heartbeat_log=${lease_dir}/heartbeat.log"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Start identity-bound lease heartbeat
+        id: heartbeat
+        env:
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          LEASE_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          LEASE_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          LEASE_SHUTDOWN_FILE: ${{ steps.lease.outputs.shutdown_file }}
+          LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          exec {token_fd}<<<"${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          env -i PATH="${PATH}" HOME="${HOME}" LANG=C.UTF-8 PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 \
+            python3 "${controller}/scripts/dev_environment_lease.py" heartbeat-loop \
+              --repository ajoe734/execute-plans \
+              --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment \
+              --state-file "${LEASE_STATE_FILE}" \
+              --ttl-seconds 300 \
+              --interval-seconds 60 \
+              --failure-json-out "${LEASE_FAILURE_FILE}" \
+              --shutdown-json-out "${LEASE_SHUTDOWN_FILE}" \
+              --identity-json-out "${LEASE_IDENTITY_FILE}" \
+              --token-stdin <&"${token_fd}" >"${LEASE_HEARTBEAT_LOG}" 2>&1 &
+          heartbeat_pid=$!
+          exec {token_fd}<&-
+          printf '%s\n' "${heartbeat_pid}" > "${LEASE_PID_FILE}"
+          for _ in $(seq 1 100); do
+            [[ -s "${LEASE_IDENTITY_FILE}" ]] && break
+            kill -0 "${heartbeat_pid}" 2>/dev/null || exit 75
+            sleep 0.1
+          done
+          [[ -s "${LEASE_IDENTITY_FILE}" ]]
+
+      - name: Seed durable proof resources and recreate the actual BFF instance
+        id: recreate
+        env:
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS: "120"
+          PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          artifacts="${RUNNER_TEMP}/agora-hosted-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${artifacts}"
+          python3 scripts/probe_agora_hosted_service_journey.py operator-identity \
+            --bff-base-url "${BFF_BASE_URL}" \
+            --fe-base-url "${FE_BASE_URL}" \
+            --expected-bff-sha "${EXPECTED_BFF_SHA}" \
+            --expected-fe-sha "${EXPECTED_FE_SHA}" \
+            --tenant-id "${TENANT_ID}" \
+            --foreign-tenant-id "${FOREIGN_TENANT_ID}" \
+            --restart-workshop-id "identity-placeholder" \
+            --github-run-id "${GITHUB_RUN_ID}" \
+            --github-run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --output "${artifacts}/operator-identity.json"
+          operator_user_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["operator_user_id"])' "${artifacts}/operator-identity.json")"
+          [[ -n "${operator_user_id}" ]]
+          restart_workshop_id="agora-hosted-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf -v remote_dir_q '%q' "${DEV_REMOTE_DIR}"
+          printf -v workshop_q '%q' "${restart_workshop_id}"
+          printf -v tenant_q '%q' "${TENANT_ID}"
+          printf -v user_q '%q' "${operator_user_id}"
+          printf -v expected_q '%q' "${EXPECTED_BFF_SHA}"
+          export remote_dir_q workshop_q tenant_q user_q expected_q
+          before_instance_id="$(PANTHEON_ENVIRONMENT_LEASE_TOKEN="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" \
+            "${controller}/scripts/run_with_dev_environment_lease.sh" bash -c '
+              set -euo pipefail
+              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
+                --command "set -euo pipefail; cd ${remote_dir_q}; test \\\"\\$(git rev-parse HEAD)\\\" = ${expected_q}; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_WORKSHOP_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_GOVERNANCE_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_DATASET_STORE_BACKEND=postgres'\'' >/dev/null; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py seed --workshop-id ${workshop_q} --tenant-id ${tenant_q} --user-id ${user_q} >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{.Id}}'\''"
+            ')"
+          [[ -n "${before_instance_id}" ]]
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" \
+            "${controller}/scripts/run_with_dev_environment_lease.sh" bash -c '
+              set -euo pipefail
+              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
+                --command "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml up -d --no-deps --force-recreate operator-bff >/dev/null"
+            '
+          {
+            echo "artifacts=${artifacts}"
+            echo "restart_workshop_id=${restart_workshop_id}"
+            echo "before_instance_id=${before_instance_id}"
+            echo "operator_user_id=${operator_user_id}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Wait for the recreated exact BFF deployment
+        env:
+          RESTART_WORKSHOP_ID: ${{ steps.recreate.outputs.restart_workshop_id }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          python3 scripts/wait_for_bff_lifecycle_readiness.py \
+            --url "${BFF_BASE_URL}/readyz" \
+            --expected-deployment-sha "${EXPECTED_BFF_SHA}" \
+            --initial-timeout-seconds 120 \
+            --recovery-extension-seconds 120 \
+            --stalled-timeout-seconds 45 \
+            --poll-interval-seconds 2 \
+            --request-timeout-seconds 2 \
+            --exact-evidence-max-age-seconds 30
+          [[ -n "${RESTART_WORKSHOP_ID}" ]]
+
+      - name: Verify durable readback, instance identity, and the fourteen-stage BFF journey
+        id: proof
+        env:
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS: "120"
+          PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
+          ARTIFACTS: ${{ steps.recreate.outputs.artifacts }}
+          RESTART_WORKSHOP_ID: ${{ steps.recreate.outputs.restart_workshop_id }}
+          BEFORE_INSTANCE_ID: ${{ steps.recreate.outputs.before_instance_id }}
+          OPERATOR_USER_ID: ${{ steps.recreate.outputs.operator_user_id }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          printf -v remote_dir_q '%q' "${DEV_REMOTE_DIR}"
+          printf -v workshop_q '%q' "${RESTART_WORKSHOP_ID}"
+          printf -v tenant_q '%q' "${TENANT_ID}"
+          export remote_dir_q workshop_q tenant_q
+          after_instance_id="$(PANTHEON_ENVIRONMENT_LEASE_TOKEN="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" \
+            "${controller}/scripts/run_with_dev_environment_lease.sh" bash -c '
+              set -euo pipefail
+              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
+                --command "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_q} --tenant-id ${tenant_q} --user-id \"${OPERATOR_USER_ID}\" >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{.Id}}'\''"
+            ')"
+          [[ -n "${after_instance_id}" && "${after_instance_id}" != "${BEFORE_INSTANCE_ID}" ]]
+          common=(
+            --bff-base-url "${BFF_BASE_URL}"
+            --fe-base-url "${FE_BASE_URL}"
+            --expected-bff-sha "${EXPECTED_BFF_SHA}"
+            --expected-fe-sha "${EXPECTED_FE_SHA}"
+            --tenant-id "${TENANT_ID}"
+            --foreign-tenant-id "${FOREIGN_TENANT_ID}"
+            --restart-workshop-id "${RESTART_WORKSHOP_ID}"
+            --github-run-id "${GITHUB_RUN_ID}"
+            --github-run-attempt "${GITHUB_RUN_ATTEMPT}"
+          )
+          python3 scripts/probe_agora_hosted_service_journey.py restart-evidence "${common[@]}" \
+            --before-instance-id "${BEFORE_INSTANCE_ID}" \
+            --after-instance-id "${after_instance_id}" \
+            --resource-id "workshop_id=${RESTART_WORKSHOP_ID}" \
+            --resource-id "proposal_id=proposal-${RESTART_WORKSHOP_ID}" \
+            --resource-id "evidence_id=evidence-${RESTART_WORKSHOP_ID}" \
+            --output "${ARTIFACTS}/restart-evidence.json"
+          python3 scripts/probe_agora_hosted_service_journey.py journey "${common[@]}" \
+            --output "${ARTIFACTS}/service-journey-evidence.json"
+
+      - name: Upload redacted hosted proof evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agora-hosted-service-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.recreate.outputs.artifacts }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Stop heartbeat and release only after complete proof success
+        if: ${{ always() && steps.lease.outcome == 'success' }}
+        env:
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          LEASE_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          PROOF_OUTCOME: ${{ steps.proof.outcome }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          heartbeat_pid="$(tr -d '[:space:]' < "${LEASE_PID_FILE}")"
+          kill -TERM "${heartbeat_pid}" 2>/dev/null || true
+          for _ in $(seq 1 40); do
+            kill -0 "${heartbeat_pid}" 2>/dev/null || break
+            sleep 0.25
+          done
+          if [[ "${PROOF_OUTCOME}" != "success" || -e "${LEASE_FAILURE_FILE}" ]]; then
+            echo "Hosted proof did not complete; leave the lease quarantined until its TTL." >&2
+            exit 0
+          fi
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" \
+            python3 "${controller}/scripts/dev_environment_lease.py" release \
+              --repository ajoe734/execute-plans \
+              --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment \
+              --state-file "${LEASE_STATE_FILE}"
