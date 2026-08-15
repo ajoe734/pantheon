@@ -171,7 +171,7 @@ class JsonLoadResilienceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             status_file = Path(tmpdir) / "ai-status.json"
             status_file.write_text("", encoding="utf-8")
-            event_log = Path(tmpdir) / "task-state-events.jsonl"
+            event_log = Path(tmpdir).parent / f"{Path(tmpdir).name}-runtime" / "task-state-events.jsonl"
 
             with self.assertRaisesRegex(RuntimeError, "journal is empty"):
                 common.load_status(

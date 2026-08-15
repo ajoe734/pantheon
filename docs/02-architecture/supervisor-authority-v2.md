@@ -226,6 +226,27 @@ When a task reaches `done`, TaskStore retains a compact terminal fact
 current head. Dependency resolution reads this fact, never the rich task
 archive. The archive remains an audit/display projection only.
 
+The live V2 binding has exactly one logical state domain:
+
+- `PANTHEON_STATUS_ROOT/ai-status.json` is the TaskStore projection;
+- `PANTHEON_STATUS_ROOT/ai-task-archive/` is its rich terminal archive; and
+- the configured external event log is its append-only journal.
+
+The journal is intentionally outside the status root, but supervisor-issued
+status-command environments carry their exact root, archive, journal and
+identity digest together. A command whose supplied combination differs fails
+closed; it must not write one root while reading another journal.
+
+Archive removal from the active board is two-stage. The durable outbox records
+the target archive root and SHA-256 of every pending snapshot. It is cleared
+only after the snapshot and rebuilt archive index have been read back, with a
+receipt retained alongside the terminal fact. If a historic terminal fact has
+no rich snapshot, `show` and management projection report
+`source=terminal_fact` and `archive_missing=true`; they never report the task
+as unknown. Local Human/Ops `archive_reconcile` may import only snapshots that
+exactly match existing terminal facts. It never bulk-copies a former status
+root or creates terminal truth from an archive file.
+
 ### 6.2 Delta event
 
 Every journal record contains:
