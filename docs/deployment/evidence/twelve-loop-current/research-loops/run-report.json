@@ -1,0 +1,40 @@
+{
+  "active_case": null,
+  "anti_fixture": {
+    "automatic_repair": false,
+    "in_process_service_client": false,
+    "product_store_imports": false,
+    "temporary_authority_store": false
+  },
+  "cases": [
+    {
+      "authority_readback": null,
+      "case_index": 1,
+      "completed_at": "2026-08-15T05:43:43Z",
+      "first_failed_boundary": "source.owner_compose_identity",
+      "last_successful_boundary": null,
+      "loop_id": "source_ingestion",
+      "next_consumer": null,
+      "owner": null,
+      "started_at": "2026-08-15T05:43:42Z",
+      "status": "failed",
+      "successful_boundaries": [],
+      "terminal_output": null,
+      "trigger": null
+    }
+  ],
+  "completed_at": "2026-08-15T05:43:43Z",
+  "compose_project": "l12currente2e",
+  "first_failure": {
+    "boundary": "source.owner_compose_identity",
+    "case_index": 1,
+    "detail": "Compose owner source-ingest-scheduler did not reach a stable healthy identity: {\"compose_service\":\"source-ingest-scheduler\",\"container_id\":\"7afa12411608e58316aae710103010d5c54cb3251382473460c64226211e536b\",\"health\":\"unhealthy\",\"image_id\":\"sha256:164551d064099c0d32254fde9a56f92babb2aa4eb05b332f750a03379d8a9e8f\",\"image_revision\":null,\"restart_count\":10,\"state\":\"restarting\"}",
+    "last_successful_boundary": null,
+    "loop_id": "source_ingestion"
+  },
+  "git_sha": "7247681da966d8bfe0cb725a0a930429117daccf",
+  "schema_version": "pantheon.l12.research-loops.deployed-e2e.v1",
+  "started_at": "2026-08-15T05:43:42Z",
+  "status": "failed",
+  "task_id": "L12-CURRENT-E2E-RESEARCH-20260814"
+}
