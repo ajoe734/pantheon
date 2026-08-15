@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
@@ -16,6 +17,7 @@ from services.incident.incident import IncidentCase
 from services.incident.reference_validation import (
     CanonicalReferenceError,
     CanonicalReferenceValidator,
+    _TelemetryLineageLookup,
 )
 
 
@@ -224,6 +226,32 @@ class TestCanonicalReferenceValidator(unittest.TestCase):
         with self.assertRaises(CanonicalReferenceError) as ctx:
             validator.validate_incident(_make_incident())
         self.assertIn("is before RuntimeBinding 'binding-001' effective_at", str(ctx.exception))
+
+
+class TestTelemetryLineageLookupAuthority(unittest.TestCase):
+    def test_http_lookup_sends_service_token_and_tenant(self):
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self):
+                return b'{"target_id":"binding-001"}'
+
+        lookup = _TelemetryLineageLookup(
+            base_url="http://telemetry:8083",
+            service_token="incident-telemetry-token",
+            tenant_id="tenant-a",
+        )
+        with patch("urllib.request.urlopen", return_value=_Response()) as urlopen:
+            result = lookup.runtime_binding_projection("binding-001")
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer incident-telemetry-token")
+        self.assertEqual(request.get_header("X-tenant-id"), "tenant-a")
+        self.assertEqual(result, {"target_id": "binding-001"})
 
 
 if __name__ == "__main__":

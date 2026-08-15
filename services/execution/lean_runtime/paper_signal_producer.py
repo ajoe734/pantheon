@@ -742,6 +742,7 @@ def fetch_eligible_paper_bindings(
     raise_on_error: bool = False,
 ) -> list[dict[str, Any]]:
     """Fetch active paper bindings from runtime-manager desired state."""
+    import urllib.parse
     import urllib.request
     import json
 
@@ -757,9 +758,33 @@ def fetch_eligible_paper_bindings(
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
-        bindings = payload.get("bindings", [])
-        # Only return eligible active paper bindings
-        return [b for b in bindings if b.get("status") == "active"]
+        bindings = [
+            binding
+            for binding in payload.get("bindings", [])
+            if binding.get("status") == "active"
+        ]
+        hydrated: list[dict[str, Any]] = []
+        for binding in bindings:
+            binding_id = str(binding.get("binding_id") or "").strip()
+            if not binding_id:
+                raise ValueError("desired-state binding_id is required")
+            detail_url = (
+                f"{runtime_manager_url.rstrip('/')}/api/runtime-bindings/"
+                f"{urllib.parse.quote(binding_id, safe='')}"
+            )
+            detail_req = urllib.request.Request(
+                detail_url,
+                headers=headers,
+                method="GET",
+            )
+            with urllib.request.urlopen(detail_req, timeout=10) as detail_resp:
+                detail = json.loads(detail_resp.read().decode("utf-8"))
+            if detail.get("binding_id") != binding_id or detail.get("status") != "active":
+                raise ValueError(
+                    f"authoritative RuntimeBinding {binding_id!r} is not active"
+                )
+            hydrated.append(detail)
+        return hydrated
     except Exception as e:
         log.warning("Failed to fetch active bindings from runtime-manager: %s", e)
         if raise_on_error:
