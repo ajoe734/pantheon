@@ -1419,36 +1419,36 @@ jobs:
             python3 - \
               "${RELEASE_EVIDENCE_DIR}/release-controller-rejected.json" \
               "${controller_status}" <<'PY'
-            import json
-            import os
-            import pathlib
-            import sys
+          import json
+          import os
+          import pathlib
+          import sys
 
-            pathlib.Path(sys.argv[1]).write_text(
-                json.dumps(
-                    {
-                        "schema_version": "pantheon.cross-repo-release-controller-evidence.v1",
-                        "release_candidate_id": os.environ["RELEASE_CANDIDATE_ID"],
-                        "compatibility_manifest_sha256": os.environ[
-                            "COMPATIBILITY_MANIFEST_SHA256"
-                        ],
-                        "backend": {"commit": os.environ["BACKEND_SHA"]},
-                        "frontend": {"commit": os.environ["FRONTEND_SHA"]},
-                        "controller": {
-                            "repository": os.environ["GITHUB_REPOSITORY"],
-                            "workflow": "nonprod-deploy.yml",
-                            "run_id": os.environ["GITHUB_RUN_ID"],
-                        },
-                        "outcome": "rejected",
-                        "controller_exit_code": int(sys.argv[2]),
-                    },
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            PY
+          pathlib.Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "pantheon.cross-repo-release-controller-evidence.v1",
+                      "release_candidate_id": os.environ["RELEASE_CANDIDATE_ID"],
+                      "compatibility_manifest_sha256": os.environ[
+                          "COMPATIBILITY_MANIFEST_SHA256"
+                      ],
+                      "backend": {"commit": os.environ["BACKEND_SHA"]},
+                      "frontend": {"commit": os.environ["FRONTEND_SHA"]},
+                      "controller": {
+                          "repository": os.environ["GITHUB_REPOSITORY"],
+                          "workflow": "nonprod-deploy.yml",
+                          "run_id": os.environ["GITHUB_RUN_ID"],
+                      },
+                      "outcome": "rejected",
+                      "controller_exit_code": int(sys.argv[2]),
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
           fi
           echo "evidence_dir=${RELEASE_EVIDENCE_DIR}" >> "${GITHUB_OUTPUT}"
           echo "controller_log=${controller_log}" >> "${GITHUB_OUTPUT}"
