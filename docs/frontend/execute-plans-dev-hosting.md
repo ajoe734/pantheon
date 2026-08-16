@@ -287,7 +287,7 @@ readiness is not enough: `/bff/assistant/mode` must report
 `kernel_enabled: true`, and control mode must be activatable by an authorized
 operator/admin session before claiming that Management AI can read/write VM
 files or coordinate debugging through OpenClaw. See
-`docs/operations/management-ai-openclaw-dev-bridge.md`.
+`docs/02-architecture/development-tooling-product-boundary.md`.
 
 Do not use `/bff/assistant/tools/*` as the VM file access proof. That route
 family is for governed Pantheon action preview/validation/execute contracts.

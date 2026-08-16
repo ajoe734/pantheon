@@ -22,7 +22,7 @@
 只要換三件事：
 
 1. 專案的 `status/current/activity` 路徑
-2. `config.example.json` 裡的 reviewer 對應 profile
+2. `.orchestrator/config.json` 裡的 reviewer 對應 profile
 3. prompt builder 需要額外塞入的上下文
 
 ## 最佳做法

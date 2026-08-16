@@ -6,7 +6,6 @@ from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.copilot_cloud import CopilotCloudAdapter
 from adapters.copilot_local import CopilotLocalAdapter
 from adapters.codex import CodexAdapter
-from adapters.gemini import GeminiAdapter
 
 
 ADAPTERS: dict[str, type[BaseAdapter]] = {
@@ -14,7 +13,6 @@ ADAPTERS: dict[str, type[BaseAdapter]] = {
     "copilot_local": CopilotLocalAdapter,
     "copilot_cloud": CopilotCloudAdapter,
     "antigravity": AntigravityAdapter,
-    "gemini": GeminiAdapter,
     "codex": CodexAdapter,
 }
 

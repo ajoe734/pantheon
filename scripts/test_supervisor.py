@@ -25,14 +25,10 @@ import runtime_state
 
 class SupervisorV2SmokeTests(unittest.TestCase):
     def test_repo_configs_use_adaptive_stall_detection(self) -> None:
-        for relative_path in (
-            ".orchestrator/config.json",
-            ".orchestrator/config.example.json",
-        ):
-            config = json.loads((ROOT / relative_path).read_text())
-            supervisor_config = config["supervisor"]
-            self.assertEqual(int(supervisor_config["stall_after_seconds"]), 300)
-            self.assertIs(supervisor_config["adaptive_stall_detection"], True)
+        config = json.loads((ROOT / ".orchestrator/config.json").read_text())
+        supervisor_config = config["supervisor"]
+        self.assertEqual(int(supervisor_config["stall_after_seconds"]), 300)
+        self.assertIs(supervisor_config["adaptive_stall_detection"], True)
 
     def test_repo_config_passes_strict_account_schema(self) -> None:
         config = json.loads((ORCH_DIR / "config.json").read_text())

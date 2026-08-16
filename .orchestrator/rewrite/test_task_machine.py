@@ -203,8 +203,11 @@ class AssignmentTransitionTests(unittest.TestCase):
         )
 
         self.assertTrue(event["event_id"].startswith("supervisor-task-reassigned-"))
+        self.assertTrue(task_machine.assignment_activity_event_matches(event))
         self.assertEqual(event["old_generation"], 4)
         self.assertEqual(event["generation"], 5)
+        event["generation"] = 6
+        self.assertFalse(task_machine.assignment_activity_event_matches(event))
         with self.assertRaisesRegex(TransitionError, "generation-bound"):
             task_machine.assignment_activity_event(
                 task_id="TASK-42",

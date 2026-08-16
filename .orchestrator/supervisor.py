@@ -682,115 +682,6 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
         )
 
 
-def assistant_dev_bridge_tooling_dirs(repo_root: Path) -> list[Path]:
-    """Locate the local development-bridge package, never product BFF code."""
-
-    code_tooling_dir = THIS_DIR
-    repo_tooling_dir = repo_root / ".orchestrator"
-    dirs: list[Path] = []
-    for candidate in (code_tooling_dir, repo_tooling_dir):
-        if candidate not in dirs:
-            dirs.append(candidate)
-    return dirs
-
-
-def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, Any]) -> bool:
-    settings = config.get("assistant_dev_bridge") if isinstance(config.get("assistant_dev_bridge"), dict) else {}
-    if settings.get("enabled") is False:
-        return False
-
-    try:
-        repo_root = config_path(config, "status_file").parent
-    except KeyError:
-        repo_root = THIS_DIR.parent
-    tooling_dirs = assistant_dev_bridge_tooling_dirs(repo_root)
-    for tooling_dir in reversed(tooling_dirs):
-        if str(tooling_dir) not in sys.path:
-            sys.path.insert(0, str(tooling_dir))
-
-    try:
-        from development_bridge.dev_bridge_inbox import drain_task_packet_inbox
-    except Exception as exc:
-        write_activity_log(
-            config,
-            {
-                "type": "assistant_dev_packet_drain_unavailable",
-                "message": f"Assistant dev packet inbox drain unavailable: {type(exc).__name__}: {exc}",
-                "searched_tooling_dirs": [str(path) for path in tooling_dirs],
-            },
-        )
-        bridge_state = state.setdefault("assistant_dev_bridge", {})
-        bridge_state["last_drain_at"] = utc_now()
-        bridge_state["last_result"] = {
-            "status": "unavailable",
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-        return True
-
-    limit_value = settings.get("max_packets_per_tick", settings.get("limit", 4))
-    try:
-        limit = max(0, int(limit_value))
-    except (TypeError, ValueError):
-        limit = 4
-    bridge_runtime_env = {
-        "PANTHEON_STATUS_ROOT": str(repo_root.resolve()),
-        "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
-        **status_command_runtime_env(config),
-    }
-    result = drain_task_packet_inbox(
-        repo_root=str(repo_root),
-        inbox_dir=settings.get("inbox_path") or settings.get("inbox_dir"),
-        limit=limit,
-        dispatch_env=bridge_runtime_env,
-    )
-    processed_count = int(result.get("processedCount") or 0)
-    error_count = int(result.get("errorCount") or 0)
-    if processed_count == 0 and error_count == 0:
-        return False
-
-    bridge_state = state.setdefault("assistant_dev_bridge", {})
-    bridge_state["last_drain_at"] = utc_now()
-    bridge_state["last_result"] = result
-    canonical_readbacks = [
-        readback
-        for item in result.get("packets", [])
-        if isinstance(item, dict)
-        for dispatch_result in [item.get("result")]
-        if isinstance(dispatch_result, dict)
-        for audit_refs in [dispatch_result.get("auditRefs")]
-        if isinstance(audit_refs, dict)
-        for readback in [audit_refs.get("materializationReadback")]
-        if isinstance(readback, dict) and readback.get("status") == "verified"
-    ]
-    write_activity_log(
-        config,
-        {
-            "type": "assistant_dev_packet_inbox_drained",
-            "message": (
-                "Drained assistant dev packet inbox: "
-                f"processed={processed_count} errors={error_count}"
-            ),
-            "processed_count": processed_count,
-            "error_count": error_count,
-            "packet_ids": [
-                item.get("packetId")
-                for item in result.get("packets", [])
-                if isinstance(item, dict) and item.get("packetId")
-            ],
-            "canonical_task_ids": sorted(
-                {
-                    str(task_id)
-                    for readback in canonical_readbacks
-                    for task_id in readback.get("taskIds", [])
-                    if str(task_id or "").strip()
-                }
-            ),
-            "canonical_readbacks": canonical_readbacks,
-        },
-    )
-    return True
-
-
 def safe_load_approval_state(config: dict[str, Any]) -> dict[str, Any]:
     try:
         return load_approval_state(config)
@@ -6896,19 +6787,6 @@ def _ai_status_activity_event_id_matches(event: Mapping[str, Any]) -> bool:
     return event_id == "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
 
 
-def _supervisor_reassignment_event_id_matches(event: Mapping[str, Any]) -> bool:
-    if event.get("agent") != "Orchestrator" or event.get("type") != "task_reassigned":
-        return False
-    payload = (
-        f"{event.get('task_id') or ''}\0{event.get('ts') or ''}\0"
-        f"{event.get('old_owner') or ''}\0{event.get('new_owner') or ''}\0"
-        f"{event.get('old_reviewer') or ''}\0{event.get('new_reviewer') or ''}\0"
-        f"{event.get('message') or ''}"
-    )
-    expected = "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return str(event.get("event_id") or "") == expected
-
-
 def _governance_event_after_worker_start(
     worker: Mapping[str, Any],
     event: Mapping[str, Any],
@@ -7037,7 +6915,7 @@ def active_worker_governance_lease_decision(
                 worker,
             ),
         }
-    if not _supervisor_reassignment_event_id_matches(latest_assignment):
+    if not rewrite_task_machine.assignment_activity_event_matches(latest_assignment):
         return {
             "action": "preserve",
             "reason_code": "invalid_reassignment_evidence",
@@ -12115,7 +11993,6 @@ def apply_post_dispatch_maintenance(
     *,
     delivery_health_observations: Iterable[Mapping[str, Any]],
     task_state_projection_snapshot: dict[str, Any] | None,
-    assistant_dev_bridge_snapshot: dict[str, Any] | None,
     quiet: bool,
 ) -> bool:
     """Apply slow observations after launch; their effects feed the next plan."""
@@ -12127,11 +12004,6 @@ def apply_post_dispatch_maintenance(
         )
     ) or changed
     changed = bool(reconcile_unavailable_assignments(config, state)) or changed
-    if isinstance(assistant_dev_bridge_snapshot, dict):
-        bridge_state = assistant_dev_bridge_snapshot.get("state")
-        if isinstance(bridge_state, dict):
-            state["assistant_dev_bridge"] = deepcopy(bridge_state)
-            changed = bool(assistant_dev_bridge_snapshot.get("changed")) or changed
     changed = bool(reconcile_queue_records(config, state)) or changed
     changed = bool(reconcile_queue_intents(config, state)) or changed
     changed = bool(
@@ -12303,27 +12175,6 @@ def run_once(
         )
         if not isinstance(maintenance_runtime_snapshot, dict):
             maintenance_runtime_snapshot = {}
-        bridge_runtime_scratch: dict[str, Any] = {}
-        bridge_drain_changed = bool(
-            _safe_phase(
-                "drain_assistant_dev_packet_inbox",
-                drain_assistant_dev_packet_inbox,
-                config,
-                bridge_runtime_scratch,
-                quiet=quiet,
-            )
-        )
-        bridge_state = bridge_runtime_scratch.get("assistant_dev_bridge")
-        bridge_snapshot = (
-            {"changed": bridge_drain_changed, "state": deepcopy(bridge_state)}
-            if isinstance(bridge_state, dict)
-            else None
-        )
-        # Bridge materialization is a canonical mutation even if its optional
-        # runtime-observability snapshot loses a later CAS race.  Report the
-        # cycle as changed so callers never treat a successfully drained packet
-        # as an idle supervisor pass.
-        changed = bridge_drain_changed or changed
         _safe_phase(
             "continue_or_skip_empty",
             continue_or_skip_empty,
@@ -12362,7 +12213,6 @@ def run_once(
                     state,
                     delivery_health_observations=delivery_health_observations,
                     task_state_projection_snapshot=task_state_projection_snapshot,
-                    assistant_dev_bridge_snapshot=bridge_snapshot,
                     quiet=quiet,
                 ),
                 quiet=quiet,

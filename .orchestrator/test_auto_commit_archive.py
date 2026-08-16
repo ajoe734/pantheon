@@ -16,7 +16,7 @@ auto_commit_archive = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(auto_commit_archive)
 
 
-def test_detect_pending_expands_untracked_files_and_separates_admissions(
+def test_detect_pending_collects_terminal_archives_and_task_briefs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -24,8 +24,6 @@ def test_detect_pending_expands_untracked_files_and_separates_admissions(
     status_output = "\n".join(
         [
             "?? ai-task-archive/tasks/TERMINAL-001.json",
-            "?? ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt--abc.json",
-            "?? ai-task-archive/tasks/assistant-dev-bridge-admissions/",
             "?? ai-task-archive/tasks/unrelated/nested.json",
             "?? .orchestrator/task-briefs/TASK-001.md",
             " M ai-task-archive/tasks/TRACKED-001.json",
@@ -48,30 +46,22 @@ def test_detect_pending_expands_untracked_files_and_separates_admissions(
     assert pending == {
         "briefs": [".orchestrator/task-briefs/TASK-001.md"],
         "archives": ["ai-task-archive/tasks/TERMINAL-001.json"],
-        "admissions": [
-            "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt--abc.json"
-        ],
         "index_modified": True,
     }
 
 
-def test_commit_message_counts_terminal_and_nonterminal_records_separately() -> None:
+def test_commit_message_counts_terminal_records_and_briefs() -> None:
     message = auto_commit_archive._build_commit_message(
         "OPS-ARCHIVE-AUTO-COMMIT-TEST",
         {
             "briefs": [".orchestrator/task-briefs/TASK-001.md"],
             "archives": ["ai-task-archive/tasks/TERMINAL-001.json"],
-            "admissions": [
-                "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt--abc.json",
-                "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt--def.json",
-            ],
             "index_modified": False,
         },
     )
 
-    assert "backfill 4 files" in message
+    assert "backfill 2 files" in message
     assert "1 ai-task-archive/tasks/*.json terminal task records" in message
-    assert "2 non-terminal assistant dev-bridge admission records" in message
 
 
 def test_backfill_refuses_directory_scope_before_copy2(
@@ -110,7 +100,6 @@ def test_backfill_refuses_directory_scope_before_copy2(
             {
                 "briefs": [],
                 "archives": ["ai-task-archive/tasks/BAD.json"],
-                "admissions": [],
                 "index_modified": False,
             }
         )

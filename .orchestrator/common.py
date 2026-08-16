@@ -906,22 +906,6 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
     return env
 
 
-WORKER_AUTHORITY_SECRET_ENV_NAMES = frozenset(
-    {
-        "BRIDGE_SIGNING_KEY",
-        "BRIDGE_SIGNING_PRIVATE_KEY",
-        "BRIDGE_SIGNING_KEY_ID",
-    }
-)
-
-
-def scrub_worker_authority_secrets(env: dict[str, str]) -> None:
-    """Remove control-plane signing material at the final worker spawn boundary."""
-
-    for name in WORKER_AUTHORITY_SECRET_ENV_NAMES:
-        env.pop(name, None)
-
-
 def github_cli_config_dir(env: Mapping[str, str] | None = None) -> Path:
     source = env or os.environ
     configured = str(source.get("GH_CONFIG_DIR") or "").strip()
@@ -1132,7 +1116,12 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
 
 
 def command_exists(name: str) -> str | None:
-    return shutil.which(name)
+    resolved = shutil.which(name)
+    if not resolved:
+        return None
+    if os.sep in resolved or (os.altsep and os.altsep in resolved):
+        return str(Path(resolved).resolve())
+    return resolved
 
 
 def shell_quote(parts: list[str]) -> str:
@@ -4347,7 +4336,6 @@ def spawn_background_process(
     ensure_parent(log_path)
     command_to_spawn = list(command)
     spawn_env = dict(env or os.environ)
-    scrub_worker_authority_secrets(spawn_env)
     if runner_enabled and run_id:
         if heartbeat_path is None:
             heartbeat_path = log_path.with_suffix(log_path.suffix + ".heartbeat.json")

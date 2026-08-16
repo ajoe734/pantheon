@@ -22,28 +22,17 @@ from urllib.error import HTTPError
 import common
 
 
-class WorkerSpawnAuthorityBoundaryTests(unittest.TestCase):
-    def test_final_spawn_boundary_removes_control_plane_signing_secrets(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / "worker.log"
-            fake_process = mock.Mock(pid=321)
-            with mock.patch.object(
-                common.subprocess,
-                "Popen",
-                return_value=fake_process,
-            ) as popen:
-                common.spawn_background_process(
-                    ["worker"],
-                    log_path=log_path,
-                    env={
-                        "BRIDGE_SIGNING_KEY": "bridge-secret",
-                        "BRIDGE_SIGNING_PUBLIC_KEYS_JSON": "{}",
-                    },
-                    runner_enabled=False,
-                )
-            spawned_env = popen.call_args.kwargs["env"]
-            self.assertNotIn("BRIDGE_SIGNING_KEY", spawned_env)
-            self.assertIn("BRIDGE_SIGNING_PUBLIC_KEYS_JSON", spawned_env)
+class CommandResolutionTests(unittest.TestCase):
+    def test_relative_wrapper_is_resolved_before_worker_changes_cwd(self) -> None:
+        with mock.patch.object(
+            common.shutil,
+            "which",
+            return_value=".orchestrator/bin/agy",
+        ):
+            self.assertEqual(
+                common.command_exists(".orchestrator/bin/agy"),
+                str((Path(".orchestrator") / "bin" / "agy").resolve()),
+            )
 
 
 def _sigkill_during_activity_rotation(log_path: str, point: str) -> None:

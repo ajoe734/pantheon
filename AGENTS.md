@@ -192,9 +192,8 @@ Keep these authority domains separate:
   evidence. It does not become task authority or product truth.
 
 Do not require a product BFF login, product control mode, or product readiness
-to maintain local canonical development tasks. The local development bridge is
-under `.orchestrator/development_bridge/`; it is not a product route or product
-image dependency. Conversely,
+to maintain local canonical development tasks. Local Human/Ops status commands
+are the only task-ingress path; there is no development bridge. Conversely,
 supervisor or auto-worker health proves only that development tooling can
 dispatch work; it does not prove that the product is deployed, ready, or usable.
 
@@ -207,12 +206,9 @@ must not create SA/SD packets, alter canonical tasks, prepare worktrees, or
 write repository files. Do not route new Management AI development through
 Lovable, and do not use `front-ai-trading-system` as a source checkout.
 
-Development work uses a clean repository worktree plus local tooling:
-
-- `.orchestrator/development_bridge/` for signed local task-packet transport;
-- `scripts/human-ops-status.sh` and `scripts/ai_status.py` for local canonical
-  task maintenance; and
-- the repository task branch/PR workflow for source changes.
+Development work uses a clean repository worktree, `scripts/human-ops-status.sh`,
+`scripts/ai_status.py`, and the repository task branch/PR workflow. The local
+Human/Ops status command is the only canonical task ingress.
 
 There are no product BFF routes for dev-doc generation, task-packet transport,
 worktree preparation, or supervisor status. Do not add those routes back as
@@ -225,9 +221,5 @@ OpenClaw-backed product diagnostics are reached through
 adapter never run source-writing repair work; implement code through the local
 task worktree flow instead.
 
-The local supervisor handoff path is
-`.orchestrator/assistant-dev-packets/`. The supervisor must drain pending local
-packets into `ai-task-archive/tasks/` before a task packet is considered
-accepted by downstream workers. See
-`docs/operations/management-ai-openclaw-dev-bridge.md` for the local-tooling
-runbook.
+The supervisor consumes only already-materialized canonical tasks. It does not
+accept task packets, drain a local inbox, or depend on product BFF routes.

@@ -13,10 +13,8 @@ if str(THIS_DIR) not in sys.path:
 from common import load_config, write_activity_log
 from provider_permissions import (
     CLAUDE_LOCAL_SETTINGS_PATH,
-    GEMINI_SETTINGS_PATH,
     WORKSPACE_SETTINGS_PATH,
     apply_claude_local_settings,
-    apply_gemini_settings,
     apply_workspace_settings,
     create_backup,
     latest_backup_dir,
@@ -47,7 +45,6 @@ def check_mode(config: dict) -> int:
         "targets": {
             "workspace_settings": str(WORKSPACE_SETTINGS_PATH),
             "claude_local_settings": str(CLAUDE_LOCAL_SETTINGS_PATH),
-            "gemini_settings": str(GEMINI_SETTINGS_PATH),
         },
     }
     print(json.dumps(output, indent=2, ensure_ascii=False))
@@ -58,7 +55,6 @@ def apply_mode(config: dict) -> int:
     backup_dir = create_backup(config)
     workspace = apply_workspace_settings(config)
     claude = apply_claude_local_settings(config)
-    gemini = apply_gemini_settings(config)
     report = provider_capabilities(config)
     write_provider_capabilities(config, report=report)
     write_activity_log(
@@ -76,7 +72,6 @@ def apply_mode(config: dict) -> int:
                 "backup_dir": str(backup_dir),
                 "workspace_settings": workspace,
                 "claude_local_settings": claude,
-                "gemini_settings": gemini,
                 "report_path": str(Path(config["paths"]["provider_capabilities"])),
             },
             indent=2,

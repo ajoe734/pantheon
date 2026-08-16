@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from common import (
@@ -47,12 +46,6 @@ class CodexAdapter(BaseAdapter):
     def _resolve_cli(self, codex_settings: dict) -> str | None:
         configured_cli = str(codex_settings.get("cli") or "codex").strip() or "codex"
         resolved = command_exists(configured_cli) or command_exists("codex")
-        if not resolved:
-            return None
-        if os.path.isabs(resolved):
-            return resolved
-        if os.sep in resolved or (os.altsep and os.altsep in resolved):
-            return str(Path(resolved).resolve())
         return resolved
 
     def capability(self, agent_id: str) -> DeliveryCapability:

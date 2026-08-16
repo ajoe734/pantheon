@@ -87,10 +87,6 @@ def default_state() -> dict[str, Any]:
             "last_decision": None,
             "last_safe_mode_observed_until": None,
         },
-        "assistant_dev_bridge": {
-            "last_drain_at": None,
-            "last_result": None,
-        },
         "supervisor": {
             "pid": None,
             "started_at": None,
@@ -234,9 +230,6 @@ def normalize_v2_runtime_cache(
     state["watchdog"].setdefault("safe_mode_started_at", None)
     state["watchdog"].setdefault("last_decision", None)
     state["watchdog"].setdefault("last_safe_mode_observed_until", None)
-    state.setdefault("assistant_dev_bridge", {})
-    state["assistant_dev_bridge"].setdefault("last_drain_at", None)
-    state["assistant_dev_bridge"].setdefault("last_result", None)
     raw_supervisor = state.get("supervisor")
     allowed_supervisor_keys = set(default_state()["supervisor"])
     state["supervisor"] = {
