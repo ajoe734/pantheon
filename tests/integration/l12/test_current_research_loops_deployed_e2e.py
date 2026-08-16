@@ -127,7 +127,15 @@ class DeployedResearchHarness:
         self.failure_reported = False
         self.chain: dict[str, Any] = {}
         self._current_case: dict[str, Any] | None = None
+        self.source_controller_token = os.getenv(
+            "PANTHEON_L12_SOURCE_INGEST_CONTROLLER_TOKEN", ""
+        ).strip()
         self._write_report("running")
+
+    def _source_ingest_headers(self) -> dict[str, str]:
+        if not self.source_controller_token:
+            return {}
+        return {"Authorization": f"Bearer {self.source_controller_token}"}
 
     def _command(self, argv: Sequence[str]) -> str:
         completed = subprocess.run(
@@ -466,6 +474,22 @@ class DeployedResearchHarness:
             "id": connector_id,
             "trace_id": trace_id,
         }
+
+        self._at(
+            "source.job_trigger",
+            lambda: self._http_json(
+                self.source_url,
+                "/api/source-ingest/jobs",
+                method="POST",
+                headers=self._source_ingest_headers(),
+                payload={
+                    "connector_id": connector_id,
+                    "trace_id": trace_id,
+                    "trigger_type": "scheduled",
+                },
+                expected=(201,),
+            ),
+        )
 
         source = self._at(
             "source.durable_terminal_readback",
