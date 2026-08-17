@@ -10328,6 +10328,7 @@ def worker_retry_attempt_index(worker: dict[str, Any]) -> int:
 
 def schedule_missing_process_retry(
     config: dict[str, Any],
+    state: dict[str, Any],
     worker: dict[str, Any],
     reason: str,
 ) -> bool:
@@ -10704,6 +10705,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 retry_reason = failure_summary.get("summary") or detected_reason
                 if missing_process and schedule_missing_process_retry(
                     config,
+                    state,
                     worker,
                     retry_reason,
                 ):
@@ -10742,7 +10744,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             )
 
         if missing_process:
-            if schedule_missing_process_retry(config, worker, reason):
+            if schedule_missing_process_retry(config, state, worker, reason):
                 write_activity_log(
                     config,
                     {
