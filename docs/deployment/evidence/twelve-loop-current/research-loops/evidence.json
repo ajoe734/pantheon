@@ -54,7 +54,7 @@
     ]
   },
   "validation": {
-    "validated_at": "2026-08-15T05:54:01Z",
+    "validated_at": "2026-08-17T10:41:37Z",
     "commands": [
       {
         "command": "python3 -m py_compile tests/integration/l12/test_current_research_loops_deployed_e2e.py",
@@ -67,53 +67,45 @@
         "conclusion": "1 anti-fixture assertion passed; 4 deployed cases skipped without opt-in"
       },
       {
-        "command": "docker compose -p l12research814 -f docker-compose.yml -f /tmp/l12-research-814-compose.override.yml up -d --build source-ingest-scheduler strategy-distillation-worker alpha-replication-worker training-session-preview-worker",
-        "result": "pass",
-        "conclusion": "isolated task-SHA services and their declared dependencies started"
-      },
-      {
-        "command": "PANTHEON_L12_RESEARCH_E2E=1 PANTHEON_L12_COMPOSE_PROJECT=l12research814 ... pytest -q tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+        "command": "PANTHEON_L12_RESEARCH_E2E=1 .venv-pantheon/bin/python3 -m pytest -q tests/integration/l12/test_current_research_loops_deployed_e2e.py",
         "result": "fail_closed_as_observed",
-        "conclusion": "1 deployed case failed at the first owner boundary; 1 anti-fixture assertion passed; 3 downstream cases not reached"
+        "conclusion": "rerun (2026-08-17T10:18Z-10:42Z, run task L12-CURRENT-RESEARCH-CHAIN-RERUN-20260817) against the already-running default `pantheon` Compose project; loop 1 advanced past the previously fixed owner-identity/readback boundary from PR #4974 (commit 1557c22e0) and past the connector/schedule/job-trigger/durable-readback boundaries, then failed at a new boundary before loop 2 was reached; 1 anti-fixture assertion passed; 3 downstream cases not reached"
       }
     ]
   },
   "deployed_observation": {
-    "environment": "unique isolated local Compose project l12research814",
-    "source_revision": "1212a92e4d4c736fa0121a3cd10ed1af5f361de3",
+    "environment": "already-running default local Compose project `pantheon` (dev root, up 18h+ at observation time)",
+    "source_revision": "0705ad73e81a6e9f72184386766d03bd0a8dfa27",
     "run_report": "docs/deployment/evidence/twelve-loop-current/research-loops/run-report.json",
     "status": "failed_at_first_boundary",
     "first_failure": {
       "loop_id": "source_ingestion",
-      "boundary": "source.owner_compose_identity",
+      "boundary": "source.authority_actual_state",
       "compose_service": "source-ingest-scheduler",
-      "container_id": "ee5f5faf9c27bce936860c47bcedd53581e219b5d14e4a3137e0ca9bc7d57ec2",
-      "image_id": "sha256:c3b26ec1cfc77095821d834960d169a7dac64b6a735a15532a5b60f39fc2ff2f",
-      "state": "running",
-      "health": "starting",
-      "restart_count": 4,
-      "exit_code": 1,
-      "post_failure_inspect_state": "restarting/unhealthy",
-      "root_cause": "The default reconcile_and_pull controller received SOURCE_INGEST_CONTROLLER_MAX_TICKS=0, while controller_worker requires a value between 1 and 24 for that mode."
+      "http_call": "GET /api/source-ingest/controller/readback",
+      "detail": "GET /api/source-ingest/controller/readback returned non-JSON content",
+      "root_cause": "The controller readback response body is now 1,237,625 bytes (257+ accumulated connector configs in the long-lived shared `pantheon` Compose project), while the test harness's _http_json helper reads only response.read(32_768) bytes before json.loads, so the body is truncated mid-object and fails to parse. This is a test-harness fixed-size read cap colliding with a long-lived, ever-growing environment, not a regression in the Loop1 owner/readback fix from PR #4974: source.owner_compose_identity, source.anti_preseed_readback, source.connector_command, source.scheduled_trigger, source.job_trigger, and source.durable_terminal_readback all passed in this rerun, which they did not before PR #4974 merged.",
+      "secondary_observation": "One earlier rerun attempt in this same session failed instead at source.job_trigger with a client-side 15s timeout (server logged the same POST completing successfully with 201 shortly after the client gave up), consistent with the same long-lived environment's accumulated connector/reconcile load pushing single mutating requests close to or past the harness's fixed 15s per-call timeout. This did not reproduce on the immediately following rerun and is recorded here as a related but distinct latency symptom of the same environment-growth condition, not a separate product defect."
     },
     "bounded_failure_behavior": {
-      "source_trigger_written": false,
+      "source_trigger_written": true,
       "repair_task_written": false,
       "downstream_cases_executed": false,
-      "report_size_bytes": 1575
+      "report_size_bytes": 2034
     },
     "cleanup": {
-      "isolated_project_removed": true,
-      "isolated_containers_removed": true,
-      "isolated_volumes_removed": true,
-      "existing_pantheon_project_mutated": false
+      "isolated_project_removed": "not_applicable_shared_environment",
+      "isolated_containers_removed": "not_applicable_shared_environment",
+      "isolated_volumes_removed": "not_applicable_shared_environment",
+      "existing_pantheon_project_mutated": true,
+      "mutation_note": "one connector config plus its schedule and one job/frontier entry were created against the shared default pantheon project by this rerun's e2e run tokens; no repair task, downstream case data, or live-capital action was written"
     }
   },
   "acceptance": [
     {
       "id": "AC1",
       "statement": "Four per-loop cases carry trigger, owner, terminal output, authority readback, and next-consumer identity fields.",
-      "status": "pass_implementation; runtime_not_reached_after_loop_1_owner_failure",
+      "status": "pass_implementation; runtime_not_reached_beyond_loop_1_authority_readback_boundary",
       "evidence_refs": [
         "tests/integration/l12/test_current_research_loops_deployed_e2e.py::DeployedResearchHarness",
         "tests/integration/l12/test_current_research_loops_deployed_e2e.py::test_deployed_source_ingestion_identity_chain",
@@ -143,9 +135,9 @@
   "residual_product_gap": {
     "blocking_for_test_delivery": false,
     "blocking_for_loops_1_to_4_closure": true,
-    "owner": "Source Ingestion / current Compose integration",
-    "description": "The default Source owner cannot become healthy, so no real scheduled trigger can enter the four-loop chain.",
-    "containment": "No product repair is performed by this E2E task. Rerun the same suite after the owning product change merges."
+    "owner": "L12-CURRENT-E2E-RESEARCH-20260814 test harness (tests/integration/l12/test_current_research_loops_deployed_e2e.py::DeployedResearchHarness._http_json) and/or Source Ingestion controller-readback payload size",
+    "description": "PR #4974's Loop1 owner-identity/readback fix holds: this rerun passed all six source_ingestion boundaries through source.job_trigger and source.durable_terminal_readback that previously failed at the very first boundary. The chain now stops one boundary later, at source.authority_actual_state, because the harness's fixed 32KB HTTP read cap cannot fit the controller readback payload once the shared long-lived pantheon Compose environment accumulates 257+ connector configs. Loops 2-4 (Distillation, Alpha, Teaching) were still not reached in this rerun, so their readiness beyond Loop1 remains unproven.",
+    "containment": "No product or harness repair is performed by this rerun task per its declared out-of-scope (no automatic repair task created). Re-run the same suite, either after the harness's read cap is raised or run_ingest controller readback is paginated/bounded, or against a freshly reset Compose project with a small connector count, to observe whether loops 2-4 pass."
   },
   "security_and_safety": {
     "no_live_capital": true,
@@ -157,8 +149,8 @@
   "integrity": {
     "algorithm": "sha256",
     "manifest_checksum_file": "docs/deployment/evidence/twelve-loop-current/research-loops/evidence.sha256",
-    "run_report_checksum": "76fad9cd54987583e8d38d4e568822d5c9c68f646dfbcd8c4aea45cec9ce8bf1",
-    "test_module_checksum": "48b713d0f0ba098a9d98ff2b94d9883144a7377ab29f5d88a9d2b994ce1fc078",
+    "run_report_checksum": "380dcf9fa716e7a1099677c1d37daeb82818aab7c8595160d62e969128cddf0c",
+    "test_module_checksum": "110e086f8280ebb150ed0c8728af9e7673bdf5a47f9d03c12c74236b2f46ccf1",
     "self_hashing": false
   },
   "record_log": [
@@ -169,6 +161,15 @@
       "recorded_at": "2026-08-15T05:54:01Z",
       "sha": "1212a92e4d4c736fa0121a3cd10ed1af5f361de3",
       "status": "ready_for_independent_review"
+    },
+    {
+      "sequence": 2,
+      "actor": "Claude",
+      "kind": "rerun_observed",
+      "task_id": "L12-CURRENT-RESEARCH-CHAIN-RERUN-20260817",
+      "recorded_at": "2026-08-17T10:41:37Z",
+      "sha": "0705ad73e81a6e9f72184386766d03bd0a8dfa27",
+      "status": "loop1_advanced_new_boundary_found; loops_2_to_4_still_not_reached"
     }
   ]
 }
