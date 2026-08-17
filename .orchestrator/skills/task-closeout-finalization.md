@@ -311,6 +311,43 @@ resolves stale blockers/handoffs, and archives the task through the same
 canonical transaction as `done`. Never use it with a draft, unmerged review
 file, inferred reviewer identity, or a commit that is not already on `dev`.
 
+## Reviewer Recovery When A Reject Verdict Cannot Be Recorded
+
+`reconcile_merged_done` above only covers a task that was already merged and
+whose independent review already **passed**. A different, harder case: the
+task's PR merged before the assigned reviewer finished an independent review
+(for example the delivery repository's required-status-check for Pantheon
+review was never actually satisfiable, or the PR was merged by an identity
+that bypasses branch protection), and the reviewer's real verdict is
+**reject**. `reopen` requires the bound GitHub PR to still be open
+(`scripts/git/github_review_bridge.py` fails closed with
+`GitHub PR #<N> is not open`), so it cannot record a reject against an
+already-merged head. Do not treat that failure as permission to hand-edit
+state, bypass the bridge, or silently drop the review.
+
+The task's own pure lifecycle already has the correct exit for this:
+`supersede` is legal directly from `review` (`.orchestrator/rewrite/task_machine.py`)
+and, unlike `reopen`/`approve`, carries no GitHub PR-liveness check.
+
+```bash
+AI_NAME=<Reviewer or Owner or Human/Ops> \
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" supersede \
+  <task-id> "<independent review verdict: reject, with the specific defects>" \
+  [<replacement-task-id>]
+```
+
+Run this instead of retrying `reopen` once the bridge reports the PR is not
+open. Record the actual defects found in the message (they are real review
+evidence, not discarded) and, when the fix is nontrivial, open a replacement
+task and pass its id so the defects have somewhere to land. This does not
+retroactively fix the stray merge -- if the merged head shipped a real
+defect, that is a separate closeout/rollback decision for the owner or
+Human/Ops, not something this command resolves. It only unblocks the
+stranded canonical row so the fleet dispatcher stops treating it as pending
+review forever: the `review_ready_dispatch` binding is keyed to the PR's
+head SHA, which does not change after merge, so a stuck `review` row with no
+`supersede` is otherwise undispatchable indefinitely.
+
 ## Push and Merge Policy
 
 Closeout is not complete until the finished work has merged into the
