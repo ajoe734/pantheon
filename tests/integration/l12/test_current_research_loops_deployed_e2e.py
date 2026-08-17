@@ -295,6 +295,11 @@ class DeployedResearchHarness:
         entry = view.get("entry")
         return entry if isinstance(entry, Mapping) else view
 
+    @staticmethod
+    def _source_record(view: Mapping[str, Any]) -> Mapping[str, Any]:
+        record = view.get("source_record")
+        return record if isinstance(record, Mapping) else view
+
     def _training_headers(self) -> dict[str, str]:
         token = os.getenv("PANTHEON_L12_TRAINING_TOKEN", LOCAL_TRAINING_WORKER_TOKEN).strip()
         if not token:
@@ -424,7 +429,10 @@ class DeployedResearchHarness:
                         "content_ref": f"urn:pantheon:l12-e2e:{self.run_token}",
                         "trace_id": trace_id,
                         "metadata": {
-                            "body": "Controlled research evidence for the deployed owner chain.",
+                            "body": (
+                                "Controlled research evidence for the deployed owner chain. "
+                                f"run_token={self.run_token}"
+                            ),
                             "access_scope": ["research"],
                             "license_scope": "internal",
                             "available_time": available_time,
@@ -491,17 +499,22 @@ class DeployedResearchHarness:
             ),
         )
 
-        source = self._at(
-            "source.durable_terminal_readback",
-            lambda: self._poll(
-                source_id,
-                lambda: self._http_json(
-                    self.source_url,
-                    f"/api/source-ingest/source-records/{urllib.parse.quote(source_id, safe='')}",
-                    expected=(200, 404),
+        source = self._source_record(
+            self._at(
+                "source.durable_terminal_readback",
+                lambda: self._poll(
+                    source_id,
+                    lambda: self._http_json(
+                        self.source_url,
+                        f"/api/source-ingest/source-records/{urllib.parse.quote(source_id, safe='')}",
+                        expected=(200, 404),
+                    ),
+                    lambda value: (
+                        isinstance(value, Mapping)
+                        and self._source_record(value).get("source_id") == source_id
+                    ),
                 ),
-                lambda value: isinstance(value, Mapping) and value.get("source_id") == source_id,
-            ),
+            )
         )
         digest = _source_digest(source)
         controller_readback = self._at(
