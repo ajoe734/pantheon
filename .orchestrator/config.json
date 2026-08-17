@@ -162,42 +162,90 @@
     "enabled": true,
     "owner_fallbacks": {
       "Claude": [
-        "Claude2"
-      ],
-      "Claude2": [
-        "Claude"
-      ],
-      "Antigravity": [
-        "Antigravity2"
-      ],
-      "Antigravity2": [
-        "Antigravity"
-      ],
-      "Codex": [
+        "Claude2",
+        "Antigravity",
+        "Antigravity2",
+        "Codex",
         "Codex2"
       ],
+      "Claude2": [
+        "Claude",
+        "Antigravity",
+        "Antigravity2",
+        "Codex",
+        "Codex2"
+      ],
+      "Antigravity": [
+        "Antigravity2",
+        "Claude",
+        "Claude2",
+        "Codex",
+        "Codex2"
+      ],
+      "Antigravity2": [
+        "Antigravity",
+        "Claude",
+        "Claude2",
+        "Codex",
+        "Codex2"
+      ],
+      "Codex": [
+        "Codex2",
+        "Claude",
+        "Claude2",
+        "Antigravity",
+        "Antigravity2"
+      ],
       "Codex2": [
-        "Codex"
+        "Codex",
+        "Claude",
+        "Claude2",
+        "Antigravity",
+        "Antigravity2"
       ]
     },
     "reviewer_fallbacks": {
       "Claude": [
-        "Claude2"
-      ],
-      "Claude2": [
-        "Claude"
-      ],
-      "Antigravity": [
-        "Antigravity2"
-      ],
-      "Antigravity2": [
-        "Antigravity"
-      ],
-      "Codex": [
+        "Claude2",
+        "Antigravity",
+        "Antigravity2",
+        "Codex",
         "Codex2"
       ],
+      "Claude2": [
+        "Claude",
+        "Antigravity",
+        "Antigravity2",
+        "Codex",
+        "Codex2"
+      ],
+      "Antigravity": [
+        "Antigravity2",
+        "Claude",
+        "Claude2",
+        "Codex",
+        "Codex2"
+      ],
+      "Antigravity2": [
+        "Antigravity",
+        "Claude",
+        "Claude2",
+        "Codex",
+        "Codex2"
+      ],
+      "Codex": [
+        "Codex2",
+        "Claude",
+        "Claude2",
+        "Antigravity",
+        "Antigravity2"
+      ],
       "Codex2": [
-        "Codex"
+        "Codex",
+        "Claude",
+        "Claude2",
+        "Antigravity",
+        "Antigravity2"
       ]
     },
     "max_reassignments_per_cycle": 4
