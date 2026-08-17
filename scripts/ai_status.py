@@ -6536,7 +6536,6 @@ def validate_delivery_binding_for_approval(
         if (
             expected.get("contract_sha256") != _canonical_json_sha256(contract)
             or expected.get("task_id") != contract["task_id"]
-            or expected.get("task_generation") != contract["task_generation"]
         ):
             raise SystemExit(
                 f"{task_id} artifact delivery contract changed after handoff; "
