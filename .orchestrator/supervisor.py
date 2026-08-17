@@ -8206,6 +8206,15 @@ def unavailable_assignment_fallback_refresh_targets(
     )
     eligible_owner_statuses = {"todo", "in_progress", "review_approved", "blocked"}
     health = runtime_delivery_health(state)
+    # Computed once: health_gate_for_endpoint is the same predicate plan/
+    # delivery admission uses (rewrite_dispatch_admission), so a fallback
+    # candidate's viability is judged by one rule instead of a second,
+    # independently-maintained copy that can silently disagree (it did,
+    # until OPS-HEALTH-GATE-ACCOUNT-PRECEDENCE-20260817 /
+    # OPS-HEALTH-GATE-UNIFY-20260817).
+    endpoint_records = _admission_health_records(health, "endpoints")
+    account_records = _admission_health_records(health, "accounts")
+    now = datetime.now(timezone.utc)
     targets: list[dict[str, str]] = []
 
     def demand_refresh(agent_name: str) -> None:
@@ -8219,13 +8228,17 @@ def unavailable_assignment_fallback_refresh_targets(
                 or not endpoint.can_auto_deliver
             ):
                 continue
-            _reason, needs_refresh = rewrite_provider_health.delivery_health_block_reason(
-                health,
+            _reason, refresh_target = rewrite_dispatch_admission.health_gate_for_endpoint(
                 endpoint_id=endpoint.endpoint_id,
                 account_id=endpoint.account_id,
+                endpoint_health=endpoint_records,
+                account_health=account_records,
+                now=now,
             )
-            target = {"scope": "endpoint", "id": endpoint.endpoint_id}
-            if needs_refresh and target not in targets:
+            if refresh_target is None:
+                continue
+            target = {"scope": refresh_target.scope.value, "id": refresh_target.identifier}
+            if target not in targets:
                 targets.append(target)
 
     for task in status.get("tasks", []) or []:

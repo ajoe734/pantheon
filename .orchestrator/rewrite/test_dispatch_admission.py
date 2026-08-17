@@ -18,11 +18,47 @@ from rewrite.dispatch_admission import (
     HealthState,
     TaskIntent,
     evaluate_dispatch_intent,
+    health_gate_for_endpoint,
 )
 from rewrite.task_machine import DispatchReason
+import rewrite.provider_health as provider_health
 
 
 NOW = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
+
+
+def _health_records(snapshot, bucket, *, now):
+    """Raw snapshot bucket -> {identity: HealthRecord}, one call site's worth.
+
+    Mirrors supervisor.py's _admission_health_records for this module's own
+    tests; production code keeps that conversion in supervisor.py since only
+    it reads live runtime state.
+    """
+
+    reader = (
+        provider_health.endpoint_health_entry
+        if bucket == "endpoints"
+        else provider_health.account_health_entry
+    )
+    records = {}
+    for identity in provider_health.normalize_delivery_health(snapshot)[bucket]:
+        entry = reader(snapshot, identity, now=now)
+        records[identity] = HealthRecord(
+            state=entry.get("state") or "unknown",
+            retry_at=provider_health._parse_time(entry.get("retry_at")),
+            refresh_at=provider_health._parse_time(entry.get("retry_at")),
+        )
+    return records
+
+
+def _gate_from_snapshot(snapshot, *, endpoint_id, account_id, now):
+    return health_gate_for_endpoint(
+        endpoint_id=endpoint_id,
+        account_id=account_id,
+        endpoint_health=_health_records(snapshot, "endpoints", now=now),
+        account_health=_health_records(snapshot, "accounts", now=now),
+        now=now,
+    )
 
 
 def endpoint(
@@ -261,6 +297,109 @@ class DispatchAdmissionTests(unittest.TestCase):
 
         self.assertTrue(decision.eligible)
         self.assertEqual(decision.endpoint_id, "codex-1")
+
+
+class HealthGateForEndpointRawSnapshotTests(unittest.TestCase):
+    """Migrated from test_provider_health.py's delivery_health_block_reason
+    tests: health_gate_for_endpoint is now the sole shared predicate, so
+    these realistic apply_probe()-built snapshots exercise it directly
+    instead of the deleted provider_health.delivery_health_block_reason.
+    """
+
+    def setUp(self) -> None:
+        self.now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
+
+    def test_live_success_marks_exact_endpoint_and_capacity_account_healthy(self) -> None:
+        snapshot = provider_health.apply_probe(
+            provider_health.empty_delivery_health(),
+            endpoint_id="codex1-2",
+            account_id="codex1",
+            probe={"source": "live", "ready": True, "status": "ready"},
+            observed_at=self.now,
+            valid_for_seconds=300,
+        )
+
+        reason, refresh = _gate_from_snapshot(
+            snapshot, endpoint_id="codex1-2", account_id="codex1", now=self.now
+        )
+        self.assertIsNone(reason)
+        self.assertIsNone(refresh)
+
+    def test_auth_failure_is_endpoint_local_even_when_capacity_account_is_shared(self) -> None:
+        snapshot = provider_health.apply_probe(
+            provider_health.empty_delivery_health(),
+            endpoint_id="claude",
+            account_id="claude-shared",
+            probe={"source": "live", "ready": True, "status": "ready"},
+            observed_at=self.now,
+        )
+        snapshot = provider_health.apply_probe(
+            snapshot,
+            endpoint_id="claude2",
+            account_id="claude-shared",
+            probe={"source": "live", "ready": False, "status": "auth_not_ready"},
+            observed_at=self.now,
+            retry_after_seconds=60,
+        )
+
+        reason, refresh = _gate_from_snapshot(
+            snapshot, endpoint_id="claude", account_id="claude-shared", now=self.now
+        )
+        self.assertIsNone(reason)
+        self.assertIsNone(refresh)
+
+    def test_quota_failure_blocks_account_but_preserves_endpoint_auth(self) -> None:
+        reset = (self.now + timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+        snapshot = provider_health.apply_probe(
+            provider_health.empty_delivery_health(),
+            endpoint_id="codex1-2",
+            account_id="codex1",
+            probe={
+                "source": "live",
+                "ready": False,
+                "status": "quota_reached",
+                "quota_reset_at": reset,
+            },
+            observed_at=self.now,
+        )
+
+        reason, refresh = _gate_from_snapshot(
+            snapshot, endpoint_id="codex1-2", account_id="codex1", now=self.now
+        )
+        self.assertEqual(reason, DispatchBlockReason.ACCOUNT_RETRY_AFTER)
+        self.assertIsNone(refresh)
+
+    def test_expired_or_missing_evidence_demands_one_fresh_observation(self) -> None:
+        snapshot = provider_health.apply_probe(
+            provider_health.empty_delivery_health(),
+            endpoint_id="codex1-2",
+            account_id="codex1",
+            probe={"source": "live", "ready": True, "status": "ready"},
+            observed_at=self.now,
+            valid_for_seconds=60,
+        )
+        later = self.now + timedelta(seconds=61)
+
+        reason, refresh = _gate_from_snapshot(
+            snapshot, endpoint_id="codex1-2", account_id="codex1", now=later
+        )
+        self.assertEqual(reason, DispatchBlockReason.HEALTH_REFRESH_REQUIRED)
+        self.assertEqual(refresh, HealthRefreshTarget(HealthScope.ENDPOINT, "codex1-2"))
+
+    def test_cached_probe_never_becomes_delivery_evidence(self) -> None:
+        snapshot = provider_health.apply_probe(
+            provider_health.empty_delivery_health(),
+            endpoint_id="codex1-2",
+            account_id="codex1",
+            probe={"source": "cached", "ready": True, "status": "ready"},
+            observed_at=self.now,
+        )
+
+        reason, refresh = _gate_from_snapshot(
+            snapshot, endpoint_id="codex1-2", account_id="codex1", now=self.now
+        )
+        self.assertEqual(reason, DispatchBlockReason.HEALTH_REFRESH_REQUIRED)
+        self.assertEqual(refresh, HealthRefreshTarget(HealthScope.ENDPOINT, "codex1-2"))
 
 
 if __name__ == "__main__":
