@@ -23,7 +23,7 @@ from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 THIS_DIR = Path(__file__).resolve().parent
