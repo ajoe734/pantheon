@@ -36,6 +36,21 @@ name: Canonical Review Gate
 #
 # This generic github-actions status is a separate lifecycle check; it cannot
 # satisfy the dedicated external-App-pinned canonical reviewer attestation.
+#
+# OPS-CANONICAL-REVIEW-GATE-POST-RETRY-20260817: the POST that publishes this
+# status used to have no retry and no distinct failure signal. A transient
+# GitHub API 5xx during that single `gh api` call crashed
+# canonical_review_gate_ci.py with an uncaught exception, whose exit code (1,
+# Python's default for an uncaught exception) was indistinguishable from the
+# script's *deliberate* exit(1) for "posted a failing status, head not
+# approved yet" -- so the bash step below treated a crash that posted
+# nothing as an unremarkable, expected outcome and reported job success.
+# Real effect, observed live: several approved PRs sat permanently BLOCKED
+# because the required context was simply never posted, and nothing about
+# the job's own green checkmark revealed that. The script now retries the
+# POST with backoff and, only if every attempt fails, exits 2 -- a code the
+# step below treats as a genuine job failure, not the designed fail-closed
+# path.
 
 on:
   pull_request:
@@ -100,11 +115,21 @@ jobs:
           DELIVERY_CLASS: ${{ contains(github.event.pull_request.labels.*.name, 'delivery:tooling') && 'tooling' || 'product' }}
           TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # Exit 1 means the fail-closed required status was published because
-          # this exact head is not approved yet.  The publisher job itself is
-          # not the gate and must not create a second failing result with the
-          # required context name.  Missing/failed status publication still
-          # fails closed because the required context remains unsatisfied.
+          # Exit 0: head is approved, a success status was posted.
+          # Exit 1: the fail-closed required status was published because
+          #   this exact head is not approved yet. The publisher job itself
+          #   is not the gate and must not create a second failing result
+          #   with the required context name -- this is an expected, healthy
+          #   outcome and the step below must not fail the job for it.
+          # Exit 2: the script could not POST any status at all, even after
+          #   its own internal retries (e.g. GitHub API was unavailable for
+          #   every attempt). No status landed, so the required context is
+          #   still unsatisfied -- but unlike exit 1, this is NOT the
+          #   designed fail-closed path; it is a real failure of this job
+          #   that needs a re-dispatch (or investigation), so fail loudly
+          #   instead of blending into "success" the way an uncaught crash
+          #   used to.
+          # Anything else: unexpected -- fail loudly too.
           gate_rc=0
           python3 scripts/git/canonical_review_gate_ci.py \
             --repo "$REPO" \
@@ -112,6 +137,10 @@ jobs:
             --head-sha "$HEAD_SHA" \
             --delivery-class "$DELIVERY_CLASS" \
             --target-url "$TARGET_URL" || gate_rc=$?
+          if [[ "$gate_rc" -eq 2 ]]; then
+            echo "::error::canonical review gate could not POST any status after retries -- required context is unset for this head; re-dispatch this workflow once GitHub's API is healthy" >&2
+            exit "$gate_rc"
+          fi
           if [[ "$gate_rc" -ne 0 && "$gate_rc" -ne 1 ]]; then
             exit "$gate_rc"
           fi

@@ -197,6 +197,85 @@ class MainDryRunTests(unittest.TestCase):
         self.assertEqual(post_status.call_args.kwargs["payload"]["state"], "failure")
         self.assertEqual(exit_code, 1)
 
+    def test_post_status_failure_after_retries_exits_2_not_1(self) -> None:
+        # A crash while posting (e.g. every retry hit a transient GitHub 5xx)
+        # must be distinguishable from the designed "not yet approved, posted
+        # a failing status" outcome, which also exits 1. Regression guard for
+        # the bug where an uncaught exception here silently exited 1 too,
+        # making the workflow's bash step treat "posted nothing at all" the
+        # same as "correctly posted failure".
+        with (
+            mock.patch.object(gate_ci, "default_tag_lookup", return_value=None),
+            mock.patch.object(
+                gate_ci, "_post_status", side_effect=gate_ci.StatusPostError("boom")
+            ) as post_status,
+        ):
+            exit_code = gate_ci.main(
+                ["--repo", REPOSITORY, "--head-ref", "task/SUP-X", "--head-sha", HEAD]
+            )
+        post_status.assert_called_once()
+        self.assertEqual(exit_code, gate_ci.EXIT_STATUS_POST_FAILED)
+        self.assertNotEqual(exit_code, 1)
+
+
+class PostStatusRetryTests(unittest.TestCase):
+    """`_post_status` itself: retry-with-backoff around the `gh api` POST."""
+
+    def _run(self, side_effect) -> None:
+        with (
+            mock.patch.object(gate_ci.subprocess, "run", side_effect=side_effect) as run,
+            mock.patch.object(gate_ci.time, "sleep") as sleep,
+        ):
+            gate_ci._post_status(
+                repository=REPOSITORY,
+                head_sha=HEAD,
+                payload={"state": "success", "context": "Pantheon canonical review gate"},
+                backoff_seconds=0.01,
+            )
+        return run, sleep
+
+    @staticmethod
+    def _completed(returncode: int) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(args=["gh"], returncode=returncode, stdout="", stderr="")
+
+    def test_succeeds_on_first_attempt_without_sleeping(self) -> None:
+        run, sleep = self._run(side_effect=[self._completed(0)])
+        self.assertEqual(run.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_retries_after_transient_failures_then_succeeds(self) -> None:
+        run, sleep = self._run(
+            side_effect=[self._completed(1), self._completed(1), self._completed(0)]
+        )
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_backs_off_with_increasing_delay(self) -> None:
+        _, sleep = self._run(
+            side_effect=[self._completed(1), self._completed(1), self._completed(0)]
+        )
+        first_delay, second_delay = (call.args[0] for call in sleep.call_args_list)
+        self.assertLess(first_delay, second_delay)
+
+    def test_exhausting_all_attempts_raises_status_post_error_not_called_process_error(
+        self,
+    ) -> None:
+        with (
+            mock.patch.object(
+                gate_ci.subprocess, "run", side_effect=[self._completed(1)] * 10
+            ) as run,
+            mock.patch.object(gate_ci.time, "sleep"),
+        ):
+            with self.assertRaises(gate_ci.StatusPostError):
+                gate_ci._post_status(
+                    repository=REPOSITORY,
+                    head_sha=HEAD,
+                    payload={"state": "success", "context": "Pantheon canonical review gate"},
+                    attempts=4,
+                    backoff_seconds=0.01,
+                )
+        self.assertEqual(run.call_count, 4)
+
 
 class DefaultTagLookupTests(unittest.TestCase):
     """The one function in this module that actually shells out to `gh` --
