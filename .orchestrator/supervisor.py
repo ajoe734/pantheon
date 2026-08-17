@@ -3428,12 +3428,22 @@ def process_queue(
     state: dict[str, Any],
     *,
     delivery_outcome: dict[str, bool] | None = None,
+    health_refresh_demand: list[dict[str, str]] | None = None,
 ) -> bool:
     """Reconcile queued intents and launch at most one worker process.
 
     A runtime-phase reservation carries one crash-recoverable launch intent and
     receipt.  Launching a second process in the same reservation would replace
     that evidence and orphan the first process after a hard crash.
+
+    ``health_refresh_demand``, when supplied, collects the exact endpoints a
+    pending intent is waiting on so the caller can fold them into the same
+    cycle's live probe pass. Before this parameter existed, a pending intent
+    only recorded ``last_wait_reason``/``last_health_refresh_requested_at`` as
+    bookkeeping timestamps and dropped the actual endpoint identifiers on the
+    floor -- nothing ever re-probed them, so an intent stuck waiting on a
+    lane whose cached health had merely gone stale (not a durable failure)
+    could wait forever. Diagnosed 2026-08-17 on AGORA-HOSTED-SERVICE-PROOF-20260815.
     """
     if delivery_outcome is not None:
         delivery_outcome["launched"] = False
@@ -3605,6 +3615,11 @@ def process_queue(
                 record["last_wait_reason"] = reason_code
                 if decision.needs_health_refresh:
                     record["last_health_refresh_requested_at"] = utc_now()
+                    if health_refresh_demand is not None:
+                        for target in decision.health_refresh_targets:
+                            entry = {"scope": target.scope.value, "id": target.identifier}
+                            if entry not in health_refresh_demand:
+                                health_refresh_demand.append(entry)
             changed = True
             continue
         request = build_request(config, event, agent_id_override=endpoint_id)
@@ -5022,6 +5037,48 @@ def bounded_fallback_candidates(
     return ordered
 
 
+def reviewer_fallback_search_order(
+    config: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    reviewer: str,
+    owner: str,
+    candidate_owner: str,
+) -> list[str]:
+    """Reviewer fallback chain :func:`plan_task_assignment_pair` walks for an
+    owner reassignment, past its fixed seed (the incumbent reviewer).
+
+    Single definition shared with :func:`unavailable_assignment_fallback_refresh_targets`.
+    A second, hand-maintained copy of this traversal previously covered only
+    owner-side fallbacks when requesting live health refreshes, so a reviewer
+    whose cached health had gone stale (no dispatch had touched it recently)
+    was never re-probed and silently starved every owner reassignment attempt
+    that needed it -- diagnosed 2026-08-17 on AGORA-HOSTED-SERVICE-PROOF-20260815
+    after Codex2 hit a durable quota_terminal state: the planner correctly
+    found Codex as a viable new owner but could never pair it with a reviewer
+    because Claude's (and then Claude2's) health had never been refreshed.
+    """
+
+    reviewer_mapping = settings.get("reviewer_fallbacks", {}) or {}
+    owner_mapping = settings.get("owner_fallbacks", {}) or {}
+    order: list[str] = []
+    order.extend(
+        bounded_fallback_candidates(
+            config,
+            reviewer_mapping,
+            roots=[name for name in (reviewer, owner, candidate_owner) if name],
+        )
+    )
+    order.extend(
+        bounded_fallback_candidates(
+            config,
+            owner_mapping,
+            roots=[name for name in (owner, candidate_owner) if name],
+        )
+    )
+    return order
+
+
 def plan_task_assignment_pair(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -5064,7 +5121,6 @@ def plan_task_assignment_pair(
 
     settings = worker_reassignment_settings(config)
     owner_mapping = settings.get("owner_fallbacks", {}) or {}
-    reviewer_mapping = settings.get("reviewer_fallbacks", {}) or {}
     if fixed_owner is not None:
         owner_order = [canonical_agent_name(config, fixed_owner)]
     elif owner_candidates is not None:
@@ -5106,17 +5162,12 @@ def plan_task_assignment_pair(
             if preferred_reviewers is None and owner and owner not in reviewer_order:
                 reviewer_order.append(owner)
             reviewer_order.extend(
-                bounded_fallback_candidates(
+                reviewer_fallback_search_order(
                     config,
-                    reviewer_mapping,
-                    roots=[name for name in (reviewer, owner, candidate_owner) if name],
-                )
-            )
-            reviewer_order.extend(
-                bounded_fallback_candidates(
-                    config,
-                    owner_mapping,
-                    roots=[name for name in (owner, candidate_owner) if name],
+                    settings,
+                    reviewer=reviewer,
+                    owner=owner,
+                    candidate_owner=candidate_owner,
                 )
             )
         seen_reviewers: set[str] = set()
@@ -8157,6 +8208,26 @@ def unavailable_assignment_fallback_refresh_targets(
     health = runtime_delivery_health(state)
     targets: list[dict[str, str]] = []
 
+    def demand_refresh(agent_name: str) -> None:
+        lane = delivery_lane_for_agent(config, normalize_agent_id(agent_name))
+        for endpoint in lane.endpoints:
+            if (
+                not endpoint.endpoint_id
+                or not endpoint.provider_id
+                or not endpoint.account_id
+                or not endpoint.enabled
+                or not endpoint.can_auto_deliver
+            ):
+                continue
+            _reason, needs_refresh = rewrite_provider_health.delivery_health_block_reason(
+                health,
+                endpoint_id=endpoint.endpoint_id,
+                account_id=endpoint.account_id,
+            )
+            target = {"scope": "endpoint", "id": endpoint.endpoint_id}
+            if needs_refresh and target not in targets:
+                targets.append(target)
+
     for task in status.get("tasks", []) or []:
         if not isinstance(task, dict):
             continue
@@ -8190,24 +8261,26 @@ def unavailable_assignment_fallback_refresh_targets(
         ):
             if role == "reviewer" and candidate.casefold() == owner.casefold():
                 continue
-            lane = delivery_lane_for_agent(config, normalize_agent_id(candidate))
-            for endpoint in lane.endpoints:
-                if (
-                    not endpoint.endpoint_id
-                    or not endpoint.provider_id
-                    or not endpoint.account_id
-                    or not endpoint.enabled
-                    or not endpoint.can_auto_deliver
-                ):
+            demand_refresh(candidate)
+            if role != "owner" or reviewer_is_explicit_human_gate(reviewer):
+                continue
+            # plan_task_assignment_pair must also pair the reassigned owner
+            # with a reviewer it can independently verify healthy. A stale
+            # incumbent reviewer (nobody dispatched to it recently, not any
+            # durable unavailability of its own) would otherwise never get
+            # re-probed, and the planner would have a viable owner with no
+            # viable reviewer to pair it with -- see reviewer_fallback_search_order.
+            demand_refresh(reviewer)
+            for reviewer_candidate in reviewer_fallback_search_order(
+                config,
+                settings,
+                reviewer=reviewer,
+                owner=owner,
+                candidate_owner=candidate,
+            ):
+                if reviewer_candidate.casefold() == candidate.casefold():
                     continue
-                _reason, needs_refresh = rewrite_provider_health.delivery_health_block_reason(
-                    health,
-                    endpoint_id=endpoint.endpoint_id,
-                    account_id=endpoint.account_id,
-                )
-                target = {"scope": "endpoint", "id": endpoint.endpoint_id}
-                if needs_refresh and target not in targets:
-                    targets.append(target)
+                demand_refresh(reviewer_candidate)
     return targets
 
 
@@ -12268,6 +12341,7 @@ def run_once(
             0,
             int(ready_dispatch_settings(config).get("max_dispatches_per_tick", 4) or 0),
         )
+        queued_health_refresh_demand: list[dict[str, str]] = []
         for _delivery_index in range(max_delivery_launches):
             delivery_outcome: dict[str, bool] = {}
             delivery_changed = bool(
@@ -12283,6 +12357,7 @@ def run_once(
                             config,
                             state,
                             delivery_outcome=delivery_outcome,
+                            health_refresh_demand=queued_health_refresh_demand,
                         )
                     ),
                     quiet=quiet,
@@ -12330,9 +12405,13 @@ def run_once(
             THIS_DIR.parent,
             quiet=quiet,
         )
+        probe_targets = list(dispatch_plan.get("health_refresh_targets", []))
+        for target in queued_health_refresh_demand:
+            if target not in probe_targets:
+                probe_targets.append(target)
         delivery_health_observations = probe_demanded_delivery_health(
             config,
-            dispatch_plan.get("health_refresh_targets", []),
+            probe_targets,
             quiet=quiet,
         )
         task_state_projection_snapshot = _safe_phase(
