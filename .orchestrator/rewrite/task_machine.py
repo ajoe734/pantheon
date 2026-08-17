@@ -57,20 +57,20 @@ def _is_hex(value: object, length: int) -> bool:
 
 
 def delivery_contract_payload(task: Mapping[str, object]) -> dict[str, object]:
-    """Return the immutable artifact contract frozen by a review handoff."""
+    """Return the immutable artifact contract frozen by a review handoff.
+
+    Deliberately excludes ``generation``: it is an assignment epoch that
+    advances on owner/reviewer reassignment, not a signal that the reviewed
+    artifacts/acceptance changed, so it must not affect contract identity.
+    """
 
     def normalized_list(value: object) -> list[str]:
         if not isinstance(value, list):
             return []
         return sorted({str(item).strip() for item in value if str(item).strip()})
 
-    try:
-        generation = int(task.get("generation", 1) or 1)
-    except (TypeError, ValueError):
-        generation = 0
     return {
         "task_id": str(task.get("id") or "").strip(),
-        "task_generation": generation,
         "repository_id": str(
             task.get("repository_id") or task.get("target_repo") or ""
         ).strip(),
@@ -112,7 +112,6 @@ def delivery_binding_is_current(task: Mapping[str, object]) -> bool:
         contract = delivery_contract_payload(task)
         return (
             str(binding.get("task_id") or "") == contract["task_id"]
-            and binding.get("task_generation") == contract["task_generation"]
             and _is_hex(binding.get("contract_sha256"), 64)
             and str(binding.get("contract_sha256")) == _canonical_json_sha256(contract)
         )
