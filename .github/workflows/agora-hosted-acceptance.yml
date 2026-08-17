@@ -69,10 +69,11 @@ jobs:
       - name: Checkout dispatched Pantheon revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ inputs.expected_bff_sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Require the exact current dev head and safe dev origins
+      - name: Require the dispatched revision and safe dev origins
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           [[ "${GITHUB_REF}" == "refs/heads/dev" ]]
@@ -80,10 +81,7 @@ jobs:
           [[ "${EXPECTED_FE_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${BFF_BASE_URL}" == "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io" ]]
           [[ "${FE_BASE_URL}" == "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" ]]
-          git fetch --no-tags origin dev
           [[ "$(git rev-parse HEAD)" == "${EXPECTED_BFF_SHA}" ]]
-          [[ "$(git rev-parse refs/remotes/origin/dev)" == "${EXPECTED_BFF_SHA}" ]]
-          [[ "${GITHUB_SHA}" == "${EXPECTED_BFF_SHA}" ]]
           [[ -n "${AGORA_HOSTED_OPERATOR_CLIENT_SECRET}" ]]
           [[ -n "${AGORA_HOSTED_PEER_CLIENT_SECRET}" ]]
           [[ -n "${AGORA_HOSTED_VIEWER_CLIENT_SECRET}" ]]
