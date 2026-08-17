@@ -1,0 +1,19 @@
+{
+  "_purpose": "Cross-repository conformance fixture for the Agora canonical-JSON-hash algorithm. The pantheon (Python, scripts/agora_compat_manifest.py::canonical_json_sha256) and execute-plans (JS, scripts/deploy-dev-vm.sh::canonicalize + sha256) implementations are independent reimplementations of the same rule: recursively sort object keys, JSON-encode compactly (no extra whitespace), append one literal LF byte, then SHA-256 the UTF-8 bytes. This fixture pins one concrete payload/hash pair so both sides' test suites assert against the same expected value instead of only checking self-consistency. If either implementation changes and this fixture's expected_sha256 no longer matches, that is the two repos' contracts silently diverging -- update this file in BOTH repos in the same change, with the algorithm rationale in the commit message, never as a routine bump.",
+  "payload": {
+    "backend": {
+      "commit": "1111111111111111111111111111111111aaaa",
+      "tree": "2222222222222222222222222222222222bbbb"
+    },
+    "frontend": {
+      "commit": "3333333333333333333333333333333333cccc",
+      "tree": "4444444444444444444444444444444444dddd"
+    },
+    "compatibility_manifest": {
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
+    "contract_family": "agora.v1.13"
+  },
+  "expected_sha256": "e730a3e06d74bed834dcdb982b22514d15438b40a8e7624f94d4de50d4715f58"
+}
