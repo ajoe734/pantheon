@@ -101,6 +101,30 @@ class DeliveryBindingTests(unittest.TestCase):
         task["artifacts"] = ["src/b.py"]
         self.assertFalse(task_machine.delivery_binding_is_current(task))
 
+    def test_artifact_binding_survives_reassignment_generation_bump(self) -> None:
+        task = {
+            "id": "TASK-3",
+            "generation": 1,
+            "artifacts": ["src/a.py"],
+            "acceptance": ["test passes"],
+        }
+        contract = task_machine.delivery_contract_payload(task)
+        task["delivery_binding"] = {
+            "kind": "artifact_contract",
+            **contract,
+            "contract_sha256": task_machine._canonical_json_sha256(contract),
+        }
+        self.assertTrue(task_machine.delivery_binding_is_current(task))
+        task["generation"] = 2
+        self.assertTrue(
+            task_machine.delivery_binding_is_current(task),
+            "a reassignment that only bumps the assignment generation must not "
+            "invalidate an otherwise-unchanged artifact delivery",
+        )
+        self.assertIsNotNone(task_machine.delivery_binding_digest(task))
+        self.assertNotIn("generation", contract)
+        self.assertNotIn("task_generation", contract)
+
 
 class StateTableTests(unittest.TestCase):
     def test_coerce_known(self) -> None:
