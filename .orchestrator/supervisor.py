@@ -4103,6 +4103,15 @@ def normalize_pr_url(config: dict[str, Any], url: str | None) -> str | None:
 
 
 def canonical_agent_name(config: dict[str, Any], value: str | None) -> str:
+    # scripts/ai_status.py has a separate, older canonical_agent_name(name)
+    # that resolves against a hardcoded KNOWN_AGENTS/AGENT_ALIASES table
+    # instead of live config -- it predates this config-driven version and
+    # is missing worker-slot ids (e.g. codex1_1) present here. Investigated
+    # 2026-08-17: no evidence in ai-status.json/activity-log/task-archive of
+    # this ever causing a real mismatch (owner/reviewer values observed in
+    # practice are always pre-normalized display names), so left as a known,
+    # low-risk divergence rather than unified across ~60 call sites with no
+    # existing test coverage.
     raw = str(value or "").strip()
     if not raw:
         return ""
