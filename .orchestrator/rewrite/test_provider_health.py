@@ -33,12 +33,6 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
             provider_health.account_state(snapshot, "codex1", now=self.now),
             DeliveryHealthState.HEALTHY,
         )
-        self.assertEqual(
-            provider_health.delivery_health_block_reason(
-                snapshot, endpoint_id="codex1-2", account_id="codex1", now=self.now
-            ),
-            (None, False),
-        )
 
     def test_auth_failure_is_endpoint_local_even_when_capacity_account_is_shared(self) -> None:
         snapshot = provider_health.apply_probe(
@@ -69,12 +63,6 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
             provider_health.account_state(snapshot, "claude-shared", now=self.now),
             DeliveryHealthState.HEALTHY,
         )
-        self.assertEqual(
-            provider_health.delivery_health_block_reason(
-                snapshot, endpoint_id="claude", account_id="claude-shared", now=self.now
-            ),
-            (None, False),
-        )
 
     def test_quota_failure_blocks_account_but_preserves_endpoint_auth(self) -> None:
         reset = (self.now + timedelta(hours=2)).isoformat().replace("+00:00", "Z")
@@ -99,12 +87,6 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
             provider_health.account_state(snapshot, "codex1", now=self.now),
             DeliveryHealthState.RETRY_AFTER,
         )
-        self.assertEqual(
-            provider_health.delivery_health_block_reason(
-                snapshot, endpoint_id="codex1-2", account_id="codex1", now=self.now
-            ),
-            ("account_retry_after", False),
-        )
 
     def test_expired_or_missing_evidence_demands_one_fresh_observation(self) -> None:
         snapshot = provider_health.apply_probe(
@@ -121,12 +103,6 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
             provider_health.endpoint_state(snapshot, "codex1-2", now=later),
             DeliveryHealthState.UNKNOWN,
         )
-        self.assertEqual(
-            provider_health.delivery_health_block_reason(
-                snapshot, endpoint_id="codex1-2", account_id="codex1", now=later
-            ),
-            ("account_health_stale", True),
-        )
 
     def test_cached_probe_never_becomes_delivery_evidence(self) -> None:
         snapshot = provider_health.apply_probe(
@@ -138,10 +114,12 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            provider_health.delivery_health_block_reason(
-                snapshot, endpoint_id="codex1-2", account_id="codex1", now=self.now
-            ),
-            ("account_health_stale", True),
+            provider_health.endpoint_state(snapshot, "codex1-2", now=self.now),
+            DeliveryHealthState.UNKNOWN,
+        )
+        self.assertEqual(
+            provider_health.account_state(snapshot, "codex1", now=self.now),
+            DeliveryHealthState.UNKNOWN,
         )
 
 

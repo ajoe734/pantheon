@@ -370,52 +370,6 @@ def apply_failure(
     )
 
 
-def _refresh_required(entry: Mapping[str, Any], *, now: datetime) -> bool:
-    state = _state(entry.get("state"))
-    if state is DeliveryHealthState.HEALTHY:
-        return False
-    retry_at = _parse_time(entry.get("retry_at"))
-    return retry_at is None or retry_at <= now
-
-
-def delivery_health_block_reason(
-    snapshot: Mapping[str, Any] | None,
-    *,
-    endpoint_id: str,
-    account_id: str,
-    now: datetime | None = None,
-) -> tuple[str | None, bool]:
-    """Return ``(block_reason, needs_live_refresh)`` for one exact endpoint.
-
-    Account capacity availability takes precedence over endpoint credentials.
-    This function intentionally has no knowledge of task status, leases, or
-    capacity counts; planner and delivery may therefore share it without
-    recreating a second scheduler policy.
-    """
-
-    current = now or _utc_now()
-    normalized = normalize_delivery_health(snapshot)
-    account_raw = normalized["accounts"].get(str(account_id or "").strip(), {})
-    endpoint_raw = normalized["endpoints"].get(str(endpoint_id or "").strip(), {})
-    account = account_health_entry(normalized, account_id, now=current)
-    endpoint = endpoint_health_entry(normalized, endpoint_id, now=current)
-    account_state_value = _state(account.get("state"))
-    endpoint_state_value = _state(endpoint.get("state"))
-    if account_state_value is not DeliveryHealthState.HEALTHY:
-        if account_state_value is DeliveryHealthState.RETRY_AFTER:
-            return "account_retry_after", _refresh_required(account_raw, now=current)
-        if account_state_value is DeliveryHealthState.UNAVAILABLE:
-            return "account_unavailable", _refresh_required(account_raw, now=current)
-        return "account_health_stale", True
-    if endpoint_state_value is not DeliveryHealthState.HEALTHY:
-        if endpoint_state_value is DeliveryHealthState.RETRY_AFTER:
-            return "endpoint_retry_after", _refresh_required(endpoint_raw, now=current)
-        if endpoint_state_value is DeliveryHealthState.UNAVAILABLE:
-            return "endpoint_unavailable", _refresh_required(endpoint_raw, now=current)
-        return "endpoint_health_stale", True
-    return None, False
-
-
 def _norm(kind: object) -> str:
     return str(kind or "").strip().lower()
 
