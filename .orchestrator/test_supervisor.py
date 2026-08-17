@@ -1363,6 +1363,36 @@ class DurableQueueContractTests(unittest.TestCase):
                 self.assertEqual(record["status"], "pending")
                 self.assertEqual(record["last_wait_reason"], "health_refresh_required")
 
+    def test_pending_intent_collects_its_own_health_refresh_demand(self) -> None:
+        """A pending intent must hand back which endpoints need re-probing.
+
+        Before this test's companion fix, a pending intent only recorded
+        ``last_wait_reason``/``last_health_refresh_requested_at`` timestamps
+        and dropped the actual endpoint identifiers -- nothing downstream
+        ever re-probed them, so an intent stuck on a lane whose cached health
+        had simply gone stale (not a durable failure) could wait forever.
+        Diagnosed 2026-08-17 on AGORA-HOSTED-SERVICE-PROOF-20260815: a retried
+        queue event sat "pending: health_refresh_required" indefinitely after
+        its endpoint's health TTL lapsed mid-retry.
+        """
+
+        state = {"workers": {}, "queue": {"events": {}}, "delivery_health": {}}
+        with_queue_intents(state, self.event)
+        demand: list[dict[str, str]] = []
+        with (
+            mock.patch.object(supervisor, "queue_events", return_value=[self.event]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("unproven auth must not launch"),
+            ),
+        ):
+            supervisor.process_queue(self.config, state, health_refresh_demand=demand)
+        record = state["queue"]["events"]["evt-1"]
+        self.assertEqual(record["status"], "pending")
+        self.assertIn({"scope": "endpoint", "id": "codex"}, demand)
+
     def test_one_runtime_reservation_launches_at_most_one_process(self) -> None:
         second_task = task_fixture("TASK-2", status="in_progress")
         second_event = supervisor.build_dispatch_event(
