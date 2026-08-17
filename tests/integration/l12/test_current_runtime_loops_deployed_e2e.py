@@ -16,6 +16,14 @@ Required environment variables when ``PANTHEON_L12_DEPLOYED_E2E=1``:
 The Compose files value is an ``os.pathsep``-separated list.  The task harness
 must set paper-only controls, a one- or two-second worker interval, BFF health
 probe interval, and must disable all live broker/capital execution.
+
+Do not point ``PANTHEON_L12_COMPOSE_PROJECT`` at the persistent default
+``pantheon`` compose project: this suite mutates real capital/registry/
+deployment/runtime state and stops a live worker container, which is unsafe
+against shared fleet infrastructure without a governed exclusivity
+mechanism. See the "Default-compose rerun evaluated and found infeasible"
+section of
+``docs/deployment/evidence/twelve-loop-current/runtime-loops/README.md``.
 """
 
 from __future__ import annotations
