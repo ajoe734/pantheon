@@ -179,6 +179,38 @@ class DispatchAdmissionTests(unittest.TestCase):
             (HealthRefreshTarget(HealthScope.ENDPOINT, "codex-1"),),
         )
 
+    def test_account_gate_is_checked_before_endpoint_gate(self) -> None:
+        """A durably blocked account must win over an unprobed endpoint.
+
+        provider_health.delivery_health_block_reason (used by reassignment
+        recovery) documents "account capacity availability takes precedence
+        over endpoint credentials" and checks account before endpoint. This
+        module previously checked endpoint first, so a lane with an unprobed
+        endpoint (UNKNOWN, itself harmless) alongside a durably
+        quota-exhausted account reported HEALTH_REFRESH_REQUIRED for the
+        endpoint instead of ACCOUNT_RETRY_AFTER -- the two admission paths
+        disagreed about which fact mattered, and the account exhaustion took
+        an extra cycle to surface. Diagnosed 2026-08-17.
+        """
+
+        decision = evaluate_dispatch_intent(
+            intent(),
+            lane(endpoint()),
+            healthy_snapshot(
+                endpoint_health={"codex-1": HealthRecord(HealthState.UNKNOWN)},
+                account_health={
+                    "codex-account": HealthRecord(
+                        HealthState.RETRY_AFTER,
+                        retry_at=NOW + timedelta(days=3),
+                    )
+                },
+            ),
+        )
+
+        self.assertFalse(decision.eligible)
+        self.assertEqual(decision.reason, DispatchBlockReason.ACCOUNT_RETRY_AFTER)
+        self.assertEqual(decision.health_refresh_targets, ())
+
     def test_account_capacity_and_task_lease_are_distinct_closed_gates(self) -> None:
         capacity = evaluate_dispatch_intent(
             intent(),
