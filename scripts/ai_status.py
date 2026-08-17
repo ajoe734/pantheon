@@ -1323,6 +1323,16 @@ def localize_embedded_timestamps(text: Any) -> str:
 
 
 def canonical_agent_name(name: str | None) -> str:
+    # .orchestrator/supervisor.py has a separate, newer canonical_agent_name
+    # (config, value) that resolves against the live config.json agent
+    # registry instead of KNOWN_AGENTS/AGENT_ALIASES below. This function
+    # predates that (present since the initial commit) and is missing
+    # worker-slot ids (e.g. codex1_1) the supervisor.py version resolves.
+    # Investigated 2026-08-17: no evidence in ai-status.json/activity-log/
+    # task-archive of this ever causing a real mismatch (owner/reviewer
+    # values observed in practice are always pre-normalized display names),
+    # so left as a known, low-risk divergence rather than unified across
+    # ~60 call sites here with no existing test coverage.
     if name is None:
         return ""
     trimmed = str(name).strip()
