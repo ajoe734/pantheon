@@ -69,7 +69,14 @@ jobs:
       - name: Checkout dispatched Pantheon revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          fetch-depth: 0
+          # Pin to the exact commit that is currently hosted (as recorded in
+          # deployment.json when the caller computed expected_bff_sha), not
+          # to the dev branch tip. dev merges continuously and independently
+          # of the periodic, manual deploy that produced this snapshot, so
+          # resolving "dev" at checkout time made this step race against
+          # unrelated PRs merging while the run was queued or fetching.
+          ref: ${{ inputs.expected_bff_sha }}
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Require the exact current dev head and safe dev origins
@@ -80,10 +87,18 @@ jobs:
           [[ "${EXPECTED_FE_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${BFF_BASE_URL}" == "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io" ]]
           [[ "${FE_BASE_URL}" == "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" ]]
-          git fetch --no-tags origin dev
+          # The checkout step above already pins HEAD to EXPECTED_BFF_SHA, so
+          # this is a defensive sanity check, not an identity proof. Do not
+          # compare against origin/dev's current tip or GITHUB_SHA here: dev
+          # is expected to keep advancing independently of whatever was
+          # hosted when EXPECTED_BFF_SHA was computed, so both of those
+          # comparisons raced against unrelated merges by design and failed
+          # on essentially every run during normal fleet activity. The real
+          # proof that the checked-out code matches what is actually serving
+          # traffic lives in the later wait_for_bff_lifecycle_readiness.py
+          # --expected-deployment-sha step, which asks the live BFF instance
+          # for its own reported SHA.
           [[ "$(git rev-parse HEAD)" == "${EXPECTED_BFF_SHA}" ]]
-          [[ "$(git rev-parse refs/remotes/origin/dev)" == "${EXPECTED_BFF_SHA}" ]]
-          [[ "${GITHUB_SHA}" == "${EXPECTED_BFF_SHA}" ]]
           [[ -n "${AGORA_HOSTED_OPERATOR_CLIENT_SECRET}" ]]
           [[ -n "${AGORA_HOSTED_PEER_CLIENT_SECRET}" ]]
           [[ -n "${AGORA_HOSTED_VIEWER_CLIENT_SECRET}" ]]
