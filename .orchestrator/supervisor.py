@@ -11287,15 +11287,6 @@ def agent_dispatch_loads(
     return loads
 
 
-def worker_logical_dispatch_agent_id(config: dict[str, Any], worker: dict[str, Any]) -> str:
-    explicit = normalize_agent_id(str(worker.get("logical_agent_id") or ""))
-    if explicit:
-        return explicit
-    agent_id = normalize_agent_id(str(worker.get("agent_id") or worker.get("provider") or ""))
-    agent = config.get("agents", {}).get(agent_id, {}) or {}
-    return normalize_agent_id(str(agent.get("dispatch_slot_for") or agent_id))
-
-
 def worker_matches_current_assignment(
     config: dict[str, Any],
     worker: dict[str, Any],

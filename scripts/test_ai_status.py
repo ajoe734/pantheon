@@ -3339,7 +3339,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
             _command_done(self.state, ["REG-002", "Owner finalized approved task"])
 
@@ -3363,7 +3363,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 clear=False,
             ),
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
             _command_done(
                 self.state,
@@ -3423,7 +3423,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.dict(os.environ, {"AI_NAME": "Codex", "REVIEW_FILE": review_file}, clear=False),
             mock.patch.object(ai_status, "review_evidence_file_committed", return_value=True),
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
             _command_done(self.state, ["REG-002", "Owner binds the already-reviewed manifest"])
 
@@ -3500,7 +3500,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "validate_protected_closeout_transition",
                 return_value=consumed_ref,
             ) as protected,
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
             _command_done(
                 self.state,
@@ -3585,7 +3585,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "validate_protected_closeout_transition",
                 return_value=consumed_ref,
             ),
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
             _command_reconcile_merged_done(
                 self.state,
@@ -3641,7 +3641,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "validate_protected_closeout_transition",
                 return_value=consumed_ref,
             ) as protected,
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
             _command_reconcile_merged_done(
                 self.state,
@@ -4157,7 +4157,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
             with self.assertRaises(SystemExit):
                 ai_status.command_handoff(self.state, ["REG-002", "Gemini", "Wrong reviewer"])
@@ -4410,7 +4410,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
             ai_status.command_supersede(self.state, ["REG-002", "Superseded by REG-010 after accepted consensus.", "REG-010"])
 
@@ -5690,7 +5690,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
             },
         }
         with (
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=snapshot),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=snapshot),
             mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
         ):
             ai_status.command_show(self.state, ["REG-100"])
@@ -5711,7 +5711,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
             }
         }
         with (
-            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
             mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
         ):
             ai_status.command_show(self.state, ["REG-100"])
@@ -5731,7 +5731,7 @@ class ArchiveWorkflowTests(unittest.TestCase):
                 "recorded_at": "2026-04-14T02:00:00Z",
             }
         }
-        with mock.patch.object(ai_status, "archived_task_snapshot", return_value=None):
+        with mock.patch.object(ai_status, "load_archived_snapshot", return_value=None):
             projection = ai_status.terminal_archive_projection(self.state)
 
         self.assertEqual(projection[0]["task_id"], "REG-100")
@@ -8635,7 +8635,7 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         before = deepcopy(state)
         with mock.patch.object(
             ai_status,
-            "archived_task_snapshot",
+            "load_archived_snapshot",
             return_value=existing_no_conflict,
         ):
             snapshot = ai_status.archive_terminal_task_from_state(state, terminal, archived_at="2026-07-14T00:03:00Z")
@@ -8670,7 +8670,7 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         before = deepcopy(state)
         with mock.patch.object(
             ai_status,
-            "archived_task_snapshot",
+            "load_archived_snapshot",
             return_value=existing_conflict,
         ):
             with self.assertRaises(RuntimeError):
@@ -8692,7 +8692,7 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         before = deepcopy(state)
         with mock.patch.object(
             ai_status,
-            "archived_task_snapshot",
+            "load_archived_snapshot",
             return_value=legacy_existing,
         ):
             with self.assertRaises(RuntimeError):

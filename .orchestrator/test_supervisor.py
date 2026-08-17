@@ -132,6 +132,44 @@ class V2StartupCacheTests(unittest.TestCase):
             with mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
                 self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
 
+    def test_schedule_missing_process_retry_does_not_raise_without_state_param(self) -> None:
+        """schedule_missing_process_retry must accept state, not close over a
+        caller-scope name of the same spelling.
+
+        It calls request_for_worker(config, state, worker), which requires an
+        actual `state` parameter. A prior version of this function had no
+        such parameter -- Python resolved the bare name `state` used inside
+        the call by raising NameError at call time (not import time), so
+        nothing caught it until reconcile_runtime_on_boot's boot-reconciliation
+        path actually hit a missing-process worker. No existing test built a
+        worker record with a dead process, so the gap went unnoticed until it
+        fired live and repeatedly failed 'apply_post_dispatch_maintenance'
+        (16 times in one live session on 2026-08-17, non-fatal but recurring)
+        before OPS-SUPERVISOR-RETRY-MISSING-STATE-20260817 fixed the missing
+        parameter. This test calls the function directly (not through the
+        much larger reconcile_runtime_on_boot) so a future regression is
+        caught by a NameError at the narrowest possible point.
+        """
+
+        config = config_fixture()
+        state = {"workers": {}, "queue": {"events": {}}}
+        worker = {
+            "provider": "codex",
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "wake",
+            },
+        }
+
+        result = supervisor.schedule_missing_process_retry(
+            config, state, worker, "worker process missing"
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(worker.get("status"), "retry_backoff")
+
     def test_terminal_facts_satisfy_dependencies_without_archive_lookup(self) -> None:
         config = config_fixture()
         child = task_fixture(task_id="CHILD", depends_on=["MERGED-LEGACY"])

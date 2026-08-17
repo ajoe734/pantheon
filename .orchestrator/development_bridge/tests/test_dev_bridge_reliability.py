@@ -1766,7 +1766,7 @@ def test_ai_status_bridge_assignment_preserves_exact_spec_and_is_idempotent(
     state["wave_state"] = {"status": "open"}
 
     with (
-        patch.object(AI_STATUS, "archived_task_snapshot", return_value=None),
+        patch.object(AI_STATUS, "load_archived_snapshot", return_value=None),
         patch.object(AI_STATUS, "append_log") as append_log,
     ):
         with AI_STATUS.dev_bridge_materialize_mutation_environment(
@@ -1812,7 +1812,7 @@ def test_ai_status_bridge_assignment_conflicts_fail_closed(
     state["wave_state"] = {"status": "open"}
 
     with (
-        patch.object(AI_STATUS, "archived_task_snapshot", return_value=None),
+        patch.object(AI_STATUS, "load_archived_snapshot", return_value=None),
         patch.object(AI_STATUS, "append_log"),
     ):
         with AI_STATUS.dev_bridge_materialize_mutation_environment(

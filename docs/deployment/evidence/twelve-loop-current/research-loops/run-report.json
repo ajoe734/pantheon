@@ -10,31 +10,50 @@
     {
       "authority_readback": null,
       "case_index": 1,
-      "completed_at": "2026-08-15T05:53:56Z",
-      "first_failed_boundary": "source.owner_compose_identity",
-      "last_successful_boundary": null,
+      "completed_at": "2026-08-17T10:41:37Z",
+      "first_failed_boundary": "source.authority_actual_state",
+      "last_successful_boundary": "source.durable_terminal_readback",
       "loop_id": "source_ingestion",
       "next_consumer": null,
-      "owner": null,
-      "started_at": "2026-08-15T05:53:55Z",
+      "owner": {
+        "compose_service": "source-ingest-scheduler",
+        "container_id": "3b07226df7b9cf6e41c95e349d4071c35953bca8f33870459c9a4fbe5f92acc6",
+        "health": "healthy",
+        "image_id": "sha256:32bed2aa9e87ef4e28bfb8e0c9f6a2e7cbcc93aa357ded023aee4c6ab1d7179e",
+        "image_revision": null,
+        "restart_count": 0,
+        "state": "running"
+      },
+      "started_at": "2026-08-17T10:41:29Z",
       "status": "failed",
-      "successful_boundaries": [],
+      "successful_boundaries": [
+        "source.owner_compose_identity",
+        "source.anti_preseed_readback",
+        "source.connector_command",
+        "source.scheduled_trigger",
+        "source.job_trigger",
+        "source.durable_terminal_readback"
+      ],
       "terminal_output": null,
-      "trigger": null
+      "trigger": {
+        "id": "conn-l12-e2e-ddd5b910e01c",
+        "trace_id": "trace-l12-e2e-ddd5b910e01c",
+        "type": "connector_schedule"
+      }
     }
   ],
-  "completed_at": "2026-08-15T05:53:56Z",
-  "compose_project": "l12research814",
+  "completed_at": "2026-08-17T10:41:37Z",
+  "compose_project": "pantheon",
   "first_failure": {
-    "boundary": "source.owner_compose_identity",
+    "boundary": "source.authority_actual_state",
     "case_index": 1,
-    "detail": "Compose owner source-ingest-scheduler did not reach a stable healthy identity: {\"compose_service\":\"source-ingest-scheduler\",\"container_id\":\"ee5f5faf9c27bce936860c47bcedd53581e219b5d14e4a3137e0ca9bc7d57ec2\",\"health\":\"starting\",\"image_id\":\"sha256:c3b26ec1cfc77095821d834960d169a7dac64b6a735a15532a5b60f39fc2ff2f\",\"image_revision\":null,\"restart_count\":4,\"state\":\"running\"}",
-    "last_successful_boundary": null,
+    "detail": "GET /api/source-ingest/controller/readback returned non-JSON content",
+    "last_successful_boundary": "source.durable_terminal_readback",
     "loop_id": "source_ingestion"
   },
-  "git_sha": "1212a92e4d4c736fa0121a3cd10ed1af5f361de3",
+  "git_sha": "0705ad73e81a6e9f72184386766d03bd0a8dfa27",
   "schema_version": "pantheon.l12.research-loops.deployed-e2e.v1",
-  "started_at": "2026-08-15T05:53:55Z",
+  "started_at": "2026-08-17T10:41:29Z",
   "status": "failed",
   "task_id": "L12-CURRENT-E2E-RESEARCH-20260814"
 }
