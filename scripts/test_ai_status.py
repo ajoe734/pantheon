@@ -4174,6 +4174,22 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(binding["task_id"], "REG-002")
         self.assertTrue(binding["contract_sha256"])
 
+    def test_artifact_contract_approval_survives_reassignment_generation_bump(self) -> None:
+        self.state["tasks"][0]["status"] = "in_progress"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
+
+        task = self.state["tasks"][0]
+        binding = task[ai_status.DELIVERY_BINDING_KEY]
+
+        # A mid-review reassignment (worker_reassignment recovery, or a
+        # manual `assign`) bumps the task's assignment generation without
+        # touching the reviewed artifacts/acceptance. That must not
+        # invalidate the frozen delivery binding.
+        task["generation"] = task.get("generation", 1) + 1
+
+        ai_status.validate_delivery_binding_for_approval(task, binding)
+
     def test_pr_handoff_freezes_exact_head_and_rejects_late_head_substitution(self) -> None:
         task = self.state["tasks"][0]
         task["status"] = "in_progress"
