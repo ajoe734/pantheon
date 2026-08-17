@@ -1363,6 +1363,36 @@ class DurableQueueContractTests(unittest.TestCase):
                 self.assertEqual(record["status"], "pending")
                 self.assertEqual(record["last_wait_reason"], "health_refresh_required")
 
+    def test_pending_intent_collects_its_own_health_refresh_demand(self) -> None:
+        """A pending intent must hand back which endpoints need re-probing.
+
+        Before this test's companion fix, a pending intent only recorded
+        ``last_wait_reason``/``last_health_refresh_requested_at`` timestamps
+        and dropped the actual endpoint identifiers -- nothing downstream
+        ever re-probed them, so an intent stuck on a lane whose cached health
+        had simply gone stale (not a durable failure) could wait forever.
+        Diagnosed 2026-08-17 on AGORA-HOSTED-SERVICE-PROOF-20260815: a retried
+        queue event sat "pending: health_refresh_required" indefinitely after
+        its endpoint's health TTL lapsed mid-retry.
+        """
+
+        state = {"workers": {}, "queue": {"events": {}}, "delivery_health": {}}
+        with_queue_intents(state, self.event)
+        demand: list[dict[str, str]] = []
+        with (
+            mock.patch.object(supervisor, "queue_events", return_value=[self.event]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [self.task]}),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("unproven auth must not launch"),
+            ),
+        ):
+            supervisor.process_queue(self.config, state, health_refresh_demand=demand)
+        record = state["queue"]["events"]["evt-1"]
+        self.assertEqual(record["status"], "pending")
+        self.assertIn({"scope": "endpoint", "id": "codex"}, demand)
+
     def test_one_runtime_reservation_launches_at_most_one_process(self) -> None:
         second_task = task_fixture("TASK-2", status="in_progress")
         second_event = supervisor.build_dispatch_event(
@@ -1908,6 +1938,77 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         )
         self.assertIn(
             {"scope": "endpoint", "id": "codex2"},
+            plan["health_refresh_targets"],
+        )
+
+    def test_terminal_owner_reassignment_also_demands_reviewer_health(self) -> None:
+        """An owner reassignment needs a healthy reviewer to pair with too.
+
+        plan_task_assignment_pair validates the incumbent reviewer (and its
+        fallback chain) with the same strictness as the candidate owner, so a
+        reviewer nobody has dispatched to recently -- not durably unavailable,
+        just never probed -- must also be demanded here. Before this test's
+        companion fix, only the owner-fallback candidate's health was
+        demanded; a stale-but-not-broken reviewer silently starved recovery
+        because it was never re-probed and the planner could never confirm it
+        healthy enough to pair with the new owner. Diagnosed 2026-08-17 on
+        AGORA-HOSTED-SERVICE-PROOF-20260815 after Codex2 hit quota_terminal
+        with reviewer Claude sitting on ~40h-stale health.
+        """
+
+        task = task_fixture(reviewer="Claude")
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "codex",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "codex",
+            "account": "claude-account",
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"][
+            "claude-account"
+        ] = 1
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                    # Claude has no entry at all: never probed, not a durable
+                    # failure -- exactly the gap this test guards.
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                },
+            },
+        }
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            state,
+            {"tasks": [task]},
+            [],
+            live_total=0,
+        )
+        self.assertIn(
+            {"scope": "endpoint", "id": "claude"},
             plan["health_refresh_targets"],
         )
 

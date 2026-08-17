@@ -351,18 +351,15 @@ def evaluate_dispatch_intent(
             reasons.append(DispatchBlockReason.ENDPOINT_BUSY)
             continue
 
-        endpoint_gate, endpoint_refresh = _health_gate(
-            _health_record(snapshot.endpoint_health, endpoint_id),
-            scope=HealthScope.ENDPOINT,
-            identifier=endpoint_id,
-            now=snapshot.now,
-        )
-        if endpoint_gate is not None:
-            reasons.append(endpoint_gate)
-            if endpoint_refresh is not None:
-                refresh_targets.append(endpoint_refresh)
-            continue
-
+        # Account capacity availability takes precedence over endpoint
+        # credentials (matches provider_health.delivery_health_block_reason,
+        # the sibling check reassignment recovery uses). This module and that
+        # one previously disagreed on the order -- endpoint-first here,
+        # account-first there -- so a lane with both an unprobed endpoint and
+        # a durably exhausted account surfaced the wrong (endpoint) reason
+        # here for a full cycle before the account gate ever got checked.
+        # Diagnosed 2026-08-17 alongside OPS-REASSIGN-REVIEWER-REFRESH-GAP-20260817
+        # and OPS-QUEUE-PENDING-HEALTH-REFRESH-GAP-20260817.
         account_gate, account_refresh = _health_gate(
             _health_record(snapshot.account_health, account_id),
             scope=HealthScope.ACCOUNT,
@@ -379,6 +376,18 @@ def evaluate_dispatch_intent(
                 refresh_targets.append(
                     HealthRefreshTarget(HealthScope.ENDPOINT, endpoint_id)
                 )
+            continue
+
+        endpoint_gate, endpoint_refresh = _health_gate(
+            _health_record(snapshot.endpoint_health, endpoint_id),
+            scope=HealthScope.ENDPOINT,
+            identifier=endpoint_id,
+            now=snapshot.now,
+        )
+        if endpoint_gate is not None:
+            reasons.append(endpoint_gate)
+            if endpoint_refresh is not None:
+                refresh_targets.append(endpoint_refresh)
             continue
 
         account_limit = _mapping_value(snapshot.account_limits, account_id)
