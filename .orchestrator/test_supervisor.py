@@ -1911,6 +1911,77 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
             plan["health_refresh_targets"],
         )
 
+    def test_terminal_owner_reassignment_also_demands_reviewer_health(self) -> None:
+        """An owner reassignment needs a healthy reviewer to pair with too.
+
+        plan_task_assignment_pair validates the incumbent reviewer (and its
+        fallback chain) with the same strictness as the candidate owner, so a
+        reviewer nobody has dispatched to recently -- not durably unavailable,
+        just never probed -- must also be demanded here. Before this test's
+        companion fix, only the owner-fallback candidate's health was
+        demanded; a stale-but-not-broken reviewer silently starved recovery
+        because it was never re-probed and the planner could never confirm it
+        healthy enough to pair with the new owner. Diagnosed 2026-08-17 on
+        AGORA-HOSTED-SERVICE-PROOF-20260815 after Codex2 hit quota_terminal
+        with reviewer Claude sitting on ~40h-stale health.
+        """
+
+        task = task_fixture(reviewer="Claude")
+        self.config["agents"]["claude"] = {
+            "display_name": "Claude",
+            "provider": "claude",
+            "adapter": "codex",
+            "max_parallel": 1,
+        }
+        self.config["providers"]["claude"] = {
+            "delivery_mode": "codex",
+            "account": "claude-account",
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"][
+            "claude-account"
+        ] = 1
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                    # Claude has no entry at all: never probed, not a durable
+                    # failure -- exactly the gap this test guards.
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {
+                        "state": "healthy",
+                        "valid_until": "2999-01-01T00:00:00Z",
+                    },
+                },
+            },
+        }
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            state,
+            {"tasks": [task]},
+            [],
+            live_total=0,
+        )
+        self.assertIn(
+            {"scope": "endpoint", "id": "claude"},
+            plan["health_refresh_targets"],
+        )
+
     def test_terminal_pause_reopens_stale_blocked_assignment_for_normal_dispatch(self) -> None:
         task = task_fixture(status="blocked", reviewer="Human/Ops")
         state = {
