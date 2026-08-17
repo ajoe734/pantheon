@@ -4676,6 +4676,17 @@ def worker_lease_progress_is_fresh(
 ) -> bool:
     settings = worker_runtime_settings(config)
     now_dt = now or datetime.now(timezone.utc)
+    # A worker legitimately blocked on an unresolved tool-use approval has no
+    # observable progress signal by design for as long as the approval stays
+    # open (up to the provider's approval_wait_seconds, commonly much longer
+    # than work_progress_stale_seconds). Reclaiming its lease as "stuck" here
+    # kills a healthy, correctly-waiting process and surfaces as "Approval
+    # state disappeared before the worker could resume" on the next
+    # reconciliation tick. Heartbeat freshness (checked separately by the
+    # caller) still catches a genuinely hung process in this state; only the
+    # work-progress dimension is exempted.
+    if str(worker.get("status") or "") in {"waiting_approval", "suspended_approval"}:
+        return True
     progress_candidates = [
         dt
         for dt in (

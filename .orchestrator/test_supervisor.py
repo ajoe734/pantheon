@@ -2558,5 +2558,42 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         self.assertNotIn("task[\"status\"]", source)
 
 
+class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
+    """A worker legitimately blocked on an unresolved tool-use approval has
+    no observable progress signal by design. Reclaiming its lease as "stuck"
+    kills a healthy process and surfaces as "Approval state disappeared
+    before the worker could resume" on the next reconciliation tick."""
+
+    def setUp(self) -> None:
+        self.config = {"worker_runtime": {"work_progress_stale_seconds": 360}}
+        self.now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.stale_event_at = (self.now - timedelta(seconds=3600)).isoformat().replace("+00:00", "Z")
+        self.fresh_event_at = (self.now - timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+
+    def test_waiting_approval_with_stale_progress_is_exempted(self) -> None:
+        worker = {"status": "waiting_approval", "last_event_at": self.stale_event_at}
+        self.assertTrue(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
+
+    def test_suspended_approval_with_stale_progress_is_exempted(self) -> None:
+        worker = {"status": "suspended_approval", "last_event_at": self.stale_event_at}
+        self.assertTrue(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
+
+    def test_running_with_stale_progress_is_still_stale(self) -> None:
+        worker = {"status": "running", "last_event_at": self.stale_event_at}
+        self.assertFalse(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
+
+    def test_running_with_fresh_progress_is_fresh(self) -> None:
+        worker = {"status": "running", "last_event_at": self.fresh_event_at}
+        self.assertTrue(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
