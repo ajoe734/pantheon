@@ -272,7 +272,7 @@
       "Copilot": [
         "ajoe734"
       ]
-  }
+    }
   },
   "schema": {
     "tasks_path": "tasks",
@@ -289,14 +289,14 @@
     "claude": {
       "display_name": "Claude",
       "provider": "claude",
-      "max_parallel": 1,
+      "max_parallel": 4,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "claude2": {
       "display_name": "Claude2",
       "provider": "claude2",
-      "max_parallel": 1,
+      "max_parallel": 4,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
@@ -739,146 +739,6 @@
         ]
       },
       "retry": {}
-    },
-    "claude1-1": {
-      "delivery_mode": "claude_cli",
-      "account": "claude_account_shared_max_1",
-      "runtime": {
-        "cli": ".orchestrator/bin/claude",
-        "output_format": "stream-json",
-        "include_hook_events": true,
-        "permission_mode": "acceptEdits",
-        "resume_permission_mode_after_approval": "acceptEdits",
-        "resume_use_allowed_tools_from_approval": true,
-        "enable_auto_mode_if_supported": true,
-        "auto_permission_mode": "auto",
-        "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
-        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
-        "env": {
-          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
-        },
-        "model": "sonnet",
-        "effort": "medium"
-      },
-      "broker": {
-        "approval_wait_seconds": 3600,
-        "http_host": "127.0.0.1",
-        "http_port": 8765,
-        "persist_allow_by_default": false
-      },
-      "approval": {
-        "workspace_permission_mode": "acceptEdits",
-        "allow_dangerous_skip": false,
-        "copilot_allow_dangerous_skip": false,
-        "rule_default_mode": "acceptEdits",
-        "disable_bypass_permissions": true
-      },
-      "retry": {}
-    },
-    "claude1-2": {
-      "delivery_mode": "claude_cli",
-      "account": "claude_account_shared_max_1",
-      "runtime": {
-        "cli": ".orchestrator/bin/claude",
-        "output_format": "stream-json",
-        "include_hook_events": true,
-        "permission_mode": "acceptEdits",
-        "resume_permission_mode_after_approval": "acceptEdits",
-        "resume_use_allowed_tools_from_approval": true,
-        "enable_auto_mode_if_supported": true,
-        "auto_permission_mode": "auto",
-        "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
-        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
-        "env": {
-          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
-        },
-        "model": "sonnet",
-        "effort": "medium"
-      },
-      "broker": {
-        "approval_wait_seconds": 3600,
-        "http_host": "127.0.0.1",
-        "http_port": 8765,
-        "persist_allow_by_default": false
-      },
-      "approval": {
-        "workspace_permission_mode": "acceptEdits",
-        "allow_dangerous_skip": false,
-        "copilot_allow_dangerous_skip": false,
-        "rule_default_mode": "acceptEdits",
-        "disable_bypass_permissions": true
-      },
-      "retry": {}
-    },
-    "claude1-3": {
-      "delivery_mode": "claude_cli",
-      "account": "claude_account_shared_max_1",
-      "runtime": {
-        "cli": ".orchestrator/bin/claude",
-        "output_format": "stream-json",
-        "include_hook_events": true,
-        "permission_mode": "acceptEdits",
-        "resume_permission_mode_after_approval": "acceptEdits",
-        "resume_use_allowed_tools_from_approval": true,
-        "enable_auto_mode_if_supported": true,
-        "auto_permission_mode": "auto",
-        "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
-        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
-        "env": {
-          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
-        },
-        "model": "sonnet",
-        "effort": "medium"
-      },
-      "broker": {
-        "approval_wait_seconds": 3600,
-        "http_host": "127.0.0.1",
-        "http_port": 8765,
-        "persist_allow_by_default": false
-      },
-      "approval": {
-        "workspace_permission_mode": "acceptEdits",
-        "allow_dangerous_skip": false,
-        "copilot_allow_dangerous_skip": false,
-        "rule_default_mode": "acceptEdits",
-        "disable_bypass_permissions": true
-      },
-      "retry": {}
-    },
-    "claude1-4": {
-      "delivery_mode": "claude_cli",
-      "account": "claude_account_shared_max_1",
-      "runtime": {
-        "cli": ".orchestrator/bin/claude",
-        "output_format": "stream-json",
-        "include_hook_events": true,
-        "permission_mode": "acceptEdits",
-        "resume_permission_mode_after_approval": "acceptEdits",
-        "resume_use_allowed_tools_from_approval": true,
-        "enable_auto_mode_if_supported": true,
-        "auto_permission_mode": "auto",
-        "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
-        "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
-        "env": {
-          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
-        },
-        "model": "sonnet",
-        "effort": "medium"
-      },
-      "broker": {
-        "approval_wait_seconds": 3600,
-        "http_host": "127.0.0.1",
-        "http_port": 8765,
-        "persist_allow_by_default": false
-      },
-      "approval": {
-        "workspace_permission_mode": "acceptEdits",
-        "allow_dangerous_skip": false,
-        "copilot_allow_dangerous_skip": false,
-        "rule_default_mode": "acceptEdits",
-        "disable_bypass_permissions": true
-      },
-      "retry": {}
     }
   },
   "ready_dispatcher": {
@@ -913,7 +773,7 @@
     "max_dispatches_per_tick": 10,
     "max_active_workers_per_task": 1,
     "max_concurrent_per_account": {
-      "claude_account_shared_max_1": 1,
+      "claude_account_shared_max_1": 4,
       "antigravity": 4,
       "antigravity2": 4,
       "codex1": 2,
