@@ -3428,12 +3428,22 @@ def process_queue(
     state: dict[str, Any],
     *,
     delivery_outcome: dict[str, bool] | None = None,
+    health_refresh_demand: list[dict[str, str]] | None = None,
 ) -> bool:
     """Reconcile queued intents and launch at most one worker process.
 
     A runtime-phase reservation carries one crash-recoverable launch intent and
     receipt.  Launching a second process in the same reservation would replace
     that evidence and orphan the first process after a hard crash.
+
+    ``health_refresh_demand``, when supplied, collects the exact endpoints a
+    pending intent is waiting on so the caller can fold them into the same
+    cycle's live probe pass. Before this parameter existed, a pending intent
+    only recorded ``last_wait_reason``/``last_health_refresh_requested_at`` as
+    bookkeeping timestamps and dropped the actual endpoint identifiers on the
+    floor -- nothing ever re-probed them, so an intent stuck waiting on a
+    lane whose cached health had merely gone stale (not a durable failure)
+    could wait forever. Diagnosed 2026-08-17 on AGORA-HOSTED-SERVICE-PROOF-20260815.
     """
     if delivery_outcome is not None:
         delivery_outcome["launched"] = False
@@ -3605,6 +3615,11 @@ def process_queue(
                 record["last_wait_reason"] = reason_code
                 if decision.needs_health_refresh:
                     record["last_health_refresh_requested_at"] = utc_now()
+                    if health_refresh_demand is not None:
+                        for target in decision.health_refresh_targets:
+                            entry = {"scope": target.scope.value, "id": target.identifier}
+                            if entry not in health_refresh_demand:
+                                health_refresh_demand.append(entry)
             changed = True
             continue
         request = build_request(config, event, agent_id_override=endpoint_id)
@@ -12268,6 +12283,7 @@ def run_once(
             0,
             int(ready_dispatch_settings(config).get("max_dispatches_per_tick", 4) or 0),
         )
+        queued_health_refresh_demand: list[dict[str, str]] = []
         for _delivery_index in range(max_delivery_launches):
             delivery_outcome: dict[str, bool] = {}
             delivery_changed = bool(
@@ -12283,6 +12299,7 @@ def run_once(
                             config,
                             state,
                             delivery_outcome=delivery_outcome,
+                            health_refresh_demand=queued_health_refresh_demand,
                         )
                     ),
                     quiet=quiet,
@@ -12330,9 +12347,13 @@ def run_once(
             THIS_DIR.parent,
             quiet=quiet,
         )
+        probe_targets = list(dispatch_plan.get("health_refresh_targets", []))
+        for target in queued_health_refresh_demand:
+            if target not in probe_targets:
+                probe_targets.append(target)
         delivery_health_observations = probe_demanded_delivery_health(
             config,
-            dispatch_plan.get("health_refresh_targets", []),
+            probe_targets,
             quiet=quiet,
         )
         task_state_projection_snapshot = _safe_phase(
