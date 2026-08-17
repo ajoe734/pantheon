@@ -379,6 +379,34 @@ EOF
 
         self.assertEqual(permission_broker.classify_command(command), "allow")
 
+    def test_docker_compose_ps_with_project_flag_is_auto_allowed(self) -> None:
+        command = "docker compose -p pantheon ps 2>&1 | grep -i source-ingest"
+
+        self.assertEqual(permission_broker.classify_command(command), "allow")
+
+    def test_docker_compose_images_with_project_flag_is_auto_allowed(self) -> None:
+        command = "docker compose --project-name pantheon images 2>&1"
+
+        self.assertEqual(permission_broker.classify_command(command), "allow")
+
+    def test_docker_compose_ps_project_flag_chained_and_piped_is_auto_allowed(self) -> None:
+        command = (
+            'docker compose -p pantheon ps 2>&1 | grep -i source-ingest; echo ---; '
+            'docker compose -p pantheon ps 2>&1 | grep -iE "distill|alpha-replication"'
+        )
+
+        self.assertEqual(permission_broker.classify_command(command), "allow")
+
+    def test_docker_compose_up_with_project_flag_still_requires_review(self) -> None:
+        command = "docker compose -p pantheon up -d"
+
+        self.assertEqual(permission_broker.classify_command(command), "defer")
+
+    def test_docker_compose_ps_rejects_option_shaped_project_value(self) -> None:
+        command = "docker compose -p --file ps"
+
+        self.assertEqual(permission_broker.classify_command(command), "defer")
+
     def test_docker_compose_up_still_requires_review(self) -> None:
         command = "docker compose -f docker-compose.control.yml up -d"
 

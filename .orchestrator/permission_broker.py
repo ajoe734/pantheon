@@ -496,7 +496,10 @@ def _is_safe_docker_exec_probe(tokens: list[str]) -> bool:
 
 
 def _is_safe_compose_option_value(token: str) -> bool:
-    return bool(re.match(r"^[A-Za-z0-9_.:/@-]+$", str(token or "")))
+    value = str(token or "")
+    if value.startswith("-"):
+        return False
+    return bool(re.match(r"^[A-Za-z0-9_.:/@-]+$", value))
 
 
 def _is_safe_compose_path_value(token: str) -> bool:
@@ -578,6 +581,55 @@ def _is_safe_docker_compose_config(tokens: list[str]) -> bool:
     return True
 
 
+def _docker_compose_subcommand_index(tokens: list[str]) -> int | None:
+    """Return the index of the docker-compose subcommand after skipping
+    global flags (-p/--project-name, -f/--file, --env-file,
+    --project-directory, --profile, --ansi, --progress), or None if a flag
+    value fails validation or no subcommand token is present.
+
+    "docker compose -p pantheon ps" and "docker compose ps" name the same
+    read-only subcommand; only the position of "ps" differs. Without this,
+    the common project-scoped form was misclassified as unsafe and forced
+    an unresolvable manual approval for every worker that names its
+    compose project explicitly (which every deployed L12 evidence suite
+    and every isolated-compose task does).
+    """
+
+    if len(tokens) < 3 or tokens[:2] != ["docker", "compose"]:
+        return None
+    index = 2
+    path_options = {"-f", "--file", "--env-file", "--project-directory"}
+    value_options = {"-p", "--project-name", "--profile", "--ansi", "--progress"}
+    while index < len(tokens):
+        token = tokens[index]
+        if token in path_options:
+            if index + 1 >= len(tokens) or not _is_safe_compose_path_value(tokens[index + 1]):
+                return None
+            index += 2
+            continue
+        matched_path_option = next((option for option in path_options if token.startswith(f"{option}=")), None)
+        if matched_path_option:
+            value = token.split("=", 1)[1]
+            if not _is_safe_compose_path_value(value):
+                return None
+            index += 1
+            continue
+        if token in value_options:
+            if index + 1 >= len(tokens) or not _is_safe_compose_option_value(tokens[index + 1]):
+                return None
+            index += 2
+            continue
+        matched_value_option = next((option for option in value_options if token.startswith(f"{option}=")), None)
+        if matched_value_option:
+            value = token.split("=", 1)[1]
+            if not _is_safe_compose_option_value(value):
+                return None
+            index += 1
+            continue
+        break
+    return index if index < len(tokens) else None
+
+
 def _is_safe_docker_segment(segment: str) -> bool:
     fragment = _primary_shell_fragment(segment)
     tokens = _shell_tokens(fragment)
@@ -586,6 +638,9 @@ def _is_safe_docker_segment(segment: str) -> bool:
     if tokens[:2] in (["docker", "ps"], ["docker", "images"], ["docker", "inspect"], ["docker", "logs"]):
         return True
     if len(tokens) >= 3 and tokens[:3] in (["docker", "compose", "ps"], ["docker", "compose", "images"]):
+        return True
+    subcommand_index = _docker_compose_subcommand_index(tokens)
+    if subcommand_index is not None and tokens[subcommand_index] in ("ps", "images"):
         return True
     if _is_safe_docker_compose_config(tokens):
         return True
