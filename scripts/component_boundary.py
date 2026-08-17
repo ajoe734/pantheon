@@ -111,14 +111,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv or sys.argv[1:])
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     if bool(args.base) != bool(args.head):
         raise SystemExit("--base and --head must be supplied together")
+    if not args.path and not args.base:
+        raise SystemExit("supply --path or both --base and --head")
     paths = list(args.path)
     if args.base:
         paths.extend(changed_paths(args.base, args.head))
-    if not paths:
-        raise SystemExit("supply --path or both --base and --head")
     result = classify_paths(load_manifest(args.manifest), paths)
     if args.json:
         print(json.dumps(result, sort_keys=True))

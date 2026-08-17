@@ -86,12 +86,21 @@ jobs:
           [[ -n "${AGORA_HOSTED_PEER_CLIENT_SECRET}" ]]
           [[ -n "${AGORA_HOSTED_VIEWER_CLIENT_SECRET}" ]]
 
+      # Default --mode venv resolves dependencies from a fleet/worktree .venv
+      # that does not exist on this disposable single-checkout runner, so the
+      # bare system python3 here has neither pytest nor the repository's
+      # dependencies until this step installs them. Same install + --mode
+      # current --allow-system-interpreter pattern as the "Python packaging
+      # provision" job in branch-ci.yml, for the same reason it is admissible
+      # there: a GitHub runner cannot collide with another checkout.
       - name: Run focused proof contract tests
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
-          python3 scripts/dev/provision_python_distribution.py
-          pantheon_py="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
-          "${pantheon_py}" -m pytest -q scripts/test_probe_agora_hosted_service_journey.py
+          python3 -m pip install --upgrade pip "setuptools>=68"
+          python3 -m pip install -r requirements.txt pytest
+          python3 scripts/dev/provision_python_distribution.py \
+            --mode current --allow-system-interpreter
+          python3 -m pytest -q scripts/test_probe_agora_hosted_service_journey.py
 
       - name: Checkout pinned dev lease controller
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

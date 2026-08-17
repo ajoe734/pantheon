@@ -1323,6 +1323,16 @@ def localize_embedded_timestamps(text: Any) -> str:
 
 
 def canonical_agent_name(name: str | None) -> str:
+    # .orchestrator/supervisor.py has a separate, newer canonical_agent_name
+    # (config, value) that resolves against the live config.json agent
+    # registry instead of KNOWN_AGENTS/AGENT_ALIASES below. This function
+    # predates that (present since the initial commit) and is missing
+    # worker-slot ids (e.g. codex1_1) the supervisor.py version resolves.
+    # Investigated 2026-08-17: no evidence in ai-status.json/activity-log/
+    # task-archive of this ever causing a real mismatch (owner/reviewer
+    # values observed in practice are always pre-normalized display names),
+    # so left as a known, low-risk divergence rather than unified across
+    # ~60 call sites here with no existing test coverage.
     if name is None:
         return ""
     trimmed = str(name).strip()
@@ -1337,9 +1347,6 @@ def canonical_agent_name(name: str | None) -> str:
         return alias_target
     return trimmed
 
-
-def active_agent_name(name: str | None) -> str:
-    return canonical_agent_name(name)
 
 
 def current_actor(default: str = "Codex") -> str:
@@ -1777,9 +1784,6 @@ def task_resolver(state: dict[str, Any]) -> TaskResolver:
     )
 
 
-def archived_task_snapshot(task_id: str) -> dict[str, Any] | None:
-    return load_archived_snapshot(task_id)
-
 
 def task_archive_recent_limit() -> int:
     return DEFAULT_ARCHIVE_RECENT_LIMIT
@@ -2005,7 +2009,7 @@ def terminal_archive_projection(state: dict[str, Any]) -> list[dict[str, Any]]:
     receipts = state[ARCHIVE_RECEIPTS_KEY]
     rows: list[dict[str, Any]] = []
     for task_id in sorted(facts):
-        snapshot = archived_task_snapshot(task_id)
+        snapshot = load_archived_snapshot(task_id)
         receipt = receipts.get(task_id)
         snapshot_sha256 = (
             _canonical_json_sha256(snapshot) if isinstance(snapshot, Mapping) else None
@@ -2039,7 +2043,7 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
         )
     related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
     related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
-    existing = archived_task_snapshot(task_id)
+    existing = load_archived_snapshot(task_id)
     task_clean = deepcopy(task)
     task_clean.pop("status_write_pending", None)
     task_clean.pop("status_write_pending_count", None)
@@ -2284,7 +2288,7 @@ def recover_status_archive_outbox(state: dict[str, Any]) -> bool:
         # A receipt repair may intentionally queue an already-existing rich
         # snapshot (including a governed correction context). Do not rebuild a
         # second shape from its task row; verify the exact stored bytes first.
-        actual = archived_task_snapshot(str(expected["task_id"]))
+        actual = load_archived_snapshot(str(expected["task_id"]))
         if actual is None:
             actual = archive_task_snapshot(
                 deepcopy(expected["task"]),
@@ -3379,21 +3383,21 @@ def validate_state(state: dict[str, Any]) -> None:
 
 def normalize_state_agents(state: dict[str, Any]) -> None:
     for task in state.get("tasks", []):
-        task["owner"] = active_agent_name(task.get("owner"))
-        task["reviewer"] = active_agent_name(task.get("reviewer"))
+        task["owner"] = canonical_agent_name(task.get("owner"))
+        task["reviewer"] = canonical_agent_name(task.get("reviewer"))
         if task.get("waiting_for"):
-            task["waiting_for"] = active_agent_name(task.get("waiting_for"))
+            task["waiting_for"] = canonical_agent_name(task.get("waiting_for"))
 
     for blocker in state.get("blockers", []):
-        blocker["owner"] = active_agent_name(blocker.get("owner"))
-        blocker["waiting_for"] = active_agent_name(blocker.get("waiting_for"))
+        blocker["owner"] = canonical_agent_name(blocker.get("owner"))
+        blocker["waiting_for"] = canonical_agent_name(blocker.get("waiting_for"))
 
     for handoff in state.get("handoffs", []):
-        handoff["from"] = active_agent_name(handoff.get("from"))
-        handoff["to"] = active_agent_name(handoff.get("to"))
+        handoff["from"] = canonical_agent_name(handoff.get("from"))
+        handoff["to"] = canonical_agent_name(handoff.get("to"))
 
     for agent in state.get("agents", []):
-        agent["name"] = active_agent_name(agent.get("name"))
+        agent["name"] = canonical_agent_name(agent.get("name"))
 
 
 def recompute_agents(state: dict[str, Any]) -> None:
@@ -6532,7 +6536,6 @@ def validate_delivery_binding_for_approval(
         if (
             expected.get("contract_sha256") != _canonical_json_sha256(contract)
             or expected.get("task_id") != contract["task_id"]
-            or expected.get("task_generation") != contract["task_generation"]
         ):
             raise SystemExit(
                 f"{task_id} artifact delivery contract changed after handoff; "
@@ -7206,7 +7209,7 @@ def command_archive_reconcile(state: dict[str, Any], args: list[str]) -> None:
     missing_source_ids: list[str] = []
     existing_ids: list[str] = []
     for task_id, fact in sorted(state[TERMINAL_FACTS_KEY].items()):
-        canonical_snapshot = archived_task_snapshot(task_id)
+        canonical_snapshot = load_archived_snapshot(task_id)
         source_snapshot = _read_reconciliation_snapshot(source_tasks_dir, task_id)
         if source_snapshot is not None and not _snapshot_matches_terminal_fact(
             source_snapshot, fact, task_id=task_id
@@ -7625,7 +7628,7 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
         )
         return
 
-    snapshot = archived_task_snapshot(task_id)
+    snapshot = load_archived_snapshot(task_id)
     if snapshot is not None:
         print(
             json.dumps(

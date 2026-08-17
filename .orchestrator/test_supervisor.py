@@ -132,6 +132,44 @@ class V2StartupCacheTests(unittest.TestCase):
             with mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
                 self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
 
+    def test_schedule_missing_process_retry_does_not_raise_without_state_param(self) -> None:
+        """schedule_missing_process_retry must accept state, not close over a
+        caller-scope name of the same spelling.
+
+        It calls request_for_worker(config, state, worker), which requires an
+        actual `state` parameter. A prior version of this function had no
+        such parameter -- Python resolved the bare name `state` used inside
+        the call by raising NameError at call time (not import time), so
+        nothing caught it until reconcile_runtime_on_boot's boot-reconciliation
+        path actually hit a missing-process worker. No existing test built a
+        worker record with a dead process, so the gap went unnoticed until it
+        fired live and repeatedly failed 'apply_post_dispatch_maintenance'
+        (16 times in one live session on 2026-08-17, non-fatal but recurring)
+        before OPS-SUPERVISOR-RETRY-MISSING-STATE-20260817 fixed the missing
+        parameter. This test calls the function directly (not through the
+        much larger reconcile_runtime_on_boot) so a future regression is
+        caught by a NameError at the narrowest possible point.
+        """
+
+        config = config_fixture()
+        state = {"workers": {}, "queue": {"events": {}}}
+        worker = {
+            "provider": "codex",
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "wake",
+            },
+        }
+
+        result = supervisor.schedule_missing_process_retry(
+            config, state, worker, "worker process missing"
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(worker.get("status"), "retry_backoff")
+
     def test_terminal_facts_satisfy_dependencies_without_archive_lookup(self) -> None:
         config = config_fixture()
         child = task_fixture(task_id="CHILD", depends_on=["MERGED-LEGACY"])
@@ -2518,6 +2556,43 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         source = inspect.getsource(supervisor._quarantine_incomplete_worker_path)
         self.assertIn("ORCHESTRATOR_QUARANTINE.txt", source)
         self.assertNotIn("task[\"status\"]", source)
+
+
+class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
+    """A worker legitimately blocked on an unresolved tool-use approval has
+    no observable progress signal by design. Reclaiming its lease as "stuck"
+    kills a healthy process and surfaces as "Approval state disappeared
+    before the worker could resume" on the next reconciliation tick."""
+
+    def setUp(self) -> None:
+        self.config = {"worker_runtime": {"work_progress_stale_seconds": 360}}
+        self.now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.stale_event_at = (self.now - timedelta(seconds=3600)).isoformat().replace("+00:00", "Z")
+        self.fresh_event_at = (self.now - timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+
+    def test_waiting_approval_with_stale_progress_is_exempted(self) -> None:
+        worker = {"status": "waiting_approval", "last_event_at": self.stale_event_at}
+        self.assertTrue(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
+
+    def test_suspended_approval_with_stale_progress_is_exempted(self) -> None:
+        worker = {"status": "suspended_approval", "last_event_at": self.stale_event_at}
+        self.assertTrue(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
+
+    def test_running_with_stale_progress_is_still_stale(self) -> None:
+        worker = {"status": "running", "last_event_at": self.stale_event_at}
+        self.assertFalse(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
+
+    def test_running_with_fresh_progress_is_fresh(self) -> None:
+        worker = {"status": "running", "last_event_at": self.fresh_event_at}
+        self.assertTrue(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
 
 
 if __name__ == "__main__":

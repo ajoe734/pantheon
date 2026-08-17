@@ -23,7 +23,7 @@ from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 THIS_DIR = Path(__file__).resolve().parent
@@ -4103,6 +4103,15 @@ def normalize_pr_url(config: dict[str, Any], url: str | None) -> str | None:
 
 
 def canonical_agent_name(config: dict[str, Any], value: str | None) -> str:
+    # scripts/ai_status.py has a separate, older canonical_agent_name(name)
+    # that resolves against a hardcoded KNOWN_AGENTS/AGENT_ALIASES table
+    # instead of live config -- it predates this config-driven version and
+    # is missing worker-slot ids (e.g. codex1_1) present here. Investigated
+    # 2026-08-17: no evidence in ai-status.json/activity-log/task-archive of
+    # this ever causing a real mismatch (owner/reviewer values observed in
+    # practice are always pre-normalized display names), so left as a known,
+    # low-risk divergence rather than unified across ~60 call sites with no
+    # existing test coverage.
     raw = str(value or "").strip()
     if not raw:
         return ""
@@ -4667,6 +4676,17 @@ def worker_lease_progress_is_fresh(
 ) -> bool:
     settings = worker_runtime_settings(config)
     now_dt = now or datetime.now(timezone.utc)
+    # A worker legitimately blocked on an unresolved tool-use approval has no
+    # observable progress signal by design for as long as the approval stays
+    # open (up to the provider's approval_wait_seconds, commonly much longer
+    # than work_progress_stale_seconds). Reclaiming its lease as "stuck" here
+    # kills a healthy, correctly-waiting process and surfaces as "Approval
+    # state disappeared before the worker could resume" on the next
+    # reconciliation tick. Heartbeat freshness (checked separately by the
+    # caller) still catches a genuinely hung process in this state; only the
+    # work-progress dimension is exempted.
+    if str(worker.get("status") or "") in {"waiting_approval", "suspended_approval"}:
+        return True
     progress_candidates = [
         dt
         for dt in (
@@ -11285,15 +11305,6 @@ def agent_dispatch_loads(
         loads.setdefault(agent_name, []).append(priority)
 
     return loads
-
-
-def worker_logical_dispatch_agent_id(config: dict[str, Any], worker: dict[str, Any]) -> str:
-    explicit = normalize_agent_id(str(worker.get("logical_agent_id") or ""))
-    if explicit:
-        return explicit
-    agent_id = normalize_agent_id(str(worker.get("agent_id") or worker.get("provider") or ""))
-    agent = config.get("agents", {}).get(agent_id, {}) or {}
-    return normalize_agent_id(str(agent.get("dispatch_slot_for") or agent_id))
 
 
 def worker_matches_current_assignment(
