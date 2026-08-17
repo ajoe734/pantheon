@@ -289,6 +289,22 @@ services:
       source-ingest-scheduler:
         condition: service_completed_successfully
 
+  # strategy-distillation-worker and alpha-replication-worker (below) do not
+  # get a PANTHEON_BFF_HEALTH_TARGETS_JSON entry. Both are the file-backed
+  # "scheduler-style background worker" shape documented in
+  # services/worker_health.py: no PORT, no `ports:` mapping, no HTTP listener
+  # at all -- their own healthcheck is a Docker CMD-SHELL freshness check on a
+  # local alive/state-mtime file, not an HTTP probe. A typed BFF target only
+  # fits an HTTP owner-API (compare paper-fleet-reconciler further below,
+  # which has PORT 8011 and a real /readyz). Adding one here would require
+  # standing up a new HTTP server inside each controller first -- evaluated
+  # for L12-CURRENT-BFF-HEALTH-GAP-20260817 and found out of that task's
+  # scope (no new monitoring framework, no downstream_health_monitor.py
+  # behavior change). Every other same-shape worker in this compose file
+  # (evolution-dispatch-worker, paper-signal-producer, reconciliation-drift's
+  # scheduler/consumer, policy-learning's scheduler, etc.) is likewise absent
+  # from the typed registry for the same reason -- this is the established
+  # pattern, not a gap.
   strategy-distillation-worker:
     build:
       context: .

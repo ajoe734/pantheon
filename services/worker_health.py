@@ -6,6 +6,14 @@ running-but-stalled process is not mistaken for a healthy loop.
 
 The document is operational state rather than business authority. Writes are
 still atomic so a probe never accepts a partially written heartbeat.
+
+Because these workers never bind an HTTP port, they are intentionally absent
+from ``PANTHEON_BFF_HEALTH_TARGETS_JSON`` in docker-compose.yml (see
+DownstreamHealthMonitor in services/control-plane/bff/downstream_health_monitor.py):
+a typed BFF probe target requires a real HTTP health_path to GET, which this
+contract does not provide. Retrofitting one would mean adding a new HTTP
+server to each such worker -- evaluated for
+L12-CURRENT-BFF-HEALTH-GAP-20260817 and out of scope there.
 """
 
 from __future__ import annotations
