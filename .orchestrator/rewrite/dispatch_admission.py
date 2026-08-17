@@ -220,6 +220,56 @@ def _health_gate(
     )
 
 
+def health_gate_for_endpoint(
+    *,
+    endpoint_id: str,
+    account_id: str,
+    endpoint_health: Mapping[str, HealthRecord],
+    account_health: Mapping[str, HealthRecord],
+    now: datetime,
+) -> tuple[DispatchBlockReason | None, HealthRefreshTarget | None]:
+    """Return the closed gate for one endpoint+account pair, account-first.
+
+    The sole shared health-admission predicate. Account capacity availability
+    takes precedence over endpoint credentials: an account has no
+    independently probeable credential, so a refresh request caused by the
+    account gate always targets the current endpoint instead (there is
+    nothing else to probe). Used by both plan/delivery admission
+    (``evaluate_dispatch_intent``) and reassignment-recovery's refresh-demand
+    scan (``unavailable_assignment_fallback_refresh_targets`` in
+    supervisor.py) so a fallback candidate's health is judged by exactly one
+    rule instead of two independently-maintained copies that can silently
+    disagree -- as they did until 2026-08-17
+    (OPS-HEALTH-GATE-ACCOUNT-PRECEDENCE-20260817 fixed the two copies'
+    diverged precedence; this change removes the second copy entirely).
+    """
+
+    account_gate, account_refresh = _health_gate(
+        _health_record(account_health, account_id),
+        scope=HealthScope.ACCOUNT,
+        identifier=account_id,
+        now=now,
+    )
+    if account_gate is not None:
+        refresh = (
+            HealthRefreshTarget(HealthScope.ENDPOINT, endpoint_id)
+            if account_refresh is not None
+            else None
+        )
+        return account_gate, refresh
+
+    endpoint_gate, endpoint_refresh = _health_gate(
+        _health_record(endpoint_health, endpoint_id),
+        scope=HealthScope.ENDPOINT,
+        identifier=endpoint_id,
+        now=now,
+    )
+    if endpoint_gate is not None:
+        return endpoint_gate, endpoint_refresh
+
+    return None, None
+
+
 def _count(mapping: Mapping[str, int], identifier: str) -> int:
     value = _mapping_value(mapping, identifier)
     try:
@@ -351,43 +401,17 @@ def evaluate_dispatch_intent(
             reasons.append(DispatchBlockReason.ENDPOINT_BUSY)
             continue
 
-        # Account capacity availability takes precedence over endpoint
-        # credentials (matches provider_health.delivery_health_block_reason,
-        # the sibling check reassignment recovery uses). This module and that
-        # one previously disagreed on the order -- endpoint-first here,
-        # account-first there -- so a lane with both an unprobed endpoint and
-        # a durably exhausted account surfaced the wrong (endpoint) reason
-        # here for a full cycle before the account gate ever got checked.
-        # Diagnosed 2026-08-17 alongside OPS-REASSIGN-REVIEWER-REFRESH-GAP-20260817
-        # and OPS-QUEUE-PENDING-HEALTH-REFRESH-GAP-20260817.
-        account_gate, account_refresh = _health_gate(
-            _health_record(snapshot.account_health, account_id),
-            scope=HealthScope.ACCOUNT,
-            identifier=account_id,
+        health_reason, health_refresh = health_gate_for_endpoint(
+            endpoint_id=endpoint_id,
+            account_id=account_id,
+            endpoint_health=snapshot.endpoint_health,
+            account_health=snapshot.account_health,
             now=snapshot.now,
         )
-        if account_gate is not None:
-            reasons.append(account_gate)
-            if account_refresh is not None:
-                # An account has no independently probeable credential.  A
-                # refresh is always executed through this exact endpoint, so
-                # planner and delivery never invent an account-wide probing
-                # side channel (nor probe a different slot after queueing).
-                refresh_targets.append(
-                    HealthRefreshTarget(HealthScope.ENDPOINT, endpoint_id)
-                )
-            continue
-
-        endpoint_gate, endpoint_refresh = _health_gate(
-            _health_record(snapshot.endpoint_health, endpoint_id),
-            scope=HealthScope.ENDPOINT,
-            identifier=endpoint_id,
-            now=snapshot.now,
-        )
-        if endpoint_gate is not None:
-            reasons.append(endpoint_gate)
-            if endpoint_refresh is not None:
-                refresh_targets.append(endpoint_refresh)
+        if health_reason is not None:
+            reasons.append(health_reason)
+            if health_refresh is not None:
+                refresh_targets.append(health_refresh)
             continue
 
         account_limit = _mapping_value(snapshot.account_limits, account_id)
