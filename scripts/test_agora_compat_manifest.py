@@ -13,6 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "agora_compat_manifest.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 BACKEND_HANDOFF = ROOT / "docs" / "contracts" / "agora" / "backend-generation-input.v1_13.json"
+CANONICAL_HASH_FIXTURE = (
+    ROOT / "docs" / "contracts" / "agora" / "canonical-hash-conformance-fixture.json"
+)
 TYPE_PATHS = [
     "src/lib/bff-v1/agora/contract-snapshot.json",
     "src/lib/bff-v1/agora/types.ts",
@@ -610,3 +613,26 @@ def test_generated_types_hash_algorithm_sorts_relative_paths(tmp_path: Path) -> 
     actual = module.sha256_bytes("".join(actual_lines).encode("utf-8"))
 
     assert actual == expected
+
+
+def test_canonical_json_sha256_matches_cross_repo_fixture() -> None:
+    """Pin `canonical_json_sha256` against a fixture shared with execute-plans.
+
+    execute-plans reimplements this exact algorithm in JS
+    (scripts/deploy-dev-vm.sh::canonicalize + sha256) because it cannot import
+    this Python module. The two implementations drifted once already (a
+    missing trailing-LF byte, fixed 2026-08-16 by
+    OPS-AGORA-RELEASE-CANDIDATE-LF-20260816, which is what rejected the
+    AGORA-HOSTED-SERVICE-PROOF-20260815 release candidate). This test and its
+    identical counterpart in execute-plans both assert against the same
+    payload/hash pair recorded in
+    docs/contracts/agora/canonical-hash-conformance-fixture.json, so a future
+    change to either side's algorithm is caught locally instead of surfacing
+    weeks later as a live cross-repo release rejection. Keep the fixture file
+    byte-identical in both repositories; update it in the same change on both
+    sides if the algorithm itself ever needs to change, never independently.
+    """
+
+    module = _load_module()
+    fixture = json.loads(CANONICAL_HASH_FIXTURE.read_text(encoding="utf-8"))
+    assert module.canonical_json_sha256(fixture["payload"]) == fixture["expected_sha256"]
