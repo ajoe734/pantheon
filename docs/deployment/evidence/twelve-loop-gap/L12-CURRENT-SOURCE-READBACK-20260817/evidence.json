@@ -1,0 +1,126 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-CURRENT-SOURCE-READBACK-20260817 owner review-evidence gate.",
+    "note": "Owner-authored diagnosis and fix manifest for the source.durable_terminal_readback deployed E2E boundary, committed before independent review as required by task-closeout-finalization.md.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": null,
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR after this manifest merges.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-17T08:05:00Z",
+    "evidence_cut_semantics": "Owner diagnosis and fix committed on task/L12-CURRENT-SOURCE-READBACK-20260817 against dev tip 99b8da52410d2dbfcbaac543f1de1edf2ce52671; not yet merged or independently reviewed.",
+    "id": "L12-CURRENT-SOURCE-READBACK-20260817",
+    "overall_admission": "pending_review",
+    "owner": "Claude",
+    "phase": "Research loop 1 closure",
+    "product_level_required": true,
+    "program_id": "pantheon-l12-current-clean-closure-20260814",
+    "repository": "ajoe734/pantheon",
+    "reviewer": "Antigravity",
+    "target_environment": "dev integration (shared long-lived pantheon compose project)",
+    "task_branch": "task/L12-CURRENT-SOURCE-READBACK-20260817",
+    "title": "Fix Source Ingestion durable terminal readback gap"
+  },
+  "root_cause": {
+    "summary": "The source-ingestion write and readback code path (services/source_ingestion/main.py, configured.py, scheduler.py) works correctly and needed no product code change. The deployed E2E boundary failed for two independent reasons in the test harness itself, both proven by direct reproduction against the live pantheon compose stack (source-ingest on 127.0.0.1:18097).",
+    "candidates_ruled_out": [
+      "scheduler.run_once idempotency: run_once completed normally on every attempt (run.status == completed, raw_count == normalized_count == 1); no retry or duplicate-run defect observed.",
+      "configured fetch batch persistence: ConfiguredConnectorFetcher.fetch_batch correctly returned the static_records payload every time (connector fetch state showed successful_attempts == attempts, 0 failures)."
+    ],
+    "confirmed_cause": "A store identity mismatch between write and read paths, entirely inside the test harness (tests/integration/l12/test_current_research_loops_deployed_e2e.py), with two independent contributing defects: (1) GET /api/source-ingest/source-records/{source_id} returns the established envelope {\"source_record\": {...}} (matching tests/e2e/test_source_to_strategy_spec.py and every other source-ingest read endpoint's {\"item\"|\"bundle\"|\"connector\"} shape), but the poll accept-predicate compared value.get(\"source_id\") on the un-unwrapped envelope, so it could never match even once the record existed, and the harness would time out. (2) Once (1) is fixed, a second, environment-triggered mismatch surfaces on any pantheon compose project that has run this suite before: the test's static_records payload used a fixed, non-unique metadata.body string across every run. services/knowledge/evidence/normalization.py content-addresses SourceRecords by content_hash (derived from metadata.body) when no canonical_doi/repo/url is present, and services/source_ingestion/main.py::_persist_source_evidence_refs correctly honors that existing dedupe owner. On a fresh store the newly generated source_id is its own dedupe owner and readback succeeds; on a reused store (the deployed E2E's own target) the fixed body text collides with a prior run's SourceRecord, so the new job's post-processing legitimately attaches evidence to the old owner id and the freshly generated source_id is deliberately never assigned its own record. The caller-declared source_id therefore never resolves, independent of any correctness bug in the ingestion pipeline itself.",
+    "reproduction": [
+      "In-process FastAPI TestClient run (jsonl evidence backend, single process): POST /api/source-ingest/connectors -> 201, PUT .../schedule -> 200, POST /api/source-ingest/jobs (connector_id only, no records field) -> 201 with run.status=completed, GET /api/source-ingest/source-records/{source_id} -> 200 with the exact posted source_id, proving the production write/read path is correct end to end.",
+      "Live deployed pantheon compose stack (source-ingest on 127.0.0.1:18097, SOURCE_INGEST_EVIDENCE_BACKEND=postgres): first run against the long-lived shared environment passed source.durable_terminal_readback; a second run with the original static body text reproduced a persistent 404 even though GET /api/source-ingest/jobs showed the ingest run completed with normalized_count=1, confirming the dedupe-owner redirection rather than a lost write."
+    ]
+  },
+  "fix": {
+    "implementation_changed_files": [],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-SOURCE-READBACK-20260817/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-SOURCE-READBACK-20260817/README.md"
+    ],
+    "test_changed_files": [
+      "tests/integration/l12/test_current_research_loops_deployed_e2e.py"
+    ],
+    "changes": [
+      "Added DeployedResearchHarness._source_record(view), matching the existing _entry(view) unwrap-helper pattern already used for the strategy-spec registry boundary, and used it to unwrap the {\"source_record\": ...} envelope before comparing source_id in the durable_terminal_readback poll accept-predicate and before computing _source_digest(source).",
+      "Made the static_records connector payload's metadata.body include self.run_token so each E2E run produces a distinct content_hash / source_dedupe_key and cannot collide with a prior run's SourceRecord on a reused compose deployment. The POST call sequence (connector configure -> schedule -> job trigger -> readback poll -> controller readback) is unchanged; only the read-side parsing and the per-run content value changed."
+    ],
+    "not_changing": "services/source_ingestion/main.py, services/source_ingestion/configured.py, services/source_ingestion/scheduler.py, and services/knowledge/evidence/normalization.py are unmodified; the content-addressed dedupe design in normalization.py is intentional product behavior for genuinely duplicate content and is left in place.",
+    "owned_layer": "Deployed E2E harness readback parsing and per-run content uniqueness for the source_ingestion identity-chain case."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python .scratch/repro.py (ad hoc in-process TestClient reproduction, jsonl backend)",
+        "conclusion": "connector 201, schedule 200, job 201 run.status=completed, GET source-records/{source_id} 200 with the exact posted source_id and correct content -- proves the production write/read path is correct.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_L12_RESEARCH_E2E=1 PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m pytest -q tests/integration/l12/test_current_research_loops_deployed_e2e.py::test_deployed_source_ingestion_identity_chain (before fix, first run against live compose)",
+        "conclusion": "source.durable_terminal_readback timed out; accept-predicate compared source_id against the un-unwrapped {\"source_record\": ...} envelope.",
+        "result": "fail (pre-fix baseline)"
+      },
+      {
+        "command": "PANTHEON_L12_RESEARCH_E2E=1 PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m pytest -q tests/integration/l12/test_current_research_loops_deployed_e2e.py::test_deployed_source_ingestion_identity_chain (after envelope fix only, second run against the now-reused compose environment)",
+        "conclusion": "source.durable_terminal_readback timed out with a genuine 404 despite the underlying ingest run completing (normalized_count=1); root-caused to content-hash dedupe collision against the first run's SourceRecord because metadata.body was static across runs.",
+        "result": "fail (revealed second, environment-dependent defect)"
+      },
+      {
+        "command": "PANTHEON_L12_RESEARCH_E2E=1 PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m pytest -q tests/integration/l12/test_current_research_loops_deployed_e2e.py::test_deployed_source_ingestion_identity_chain (after both fixes, third run against the same reused compose environment)",
+        "conclusion": "successful_boundaries includes source.owner_compose_identity, source.anti_preseed_readback, source.connector_command, source.scheduled_trigger, source.job_trigger, source.durable_terminal_readback; first_failure moved past this task's boundary to source.authority_actual_state (GET /api/source-ingest/controller/readback returned non-JSON content, because this shared 16h-uptime deployment has accumulated a large 248-connector/1.18MB controller readback payload that exceeds the harness's fixed 32768-byte HTTP read buffer). That later boundary is not in this task's declared scope or acceptance criteria and is unrelated to source_ingestion write/read persistence; recommend a follow-up task against the harness's _http_json read cap or environment reset.",
+        "result": "pass (target boundary); noted out-of-scope follow-on failure at a later, unrelated boundary"
+      },
+      {
+        "command": "python3 -c \"import ast; ast.parse(open('tests/integration/l12/test_current_research_loops_deployed_e2e.py').read())\"",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m pytest -q tests/integration/l12/test_current_research_loops_deployed_e2e.py::test_deployed_suite_has_no_fixture_or_product_store_shortcut",
+        "conclusion": "1 passed",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-08-17T08:05:00Z",
+    "validated_base_sha": "99b8da52410d2dbfcbaac543f1de1edf2ce52671"
+  },
+  "acceptance": {
+    "items": [
+      {
+        "criterion": "POST /api/source-ingest/jobs against a static_records-configured connector with no records field synchronously produces a SourceRecord retrievable at GET /api/source-ingest/source-records/{source_id}",
+        "status": "pass",
+        "evidence": "In-process reproduction and the live-compose test run both show GET returning 200 with the exact posted source_id immediately after the 201 job response."
+      },
+      {
+        "criterion": "tests/integration/l12/test_current_research_loops_deployed_e2e.py boundary source.durable_terminal_readback passes against the default pantheon compose project",
+        "status": "pass",
+        "evidence": "Third live-compose run: successful_boundaries includes source.durable_terminal_readback; run-report.json cases[0] before restoring the generated mirror confirmed this directly."
+      },
+      {
+        "criterion": "root cause is documented in the fix commit: whether the gap was in scheduler.run_once idempotency; configured fetch batch persistence; or a store identity mismatch between write and read paths",
+        "status": "pass",
+        "evidence": "See root_cause above: neither run_once idempotency nor configured fetch persistence was defective; the gap was a store identity mismatch entirely inside the test harness (unwrapped envelope comparison, plus a content-hash dedupe collision driven by non-unique static test content on a reused store)."
+      },
+      {
+        "criterion": "no change to the test's client-facing trigger sequence unless the test itself is proven wrong",
+        "status": "pass",
+        "evidence": "The POST/PUT trigger call sequence (connector configure, schedule, job trigger) is byte-for-byte unchanged; only the read-side envelope unwrap and one metadata.body string value changed, after proving via direct reproduction that the production API and pipeline already behave correctly."
+      }
+    ]
+  },
+  "deployment": {
+    "applicable": false,
+    "reason": "This task diagnoses and fixes a deployed E2E test harness defect; it does not change source_ingestion service code, runtime topology, or deployment profile wiring.",
+    "environment": "dev integration"
+  }
+}
