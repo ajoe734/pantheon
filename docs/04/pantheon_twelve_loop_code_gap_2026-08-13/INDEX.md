@@ -1,39 +1,42 @@
 # Pantheon 十二循環程式碼盤點與最小閉環設計
 
-日期：2026-08-14
+日期：2026-08-18
 
-狀態：2026-08-13 文件已降級為 historical planning baseline；最新 current truth 為
-`CURRENT_GAP_2026-08-14.md`，current execution catalog 為
-`execution-tasks-current-2026-08-14.json`。16/16 tasks 已 canonical materialized，
-supervisor 已開始派給 Claude／Antigravity auto-workers。2026-08-14 第一波 delivery 後發現的
-四個 gate 以 `CURRENT_BLOCKER_RECONCILIATION_2026-08-14.md` 為唯一 unblock truth。
+狀態：2026-08-13／08-14 文件與 execution catalogs 已降級為 historical planning／delivery
+baseline；最新 current code gap truth 為 `CURRENT_GAP_2026-08-18.md`。新盤點已逐項重驗
+8/14 後合併的功能，不重新 materialize 舊 16-task、R4 18-task或更早 28-task catalogs。
 
 ## 本次結論
 
-以 `pantheon/dev` `7ecef96e97a8de4f8bb6acd7d6c572104478c50b` 的程式碼、compose
+以 `pantheon/origin/dev` `d6cdaa2e05947afd29e142a1c20e9749f657e442` 的程式碼、compose
 wiring、測試與 dev runtime 逐條對照 `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md` 後：
 
-- 8 個循環有直接功能或架構阻斷。
-- 4 個循環只有部分閉環。
-- 0 個循環具備本輪要求的真實整合 E2E 證明。
-- Management 管理系統不能正確呈現上述真相。
+- 4 個循環有直接功能或架構阻斷。
+- 8 個循環已有主要 domain flow，但仍缺 current deployed closure proof。
+- 0 個循環具備最新 dev + deployed E2E + Management accepted-live 的完整簽收證明。
+- Management 前端已修正 canonical/composite分類與 non-live計數，但 backend runtime records
+  仍為 0，且 BFF漏監控實際 unhealthy 的 paper signal worker。
 
 ## 文件
 
-- [CURRENT_GAP_2026-08-14.md](CURRENT_GAP_2026-08-14.md)：**唯一 current gap 與下一步
-  最小開發設計**；逐循環程式碼真相、dev runtime 反證、疊床架屋汰除清單、舊 R4
-  適用性、E2E 缺口與可平行 slices。
+- [CURRENT_GAP_2026-08-18.md](CURRENT_GAP_2026-08-18.md)：**唯一 current code gap truth**；
+  包含已完成舊缺口重驗、12-loop matrix、真正未開發功能、驗證缺口、疊床架屋汰除清單、
+  Management與最小相依順序。本文件不建立或 dispatch execution tasks。
+- [CURRENT_GAP_2026-08-14.md](CURRENT_GAP_2026-08-14.md)：8/14 gap與最小開發設計。
+  **Historical；不得當 current truth或再次整包派工。**
 - [CURRENT_EXECUTION_TASKS_2026-08-14.md](CURRENT_EXECUTION_TASKS_2026-08-14.md)：
-  16-task 去重後 DAG、owner/reviewer、平行 wave 與 materialization evidence 規則。
+  16-task 去重後 DAG、owner/reviewer、平行 wave 與 materialization evidence規則。
+  **Historical delivery plan。**
 - [execution-tasks-current-2026-08-14.json](execution-tasks-current-2026-08-14.json)：
-  **唯一 current machine-readable execution catalog**。
+  8/14 machine-readable execution catalog。**Historical；不得重送。**
 - [materialization-receipt-current-2026-08-14.json](materialization-receipt-current-2026-08-14.json)：
   canonical 16-task readback、supervisor dispatch receipt 與兩次未寫入 task-state 的 bridge
-  failure evidence。
+  failure evidence。**Historical delivery evidence。**
 - [CURRENT_BLOCKER_RECONCILIATION_2026-08-14.md](CURRENT_BLOCKER_RECONCILIATION_2026-08-14.md)：
-  Teaching／FE／Imitation 原 task reopen 與 Consultation 原 PR closeout；不重建後段 DAG。
+  Teaching／FE／Imitation 原 task reopen 與 Consultation 原 PR closeout。**Historical。**
 - [execution-task-current-imitation-entrypoint-2026-08-14.json](execution-task-current-imitation-entrypoint-2026-08-14.json)：
-  原 Imitation immutable scope 漏掉 `main.py` 後的唯一 supplemental execution task。
+  原 Imitation immutable scope 漏掉 `main.py` 後的 supplemental execution task。
+  **Historical；該功能已合併。**
 - [GAP_REPORT.md](GAP_REPORT.md)：逐循環程式碼現況、根因、錯誤設計、缺失開發、
   缺失驗證、廢棄／誤導內容與舊計畫適用性。**Historical；不得當 current truth。**
 - [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)：替代錯誤設計的最小可用系統設計、資料與
@@ -45,11 +48,10 @@ wiring、測試與 dev runtime 逐條對照 `LOOP_TRIGGER_AND_CONCURRENCY_POLICY
 
 ## 基線與邊界
 
-- Pantheon current gap 程式碼基線：`refs/remotes/origin/dev`
-  `768eba39b35d4e9c53beaef22fe7bf841b8f5e45`。
-- Management 前端程式碼基線：`execute-plans/dev`
-  `da50ceee0ba1c6965954b26fb1f69a8b7b0b33d5`（local remote-tracking
-  `origin/dev`；本次未修改前端 repository）。
+- Pantheon current gap程式碼基線：`refs/remotes/origin/dev`
+  `d6cdaa2e05947afd29e142a1c20e9749f657e442`。
+- Management前端程式碼基線：`execute-plans/origin/dev`
+  `a1ba152130bab51447892f5f2a36fab1e3fe11c4`（本次未修改前端 repository）。
 - 規格真相：`LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`。
 - 只處理 Pantheon 12 個產品循環與 Management 的循環真相呈現。
 - 不把 Supervisor V2、fleet dispatch、task-state governance 當成第 13 個產品循環，
@@ -76,7 +78,7 @@ catalog `implemented`、PR merged 或 hosted bundle 存在，均不能單獨代�
 
 ## 後續使用規則
 
-後續以 `CURRENT_GAP_2026-08-14.md` 與 `execution-tasks-current-2026-08-14.json`
-為唯一 current planning/materialization truth。此目錄的舊 `execution-tasks.json`、舊
-28-task DAG 與 2026-08-08 minimum closure task IDs 不得直接重送或原地改寫；它們只作
-historical input。
+後續 current code planning只以 `CURRENT_GAP_2026-08-18.md`為 gap來源。任何新的 SD／
+execution catalog必須另行對 active/archive state、PR、branch與已交付程式碼去重；本目錄的
+兩份舊 execution JSON、舊 28-task DAG與 2026-08-08 minimum closure task IDs不得直接重送
+或原地改寫，只作 historical input。
