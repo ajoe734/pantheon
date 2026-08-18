@@ -624,6 +624,12 @@ services:
       POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
       AGORA_BFF_URL: http://operator-bff:8001
       RESEARCH_SERVICE_URL: http://research-orchestrator-svc:8101
+      # L12-GAP-F05-L6: durable loop-control controller-record observation.
+      # Same shared cluster DSN as policy-learning-svc; the scheduler only
+      # writes its own heartbeat/tick/success/failure record, never product
+      # candidate rows.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS: ${SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS:-3600}
       SHADOW_EVAL_SCHEDULER_MAX_TICKS: ${SHADOW_EVAL_SCHEDULER_MAX_TICKS:-0}
       SHADOW_EVAL_TYPE: ${SHADOW_EVAL_TYPE:-shadow}
