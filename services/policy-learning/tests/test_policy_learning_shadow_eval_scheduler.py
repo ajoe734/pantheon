@@ -276,6 +276,158 @@ def test_scheduler_health_degrades_when_handoff_intake_is_partial(
 
 
 # ---------------------------------------------------------------------------
+# loop-control observation writer (L12-GAP-F05-L6)
+# ---------------------------------------------------------------------------
+
+
+class _FakeLoopWriter:
+    def __init__(self) -> None:
+        self.written: list[dict] = []
+
+    async def record_success(self, *, loop_id: str, **kwargs) -> None:
+        self.written.append({"type": "success", "loop_id": loop_id, "kwargs": kwargs})
+
+    async def record_failure(self, *, loop_id: str, **kwargs) -> None:
+        self.written.append({"type": "failure", "loop_id": loop_id, "kwargs": kwargs})
+
+
+def test_build_loop_writer_returns_none_without_dsn() -> None:
+    scheduler = _load_scheduler_module()
+    assert scheduler._build_loop_writer(dsn="", tenant_id="tenant-a") is None
+
+
+def test_scheduler_writes_loop_control_success_observation(tmp_path: Path) -> None:
+    scheduler = _load_scheduler_module()
+    health_file = tmp_path / "shadow-eval-observation-health.json"
+    fake_writer = _FakeLoopWriter()
+    success = {"status": "ok", "processed_count": 2, "acked_count": 2}
+    cycle = {
+        "status": "ok",
+        "processed_count": 1,
+        "candidate_ids": ["cand-1", ""],
+        "status_counts": {"claimed": 1, "processed": 1},
+    }
+
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "POLICY_LEARNING_SERVICE_TOKEN": "test-token",
+            "AGORA_HANDOFF_SERVICE_TOKEN": "agora-test-token",
+            "POLICY_LEARNING_AGORA_TENANT_ID": "tenant-observation",
+            "SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS": "1",
+            "SHADOW_EVAL_SCHEDULER_MAX_TICKS": "1",
+            "SHADOW_EVAL_SCHEDULER_HEALTH_FILE": str(health_file),
+            "DATABASE_URL": "postgresql://fake:fake@localhost:5432/fake",
+        },
+        clear=False,
+    ), mock.patch.object(
+        scheduler, "run_recovery", return_value={"status": "ok", "reset_count": 0}
+    ), mock.patch.object(
+        scheduler, "run_intake_cycle", return_value=success
+    ), mock.patch.object(
+        scheduler, "run_claim_cycle", return_value=cycle
+    ), mock.patch.object(
+        scheduler, "_build_loop_writer", return_value=fake_writer
+    ):
+        assert scheduler.main() == 0
+
+    assert len(fake_writer.written) == 1
+    record = fake_writer.written[0]
+    assert record["type"] == "success"
+    assert record["loop_id"] == scheduler.DEFAULT_LOOP_ID
+    assert record["kwargs"]["evidence_refs"] == ["policy-learning://candidates/cand-1"]
+    assert record["kwargs"]["backlog"] == 1
+    assert record["kwargs"]["dlq_count"] == 0
+    assert record["kwargs"]["payload"]["cycle"] == cycle
+
+
+def test_scheduler_writes_loop_control_failure_observation_when_degraded(
+    tmp_path: Path,
+) -> None:
+    scheduler = _load_scheduler_module()
+    health_file = tmp_path / "shadow-eval-observation-failure-health.json"
+    fake_writer = _FakeLoopWriter()
+    degraded = {
+        "status": "degraded",
+        "processed_count": 1,
+        "acked_count": 0,
+        "errors": [{"step": "ack", "detail": "BFF unavailable"}],
+    }
+
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "POLICY_LEARNING_SERVICE_TOKEN": "test-token",
+            "AGORA_HANDOFF_SERVICE_TOKEN": "agora-test-token",
+            "POLICY_LEARNING_AGORA_TENANT_ID": "tenant-observation",
+            "SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS": "1",
+            "SHADOW_EVAL_SCHEDULER_MAX_TICKS": "1",
+            "SHADOW_EVAL_SCHEDULER_HEALTH_FILE": str(health_file),
+            "DATABASE_URL": "postgresql://fake:fake@localhost:5432/fake",
+        },
+        clear=False,
+    ), mock.patch.object(
+        scheduler, "run_recovery", return_value={"status": "ok", "reset_count": 0}
+    ), mock.patch.object(
+        scheduler, "run_intake_cycle", return_value=degraded
+    ), mock.patch.object(
+        scheduler, "run_claim_cycle", return_value={"status": "ok", "processed_count": 1}
+    ), mock.patch.object(
+        scheduler, "_build_loop_writer", return_value=fake_writer
+    ):
+        assert scheduler.main() == 0
+
+    assert len(fake_writer.written) == 1
+    record = fake_writer.written[0]
+    assert record["type"] == "failure"
+    assert record["loop_id"] == scheduler.DEFAULT_LOOP_ID
+    assert record["kwargs"]["reason"]
+
+
+def test_scheduler_writer_failure_does_not_break_tick(tmp_path: Path) -> None:
+    """A broken durable-store write degrades to a stderr warning, not a crash."""
+
+    scheduler = _load_scheduler_module()
+    health_file = tmp_path / "shadow-eval-observation-writer-error-health.json"
+
+    class _RaisingWriter:
+        async def record_success(self, *, loop_id: str, **kwargs) -> None:
+            raise RuntimeError("durable store unreachable")
+
+        async def record_failure(self, *, loop_id: str, **kwargs) -> None:
+            raise RuntimeError("durable store unreachable")
+
+    success = {"status": "ok", "processed_count": 0, "acked_count": 0}
+    cycle = {"status": "ok", "processed_count": 0}
+
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "POLICY_LEARNING_SERVICE_TOKEN": "test-token",
+            "AGORA_HANDOFF_SERVICE_TOKEN": "agora-test-token",
+            "POLICY_LEARNING_AGORA_TENANT_ID": "tenant-observation",
+            "SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS": "1",
+            "SHADOW_EVAL_SCHEDULER_MAX_TICKS": "1",
+            "SHADOW_EVAL_SCHEDULER_HEALTH_FILE": str(health_file),
+            "DATABASE_URL": "postgresql://fake:fake@localhost:5432/fake",
+        },
+        clear=False,
+    ), mock.patch.object(
+        scheduler, "run_recovery", return_value={"status": "ok", "reset_count": 0}
+    ), mock.patch.object(
+        scheduler, "run_intake_cycle", return_value=success
+    ), mock.patch.object(
+        scheduler, "run_claim_cycle", return_value=cycle
+    ), mock.patch.object(
+        scheduler, "_build_loop_writer", return_value=_RaisingWriter()
+    ):
+        assert scheduler.main() == 0
+
+    state = json.loads(health_file.read_text(encoding="utf-8"))
+    assert state["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
 # /api/policy-learning/shadow-eval-tick endpoint tests
 # ---------------------------------------------------------------------------
 
