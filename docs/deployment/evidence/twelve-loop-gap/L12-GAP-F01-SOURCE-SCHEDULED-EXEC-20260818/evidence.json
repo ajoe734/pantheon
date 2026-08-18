@@ -3,13 +3,13 @@
   "owner": "Antigravity",
   "reviewer": "Claude",
   "status": "review_ready",
-  "summary": "Existing Source owner (source-ingest-scheduler) executes scheduled ingest without adding new parallel mechanisms, security scope expansions, or auto repair tasks.",
+  "summary": "Updated docker-compose.yml default SOURCE_INGEST_CONTROLLER_MODE to reconcile_and_pull and MAX_TICKS to 1 so the scheduled owner executes due connectors in normal dev deployments. Updated unit and compose integration tests.",
   "verification": {
-    "test_command": "./.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/test_compose_activation.py",
-    "passed": 101,
+    "test_command": "/tmp/pantheon-worker-worktrees/coordination-root/l12-gap-f01-source-scheduled-exec-20260818/.venv-pantheon/bin/python3 -m pytest scripts/test_current_l12_compose_wiring.py services/source_ingestion/test_compose_activation.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_controller_worker.py",
+    "passed": 107,
     "failed": 0,
     "warnings": 1,
-    "duration_seconds": 79.91
+    "duration_seconds": 54.29
   },
   "acceptance_criteria_validated": [
     "A due allowed connector is executed by the existing scheduled owner and produces a durable SourceRecord without POST /jobs",
