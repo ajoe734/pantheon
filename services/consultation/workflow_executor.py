@@ -15,10 +15,13 @@ capital, or approval authority.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import importlib
 import json
 import os
 import socket
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -39,6 +42,30 @@ from .workflow_state import (
     WorkflowClaim,
     WorkflowStateStore,
 )
+
+
+def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
+    if not dsn:
+        return None
+    try:
+        module = importlib.import_module("services.loop-control")
+        deployment_sha = str(
+            os.getenv("PANTHEON_DEPLOYMENT_SHA")
+            or os.getenv("GIT_SHA")
+            or "unknown"
+        )
+        return module.LoopControllerWriter(
+            dsn,
+            tenant_id=tenant_id,
+            environment=os.getenv("PANTHEON_ENV", "dev"),
+            controller_id=os.getenv("CONSULTATION_WORKFLOW_EXECUTOR_ID")
+            or f"{CONSUMER_NAME}:{socket.gethostname()}:{os.getpid()}",
+            controller_name=CONSUMER_NAME,
+            deployment_sha=deployment_sha,
+        )
+    except ModuleNotFoundError:
+        return None
+
 
 
 CONSUMER_NAME = "consultation-workflow-executor"
@@ -99,6 +126,7 @@ class ExecutorConfig:
     handoff_token: str
     worker_id: str
     state_path: str
+    database_url: str = ""
     lease_seconds: int = 60
     retry_after_seconds: int = 15
     max_blocked_attempts: int = 3
@@ -143,6 +171,7 @@ class ExecutorConfig:
                 os.getenv("CONSULTATION_WORKFLOW_STATE_PATH")
                 or Path(data_dir) / "consult_workflow_state.sqlite3"
             ),
+            database_url=str(os.getenv("DATABASE_URL") or ""),
             lease_seconds=_env_int(
                 "CONSULTATION_WORKFLOW_LEASE_SECONDS", 60, minimum=1
             ),
@@ -827,6 +856,9 @@ def main() -> int:
             request_id=request_id,
         )
 
+    writer = _build_loop_writer(dsn=config.database_url, tenant_id=config.tenant_id)
+    loop_id = os.getenv("PANTHEON_LOOP_ID") or "consultation"
+
     health = initial_health_state(config)
     tick = 0
     while True:
@@ -834,6 +866,40 @@ def main() -> int:
         result = run_tick(config=config, state=state, provider=provider)
         update_functional_health(health, result)
         _write_health(health_file, health)
+        if writer is not None:
+            try:
+                evidence_refs = [
+                    f"consultation://memos/{outcome['detail'].split('memo=')[1].split(' ')[0]}"
+                    for outcome in result.get("outcomes", [])
+                    if isinstance(outcome, dict) and outcome.get("outcome") == "completed" and "memo=" in outcome.get("detail", "")
+                ]
+                state_counts = result.get("state_counts", {})
+                backlog = state_counts.get("in_progress", 0) + state_counts.get("memo_pending", 0)
+                dlq_count = state_counts.get("dead_letter", 0)
+                if health.get("status") == "ok":
+                    asyncio.run(
+                        writer.record_success(
+                            loop_id=loop_id,
+                            summary=f"Processed {result.get('completed', 0)} request(s)",
+                            backlog=backlog,
+                            dlq_count=dlq_count,
+                            evidence_refs=evidence_refs,
+                            payload={"health": health, "result": result},
+                        )
+                    )
+                else:
+                    asyncio.run(
+                        writer.record_failure(
+                            loop_id=loop_id,
+                            reason=health.get("last_failure_reason") or "workflow degraded",
+                            backlog=backlog,
+                            dlq_count=dlq_count,
+                            evidence_refs=evidence_refs,
+                            payload={"health": health, "result": result},
+                        )
+                    )
+            except Exception as exc:
+                print(f"Warning: failed to write to LoopControllerWriter: {exc}", file=sys.stderr)
         print(
             json.dumps(
                 {"tick": tick, "health": health, "result": result},

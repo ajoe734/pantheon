@@ -1,0 +1,27 @@
+{
+  "task_id": "L12-GAP-F05-L10-RECON-OBSERVATION-20260818",
+  "title": "Publish Telemetry and Reconciliation runtime controller truth",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "status": "in_progress",
+  "verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_worker_health.py services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py",
+    "result": "40 passed",
+    "full_suite_command": ".venv-pantheon/bin/python3 -m pytest -q services/reconciliation-drift/tests/",
+    "full_suite_result": "107 passed",
+    "verified_at": "2026-08-18T15:45:00Z"
+  },
+  "scope": [
+    "services/reconciliation-drift/consumer.py",
+    "services/reconciliation-drift/scheduler_worker.py",
+    "services/reconciliation-drift/incident_listener.py",
+    "services/reconciliation-drift/tests/test_reconciliation_drift_worker_health.py"
+  ],
+  "summary": "Wired the existing reconciliation-drift consumer, scheduler, and incident-listener worker loops to services/loop-control's LoopControllerWriter so real DriftReport/IncidentCase triggers (not synthetic ticks) publish one shared loop_id=telemetry_reconciliation (Loop 10) controller record with tenant/environment, deployment SHA, fresh heartbeat, next receipt (evidence_refs), and failure reason on degraded ticks.",
+  "architecture_compliance": {
+    "single_shared_loop_id": "telemetry_reconciliation",
+    "no_second_reconciler_monitor_or_state_store_added": true,
+    "tenant_and_environment_scoped": true,
+    "real_trigger_required_for_reconciled_live_proof_truth_level": true
+  }
+}
