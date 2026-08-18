@@ -165,7 +165,7 @@ def test_hosted_workflow_requires_exact_head_lease_and_recreated_instance() -> N
 
     assert "environment: dev" in text
     assert '"${GITHUB_REF}" == "refs/heads/dev"' in text
-    assert '"$(git rev-parse refs/remotes/origin/dev)" == "${EXPECTED_BFF_SHA}"' in text
+    assert '"$(git rev-parse HEAD)" == "${EXPECTED_BFF_SHA}"' in text
     assert "run_with_dev_environment_lease.sh" in text
     assert "google-github-actions/auth@" in text
     assert "docker compose -p pantheon -f docker-compose.yml up -d --no-deps --force-recreate operator-bff" in text
