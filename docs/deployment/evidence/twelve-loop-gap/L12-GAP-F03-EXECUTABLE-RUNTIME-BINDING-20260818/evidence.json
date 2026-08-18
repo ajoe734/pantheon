@@ -1,0 +1,110 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "task": {
+    "id": "L12-GAP-F03-EXECUTABLE-RUNTIME-BINDING-20260818",
+    "title": "Make RuntimeBinding an executable artifact projection contract",
+    "phase": "Pantheon 12-loop minimum functional closure 2026-08-18",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-GAP-F03-EXECUTABLE-RUNTIME-BINDING-20260818",
+    "merge_target": "dev",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F03-EXECUTABLE-RUNTIME-BINDING-20260818/evidence.json",
+    "overall_admission": "ready_for_independent_review"
+  },
+  "scope": {
+    "owned_layer": "Executable artifact projection contract for RuntimeBinding, verifying artifact loading, checksum, strategy parameters, and paper signal generation integration.",
+    "not_changing": [
+      "RuntimeBinding write ownership",
+      "Existing deployment dispatcher and Runtime Manager ownership",
+      "Live broker execution safety gates"
+    ],
+    "composes_with": {
+      "upstream": "DeploymentPlan and Registry artifact projection contract",
+      "downstream": "PaperSignalProducer (Loop 8) and LEAN paper signal consumer (Loop 9)"
+    ],
+    "implementation_changed_files": [
+      "services/execution/artifact_loader.py",
+      "services/execution/runtime-manager/runtime_binding.py",
+      "services/execution/runtime-manager/runtime_manager.py",
+      "services/execution/lean_runtime/paper_signal_producer.py",
+      "services/deployment/runtime_manager_dispatch_adapter.py"
+    ]
+  },
+  "normal_path_proof": {
+    "mode": "deterministic isolated unit and integration test suite",
+    "verified_contracts": [
+      "ArtifactLoader validates metadata, checksum, strategy_id, version, and execution_mode boundaries.",
+      "ArtifactLoader load_exact verifies registry_id, strategy_id, version, and artifact_checksum alignment.",
+      "CurrentArtifactStrategy in PaperSignalProducer evaluates approved artifact projections without hardcoded BUY/SELL fallbacks.",
+      "Deployment saga and RuntimeManager client/adapter validate authoritative readback."
+    ]
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Approved immutable artifact storage identity checksum interpreter and paper market-input policy flow from Registry through DeploymentPlan into RuntimeBinding",
+      "status": "pass",
+      "evidence_refs": [
+        "services/execution/artifact_loader.py::ArtifactLoader::load_exact",
+        "services/execution/lean_runtime/paper_signal_producer.py::CurrentArtifactStrategy::__call__"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Runtime Manager fails closed before active when an execution-required projection is missing or caller-authored",
+      "status": "pass",
+      "evidence_refs": [
+        "services/execution/artifact_loader.py::ArtifactLoader::_validate_metadata",
+        "services/execution/lean_runtime/paper_signal_producer.py::CurrentArtifactStrategy::__call__"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "the existing deployment dispatcher and Runtime Manager remain the only owners",
+      "status": "pass",
+      "evidence_refs": [
+        "services/execution/runtime-manager/contract.md",
+        "services/deployment/runtime_manager_dispatch_adapter.py"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Loop 8 terminal readback records the executable binding and its Loop 9 receipt",
+      "status": "pass",
+      "evidence_refs": [
+        "services/execution/lean_runtime/paper_signal_producer.py::CurrentArtifactStrategy::__call__",
+        "services/execution/lean_runtime/test_paper_signal_producer.py"
+      ]
+    }
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest services/execution/runtime-manager/test_runtime_binding.py services/deployment/test_runtime_manager_dispatch_adapter.py services/deployment/test_l12_dep_001_dispatcher.py",
+        "result": "pass",
+        "conclusion": "109 passed"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest services/execution/lean_runtime/test_paper_signal_producer.py",
+        "result": "pass",
+        "conclusion": "9 passed"
+      },
+      {
+        "command": "./.venv-pantheon/bin/python3 -m pytest services/execution/runtime-manager/test_runtime_manager_risk_policy.py",
+        "result": "pass",
+        "conclusion": "2 passed"
+      }
+    ]
+  },
+  "safety": {
+    "no_live_capital": "pass",
+    "runtime_binding_write_owner": "Runtime Manager remains sole write owner."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer": "Claude",
+    "required_review": "Verify evidence manifest, executable RuntimeBinding contract alignment, and test suite execution results."
+  }
+}
