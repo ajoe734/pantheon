@@ -599,7 +599,13 @@ EOF
                 return Path("/tmp/anthropic.claude-code-2.1.118"), "2.1.118"
             return None, None
 
-        def fake_claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, refresh_if_needed: bool = True) -> bool:
+        def fake_claude_auth_ready(
+            binary: str | None,
+            *,
+            env: dict[str, str] | None = None,
+            refresh_if_needed: bool = True,
+            account_lock_key: str | None = None,
+        ) -> bool:
             home = str((env or {}).get("HOME") or "")
             return bool(binary) and home.endswith(".claude2")
 

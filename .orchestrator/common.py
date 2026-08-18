@@ -1037,7 +1037,46 @@ def apply_claude_oauth_token_file(env: dict[str, str], runtime: dict[str, Any]) 
     return env
 
 
-def refresh_claude_oauth_tokens(env: dict[str, str] | None = None, *, timeout: float = 15.0) -> dict[str, Any] | None:
+@contextmanager
+def _claude_oauth_refresh_serialization(account_lock_key: str | None) -> Generator[None, None, None]:
+    """Serialize outbound OAuth refresh calls sharing one Claude account.
+
+    Several CLI identities (claude, claude2, claude1-1..4, ...) can hold
+    separate token pairs against the same underlying Anthropic account.
+    Independent, concurrent refresh calls from those identities have been
+    observed to intermittently fail (Cloudflare/API rate limiting reads as a
+    plain network error here, surfacing as "OAuth refresh failed"). This
+    does not change refresh semantics; it only prevents this process from
+    overlapping its own account's refresh call with a sibling identity's.
+    """
+
+    if not account_lock_key:
+        yield
+        return
+    safe_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", account_lock_key)
+    lock_path = Path(tempfile.gettempdir()) / f"pantheon-claude-oauth-refresh-{safe_key}.lock"
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        handle = os.fdopen(descriptor, "a+")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+def refresh_claude_oauth_tokens(
+    env: dict[str, str] | None = None,
+    *,
+    timeout: float = 15.0,
+    account_lock_key: str | None = None,
+) -> dict[str, Any] | None:
     loaded = load_claude_oauth_tokens(env)
     if not loaded:
         return None
@@ -1060,8 +1099,9 @@ def refresh_claude_oauth_tokens(env: dict[str, str] | None = None, *, timeout: f
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
+        with _claude_oauth_refresh_serialization(account_lock_key):
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         return None
 
@@ -1084,7 +1124,13 @@ def refresh_claude_oauth_tokens(env: dict[str, str] | None = None, *, timeout: f
     return updated
 
 
-def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, refresh_if_needed: bool = True) -> bool:
+def claude_auth_ready(
+    binary: str | None,
+    *,
+    env: dict[str, str] | None = None,
+    refresh_if_needed: bool = True,
+    account_lock_key: str | None = None,
+) -> bool:
     if not binary:
         return False
     env_token = claude_oauth_token_from_env(env)
@@ -1103,7 +1149,7 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
             return True
         if not refresh_if_needed:
             return False
-        refreshed = refresh_claude_oauth_tokens(env)
+        refreshed = refresh_claude_oauth_tokens(env, account_lock_key=account_lock_key)
         if refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0):
             refreshed_token = str(refreshed.get("accessToken") or "").strip()
             if refreshed_token.startswith("sk-ant-") and env is not None:
@@ -1127,7 +1173,7 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
         return True
     if not refresh_if_needed:
         return False
-    refreshed = refresh_claude_oauth_tokens(env)
+    refreshed = refresh_claude_oauth_tokens(env, account_lock_key=account_lock_key)
     return bool(refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0))
 
 
