@@ -512,3 +512,49 @@ class TestDistillationJobQueue:
         job = q.reset_to_pending("src-fresh")
         assert job.status == DistillationJobStatus.PENDING
         assert q.count() == 1
+
+
+class TestEventAdmissionSharesQueueWithCatchUp:
+    """L12-GAP-F02: a commit-time enqueue and the controller's catch_up poll
+    must resolve to the same durable queue, not two independent mechanisms."""
+
+    def test_commit_time_admission_is_visible_without_a_catch_up_poll(self, tmp_path: Path) -> None:
+        queue_path = tmp_path / "shared_job_queue.sqlite3"
+        source = _normalized_source(source_id="src-event-001")
+
+        # Simulate the ingest-side admission: a fresh queue handle opened on
+        # the same durable path as the distillation controller would use.
+        ingest_side_queue = DistillationJobQueue(queue_path)
+        admitted = ingest_side_queue.enqueue_source_record(source, requested_by="source-ingest")
+
+        # A second, independent handle on the same path is what the
+        # distillation controller opens on its own tick; it must already see
+        # the admitted job without running catch_up's enqueue step first.
+        controller_side_queue = DistillationJobQueue(queue_path)
+        pending = controller_side_queue.list_pending()
+        assert len(pending) == 1
+        assert pending[0].job_id == admitted.job_id
+        assert pending[0].source_digest == source_version_digest(source)
+
+    def test_catch_up_does_not_duplicate_an_already_admitted_job(self, tmp_path: Path) -> None:
+        queue_path = tmp_path / "shared_job_queue.sqlite3"
+        source = _normalized_source(source_id="src-event-002")
+
+        ingest_side_queue = DistillationJobQueue(queue_path)
+        admitted = ingest_side_queue.enqueue_source_record(source, requested_by="source-ingest")
+
+        with tempfile.TemporaryDirectory() as seed_dir:
+            worker = DistillationWorker(
+                DistillationJobQueue(queue_path),
+                StrategySpecSeedStore(Path(seed_dir) / "seeds.jsonl"),
+            )
+            result = worker.catch_up([source])
+
+        # catch_up's own enqueue step is a no-op recovery path here: the job
+        # was already admitted at commit time, so nothing new is enqueued,
+        # and the exact same job_id is what gets processed.
+        assert result.enqueued == 0
+        assert result.processed == 1
+        assert DistillationJobQueue(queue_path).get(source.source_id, source_version_digest(source)).job_id == (
+            admitted.job_id
+        )

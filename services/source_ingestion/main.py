@@ -22,7 +22,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Iterable, Literal, Mapping
 
 from fastapi import FastAPI, Header, HTTPException
 try:
@@ -78,6 +78,7 @@ from .connectors import (
     example_provider_catalog,
 )
 from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+from .distillation_worker import DistillationJobQueue
 from .external_sources import (
     external_source_bundle_metadata,
     validate_external_source_connector,
@@ -139,6 +140,9 @@ RECONCILE_TRANSACTION_LOCK_PATH = Path(
 CONTROLLER_TOKEN_PATH = Path(
     os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", str(DATA_DIR / "controller_token"))
 )
+DISTILLATION_JOB_QUEUE_PATH = Path(
+    os.getenv("DISTILLATION_JOB_QUEUE_PATH", str(DATA_DIR / "distillation_job_queue.sqlite3"))
+)
 SOURCE_RECORD_SCHEMA_PATH = Path(__file__).with_name("source_record.schema.json")
 MAX_RECORDS_PER_JOB = int(os.getenv("SOURCE_INGEST_MAX_RECORDS", "100"))
 SCHEDULER_MAX_CONCURRENCY = max(1, int(os.getenv("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY", "2")))
@@ -182,6 +186,10 @@ authoritative_reconcile_lock = threading.RLock()
 audit_store_lock = threading.RLock()
 source_execution_lock = threading.RLock()
 market_data_storage_writer = MarketDataStorageWriter(MARKET_DATA_STORAGE_ROOT)
+# Shared with the strategy-distillation controller via DISTILLATION_JOB_QUEUE_PATH:
+# admitting a normalized SourceRecord commit here lets the controller's run_pending
+# pick it up immediately instead of waiting for its next catch_up poll.
+distillation_job_queue = DistillationJobQueue(DISTILLATION_JOB_QUEUE_PATH)
 register_fastapi_health_routes(
     app,
     "pantheon-source-ingest",
@@ -1558,6 +1566,36 @@ def _with_source_ingest_run(record: SourceRecord, ingest_run_id: str) -> SourceR
     )
 
 
+def _admit_normalized_records_to_distillation(
+    normalized_source_records: Iterable[SourceRecord],
+) -> dict[str, Any]:
+    # Idempotent: same source_id + content digest resolves to the same job,
+    # so a later controller catch_up pass over the same version is a no-op.
+    # Never raises; catch_up remains the missed-event recovery path for
+    # whatever admission could not enqueue here.
+    admissions: dict[str, Any] = {}
+    for source in normalized_source_records:
+        if source.status != SourceRecordStatus.NORMALIZED:
+            continue
+        try:
+            job = distillation_job_queue.enqueue_source_record(
+                source,
+                requested_by="source-ingest",
+            )
+        except Exception as exc:  # noqa: BLE001 - ingest completion must remain non-blocking.
+            admissions[source.source_id] = {
+                "status": "admission_failed",
+                "error": str(exc)[:300],
+            }
+            continue
+        admissions[source.source_id] = {
+            "status": "admitted",
+            "job_id": job.job_id,
+            "source_digest": job.source_digest,
+        }
+    return admissions
+
+
 def _persist_source_evidence_refs(result: Any, storage_refs: dict[str, Any] | None = None) -> dict[str, Any]:
     source_records = [
         _with_source_ingest_run(
@@ -1573,6 +1611,7 @@ def _persist_source_evidence_refs(result: Any, storage_refs: dict[str, Any] | No
             "evidence_item_ids": [],
             "evidence_bundle_id": None,
             "knowledge_object_ids": [],
+            "distillation_admissions": {},
         }
 
     connector = manager.get_connector(result.run.connector_id)
@@ -1623,6 +1662,9 @@ def _persist_source_evidence_refs(result: Any, storage_refs: dict[str, Any] | No
         evidence_bundle_id=_stable_ref("evbundle", result.run.ingest_run_id),
         metadata=bundle_metadata,
     )
+    distillation_admissions = _admit_normalized_records_to_distillation(
+        normalized_source_records_by_id.values()
+    )
     knowledge_object_ids: list[str] = []
     for item in evidence_items:
         record = source_by_evidence_item_id[item.evidence_item_id]
@@ -1655,6 +1697,7 @@ def _persist_source_evidence_refs(result: Any, storage_refs: dict[str, Any] | No
         "evidence_item_ids": [item.evidence_item_id for item in evidence_items],
         "evidence_bundle_id": bundle.evidence_bundle_id,
         "knowledge_object_ids": knowledge_object_ids,
+        "distillation_admissions": distillation_admissions,
     }
 
 
