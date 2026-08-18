@@ -5367,6 +5367,17 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             event_type="task_reassigned",
         )
         event["reason"] = assignment_reason
+    else:
+        # A first-ever assignment (no prior owner/reviewer to reassign from) is
+        # structurally distinct from a reassignment, but a `done` closeout still
+        # needs to verify it the same way when a commit's Reviewer trailer was
+        # written before this event landed. Carry the same old/new fields a
+        # task_reassigned event carries so that verification never has to parse
+        # the free-text `message`.
+        event["old_owner"] = ""
+        event["new_owner"] = owner
+        event["old_reviewer"] = ""
+        event["new_reviewer"] = reviewer
     event.update(local_human_ops_audit_fields())
     append_log(event)
 
@@ -6038,6 +6049,63 @@ def _verified_done_owner_reassignment(
     }
 
 
+def _self_consistent_event_id_matches(event: Mapping[str, Any]) -> bool:
+    """Verify the generic digest `append_log` stamps on an unbespoke event.
+
+    `_activity_event()` sets `event_id` to `ai-status-event-<sha256 of the
+    rest of the event>` whenever the caller does not supply one of its own --
+    the scheme a plain `assign` event gets. Recomputing and comparing catches
+    a hand-edited log line the same way `_supervisor_reassignment_event_id_matches`
+    does for the narrower supervisor-reassignment digest.
+    """
+
+    payload = {key: value for key, value in event.items() if key != "event_id"}
+    expected = "ai-status-event-" + _canonical_json_sha256(payload)
+    return str(event.get("event_id") or "") == expected
+
+
+def _audited_initial_reviewer_assignment(
+    task_id: str,
+    *,
+    source: str,
+    unavailable_message: str,
+) -> tuple[datetime, dict[str, Any]] | None:
+    """Return the task's audited first-ever reviewer assignment, if any.
+
+    A commit's Reviewer trailer can only fail to name a real prior identity
+    when the task itself had no reviewer yet -- there is no task_reassigned
+    hop to walk in that case, only the `assign` event that first bound one.
+    Trust mirrors `_audited_reassignment_events`: only an `assign` event from
+    a privileged actor (`Orchestrator`, or the governed `Human/Ops`
+    local-operator path) with an explicitly empty `old_reviewer` (proving it
+    was genuinely the first assignment, not a later reassignment) and a
+    self-consistent event digest qualifies.
+    """
+
+    try:
+        events = list(_activity_events_across_sources(LOG_FILE, source=source))
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise SystemExit(unavailable_message) from exc
+
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
+    for event in events:
+        if (
+            event.get("type") != "assign"
+            or str(event.get("task_id") or "").strip() != task_id
+            or event.get("agent") not in {"Orchestrator", "Human/Ops"}
+            or event.get("old_reviewer")
+            or not event.get("new_reviewer")
+            or not _self_consistent_event_id_matches(event)
+        ):
+            continue
+        event_timestamp = _parse_utc_timestamp(event.get("ts"))
+        if event_timestamp is None:
+            continue
+        candidates.append((event_timestamp, event))
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0] if candidates else None
+
+
 def _verified_done_reviewer_reassignment(
     task: dict[str, Any],
     *,
@@ -6052,9 +6120,55 @@ def _verified_done_reviewer_reassignment(
     together. Failing that trailer outright left the owner with a merged
     delivery it could never finalize, so verify it against the same audit the
     owner trailer uses.
+
+    A commit can also land while the task had no reviewer at all yet (the
+    trailer then carries whatever free-text placeholder a worker wrote, e.g.
+    "pending", not a real prior identity). There is no reassignment chain to
+    walk from a placeholder, so that case is instead explained by the task's
+    audited first-ever reviewer assignment.
     """
 
     task_id = str(task.get("id") or "").strip()
+    delivered_at = _parse_utc_timestamp(commit_timestamp)
+    if delivered_at is None:
+        raise SystemExit(
+            "Cannot finalize task: delivered commit timestamp is unavailable for "
+            "reviewer reassignment ordering."
+        )
+
+    commit_reviewer_canonical = canonical_agent_name(commit_reviewer)
+    if commit_reviewer_canonical not in KNOWN_AGENTS:
+        first_assignment = _audited_initial_reviewer_assignment(
+            task_id,
+            source="canonical done reviewer reassignment evidence",
+            unavailable_message=(
+                "Cannot finalize task: prior-reviewer Reviewer trailer requires an "
+                "audited first reviewer assignment event, but the activity audit is "
+                "unavailable."
+            ),
+        )
+        if (
+            first_assignment is None
+            or canonical_agent_name(first_assignment[1].get("new_reviewer"))
+            != canonical_agent_name(current_reviewer)
+            or first_assignment[0] < delivered_at
+        ):
+            raise SystemExit(
+                "Cannot finalize task: no audited first reviewer assignment explains "
+                "the commit's unset Reviewer trailer binding to the current reviewer."
+            )
+        event = first_assignment[1]
+        return {
+            "event_id": str(event.get("event_id")),
+            "ts": str(event.get("ts")),
+            "old_reviewer": "",
+            "new_reviewer": canonical_agent_name(current_reviewer),
+            "hops": 1,
+            "owner": canonical_agent_name(task.get("owner")),
+            "message": str(event.get("message") or ""),
+            "commit_timestamp": commit_timestamp,
+        }
+
     audited = _audited_reassignment_events(
         task_id,
         source="canonical done reviewer reassignment evidence",
@@ -6066,7 +6180,7 @@ def _verified_done_reviewer_reassignment(
     chain = _walk_audited_role_chain(
         audited,
         role="reviewer",
-        start=canonical_agent_name(commit_reviewer),
+        start=commit_reviewer_canonical,
         end=canonical_agent_name(current_reviewer),
         failure_message=(
             "Cannot finalize task: the audited reviewer reassignment chain does not "
@@ -6074,12 +6188,6 @@ def _verified_done_reviewer_reassignment(
         ),
     )
 
-    delivered_at = _parse_utc_timestamp(commit_timestamp)
-    if delivered_at is None:
-        raise SystemExit(
-            "Cannot finalize task: delivered commit timestamp is unavailable for "
-            "reviewer reassignment ordering."
-        )
     if chain[0][0] < delivered_at:
         raise SystemExit(
             "Cannot finalize task: audited reviewer reassignment must follow the delivered commit."
@@ -6089,7 +6197,7 @@ def _verified_done_reviewer_reassignment(
     return {
         "event_id": str(last_event.get("event_id")),
         "ts": str(last_event.get("ts")),
-        "old_reviewer": canonical_agent_name(commit_reviewer),
+        "old_reviewer": commit_reviewer_canonical,
         "new_reviewer": canonical_agent_name(current_reviewer),
         "hops": len(chain),
         "owner": canonical_agent_name(task.get("owner")),
