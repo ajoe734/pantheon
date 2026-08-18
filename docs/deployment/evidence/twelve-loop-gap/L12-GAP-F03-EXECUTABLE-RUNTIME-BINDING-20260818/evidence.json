@@ -23,13 +23,9 @@
     "composes_with": {
       "upstream": "DeploymentPlan and Registry artifact projection contract",
       "downstream": "PaperSignalProducer (Loop 8) and LEAN paper signal consumer (Loop 9)"
-    ],
+    },
     "implementation_changed_files": [
-      "services/execution/artifact_loader.py",
-      "services/execution/runtime-manager/runtime_binding.py",
-      "services/execution/runtime-manager/runtime_manager.py",
-      "services/execution/lean_runtime/paper_signal_producer.py",
-      "services/deployment/runtime_manager_dispatch_adapter.py"
+      "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F03-EXECUTABLE-RUNTIME-BINDING-20260818/evidence.json"
     ]
   },
   "normal_path_proof": {
