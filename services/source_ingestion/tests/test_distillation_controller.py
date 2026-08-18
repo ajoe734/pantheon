@@ -160,6 +160,89 @@ def test_distillation_controller_tick_success(tmp_path, monkeypatch) -> None:
     assert alive_path.exists()
 
 
+def test_distillation_controller_tick_processes_pre_admitted_job_without_reenqueue(
+    tmp_path, monkeypatch
+) -> None:
+    """L12-GAP-F02: a job admitted at commit time (the ingest-side event
+    admission path) must be picked up and processed by the controller's
+    tick without catch_up enqueueing a duplicate job for it."""
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    job_queue_path = tmp_path / "job_queue.jsonl"
+    seed_store_path = tmp_path / "seeds.jsonl"
+    state_path = tmp_path / "controller_state.json"
+    alive_path = tmp_path / "controller_alive"
+
+    record = _normalized_source("src-note-test-003")
+    with open(evidence_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"record_type": "source_record", "payload": record.to_dict()}) + "\n")
+
+    # Simulate the source-ingest side: the normalized SourceRecord commit
+    # already admitted its job to the queue, before this tick ever runs.
+    pre_admitted = DistillationJobQueue(job_queue_path).enqueue_source_record(record)
+
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=alive_path,
+        job_queue_path=job_queue_path,
+        seed_store_path=seed_store_path,
+        evidence_store_path=evidence_path,
+        source_dirs=[tmp_path],
+    )
+
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-distillation-controller",
+        environment="test",
+        tenant_id="test",
+        deployment={"git_sha": "test-sha"},
+    )
+    state_store = ControllerStateStore(state_path)
+    state_store.save(state)
+
+    writer = DummyLoopWriter()
+
+    registry_store: dict[str, dict] = {}
+
+    def mock_get_registry_entry(url: str, registry_id: str) -> dict | None:
+        return registry_store.get(registry_id)
+
+    def mock_register_strategy_spec(url: str, payload: dict) -> dict:
+        metadata = dict(payload.get("metadata") or {})
+        if isinstance(payload.get("strategy_spec"), dict):
+            metadata.setdefault("strategy_spec", payload["strategy_spec"])
+        entry = {
+            **payload,
+            "artifact_type": "strategy_spec",
+            "artifact_state": "draft",
+            "lineage": {"parent_registry_ids": None, **dict(payload.get("lineage") or {}), "source_strategy_spec_id": None},
+            "metadata": metadata,
+        }
+        entry.pop("strategy_spec", None)
+        entry.pop("source_digest", None)
+        registry_store[payload["registry_id"]] = {"entry": entry}
+        return {"entry": entry}
+
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", mock_get_registry_entry)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec_if_absent", mock_register_strategy_spec)
+
+    res = run_controller_tick(config=config, state=state, store=state_store, writer=writer)
+
+    assert res["status"] == "success"
+    # catch_up's own enqueue step found the job already admitted: nothing new
+    # to enqueue, but the pre-admitted job still gets fully processed.
+    assert res["reconcile"]["enqueued"] == 0
+    assert res["reconcile"]["created"] == 1
+    assert res["actual"]["synced_count"] == 1
+
+    processed_job = DistillationJobQueue(job_queue_path).get(record.source_id, source_version_digest(record))
+    assert processed_job.job_id == pre_admitted.job_id
+    assert processed_job.status == "done"
+
+
 def test_distillation_controller_immutable_protection(tmp_path, monkeypatch) -> None:
     # Setup paths
     evidence_path = tmp_path / "source_evidence.jsonl"
