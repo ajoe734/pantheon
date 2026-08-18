@@ -5171,6 +5171,101 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     commit_timestamp="2026-07-20T00:00:00+00:00",
                 )
 
+    @staticmethod
+    def _first_assignment_event(
+        *,
+        task_id: str = "REG-002",
+        agent: str = "Human/Ops",
+        new_reviewer: str = "Antigravity2",
+        timestamp: str = "2026-08-17T16:39:04Z",
+    ) -> dict[str, Any]:
+        event = {
+            "ts": timestamp,
+            "agent": agent,
+            "type": "assign",
+            "task_id": task_id,
+            "old_owner": "",
+            "new_owner": "Claude",
+            "old_reviewer": "",
+            "new_reviewer": new_reviewer,
+            "message": f"Assigned {task_id} to Claude with reviewer {new_reviewer}",
+        }
+        event["event_id"] = "ai-status-event-" + ai_status._canonical_json_sha256(event)
+        return event
+
+    def test_done_reviewer_reassignment_accepts_audited_first_assignment(self) -> None:
+        for agent in ("Orchestrator", "Human/Ops"):
+            with self.subTest(agent=agent):
+                event = self._first_assignment_event(agent=agent)
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+                    log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+                    with mock.patch.object(ai_status, "LOG_FILE", log_file):
+                        result = ai_status._verified_done_reviewer_reassignment(
+                            {"id": "REG-002", "owner": "Claude", "reviewer": "Antigravity2"},
+                            commit_reviewer="pending",
+                            current_reviewer="Antigravity2",
+                            commit_timestamp="2026-08-17T16:37:40+00:00",
+                        )
+                self.assertEqual(result["event_id"], event["event_id"])
+                self.assertEqual(result["old_reviewer"], "")
+                self.assertEqual(result["new_reviewer"], "Antigravity2")
+
+    def test_done_reviewer_reassignment_rejects_forged_first_assignment_actor(self) -> None:
+        event = self._first_assignment_event(agent="Claude")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                self.assertRaisesRegex(
+                    SystemExit, "no audited first reviewer assignment explains"
+                ),
+            ):
+                ai_status._verified_done_reviewer_reassignment(
+                    {"id": "REG-002", "owner": "Claude", "reviewer": "Antigravity2"},
+                    commit_reviewer="pending",
+                    current_reviewer="Antigravity2",
+                    commit_timestamp="2026-08-17T16:37:40+00:00",
+                )
+
+    def test_done_reviewer_reassignment_rejects_first_assignment_before_commit(self) -> None:
+        event = self._first_assignment_event(timestamp="2026-08-17T16:00:00Z")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                self.assertRaisesRegex(
+                    SystemExit, "no audited first reviewer assignment explains"
+                ),
+            ):
+                ai_status._verified_done_reviewer_reassignment(
+                    {"id": "REG-002", "owner": "Claude", "reviewer": "Antigravity2"},
+                    commit_reviewer="pending",
+                    current_reviewer="Antigravity2",
+                    commit_timestamp="2026-08-17T16:37:40+00:00",
+                )
+
+    def test_done_reviewer_reassignment_rejects_tampered_first_assignment_digest(self) -> None:
+        event = self._first_assignment_event()
+        event["new_reviewer"] = "Codex"  # mutated after the digest was stamped
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                self.assertRaisesRegex(
+                    SystemExit, "no audited first reviewer assignment explains"
+                ),
+            ):
+                ai_status._verified_done_reviewer_reassignment(
+                    {"id": "REG-002", "owner": "Claude", "reviewer": "Codex"},
+                    commit_reviewer="pending",
+                    current_reviewer="Codex",
+                    commit_timestamp="2026-08-17T16:37:40+00:00",
+                )
+
     def test_collect_done_delivery_metadata_reports_all_missing_trailers_at_once(self) -> None:
         responses = iter(
             [
@@ -6171,6 +6266,20 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertIsNotNone(task)
         self.assertEqual(task["owner"], "Antigravity2")
         self.assertEqual(task["reviewer"], "Claude")
+
+    def test_first_assign_logs_structured_old_and_new_roles(self) -> None:
+        ai_status.command_assign(self.state, ["APP-003-SIDECAR-REVIEW", "Claude", "Antigravity2"])
+
+        lines = self._test_log_file.read_text(encoding="utf-8").splitlines()
+        events = [json.loads(line) for line in lines if line.strip()]
+        assign_events = [e for e in events if e.get("task_id") == "APP-003-SIDECAR-REVIEW"]
+        self.assertEqual(len(assign_events), 1)
+        event = assign_events[0]
+        self.assertEqual(event["type"], "assign")
+        self.assertEqual(event["old_owner"], "")
+        self.assertEqual(event["new_owner"], "Claude")
+        self.assertEqual(event["old_reviewer"], "")
+        self.assertEqual(event["new_reviewer"], "Antigravity2")
 
     def test_create_only_assign_rejects_existing_task_without_overwrite(self) -> None:
         ai_status.command_assign(
