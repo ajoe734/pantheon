@@ -1,10 +1,109 @@
 {
-  "schema_version": "loop_product_evidence.v1",
-  "schema_status": {
-    "formal_schema_owner": "LOOP-PROD-002",
-    "formalization_trigger": "L12-CURRENT-E2E-HUMAN-LEARNING-20260814 deployed E2E review gate.",
-    "note": "Owner evidence for deployed E2E testing of Agora Interaction Evidence, Human Imitation / Shadow Evaluation, and Consultation (Loops 5, 6, 7).",
-    "status": "formalized"
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::_case_agora_interaction_evidence",
+        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::_case_imitation_research_handoff",
+        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::_case_consultation_governance_handoff"
+      ],
+      "id": "AC1",
+      "statement": "The suite calls deployed Agora, Policy Learning, Consultation, OpenClaw, and Governance owners over HTTP instead of an in-process ASGI app.",
+      "status": "pass_structural_pending_live_run"
+    },
+    {
+      "evidence_refs": [
+        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::test_deployed_suite_has_no_fixture_or_product_store_shortcut"
+      ],
+      "id": "AC2",
+      "statement": "No in-process ASGI/tmp-store/FakeOpenClawRiskProvider/direct drainer call is accepted; enforced by an AST guard at collection time.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::test_deployed_human_learning_chain_identity_correlation"
+      ],
+      "id": "AC3",
+      "statement": "One run proves the evidence -> dataset -> durable handoff -> candidate -> Research receipt -> Consultation memo -> Governance receipt chain via a single self.chain dictionary populated only by this run's own HTTP responses.",
+      "status": "pass_structural_pending_live_run"
+    },
+    {
+      "evidence_refs": [
+        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::DeployedHumanLearningHarness.run_case"
+      ],
+      "id": "AC4",
+      "statement": "Failure creates no automatic repair task: run_case fails the first unreached case closed with pytest.fail/pytest.skip and only ever writes a bounded JSON run report.",
+      "status": "pass"
+    }
+  ],
+  "authorities": {
+    "actual_state": [
+      "operator-bff Agora interaction-evidence and dataset-worker/process routes",
+      "policy-learning-shadow-eval-scheduler Compose worker (real Agora handoff drainer)",
+      "Policy Learning candidates and agora-handoff intake routes",
+      "Research orchestrator intake and run readback authority",
+      "Consultation workflow executor, real deployed OpenClaw gateway adapter contribution route",
+      "Governance consultation-handoffs accept route"
+    ],
+    "desired_state": [
+      "GAP-F07 item 2: Loops 5-7 remove in-process app/tmp store/fake provider and call deployed owner URLs instead",
+      "No direct agora_handoff_drainer.process_drainer_cycle call; the suite polls the real scheduler worker's HTTP-visible effect",
+      "No FakeOpenClawRiskProvider; the suite calls the real deployed openclaw-gateway-adapter consultation contribution route",
+      "Failure produces one bounded run report with the last successful boundary and first failure only; no automatic repair task"
+    ],
+    "task_packet": "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/CURRENT_GAP_2026-08-18.md"
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Loop 5 case posts a replay POST /api/policy-learning/agora-handoff for the same handoff_id and asserts the same candidate_id is returned.",
+        "Loop 6 case replays post_imitation_candidate_intake_http for the same candidate and asserts the same task_id/run_id.",
+        "Loop 7 case runs a second, independent WorkflowStateStore recovery claim and asserts execute_claim reports a recovered acknowledged handoff (no duplicate OpenClaw turn)."
+      ],
+      "status": "pending_live_run"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Loop 6 case asserts an empty candidate_id fails closed through handoff_candidate_to_experiment_authority against the deployed Research owner."
+      ],
+      "status": "pending_live_run"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Loop 5-7 cases thread evidence_id/dataset_version_id/agora_handoff_id/candidate_id/experiment_task_id/experiment_run_id/consult_request_id/memo_id/governance_handoff_id through self.chain.",
+        "test_deployed_human_learning_chain_identity_correlation asserts every one of those identifiers was actually produced by this run before the suite is considered closed."
+      ],
+      "status": "pending_live_run"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Loop 7 case's recovery claim uses a fresh local WorkflowStateStore against the same deployed Consultation/Governance/OpenClaw-adapter URLs and asserts the recovered outcome, not a fresh provider turn."
+      ],
+      "status": "pending_live_run"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "No in-process store, TestClient, uvicorn server, or FakeOpenClawRiskProvider remains importable from this suite (enforced by test_deployed_suite_has_no_fixture_or_product_store_shortcut).",
+        "Loop 5's drainer step is now a poll of the real policy-learning-shadow-eval-scheduler Compose worker's HTTP-visible effect instead of an in-process call to agora_handoff_drainer.process_drainer_cycle."
+      ],
+      "status": "pass"
+    }
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "conclusion": "e2e_suite_rewritten_not_executed_live",
+      "reason": "This task rewrites the Loops 5-7 suite onto deployed HTTP boundaries per GAP-F07; the opt-in PANTHEON_L12_HUMAN_LEARNING_E2E=1 path itself was not exercised against a live Compose stack in this sandboxed worker, which has no docker/compose access and no OpenClaw credentials."
+    },
+    "environment": "dev integration (opt-in)",
+    "identity_admission": {
+      "reason": "Structural review only: real deployed URLs, real bearer tokens matching docker-compose.yml defaults, no TestClient/uvicorn/fake provider/direct store import, and an AST guard enforce this at collection time.",
+      "status": "pending_live_run"
+    },
+    "public_bff_base_url": "not_applicable_internal_e2e",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "This E2E task does not claim hosted publication."
+    }
   },
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/twelve-loop-current/human-learning/evidence.sha256",
@@ -14,65 +113,19 @@
     "redacted": true,
     "self_hashing": false
   },
-  "task": {
-    "base_branch": "dev",
-    "evidence_cut_at": "2026-08-15T05:32:00Z",
-    "evidence_cut_semantics": "Owner validation of deployed E2E suite covering Loops 5, 6, and 7; reviewer Claude2 must bind the final evidence-bearing PR head.",
-    "id": "L12-CURRENT-E2E-HUMAN-LEARNING-20260814",
-    "overall_admission": "ready_for_independent_review",
-    "owner": "Antigravity2",
-    "phase": "W4-e2e",
-    "product_level_required": true,
-    "repository": "ajoe734/pantheon",
-    "review_file": "docs/deployment/evidence/twelve-loop-current/human-learning/evidence.json",
-    "reviewer": "Claude2",
-    "target_environment": "dev integration",
-    "target_maturity": "reconciled",
-    "task_branch": "task/L12-CURRENT-E2E-HUMAN-LEARNING-20260814",
-    "title": "Add deployed E2E for Agora Imitation and Consultation"
-  },
-  "authorities": {
-    "actual_state": [
-      "Agora BFF interaction evidence and dataset worker handoff routes",
-      "Policy Learning Agora handoff drainer and candidate processing",
-      "Research HTTP intake and run readback authority",
-      "Consultation workflow executor and OpenClaw HTTP provider",
-      "Governance consultation handoff sink"
-    ],
-    "desired_state": [
-      "Three per-loop deployed E2E cases covering Agora, Imitation, and Consultation",
-      "Exact identity preservation across candidate, run, memo, and handoff authorities",
-      "Idempotent replay and anti-zero-candidate rejection assertions",
-      "Anti-direct-store verification confirming absence of in-process cross-service store imports"
-    ],
-    "task_packet": "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/execution-tasks-current-2026-08-14.json"
-  },
-  "scope": {
-    "authoritative_write_owner": "Antigravity2 owns tests/integration/l12/test_current_human_learning_deployed_e2e.py and docs/deployment/evidence/twelve-loop-current/human-learning/.",
-    "composes_with": [
-      "L12-CURRENT-CONSULTATION-WIRING-20260814 for Consultation provider and Governance sink",
-      "L12-CURRENT-AGORA-HANDOFF-CUTOVER-20260814 for durable Agora handoff intake",
-      "L12-CURRENT-IMITATION-HTTP-20260814 for Research HTTP intake",
-      "L12-CURRENT-COMPOSE-INTEGRATION-20260814 for compose service integration",
-      "L12-CURRENT-CROSS-LOOP-E2E-20260814 for downstream cross-loop DAG validation"
-    ],
-    "evidence_changed_files": [
-      "docs/deployment/evidence/twelve-loop-current/human-learning/evidence.json",
-      "docs/deployment/evidence/twelve-loop-current/human-learning/evidence.sha256",
-      "docs/deployment/evidence/twelve-loop-current/human-learning/evidence.md"
-    ],
-    "implementation_changed_files": [
-      "tests/integration/l12/test_current_human_learning_deployed_e2e.py"
-    ],
-    "not_changing": "Active Agora frontend files, automatic repair tasks, direct database/store shortcuts, broker authority, or live capital authority.",
-    "owned_layer": "Deployed E2E verification for Agora dataset handoff, imitation learning Research HTTP handoff, Consultation OpenClaw provider interaction, downstream Governance handoff, and identity correlation."
+  "hosted_readback": {
+    "pre_deploy": {
+      "component_readback": "Suite collects cleanly, the 4 deployed cases skip without PANTHEON_L12_HUMAN_LEARNING_E2E=1, and the AST guard confirms no TestClient/uvicorn/mock/FakeOpenClawRiskProvider/direct drainer import remains in the file.",
+      "hosted_activation_owner": "Whichever task next runs this suite with a live Compose stack and OpenClaw credentials (PANTHEON_L12_HUMAN_LEARNING_E2E=1)",
+      "status": "structure_reconciled_live_run_pending"
+    }
   },
   "implementation_delivery": {
     "anchor_commits": [
       {
         "delivery_state": "task_branch",
-        "sha": "75afc0859f5cbee4793eface4f61aa683c3826e3",
-        "subject": "L12-CURRENT-E2E-HUMAN-LEARNING-20260814: add deployed E2E for loops 5-7"
+        "sha": "15a0418c043b3340aab0ae219abd8b5b50bf1aef",
+        "subject": "L12-GAP-F07-E2E-HUMAN-20260818: deployed human-learning E2E"
       }
     ],
     "required_checks": [
@@ -88,172 +141,6 @@
       }
     ]
   },
-  "validation": {
-    "commands": [
-      {
-        "command": ".venv-pantheon/bin/python -m pytest -v tests/integration/l12/test_current_human_learning_deployed_e2e.py",
-        "conclusion": "4 passed in 7.61s",
-        "result": "pass"
-      },
-      {
-        "command": ".venv-pantheon/bin/python -m pytest -v tests/integration/l12/test_current_human_learning_deployed_e2e.py services/consultation/tests/test_current_provider_handoff.py services/policy-learning/tests/test_current_agora_handoff_cutover.py services/policy-learning/tests/test_current_research_http_handoff.py services/governance/test_consultation_handoff.py",
-        "conclusion": "20 passed, 1 warning in 17.89s",
-        "result": "pass"
-      },
-      {
-        "command": "git diff --check",
-        "conclusion": "exit 0",
-        "result": "pass"
-      }
-    ],
-    "validated_at": "2026-08-15T05:31:13Z",
-    "validated_base_sha": "814b3b69e1aa719a9307d0db7d29bc56bf6f3a53",
-    "validated_head_sha": "75afc0859f5cbee4793eface4f61aa683c3826e3"
-  },
-  "deployment": {
-    "applicable": false,
-    "canonical_root_deploy": {
-      "conclusion": "e2e_suite_verified",
-      "reason": "This task delivers the deployed E2E test suite for Loops 5, 6, 7; hosted rollout remains downstream."
-    },
-    "environment": "dev integration",
-    "identity_admission": {
-      "reason": "Deployed E2E tests verified exact service URLs, distinct bearer tokens, actor identities, tenants, and readback correlation.",
-      "status": "reconciled"
-    },
-    "public_bff_base_url": "not_applicable_internal_e2e",
-    "publish_cut": {
-      "conclusion": "not_applicable",
-      "reason": "This E2E task does not claim hosted publication."
-    }
-  },
-  "hosted_readback": {
-    "pre_deploy": {
-      "component_readback": "Four deployed E2E cases verified Agora evidence-to-handoff, Policy Learning candidate admission, Research HTTP intake, Consultation OpenClaw provider turn, Governance handoff sink, and cross-loop identity correlation.",
-      "hosted_activation_owner": "Downstream current twelve-loop E2E cross-loop and hosted tasks",
-      "status": "e2e_reconciled_hosted_pending"
-    }
-  },
-  "behavioral_proof": {
-    "duplicate_safety": {
-      "proof": [
-        "Replay of Agora dataset handoff admission is idempotent and preserves exact candidate ID without duplicates.",
-        "Replay of Imitation candidate HTTP intake to Research authority returns identical task/run IDs.",
-        "Replay of Consultation claim recovery reuses acknowledged handoff with zero duplicate OpenClaw turns or Governance handoffs."
-      ],
-      "status": "pass"
-    },
-    "failure_and_degraded_behavior": {
-      "proof": [
-        "Missing downstream Governance handoff sink degrades Consultation executor functional health and enqueues to DLQ; DLQ replay with working sink restores health to ok.",
-        "Empty/zero candidate submissions to Research intake fail closed with typed error.",
-        "Idle drainer tick with zero pending handoffs produces zero processed/acked counts and cannot satisfy loop execution."
-      ],
-      "status": "pass"
-    },
-    "request_receipt_downstream_correlation": {
-      "proof": [
-        "Agora evidence_id correlates to DatasetVersion dsv-ID and durable handoff gh-ID, which Policy Learning binds to candidate record.",
-        "Imitation candidate_id correlates to Research experiment_task_id and experiment_run_id confirmed by Research owner readback.",
-        "Consultation request_id correlates to published ConsultMemo memo_id and acknowledged ConsultGateHandoff gh-ID confirmed by Governance store readback."
-      ],
-      "status": "pass"
-    },
-    "restart_and_recovery": {
-      "proof": [
-        "Recovery worker starting from fresh state store recovers terminal acknowledged handoff status without repeating side effects.",
-        "DLQ replay mechanism restores healthy status after transient downstream failures."
-      ],
-      "status": "pass"
-    },
-    "rollback_or_compensation": {
-      "proof": [
-        "Failing consumers pause with durable backlog retained and degraded functional health reported.",
-        "Direct store write bypass is eliminated; all handoffs use explicit HTTP clients and replay-safe endpoints."
-      ],
-      "status": "pass"
-    }
-  },
-  "security_and_safety": {
-    "environment_boundary": {
-      "proof": "Only declared task worktree and local test service boundaries were exercised; no external production systems were modified.",
-      "status": "pass"
-    },
-    "hosted_frontend": {
-      "status": "not_applicable"
-    },
-    "mfa": {
-      "status": "not_applicable"
-    },
-    "no_live_capital": {
-      "proof": "No live capital authority; OpenClaw provider and Consultation requests are strictly paper-only with advisory scope.",
-      "status": "pass"
-    },
-    "rbac": {
-      "proof": "Service actors policy-learning-agora-handoff-drainer and consultation-workflow-executor use distinct tokens and dedicated service actor headers.",
-      "status": "pass"
-    },
-    "tenant_isolation": {
-      "proof": "All Agora, Policy Learning, Research, Consultation, and Governance boundaries enforce explicit tenant binding and reject cross-tenant scopes.",
-      "status": "pass"
-    },
-    "two_person_approval": {
-      "proof": "Owner evidence committed before review; assigned reviewer Claude2 must independently review and bind the final PR head.",
-      "status": "pending_independent_review"
-    }
-  },
-  "acceptance": [
-    {
-      "evidence_refs": [
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_loop5_agora_interaction_evidence_and_durable_handoff_e2e",
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_loop6_human_imitation_shadow_eval_and_research_http_e2e",
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_loop7_consultation_provider_and_governance_handoff_e2e"
-      ],
-      "id": "AC1",
-      "statement": "Three per-loop cases use provider-backed interaction and durable handoffs.",
-      "status": "pass"
-    },
-    {
-      "evidence_refs": [
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_loop6_human_imitation_shadow_eval_and_research_http_e2e",
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_loop7_consultation_provider_and_governance_handoff_e2e",
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_human_learning_chain_identity_correlation_e2e"
-      ],
-      "id": "AC2",
-      "statement": "Research and Consultation owner readbacks preserve exact candidate IDs.",
-      "status": "pass"
-    },
-    {
-      "evidence_refs": [
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_loop5_agora_interaction_evidence_and_durable_handoff_e2e",
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_loop6_human_imitation_shadow_eval_and_research_http_e2e"
-      ],
-      "id": "AC3",
-      "statement": "Idle zero-candidate ticks cannot satisfy the test.",
-      "status": "pass"
-    },
-    {
-      "evidence_refs": [
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_loop5_agora_interaction_evidence_and_durable_handoff_e2e",
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_loop6_human_imitation_shadow_eval_and_research_http_e2e",
-        "tests/integration/l12/test_current_human_learning_deployed_e2e.py::TestL12CurrentHumanLearningDeployedE2E::test_l12_loop7_consultation_provider_and_governance_handoff_e2e"
-      ],
-      "id": "AC4",
-      "statement": "Replay is idempotent across all three loops and direct ResearchOrchestratorStore imports are absent.",
-      "status": "pass"
-    }
-  ],
-  "residual_risks": {
-    "cross_loop_dag": {
-      "blocking_for_this_task": false,
-      "containment": "This manifest verifies per-loop deployment for Loops 5, 6, 7 and correlation; broader multi-chain DAG is verified in W5.",
-      "description": "Full system DAG execution across all 12 loops is validated in L12-CURRENT-CROSS-LOOP-E2E-20260814.",
-      "expiry": "When L12-CURRENT-CROSS-LOOP-E2E-20260814 completes.",
-      "owner": "L12-CURRENT-CROSS-LOOP-E2E-20260814",
-      "recheck_trigger": "After all W4 E2E tasks complete.",
-      "severity": "informational"
-    }
-  },
   "integrity": {
     "algorithm": "sha256",
     "checksum_coverage": [
@@ -263,7 +150,7 @@
     "hosted_semantic_sha256": {},
     "manifest_path": "docs/deployment/evidence/twelve-loop-current/human-learning/evidence.json",
     "normalized_hosted_readback": {
-      "deployed_e2e_verified": true,
+      "deployed_e2e_verified": false,
       "hosted_activation_claimed": false,
       "independent_review_recorded": false
     },
@@ -272,13 +159,130 @@
   },
   "record_log": [
     {
-      "actor": "Antigravity2",
+      "actor": "Claude",
       "kind": "owner_evidence_ready",
-      "recorded_at": "2026-08-15T05:32:00Z",
-      "reference": "task/L12-CURRENT-E2E-HUMAN-LEARNING-20260814",
+      "recorded_at": "2026-08-18T16:04:16Z",
+      "reference": "task/L12-GAP-F07-E2E-HUMAN-20260818",
       "sequence": 1,
-      "sha": "75afc0859f5cbee4793eface4f61aa683c3826e3",
+      "sha": "15a0418c043b3340aab0ae219abd8b5b50bf1aef",
       "status": "ready_for_independent_review"
     }
-  ]
+  ],
+  "residual_risks": {
+    "cross_loop_dag": {
+      "blocking_for_this_task": false,
+      "containment": "This manifest only verifies the Loops 5-7 suite's shape and skip path; broader multi-chain DAG stimulus-driven cross-loop testing remains a separate GAP-F07 downstream task per CURRENT_GAP_2026-08-18.",
+      "description": "Full system DAG execution across all 12 loops driven by fresh self-generated stimulus is not covered here.",
+      "expiry": "When the stimulus-driven cross-loop deployed E2E task completes.",
+      "owner": "GAP-F07 stimulus-driven cross-loop task",
+      "recheck_trigger": "After all three deployed-E2E suites (research, human-learning, runtime) are live-run-verified.",
+      "severity": "informational"
+    },
+    "live_compose_run_not_exercised": {
+      "blocking_for_this_task": false,
+      "containment": "This worker has no docker/compose access and no OpenClaw credentials, so PANTHEON_L12_HUMAN_LEARNING_E2E=1 was never actually set during this task; only collection, the skip path, and the AST guard were verified locally.",
+      "description": "The rewritten suite's real deployed-boundary behavior (exact field shapes returned by operator-bff/policy-learning/research/consultation/governance/openclaw-gateway-adapter) has not been proven against a live Compose stack.",
+      "expiry": "When a task with Compose + OpenClaw credential access runs this suite with PANTHEON_L12_HUMAN_LEARNING_E2E=1 and records a pass/fail run-report.json.",
+      "owner": "Next task that runs the deployed opt-in path (see docs/deployment/evidence/twelve-loop-current/human-learning/README.md if created, or GAP-F07 downstream tasks)",
+      "recheck_trigger": "Before this evidence is treated as proof of a working live chain.",
+      "severity": "moderate"
+    }
+  },
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-GAP-F07-E2E-HUMAN-20260818 removes the in-process/fake/direct-drainer shortcuts flagged by CURRENT_GAP_2026-08-18 GAP-F07.",
+    "note": "Owner evidence for converting the Loops 5-7 human-learning suite from an in-process ASGI/tmp-store/fake-provider harness into an opt-in deployed Compose E2E.",
+    "status": "formalized"
+  },
+  "schema_version": "loop_product_evidence.v1",
+  "scope": {
+    "authoritative_write_owner": "Claude owns tests/integration/l12/test_current_human_learning_deployed_e2e.py and docs/deployment/evidence/twelve-loop-current/human-learning/.",
+    "composes_with": [
+      "L12-CURRENT-E2E-HUMAN-LEARNING-20260814 for the domain/component behavior this suite still exercises",
+      "GAP-F05 owner observation adapters for BFF/loop-health projection of these owners",
+      "GAP-F07 Loops 1-4 and Loops 8-12 deployed E2E suites for the eventual stimulus-driven cross-loop suite"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-current/human-learning/evidence.json",
+      "docs/deployment/evidence/twelve-loop-current/human-learning/evidence.sha256",
+      "docs/deployment/evidence/twelve-loop-current/human-learning/evidence.md"
+    ],
+    "implementation_changed_files": [
+      "tests/integration/l12/test_current_human_learning_deployed_e2e.py"
+    ],
+    "not_changing": "Active Agora/Consultation/Governance product routes, automatic repair tasks, direct database/store shortcuts, broker authority, or live capital authority. No new production scheduler or endpoint was added; the Consultation executor tick is invoked with real deployed URLs because no Compose scheduler currently runs it (documented residual risk below).",
+    "owned_layer": "Deployed-Compose E2E verification for Agora dataset handoff, imitation learning Research HTTP handoff, Consultation OpenClaw provider interaction, downstream Governance handoff, and same-run identity correlation."
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "The suite only talks to services already declared as Compose owners in docker-compose.yml, using the same default dev-stack bearer tokens those services already accept; no production/live systems are addressed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "No live capital authority; OpenClaw provider and Consultation requests remain strictly paper-only with advisory scope (metadata.paper_only=True on the ConsultRequest).",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Service actors policy-learning-agora-handoff-drainer and consultation-workflow-executor still use distinct tokens and dedicated service-actor headers; no shared-identity shortcut was introduced.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "All requests carry X-Pantheon-Tenant-Id and the configured tenant defaults to the same pantheon-local tenant docker-compose.yml already binds Agora/Policy-Learning to.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner evidence committed before review; assigned reviewer Antigravity2 must independently review and bind the final PR head, including verifying the deployed-URL/no-fixture claims made here.",
+      "status": "pending_independent_review"
+    }
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-18T16:04:16Z",
+    "evidence_cut_semantics": "Owner validation of the deployed-Compose rewrite of tests/integration/l12/test_current_human_learning_deployed_e2e.py; reviewer Antigravity2 must bind the final evidence-bearing PR head.",
+    "id": "L12-GAP-F07-E2E-HUMAN-20260818",
+    "overall_admission": "ready_for_independent_review",
+    "owner": "Claude",
+    "phase": "Pantheon 12-loop minimum functional closure 2026-08-18",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-current/human-learning/evidence.json",
+    "reviewer": "Antigravity2",
+    "target_environment": "dev integration (opt-in Compose, not exercised live in this worker)",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-GAP-F07-E2E-HUMAN-20260818",
+    "title": "Run real deployed E2E for Loops 5 through 7"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -v tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+        "conclusion": "1 passed, 4 skipped (skipped: PANTHEON_L12_HUMAN_LEARNING_E2E is unset; no Compose stack or OpenClaw credentials in this worker)",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q tests/integration/l12/",
+        "conclusion": "2 passed, 20 skipped",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m pyflakes tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+        "conclusion": "no output (clean)",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-08-18T16:04:16Z",
+    "validated_base_sha": "9c4b159d649b7e9a4993f0ecad8e6cb4ef7693fb",
+    "validated_head_sha": "15a0418c043b3340aab0ae219abd8b5b50bf1aef"
+  }
 }
