@@ -10,8 +10,12 @@ preview result event.
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import json
 import os
+import socket
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -23,6 +27,7 @@ from typing import Any, Callable
 
 DEFAULT_ALIVE_PATH = "/data/training-session/preview-worker-alive"
 TERMINAL_SESSION_STATUSES = {"completed", "committed", "discarded", "abandoned", "expired"}
+LOOP_ID = "persona_teaching"
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -189,15 +194,115 @@ def complete_and_read_terminal_session(
     }
 
 
+def build_loop_writer() -> Any | None:
+    """Best-effort GAP-F05 observation writer; the worker still runs without it.
+
+    ``services/loop-control`` is the shared owner-observation store for all
+    twelve canonical loops -- this must reuse it, not add a second Teaching
+    controller service or state store.
+    """
+
+    dsn = str(os.getenv("DATABASE_URL") or "").strip()
+    if not dsn:
+        return None
+    try:
+        module = importlib.import_module("services.loop-control")
+    except ModuleNotFoundError:
+        return None
+    return module.LoopControllerWriter(
+        dsn,
+        tenant_id=str(os.getenv("TRAINING_SESSION_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "default"),
+        environment=str(os.getenv("PANTHEON_ENV") or "dev"),
+        controller_id=str(
+            os.getenv("PANTHEON_CONTROLLER_ID")
+            or f"training-session-preview-eval-worker-{socket.gethostname()}-{os.getpid()}"
+        ),
+        controller_name=str(
+            os.getenv("PANTHEON_CONTROLLER_NAME") or "training-session-preview-eval-worker"
+        ),
+        deployment_sha=str(os.getenv("GIT_SHA") or os.getenv("PANTHEON_DEPLOYMENT_SHA") or "unknown"),
+    )
+
+
+def _extract_consultation(result: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+    """Read the optional consultation receipt off a completed preview job."""
+
+    preview = result.get("preview") if isinstance(result.get("preview"), dict) else {}
+    evaluation_result = (
+        preview.get("evaluation_result") if isinstance(preview.get("evaluation_result"), dict) else {}
+    )
+    consult_request_id = evaluation_result.get("consult_request_id")
+    consultation_receipt = evaluation_result.get("consultation_receipt")
+    return (
+        str(consult_request_id) if consult_request_id else None,
+        consultation_receipt if isinstance(consultation_receipt, dict) else None,
+    )
+
+
+def _write_loop_heartbeat(loop_writer: Any, *, api_url: str) -> None:
+    try:
+        asyncio.run(
+            loop_writer.record_heartbeat(
+                LOOP_ID,
+                desired_state_query="claimable preview/eval jobs",
+                actual_state_query=(
+                    api_url.rstrip("/") + "/api/training/preview-jobs?status=claimable"
+                ),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: failed to write loop-control heartbeat: {exc}", file=sys.stderr)
+
+
+def _write_loop_result(loop_writer: Any, result: dict[str, Any]) -> None:
+    evidence_refs: list[str] = list(result.get("terminal_session_ids") or [])
+    for consult_request_id in result.get("consult_request_ids") or []:
+        ref = f"consult-request:{consult_request_id}"
+        if ref not in evidence_refs:
+            evidence_refs.append(ref)
+    payload = {
+        "jobs_found": result.get("jobs_found"),
+        "job_ids": result.get("job_ids"),
+        "terminal_sessions": result.get("terminal_sessions"),
+    }
+    try:
+        if result.get("failed"):
+            asyncio.run(
+                loop_writer.record_failure(
+                    LOOP_ID,
+                    "; ".join(result.get("errors") or []) or "preview/eval tick reported failures",
+                    evidence_refs=evidence_refs,
+                    payload=payload,
+                )
+            )
+        else:
+            asyncio.run(
+                loop_writer.record_success(
+                    LOOP_ID,
+                    summary=(
+                        f"completed={result.get('completed')} "
+                        f"terminal_sessions={len(result.get('terminal_session_ids') or [])}"
+                    ),
+                    evidence_refs=evidence_refs,
+                    payload=payload,
+                )
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: failed to write loop-control result: {exc}", file=sys.stderr)
+
+
 def run_tick(
     *,
     api_url: str,
     limit: int,
     timeout_seconds: float = 30.0,
     heartbeat: Callable[[], None] | None = None,
+    loop_writer: Any | None = None,
 ) -> dict[str, Any]:
     if heartbeat:
         heartbeat()
+    if loop_writer is not None:
+        _write_loop_heartbeat(loop_writer, api_url=api_url)
     completed = 0
     replayed = 0
     reclaimed = 0
@@ -206,6 +311,7 @@ def run_tick(
     errors: list[str] = []
     job_ids: list[str] = []
     terminal_sessions: list[dict[str, Any]] = []
+    consult_request_ids: list[str] = []
 
     try:
         jobs = fetch_claimable_jobs(api_url=api_url, limit=limit, timeout_seconds=timeout_seconds)
@@ -213,7 +319,7 @@ def run_tick(
         failed += 1
         detail = exc.read().decode("utf-8", errors="replace")
         errors.append(f"fetch_claimable_jobs http_error={exc.code} {detail}")
-        return {
+        result = {
             "jobs_found": 0,
             "job_ids": [],
             "completed": 0,
@@ -224,11 +330,15 @@ def run_tick(
             "errors": errors,
             "terminal_session_ids": [],
             "terminal_sessions": [],
+            "consult_request_ids": [],
         }
+        if loop_writer is not None:
+            _write_loop_result(loop_writer, result)
+        return result
     except urllib.error.URLError as exc:
         failed += 1
         errors.append(f"fetch_claimable_jobs url_error={exc.reason}")
-        return {
+        result = {
             "jobs_found": 0,
             "job_ids": [],
             "completed": 0,
@@ -239,7 +349,11 @@ def run_tick(
             "errors": errors,
             "terminal_session_ids": [],
             "terminal_sessions": [],
+            "consult_request_ids": [],
         }
+        if loop_writer is not None:
+            _write_loop_result(loop_writer, result)
+        return result
 
     for job in jobs:
         job_id = str(job.get("job_id") or "").strip()
@@ -277,6 +391,9 @@ def run_tick(
             retryable += 1
         if result.get("status") == "completed":
             completed += 1
+            consult_request_id, _consultation_receipt = _extract_consultation(result)
+            if consult_request_id and consult_request_id not in consult_request_ids:
+                consult_request_ids.append(consult_request_id)
             if result.get("terminalize_session") is True:
                 try:
                     terminal_sessions.append(
@@ -302,7 +419,7 @@ def run_tick(
             failed += 1
             errors.append(f"job_id={job_id} unexpected_status={result.get('status')!r}")
 
-    return {
+    result = {
         "jobs_found": len(jobs),
         "job_ids": job_ids,
         "completed": completed,
@@ -313,7 +430,11 @@ def run_tick(
         "errors": errors,
         "terminal_session_ids": [item["session_id"] for item in terminal_sessions],
         "terminal_sessions": terminal_sessions,
+        "consult_request_ids": consult_request_ids,
     }
+    if loop_writer is not None:
+        _write_loop_result(loop_writer, result)
+    return result
 
 
 def _write_alive(path: str, result: dict[str, Any] | None = None) -> None:
@@ -346,6 +467,7 @@ def main() -> int:
     batch_limit = _env_int("TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT", 10, minimum=1)
     timeout_seconds = float(os.getenv("TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS", "30"))
     alive_path = os.getenv("TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH", DEFAULT_ALIVE_PATH)
+    loop_writer = build_loop_writer()
 
     tick = 0
     while True:
@@ -355,6 +477,7 @@ def main() -> int:
                 api_url=api_url,
                 limit=batch_limit,
                 timeout_seconds=timeout_seconds,
+                loop_writer=loop_writer,
             )
             print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)
             if result.get("failed") == 0:
