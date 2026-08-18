@@ -1,0 +1,20 @@
+{
+  "task_id": "L12-GAP-F01-SOURCE-SCHEDULED-EXEC-20260818",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "status": "review_ready",
+  "summary": "Existing Source owner (source-ingest-scheduler) executes scheduled ingest without adding new parallel mechanisms, security scope expansions, or auto repair tasks.",
+  "verification": {
+    "test_command": "./.venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/test_compose_activation.py",
+    "passed": 101,
+    "failed": 0,
+    "warnings": 1,
+    "duration_seconds": 79.91
+  },
+  "acceptance_criteria_validated": [
+    "A due allowed connector is executed by the existing scheduled owner and produces a durable SourceRecord without POST /jobs",
+    "reconcile_only remains an explicit diagnostic mode and is not accepted as scheduled closure",
+    "the existing single controller remains the only scheduler",
+    "Loop 1 controller truth uses the authenticated tenant and environment scope and includes the Distillation next receipt"
+  ]
+}
