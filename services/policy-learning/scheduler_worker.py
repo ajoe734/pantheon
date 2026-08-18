@@ -27,6 +27,8 @@ only if the backlog claim cycle itself fails.
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import json
 import os
 import socket
@@ -64,10 +66,37 @@ AGORA_BFF_URL_ENV = agora_handoff_drainer.AGORA_BFF_URL_ENV
 AGORA_SERVICE_TOKEN_ENV = agora_handoff_drainer.AGORA_SERVICE_TOKEN_ENV
 INTAKE_BATCH_SIZE_ENV = "SHADOW_EVAL_INTAKE_BATCH_SIZE"
 _WORKER_NAME = "policy-learning-shadow-eval-scheduler"
+DEFAULT_LOOP_ID = "policy_learning_shadow_eval"
 
 
 class SchedulerConfigurationError(RuntimeError):
     """The sidecar is not configured to be a trusted, tenant-bound caller."""
+
+
+def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
+    """Return a ``LoopControllerWriter`` bound to this scheduler's identity.
+
+    ``services.loop-control`` is a hyphenated package name, so it can only be
+    reached through ``importlib`` rather than a normal dotted import. Returns
+    ``None`` when no durable store is configured or the module is absent, so
+    callers degrade to local health only instead of failing the tick loop.
+    """
+
+    if not dsn:
+        return None
+    try:
+        module = importlib.import_module("services.loop-control")
+    except ModuleNotFoundError:
+        return None
+    deployment_sha = str(os.getenv("PANTHEON_DEPLOYMENT_SHA") or os.getenv("GIT_SHA") or "unknown")
+    return module.LoopControllerWriter(
+        dsn,
+        tenant_id=tenant_id,
+        environment=os.getenv("PANTHEON_ENV", "dev"),
+        controller_id=os.getenv("POLICY_LEARNING_WORKER_ID") or f"{_WORKER_NAME}:{socket.gethostname()}:{os.getpid()}",
+        controller_name=_WORKER_NAME,
+        deployment_sha=deployment_sha,
+    )
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -361,6 +390,9 @@ def main() -> int:
     intake_batch_size = _env_int(INTAKE_BATCH_SIZE_ENV, agora_handoff_drainer.DEFAULT_BATCH_SIZE, minimum=1)
     worker = worker_id()
     health_file = _env_text("SHADOW_EVAL_SCHEDULER_HEALTH_FILE")
+    database_url = str(os.getenv("DATABASE_URL") or "")
+    writer = _build_loop_writer(dsn=database_url, tenant_id=tenant_id)
+    loop_id = os.getenv("PANTHEON_LOOP_ID") or DEFAULT_LOOP_ID
     health: dict[str, Any] = {
         "worker_name": _WORKER_NAME,
         "status": "starting",
@@ -432,6 +464,47 @@ def main() -> int:
             health["last_success_at"] = health["last_tick_at"]
             health["last_failure_reason"] = None
         write_health(health_file, health)
+
+        if writer is not None:
+            try:
+                status_counts = cycle.get("status_counts") if isinstance(cycle, dict) else None
+                status_counts = status_counts if isinstance(status_counts, dict) else {}
+                candidate_ids = cycle.get("candidate_ids") if isinstance(cycle, dict) else None
+                evidence_refs = [
+                    f"policy-learning://candidates/{candidate_id}"
+                    for candidate_id in (candidate_ids or [])
+                    if candidate_id
+                ]
+                backlog = int(status_counts.get("claimed", 0) or 0)
+                dlq_count = int(status_counts.get("failed", 0) or 0)
+                payload = {"result": result, "cycle": cycle, "health": health}
+                if health["status"] == "ok":
+                    asyncio.run(
+                        writer.record_success(
+                            loop_id=loop_id,
+                            summary=(
+                                f"Drained {result.get('processed_count', 0)} Agora handoff(s); "
+                                f"processed {cycle.get('processed_count', 0)} shadow-eval candidate(s)"
+                            ),
+                            backlog=backlog,
+                            dlq_count=dlq_count,
+                            evidence_refs=evidence_refs,
+                            payload=payload,
+                        )
+                    )
+                else:
+                    asyncio.run(
+                        writer.record_failure(
+                            loop_id=loop_id,
+                            reason=str(health.get("last_failure_reason") or "shadow evaluation cycle failed"),
+                            backlog=backlog,
+                            dlq_count=dlq_count,
+                            evidence_refs=evidence_refs,
+                            payload=payload,
+                        )
+                    )
+            except Exception as exc:
+                print(f"Warning: failed to write to LoopControllerWriter: {exc}", file=sys.stderr)
 
         metrics = {
             "tick": tick,
