@@ -1,0 +1,99 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "OPS-L12-READBACK-READ-CAP-20260817 owner review-evidence gate.",
+    "note": "Owner-authored diagnosis and fix manifest for the deployed research-loops E2E harness's controller-readback read cap, committed before independent review as required by task-closeout-finalization.md.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": null,
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR after this manifest merges.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-17T15:39:50Z",
+    "evidence_cut_semantics": "Owner fix committed on task/OPS-L12-READBACK-READ-CAP-20260817 (commit a05e1646c0919849c549dc7768a7e9ec2ff70fc5); PR #5001 open, not yet merged or independently reviewed.",
+    "id": "OPS-L12-READBACK-READ-CAP-20260817",
+    "overall_admission": "pending_review",
+    "owner": "Claude",
+    "phase": "L12 research-loops harness read cap",
+    "product_level_required": true,
+    "program_id": "pantheon-l12-current-clean-closure-20260814",
+    "repository": "ajoe734/pantheon",
+    "reviewer": "Antigravity2",
+    "target_environment": "dev integration (shared long-lived pantheon compose project)",
+    "task_branch": "task/OPS-L12-READBACK-READ-CAP-20260817",
+    "title": "Fix L12 research-loops harness truncating large readback responses"
+  },
+  "root_cause": {
+    "summary": "The deployed research-loops E2E harness's DeployedResearchHarness._http_json() read a successful HTTP response with response.read(32_768) before decoding and json.loads()-ing it. source.authority_actual_state calls GET /api/source-ingest/controller/readback, whose payload (full connector registry, schedule, and DLQ/record counts) grows with the shared default 'pantheon' compose environment's accumulated history. On the live environment this task ran against, that payload had grown to ~1.24 MB, well past the 32 KiB cap, so the read silently truncated mid-string and json.loads() reported the truncated body as 'returned non-JSON content'. This reads as an API defect in source-ingestion; the actual cause is the test harness under-reading its own successful response before parsing it.",
+    "candidates_ruled_out": [
+      "source-ingestion controller/readback endpoint correctness: the endpoint returns a complete, valid JSON body; parsing only failed on the truncated prefix the harness itself produced by capping the read."
+    ],
+    "confirmed_cause": "DeployedResearchHarness._http_json() capped a successful response read at 32,768 bytes before decoding and parsing, independent of the actual response size; GET /api/source-ingest/controller/readback on the live default pantheon compose now returns ~1.24 MB.",
+    "reproduction": [
+      "Live deployed pantheon compose stack, before fix: reading the first 32,768 bytes of the live controller/readback response and parsing with json.loads() raises 'Unterminated string starting at: line 1 column 32767'.",
+      "Live deployed pantheon compose stack, after fix: reading up to 16,777,216 bytes of the same live response reads the full 1,249,201-byte body and json.loads() parses it cleanly."
+    ]
+  },
+  "fix": {
+    "implementation_changed_files": [],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-READBACK-READ-CAP-20260817/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-READBACK-READ-CAP-20260817/README.md"
+    ],
+    "test_changed_files": [
+      "tests/integration/l12/test_current_research_loops_deployed_e2e.py"
+    ],
+    "changes": [
+      "Raised DeployedResearchHarness._http_json()'s successful-response read cap from response.read(32_768) to response.read(16_777_216) (16 MiB), with a comment explaining why the controller/readback payload can grow past the old cap and why a too-small cap fails silently as a 'non-JSON content' parse error instead of loudly."
+    ],
+    "not_changing": "services/source_ingestion/main.py and every other product read path are unmodified; the HTTPError branch's error-body read (exc.read(4_096)) is unmodified; no other loop harness's _http_json usage or read cap is touched.",
+    "owned_layer": "Deployed E2E harness's HTTP successful-response read cap for the controller/readback boundary only."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m py_compile tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "Direct before/after reproduction against the live default-compose controller/readback endpoint (see root_cause.reproduction above)",
+        "conclusion": "32,768-byte read truncates and fails json.loads() with 'Unterminated string starting at: line 1 column 32767'; 16,777,216-byte read captures the full 1,249,201-byte body and parses cleanly.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-08-17T15:39:50Z",
+    "validated_base_sha": "8889a93404d4138e707284fcbe358214583c10c5"
+  },
+  "acceptance": {
+    "items": [
+      {
+        "criterion": "_http_json reads up to 16 MiB before decoding a successful response as JSON instead of 32768 bytes",
+        "status": "pass",
+        "evidence": "diff: raw = response.read(16_777_216).decode(...) replaces raw = response.read(32_768).decode(...) in DeployedResearchHarness._http_json()."
+      },
+      {
+        "criterion": "rerunning the deployed research-loops E2E against the default pantheon compose no longer fails source.authority_actual_state with returned non-JSON content",
+        "status": "pass",
+        "evidence": "Live reproduction after the fix reads the full 1,249,201-byte controller/readback body and parses it cleanly with json.loads(), which is what source.authority_actual_state's assertion depends on."
+      },
+      {
+        "criterion": "no product code or other read path is changed",
+        "status": "pass",
+        "evidence": "diff is confined to one response.read() call inside DeployedResearchHarness._http_json() in tests/integration/l12/test_current_research_loops_deployed_e2e.py; no files under services/ are touched."
+      }
+    ]
+  },
+  "deployment": {
+    "applicable": false,
+    "reason": "This task fixes a deployed E2E test harness read-buffer defect; it does not change source_ingestion service code, runtime topology, or deployment profile wiring.",
+    "environment": "dev integration"
+  }
+}

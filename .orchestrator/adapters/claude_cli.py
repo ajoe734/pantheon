@@ -62,8 +62,18 @@ def _claude_auth_ready(
     *,
     env: dict[str, str] | None = None,
     refresh_if_needed: bool = True,
+    config: dict | None = None,
+    provider_id: str | None = None,
 ) -> bool:
-    return shared_claude_auth_ready(cli, env=env, refresh_if_needed=refresh_if_needed)
+    account_lock_key = None
+    if provider_id is not None:
+        account_lock_key = str(_provider_settings(config, provider_id).get("account") or "").strip() or None
+    return shared_claude_auth_ready(
+        cli,
+        env=env,
+        refresh_if_needed=refresh_if_needed,
+        account_lock_key=account_lock_key,
+    )
 
 
 def _configured_claude_cli(config: dict | None = None, provider_id: str | None = None) -> str | None:
@@ -141,7 +151,7 @@ class ClaudeCLIAdapter(BaseAdapter):
         provider_id = _provider_key(self.config, agent_id=request.agent_id, provider_id=request.provider)
         cli = _configured_claude_cli(self.config, provider_id)
         env = _spawn_env(self.config, provider_id)
-        auth_ready = _claude_auth_ready(cli, env=env)
+        auth_ready = _claude_auth_ready(cli, env=env, config=self.config, provider_id=provider_id)
         if not cli or not auth_ready:
             reason = (
                 "Claude CLI is unavailable."

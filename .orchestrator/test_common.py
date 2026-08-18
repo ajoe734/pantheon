@@ -11,9 +11,11 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import tracemalloc
 import unittest
+import uuid
 from itertools import islice
 from pathlib import Path
 from unittest import mock
@@ -346,7 +348,7 @@ class ClaudeAuthTests(unittest.TestCase):
         ):
             self.assertTrue(common.claude_auth_ready("claude", env=env))
 
-        refresh.assert_called_once_with(env)
+        refresh.assert_called_once_with(env, account_lock_key=None)
         run_command.assert_not_called()
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-new")
 
@@ -409,7 +411,7 @@ class ClaudeAuthTests(unittest.TestCase):
             mock.patch.object(common, "refresh_claude_oauth_tokens", return_value=refreshed_oauth) as refresh,
         ):
             self.assertTrue(common.claude_auth_ready("claude", env=env))
-        refresh.assert_called_once_with(env)
+        refresh.assert_called_once_with(env, account_lock_key=None)
 
     def test_claude_auth_ready_fails_when_refresh_of_expired_oauth_fails(self) -> None:
         status = mock.Mock(returncode=0, stdout=json.dumps({"loggedIn": True}))
@@ -495,6 +497,115 @@ class ClaudeAuthTests(unittest.TestCase):
                 refreshed = common.refresh_claude_oauth_tokens({"HOME": tmpdir})
 
             self.assertIsNone(refreshed)
+
+    def test_refresh_claude_oauth_tokens_serializes_same_account_lock_key(self) -> None:
+        # Two distinct CLI identities (separate credentials files) that share
+        # one Anthropic account must never have their refresh network calls
+        # overlap in time, since concurrent refreshes against a shared
+        # account have been observed to trip rate limiting.
+        intervals: list[tuple[float, float]] = []
+        intervals_lock = threading.Lock()
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600}
+                ).encode("utf-8")
+
+        def slow_urlopen(*_args, **_kwargs):
+            start = time.monotonic()
+            time.sleep(0.15)
+            with intervals_lock:
+                intervals.append((start, time.monotonic()))
+            return _Response()
+
+        def make_credentials(tmpdir: str) -> None:
+            path = Path(tmpdir) / ".claude" / ".credentials.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "claudeAiOauth": {
+                            "accessToken": "old-access",
+                            "refreshToken": "old-refresh",
+                            "expiresAt": 1,
+                            "scopes": ["user:profile"],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir_a, tempfile.TemporaryDirectory() as tmpdir_b:
+            make_credentials(tmpdir_a)
+            make_credentials(tmpdir_b)
+            lock_key = f"test-shared-account-{uuid.uuid4()}"
+            results: list[dict | None] = [None, None]
+
+            def worker(index: int, home: str) -> None:
+                results[index] = common.refresh_claude_oauth_tokens(
+                    {"HOME": home}, account_lock_key=lock_key
+                )
+
+            with mock.patch.object(common.urllib.request, "urlopen", side_effect=slow_urlopen):
+                threads = [
+                    threading.Thread(target=worker, args=(0, tmpdir_a)),
+                    threading.Thread(target=worker, args=(1, tmpdir_b)),
+                ]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=5)
+
+            self.assertTrue(all(results))
+            self.assertEqual(len(intervals), 2)
+            (start_a, end_a), (start_b, end_b) = intervals
+            overlapped = start_a < end_b and start_b < end_a
+            self.assertFalse(overlapped, f"refresh calls overlapped: {intervals}")
+
+    def test_refresh_claude_oauth_tokens_without_lock_key_is_unserialized(self) -> None:
+        # account_lock_key is optional and defaults to no locking, matching
+        # every existing caller that predates this parameter.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            credentials_path = Path(tmpdir) / ".claude" / ".credentials.json"
+            credentials_path.parent.mkdir(parents=True)
+            credentials_path.write_text(
+                json.dumps(
+                    {
+                        "claudeAiOauth": {
+                            "accessToken": "old-access",
+                            "refreshToken": "old-refresh",
+                            "expiresAt": 1,
+                            "scopes": ["user:profile"],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            class _Response:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def read(self):
+                    return json.dumps(
+                        {"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600}
+                    ).encode("utf-8")
+
+            with mock.patch.object(common.urllib.request, "urlopen", return_value=_Response()):
+                refreshed = common.refresh_claude_oauth_tokens({"HOME": tmpdir})
+
+            self.assertIsNotNone(refreshed)
+            self.assertEqual(refreshed["accessToken"], "new-access")
 
 
 class StableCanonicalLockPathTests(unittest.TestCase):
