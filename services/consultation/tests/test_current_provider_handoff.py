@@ -464,3 +464,52 @@ def test_missing_handoff_owner_degrades_health_until_dlq_replay(
     assert health["functional_health"]["ready"] is True
     assert len(current_stack.provider.calls) == 1
     assert len(current_stack.handoff.calls) == 1
+
+
+def test_workflow_executor_loop_control_observation(
+    current_stack: CurrentStack,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_id = "observation-test"
+    current_stack.create_request(request_id)
+    config = current_stack.config(max_blocked_attempts=1)
+
+    monkeypatch.setenv("CONSULTATION_API_URL", config.api_url)
+    monkeypatch.setenv("PANTHEON_TENANT_ID", config.tenant_id)
+    monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", config.api_token)
+    monkeypatch.setenv("CONSULTATION_PROVIDER_URL", config.provider_url)
+    monkeypatch.setenv("CONSULTATION_PROVIDER_TOKEN", config.provider_token)
+    monkeypatch.setenv("CONSULTATION_HANDOFF_SINK_URL", config.handoff_sink_url)
+    monkeypatch.setenv("CONSULTATION_HANDOFF_TOKEN", config.handoff_token)
+    monkeypatch.setenv("CONSULTATION_WORKFLOW_STATE_PATH", config.state_path)
+    monkeypatch.setenv("CONSULTATION_WORKFLOW_EXECUTOR_MAX_TICKS", "1")
+    monkeypatch.setenv("CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS", "1")
+
+    written_records: list[dict[str, Any]] = []
+
+    class FakeLoopWriter:
+        def __init__(self, dsn: str, **kwargs: Any) -> None:
+            self.dsn = dsn
+            self.kwargs = kwargs
+
+        async def record_success(self, loop_id: str, **kwargs: Any) -> None:
+            written_records.append({"type": "success", "loop_id": loop_id, "kwargs": kwargs})
+
+        async def record_failure(self, loop_id: str, **kwargs: Any) -> None:
+            written_records.append({"type": "failure", "loop_id": loop_id, "kwargs": kwargs})
+
+    import services.consultation.workflow_executor as executor_module
+
+    fake_module = SimpleNamespace(LoopControllerWriter=FakeLoopWriter)
+    monkeypatch.setattr(executor_module, "importlib", SimpleNamespace(import_module=lambda name: fake_module if name == "services.loop-control" else __import__(name)))
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://fake:fake@localhost:5432/fake")
+
+    ret = executor_module.main()
+    assert ret == 0
+    assert len(written_records) == 1
+    record = written_records[0]
+    assert record["type"] == "success"
+    assert record["loop_id"] == "consultation"
+    assert "consultation://memos/" in record["kwargs"]["evidence_refs"][0]
+
