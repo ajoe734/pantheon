@@ -239,7 +239,16 @@ class DeployedResearchHarness:
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
                 status = response.status
-                raw = response.read(32_768).decode("utf-8", errors="replace")
+                # source.authority_actual_state reads the full controller
+                # readback (connector registry, schedule, DLQ, and record
+                # counts), which grows with the shared default compose
+                # environment's accumulated history and has already exceeded
+                # 1 MB. A too-small cap here does not fail loudly; it
+                # silently truncates mid-object and json.loads() reports the
+                # truncated body as "non-JSON content", which reads as an
+                # API defect rather than the harness under-reading its own
+                # response.
+                raw = response.read(16_777_216).decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             status = exc.code
             raw = exc.read(4_096).decode("utf-8", errors="replace")

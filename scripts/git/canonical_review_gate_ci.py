@@ -41,6 +41,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote
@@ -178,12 +179,48 @@ def build_status_payload(
     }
 
 
-def _post_status(*, repository: str, head_sha: str, payload: Mapping[str, Any]) -> None:
-    subprocess.run(
-        ["gh", "api", "--method", "POST", f"repos/{repository}/statuses/{head_sha}", "--input", "-"],
-        input=json.dumps(dict(payload)),
-        text=True,
-        check=True,
+class StatusPostError(RuntimeError):
+    """The `gh api` status POST never succeeded, even after retries.
+
+    This must never be conflated with the script's normal `exit(1)`, which
+    means the gate correctly posted a *failing* status (head not yet
+    approved) -- that is a successful run of this script. This exception
+    means no status was posted at all: the required check is left unset for
+    this head, silently blocking merge until someone re-dispatches and gets
+    lucky. `main()` maps this to a distinct exit code so the caller (the
+    workflow's bash step) can tell the two apart instead of the earlier
+    behaviour, where an uncaught exception from a failed POST also exited 1
+    and was indistinguishable from the designed "not yet approved" outcome.
+    """
+
+
+def _post_status(
+    *,
+    repository: str,
+    head_sha: str,
+    payload: Mapping[str, Any],
+    attempts: int = 4,
+    backoff_seconds: float = 2.0,
+) -> None:
+    body = json.dumps(dict(payload))
+    args = ["gh", "api", "--method", "POST", f"repos/{repository}/statuses/{head_sha}", "--input", "-"]
+    last_output = ""
+    for attempt in range(1, attempts + 1):
+        proc = subprocess.run(args, input=body, text=True, capture_output=True)
+        if proc.returncode == 0:
+            return
+        last_output = (proc.stderr or proc.stdout or "").strip()
+        if attempt < attempts:
+            print(
+                f"gh api status POST failed (attempt {attempt}/{attempts}): "
+                f"{last_output[:300]} -- retrying in {backoff_seconds:.0f}s",
+                file=sys.stderr,
+            )
+            time.sleep(backoff_seconds)
+            backoff_seconds *= 2
+    raise StatusPostError(
+        f"could not POST the {payload.get('context')!r} status for {head_sha} "
+        f"after {attempts} attempts: {last_output[:300]}"
     )
 
 
@@ -208,6 +245,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+EXIT_STATUS_POST_FAILED = 2
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     payload = build_status_payload(
@@ -220,7 +260,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(json.dumps(payload, indent=2, sort_keys=True))
     if not args.dry_run:
-        _post_status(repository=args.repo, head_sha=args.head_sha, payload=payload)
+        try:
+            _post_status(repository=args.repo, head_sha=args.head_sha, payload=payload)
+        except StatusPostError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_STATUS_POST_FAILED
     return 0 if payload["state"] == "success" else 1
 
 

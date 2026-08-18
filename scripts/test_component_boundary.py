@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from scripts import component_boundary
 
@@ -38,6 +39,18 @@ class ComponentBoundaryTests(unittest.TestCase):
         result = component_boundary.classify_paths(self.manifest, ["README.md"])
         self.assertTrue(result["tooling_only"])
         self.assertEqual(result["unknown_paths"], ["README.md"])
+
+    def test_main_rejects_missing_selectors(self) -> None:
+        with self.assertRaises(SystemExit):
+            component_boundary.main([])
+
+    def test_main_accepts_base_and_head_that_diff_to_no_files(self) -> None:
+        # A no-op push (e.g. a commit-message-only amend) legitimately diffs to
+        # zero changed files; that must not be treated the same as the caller
+        # forgetting to supply --path/--base/--head.
+        with mock.patch.object(component_boundary, "changed_paths", return_value=[]):
+            exit_code = component_boundary.main(["--base", "aaa", "--head", "bbb", "--json"])
+        self.assertEqual(exit_code, 0)
 
 
 if __name__ == "__main__":
