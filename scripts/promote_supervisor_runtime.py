@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -241,6 +242,70 @@ def _write_evidence(path: Path | None, result: Mapping[str, Any]) -> None:
     write_json_atomic(path, dict(result))
 
 
+def _sync_directory_tree(source: Path, dest: Path) -> None:
+    if dest.exists():
+        shutil.rmtree(dest)
+    if source.exists():
+        shutil.copytree(source, dest)
+
+
+def _sync_top_level_py_files(source_dir: Path, dest_dir: Path) -> None:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    wanted = {path.name for path in source_dir.glob("*.py")} if source_dir.exists() else set()
+    existing = {path.name for path in dest_dir.glob("*.py")}
+    for name in existing - wanted:
+        (dest_dir / name).unlink()
+    for name in wanted:
+        shutil.copy2(source_dir / name, dest_dir / name)
+
+
+def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict[str, Any]:
+    """Best-effort refresh of status_root's own governance-tool code.
+
+    status_root (coordination-root) is a stable worktree that also holds
+    live, locally-mutated task/activity/archive data
+    (ai-status.json, ai-task-archive/, current-work.md, .orchestrator/
+    state.json, .orchestrator/logs/, lock files, ...) which this must never
+    touch. Scope is therefore an explicit allowlist of pure-code paths this
+    directory's own scripts/ai-status.sh actually executes when invoked
+    without PANTHEON_COMMAND_ROOT (a bare manual Human/Ops command) --
+    anything not listed here is left alone, never inferred from a directory
+    scan, so a future data file added under an already-synced directory
+    can't be silently overwritten by widening the sweep without a matching
+    allowlist change.
+
+    Mirrors rather than only adds: a file removed from candidate_root's
+    scope is also removed from status_root's copy, so a promotion cannot
+    leave retired code behind.
+
+    Best-effort and independent of the supervisor replacement outcome: a
+    failure here must never fail or roll back an otherwise-successful
+    supervisor replacement. It only affects a bare manual Human/Ops
+    invocation of status_root/scripts/ai-status.sh -- real auto workers
+    always route through PANTHEON_COMMAND_ROOT (the exact candidate_root
+    this copies from), so they are unaffected either way.
+    """
+
+    result: dict[str, Any] = {"outcome": "skipped", "paths": []}
+    try:
+        _sync_directory_tree(candidate_root / "scripts", status_root / "scripts")
+        result["paths"].append("scripts")
+        _sync_top_level_py_files(
+            candidate_root / ".orchestrator", status_root / ".orchestrator"
+        )
+        result["paths"].append(".orchestrator/*.py")
+        _sync_directory_tree(
+            candidate_root / ".orchestrator" / "rewrite",
+            status_root / ".orchestrator" / "rewrite",
+        )
+        result["paths"].append(".orchestrator/rewrite")
+        result["outcome"] = "synced"
+    except Exception as exc:
+        result["outcome"] = "failed"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
 def replace_supervisor(
     repo_root: Path,
     *,
@@ -297,6 +362,20 @@ def replace_supervisor(
         )
         result["outcome"] = "launched"
         result["exit_code"] = 0
+        # Best-effort and fully self-contained: sync_coordination_root_code
+        # already catches its own errors, but this call site never lets an
+        # unexpected exception from it reach the replacement's own outcome
+        # or exit_code either, since the supervisor above already launched
+        # successfully.
+        try:
+            result["coordination_code_sync"] = sync_coordination_root_code(
+                Path(identity["root"]), status_root
+            )
+        except Exception as sync_exc:
+            result["coordination_code_sync"] = {
+                "outcome": "failed",
+                "error": f"{type(sync_exc).__name__}: {sync_exc}",
+            }
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
         result["exit_code"] = 1
