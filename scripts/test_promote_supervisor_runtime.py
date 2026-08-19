@@ -294,3 +294,142 @@ def test_discover_only_is_read_only_and_reports_v2_identity(tmp_path: Path, caps
     assert payload["outcome"] == "ready"
     assert payload["task_state_store"]["mode"] == "authoritative"
     assert not live_config.exists()
+
+
+def test_sync_coordination_root_code_updates_code_and_preserves_data(tmp_path: Path) -> None:
+    candidate = tmp_path / "candidate"
+    status_root = tmp_path / "status"
+    (candidate / "scripts").mkdir(parents=True)
+    (candidate / ".orchestrator" / "rewrite").mkdir(parents=True)
+    (candidate / "scripts" / "ai_status.py").write_text("# new version\n", encoding="utf-8")
+    (candidate / ".orchestrator" / "common.py").write_text("# new common\n", encoding="utf-8")
+    (candidate / ".orchestrator" / "rewrite" / "task_machine.py").write_text(
+        "# new task_machine\n", encoding="utf-8"
+    )
+
+    (status_root / "scripts").mkdir(parents=True)
+    (status_root / ".orchestrator" / "rewrite").mkdir(parents=True)
+    (status_root / "scripts" / "ai_status.py").write_text("# stale version\n", encoding="utf-8")
+    (status_root / ".orchestrator" / "common.py").write_text("# stale common\n", encoding="utf-8")
+    (status_root / ".orchestrator" / "rewrite" / "task_machine.py").write_text(
+        "# stale task_machine\n", encoding="utf-8"
+    )
+    live_status = json.dumps({"tasks": [{"id": "REG-1", "status": "in_progress"}]})
+    (status_root / "ai-status.json").write_text(live_status, encoding="utf-8")
+    (status_root / ".orchestrator" / "state.json").write_text('{"live": true}\n', encoding="utf-8")
+
+    result = promotion.sync_coordination_root_code(candidate, status_root)
+
+    assert result["outcome"] == "synced"
+    assert result["paths"] == ["scripts", ".orchestrator/*.py", ".orchestrator/rewrite"]
+    assert (status_root / "scripts" / "ai_status.py").read_text(encoding="utf-8") == "# new version\n"
+    assert (status_root / ".orchestrator" / "common.py").read_text(encoding="utf-8") == "# new common\n"
+    assert (
+        status_root / ".orchestrator" / "rewrite" / "task_machine.py"
+    ).read_text(encoding="utf-8") == "# new task_machine\n"
+    # Live data must be byte-for-byte untouched.
+    assert (status_root / "ai-status.json").read_text(encoding="utf-8") == live_status
+    assert (status_root / ".orchestrator" / "state.json").read_text(encoding="utf-8") == '{"live": true}\n'
+
+
+def test_sync_coordination_root_code_removes_retired_files(tmp_path: Path) -> None:
+    candidate = tmp_path / "candidate"
+    status_root = tmp_path / "status"
+    (candidate / "scripts").mkdir(parents=True)
+    (candidate / ".orchestrator" / "rewrite").mkdir(parents=True)
+    (candidate / "scripts" / "kept.py").write_text("# kept\n", encoding="utf-8")
+
+    (status_root / "scripts").mkdir(parents=True)
+    (status_root / ".orchestrator" / "rewrite").mkdir(parents=True)
+    (status_root / "scripts" / "kept.py").write_text("# stale\n", encoding="utf-8")
+    (status_root / "scripts" / "retired_script.py").write_text("# should be removed\n", encoding="utf-8")
+    (status_root / ".orchestrator" / "retired_top_level.py").write_text("# gone\n", encoding="utf-8")
+    (status_root / ".orchestrator" / "rewrite" / "retired_module.py").write_text(
+        "# gone too\n", encoding="utf-8"
+    )
+
+    result = promotion.sync_coordination_root_code(candidate, status_root)
+
+    assert result["outcome"] == "synced"
+    assert not (status_root / "scripts" / "retired_script.py").exists()
+    assert not (status_root / ".orchestrator" / "retired_top_level.py").exists()
+    assert not (status_root / ".orchestrator" / "rewrite" / "retired_module.py").exists()
+    assert (status_root / "scripts" / "kept.py").read_text(encoding="utf-8") == "# kept\n"
+
+
+def test_sync_coordination_root_code_never_touches_orchestrator_json_or_logs(tmp_path: Path) -> None:
+    """The allowlist is *.py-at-top-level plus rewrite/ -- config.json, logs/,
+    and any other .orchestrator content must be left exactly as they were."""
+
+    candidate = tmp_path / "candidate"
+    status_root = tmp_path / "status"
+    (candidate / "scripts").mkdir(parents=True)
+    (candidate / ".orchestrator" / "rewrite").mkdir(parents=True)
+    (candidate / ".orchestrator" / "config.json").write_text('{"from": "candidate"}\n', encoding="utf-8")
+
+    (status_root / "scripts").mkdir(parents=True)
+    (status_root / ".orchestrator" / "rewrite").mkdir(parents=True)
+    (status_root / ".orchestrator" / "config.json").write_text('{"from": "status_root"}\n', encoding="utf-8")
+    (status_root / ".orchestrator" / "logs").mkdir(parents=True)
+    (status_root / ".orchestrator" / "logs" / "supervisor.log").write_text("live log\n", encoding="utf-8")
+
+    result = promotion.sync_coordination_root_code(candidate, status_root)
+
+    assert result["outcome"] == "synced"
+    assert (status_root / ".orchestrator" / "config.json").read_text(
+        encoding="utf-8"
+    ) == '{"from": "status_root"}\n'
+    assert (status_root / ".orchestrator" / "logs" / "supervisor.log").read_text(
+        encoding="utf-8"
+    ) == "live log\n"
+
+
+def test_replace_supervisor_records_coordination_code_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    (status_root / ".orchestrator" / "supervisor.py").write_text("# stale copy\n", encoding="utf-8")
+    live_config = tmp_path / "runtime" / "live.json"
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *_a, **_k: 41)
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", lambda *_a, **_k: 42)
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "launched"
+    assert result["coordination_code_sync"]["outcome"] == "synced"
+    assert (status_root / ".orchestrator" / "supervisor.py").read_text(
+        encoding="utf-8"
+    ) == (candidate / ".orchestrator" / "supervisor.py").read_text(encoding="utf-8")
+
+
+def test_replace_supervisor_survives_coordination_code_sync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *_a, **_k: 41)
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", lambda *_a, **_k: 42)
+    monkeypatch.setattr(
+        promotion,
+        "sync_coordination_root_code",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "launched"
+    assert result["exit_code"] == 0
+    assert result["stopped_pid"] == 41
+    assert result["launched_pid"] == 42
