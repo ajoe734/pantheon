@@ -92,6 +92,13 @@ jobs:
       release_candidate_id: ${{ steps.release_admission.outputs.release_candidate_id }}
       compatibility_manifest_sha256: ${{ steps.release_admission.outputs.compatibility_manifest_sha256 }}
       admission_artifact_digest: ${{ steps.release_admission_upload.outputs.artifact-digest }}
+      # Whether BFF/FE compatibility was itself verified -- deliberately narrower
+      # than the job's own pass/fail. `deploy-dev` also runs smoke tests for
+      # unrelated subsystems (e.g. the OpenClaw assistant integration) later in
+      # the same job; their failure must not block admitting an already-verified
+      # FE/BFF pair. `public_smoke` is the step that curls the live BFF and
+      # asserts its version matches this deploy's exact target sha.
+      bff_fe_pair_verified: ${{ steps.deploy.outcome == 'success' && steps.public_smoke.outcome == 'success' }}
     env:
       TARGET_ENV: dev
       TARGET_COMPONENT: ${{ inputs.component }}
@@ -959,59 +966,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Dev OpenClaw assistant live smoke under lease
-        id: openclaw
-        if: ${{ env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' }}
-        env:
-          PATH: ${{ steps.runtime.outputs.safe_path }}
-          BASH_ENV: ""
-          ENV: ""
-          PYTHONPATH: ""
-          PYTHONHOME: ""
-          PYTHONNOUSERSITE: "1"
-          PYTHONSAFEPATH: "1"
-          PYTHONSTARTUP: ""
-          PYTHONINSPECT: ""
-          CDPATH: ""
-          HOME: /home/runner
-          LD_PRELOAD: ""
-          LD_LIBRARY_PATH: ""
-          GIT_CONFIG_COUNT: "0"
-          GIT_CONFIG_NOSYSTEM: "1"
-          GIT_CONFIG_GLOBAL: /dev/null
-          GIT_CONFIG_SYSTEM: /dev/null
-          GIT_CONFIG_PARAMETERS: ""
-          GIT_SSH_COMMAND: ""
-          GIT_ASKPASS: ""
-          SSH_ASKPASS: ""
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
-          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
-          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
-        shell: /bin/bash --noprofile --norc -euo pipefail {0}
-        run: |
-          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
-          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
-          controller="${GITHUB_WORKSPACE}/.lease-controller"
-          [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
-          printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
-            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
-            | sha256sum --check --strict
-          # The service token is streamed over stdin ahead of the smoke script so
-          # it never appears on the remote command line or in the deployed checkout.
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
-            bash -c '{ printf "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=%q\n" "${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"; printf "%s\n" "curl() {" "  command curl -H \"X-Pantheon-Service-Token: \${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}\" \"\$@\"" "}"; cat "$1"; } | gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T --command "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s"' \
-            bash "${GITHUB_WORKSPACE}/.target/scripts/openclaw-assistant-openclaw-live-smoke.sh"
-
       - name: Public dev BFF smoke and exact version proof under lease
         id: public_smoke
         env:
@@ -1111,6 +1065,59 @@ jobs:
           path: ${{ steps.public_smoke.outputs.deployment_evidence_path }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Dev OpenClaw assistant live smoke under lease
+        id: openclaw
+        if: ${{ env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' }}
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
+          printf '%s  %s\n' \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+          # The service token is streamed over stdin ahead of the smoke script so
+          # it never appears on the remote command line or in the deployed checkout.
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+            bash -c '{ printf "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=%q\n" "${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"; printf "%s\n" "curl() {" "  command curl -H \"X-Pantheon-Service-Token: \${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}\" \"\$@\"" "}"; cat "$1"; } | gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T --command "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s"' \
+            bash "${GITHUB_WORKSPACE}/.target/scripts/openclaw-assistant-openclaw-live-smoke.sh"
 
       - name: Dev Agora restart persistence smoke under lease
         id: agora
@@ -1359,7 +1366,11 @@ jobs:
     name: Admit and switch exact FE/BFF release
     needs:
       - deploy-dev
-    if: ${{ needs.deploy-dev.result == 'success' }}
+    # Admission depends only on BFF/FE compatibility actually being verified,
+    # not on deploy-dev's overall pass/fail -- that job also runs smoke tests
+    # for unrelated subsystems (e.g. OpenClaw) whose failure has no bearing on
+    # whether this FE/BFF pair is safe to admit. See bff_fe_pair_verified.
+    if: ${{ !cancelled() && needs.deploy-dev.outputs.bff_fe_pair_verified == 'true' }}
     runs-on: ubuntu-latest
     environment: dev
     permissions:
