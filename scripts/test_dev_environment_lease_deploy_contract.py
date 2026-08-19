@@ -205,6 +205,43 @@ def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
     )
 
 
+def test_bff_smoke_runs_before_unrelated_smoke_steps() -> None:
+    """An unrelated smoke test failing must not silently skip the one step
+    that actually verifies the live BFF matches this deploy's exact target
+    sha. GitHub Actions skips a later step by default once an earlier step
+    in the same job fails, so the BFF/FE verification has to run first."""
+
+    dev = _job(_workflow(), "deploy-dev", "deploy-staging-live")
+    bff_smoke_at = dev.index(
+        "      - name: Public dev BFF smoke and exact version proof under lease"
+    )
+    for unrelated_step in (
+        "Dev OpenClaw assistant live smoke under lease",
+        "Dev Agora restart persistence smoke under lease",
+    ):
+        assert bff_smoke_at < dev.index(f"      - name: {unrelated_step}")
+
+
+def test_dev_release_admission_depends_only_on_verified_bff_fe_pair() -> None:
+    """Admitting a release candidate must track whether the BFF/FE pair
+    itself was verified healthy, not whether unrelated smoke tests (e.g. the
+    OpenClaw assistant integration) also happened to pass in the same job."""
+
+    workflow = _workflow()
+    dev = _job(workflow, "deploy-dev", "coordinate-dev-release")
+    assert (
+        "bff_fe_pair_verified: ${{ steps.deploy.outcome == 'success' "
+        "&& steps.public_smoke.outcome == 'success' }}"
+    ) in dev
+
+    coordinate = _job(workflow, "coordinate-dev-release", "deploy-staging-live")
+    assert "needs.deploy-dev.result" not in coordinate
+    assert (
+        "if: ${{ !cancelled() && needs.deploy-dev.outputs.bff_fe_pair_verified "
+        "== 'true' }}"
+    ) in coordinate
+
+
 def test_rollback_baseline_uses_the_accepted_frontend_pair_manifest() -> None:
     """A failed BFF cannot erase the last accepted release identity needed to
     repair it. The immutable frontend deployment manifest carries that pair;
