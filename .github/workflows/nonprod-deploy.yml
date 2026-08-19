@@ -741,6 +741,13 @@ jobs:
           # rejects an empty value while service auth is required.
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
+          # Long-lived (`claude setup-token`) credential for the Claude CLI
+          # the openclaw-gateway container runs internally. Distinct from the
+          # adapter service token above: this authenticates the container's
+          # own `claude -p` calls, not calls to it. Optional -- an empty
+          # value leaves the container on its persisted interactive-login
+          # session, which is the prior (refresh-dependent) behavior.
+          DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}

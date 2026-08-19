@@ -1,0 +1,21 @@
+{
+  "task_id": "L12-GAP-F05-L11-EVOLUTION-OBSERVATION-20260818",
+  "title": "Publish Evolution runtime controller truth",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "status": "in_progress",
+  "verification": {
+    "command": "PANTHEON_RUNTIME_MANAGER_URL=http://127.0.0.1:8088 .venv-pantheon/bin/python3 -m pytest -q services/evolution/test_l12_evo_001_downstream_integration.py services/evolution/test_evolution_service.py services/evolution/test_threshold_sweep_worker.py",
+    "result": "175 passed in 56.59s",
+    "verified_at": "2026-08-18T15:29:56Z"
+  },
+  "scope": [
+    "services/evolution"
+  ],
+  "architecture_compliance": {
+    "single_evolution_scheduler": true,
+    "single_evolution_state_store": true,
+    "tenant_and_env_boundary_preserved": true,
+    "cooldown_and_dispatch_contracts_intact": true
+  }
+}

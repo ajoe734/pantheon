@@ -240,7 +240,20 @@ class HostedAgoraJourney:
 
     def _expect(self, response: HttpResponse, allowed: set[int], label: str) -> Mapping[str, Any]:
         if response.status not in allowed:
-            raise ProbeFailure(f"{label} returned HTTP {response.status}; expected one of {sorted(allowed)}")
+            # The BFF's error envelope (detail.error.{message,details.reason,
+            # details.precondition_failed}) is server-authored diagnostic text,
+            # never a credential or token echo -- safe to surface here. Without
+            # it, every non-2xx failure collapsed to a bare status code, which
+            # made a role/tenant/MFA/auth rejection indistinguishable from each
+            # other in CI logs and forced re-deriving the cause from source
+            # reading alone.
+            detail = ""
+            if isinstance(response.payload, Mapping):
+                detail = json.dumps(response.payload, sort_keys=True)[:500]
+            raise ProbeFailure(
+                f"{label} returned HTTP {response.status}; expected one of {sorted(allowed)}"
+                + (f" -- {detail}" if detail else "")
+            )
         return response.payload
 
     def _login(self, name: str, client_id: str, client_secret: str) -> str:
