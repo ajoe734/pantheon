@@ -2,7 +2,7 @@
 
 Hands off processed shadow imitation candidates from policy-learning to the
 Research experiment authority (services/research/experiment_candidate_intake.py)
-via HTTP endpoint or direct intake.
+via HTTP endpoint.
 """
 
 from __future__ import annotations
