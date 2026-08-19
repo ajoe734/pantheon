@@ -5729,6 +5729,182 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "dev",
         )
 
+    def test_collect_done_squash_merge_reviewer_trailer_uses_reviewed_head_timestamp(self) -> None:
+        """Reproduces the real 2026-08-19 false rejection.
+
+        A worker wrote a commit with a correct `Reviewer: Claude` trailer at
+        15:30, hours before the reviewer was reassigned to Antigravity2 at
+        00:06 the next day. GitHub then squash-merged the PR, producing a
+        brand-new HEAD commit with the *same* trailer text but a fresh
+        06:48 timestamp. Reading HEAD's own timestamp made the reassignment
+        (00:06) look like it preceded the "delivered commit" (06:48), which
+        is backwards -- the real content was authored at 15:30, well before
+        the reassignment. The fix reads the timestamp of the exact reviewed
+        head (recorded at approval time) instead of HEAD's post-squash one.
+        """
+
+        reviewed_head = "1" * 40
+        squashed_head = "6" * 40
+        event = audited_reassignment_event(
+            task_id="REG-002",
+            old_owner="Antigravity",
+            new_owner="Antigravity",
+            old_reviewer="Claude",
+            new_reviewer="Antigravity2",
+            timestamp="2026-08-19T00:06:49Z",
+            message="Recovery reassigned reviewer from Claude after durable terminal_auth:claude.",
+        )
+        task = {
+            "id": "REG-002",
+            "owner": "Antigravity",
+            "reviewer": "Antigravity2",
+            "status": "review_approved",
+            ai_status.APPROVAL_BINDING_KEY: {
+                "pr": 5020,
+                "head_sha": reviewed_head,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **_kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+                ("rev-parse", "HEAD"): squashed_head,
+                ("show", "-s", "--format=%s", "HEAD"): "REG-002: finish delivery (#5020)",
+                ("show", "-s", "--format=%b", "HEAD"): (
+                    "LLM-Agent: Antigravity\nTask-ID: REG-002\nReviewer: Claude\n"
+                ),
+                ("show", "-s", "--format=%an", "HEAD"): "Antigravity",
+                ("show", "-s", "--format=%ae", "HEAD"): "worker@example.com",
+                # HEAD's own (post-squash) timestamp -- must NOT be what
+                # decides the ordering check, or this reproduces the bug.
+                ("show", "-s", "--format=%cI", "HEAD"): "2026-08-19T06:48:00+00:00",
+                # The exact reviewed head's true authoring timestamp.
+                ("show", "-s", "--format=%cI", reviewed_head): "2026-08-18T15:30:12+00:00",
+                ("status", "--porcelain"): "",
+                ("remote",): "",
+            }
+            return responses[tuple(args)]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.dict(
+                    os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False
+                ),
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(
+                    ai_status, "run_git_command", side_effect=fake_run_git_command
+                ),
+                mock.patch.object(
+                    ai_status, "git_command_succeeds", return_value=True
+                ) as succeeds,
+            ):
+                delivery = ai_status.collect_done_delivery_metadata(task, "Antigravity")
+
+        succeeds.assert_called_once_with(
+            ["cat-file", "-e", reviewed_head], cwd=mock.ANY
+        )
+        proof = delivery["commit_reviewer_reassignment"]
+        self.assertEqual(proof["old_reviewer"], "Claude")
+        self.assertEqual(proof["new_reviewer"], "Antigravity2")
+        self.assertEqual(proof["commit_timestamp"], "2026-08-18T15:30:12+00:00")
+
+
+class DeliveredCommitTimestampTests(unittest.TestCase):
+    def test_prefers_reviewed_head_timestamp_when_locally_present(self) -> None:
+        reviewed_head = "a" * 40
+        task = {ai_status.APPROVAL_BINDING_KEY: {"head_sha": reviewed_head}}
+        with (
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="2026-08-18T15:30:12+00:00",
+            ) as run_git,
+        ):
+            result = ai_status._delivered_commit_timestamp(Path("/repo"), task)
+        self.assertEqual(result, "2026-08-18T15:30:12+00:00")
+        run_git.assert_called_once_with(
+            ["show", "-s", "--format=%cI", reviewed_head],
+            cwd=Path("/repo"),
+            failure_message=mock.ANY,
+        )
+
+    def test_fetches_reviewed_head_when_not_locally_present(self) -> None:
+        reviewed_head = "b" * 40
+        task = {ai_status.APPROVAL_BINDING_KEY: {"head_sha": reviewed_head}}
+        with (
+            mock.patch.object(
+                ai_status, "git_command_succeeds", side_effect=[False, True]
+            ) as succeeds,
+            mock.patch.object(ai_status.subprocess, "run") as fetch,
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="2026-08-18T15:30:12+00:00",
+            ),
+        ):
+            result = ai_status._delivered_commit_timestamp(Path("/repo"), task)
+        self.assertEqual(result, "2026-08-18T15:30:12+00:00")
+        self.assertEqual(succeeds.call_count, 2)
+        fetch.assert_called_once()
+        self.assertIn(reviewed_head, fetch.call_args.args[0])
+
+    def test_falls_back_to_head_when_reviewed_head_unresolvable_after_fetch(self) -> None:
+        reviewed_head = "c" * 40
+        task = {ai_status.APPROVAL_BINDING_KEY: {"head_sha": reviewed_head}}
+        with (
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=False),
+            mock.patch.object(ai_status.subprocess, "run"),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="2026-08-19T06:48:00+00:00",
+            ) as run_git,
+        ):
+            result = ai_status._delivered_commit_timestamp(Path("/repo"), task)
+        self.assertEqual(result, "2026-08-19T06:48:00+00:00")
+        run_git.assert_called_once_with(
+            ["show", "-s", "--format=%cI", "HEAD"],
+            cwd=Path("/repo"),
+            failure_message=mock.ANY,
+        )
+
+    def test_falls_back_to_head_when_no_approval_binding_recorded(self) -> None:
+        with (
+            mock.patch.object(ai_status, "git_command_succeeds") as succeeds,
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="2026-08-19T06:48:00+00:00",
+            ) as run_git,
+        ):
+            result = ai_status._delivered_commit_timestamp(Path("/repo"), {})
+        self.assertEqual(result, "2026-08-19T06:48:00+00:00")
+        succeeds.assert_not_called()
+        run_git.assert_called_once_with(
+            ["show", "-s", "--format=%cI", "HEAD"],
+            cwd=Path("/repo"),
+            failure_message=mock.ANY,
+        )
+
+    def test_falls_back_to_head_when_binding_head_sha_is_malformed(self) -> None:
+        task = {ai_status.APPROVAL_BINDING_KEY: {"head_sha": "not-a-sha"}}
+        with (
+            mock.patch.object(ai_status, "git_command_succeeds") as succeeds,
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="2026-08-19T06:48:00+00:00",
+            ),
+        ):
+            result = ai_status._delivered_commit_timestamp(Path("/repo"), task)
+        self.assertEqual(result, "2026-08-19T06:48:00+00:00")
+        succeeds.assert_not_called()
+
 
 class ArchiveWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
