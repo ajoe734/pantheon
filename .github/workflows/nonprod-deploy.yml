@@ -1484,6 +1484,7 @@ jobs:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees' }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
