@@ -3070,6 +3070,67 @@ def _done_delivery_repository_root(
     }
 
 
+def _delivered_commit_timestamp(repository_root: Path, task: Mapping[str, Any]) -> str:
+    """Return the ISO timestamp the delivered content was actually authored at.
+
+    A squash merge creates a brand-new commit object with a fresh
+    author/committer date stamped at merge time, while copying the
+    original commit's message -- including any LLM-Agent/Reviewer trailer
+    -- verbatim. Reading HEAD's own timestamp after such a merge makes a
+    trailer that was correct when written look like it postdates a
+    reassignment that in reality only happened after the real authoring,
+    not before it.
+
+    When the task recorded an exact reviewed head (APPROVAL_BINDING_KEY),
+    prefer that commit's own timestamp instead -- fetching it from origin
+    first if the local checkout does not already have the object. GitHub
+    keeps every PR commit reachable by SHA even after a squash-merge
+    deletes the source branch, so this is a targeted, bounded fetch of one
+    already-known object, not a discovery search. Falls back to HEAD's own
+    timestamp when no reviewed head is recorded or that exact object
+    cannot be resolved even after the fetch attempt.
+    """
+
+    binding = task.get(APPROVAL_BINDING_KEY)
+    reviewed_head = (
+        str(binding.get("head_sha") or "").strip()
+        if isinstance(binding, Mapping)
+        else ""
+    )
+    if reviewed_head and APPROVAL_HEAD_SHA_RE.fullmatch(reviewed_head):
+        reachable = git_command_succeeds(
+            ["cat-file", "-e", reviewed_head], cwd=repository_root
+        )
+        if not reachable:
+            subprocess.run(
+                ["git", "fetch", "--quiet", "origin", reviewed_head],
+                cwd=repository_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            reachable = git_command_succeeds(
+                ["cat-file", "-e", reviewed_head], cwd=repository_root
+            )
+        if reachable:
+            return run_git_command(
+                ["show", "-s", "--format=%cI", reviewed_head],
+                cwd=repository_root,
+                failure_message=(
+                    "Cannot finalize task: delivered commit timestamp is "
+                    "unavailable for reassignment verification."
+                ),
+            )
+    return run_git_command(
+        ["show", "-s", "--format=%cI", "HEAD"],
+        cwd=repository_root,
+        failure_message=(
+            "Cannot finalize task: delivered commit timestamp is "
+            "unavailable for reassignment verification."
+        ),
+    )
+
+
 def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
@@ -3180,13 +3241,8 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
                     # verified against the audited reassignment chain instead of
                     # failing closed and requiring a Human/Ops sign-off.
                     if field_name in {"LLM-Agent", "Reviewer"} and not commit_timestamp:
-                        commit_timestamp = run_git_command(
-                            ["show", "-s", "--format=%cI", "HEAD"],
-                            cwd=repository_root,
-                            failure_message=(
-                                "Cannot finalize task: delivered commit timestamp is "
-                                "unavailable for reassignment verification."
-                            ),
+                        commit_timestamp = _delivered_commit_timestamp(
+                            repository_root, task
                         )
                     if field_name == "LLM-Agent":
                         delivery["commit_owner_reassignment"] = (
