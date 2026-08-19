@@ -152,6 +152,38 @@ def test_restart_evidence_fails_closed_when_the_instance_id_did_not_change() -> 
         )
 
 
+def test_expect_failure_includes_server_error_detail() -> None:
+    # A bare "returned HTTP 403" told us nothing about *why*: role, tenant,
+    # and MFA rejections all collapsed to the same message, forcing a source
+    # read every time instead of reading the BFF's own (non-secret) error
+    # envelope. Observed live: a hosted-acceptance run failed with just
+    # "operator identity returned HTTP 403" and no way to tell which of
+    # several plausible causes it actually was.
+    journey = HostedAgoraJourney(_config(), transport=lambda *a, **k: None)
+    response = HttpResponse(
+        status=403,
+        payload={
+            "detail": {
+                "error": {
+                    "message": "Read access requires viewer-level role",
+                    "details": {"precondition_failed": "role_check"},
+                }
+            }
+        },
+        headers={},
+    )
+    with pytest.raises(ProbeFailure) as excinfo:
+        journey._expect(response, {200}, "operator identity")
+    assert "operator identity returned HTTP 403" in str(excinfo.value)
+    assert "role_check" in str(excinfo.value)
+
+
+def test_expect_success_does_not_raise() -> None:
+    journey = HostedAgoraJourney(_config(), transport=lambda *a, **k: None)
+    response = HttpResponse(status=200, payload={"ok": True}, headers={})
+    assert journey._expect(response, {200}, "operator identity") == {"ok": True}
+
+
 def test_probe_has_no_product_application_import() -> None:
     source = Path(__file__).with_name("probe_agora_hosted_service_journey.py").read_text(encoding="utf-8")
     assert "from services" not in source
