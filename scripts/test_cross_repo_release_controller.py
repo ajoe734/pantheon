@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -258,3 +259,43 @@ def test_rejected_frontend_transaction_restores_and_proves_exact_pair() -> None:
     assert "pantheon.cross-repo-release-compensation.v1" in COMPENSATION_SCRIPT
     assert '"outcome": "compensated"' in COMPENSATION_SCRIPT
     assert "docker-compose.yml" not in COMPENSATION_SCRIPT
+
+
+def test_compensation_step_provides_every_var_the_script_requires() -> None:
+    # OPS-COMPENSATE-RELEASE-GCP-PROJECT-ID-20260818: the compensation script
+    # dies closed if any of its `required()` env vars is unset (see `for name
+    # in ... do required "${name}"; done` below), but nothing previously
+    # checked that the *calling* workflow step actually supplied all of them.
+    # GCP_DEPLOY_PROJECT_ID silently fell out of the step's env block --
+    # observed live as `compensate_cross_repo_release.sh` exiting 75 the one
+    # time a real release rejection needed to trigger a rollback, well after
+    # the step itself had long since been reviewed and merged. This asserts
+    # the two never drift apart again, rather than re-diagnosing the same gap
+    # by hand the next time it reopens.
+    required_block = COMPENSATION_SCRIPT[
+        COMPENSATION_SCRIPT.index("for name in \\") :
+        COMPENSATION_SCRIPT.index("done\n", COMPENSATION_SCRIPT.index("for name in \\"))
+    ]
+    required_vars = re.findall(r"^\s*([A-Z][A-Z0-9_]*)\s*\\?\s*$", required_block, re.MULTILINE)
+    assert "GCP_DEPLOY_PROJECT_ID" in required_vars
+
+    # These are populated by the Actions runner itself for every step; a
+    # workflow author never declares them explicitly.
+    always_available = {
+        "RUNNER_TEMP",
+        "GITHUB_REPOSITORY",
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_SERVER_URL",
+    }
+
+    # Slice the whole containing job, not just the compensation step's own
+    # `env:` block: a step inherits its job's job-level env (e.g. DEV_BFF_URL
+    # is only declared once, at job level, for every step in this job to
+    # share) -- checking the step alone would falsely flag those as missing.
+    job = NONPROD_WORKFLOW[
+        NONPROD_WORKFLOW.index("  coordinate-dev-release:") :
+        NONPROD_WORKFLOW.index("  deploy-staging-live:")
+    ]
+    missing = [name for name in required_vars if name not in always_available and f"{name}:" not in job]
+    assert missing == []

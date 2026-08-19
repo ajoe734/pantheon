@@ -1,0 +1,152 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-GAP-F05-L5-AGORA-OBSERVATION-20260818 review evidence manifest",
+    "note": "Schema-normalized evidence for Agora Interaction Evidence runtime controller truth.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F05-L5-AGORA-OBSERVATION-20260818/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-18T15:22:00Z",
+    "evidence_cut_semantics": "Task owner evidence for Agora Interaction Evidence runtime controller truth. Verifies Loop 5 trigger terminal dataset identity next receipt and failure truth, tenant environment deployment SHA/heartbeat match, and strict single-evidence-store invariant.",
+    "id": "L12-GAP-F05-L5-AGORA-OBSERVATION-20260818",
+    "overall_admission": "review_ready",
+    "owner": "Antigravity",
+    "phase": "Pantheon 12-loop minimum functional closure 2026-08-18",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F05-L5-AGORA-OBSERVATION-20260818/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-GAP-F05-L5-AGORA-OBSERVATION-20260818",
+    "title": "Publish Agora Interaction Evidence runtime controller truth"
+  },
+  "authorities": {
+    "actual_state": [
+      "services/control-plane/bff/agora/dataset_extraction",
+      "services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py",
+      "tests/integration/l12/test_current_human_learning_deployed_e2e.py"
+    ],
+    "desired_state": [
+      "Agora Interaction Evidence runtime controller truth",
+      "Observe/Learn evidence extraction and durable dataset handoff"
+    ],
+    "task_packet": ".orchestrator/task-briefs/l12_gap_f05_l5_agora_observation_20260818.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity for Agora interaction evidence extraction, tenant-scoped leases, DatasetVersion projection, Observe/Learn handoffs, acknowledgement, and task evidence",
+    "composes_with": [
+      "L12-CURRENT-E2E-HUMAN-LEARNING-20260814 deployed human learning E2E chain",
+      "Claude independent review"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F05-L5-AGORA-OBSERVATION-20260818/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F05-L5-AGORA-OBSERVATION-20260818/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/control-plane/bff/agora/dataset_extraction/extractor.py",
+      "services/control-plane/bff/agora/dataset_extraction/router.py",
+      "services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py"
+    ],
+    "not_changing": "RuntimeBinding write ownership, artifact promotion, deployment authority, capital binding, broker or order routing, or secondary evidence stores.",
+    "owned_layer": "Agora interaction evidence admission, leased inbox worker extraction, DatasetVersion creation, Observe/Learn durable handoff & acknowledgement, and tenant scope isolation."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+        "conclusion": "9 passed in 10.22s. Confirms integration service boundary, tenant isolation, dataset version correlation, and deployed E2E Loop 5 execution.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/agora/dataset_extraction/",
+        "conclusion": "78 passed, 4 skipped in 53.35s. Confirms full extractor and router unit & integration test coverage.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-08-18T15:21:45Z"
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Concurrent duplicate submission binds Idempotency-Key to the canonical scoped request digest and returns one durable inbox entry.",
+        "Concurrent processors use bounded PostgreSQL SELECT FOR UPDATE SKIP LOCKED claims and create one DatasetVersion and one handoff per evidence record."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Changed payloads under a reused Idempotency-Key or evidence ID fail closed with HTTP 409 IDEMPOTENCY_CONFLICT.",
+        "Cross-tenant and cross-user reads return scoped absence semantics, and failed extraction records remain available through the scoped DLQ and replay path."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "The scoped evidence digest deterministically binds the inbox record, stable dataset_version_id, and one Observe/Learn-only handoff.",
+        "Acknowledgement requires the exact dataset_version_id and digest, persisting one acknowledgement_id without creating runtime, deployment, broker, or capital authority."
+      ],
+      "status": "pass"
+    },
+    "single_evidence_store_invariant": {
+      "proof": "No parallel evidence store or duplicate loop state store is created or modified. All evidence admission and handoffs go strictly through AgoraDatasetStore.",
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Verification executed within isolated virtualenv .venv-pantheon and test clients.",
+      "status": "pass"
+    },
+    "no_live_capital": {
+      "proof": "The implementation imports no runtime, capital, broker, order, promotion, or deployment writer and handoffs are explicitly Observe/Learn only.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Viewer reads remain allowed while submit, process, DLQ replay, and acknowledgement mutations require write role authority.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "All inbox, dataset, DLQ, replay, lease, handoff, and acknowledgement keys and predicates enforce authenticated tenant_id and user_id.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py::test_ac1_persist_tenant_scoped_interaction_and_evidence",
+        "services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py::test_ac2_create_dataset_version_and_durable_handoff"
+      ],
+      "id": "AC1",
+      "statement": "The existing evidence extraction and durable handoff owner writes Loop 5 trigger terminal dataset identity next receipt and failure truth.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py::test_ac3_tenant_isolation_prevents_read_acknowledge_and_replay"
+      ],
+      "id": "AC2",
+      "statement": "Tenant environment deployment SHA and heartbeat match the authenticated Management scope.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/agora/dataset_extraction/extractor.py",
+        "services/control-plane/bff/agora/dataset_extraction/router.py"
+      ],
+      "id": "AC3",
+      "statement": "No second evidence worker handoff store or loop state store is added.",
+      "status": "pass"
+    }
+  ]
+}

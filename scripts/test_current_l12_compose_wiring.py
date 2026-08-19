@@ -53,7 +53,7 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     ]
     assert (
         owner["environment"]["SOURCE_INGEST_CONTROLLER_MODE"]
-        == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
+        == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_and_pull}"
     )
     assert (
         owner["environment"]["SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL"]
@@ -61,7 +61,7 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     )
     assert (
         owner["environment"]["SOURCE_INGEST_CONTROLLER_MAX_TICKS"]
-        == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
+        == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
     )
 
     matching_commands = [
