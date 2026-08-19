@@ -728,6 +728,12 @@ services:
       # Persist Claude CLI login on the openclaw-data volume so the one-time
       # `claude auth login` survives container recreate (subscription OAuth, no key).
       CLAUDE_CONFIG_DIR: ${OPENCLAW_CLAUDE_CONFIG_DIR:-/home/node/.openclaw/claude-cli}
+      # Optional long-lived credential (`claude setup-token`, ~1 year) for the
+      # Claude CLI. Takes precedence over the CLAUDE_CONFIG_DIR session above
+      # when set, so it does not depend on anything periodically exercising
+      # the CLI to keep a short-lived OAuth session's access token refreshed.
+      # Empty is a no-op: the CLI falls back to the CLAUDE_CONFIG_DIR session.
+      CLAUDE_CODE_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}

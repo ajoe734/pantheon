@@ -316,6 +316,54 @@ def test_service_token_is_redacted_from_dry_run_output() -> None:
     assert "dev_openclaw_adapter_service_token_configured=true" in result.stdout
 
 
+def test_openclaw_claude_oauth_token_has_no_fabricated_deploy_default() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        'DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}"'
+        in script
+    )
+    assert "DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-sk-" not in script
+
+
+def test_openclaw_claude_oauth_token_is_redacted_from_dry_run_output() -> None:
+    secret = "sk-ant-oat01-must-not-appear-in-deploy-output"
+    result = _run_deploy_script(
+        {"DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN": secret},
+        "--dry-run",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert secret not in result.stdout
+    assert secret not in result.stderr
+    assert "dev_openclaw_claude_code_oauth_token_configured=true" in result.stdout
+
+
+def test_openclaw_claude_oauth_token_defaults_to_unconfigured_in_dry_run() -> None:
+    result = _run_deploy_script({}, "--dry-run")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "dev_openclaw_claude_code_oauth_token_configured=false" in result.stdout
+
+
+def test_openclaw_claude_oauth_token_reaches_the_deploy_export() -> None:
+    """The var has to reach both docker compose invocations (root and the
+    narrower bff-only rebuild), keyed the same as the adapter service token
+    docker-compose.yml already reads with a PANTHEON_ prefix."""
+
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    export_line = (
+        'PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \\'
+    )
+    assert script.count(export_line) == 2
+
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert (
+        "CLAUDE_CODE_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}"
+        in compose
+    )
+
+
 def test_auth_gate_checks_hosted_posture_and_fixed_bearer_negative() -> None:
     """Regression guard: the post-deploy gate must assert both the hosted
     /bff/version auth posture and reject a fixed/arbitrary bearer token,
