@@ -166,6 +166,10 @@ services:
       SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
       SOURCE_INGEST_REQUIREMENT_STATE_PATH: /data/source-ingest/requirement_snapshots.jsonl
       SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
+      # Shared with strategy-distillation-worker: a normalized SourceRecord
+      # commit here admits its job to the same durable queue that controller
+      # tick's catch_up polls, so the two never diverge into separate queues.
+      DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
       SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
       SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
       SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS: ${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}
@@ -624,6 +628,12 @@ services:
       POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
       AGORA_BFF_URL: http://operator-bff:8001
       RESEARCH_SERVICE_URL: http://research-orchestrator-svc:8101
+      # L12-GAP-F05-L6: durable loop-control controller-record observation.
+      # Same shared cluster DSN as policy-learning-svc; the scheduler only
+      # writes its own heartbeat/tick/success/failure record, never product
+      # candidate rows.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS: ${SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS:-3600}
       SHADOW_EVAL_SCHEDULER_MAX_TICKS: ${SHADOW_EVAL_SCHEDULER_MAX_TICKS:-0}
       SHADOW_EVAL_TYPE: ${SHADOW_EVAL_TYPE:-shadow}

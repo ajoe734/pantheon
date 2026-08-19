@@ -335,6 +335,112 @@ def test_preview_eval_worker_fails_closed_without_authority(monkeypatch) -> None
         raise AssertionError("worker request must fail closed without service/tenant authority")
 
 
+class _FakeLoopWriter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def record_heartbeat(self, loop_id, **kwargs):  # noqa: ANN001
+        self.calls.append(("record_heartbeat", {"loop_id": loop_id, **kwargs}))
+
+    async def record_tick(self, loop_id, **kwargs):  # noqa: ANN001
+        self.calls.append(("record_tick", {"loop_id": loop_id, **kwargs}))
+
+    async def record_success(self, loop_id, **kwargs):  # noqa: ANN001
+        self.calls.append(("record_success", {"loop_id": loop_id, **kwargs}))
+
+    async def record_failure(self, loop_id, reason, **kwargs):  # noqa: ANN001
+        self.calls.append(("record_failure", {"loop_id": loop_id, "reason": reason, **kwargs}))
+
+    async def record_repair(self, loop_id, reason, **kwargs):  # noqa: ANN001
+        self.calls.append(("record_repair", {"loop_id": loop_id, "reason": reason, **kwargs}))
+
+
+def test_build_loop_writer_returns_none_without_database_url(monkeypatch) -> None:
+    module = _load_worker_module()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert module.build_loop_writer() is None
+
+
+def test_preview_eval_worker_writes_gap_f05_observation_on_success(monkeypatch) -> None:
+    module = _load_worker_module()
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
+    loop_writer = _FakeLoopWriter()
+
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        if "preview-jobs?" in request.full_url:
+            return _Response([{"job_id": "pvjob-obs", "status": "queued"}])
+        assert request.full_url.endswith("/preview-jobs/pvjob-obs/run")
+        return _Response(
+            {
+                "job_id": "pvjob-obs",
+                "session_id": "trn-obs",
+                "status": "completed",
+                "terminalize_session": False,
+                "preview": {
+                    "evaluation_result": {
+                        "consult_request_id": "creq-teach-obs",
+                        "consultation_receipt": {
+                            "consult_request_id": "creq-teach-obs",
+                            "session_id": "trn-obs",
+                            "status": "submitted",
+                        },
+                    }
+                },
+            }
+        )
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+
+    result = module.run_tick(
+        api_url="http://training-session-svc:8099",
+        limit=1,
+        loop_writer=loop_writer,
+    )
+
+    assert result["failed"] == 0
+    assert result["consult_request_ids"] == ["creq-teach-obs"]
+
+    kinds = [call[0] for call in loop_writer.calls]
+    assert kinds == ["record_heartbeat", "record_success"]
+    heartbeat_call = loop_writer.calls[0][1]
+    assert heartbeat_call["loop_id"] == module.LOOP_ID == "persona_teaching"
+    success_call = loop_writer.calls[1][1]
+    assert success_call["loop_id"] == "persona_teaching"
+    assert success_call["evidence_refs"] == ["consult-request:creq-teach-obs"]
+    assert success_call["payload"]["job_ids"] == ["pvjob-obs"]
+
+
+def test_preview_eval_worker_writes_gap_f05_failure_truth(monkeypatch) -> None:
+    module = _load_worker_module()
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
+    loop_writer = _FakeLoopWriter()
+
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        if request.get_method() == "GET":
+            return _Response([{"job_id": "pvjob-fail", "status": "failed"}])
+        return _Response({"job_id": "pvjob-fail", "status": "failed", "retryable": True})
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+
+    result = module.run_tick(
+        api_url="http://training-session-svc:8099",
+        limit=1,
+        loop_writer=loop_writer,
+    )
+
+    assert result["failed"] == 1
+    kinds = [call[0] for call in loop_writer.calls]
+    assert kinds == ["record_heartbeat", "record_failure"]
+    failure_call = loop_writer.calls[1][1]
+    assert failure_call["loop_id"] == "persona_teaching"
+    assert "pvjob-fail" in failure_call["reason"]
+
+
 def test_preview_eval_worker_degrades_health_on_http_401(monkeypatch, tmp_path) -> None:
     import io
     import urllib.error

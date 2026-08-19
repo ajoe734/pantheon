@@ -7,9 +7,12 @@ be retried without manufacturing a second reconciliation pass.
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import json
 import math
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -24,6 +27,36 @@ from services.background_worker_health import (
 
 SleepFn = Callable[[float], None]
 _WORKER_NAME = "reconciliation-drift-scheduler"
+LOOP_ID = os.getenv("PANTHEON_LOOP_ID") or "telemetry_reconciliation"
+
+
+def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
+    """Build the shared twelve-loop controller writer, or None when unconfigured.
+
+    Loop 10 (telemetry_reconciliation) has three independent workers
+    (consumer, scheduler, incident listener); they all target this one
+    loop_id so their ticks compose a single controller record instead of
+    a second reconciler monitor or state store.
+    """
+
+    if not dsn:
+        return None
+    try:
+        module = importlib.import_module("services.loop-control")
+        deployment_sha = str(
+            os.getenv("PANTHEON_DEPLOYMENT_SHA") or os.getenv("GIT_SHA") or "unknown"
+        )
+        return module.LoopControllerWriter(
+            dsn,
+            tenant_id=tenant_id,
+            environment=os.getenv("PANTHEON_ENV", "dev"),
+            controller_id=os.getenv("RECONCILIATION_DRIFT_SCHEDULER_ID")
+            or f"{_WORKER_NAME}:{socket.gethostname()}:{os.getpid()}",
+            controller_name=_WORKER_NAME,
+            deployment_sha=deployment_sha,
+        )
+    except ModuleNotFoundError:
+        return None
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -394,6 +427,8 @@ def main() -> int:
         print(json.dumps(_configuration_error(exc), sort_keys=True), flush=True)
         return 2
 
+    dsn = os.getenv("RECONCILIATION_DRIFT_STORE_DSN") or os.getenv("DATABASE_URL") or ""
+    loop_writer = _build_loop_writer(dsn=dsn, tenant_id=tenant_id)
     tick = 0
     while True:
         tick += 1
@@ -438,6 +473,57 @@ def main() -> int:
             health["last_failure_at"] = tick_at
             health["last_failure_reason"] = _health_failure_reason(result)
         write_health(health_file, health)
+        if loop_writer is not None:
+            try:
+                terminal_ids = [
+                    str(item)
+                    for item in (result.get("terminal_incident_ids") or [])
+                    if item
+                ]
+                drift_report_ids = [
+                    str(item)
+                    for item in (result.get("drift_report_ids") or [])
+                    if item
+                ]
+                evidence_refs = [
+                    f"reconciliation-drift://incidents/{incident_id}"
+                    for incident_id in terminal_ids
+                ] + [
+                    f"reconciliation-drift://drift-reports/{report_id}"
+                    for report_id in drift_report_ids
+                ]
+                has_real_trigger = bool(terminal_ids) or bool(drift_report_ids)
+                truth_level = (
+                    "reconciled_live_proof" if has_real_trigger else "scheduled_tick"
+                )
+                if controller_status == "healthy":
+                    asyncio.run(
+                        loop_writer.record_success(
+                            loop_id=LOOP_ID,
+                            truth_level=truth_level,
+                            summary=(
+                                f"Evaluated {result.get('evaluated_binding_count', 0)} "
+                                "binding(s)"
+                            ),
+                            evidence_refs=evidence_refs,
+                            payload={"tick": tick, "result": result},
+                        )
+                    )
+                else:
+                    asyncio.run(
+                        loop_writer.record_failure(
+                            loop_id=LOOP_ID,
+                            reason=health.get("last_failure_reason") or controller_status,
+                            truth_level=truth_level,
+                            evidence_refs=evidence_refs,
+                            payload={"tick": tick, "result": result},
+                        )
+                    )
+            except Exception as exc:
+                print(
+                    f"Warning: failed to write to LoopControllerWriter: {exc}",
+                    file=sys.stderr,
+                )
         print(
             json.dumps(
                 {"tick": tick, "controller_status": controller_status, "result": result},
