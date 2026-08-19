@@ -4252,6 +4252,74 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(task["status"], "in_progress")
         self.assertNotIn(ai_status.DELIVERY_BINDING_KEY, task)
 
+    def test_handoff_auto_discovers_open_pr_when_no_explicit_binding_or_requirement(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "_discover_open_pull_request_for_branch",
+                return_value={"pr": 4820, "head_sha": "a" * 40},
+            ) as discover,
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Opened the PR before handing off."],
+            )
+        discover.assert_called_once_with(
+            repository=mock.ANY, head_branch="task/REG-002", base="dev"
+        )
+        self.assertEqual(
+            task[ai_status.DELIVERY_BINDING_KEY],
+            {
+                "kind": "pull_request",
+                "pr": 4820,
+                "head_sha": "a" * 40,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+        )
+
+    def test_handoff_falls_back_to_artifact_contract_when_no_open_pr_discovered(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(
+                ai_status, "_discover_open_pull_request_for_branch", return_value=None
+            ),
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "No PR exists for this delivery."],
+            )
+        self.assertEqual(
+            task[ai_status.DELIVERY_BINDING_KEY]["kind"], "artifact_contract"
+        )
+
+    def test_handoff_prefers_explicit_review_pr_over_discovery(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Codex", "REVIEW_PR": "9999", "REVIEW_HEAD_SHA": "b" * 40},
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status,
+                "_discover_open_pull_request_for_branch",
+                return_value={"pr": 4820, "head_sha": "a" * 40},
+            ) as discover,
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Explicit binding wins."],
+            )
+        discover.assert_not_called()
+        self.assertEqual(task[ai_status.DELIVERY_BINDING_KEY]["pr"], 9999)
+
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
         self.state["tasks"][0]["failure_streak"] = 2
@@ -4439,6 +4507,72 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(archive_task["terminal_outcome"], "superseded")
         self.assertEqual(archive_task["superseded_by"], "REG-010")
         self.assertNotIn("waiting_for", archive_task)
+
+
+class DiscoverOpenPullRequestForBranchTests(unittest.TestCase):
+    @staticmethod
+    def _completed(*, returncode: int = 0, stdout: str = "") -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(
+            args=["gh"], returncode=returncode, stdout=stdout, stderr=""
+        )
+
+    def test_returns_single_open_match(self) -> None:
+        payload = json.dumps([{"number": 4820, "head": {"sha": "A" * 40}}])
+        with mock.patch.object(
+            ai_status.subprocess, "run", return_value=self._completed(stdout=payload)
+        ):
+            result = ai_status._discover_open_pull_request_for_branch(
+                repository="ajoe734/pantheon", head_branch="task/REG-002", base="dev"
+            )
+        self.assertEqual(result, {"pr": 4820, "head_sha": "a" * 40})
+
+    def test_returns_none_when_no_open_pr(self) -> None:
+        with mock.patch.object(
+            ai_status.subprocess, "run", return_value=self._completed(stdout="[]")
+        ):
+            result = ai_status._discover_open_pull_request_for_branch(
+                repository="ajoe734/pantheon", head_branch="task/REG-002", base="dev"
+            )
+        self.assertIsNone(result)
+
+    def test_returns_none_on_ambiguous_matches(self) -> None:
+        payload = json.dumps(
+            [
+                {"number": 1, "head": {"sha": "a" * 40}},
+                {"number": 2, "head": {"sha": "b" * 40}},
+            ]
+        )
+        with mock.patch.object(
+            ai_status.subprocess, "run", return_value=self._completed(stdout=payload)
+        ):
+            result = ai_status._discover_open_pull_request_for_branch(
+                repository="ajoe734/pantheon", head_branch="task/REG-002", base="dev"
+            )
+        self.assertIsNone(result)
+
+    def test_returns_none_on_gh_failure(self) -> None:
+        with mock.patch.object(
+            ai_status.subprocess, "run", return_value=self._completed(returncode=1)
+        ):
+            result = ai_status._discover_open_pull_request_for_branch(
+                repository="ajoe734/pantheon", head_branch="task/REG-002", base="dev"
+            )
+        self.assertIsNone(result)
+
+    def test_returns_none_on_malformed_json(self) -> None:
+        with mock.patch.object(
+            ai_status.subprocess, "run", return_value=self._completed(stdout="not json")
+        ):
+            result = ai_status._discover_open_pull_request_for_branch(
+                repository="ajoe734/pantheon", head_branch="task/REG-002", base="dev"
+            )
+        self.assertIsNone(result)
+
+    def test_returns_none_without_owner_slash_repo(self) -> None:
+        result = ai_status._discover_open_pull_request_for_branch(
+            repository="pantheon", head_branch="task/REG-002", base="dev"
+        )
+        self.assertIsNone(result)
 
 
 class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
@@ -5210,6 +5344,70 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 self.assertEqual(result["event_id"], event["event_id"])
                 self.assertEqual(result["old_reviewer"], "")
                 self.assertEqual(result["new_reviewer"], "Antigravity2")
+
+    @staticmethod
+    def _legacy_first_assignment_event(
+        *,
+        task_id: str = "REG-002",
+        agent: str = "Human/Ops",
+        owner: str = "Claude",
+        new_reviewer: str = "Antigravity2",
+        timestamp: str = "2026-08-18T13:20:05Z",
+    ) -> dict[str, Any]:
+        """An assign event shaped exactly like one predating #5006
+        (OPS-DONE-REVIEWER-ASSIGN-AUDIT-GAP-20260818): no structured
+        old_reviewer/new_reviewer fields, only the free-text message.
+        """
+        event = {
+            "ts": timestamp,
+            "agent": agent,
+            "type": "assign",
+            "task_id": task_id,
+            "message": f"Assigned {task_id} to {owner} with reviewer {new_reviewer}",
+            "operator_mode": "local_human_ops",
+        }
+        event["event_id"] = "ai-status-event-" + ai_status._canonical_json_sha256(event)
+        return event
+
+    def test_done_reviewer_reassignment_accepts_legacy_first_assignment_message(self) -> None:
+        """A pre-#5006 assign event with no structured new_reviewer field is
+        still recognized by parsing its one known, unchanging message shape.
+        """
+        event = self._legacy_first_assignment_event()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with mock.patch.object(ai_status, "LOG_FILE", log_file):
+                result = ai_status._verified_done_reviewer_reassignment(
+                    {"id": "REG-002", "owner": "Claude", "reviewer": "Antigravity2"},
+                    commit_reviewer="pending",
+                    current_reviewer="Antigravity2",
+                    commit_timestamp="2026-08-18T13:19:30+00:00",
+                )
+        self.assertEqual(result["event_id"], event["event_id"])
+        self.assertEqual(result["new_reviewer"], "Antigravity2")
+
+    def test_done_reviewer_reassignment_rejects_legacy_message_for_wrong_task(self) -> None:
+        event = self._legacy_first_assignment_event(task_id="OTHER-TASK")
+        event["task_id"] = "REG-002"  # event field matches, but message body does not
+        event["event_id"] = "ai-status-event-" + ai_status._canonical_json_sha256(
+            {k: v for k, v in event.items() if k != "event_id"}
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                self.assertRaisesRegex(
+                    SystemExit, "no audited first reviewer assignment explains"
+                ),
+            ):
+                ai_status._verified_done_reviewer_reassignment(
+                    {"id": "REG-002", "owner": "Claude", "reviewer": "Antigravity2"},
+                    commit_reviewer="pending",
+                    current_reviewer="Antigravity2",
+                    commit_timestamp="2026-08-18T13:19:30+00:00",
+                )
 
     def test_done_reviewer_reassignment_rejects_forged_first_assignment_actor(self) -> None:
         event = self._first_assignment_event(agent="Claude")

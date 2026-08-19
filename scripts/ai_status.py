@@ -5536,7 +5536,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(
             f"{task_id} handoff target must match the assigned reviewer ({task.get('reviewer')}); reassign reviewer first if needed"
         )
-    binding = resolve_handoff_delivery_binding(task)
+    binding = resolve_handoff_delivery_binding(task, load_config())
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "handoff")
     task["last_update"] = timestamp
@@ -6064,6 +6064,33 @@ def _self_consistent_event_id_matches(event: Mapping[str, Any]) -> bool:
     return str(event.get("event_id") or "") == expected
 
 
+LEGACY_ASSIGN_MESSAGE_RE = re.compile(
+    r"^Assigned (?P<task_id>\S+) to (?P<owner>\S+) with reviewer (?P<reviewer>\S+)$"
+)
+
+
+def _legacy_assign_event_new_reviewer(
+    event: Mapping[str, Any], task_id: str
+) -> str | None:
+    """Recover new_reviewer from a pre-OPS-DONE-REVIEWER-ASSIGN-AUDIT-GAP-20260818
+    assign event.
+
+    command_assign did not always stamp old_reviewer/new_reviewer on a
+    first-ever assignment; before that fix landed, the event carried only a
+    free-text `message` in one exact, unchanging format (the single f-string
+    command_assign has ever used to build it: "Assigned {task_id} to {owner}
+    with reviewer {reviewer}"). Parsing that one known historical shape here
+    is precise, not a heuristic -- and the caller still requires the event's
+    digest to self-consistently match, so this trusts the same audited
+    record the structured fields would have, just read differently.
+    """
+
+    match = LEGACY_ASSIGN_MESSAGE_RE.match(str(event.get("message") or ""))
+    if match is None or match.group("task_id") != task_id:
+        return None
+    return match.group("reviewer")
+
+
 def _audited_initial_reviewer_assignment(
     task_id: str,
     *,
@@ -6079,7 +6106,11 @@ def _audited_initial_reviewer_assignment(
     a privileged actor (`Orchestrator`, or the governed `Human/Ops`
     local-operator path) with an explicitly empty `old_reviewer` (proving it
     was genuinely the first assignment, not a later reassignment) and a
-    self-consistent event digest qualifies.
+    self-consistent event digest qualifies. `new_reviewer` is read from the
+    event's own structured field when present, or recovered from its
+    `message` for a legacy pre-fix event that never had the field (see
+    _legacy_assign_event_new_reviewer) -- both are verified against the same
+    digest before being trusted.
     """
 
     try:
@@ -6094,14 +6125,18 @@ def _audited_initial_reviewer_assignment(
             or str(event.get("task_id") or "").strip() != task_id
             or event.get("agent") not in {"Orchestrator", "Human/Ops"}
             or event.get("old_reviewer")
-            or not event.get("new_reviewer")
             or not _self_consistent_event_id_matches(event)
         ):
+            continue
+        new_reviewer = event.get("new_reviewer") or _legacy_assign_event_new_reviewer(
+            event, task_id
+        )
+        if not new_reviewer:
             continue
         event_timestamp = _parse_utc_timestamp(event.get("ts"))
         if event_timestamp is None:
             continue
-        candidates.append((event_timestamp, event))
+        candidates.append((event_timestamp, {**event, "new_reviewer": new_reviewer}))
     candidates.sort(key=lambda item: item[0])
     return candidates[0] if candidates else None
 
@@ -6566,7 +6601,67 @@ def _validated_pr_binding(binding: Mapping[str, Any], task_id: str) -> dict[str,
     }
 
 
-def resolve_handoff_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any]:
+def _discover_open_pull_request_for_branch(
+    *, repository: str, head_branch: str, base: str
+) -> dict[str, Any] | None:
+    """Return the exact open PR for a branch pair, if exactly one exists.
+
+    Handoff is the one place delivery identity may be discovered -- review
+    must never infer it (see resolve_approval_binding). A task with no
+    required_artifacts PR marker and no explicit REVIEW_PR/REVIEW_HEAD_SHA
+    still frequently delivers via a real PR in practice; without this check
+    its binding silently falls to artifact_contract, and approval never
+    reaches GitHub (resolve_approval_binding returns no binding for that
+    kind), permanently blocking the PR on branch protection with no way out
+    except reopen+re-handoff.
+
+    Any failure (missing repo config, gh error, ambiguous match) returns
+    None so the caller falls through to its existing artifact_contract path
+    -- this only adds a positive match, never blocks or changes behavior
+    for a task that genuinely has no open PR.
+    """
+
+    owner, _, _ = repository.partition("/")
+    if not owner or "/" not in repository:
+        return None
+    result = subprocess.run(
+        [
+            "gh", "api", f"repos/{repository}/pulls",
+            "--method", "GET",
+            "-f", f"head={owner}:{head_branch}",
+            "-f", f"base={base}",
+            "-f", "state=open",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, list) or len(payload) != 1:
+        return None
+    pr = payload[0]
+    if not isinstance(pr, dict):
+        return None
+    number = pr.get("number")
+    head_sha = str((pr.get("head") or {}).get("sha") or "")
+    if (
+        not isinstance(number, int)
+        or number <= 0
+        or not APPROVAL_HEAD_SHA_RE.fullmatch(head_sha)
+    ):
+        return None
+    return {"pr": number, "head_sha": head_sha.lower()}
+
+
+def resolve_handoff_delivery_binding(
+    task: Mapping[str, Any], config: dict[str, Any]
+) -> dict[str, Any]:
     """Create the one delivery contract before a task becomes reviewable.
 
     A PR task receives a full exact-head identity.  A task with no PR receives
@@ -6581,6 +6676,12 @@ def resolve_handoff_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any]:
         raise SystemExit(
             "REVIEW_PR and REVIEW_HEAD_SHA must be supplied together for a PR handoff"
         )
+    head_branch = (
+        os.environ.get("REVIEW_HEAD_BRANCH", "").strip() or f"task/{task_id}"
+    )
+    base_branch = (
+        os.environ.get("REVIEW_BASE", "").strip() or DEFAULT_APPROVAL_BASE_BRANCH
+    )
     if explicit_pr:
         return {
             "kind": "pull_request",
@@ -6588,14 +6689,8 @@ def resolve_handoff_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any]:
                 {
                     "pr": os.environ.get("REVIEW_PR", "").strip().lstrip("#"),
                     "head_sha": os.environ.get("REVIEW_HEAD_SHA", "").strip(),
-                    "head_branch": (
-                        os.environ.get("REVIEW_HEAD_BRANCH", "").strip()
-                        or f"task/{task_id}"
-                    ),
-                    "base": (
-                        os.environ.get("REVIEW_BASE", "").strip()
-                        or DEFAULT_APPROVAL_BASE_BRANCH
-                    ),
+                    "head_branch": head_branch,
+                    "base": base_branch,
                 },
                 task_id,
             ),
@@ -6607,6 +6702,24 @@ def resolve_handoff_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any]:
             "and REVIEW_HEAD_SHA after pushing the delivery branch; historical "
             "source_ref/github metadata is not a reviewable delivery identity."
         )
+
+    repository_id = task_primary_repository_id(config, dict(task))
+    repository_slug_value = repository_slug(config, repository_id)
+    if repository_slug_value:
+        discovered = _discover_open_pull_request_for_branch(
+            repository=repository_slug_value,
+            head_branch=head_branch,
+            base=base_branch,
+        )
+        if discovered:
+            return {
+                "kind": "pull_request",
+                **_validated_pr_binding(
+                    {**discovered, "head_branch": head_branch, "base": base_branch},
+                    task_id,
+                ),
+            }
+
     contract = _delivery_contract_payload(task)
     return {
         "kind": "artifact_contract",
