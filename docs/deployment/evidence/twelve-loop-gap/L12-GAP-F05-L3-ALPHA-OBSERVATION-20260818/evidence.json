@@ -1,0 +1,69 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-GAP-F05-L3-ALPHA-OBSERVATION-20260818 owner closeout gate.",
+    "note": "Observation and evidence verification for Alpha Replication runtime controller truth.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F05-L3-ALPHA-OBSERVATION-20260818/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Changes require a task-scoped commit and PR; append a record_log entry when the accepted evidence cut changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-18T15:15:00Z",
+    "evidence_cut_semantics": "Owner closeout packaging for Loop 3 (Alpha Replication) controller observation and runtime evidence verification.",
+    "id": "L12-GAP-F05-L3-ALPHA-OBSERVATION-20260818",
+    "overall_admission": "in_progress",
+    "owner": "Antigravity",
+    "phase": "Pantheon 12-loop minimum functional closure 2026-08-18",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F05-L3-ALPHA-OBSERVATION-20260818/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-GAP-F05-L3-ALPHA-OBSERVATION-20260818",
+    "title": "Publish Alpha Replication runtime controller truth"
+  },
+  "authorities": {
+    "actual_state": [
+      "research ExperimentTask",
+      "research ExperimentRun",
+      "replication queue and DLQ"
+    ],
+    "desired_state": [
+      "approved StrategySpec review decision",
+      "revalidation due policy"
+    ],
+    "task_packet": ".orchestrator/task-briefs/l12_gap_f05_l3_alpha_observation_20260818.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity for Alpha replication controller evidence and verification evidence",
+    "composes_with": [
+      "OPS-DOC-L12-CURRENT-GAP-RECHECK-20260818 code-first loop audit"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F05-L3-ALPHA-OBSERVATION-20260818/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F05-L3-ALPHA-OBSERVATION-20260818/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-GAP-F05-L3-ALPHA-OBSERVATION-20260818/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/research/alpha_replication/replication_controller.py",
+      "services/research/alpha_replication/test_replication_controller.py"
+    ],
+    "not_changing": "No wrapper worker or second loop state store is added.",
+    "owned_layer": "Alpha Replication runtime controller evidence verification"
+  },
+  "acceptance_proof": {
+    "alpha_owner_writes_fresh_loop_records": "Verified: Alpha owner writes LoopControllerRecord data on real review trigger terminal ExperimentRun readback and next receipt.",
+    "tenant_scope_alignment": "Verified: Tenant environment deployment SHA, failure reason, and heartbeat match authenticated Management scope.",
+    "no_wrapper_worker": "Verified: No wrapper worker or second loop state store added.",
+    "focused_pytest_suite": "37 passed in 14.77s across services/research/alpha_replication"
+  }
+}
