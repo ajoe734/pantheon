@@ -252,6 +252,12 @@
     "load_balance": {
       "enabled": true,
       "min_saturated_seconds": 900
+    },
+    "failure_loop": {
+      "enabled": true,
+      "max_failures_in_window": 3,
+      "window_seconds": 3600,
+      "max_auto_reassignments": 1
     }
   },
   "approvals": {
@@ -495,7 +501,7 @@
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
         "model": "gemini-3.6-flash-low",
-        "print_timeout": "15m"
+        "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
@@ -522,7 +528,7 @@
         "config_home": "/home/lupin/.gemini-agy2",
         "home": "/home/lupin/.gemini-agy2",
         "include_directories": true,
-        "print_timeout": "15m"
+        "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,

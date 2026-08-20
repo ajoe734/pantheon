@@ -1,0 +1,66 @@
+{
+  "schema_version": "pantheon.product_functional_closure.source_manual_once_evidence.v1",
+  "task": {
+    "id": "PFG-SOURCE-MANUAL-ONCE-20260820",
+    "title": "Provide a safe bounded manual one-tick Source pull for dev acceptance",
+    "owner": "Antigravity2",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-SOURCE-MANUAL-ONCE-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-SOURCE-MANUAL-ONCE-20260820/evidence.json",
+    "evidence_status": "owner_validation_passed_pending_independent_reviewer"
+  },
+  "scope": {
+    "owned_layer": [
+      "services/source_ingestion/controller_worker.py: locked default mode to reconcile_only with zero provider egress; added run_controller_once() with explicit connector requirement, cross-process locking, canonical request fingerprint binding, and replay deduplication / conflict rejection.",
+      "services/source_ingestion/controller_state.py: added recent_operations tracking to ControllerState and ControllerStateStore for idempotent operation replay.",
+      "docker-compose.yml: set default source-ingest-scheduler mode to reconcile_only with MAX_TICKS=0, unless-stopped restart, and zero provider selection.",
+      "scripts/source_ingest_scheduler_once.py: consolidated one-shot CLI onto controller_worker.py with allowlisted connector selection enforcement, --operation-key support, and terminal readback.",
+      "services/source_ingestion/tests/test_controller_worker_manual_once.py: contract tests for reconcile-only zero egress, rendered compose default startup proof, explicit connector selection rejection, request fingerprint conflict rejection, and concurrent multi-process same-key serialization proving single provider execution and terminal replay.",
+      "scripts/tests/test_source_ingest_scheduler_once.py: CLI contract tests for argument parsing, rejection on empty selection in reconcile_and_pull, --operation-key, conflict handling, error propagation, and process termination.",
+      "scripts/test_current_l12_compose_wiring.py: updated compose wiring tests for reconcile_only default and MAX_TICKS=0.",
+      "services/source_ingestion/test_compose_activation.py: updated compose activation tests for reconcile_only default and MAX_TICKS=0.",
+      "docs/operations/source-ingest-manual-one-shot.md: operational runbook for manual one-shot pull, cross-process serialization, request fingerprint binding, replay deduplication, and dev posture."
+    ],
+    "canonical_owner_and_store": {
+      "controller_owner": "services/source_ingestion/controller_worker.py",
+      "cli_entrypoint": "scripts/source_ingest_scheduler_once.py",
+      "local_state_store": "services/source_ingestion/controller_state.py:ControllerStateStore",
+      "operator_readback": "services/source_ingestion/main.py:/api/source-ingest/controller/readback"
+    },
+    "pr_5064_reuse": {
+      "candidate_pr": "https://github.com/ajoe734/pantheon/pull/5064",
+      "candidate_commit": "f4c941c765dd755beec918fd798772fc9a5435e4",
+      "disposition": "Inspected and consolidated candidate logic (lock dev pulls to one shot, default reconcile_only, explicit exact-host allowlist) into canonical controller contracts.",
+      "compose_boundary": "docker-compose.yml defaults aligned to reconcile_only with MAX_TICKS=0 and zero provider selection, matching nonprod VM deployment and ensuring zero-egress default startup."
+    },
+    "not_changing": [
+      "Continuous provider pull (never enabled as default).",
+      "Secondary scheduler daemons (scheduler_worker.py remains internal utility only)."
+    ]
+  },
+  "acceptance_verification": {
+    "criterion_1_default_reconcile_only": "controller_worker.py:config_from_env() and docker-compose.yml defaults resolve to RECONCILE_ONLY_MODE, scheduled_tick truth, MAX_TICKS=0, and no provider selection; verified rendered compose startup produces zero provider egress without configuration errors.",
+    "criterion_2_pr_5064_candidate_reuse": "Inspected PR #5064 and consolidated its bounded pull and reconcile-only rules into Python contracts without creating duplicate parallel implementations.",
+    "criterion_3_explicit_one_tick_pull": "scripts/source_ingest_scheduler_once.py and controller_worker.py:run_controller_once() strictly require explicitly selected connector IDs for reconcile_and_pull mode, execute exactly 1 tick (max_ticks=1), validate terminal readback, and emit canonical JSON.",
+    "criterion_4_boundedness_and_idempotency": "Process exits immediately upon completion (rc=0 on success, rc=1 on error); executions serialize via cross-process file lock; operations bind to canonical request fingerprints; replayed operations with matching fingerprints return terminal readback without invoking redundant provider ticks, while mismatched fingerprints reject with operation_key_conflict; concurrent multi-process execution proves exactly one provider tick across competing processes.",
+    "criterion_5_code_disposition_consolidation": "scripts/source_ingest_scheduler_once.py consolidated onto canonical controller; audited legacy scheduler utilities per code-disposition.json."
+  },
+  "validation": {
+    "commands": [
+      "python3 -m py_compile services/source_ingestion/controller_worker.py services/source_ingestion/controller_state.py scripts/source_ingest_scheduler_once.py services/source_ingestion/tests/test_controller_worker_manual_once.py scripts/tests/test_source_ingest_scheduler_once.py scripts/test_current_l12_compose_wiring.py services/source_ingestion/test_compose_activation.py",
+      "pytest -q services/source_ingestion/tests/test_controller_worker_manual_once.py scripts/tests/test_source_ingest_scheduler_once.py services/source_ingestion/test_compose_activation.py scripts/test_current_l12_compose_wiring.py scripts/test_source_ingest_deploy_diagnostics_contract.py services/source_ingestion/tests/test_controller_worker.py",
+      "git diff --check"
+    ],
+    "results": [
+      "py_compile succeeded with zero errors.",
+      "100 passed across test_controller_worker_manual_once.py, test_source_ingest_scheduler_once.py, test_compose_activation.py, test_current_l12_compose_wiring.py, test_source_ingest_deploy_diagnostics_contract.py, and test_controller_worker.py.",
+      "git diff --check passed with zero whitespace or formatting errors."
+    ]
+  },
+  "review_decision": {
+    "decision": "owner_validation_passed_pending_independent_reviewer",
+    "reviewer_action_required": "Codex2 must independently inspect this committed manifest and exact PR head, rerun the focused test suite, and bind canonical approval with this review_file before merge."
+  }
+}

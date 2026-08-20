@@ -298,6 +298,7 @@ class ControllerState:
     schedule: dict[str, Any] = field(default_factory=dict)
     actual_readback: dict[str, Any] = field(default_factory=dict)
     migration: dict[str, Any] = field(default_factory=dict)
+    recent_operations: dict[str, Any] = field(default_factory=dict)
 
     def record_startup_missed(self, *, interval_seconds: int, now: datetime | None = None) -> int:
         anchor = parse_utc(self.last_tick_at or self.heartbeat_at)
@@ -364,6 +365,21 @@ class ControllerState:
         if actual_readback is not None:
             self.actual_readback = summarize_actual_readback(actual_readback)
 
+    def record_operation(
+        self,
+        operation_key: str,
+        operation_payload: Mapping[str, Any],
+        *,
+        max_retained: int = 32,
+    ) -> None:
+        key = str(operation_key).strip()
+        if not key:
+            return
+        if len(self.recent_operations) >= max_retained and key not in self.recent_operations:
+            oldest_key = next(iter(self.recent_operations))
+            del self.recent_operations[oldest_key]
+        self.recent_operations[key] = dict(operation_payload)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": SCHEMA_VERSION,
@@ -391,6 +407,7 @@ class ControllerState:
             "schedule": summarize_schedule(self.schedule),
             "actual_readback": summarize_actual_readback(self.actual_readback),
             "migration": _scalar_summary(self.migration),
+            "recent_operations": dict(self.recent_operations),
         }
 
     @classmethod
@@ -430,6 +447,7 @@ class ControllerState:
             schedule=summarize_schedule(payload.get("schedule") or {}),
             actual_readback=summarize_actual_readback(payload.get("actual_readback") or {}),
             migration=migration,
+            recent_operations=dict(payload.get("recent_operations") or {}),
         )
 
 

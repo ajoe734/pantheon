@@ -2504,6 +2504,213 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
         self.assertNotIn("TASK-1", state["load_balance_watch"])
 
 
+class RecentTaskFailureCountsTests(unittest.TestCase):
+    """recent_task_failure_counts: a bounded, offset-free tail read of the
+    activity log -- never a stored cross-cycle byte position, so it stays
+    correct across log rotation for free.
+    """
+
+    def _config(self, tmp_path: Path) -> dict[str, object]:
+        return {"paths": {"activity_log": str(tmp_path / "ai-activity-log.jsonl")}}
+
+    def _write_log(self, tmp_path: Path, entries: list[dict[str, object]]) -> None:
+        path = tmp_path / "ai-activity-log.jsonl"
+        with path.open("w", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry) + "\n")
+
+    def test_counts_worker_failed_within_window_only(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp_path = Path(raw)
+            now = datetime.now(timezone.utc)
+            recent = (now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            old = (now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._write_log(
+                tmp_path,
+                [
+                    {"type": "worker_failed", "task_id": "TASK-1", "ts": recent},
+                    {"type": "worker_failed", "task_id": "TASK-1", "ts": recent},
+                    {"type": "worker_failed", "task_id": "TASK-1", "ts": old},
+                    {"type": "worker_started", "task_id": "TASK-1", "ts": recent},
+                    {"type": "worker_failed", "task_id": "TASK-2", "ts": recent},
+                ],
+            )
+            counts = supervisor.recent_task_failure_counts(
+                self._config(tmp_path), window_seconds=3600
+            )
+        self.assertEqual(counts.get("TASK-1"), 2)
+        self.assertEqual(counts.get("TASK-2"), 1)
+
+    def test_missing_log_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp_path = Path(raw)
+            counts = supervisor.recent_task_failure_counts(
+                self._config(tmp_path), window_seconds=3600
+            )
+        self.assertEqual(counts, {})
+
+    def test_only_reads_the_tail_not_the_whole_file(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp_path = Path(raw)
+            now = datetime.now(timezone.utc)
+            recent = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+            padding = [
+                {"type": "worker_started", "task_id": "PADDING", "ts": recent, "note": "x" * 200}
+                for _ in range(5000)
+            ]
+            self._write_log(
+                tmp_path,
+                padding + [{"type": "worker_failed", "task_id": "TASK-1", "ts": recent}],
+            )
+            counts = supervisor.recent_task_failure_counts(
+                self._config(tmp_path), window_seconds=3600, tail_bytes=4096
+            )
+        self.assertEqual(counts.get("TASK-1"), 1)
+        self.assertNotIn("PADDING", counts)
+
+
+class FailureLoopAutoGovernanceTests(unittest.TestCase):
+    """reconcile_failure_loops: bounded auto-reassign, then escalate to a
+    Human/Ops hold, for a task that keeps failing under its owner. Off by
+    default.
+    """
+
+    def setUp(self) -> None:
+        self.config = config_fixture()
+        self.config["worker_reassignment"]["failure_loop"] = {
+            "enabled": True,
+            "max_failures_in_window": 3,
+            "window_seconds": 3600,
+            "max_auto_reassignments": 1,
+        }
+
+    def test_disabled_by_default_never_touches_a_failing_task(self) -> None:
+        self.config["worker_reassignment"]["failure_loop"]["enabled"] = False
+        task = task_fixture(status="in_progress", reviewer="Human/Ops")
+        state = {"workers": {}}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "recent_task_failure_counts", return_value={"TASK-1": 5}
+            ),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+            mock.patch.object(supervisor, "record_failure_loop_blocker") as blocked,
+        ):
+            changed = supervisor.reconcile_failure_loops(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+        blocked.assert_not_called()
+
+    def test_below_threshold_does_not_reassign(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = {"workers": {}}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "recent_task_failure_counts", return_value={"TASK-1": 2}
+            ),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+        ):
+            changed = supervisor.reconcile_failure_loops(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+
+    def test_active_worker_blocks_failure_loop_action(self) -> None:
+        task = task_fixture(status="in_progress", reviewer="Human/Ops")
+        state = {
+            "workers": {
+                "run-a": {
+                    "run_id": "run-a",
+                    "task_id": "TASK-1",
+                    "agent_id": "codex",
+                    "status": "running",
+                }
+            }
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "recent_task_failure_counts", return_value={"TASK-1": 5}
+            ),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+        ):
+            changed = supervisor.reconcile_failure_loops(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+
+    def test_already_on_hold_is_left_alone(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        task["waiting_for"] = "Human/Ops"
+        state = {"workers": {}}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "recent_task_failure_counts", return_value={"TASK-1": 5}
+            ),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+            mock.patch.object(supervisor, "record_failure_loop_blocker") as blocked,
+        ):
+            changed = supervisor.reconcile_failure_loops(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+        blocked.assert_not_called()
+
+    def test_first_breach_auto_reassigns_to_the_next_fallback(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = {
+            "workers": {},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "recent_task_failure_counts", return_value={"TASK-1": 3}
+            ),
+            mock.patch.object(
+                supervisor, "persist_task_reassignment", return_value=True
+            ) as persisted,
+        ):
+            changed = supervisor.reconcile_failure_loops(self.config, state)
+        self.assertTrue(changed)
+        self.assertEqual(persisted.call_args.kwargs["new_owner"], "Codex2")
+        self.assertEqual(persisted.call_args.kwargs["expected_owner"], "Codex")
+        self.assertEqual(state["failure_loop_watch"]["TASK-1"]["auto_reassignments"], 1)
+
+    def test_breach_after_reassignment_budget_exhausted_escalates_to_hold(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = {
+            "workers": {},
+            "failure_loop_watch": {"TASK-1": {"auto_reassignments": 1}},
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor, "recent_task_failure_counts", return_value={"TASK-1": 3}
+            ),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+            mock.patch.object(
+                supervisor,
+                "record_failure_loop_blocker",
+                return_value={"task_id": "TASK-1"},
+            ) as blocked,
+        ):
+            changed = supervisor.reconcile_failure_loops(self.config, state)
+        self.assertTrue(changed)
+        persisted.assert_not_called()
+        self.assertEqual(blocked.call_args.kwargs["task_id"], "TASK-1")
+        self.assertNotIn("TASK-1", state["failure_loop_watch"])
+
+
 class RuntimeAndFailureSemanticsTests(unittest.TestCase):
     @staticmethod
     def _owner_worker(*, generation: int) -> dict[str, object]:
@@ -2917,7 +3124,7 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                     ast.unparse(node.value.value.func),
                     "rewrite_task_machine.transition",
                 )
-        self.assertEqual(len(writes), 4)
+        self.assertEqual(len(writes), 5)
 
     def test_file_worktree_quarantine_is_not_task_state(self) -> None:
         source = inspect.getsource(supervisor._quarantine_incomplete_worker_path)

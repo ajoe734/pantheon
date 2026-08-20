@@ -152,6 +152,40 @@ def test_worker_reassignment_drift_is_actionable_by_default() -> None:
     }
 
 
+def test_failure_loop_drift_is_actionable_by_default() -> None:
+    repo = {
+        "worker_reassignment": {
+            "failure_loop": {
+                "enabled": True,
+                "max_failures_in_window": 3,
+                "window_seconds": 3600,
+                "max_auto_reassignments": 1,
+            }
+        }
+    }
+    live = {
+        "worker_reassignment": {
+            "failure_loop": {
+                "enabled": False,
+                "max_failures_in_window": 3,
+                "window_seconds": 3600,
+                "max_auto_reassignments": 1,
+            }
+        }
+    }
+
+    report = find_drift(repo, live)
+
+    assert report["intentional"] == []
+    assert report["drift"] == [
+        {
+            "path": "worker_reassignment.failure_loop",
+            "repo": repo["worker_reassignment"]["failure_loop"],
+            "live": live["worker_reassignment"]["failure_loop"],
+        }
+    ]
+
+
 def test_find_drift_missing_flag_is_reported_not_drift() -> None:
     report = find_drift({}, {}, critical_flags=("ready_dispatcher.enabled",), overrides=frozenset())
     assert report["drift"] == []
