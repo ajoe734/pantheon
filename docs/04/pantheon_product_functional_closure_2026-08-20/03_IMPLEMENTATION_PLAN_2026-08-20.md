@@ -46,8 +46,9 @@ active state的地方修掉。
 ### Wave 3 — 單一Compose integration
 
 由一個task統一修改`docker-compose.yml`與dev env wiring，避免每個component worker各改一份。
-驗證Source預設仍`reconcile_only`、paper只spawn executable binding、Agora consumers與Management AI
-health/readback可見。這個task不得開啟continuous Source pull或live capital。
+把 raw Compose fallback 收斂為`reconcile_only`（受管dev deploy目前已明確注入此值），並驗證
+paper只spawn executable binding、Agora consumers與Management AI health/readback可見。這個task
+不得開啟continuous Source pull或live capital。
 
 ### Wave 4 — Current deployed journeys
 

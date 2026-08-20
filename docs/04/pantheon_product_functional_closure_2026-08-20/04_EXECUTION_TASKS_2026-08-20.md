@@ -9,10 +9,11 @@ catalog本身當成產品完成證據。
 
 ## 1. Dedup / reuse decisions
 
-保留並等待既有task完成：
+保留既有task的terminal fact：
 
-- `L12-GAP-F06-BFF-FUNCTIONAL-HEALTH-20260818`：目前`in_progress`，仍是existing BFF worker
-  health/outcome wiring；新cross-loop task依賴它，不重建另一monitor。
+- `L12-GAP-F06-BFF-FUNCTIONAL-HEALTH-20260818`：已由PR #5061合併為
+  `cd93c201076f7767366a868a1b45d75a91e9317e`並terminal completed；新cross-loop task保留這個
+  已滿足的external dependency，不重建另一monitor，也不重做F06。
 
 新task是follow-up而不是重開terminal history：
 
