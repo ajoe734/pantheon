@@ -16,7 +16,14 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 from uuid import uuid4
 
-from .controller_state import ControllerState, ControllerStateError, ControllerStateStore, parse_utc, utc_now
+from .controller_state import (
+    ControllerState,
+    ControllerStateError,
+    ControllerStateStore,
+    parse_utc,
+    summarize_actual_readback,
+    utc_now,
+)
 from .controller_auth import load_controller_token
 from .scheduler_worker import run_tick as run_schedule_tick
 
@@ -998,18 +1005,8 @@ def run_controller_tick(
                 and isinstance(item.get("latest_source_record"), Mapping)
             )
         ]
-        accepted_actual = {
-            "pre_captured_at": pre_actual.get("captured_at"),
-            "captured_at": actual.get("captured_at"),
-            "connector_count": actual.get("connector_count"),
-            "source_record_count": actual.get("source_record_count"),
-            "dlq_count": actual.get("dlq_count"),
-            "pending_dlq_count": actual.get("pending_dlq_count"),
-            "unresolved_dlq_count": actual.get("unresolved_dlq_count"),
-            "dlq_status_counts": actual.get("dlq_status_counts"),
-            "frontier_backlog": actual.get("frontier_backlog"),
-            "max_lag_seconds": actual.get("max_lag_seconds"),
-        }
+        accepted_actual = summarize_actual_readback(actual)
+        accepted_actual["pre_captured_at"] = pre_actual.get("captured_at")
         _async(
             writer.record_success(
                 LOOP_ID,
@@ -1045,7 +1042,11 @@ def run_controller_tick(
         state.record_success(
             desired_state=desired_meta,
             reconcile={"summary": reconcile.get("summary"), "connector_ids": sorted(wanted_connector_ids)},
-            schedule={"summary": schedule.get("summary")},
+            schedule={
+                "mode": config.mode,
+                "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
+                "summary": schedule.get("summary"),
+            },
             actual_readback=accepted_actual,
         )
         store.save(state)
