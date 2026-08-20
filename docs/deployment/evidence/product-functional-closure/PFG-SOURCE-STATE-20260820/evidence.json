@@ -1,0 +1,77 @@
+{
+  "schema_version": "pantheon.product_functional_closure.source_state_evidence.v1",
+  "task": {
+    "id": "PFG-SOURCE-STATE-20260820",
+    "title": "Bound Source controller state growth and restore constant-cost readiness",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-SOURCE-STATE-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-SOURCE-STATE-20260820/evidence.json",
+    "evidence_status": "owner_validation_passed_pending_independent_reviewer"
+  },
+  "scope": {
+    "owned_layer": [
+      "The ControllerStateStore v1-to-v2 migration and bounded persistence projection.",
+      "Controller-worker success and failure state persistence.",
+      "Fixed-cost Source health, readiness, and metrics probes.",
+      "Focused state-growth, migration, and 260-connector readiness tests."
+    ],
+    "canonical_owner_and_store": {
+      "controller_owner": "services/source_ingestion/controller_worker.py",
+      "local_restart_store": "services/source_ingestion/controller_state.py:ControllerStateStore",
+      "operator_readback": "services/source_ingestion/main.py:/api/source-ingest/controller/readback"
+    },
+    "retired_from_health_probes": [
+      "connector_store.list_configs()/read_snapshot() journal replay",
+      "schedule_config_store.list_schedules() journal replay",
+      "store.read_freshness_snapshot()/list_runs()/list_frontier() journal replay",
+      "evidence_repository and dead-letter full scans"
+    ],
+    "not_changing": [
+      "SOURCE_INGEST_CONTROLLER_MODE defaults or reconcile_only policy",
+      "provider pull execution, connector reconciliation ownership, or scheduler topology",
+      "SourceRecord deletion, data journal retention, deployment sizing, or external provider credentials",
+      "a second controller state store"
+    ]
+  },
+  "migration_and_rollback": {
+    "migration": "A checksummed source_ingest_controller_state.v1 envelope is compacted in memory, backed up read-only once, and atomically replaced by source_ingest_controller_state.v2 on the controller's normal startup save.",
+    "preserved_truth": [
+      "controller/deployment identity and counters",
+      "connector inventory digest and bounded identities",
+      "schedule summary",
+      "latest terminal SourceRecord identity/status/timestamp per retained connector",
+      "DLQ, frontier, and lag counters"
+    ],
+    "fail_closed": [
+      "checksum mismatch remains a ControllerStateError",
+      "oversized or unreadable state yields bounded degraded_data readiness rather than journal replay",
+      "no provider egress is requested by readiness or migration"
+    ]
+  },
+  "validation": {
+    "commands": [
+      "python3 -m py_compile services/source_ingestion/controller_state.py services/source_ingestion/controller_worker.py services/source_ingestion/main.py services/source_ingestion/tests/test_source_readiness_bounded.py",
+      "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/test_service.py services/source_ingestion/tests/test_source_readiness_bounded.py",
+      "git diff --check"
+    ],
+    "results": [
+      "86 passed; one upstream FastAPI TestClient deprecation warning.",
+      "The 100-tick failure test keeps the serialized state below 200 KiB and prevents controller_state recursion.",
+      "The migration test proves v1 checksum readback, v2 rewrite, read-only legacy backup, connector/schedule/terminal identity preservation, and checksum continuity.",
+      "The 260-connector health/readiness test places a multi-megabyte current journal beside the state file, forbids every journal store access, returns 200 from /readyz and /health, and keeps provider_egress_attempted false."
+    ]
+  },
+  "review_decision": {
+    "decision": "owner_validation_passed_pending_independent_reviewer",
+    "reviewer_action_required": "Antigravity must independently inspect this committed manifest and exact PR head, rerun the focused suite, and bind canonical approval with this review_file before merge.",
+    "acceptance_mapping": {
+      "bounded_state": "controller_state.py summary projection plus 100-tick regression",
+      "safe_migration": "ControllerStateStore v1 migration and read-only backup regression",
+      "bounded_probes": "main.py controller-state budget plus 260-connector no-journal-replay regression",
+      "single_owner_no_egress": "controller_worker remains the writer; no controller mode/provider execution change"
+    }
+  }
+}

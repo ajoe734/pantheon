@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -9,10 +10,13 @@ from typing import Any
 import pytest
 
 from services.source_ingestion import controller_worker
+from services.source_ingestion import controller_state
 from services.source_ingestion.controller_state import (
     ControllerState,
     ControllerStateError,
     ControllerStateStore,
+    LEGACY_SCHEMA_VERSION,
+    SCHEMA_VERSION,
 )
 from services.source_ingestion.controller_worker import (
     ControllerConfig,
@@ -245,6 +249,25 @@ def _actual_readback() -> dict[str, Any]:
             }
         ],
     }
+
+
+def _large_actual_readback(connector_count: int = 260) -> dict[str, Any]:
+    actual = _actual_readback()
+    connector_template = actual["connectors"][0]
+    connectors = []
+    for index in range(connector_count):
+        connector_id = f"connector-{index:03d}"
+        connector = deepcopy(connector_template)
+        connector["connector_id"] = connector_id
+        connector["connector"]["connector_id"] = connector_id
+        connector["schedule"]["connector_id"] = connector_id
+        connector["latest_source_record"]["connector_id"] = connector_id
+        connector["latest_source_record"]["source_id"] = f"source-{index:03d}"
+        connectors.append(connector)
+    actual["connector_count"] = connector_count
+    actual["source_record_count"] = connector_count
+    actual["connectors"] = connectors
+    return actual
 
 
 def _validate_terminal_readback(
@@ -512,6 +535,77 @@ def test_controller_state_counts_ticks_missed_while_worker_was_down() -> None:
 
     assert missed == 2
     assert state.startup_missed_ticks == 2
+
+
+def test_controller_state_failure_projection_stays_bounded_across_100_ticks() -> None:
+    state = _state()
+    serialized_sizes: list[int] = []
+
+    for tick in range(100):
+        actual = _large_actual_readback()
+        actual["controller_state"] = {
+            "controller_id": state.controller_id,
+            "previous_snapshot": state.to_dict(),
+        }
+        actual["captured_at"] = f"2026-07-14T08:{tick:02d}:00Z"
+        state.record_failure(
+            stage="actual_readback",
+            reason="bounded test failure",
+            reconcile={"results": [{"actions": [{"connector_id": "connector-000"}]}]},
+            schedule={"summary": {"total_due": 260, "total_failed": 1}},
+            actual_readback=actual,
+        )
+        serialized = state.to_dict()
+        serialized_sizes.append(len(json.dumps(serialized, sort_keys=True)))
+        assert "controller_state" not in serialized["actual_readback"]
+        assert serialized["actual_readback"]["terminal_connectors"]["count"] == 260
+        assert len(serialized["actual_readback"]["terminal_connectors"]["items"]) == 260
+
+    assert max(serialized_sizes) < 200_000
+    assert max(serialized_sizes) - min(serialized_sizes) < 1_024
+
+
+def test_controller_state_store_migrates_legacy_state_with_read_only_backup(tmp_path: Path) -> None:
+    path = tmp_path / "controller-state.json"
+    legacy_payload = _state().to_dict()
+    legacy_payload["schema_version"] = LEGACY_SCHEMA_VERSION
+    legacy_payload["reconcile"] = {
+        "results": [
+            {"actions": [{"connector_id": "connector-000"}, {"connector_id": "connector-259"}]}
+        ]
+    }
+    legacy_payload["schedule"] = {"summary": {"total_due": 260, "total_succeeded": 260}}
+    legacy_payload["actual_readback"] = _large_actual_readback()
+    prior_snapshot = deepcopy(legacy_payload)
+    legacy_payload["actual_readback"]["controller_state"] = {"prior_state": prior_snapshot}
+    path.write_text(
+        json.dumps(
+            {
+                "state": legacy_payload,
+                "checksum_algorithm": "sha256",
+                "checksum": controller_state._checksum(legacy_payload),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store = ControllerStateStore(path)
+    migrated = store.load()
+
+    assert migrated is not None
+    assert migrated.reconcile["connector_inventory"]["connector_ids"] == ["connector-000", "connector-259"]
+    assert migrated.schedule["summary"]["total_due"] == 260
+    assert migrated.actual_readback["terminal_connectors"]["items"][259]["terminal"]["source_id"] == "source-259"
+    assert "controller_state" not in migrated.actual_readback
+
+    store.save(migrated)
+
+    rewritten = json.loads(path.read_text(encoding="utf-8"))
+    backups = list(tmp_path.glob("controller-state.json.legacy-v1-*.json"))
+    assert rewritten["state"]["schema_version"] == SCHEMA_VERSION
+    assert len(backups) == 1
+    assert (backups[0].stat().st_mode & stat.S_IWUSR) == 0
+    assert json.loads(backups[0].read_text(encoding="utf-8"))["state"]["schema_version"] == LEGACY_SCHEMA_VERSION
 
 
 @pytest.mark.parametrize(
