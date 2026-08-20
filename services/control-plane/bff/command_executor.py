@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
 from models import CommandStatus, CommandType
+from command_adapters import ActionUnavailableError, dispatch_domain_command
 
 log = logging.getLogger(__name__)
 
@@ -557,7 +558,7 @@ def _execute_approve_decision(
         "command_id": command_id,
         "decision_id": body.get("decision_id", decision_id),
         "decision_state": body.get("decision_state", "approved"),
-        "status": body.get("status"),
+        "status": body.get("status") or body.get("decision_state", "approved"),
         "audit_id": body.get("audit_id"),
         "approved_at": body.get("approved_at"),
     }
@@ -580,7 +581,7 @@ def _execute_reject_decision(
         "command_id": command_id,
         "decision_id": body.get("decision_id", decision_id),
         "decision_state": body.get("decision_state", "rejected"),
-        "status": body.get("status"),
+        "status": body.get("status") or body.get("decision_state", "rejected"),
         "audit_id": body.get("audit_id"),
         "rejected_at": body.get("rejected_at"),
     }
@@ -1820,6 +1821,12 @@ def _execute_emergency_containment_authority(
     }
 
 
+def _make_adapter_executor(cmd_type: CommandType):
+    return lambda cid, p, auth_token=None, mfa_token=None: dispatch_domain_command(
+        cid, cmd_type, p, auth_token=auth_token, mfa_token=mfa_token
+    )
+
+
 # Dispatch table: CommandType -> execution function
 _EXECUTORS = {
     CommandType.ADVANCE_LIFECYCLE: _execute_advance_lifecycle,
@@ -1852,40 +1859,53 @@ _EXECUTORS = {
     CommandType.REVIEW_MUTATION: _execute_review_mutation,
     CommandType.EXECUTE_MUTATION: _execute_execute_mutation,
     CommandType.REMEDIATE_SENTINEL_INTERVENTION: _execute_remediate_sentinel_intervention,
-    CommandType.CAPITAL_POOL_ACTION: _execute_bff_action_adapter,
-    CommandType.RANKING_FORMULA_ACTION: _execute_bff_action_adapter,
-    CommandType.REBALANCE_ACTION: _execute_bff_action_adapter,
-    CommandType.RANKING_ACTION: _execute_bff_action_adapter,
-    CommandType.STRATEGY_ACTION: _execute_bff_action_adapter,
-    CommandType.PERSONA_ACTION: _execute_bff_action_adapter,
-    CommandType.TOOL_ACTION: _execute_bff_action_adapter,
-    CommandType.MCP_SERVER_ACTION: _execute_bff_action_adapter,
-    CommandType.SKILL_ACTION: _execute_bff_action_adapter,
-    CommandType.REVIEW_ACTION: _execute_bff_action_adapter,
-    CommandType.DEPLOYMENT_ACTION: _execute_bff_action_adapter,
-    CommandType.RUNTIME_ACTION: _execute_bff_action_adapter,
-    CommandType.RISK_ALERT_ACTION: _execute_bff_action_adapter,
-    CommandType.INCIDENT_ACTION: _execute_bff_action_adapter,
-    CommandType.EVOLUTION_PROGRAM_ACTION: _execute_bff_action_adapter,
-    CommandType.EXPERIMENT_ACTION: _execute_bff_action_adapter,
-    CommandType.JOB_ACTION: _execute_bff_action_adapter,
-    CommandType.AUDIT_EXPORT: _execute_bff_action_adapter,
-    CommandType.ALERT_ACKNOWLEDGE: _execute_bff_action_adapter,
-    CommandType.HUMAN_GATE_APPROVE: _execute_bff_action_adapter,
-    CommandType.HUMAN_GATE_REJECT: _execute_bff_action_adapter,
-    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _execute_bff_action_adapter,
-    CommandType.HUMAN_GATE_REVOKE: _execute_bff_action_adapter,
-    CommandType.HUMAN_GATE_EXTEND_TTL: _execute_bff_action_adapter,
-    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _execute_bff_action_adapter,
-    CommandType.OBSERVE: _execute_bff_action_adapter,
-    CommandType.REQUEST_REVIEW: _execute_bff_action_adapter,
-    CommandType.PAUSE_PAPER_RUNTIME: _execute_bff_action_adapter,
-    CommandType.RESUME_PAPER_RUNTIME: _execute_bff_action_adapter,
-    CommandType.DEMOTE: _execute_bff_action_adapter,
-    CommandType.PROMOTE_CANDIDATE: _execute_bff_action_adapter,
-    CommandType.REBALANCE_PROPOSAL: _execute_bff_action_adapter,
+    CommandType.CAPITAL_POOL_ACTION: _make_adapter_executor(CommandType.CAPITAL_POOL_ACTION),
+    CommandType.RANKING_FORMULA_ACTION: _make_adapter_executor(CommandType.RANKING_FORMULA_ACTION),
+    CommandType.REBALANCE_ACTION: _make_adapter_executor(CommandType.REBALANCE_ACTION),
+    CommandType.RANKING_ACTION: _make_adapter_executor(CommandType.RANKING_ACTION),
+    CommandType.STRATEGY_ACTION: _make_adapter_executor(CommandType.STRATEGY_ACTION),
+    CommandType.PERSONA_ACTION: _make_adapter_executor(CommandType.PERSONA_ACTION),
+    CommandType.TOOL_ACTION: _make_adapter_executor(CommandType.TOOL_ACTION),
+    CommandType.MCP_SERVER_ACTION: _make_adapter_executor(CommandType.MCP_SERVER_ACTION),
+    CommandType.SKILL_ACTION: _make_adapter_executor(CommandType.SKILL_ACTION),
+    CommandType.REVIEW_ACTION: _make_adapter_executor(CommandType.REVIEW_ACTION),
+    CommandType.DEPLOYMENT_ACTION: _make_adapter_executor(CommandType.DEPLOYMENT_ACTION),
+    CommandType.RUNTIME_ACTION: _make_adapter_executor(CommandType.RUNTIME_ACTION),
+    CommandType.RISK_ALERT_ACTION: _make_adapter_executor(CommandType.RISK_ALERT_ACTION),
+    CommandType.INCIDENT_ACTION: _make_adapter_executor(CommandType.INCIDENT_ACTION),
+    CommandType.EVOLUTION_PROGRAM_ACTION: _make_adapter_executor(CommandType.EVOLUTION_PROGRAM_ACTION),
+    CommandType.EXPERIMENT_ACTION: _make_adapter_executor(CommandType.EXPERIMENT_ACTION),
+    CommandType.JOB_ACTION: _make_adapter_executor(CommandType.JOB_ACTION),
+    CommandType.AUDIT_EXPORT: _make_adapter_executor(CommandType.AUDIT_EXPORT),
+    CommandType.ALERT_ACKNOWLEDGE: _make_adapter_executor(CommandType.ALERT_ACKNOWLEDGE),
+    CommandType.HUMAN_GATE_APPROVE: _make_adapter_executor(CommandType.HUMAN_GATE_APPROVE),
+    CommandType.HUMAN_GATE_REJECT: _make_adapter_executor(CommandType.HUMAN_GATE_REJECT),
+    CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE: _make_adapter_executor(CommandType.HUMAN_GATE_REQUEST_MORE_EVIDENCE),
+    CommandType.HUMAN_GATE_REVOKE: _make_adapter_executor(CommandType.HUMAN_GATE_REVOKE),
+    CommandType.HUMAN_GATE_EXTEND_TTL: _make_adapter_executor(CommandType.HUMAN_GATE_EXTEND_TTL),
+    CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT: _make_adapter_executor(CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT),
+    CommandType.OBSERVE: _make_adapter_executor(CommandType.OBSERVE),
+    CommandType.REQUEST_REVIEW: _make_adapter_executor(CommandType.REQUEST_REVIEW),
+    CommandType.PAUSE_PAPER_RUNTIME: _make_adapter_executor(CommandType.PAUSE_PAPER_RUNTIME),
+    CommandType.RESUME_PAPER_RUNTIME: _make_adapter_executor(CommandType.RESUME_PAPER_RUNTIME),
+    CommandType.DEMOTE: _make_adapter_executor(CommandType.DEMOTE),
+    CommandType.PROMOTE_CANDIDATE: _make_adapter_executor(CommandType.PROMOTE_CANDIDATE),
+    CommandType.REBALANCE_PROPOSAL: _make_adapter_executor(CommandType.REBALANCE_PROPOSAL),
     CommandType.APPROVED_APPLY: _execute_approved_rebalance_apply,
     CommandType.EMERGENCY_CONTAINMENT: _execute_emergency_containment_authority,
+    CommandType.RECORD_SPONSOR_DECISION: _make_adapter_executor(CommandType.RECORD_SPONSOR_DECISION),
+    CommandType.DEPLOYMENT_CREATE: _make_adapter_executor(CommandType.DEPLOYMENT_CREATE),
+    CommandType.DEPLOYMENT_PATCH: _make_adapter_executor(CommandType.DEPLOYMENT_PATCH),
+    CommandType.REBALANCE_PATCH: _make_adapter_executor(CommandType.REBALANCE_PATCH),
+    CommandType.V5_INTERVENTION_ACTION: _make_adapter_executor(CommandType.V5_INTERVENTION_ACTION),
+    CommandType.DECIDE_V5_INTERVENTION: _make_adapter_executor(CommandType.DECIDE_V5_INTERVENTION),
+    CommandType.SENTINEL_FINDING_STATUS: _make_adapter_executor(CommandType.SENTINEL_FINDING_STATUS),
+    CommandType.SENTINEL_REMEDIATION_BUILD: _make_adapter_executor(CommandType.SENTINEL_REMEDIATION_BUILD),
+    CommandType.SENTINEL_REMEDIATION_EXECUTE: _make_adapter_executor(CommandType.SENTINEL_REMEDIATION_EXECUTE),
+    CommandType.AGORA_SIGNAL_FEEDBACK: _make_adapter_executor(CommandType.AGORA_SIGNAL_FEEDBACK),
+    CommandType.AGORA_MESSAGE_ACTION: _make_adapter_executor(CommandType.AGORA_MESSAGE_ACTION),
+    CommandType.AGORA_INSIGHT_ACTION: _make_adapter_executor(CommandType.AGORA_INSIGHT_ACTION),
+    CommandType.AGORA_MEMORY_ACTION: _make_adapter_executor(CommandType.AGORA_MEMORY_ACTION),
 }
 
 
@@ -1900,15 +1920,15 @@ def execute_command(
     auth_token: Optional[str] = None,
     mfa_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Execute a command by dispatching to the appropriate internal API endpoint.
+    """Execute a command by dispatching to the appropriate internal API endpoint or domain adapter.
 
     Returns the result payload on success.
     Raises Exception on any failure (caller should catch and record as FAILED).
     """
     executor = _EXECUTORS.get(command_type)
-    if executor is None:
-        raise ValueError(f"No executor for command type: {command_type}")
-    return executor(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
+    if executor is not None:
+        return executor(command_id, params, auth_token=auth_token, mfa_token=mfa_token)
+    return dispatch_domain_command(command_id, command_type, params, auth_token=auth_token, mfa_token=mfa_token)
 
 
 def execute_command_with_status(
@@ -1933,6 +1953,21 @@ def execute_command_with_status(
         result["execution_started_at"] = started_at
         result["execution_completed_at"] = completed_at
         return CommandStatus.EXECUTED, result, None
+    except ActionUnavailableError as exc:
+        error = {
+            "code": exc.error_code,
+            "message": exc.message,
+            "action_id": exc.action_id,
+            "entity_type": exc.entity_type,
+            "started_at": started_at,
+            "failed_at": _utc_now(),
+            "downstream_status": 422,
+            "retryable": False,
+            "userActionable": False,
+            "suggestion": exc.suggestion,
+        }
+        log.warning("Command %s action unavailable: %s", command_id, error["message"])
+        return CommandStatus.FAILED, None, error
     except urllib.error.HTTPError as exc:
         retryable = exc.code >= 500
         error = {

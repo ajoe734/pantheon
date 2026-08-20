@@ -4927,6 +4927,38 @@ def load_balance_settings(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def failure_loop_settings(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Read-only policy for the repeated-failure auto-governance loop.
+
+    Off by default. When a task fails ``max_failures_in_window`` times
+    within ``window_seconds`` under its current owner, it is auto-reassigned
+    to the next configured ``owner_fallbacks`` candidate -- same governed
+    pipeline as ``assignment_saturated_recoverable`` -- up to
+    ``max_auto_reassignments`` times. If it keeps failing at that rate even
+    after exhausting those attempts, it is put on an explicit Human/Ops hold
+    instead of being bounced between agents forever: auto-remediation gets a
+    bounded number of tries, then escalates rather than spinning silently.
+    See ``reconcile_failure_loops``.
+    """
+
+    raw = config.get("worker_reassignment")
+    raw = raw.get("failure_loop") if isinstance(raw, Mapping) else None
+    raw = raw if isinstance(raw, Mapping) else {}
+
+    def positive(name: str, default: int) -> int:
+        try:
+            return max(1, int(raw.get(name, default)))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "max_failures_in_window": positive("max_failures_in_window", 3),
+        "window_seconds": positive("window_seconds", 3600),
+        "max_auto_reassignments": positive("max_auto_reassignments", 1),
+    }
+
+
 def normalized_mapping_values(mapping: dict[str, Any], key: str) -> list[str]:
     target = (key or "").strip().casefold()
     for candidate_key, values in mapping.items():
@@ -7463,6 +7495,106 @@ def record_missing_handoff_blocker(config: dict[str, Any], worker: dict[str, Any
     return event
 
 
+def _prepare_failure_loop_blocker_locked(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    message: str,
+) -> dict[str, Any] | None:
+    """Record an actionable failure-loop hold for a task that keeps failing
+    even after ``reconcile_failure_loops`` already tried reassigning it.
+
+    Mirrors ``_prepare_missing_handoff_blocker_locked``'s shape: same
+    outbox-clear precondition, same BLOCK transition + ``waiting_for`` +
+    ``next`` fields, same open-blocker de-dup (by ``blocker_kind``) so a
+    repeat call is a no-op instead of stacking duplicate blockers.
+    """
+
+    if not config.get("paths", {}).get("status_file"):
+        return None
+
+    status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return None
+    task = task_index_from_status(config, status).get(task_id)
+    if not task:
+        return None
+    if str(task.get("waiting_for") or "").strip():
+        return None
+    if any(
+        str(blocker.get("task_id") or "") == task_id
+        and str(blocker.get("status") or "") == "open"
+        and str(blocker.get("blocker_kind") or "") == "failure_loop"
+        for blocker in (status.get("blockers") or [])
+    ):
+        return None
+
+    timestamp = utc_now()
+    try:
+        task["status"] = rewrite_task_machine.transition(
+            task.get("status"),
+            rewrite_task_machine.TaskAction.BLOCK,
+        ).value
+    except rewrite_task_machine.TransitionError:
+        return None
+    task["waiting_for"] = "Human/Ops"
+    task["last_update"] = timestamp
+    task["next"] = message
+
+    status.setdefault("blockers", []).append(
+        {
+            "task_id": task_id,
+            "owner": task.get("owner"),
+            "waiting_for": "Human/Ops",
+            "message": message,
+            "status": "open",
+            "created_at": timestamp,
+            "blocker_kind": "failure_loop",
+        }
+    )
+
+    event = {
+        "event_id": "supervisor-failure-loop-"
+        + hashlib.sha256(f"{task_id}\0{timestamp}".encode("utf-8")).hexdigest(),
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": "task_failure_loop_blocked",
+        "task_id": task_id,
+        "waiting_for": "Human/Ops",
+        "message": message,
+    }
+    status["status_activity_outbox"] = _status_activity_outbox([event])
+    write_status(config, status, source="supervisor-failure-loop")
+    return event
+
+
+def record_failure_loop_blocker(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    message: str,
+) -> dict[str, Any] | None:
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        event = _prepare_failure_loop_blocker_locked(
+            config, task_id=task_id, message=message
+        )
+    if event is None:
+        return None
+    sync_status_pipeline(config)
+    write_activity_log(
+        config,
+        {
+            "type": "task_failure_loop_blocked",
+            "task_id": event["task_id"],
+            "message": event["message"],
+        },
+    )
+    return event
 
 
 def ownerless_in_progress_settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -8704,6 +8836,122 @@ def reconcile_unavailable_assignments(
             }
         )
         changed = True
+
+    return changed
+
+
+def reconcile_failure_loops(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Bounded auto-governance for a task that keeps failing under its owner.
+
+    Off by default (``worker_reassignment.failure_loop.enabled``).  Two-tier
+    response, both reusing existing governed write paths so this adds no new
+    mutation authority: the first ``max_auto_reassignments`` times a task
+    hits the failure threshold within the window, it is hand-checked to the
+    next configured ``owner_fallbacks`` candidate via the same
+    ``plan_task_assignment_pair``/``persist_task_reassignment`` pipeline the
+    load-balance mechanism uses -- on the theory the failure may be
+    agent-specific.  If it keeps failing at that rate under a fresh owner
+    too, further reassignment is unlikely to be the fix: the task is put on
+    an explicit Human/Ops hold (``record_failure_loop_blocker``) instead of
+    being bounced between agents forever, so it stops consuming capacity for
+    nothing and surfaces for investigation rather than spinning silently.
+
+    Never touches a task with a live active worker (that generation may yet
+    succeed) or one already on any explicit hold.
+    """
+
+    settings = failure_loop_settings(config)
+    if not settings["enabled"]:
+        return False
+    reassignment_settings = worker_reassignment_settings(config)
+    if not reassignment_settings.get("enabled", True):
+        return False
+
+    status = load_status(config)
+    tasks = [task for task in status.get("tasks", []) if isinstance(task, dict)]
+    task_map = {str(task.get("id") or ""): task for task in tasks}
+    active_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("active_worker_statuses"), []
+    )
+    _active_agents, active_pairs = active_worker_indexes(state, active_statuses)
+    active_task_ids = {task_id for task_id, _agent in active_pairs if task_id}
+    eligible_statuses = {"todo", "in_progress"}
+
+    watch = state.setdefault("failure_loop_watch", {})
+    for stale_task_id in [tid for tid in watch if tid not in task_map]:
+        watch.pop(stale_task_id, None)
+
+    failure_counts = recent_task_failure_counts(
+        config, window_seconds=settings["window_seconds"]
+    )
+    changed = False
+    for task_id, count in failure_counts.items():
+        if count < settings["max_failures_in_window"]:
+            continue
+        task = task_map.get(task_id)
+        if not task:
+            continue
+        task_status = str(task.get("status") or "").strip().lower()
+        if task_status not in eligible_statuses:
+            continue
+        if task_id in active_task_ids:
+            continue
+        if str(task.get("waiting_for") or "").strip():
+            continue
+
+        entry = watch.setdefault(task_id, {"auto_reassignments": 0})
+        owner = canonical_agent_name(config, str(task.get("owner") or ""))
+        reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+        attempts_used = int(entry.get("auto_reassignments", 0))
+
+        if attempts_used < settings["max_auto_reassignments"]:
+            candidates = reassignment_candidate_order(
+                config,
+                reassignment_settings.get("owner_fallbacks", {}) or {},
+                roots=[owner] if owner else [],
+                exclude={owner, reviewer},
+            )
+            pair = plan_task_assignment_pair(
+                config,
+                task,
+                state=state,
+                owner_candidates=candidates,
+                preferred_reviewers=[reviewer],
+            )
+            if pair is None:
+                continue
+            new_owner, new_reviewer = pair
+            message = (
+                f"Repeated failures ({count} in {settings['window_seconds']}s) under "
+                f"{owner}; auto-reassigning to {new_owner} "
+                f"(attempt {attempts_used + 1}/{settings['max_auto_reassignments']})."
+            )
+            if not persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=new_owner,
+                new_reviewer=new_reviewer,
+                message=message,
+                handoff_from=owner,
+                expected_owner=owner,
+                expected_reviewer=reviewer,
+                expected_status=str(task.get("status") or ""),
+                expected_generation=task_generation(task),
+            ):
+                continue
+            task["owner"] = new_owner
+            task["reviewer"] = new_reviewer
+            entry["auto_reassignments"] = attempts_used + 1
+            changed = True
+        else:
+            message = (
+                f"Repeated failures ({count} in {settings['window_seconds']}s) persisted "
+                f"under {owner} even after {attempts_used} auto-reassignment(s); "
+                f"holding for Human/Ops investigation."
+            )
+            if record_failure_loop_blocker(config, task_id=task_id, message=message) is not None:
+                watch.pop(task_id, None)
+                changed = True
 
     return changed
 
@@ -11449,6 +11697,63 @@ def dispatch_event_is_in_unchanged_cooldown(
     return 0 <= elapsed_seconds < cooldown_seconds
 
 
+def recent_task_failure_counts(
+    config: dict[str, Any],
+    *,
+    window_seconds: int,
+    tail_bytes: int = 524288,
+) -> dict[str, int]:
+    """Count ``worker_failed`` activity-log events per task within the last
+    ``window_seconds``, from a bounded read of the tail of the log.
+
+    The activity log is append-only, periodically rotated, and can grow into
+    the tens of MB -- nothing else in the supervisor reads it back, by
+    design.  This reads only the last ``tail_bytes`` (default 512KiB, tens of
+    thousands of events at typical entry sizes -- comfortably more than an
+    hour of fleet activity) rather than the whole file, and holds no
+    cross-cycle offset, so it is naturally correct across rotation: every
+    call re-reads fresh from the current end of file instead of trusting a
+    stored position that rotation could invalidate.
+    """
+
+    path_str = (config.get("paths") or {}).get("activity_log")
+    if not path_str:
+        return {}
+    path = Path(path_str)
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(0, size - tail_bytes))
+            raw = handle.read()
+    except OSError:
+        return {}
+    lines = raw.decode("utf-8", errors="ignore").splitlines()
+    if size > tail_bytes and lines:
+        lines = lines[1:]  # first line may have been cut mid-record
+
+    cutoff = _parse_iso_utc(utc_now())
+    counts: dict[str, int] = {}
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("type") != "worker_failed":
+            continue
+        task_id = str(entry.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        observed_at = _parse_iso_utc(str(entry.get("ts") or ""))
+        if cutoff is not None and observed_at is not None:
+            if (cutoff - observed_at).total_seconds() > window_seconds:
+                continue
+        counts[task_id] = counts.get(task_id, 0) + 1
+    return counts
+
+
 def agent_dispatch_loads(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -12419,6 +12724,7 @@ def apply_post_dispatch_maintenance(
         )
     ) or changed
     changed = bool(reconcile_unavailable_assignments(config, state)) or changed
+    changed = bool(reconcile_failure_loops(config, state)) or changed
     if isinstance(assistant_dev_bridge_snapshot, dict):
         bridge_state = assistant_dev_bridge_snapshot.get("state")
         if isinstance(bridge_state, dict):

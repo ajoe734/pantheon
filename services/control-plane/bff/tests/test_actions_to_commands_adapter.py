@@ -25,6 +25,8 @@ OPERATOR_HEADERS = {
 
 @contextmanager
 def _isolated_action_adapter() -> Iterator[TestClient]:
+    old_auth = os.environ.get("PANTHEON_BFF_AUTH_MODE")
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     with tempfile.TemporaryDirectory() as td:
         original_command_store = bff_main.command_store
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
@@ -32,6 +34,10 @@ def _isolated_action_adapter() -> Iterator[TestClient]:
             yield TestClient(bff_main.app)
         finally:
             bff_main.command_store = original_command_store
+            if old_auth is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_MODE"] = old_auth
 
 
 def test_bff_actions_openapi_exposes_frontend_and_generic_action_templates() -> None:

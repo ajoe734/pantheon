@@ -1,0 +1,10 @@
+{
+  "task_id": "PFG-MGMT-DOMAIN-ACTIONS-20260820",
+  "canonical_owner": "services/control-plane/bff/command_executor.py, services/control-plane/bff/command_adapters/",
+  "stores_and_queues": "command_queue / downstream domain authority APIs (capital, runtime, deployment, governance, incident/sentinel, evolution, strategy)",
+  "production_callers": "BFF /bff/v1/commands, /api/v1/operator/commands, /bff/actions/*",
+  "duplicate_paths": "Legacy admission-only stubs mapped in _EXECUTORS before domain adapters",
+  "retired_after_proof": "Removed stubbed _execute_bff_action_adapter mappings in favor of dispatch_domain_command to modular domain adapters with authoritative domain receipts and readbacks",
+  "retained_with_reason": "Retained specialized domain executors (e.g. _execute_approved_rebalance_apply, _execute_emergency_containment_authority) with direct domain client delegation and authoritative readbacks",
+  "new_parallel_owner_created": false
+}

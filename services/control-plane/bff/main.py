@@ -1041,10 +1041,11 @@ def _pack_d_http_exception_response(
     )
 
 
+@app.exception_handler(HTTPException)
 @app.exception_handler(StarletteHTTPException)
 async def _bff_http_exception_handler(
     request: Request,
-    exc: StarletteHTTPException,
+    exc: StarletteHTTPException | HTTPException,
 ) -> JSONResponse:
     return _pack_d_http_exception_response(request, exc)
 
@@ -4557,7 +4558,7 @@ def _stored_command_params(
         params["persona_id"] = cmd.target.id
     canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(
         cmd.command,
-        cmd.command.value,
+        cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
     )
     if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
         canonical_action_id = "submit_recommendation"
@@ -4566,7 +4567,7 @@ def _stored_command_params(
     # prevents a caller from redirecting an admitted command after validation.
     params.update(
         {
-            "entity_type": cmd.target.type.value,
+            "entity_type": cmd.params.get("entity_type") or cmd.target.type.value,
             "entity_id": cmd.target.id,
             "action_id": canonical_action_id,
             "actionId": canonical_action_id,
@@ -6517,7 +6518,7 @@ _VALIDATORS = {
 # Read surface helpers
 # --------------------------------------------------------------------------- #
 
-_READ_ROLES = {"viewer", "operator", "approver", "admin", "reviewer"}
+_READ_ROLES = {"viewer", "view_only", "operator", "approver", "admin", "reviewer"}
 _WRITE_ROLES = {"operator", "approver", "admin", "reviewer"}
 
 
