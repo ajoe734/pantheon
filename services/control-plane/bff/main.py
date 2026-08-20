@@ -63097,8 +63097,9 @@ async def _async_loop_health_records(
         except Exception as exc:
             log.warning("Failed merging downstream monitor targets in _async_loop_health_records: %s", exc)
 
-    health_available = db_available or fs_available or bool(monitor)
-    health_source = "controller_store" if db_available else (fs_source if fs_available else "bff_downstream_health_monitor")
+    has_monitor_records = any(r.get("_health_source") == "bff_downstream_health_monitor" for r in merged_records)
+    health_available = db_available or fs_available or has_monitor_records
+    health_source = "controller_store" if db_available else (fs_source if fs_available else ("bff_downstream_health_monitor" if has_monitor_records else "missing"))
     return health_available, merged_records, health_source
 
 

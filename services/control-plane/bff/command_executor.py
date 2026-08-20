@@ -222,7 +222,8 @@ def _record_outcome_for_target(url: str, ok: bool, status_code: int, detail: Opt
         registry = monitor._resolve_target_registry()
         matched_target_name = None
         for name, target in registry.items():
-            if url.startswith(target.base_url):
+            base_url = target.base_url.rstrip("/")
+            if url.startswith(base_url):
                 matched_target_name = name
                 break
         if matched_target_name:

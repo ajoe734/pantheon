@@ -17,6 +17,7 @@ _ACCEPTED_RUNTIME_HEALTH_SOURCES = {
     "controller_store",
     "service_store",
     "target_runtime",
+    "bff_downstream_health_monitor",
 }
 _ACCEPTED_RUNTIME_EVIDENCE_BASES = {
     "controller_runtime",

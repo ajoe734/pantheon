@@ -35,7 +35,7 @@ from services.telemetry.test_infrastructure_health_ingest import (  # noqa: E402
     _DurableFileBroker,
 )
 
-HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa"}
+HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa::tenant-dev"}
 
 _INCIDENT_SEED = {
     "inc-loop-1": {
@@ -764,6 +764,14 @@ def test_l12_bff_replay_route_requires_mfa_approval_and_audits_actor(
     bff_main.downstream_health_monitor = monitor
     try:
         client = TestClient(bff_main.app, raise_server_exceptions=False)
+        no_mfa_headers = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:tenant-dev"}
+        unauthorized = client.post(
+            "/bff/v5/downstream-health/dlq/replay",
+            headers=no_mfa_headers,
+            json={"event_id": event_id},
+        )
+        assert unauthorized.status_code == 403
+
         missing_approval = client.post(
             "/bff/v5/downstream-health/dlq/replay",
             headers=HEADERS,

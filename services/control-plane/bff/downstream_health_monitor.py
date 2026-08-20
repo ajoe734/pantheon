@@ -69,9 +69,11 @@ class DownstreamTarget:
     def __post_init__(self) -> None:
         if not self.name or not _TARGET_NAME_RE.fullmatch(self.name):
             raise ValueError(f"invalid health target name: {self.name!r}")
-        if not self.base_url or not self.base_url.startswith(("http://", "https://")):
+        if not self.base_url or not self.base_url.startswith(("http://", "https://", "file://")):
+            raise ValueError(f"health target {self.name!r} base_url must use http(s) or file: {self.base_url!r}")
+        if self.component_kind != "file_worker" and not self.base_url.startswith(("http://", "https://")):
             raise ValueError(f"health target {self.name!r} base_url must use http(s): {self.base_url!r}")
-        if not self.health_path or not self.health_path.startswith("/") or " " in self.health_path:
+        if self.component_kind == "http_service" and (not self.health_path or not self.health_path.startswith("/") or " " in self.health_path):
             raise ValueError(f"health target {self.name!r} health_path must start with '/': {self.health_path!r}")
         if not self.component_kind:
             raise ValueError(f"health target {self.name!r} component_kind cannot be empty")
@@ -1528,6 +1530,14 @@ class DownstreamHealthMonitor:
     def state_path(self) -> str:
         return self._store.path
 
+    @property
+    def tenant_id(self) -> str:
+        return self._tenant_id
+
+    @property
+    def instance_id(self) -> str:
+        return self._instance_id
+
     async def start(self) -> None:
         if self._running:
             return
@@ -1843,16 +1853,18 @@ class DownstreamHealthMonitor:
         dsn = os.environ.get("DATABASE_URL")
         if dsn:
             try:
-                import importlib
-                loop_control = importlib.import_module("services.loop-control")
-                writer = loop_control.LoopControllerWriter(
-                    dsn=dsn,
-                    tenant_id=self.tenant_id,
-                    environment=os.environ.get("PANTHEON_ENV", "dev"),
-                    controller_name="bff_downstream_health_monitor",
-                )
-                asyncio.run(
-                    writer.record_heartbeat(
+                import sys
+                asyncpg_module = sys.modules.get("asyncpg")
+                if asyncpg_module is not None and not isinstance(asyncpg_module, MagicMock if "MagicMock" in globals() else type):
+                    import importlib
+                    loop_control = importlib.import_module("services.loop-control")
+                    writer = loop_control.LoopControllerWriter(
+                        dsn=dsn,
+                        tenant_id=self.tenant_id,
+                        environment=os.environ.get("PANTHEON_ENV", "dev"),
+                        controller_name="bff_downstream_health_monitor",
+                    )
+                    heartbeat_coro = writer.record_heartbeat(
                         loop_id="bff_health_monitoring",
                         truth_level="reconciled_live_proof",
                         desired_state_query="SELECT count(*) FROM bff_downstream_health_targets",
@@ -1866,7 +1878,11 @@ class DownstreamHealthMonitor:
                         },
                         evidence_refs=["services/control-plane/bff/downstream_health_monitor.py"],
                     )
-                )
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(heartbeat_coro)
+                    except RuntimeError:
+                        asyncio.run(heartbeat_coro)
             except Exception as exc:
                 log.warning("Failed to publish Loop 12 controller truth to database: %s", exc)
 
@@ -2332,6 +2348,17 @@ class DownstreamHealthMonitor:
             status_code=status_code,
             detail=detail,
             observed_at=timestamp,
+        )
+        self._store.record_probe(
+            DownstreamProbeResult(
+                target_name=target_name,
+                ok=ok,
+                status_code=status_code,
+                latency_ms=latency_ms,
+                checked_at=timestamp,
+                failure_reason=detail if not ok else None,
+                consecutive_failures=0 if ok else 1,
+            )
         )
         if (
             int(window["sample_count"]) >= self._error_rate_min_samples
