@@ -6,12 +6,14 @@ product, runtime, deployment, task-state, or catalog source.
 
 The review verifies the frozen audit baseline, catalog identity, 27-task DAG,
 repository and overlap boundaries, source/manual-pull policy, code-disposition
-coverage, and hosted identity evidence. The initial review decision is
-**changes requested** because the audit describes the raw Compose fallback as
-`reconcile_only`, while the reviewed head still defaults that fallback to
-`reconcile_and_pull`. The non-production deploy wrapper does inject
-`reconcile_only` for its default profile, but that is a different guarantee.
+coverage, and hosted identity evidence. The fresh exact-head decision is
+**passed pending task-reviewer approval**. PR #5066 head
+`3dbb51db9300545a2c4139582d2cc91f1edc0bb1` corrects the earlier ambiguity:
+the managed non-production deployment is `reconcile_only`, while raw Compose
+currently falls back to `reconcile_and_pull`. The plan explicitly assigns the
+single raw-Compose default correction to `PFG-DEV-INTEGRATION-20260820`; it
+does not claim that this correction has already shipped.
 
 See `evidence.json` for the exact head, commands, passing checks, and the
-required correction before this task can proceed to reviewer approval and plan
-merge.
+exact head, commands, passing checks, and reviewer handoff required before the
+plan PR can pass its canonical review gate and merge.
