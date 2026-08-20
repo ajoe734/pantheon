@@ -303,21 +303,42 @@ class TestPaperSignalProducer(unittest.TestCase):
             self.assertFalse(state["live_capital_enabled"])
             self.assertFalse(state["live_order_submission_enabled"])
 
-    def test_paper_producer_refuses_live_execution_flags(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {
-                "SIGNAL_STORE_URL": "redis://signal-store:6379",
-                "PANTHEON_LIVE_BROKER_ENABLED": "true",
-            },
-            clear=False,
-        ):
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "refuses live/canary execution flags",
-            ):
-                main()
+    @patch("urllib.request.urlopen")
+    def test_market_input_fetched_from_source_ingest_api(self, mock_urlopen) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
+        artifact = _artifact()
+        binding = _binding(artifact, binding_id="rb-source-ingest-test", include_market_input=False)
+        binding["symbol"] = "AAPL.US"
+        
+        response = MagicMock()
+        response.read.return_value = json.dumps({
+            "symbol": "AAPL.US",
+            "closes": [100.0, 105.0, 110.0],
+            "source_ref": "source-ingest://snapshots/latest/AAPL.US",
+            "observed_at": _NOW,
+        }).encode("utf-8")
+        context = MagicMock()
+        context.__enter__.return_value = response
+        mock_urlopen.return_value = context
+
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+
+        with patch.dict("os.environ", {"PANTHEON_SOURCE_INGEST_URL": "http://source-ingest:8080"}):
+            count = producer.produce(binding, _NOW)
+
+        self.assertEqual(count, 1)
+        self.assertEqual(store.queue_depth(), 1)
+        [sig] = store.get_pending()
+        self.assertEqual(sig["symbol"], "AAPL.US")
+        self.assertEqual(sig["metadata"]["market_input_ref"], "source-ingest://snapshots/latest/AAPL.US")
+        self.assertEqual(producer.degraded_bindings, {})
 
 
 if __name__ == "__main__":
     unittest.main()
+

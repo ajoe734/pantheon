@@ -463,6 +463,45 @@ def _market_input_for_binding(
 ) -> dict[str, Any]:
     raw = binding.get("market_input") or metadata.get("market_input")
     if raw is None:
+        source_ingest_url = (
+            os.getenv("PANTHEON_SOURCE_INGEST_URL")
+            or os.getenv("PANTHEON_SOURCE_INGEST_API_URL")
+            or ""
+        ).rstrip("/")
+        symbol = str(binding.get("symbol") or metadata.get("symbol") or "").strip()
+        if source_ingest_url and symbol:
+            try:
+                import urllib.parse
+                import urllib.request
+                import json
+
+                url = (
+                    f"{source_ingest_url}/api/source-ingest/snapshots/latest"
+                    f"?symbol={urllib.parse.quote(symbol, safe='')}"
+                )
+                req = urllib.request.Request(
+                    url,
+                    headers={"Accept": "application/json"},
+                    method="GET",
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                if isinstance(payload, Mapping) and payload.get("closes"):
+                    raw = {
+                        "symbol": payload.get("symbol") or symbol,
+                        "closes": payload.get("closes"),
+                        "source_ref": payload.get("source_ref")
+                        or f"source-ingest://snapshots/latest/{symbol}",
+                        "observed_at": payload.get("observed_at"),
+                    }
+            except Exception as exc:
+                log.warning(
+                    "Failed to fetch market snapshot from source-ingest for %s: %s",
+                    symbol,
+                    exc,
+                )
+
+    if raw is None:
         closes = binding.get("recent_closes") or metadata.get("recent_closes")
         if closes is not None:
             raw = {
