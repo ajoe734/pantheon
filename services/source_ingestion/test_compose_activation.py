@@ -68,13 +68,14 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
 
     controller = services["source-ingest-scheduler"]
     controller_env = _env_map(controller)
-    # Default-on owner is an unbounded internal reconciler. Explicit bounded
-    # deployments override these four variables to enable finite provider pull.
-    assert "profiles" not in controller
-    assert controller["restart"] == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
+    # External refresh is absent from normal dev. The explicit profile remains
+    # one-shot and non-restarting; the deploy gate is what changes it from the
+    # pull-disabled default to a reviewed exact-host provider run.
+    assert controller["profiles"] == ["source-ingest-scheduler"]
+    assert controller["restart"] == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-no}"
     assert controller["command"] == ["python", "-m", "services.source_ingestion.controller_worker"]
     assert controller_env["SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
-    assert controller_env["SOURCE_INGEST_CONTROLLER_MODE"] == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_and_pull}"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_MODE"] == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
     assert controller_env["SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL"] == "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-scheduled_tick}"
     assert controller_env["SOURCE_INGEST_CONTROLLER_STATE_PATH"] == "/data/source-ingest/controller_state.json"
     assert controller_env["SOURCE_INGEST_CONTROLLER_TOKEN_FILE"] == "/data/source-ingest/controller_token"

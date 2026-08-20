@@ -113,13 +113,13 @@ def test_bounded_source_refresh_profile_is_fail_closed() -> None:
     assert "source-ingest-scheduler" not in default_profiles
 
 
-def test_default_source_owner_is_unbounded_reconcile_only() -> None:
+def test_default_source_refresh_is_held_and_fail_closed() -> None:
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
     assert 'SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"' in deploy
     assert 'SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"' in deploy
-    assert 'SOURCE_REFRESH_MAX_TICKS="0"' in deploy
-    assert 'SOURCE_REFRESH_RESTART_POLICY="unless-stopped"' in deploy
+    assert 'SOURCE_REFRESH_MAX_TICKS="1"' in deploy
+    assert 'SOURCE_REFRESH_RESTART_POLICY="no"' in deploy
     assert 'SOURCE_INGEST_CONTROLLER_MODE=$(shell_quote "${SOURCE_REFRESH_CONTROLLER_MODE}")' in deploy
     assert 'SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=$(shell_quote "${SOURCE_REFRESH_TRUTH_LEVEL}")' in deploy
     assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY=$(shell_quote "${SOURCE_REFRESH_RESTART_POLICY}")' in deploy
@@ -133,8 +133,21 @@ def test_default_source_owner_is_unbounded_reconcile_only() -> None:
     gate = deploy[start:end]
     assert 'SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only"' in gate
     assert 'SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick"' in gate
-    assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0"' in gate
-    assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "unless-stopped"' in gate
+    assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "1"' in gate
+    assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "no"' in gate
+
+    root_start = deploy.index("  root)\n")
+    root_end = deploy.index("\n  bff)\n", root_start)
+    root_case = deploy[root_start:root_end]
+    assert root_case.index("enforce_default_source_refresh_hold") < root_case.index(
+        "docker compose -p pantheon -f docker-compose.yml up -d --build"
+    )
+    hold_start = deploy.index("enforce_default_source_refresh_hold() {")
+    hold_end = deploy.index("\n}\n\n# One required scheduled/async worker", hold_start)
+    hold = deploy[hold_start:hold_end]
+    assert "docker ps -q" in hold
+    assert "com.docker.compose.service=source-ingest-scheduler" in hold
+    assert 'docker stop -t 30 "${scheduler_container_ids[@]}"' in hold
 
 
 def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:

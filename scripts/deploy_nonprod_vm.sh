@@ -118,12 +118,14 @@ if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
   SOURCE_REFRESH_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
   SOURCE_REFRESH_RESTART_POLICY="no"
 else
-  # The default owner is a durable internal reconciler. Provider egress stays
-  # available only through the explicit bounded profile above.
+  # The source refresh owner is profile-gated and absent from a normal dev
+  # deployment. Keep its inherited settings finite and pull-disabled as a
+  # second fail-safe if someone explicitly targets the service outside the
+  # governed bounded profile path.
   SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
   SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"
-  SOURCE_REFRESH_MAX_TICKS="0"
-  SOURCE_REFRESH_RESTART_POLICY="unless-stopped"
+  SOURCE_REFRESH_MAX_TICKS="1"
+  SOURCE_REFRESH_RESTART_POLICY="no"
 fi
 SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
 SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
@@ -667,11 +669,11 @@ validate_source_refresh_profile() {
     [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
       || error "default source-ingest owner must use reconcile_only mode"
     [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
-      || error "default source-ingest owner must use scheduled_tick truth"
-    [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0" ]] \
-      || error "default source-ingest owner must remain unbounded"
-    [[ "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "unless-stopped" ]] \
-      || error "default source-ingest owner must use unless-stopped restart policy"
+      || error "held source-ingest profile must use scheduled_tick truth"
+    [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "1" ]] \
+      || error "held source-ingest profile must remain bounded to one tick"
+    [[ "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "no" ]] \
+      || error "held source-ingest profile must remain non-restarting"
     return 0
   fi
 
@@ -724,6 +726,25 @@ print(f"validated {len(hosts)} exact source refresh hosts")
 PY
   export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
   export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
+}
+
+enforce_default_source_refresh_hold() {
+  local selected="false"
+  local -a scheduler_container_ids=()
+  case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
+    *,source-ingest-scheduler,*) selected="true" ;;
+  esac
+  [[ "$selected" == "false" ]] || return 0
+
+  mapfile -t scheduler_container_ids < <(
+    docker ps -q \
+      --filter label=com.docker.compose.project=pantheon \
+      --filter label=com.docker.compose.service=source-ingest-scheduler
+  )
+  if (( ${#scheduler_container_ids[@]} > 0 )); then
+    info "stopping held dev source-ingest scheduler before normal root deploy"
+    docker stop -t 30 "${scheduler_container_ids[@]}" >/dev/null
+  fi
 }
 
 # One required scheduled/async worker per twelve-loop lane. The deploy fails
@@ -2033,6 +2054,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # refresh completes.
     PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,smoke,source-search-bounded}"
     validate_source_refresh_profile
+    enforce_default_source_refresh_hold
     validate_required_loop_workers
     source_refresh_deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ensure_dev_management_ai_bucket

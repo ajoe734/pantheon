@@ -37,13 +37,13 @@ def _env(service: str) -> dict[str, str]:
     return environment
 
 
-def test_source_controller_is_the_single_default_durable_owner() -> None:
+def test_source_controller_is_the_single_opt_in_bounded_owner() -> None:
     owner = SERVICES["source-ingest-scheduler"]
 
-    assert "profiles" not in owner
+    assert owner["profiles"] == ["source-ingest-scheduler"]
     assert (
         owner["restart"]
-        == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
+        == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-no}"
     )
     assert owner["stop_grace_period"] == "30s"
     assert owner["command"] == [
@@ -53,7 +53,7 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     ]
     assert (
         owner["environment"]["SOURCE_INGEST_CONTROLLER_MODE"]
-        == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_and_pull}"
+        == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
     )
     assert (
         owner["environment"]["SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL"]
@@ -71,8 +71,8 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     ]
     assert matching_commands == ["source-ingest-scheduler"]
 
-    # A bounded run remains an explicit override of this same service:
-    # docker compose run --rm -e SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 ...
+    # A reviewed test run explicitly selects this same profile and overrides
+    # reconcile_only with reconcile_and_pull. There is no second scheduler.
     assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS" in owner["environment"]
 
 
@@ -230,7 +230,6 @@ def test_bff_health_registry_uses_real_typed_paths_and_telemetry_identity() -> N
 
 def test_default_owner_services_are_not_hidden_behind_profiles() -> None:
     canonical_default_owners = {
-        "source-ingest-scheduler",
         "strategy-distillation-worker",
         "alpha-replication-worker",
         "training-session-preview-worker",
@@ -249,3 +248,9 @@ def test_default_owner_services_are_not_hidden_behind_profiles() -> None:
     assert {
         name for name in canonical_default_owners if "profiles" in SERVICES[name]
     } == set()
+    # Operator-directed dev posture keeps only external source refresh on an
+    # explicit one-shot profile; the source API and all non-egress owners stay
+    # default-on.
+    assert SERVICES["source-ingest-scheduler"]["profiles"] == [
+        "source-ingest-scheduler"
+    ]
