@@ -530,6 +530,6 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     run_info = res_run.json()
     assert run_info["execution_status"] == "succeeded"
     assert run_info["outcome"] == "pass"
-    assert run_info["provenance"] == "real"
+    assert run_info["backend"]["mode"] == "real"
     assert len(run_info["artifact_refs"]) == 1
 
