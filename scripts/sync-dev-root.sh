@@ -11,6 +11,7 @@ set -euo pipefail
 DEV_ROOT="${1:-/home/lupin/pantheon-ci-deploy/dev-root}"
 LIVE_CONFIG="${2:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
 COORDINATION_ROOT="${3:-${PANTHEON_COORDINATION_ROOT:-/home/lupin/pantheon-ci-deploy/coordination-root}}"
+AUTHORITY_ENV_FILE="${4:-${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/supervisor-authority-public.env}}"
 REF="${SYNC_REF:-origin/dev}"
 COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
 
@@ -188,6 +189,30 @@ if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   --live-config "$LIVE_CONFIG"; then
   log "FATAL: supervisor replacement failed"
   exit 1
+fi
+
+# The systemd/cron watchdog is a separate, non-LLM safety net that restarts a
+# dead supervisor. Its unit hardcodes an absolute path into this exact
+# immutable command-runtimes/<sha> checkout, which is pruned over time -- so
+# without this step it silently goes stale on every promotion, and the
+# restart-if-dead safety net quietly stops working once that sha is gone.
+# Best-effort: a watchdog install problem must never block landing new
+# supervisor code, so failures here are logged, never fatal.
+if [[ -f "$candidate_root/scripts/supervisor_watchdog_install.py" ]]; then
+  if [[ -f "$AUTHORITY_ENV_FILE" && ! -L "$AUTHORITY_ENV_FILE" ]]; then
+    if python3 -B "$candidate_root/scripts/supervisor_watchdog_install.py" \
+      --repo "$candidate_root" \
+      --config "$LIVE_CONFIG" \
+      --authority-env-file "$AUTHORITY_ENV_FILE" \
+      --method auto \
+      --start-now; then
+      log "watchdog repointed at candidate=$candidate_root"
+    else
+      log "WARNING: watchdog repoint failed for candidate=$candidate_root -- supervisor code landed, but the restart-if-dead safety net may be stale until this is fixed"
+    fi
+  else
+    log "WARNING: watchdog authority env file missing or not a regular file ($AUTHORITY_ENV_FILE) -- skipped watchdog repoint"
+  fi
 fi
 
 log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=replaced)"
