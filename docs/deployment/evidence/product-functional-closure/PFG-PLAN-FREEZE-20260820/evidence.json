@@ -1,0 +1,144 @@
+{
+  "schema_version": "pantheon.product_functional_closure.plan_freeze_review.v1",
+  "task": {
+    "id": "PFG-PLAN-FREEZE-20260820",
+    "title": "Independently freeze the current product GAP, simplification plan, and execution catalog",
+    "owner": "Codex2",
+    "reviewer": "Antigravity2",
+    "status": "owner_exact_head_review_passed_pending_reviewer",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-PLAN-FREEZE-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-PLAN-FREEZE-20260820/evidence.json",
+    "evidence_cut_at": "2026-08-20T12:39:39Z"
+  },
+  "scope": {
+    "owned_layer": "Independent exact-head plan review evidence and freeze decision.",
+    "not_changing": [
+      "PR #5066 plan or catalog source files",
+      "product implementation, runtime mutation, deployment, or capital authority",
+      "canonical task state, activity archive, supervisor, or dispatch mechanism",
+      "the execute-plans repository"
+    ],
+    "changed_files": [
+      "docs/deployment/evidence/product-functional-closure/PFG-PLAN-FREEZE-20260820/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-PLAN-FREEZE-20260820/evidence.json",
+      "docs/deployment/evidence/product-functional-closure/PFG-PLAN-FREEZE-20260820/evidence.sha256"
+    ],
+    "intentionally_uncommitted": [
+      {
+        "path": ".orchestrator/task-briefs/pfg_plan_freeze_20260820.md",
+        "reason": "Supervisor-generated task-scoped dispatch context; it is not an approval or delivery ledger."
+      }
+    ]
+  },
+  "review_target": {
+    "pull_request": 5066,
+    "url": "https://github.com/ajoe734/pantheon/pull/5066",
+    "head_branch": "task/PFG-FUNCTIONAL-CLOSURE-PLAN-20260820",
+    "exact_head": "3dbb51db9300545a2c4139582d2cc91f1edc0bb1",
+    "base_branch": "dev",
+    "base_sha": "cd93c201076f7767366a868a1b45d75a91e9317e",
+    "mergeable_against_base": true,
+    "merge_state_at_review": "blocked_pending_canonical_review",
+    "changed_files": [
+      "docs/04/pantheon_product_functional_closure_2026-08-20/01_CURRENT_PRODUCT_FUNCTION_GAP_2026-08-20.md",
+      "docs/04/pantheon_product_functional_closure_2026-08-20/02_CODE_DISPOSITION_AND_SIMPLIFICATION_2026-08-20.md",
+      "docs/04/pantheon_product_functional_closure_2026-08-20/03_IMPLEMENTATION_PLAN_2026-08-20.md",
+      "docs/04/pantheon_product_functional_closure_2026-08-20/04_EXECUTION_TASKS_2026-08-20.md",
+      "docs/04/pantheon_product_functional_closure_2026-08-20/INDEX.md",
+      "docs/04/pantheon_product_functional_closure_2026-08-20/execution-tasks.json",
+      "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/CURRENT_GAP_2026-08-18.md"
+    ]
+  },
+  "verified_findings": {
+    "catalog": {
+      "source_catalog": "docs/04/pantheon_product_functional_closure_2026-08-20/execution-tasks.json",
+      "schema": "pantheon.execution-task-catalog.v2",
+      "git_blob": "7ea4abc4a9c355d2a0603555342b9d718b2e7ae2",
+      "byte_sha256": "b801b2c4694ccc39f772f5e934e96a869fe152d4498350403a680ec1a47d37fa",
+      "canonical_task_row_catalog_sha256": "b801b2c4694ccc39f772f5e934e96a869fe152d4498350403a680ec1a47d37fa",
+      "canonical_task_row_contract_sha256": "1dd29d012979f2ee87b6e9cbe784457e13bb10988140003e463c1e216dd14013",
+      "declared_task_count": 27,
+      "task_count": 27,
+      "unique_task_ids": 27,
+      "acyclic": true,
+      "canonical_pfg_task_ids": 27,
+      "missing_canonical_task_ids": [],
+      "extra_canonical_pfg_task_ids": [],
+      "external_dependency": "L12-GAP-F06-BFF-FUNCTIONAL-HEALTH-20260818",
+      "owner_reviewer_conflicts": [],
+      "target_repositories": [
+        "pantheon",
+        "execute-plans"
+      ],
+      "merge_targets": [
+        "dev"
+      ],
+      "unordered_artifact_overlap_pairs": 0,
+      "code_disposition_entries_missing": []
+    },
+    "source_and_runtime": {
+      "paper_producer_requires_object_store_projection": true,
+      "paper_producer_requests_missing_source_snapshot_route": true,
+      "source_ingestion_has_no_snapshots_latest_route_at_review_head": true,
+      "generic_management_action_adapter_returns_admitted": true,
+      "raw_compose_fallback_mode": "reconcile_and_pull",
+      "nonprod_deploy_default_mode": "reconcile_only",
+      "nonprod_deploy_default_provider_egress": "deny",
+      "raw_compose_default_correction_owner": "PFG-DEV-INTEGRATION-20260820"
+    },
+    "frontend_and_hosted_identity": {
+      "execute_plans_origin_dev": "729baba8f21211074c5aa3983ecd1e79e59c8599",
+      "hosted_frontend_commit": "729baba8f21211074c5aa3983ecd1e79e59c8599",
+      "hosted_manifest_bff_commit": "e50af43ab253af80ae1e0c48f9cf5448368fb6ac",
+      "public_bff_commit": "26a4fd868d73e49d5a1b37232da189d7ac9bd949",
+      "pantheon_origin_dev": "cd93c201076f7767366a868a1b45d75a91e9317e",
+      "identity_drift_confirmed": true,
+      "strict_live_read_only_build": true
+    }
+  },
+  "verification": {
+    "commands": [
+      "AI_NAME=Codex2 $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show PFG-PLAN-FREEZE-20260820",
+      "gh api repos/ajoe734/pantheon/pulls/5066 --jq head/base/mergeable fields",
+      "git fetch origin task/PFG-FUNCTIONAL-CLOSURE-PLAN-20260820",
+      "git diff --check cd93c201076f7767366a868a1b45d75a91e9317e..3dbb51db9300545a2c4139582d2cc91f1edc0bb1",
+      "git show 3dbb51db9300545a2c4139582d2cc91f1edc0bb1:docs/04/pantheon_product_functional_closure_2026-08-20/execution-tasks.json | sha256sum",
+      "catalog JSON schema, unique-ID, DAG, repository-boundary, code-disposition, policy, and transitive artifact-overlap validators",
+      "exact-head source/paper/BFF/deploy-wrapper code searches",
+      "exact-head relative Markdown link validator",
+      "git -C /home/lupin/code/execute-plans rev-parse origin/dev",
+      "curl --fail --silent --show-error --max-time 15 https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json | jq .",
+      "curl --fail --silent --show-error --max-time 15 https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version | jq ."
+    ],
+    "results": [
+      "PR #5066 is mergeable against reviewed dev base cd93c201076f7767366a868a1b45d75a91e9317e; it is blocked only on canonical review.",
+      "Catalog byte digest exactly equals the canonical task-row catalog digest.",
+      "The catalog declares the v2 schema, has 27 unique IDs, is acyclic, keeps all implementation work transitively behind plan freeze, and has no unordered artifact overlap.",
+      "All 26 implementation tasks provide code-disposition entries; the catalog-wide disposition contract requires caller/store/duplicate evidence before review.",
+      "The fixed frontend SHA and both divergent backend identities exactly match the audit baseline, confirming that an accepted manifest is not current product closure evidence.",
+      "The corrected audit accurately distinguishes the raw Compose fallback from the managed-dev default, and Wave 3 assigns the only default change to PFG-DEV-INTEGRATION-20260820."
+    ]
+  },
+  "review_decision": {
+    "decision": "passed_pending_task_reviewer",
+    "eligible_for_plan_merge": true,
+    "finding_id": "PFG-PLAN-001",
+    "severity": "resolved",
+    "path": "docs/04/pantheon_product_functional_closure_2026-08-20/01_CURRENT_PRODUCT_FUNCTION_GAP_2026-08-20.md",
+    "line_context": "Sections 1 and 4.1 distinguish managed-dev reconcile_only from raw Compose reconcile_and_pull fallback, and Section 3 assigns the corrective default change to PFG-DEV-INTEGRATION-20260820.",
+    "evidence": "At 3dbb51db, docker-compose.yml line 242 still resolves SOURCE_INGEST_CONTROLLER_MODE to reconcile_and_pull when absent; scripts/deploy_nonprod_vm.sh injects reconcile_only with denied provider egress for managed dev. The exact-head audit now states both facts and does not treat the raw fallback correction as shipped.",
+    "required_correction": "None for this plan head. PFG-DEV-INTEGRATION-20260820 remains the sole later owner of the raw Compose default change, before functional E2E waves.",
+    "non_remediation": [
+      "Do not enable continuous provider egress.",
+      "Do not add a second scheduler or a new Source owner.",
+      "Do not modify product runtime, deployment, task-state, security, or capital scope in this review task."
+    ]
+  },
+  "next_gate": {
+    "waiting_for": "Antigravity2, as task reviewer, to inspect this committed exact-head evidence and record canonical approval against the evidence manifest.",
+    "fresh_review_required": false,
+    "reason": "The previous blocking finding was corrected at 3dbb51db9300545a2c4139582d2cc91f1edc0bb1 and independently revalidated."
+  }
+}
