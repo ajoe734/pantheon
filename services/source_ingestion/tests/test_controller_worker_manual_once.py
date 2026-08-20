@@ -262,6 +262,7 @@ def test_reconcile_and_pull_requires_bounded_max_ticks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MODE", RECONCILE_AND_PULL_MODE)
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS", CONNECTOR_ID)
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "0")
     with pytest.raises(ValueError, match="SOURCE_INGEST_CONTROLLER_MAX_TICKS between 1 and 24"):
         controller_worker.config_from_env()
@@ -269,6 +270,37 @@ def test_reconcile_and_pull_requires_bounded_max_ticks(
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "25")
     with pytest.raises(ValueError, match="SOURCE_INGEST_CONTROLLER_MAX_TICKS between 1 and 24"):
         controller_worker.config_from_env()
+
+
+def test_reconcile_and_pull_requires_explicit_connector_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MODE", RECONCILE_AND_PULL_MODE)
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "1")
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS", raising=False)
+    with pytest.raises(ValueError, match="reconcile_and_pull mode requires explicitly selected connector IDs"):
+        controller_worker.config_from_env()
+
+
+def test_run_controller_once_rejects_empty_exclusive_connectors(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "controller-state.json"
+    with pytest.raises(ValueError, match="reconcile_and_pull mode requires explicitly selected connector IDs"):
+        run_controller_once(
+            mode=RECONCILE_AND_PULL_MODE,
+            exclusive_connector_ids=[],
+            state_path=state_path,
+            controller_token="test-token-32-chars-minimum-mock",
+        )
+
+    with pytest.raises(ValueError, match="reconcile_and_pull mode requires explicitly selected connector IDs"):
+        run_controller_once(
+            mode=RECONCILE_AND_PULL_MODE,
+            exclusive_connector_ids=None,
+            state_path=state_path,
+            controller_token="test-token-32-chars-minimum-mock",
+        )
 
 
 def test_run_controller_once_pulls_selected_allowlisted_connectors(
@@ -322,23 +354,30 @@ def test_run_controller_once_idempotent_replay_and_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seq_counter = 0
+    schedule_call_count = 0
 
     def mock_actual(*args: Any, **kwargs: Any) -> dict[str, Any]:
         nonlocal seq_counter
         return _actual(seq_counter)
 
+    def mock_schedule(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal schedule_call_count
+        schedule_call_count += 1
+        return _schedule()
+
     monkeypatch.setattr(controller_worker, "load_desired_state", lambda **kwargs: (_personas(), _desired_meta()))
     monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: _reconcile())
     monkeypatch.setattr(controller_worker, "read_actual_state", mock_actual)
     monkeypatch.setattr(controller_worker, "_validate_terminal_readback", lambda **kwargs: None)
-    monkeypatch.setattr(controller_worker, "run_schedule_tick", lambda **kwargs: _schedule())
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", mock_schedule)
 
     state_path = tmp_path / "controller-state.json"
 
-    # First run
+    # First run with explicit operation_key
     seq_counter = 1
     writer1 = RecordingWriter()
     res1 = run_controller_once(
+        operation_key="op-acceptance-001",
         mode=RECONCILE_AND_PULL_MODE,
         exclusive_connector_ids=[CONNECTOR_ID],
         state_path=state_path,
@@ -347,11 +386,18 @@ def test_run_controller_once_idempotent_replay_and_recovery(
     )
     assert res1["status"] == "ok"
     assert res1["state_sequence_no"] == 1
+    assert res1["provider_egress_attempted"] is True
+    assert res1["replayed"] is False
+    assert res1["deduplicated"] is False
+    assert res1["operation_key"] == "op-acceptance-001"
+    assert schedule_call_count == 1
+    assert len(writer1.successes) == 1
 
-    # Second run (replayed)
+    # Second run (replayed with same operation_key)
     seq_counter = 2
     writer2 = RecordingWriter()
     res2 = run_controller_once(
+        operation_key="op-acceptance-001",
         mode=RECONCILE_AND_PULL_MODE,
         exclusive_connector_ids=[CONNECTOR_ID],
         state_path=state_path,
@@ -359,14 +405,21 @@ def test_run_controller_once_idempotent_replay_and_recovery(
         writer=writer2,
     )
     assert res2["status"] == "ok"
-    assert res2["state_sequence_no"] == 2
+    assert res2["state_sequence_no"] == 1  # Sequence unchanged
+    assert res2["provider_egress_attempted"] is False  # Replay must NOT invoke forced provider tick
+    assert res2["replayed"] is True
+    assert res2["deduplicated"] is True
+    assert res2["operation_key"] == "op-acceptance-001"
+    assert schedule_call_count == 1  # Schedule tick was NOT invoked a second time!
+    assert len(writer2.successes) == 0  # No redundant telemetry tick recorded
 
-    # Check store state
+    # Check store state: total_successes must remain 1
     store = ControllerStateStore(state_path)
     state = store.load()
     assert state is not None
-    assert state.sequence_no == 2
-    assert state.total_successes == 2
+    assert state.sequence_no == 1
+    assert state.total_successes == 1
+    assert "op-acceptance-001" in state.recent_operations
 
 
 def test_run_controller_once_records_failure_and_exits(
@@ -399,3 +452,49 @@ def test_run_controller_once_records_failure_and_exits(
     assert state.consecutive_failures == 1
     assert state.total_failures == 1
     assert "upstream provider network error" in (state.last_failure_reason or "")
+
+
+def test_run_controller_once_cross_process_serialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call_order: list[str] = []
+
+    def mock_schedule(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        call_order.append("schedule")
+        return _schedule()
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", lambda **kwargs: (_personas(), _desired_meta()))
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: _reconcile())
+    monkeypatch.setattr(controller_worker, "read_actual_state", lambda **kwargs: _actual(1))
+    monkeypatch.setattr(controller_worker, "_validate_terminal_readback", lambda **kwargs: None)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", mock_schedule)
+
+    state_path = tmp_path / "controller-state.json"
+    writer = RecordingWriter()
+
+    res1 = run_controller_once(
+        operation_key="op-seq-1",
+        mode=RECONCILE_AND_PULL_MODE,
+        exclusive_connector_ids=[CONNECTOR_ID],
+        state_path=state_path,
+        controller_token="test-token-32-chars-minimum-mock",
+        writer=writer,
+    )
+    res2 = run_controller_once(
+        operation_key="op-seq-2",
+        mode=RECONCILE_AND_PULL_MODE,
+        exclusive_connector_ids=[CONNECTOR_ID],
+        state_path=state_path,
+        controller_token="test-token-32-chars-minimum-mock",
+        writer=writer,
+    )
+
+    assert res1["status"] == "ok"
+    assert res2["status"] == "ok"
+    assert res1["state_sequence_no"] == 1
+    assert res2["state_sequence_no"] == 2
+    assert len(call_order) == 2
+
+    # Lock file exists
+    lock_path = state_path.with_name(f"{state_path.name}.lock")
+    assert lock_path.exists()

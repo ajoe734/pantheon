@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import importlib
 import json
 import os
@@ -815,6 +816,8 @@ def config_from_env() -> ControllerConfig:
     exclusive_connector_ids = _env_csv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS")
     if mode == RECONCILE_AND_PULL_MODE and not 1 <= max_ticks <= 24:
         raise ValueError("reconcile_and_pull mode requires SOURCE_INGEST_CONTROLLER_MAX_TICKS between 1 and 24")
+    if mode == RECONCILE_AND_PULL_MODE and not exclusive_connector_ids:
+        raise ValueError("reconcile_and_pull mode requires explicitly selected connector IDs (exclusive_connector_ids)")
     if mode == RECONCILE_ONLY_MODE and (force_connector_ids or exclusive_connector_ids):
         raise ValueError("reconcile_only mode must not select provider connector execution")
     return ControllerConfig(
@@ -841,6 +844,7 @@ def config_from_env() -> ControllerConfig:
 
 def run_controller_once(
     *,
+    operation_key: str | None = None,
     config: ControllerConfig | None = None,
     mode: str = RECONCILE_AND_PULL_MODE,
     exclusive_connector_ids: Sequence[str] | None = None,
@@ -871,6 +875,8 @@ def run_controller_once(
         force_tuple = tuple(
             dict.fromkeys(str(c).strip() for c in (force_connector_ids or ()) if str(c).strip())
         )
+        if mode == RECONCILE_AND_PULL_MODE and not exclusive_tuple:
+            raise ValueError("reconcile_and_pull mode requires explicitly selected connector IDs (exclusive_connector_ids)")
         if mode == RECONCILE_ONLY_MODE and (exclusive_tuple or force_tuple):
             raise ValueError("reconcile_only mode must not select provider connector execution")
         resolved_state_path = (
@@ -908,13 +914,60 @@ def run_controller_once(
             force_connector_ids=force_tuple,
             exclusive_connector_ids=exclusive_tuple,
         )
+    else:
+        if config.mode == RECONCILE_AND_PULL_MODE and not config.exclusive_connector_ids:
+            raise ValueError("reconcile_and_pull mode requires explicitly selected connector IDs (exclusive_connector_ids)")
 
-    store = ControllerStateStore(config.state_path)
-    loaded_state = store.load()
-    state = refresh_runtime_identity(loaded_state) if loaded_state is not None else _new_state()
-    store.save(state)
-    active_writer = writer if writer is not None else build_loop_writer(dsn=config.database_url, state=state)
-    return run_controller_tick(config=config, state=state, store=store, writer=active_writer)
+    lock_path = config.state_path.with_name(f"{config.state_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(lock_path, "a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            store = ControllerStateStore(config.state_path)
+            loaded_state = store.load()
+            state = refresh_runtime_identity(loaded_state) if loaded_state is not None else _new_state()
+
+            resolved_op_key = (
+                str(operation_key).strip()
+                if operation_key is not None
+                else (str(os.getenv("SOURCE_INGEST_CONTROLLER_OPERATION_KEY") or "").strip() or None)
+            )
+
+            if resolved_op_key and resolved_op_key in state.recent_operations:
+                cached_op = dict(state.recent_operations[resolved_op_key])
+                actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+                replayed_result = dict(cached_op.get("result") or {})
+                replayed_result["status"] = "ok"
+                replayed_result["controller_mode"] = config.mode
+                replayed_result["provider_egress_attempted"] = False
+                replayed_result["state_sequence_no"] = state.sequence_no
+                replayed_result["operation_key"] = resolved_op_key
+                replayed_result["replayed"] = True
+                replayed_result["deduplicated"] = True
+                replayed_result["actual_readback"] = summarize_actual_readback(actual)
+                return replayed_result
+
+            store.save(state)
+            active_writer = writer if writer is not None else build_loop_writer(dsn=config.database_url, state=state)
+            result = run_controller_tick(config=config, state=state, store=store, writer=active_writer)
+            result["replayed"] = False
+            result["deduplicated"] = False
+            if resolved_op_key:
+                result["operation_key"] = resolved_op_key
+                state.record_operation(
+                    resolved_op_key,
+                    {
+                        "executed_at": utc_now(),
+                        "sequence_no": state.sequence_no,
+                        "mode": config.mode,
+                        "result": result,
+                    },
+                )
+                store.save(state)
+            return result
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 def _runtime_deployment() -> dict[str, Any]:

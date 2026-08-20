@@ -4,7 +4,7 @@
     "id": "PFG-SOURCE-MANUAL-ONCE-20260820",
     "title": "Provide a safe bounded manual one-tick Source pull for dev acceptance",
     "owner": "Antigravity2",
-    "reviewer": "Codex",
+    "reviewer": "Codex2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/PFG-SOURCE-MANUAL-ONCE-20260820",
@@ -13,11 +13,12 @@
   },
   "scope": {
     "owned_layer": [
-      "services/source_ingestion/controller_worker.py: locked default mode to reconcile_only with zero provider egress; added run_controller_once() for bounded manual execution.",
-      "scripts/source_ingest_scheduler_once.py: consolidated one-shot CLI onto controller_worker.py with allowlisted connector selection and terminal readback.",
-      "services/source_ingestion/tests/test_controller_worker_manual_once.py: contract tests for reconcile-only zero egress, bounded one-tick execution, and replay/idempotency.",
-      "scripts/tests/test_source_ingest_scheduler_once.py: CLI contract tests for arguments, error propagation, and process termination.",
-      "docs/operations/source-ingest-manual-one-shot.md: operational runbook for manual one-shot pull and dev posture."
+      "services/source_ingestion/controller_worker.py: locked default mode to reconcile_only with zero provider egress; added run_controller_once() with explicit connector requirement, cross-process locking, and replay deduplication.",
+      "services/source_ingestion/controller_state.py: added recent_operations tracking to ControllerState and ControllerStateStore for idempotent operation replay.",
+      "scripts/source_ingest_scheduler_once.py: consolidated one-shot CLI onto controller_worker.py with allowlisted connector selection enforcement, --operation-key support, and terminal readback.",
+      "services/source_ingestion/tests/test_controller_worker_manual_once.py: contract tests for reconcile-only zero egress, explicit connector selection rejection, cross-process serialization, and operation-key replay deduplication.",
+      "scripts/tests/test_source_ingest_scheduler_once.py: CLI contract tests for argument parsing, rejection on empty selection in reconcile_and_pull, --operation-key, error propagation, and process termination.",
+      "docs/operations/source-ingest-manual-one-shot.md: operational runbook for manual one-shot pull, cross-process serialization, replay deduplication, and dev posture."
     ],
     "canonical_owner_and_store": {
       "controller_owner": "services/source_ingestion/controller_worker.py",
@@ -40,26 +41,26 @@
   "acceptance_verification": {
     "criterion_1_default_reconcile_only": "controller_worker.py:config_from_env() defaults to RECONCILE_ONLY_MODE, scheduled_tick truth, and MAX_TICKS=0; verified provider_egress_attempted is false and run_schedule_tick is never called.",
     "criterion_2_pr_5064_candidate_reuse": "Inspected PR #5064 and consolidated its bounded pull and reconcile-only rules into Python contracts without creating duplicate parallel implementations.",
-    "criterion_3_explicit_one_tick_pull": "scripts/source_ingest_scheduler_once.py and controller_worker.py:run_controller_once() accept allowlisted connector IDs, execute exactly 1 tick (max_ticks=1), validate terminal readback, and emit canonical JSON.",
-    "criterion_4_boundedness_and_idempotency": "Process exits immediately upon completion (rc=0 on success, rc=1 on error); sequential replays update state sequence numbers monotonically with valid checksums; no lingering background processes.",
+    "criterion_3_explicit_one_tick_pull": "scripts/source_ingest_scheduler_once.py and controller_worker.py:run_controller_once() strictly require explicitly selected connector IDs for reconcile_and_pull mode, execute exactly 1 tick (max_ticks=1), validate terminal readback, and emit canonical JSON.",
+    "criterion_4_boundedness_and_idempotency": "Process exits immediately upon completion (rc=0 on success, rc=1 on error); executions serialize via cross-process file lock; replayed operation keys return terminal readback without invoking redundant provider ticks.",
     "criterion_5_code_disposition_consolidation": "scripts/source_ingest_scheduler_once.py consolidated onto canonical controller; audited legacy scheduler utilities per code-disposition.json."
   },
   "validation": {
     "commands": [
-      "python3 -m py_compile services/source_ingestion/controller_worker.py scripts/source_ingest_scheduler_once.py services/source_ingestion/tests/test_controller_worker_manual_once.py scripts/tests/test_source_ingest_scheduler_once.py",
+      "python3 -m py_compile services/source_ingestion/controller_worker.py services/source_ingestion/controller_state.py scripts/source_ingest_scheduler_once.py services/source_ingestion/tests/test_controller_worker_manual_once.py scripts/tests/test_source_ingest_scheduler_once.py",
       "pytest -q services/source_ingestion/tests/test_controller_worker_manual_once.py scripts/tests/test_source_ingest_scheduler_once.py services/source_ingestion/tests/test_controller_worker.py",
       "pytest -q services/source_ingestion/",
       "git diff --check"
     ],
     "results": [
       "py_compile succeeded with zero errors.",
-      "76 passed across test_controller_worker_manual_once.py, test_source_ingest_scheduler_once.py, and test_controller_worker.py.",
-      "782 passed, 2 skipped across full services/source_ingestion test suite.",
+      "81 passed across test_controller_worker_manual_once.py, test_source_ingest_scheduler_once.py, and test_controller_worker.py.",
+      "752 passed, 1 skipped across full services/source_ingestion test suite.",
       "git diff --check passed with zero whitespace or formatting errors."
     ]
   },
   "review_decision": {
     "decision": "owner_validation_passed_pending_independent_reviewer",
-    "reviewer_action_required": "Codex must independently inspect this committed manifest and exact PR head, rerun the focused test suite, and bind canonical approval with this review_file before merge."
+    "reviewer_action_required": "Codex2 must independently inspect this committed manifest and exact PR head, rerun the focused test suite, and bind canonical approval with this review_file before merge."
   }
 }

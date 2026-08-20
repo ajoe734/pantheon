@@ -7,8 +7,9 @@ Task: PFG-SOURCE-MANUAL-ONCE-20260820
 
 - **Single Durable Owner**: `services/source_ingestion/controller_worker.py` is the sole canonical desired-state and schedule reconciler. No secondary daemon or legacy scheduler service is permitted.
 - **Default Dev Posture**: The default controller mode is `reconcile_only` (`SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`, `SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick`). In this mode, internal persona/connector desired state is continuously reconciled while attempting **zero provider egress** (`provider_egress_attempted: false`).
-- **Bounded Manual Pull**: When acceptance testing or dev verification requires live provider data, an operator or test suite must explicitly invoke a bounded one-tick action targeting allowlisted connector IDs.
-- **Fail-Closed Execution**: Unbounded provider pull (`max_ticks=0` in `reconcile_and_pull` mode) and connector selection in `reconcile_only` mode are strictly rejected with fatal configuration errors.
+- **Bounded Manual Pull**: When acceptance testing or dev verification requires live provider data, an operator or test suite must explicitly invoke a bounded one-tick action targeting allowlisted connector IDs. In `reconcile_and_pull` mode, an explicit non-empty connector set (`exclusive_connector_ids`) is strictly required to prevent unbounded schedule claiming.
+- **Cross-Process Serialization & Deduplication**: Manual one-shot executions serialize via an exclusive cross-process file lock (`<state_path>.lock`). When an `operation_key` is supplied, replayed executions are deduplicated against recorded terminal operations, returning terminal readback immediately without invoking redundant provider ticks.
+- **Fail-Closed Execution**: Unbounded provider pull (`max_ticks=0` in `reconcile_and_pull` mode), missing connector selection in `reconcile_and_pull` mode, and connector selection in `reconcile_only` mode are strictly rejected with fatal configuration errors.
 
 ## 2. PR #5064 Candidate Reuse
 
@@ -23,7 +24,9 @@ Under `PFG-SOURCE-MANUAL-ONCE-20260820`, these guarantees are consolidated into 
 
 `scripts/source_ingest_scheduler_once.py` is the consolidated, safe one-shot entrypoint. It invokes `controller_worker.run_controller_once()`, ensuring that:
 - Exactly **one** bounded tick is executed (`max_ticks=1`).
-- `ControllerStateStore` records state sequence numbers, restart counters, and failure summaries without state duplication or recursion.
+- `reconcile_and_pull` requires at least one explicitly selected connector ID.
+- Cross-process file locking ensures bounded serialization.
+- `ControllerStateStore` records state sequence numbers, restart counters, and bounded operation keys for idempotent replay.
 - Terminal readback is validated against the live Source Ingestion HTTP service.
 - The process terminates immediately upon tick completion with exit code `0` (success) or `1` (failure). No recurring process or timer daemon is created.
 
@@ -34,8 +37,8 @@ Under `PFG-SOURCE-MANUAL-ONCE-20260820`, these guarantees are consolidated into 
 python3 scripts/source_ingest_scheduler_once.py tw-official-market-datasets
 python3 scripts/source_ingest_scheduler_once.py --connector tw-official-market-datasets --max-concurrency 2
 
-# Run multiple connectors:
-python3 scripts/source_ingest_scheduler_once.py --connector c1,c2 -c c3
+# Run multiple connectors with an operation key for idempotent replay:
+python3 scripts/source_ingest_scheduler_once.py --connector c1,c2 -c c3 --operation-key acceptance-20260820-001
 
 # Run a single bounded reconcile-only tick (zero provider egress):
 python3 scripts/source_ingest_scheduler_once.py --mode reconcile_only
@@ -54,6 +57,7 @@ The script honours standard environment variables:
 - `SOURCE_INGEST_CONTROLLER_MODE`: `reconcile_and_pull` (default for CLI) or `reconcile_only`.
 - `SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS` / `SOURCE_INGEST_CONNECTORS`: comma-separated connector IDs.
 - `SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS`: comma-separated forced connector IDs.
+- `SOURCE_INGEST_CONTROLLER_OPERATION_KEY`: operation key for concurrent deduplication and replay idempotency.
 - `SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY`: max concurrent connector pulls (1..4, default 2).
 - `SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS`: HTTP request timeout (default 30.0s).
 - `SOURCE_INGEST_CONTROLLER_STATE_PATH`: state file path.

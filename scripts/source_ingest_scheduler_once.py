@@ -97,6 +97,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=os.getenv("DATABASE_URL") or "",
         help="PostgreSQL database URL for loop controller telemetry (optional).",
     )
+    parser.add_argument(
+        "--operation-key",
+        default=os.getenv("SOURCE_INGEST_CONTROLLER_OPERATION_KEY") or None,
+        help="Optional operation key for concurrent deduplication and idempotent replay.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -118,6 +123,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if env_force and not force_ids:
         force_ids.extend(_parse_csv(env_force))
 
+    if args.mode == RECONCILE_AND_PULL_MODE and not exclusive_ids:
+        error_payload = {
+            "status": "failed",
+            "stage": "validation",
+            "error": "ValueError: reconcile_and_pull mode requires at least one explicitly selected connector ID",
+        }
+        print(json.dumps(error_payload, sort_keys=True), file=sys.stderr)
+        return 1
+
     controller_token = args.token
     if not controller_token and args.token_file:
         try:
@@ -127,6 +141,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         result = run_controller_once(
+            operation_key=args.operation_key,
             mode=args.mode,
             exclusive_connector_ids=exclusive_ids,
             force_connector_ids=force_ids,

@@ -116,6 +116,50 @@ def test_main_reads_environment_variable_defaults(
     assert captured_kwargs["api_url"] == "http://custom-api:9999"
 
 
+def test_main_rejects_reconcile_and_pull_without_connectors(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_CONNECTORS", raising=False)
+
+    rc = scheduler_once.main([])
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    err_payload = json.loads(captured.err)
+    assert err_payload["status"] == "failed"
+    assert err_payload["stage"] == "validation"
+    assert "reconcile_and_pull mode requires at least one explicitly selected connector ID" in err_payload["error"]
+
+    rc2 = scheduler_once.main(["--mode", "reconcile_and_pull"])
+    captured2 = capsys.readouterr()
+    assert rc2 == 1
+    err_payload2 = json.loads(captured2.err)
+    assert err_payload2["status"] == "failed"
+    assert err_payload2["stage"] == "validation"
+
+
+def test_main_supports_operation_key_flag_and_env(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured_kwargs: dict[str, Any] = {}
+
+    def mock_run_controller_once(**kwargs: Any) -> dict[str, Any]:
+        captured_kwargs.update(kwargs)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(scheduler_once, "run_controller_once", mock_run_controller_once)
+
+    rc = scheduler_once.main(["tw-official-market-datasets", "--operation-key", "my-op-key-123"])
+    assert rc == 0
+    assert captured_kwargs["operation_key"] == "my-op-key-123"
+
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_OPERATION_KEY", "env-op-key-456")
+    rc2 = scheduler_once.main(["tw-official-market-datasets"])
+    assert rc2 == 0
+    assert captured_kwargs["operation_key"] == "env-op-key-456"
+
+
 def test_main_handles_controller_error_and_returns_exit_code_1(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
