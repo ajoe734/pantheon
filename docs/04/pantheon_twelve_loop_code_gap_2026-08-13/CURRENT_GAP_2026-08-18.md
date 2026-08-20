@@ -1,5 +1,10 @@
 # Pantheon 十二循環最新程式碼 GAP、未開發項目與汰除盤點
 
+> 2026-08-20：本文件保留為 8/18 十二循環歷史快照。current product-wide 判定、Source
+> manual-one-shot policy、Management/Agora再盤點與新execution plan，以
+> [`pantheon_product_functional_closure_2026-08-20`](../pantheon_product_functional_closure_2026-08-20/INDEX.md)
+> 為準；不得直接重送本文件的舊task設計。
+
 日期：2026-08-18
 
 狀態：current code-first gap truth；只供下一階段 SD／execution task 設計，**本文件不建立、
