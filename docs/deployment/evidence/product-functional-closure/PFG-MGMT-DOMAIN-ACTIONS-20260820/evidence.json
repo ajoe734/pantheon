@@ -1,0 +1,206 @@
+{
+  "task_id": "PFG-MGMT-DOMAIN-ACTIONS-20260820",
+  "title": "Map production Management actions to domain owners with typed unavailable failures and authoritative readbacks",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "code_disposition": {
+    "task_id": "PFG-MGMT-DOMAIN-ACTIONS-20260820",
+    "canonical_owner": "services/control-plane/bff/command_executor.py, services/control-plane/bff/command_adapters/",
+    "stores_and_queues": "command_queue / downstream domain authority APIs (capital, runtime, deployment, governance, incident/sentinel, evolution, strategy)",
+    "production_callers": "BFF /bff/v1/commands, /api/v1/operator/commands, /bff/actions/*",
+    "duplicate_paths": "Legacy admission-only stubs mapped in _EXECUTORS before domain adapters",
+    "retired_after_proof": "Removed stubbed _execute_bff_action_adapter mappings in favor of dispatch_domain_command to modular domain adapters with authoritative domain receipts and readbacks",
+    "retained_with_reason": "Retained specialized domain executors (e.g. _execute_approved_rebalance_apply, _execute_emergency_containment_authority) with direct domain client delegation and authoritative readbacks",
+    "new_parallel_owner_created": false
+  },
+  "action_domain_owner_matrix": {
+    "Capital": {
+      "adapter": "services/control-plane/bff/command_adapters/capital_adapter.py",
+      "command_types": [
+        "CAPITAL_POOL_ACTION",
+        "REBALANCE_ACTION",
+        "REBALANCE_PROPOSAL",
+        "PATCH_REBALANCE",
+        "APPROVED_APPLY",
+        "EMERGENCY_CONTAINMENT",
+        "APPROVE_POOL",
+        "PERSONA_CAPITAL_BINDING"
+      ],
+      "domain_endpoints": [
+        "/api/capital-pools",
+        "/api/rebalances",
+        "/api/rebalances/{id}/apply",
+        "/api/containment/emergency",
+        "/api/bindings"
+      ]
+    },
+    "Runtime": {
+      "adapter": "services/control-plane/bff/command_adapters/runtime_adapter.py",
+      "command_types": [
+        "RUNTIME_ACTION",
+        "START_RUNTIME",
+        "PAUSE_RUNTIME",
+        "PAUSE_PAPER_RUNTIME",
+        "RESUME_PAPER_RUNTIME",
+        "RESTART_PAPER_RUNTIME",
+        "RESTART_TELEMETRY_BRIDGE",
+        "PROBE_TELEMETRY_INGEST",
+        "ISSUE_SAFE_MODE",
+        "EXECUTE_ROLLBACK",
+        "APPROVE_ROLLBACK",
+        "REJECT_ROLLBACK",
+        "ACTIVATE_KILL_SWITCH"
+      ],
+      "domain_endpoints": [
+        "/api/runtimes/*",
+        "/api/rollbacks/*",
+        "/api/telemetry/*"
+      ]
+    },
+    "Deployment": {
+      "adapter": "services/control-plane/bff/command_adapters/deployment_adapter.py",
+      "command_types": [
+        "DEPLOYMENT_ACTION",
+        "CREATE_DEPLOYMENT",
+        "PATCH_DEPLOYMENT",
+        "APPROVE_DEPLOYMENT",
+        "ESCALATE_DIFF"
+      ],
+      "domain_endpoints": [
+        "/api/deployments",
+        "/api/deployments/{id}/actions"
+      ]
+    },
+    "Persona": {
+      "adapter": "services/control-plane/bff/command_adapters/persona_adapter.py",
+      "command_types": [
+        "PERSONA_ACTION"
+      ],
+      "domain_endpoints": [
+        "/api/containment/emergency",
+        "/api/personas/{id}/lifecycle"
+      ]
+    },
+    "Governance": {
+      "adapter": "services/control-plane/bff/command_adapters/governance_adapter.py",
+      "command_types": [
+        "APPROVE_DECISION",
+        "REJECT_DECISION",
+        "REQUEST_APPROVAL_REVISION",
+        "HUMAN_GATE_APPROVE",
+        "HUMAN_GATE_REJECT",
+        "HUMAN_GATE_REQUEST_MORE_EVIDENCE",
+        "HUMAN_GATE_REVOKE",
+        "HUMAN_GATE_EXTEND_TTL",
+        "RECORD_SPONSOR_DECISION"
+      ],
+      "domain_endpoints": [
+        "/api/v1/governance/decisions/{id}/*",
+        "/api/v1/governance/sponsors/*"
+      ]
+    },
+    "Incident & Risk": {
+      "adapter": "services/control-plane/bff/command_adapters/incident_adapter.py",
+      "command_types": [
+        "INCIDENT_ACTION",
+        "RISK_ALERT_ACTION",
+        "ALERT_ACKNOWLEDGE",
+        "REMEDIATE_SENTINEL_INTERVENTION",
+        "V5_INTERVENTION_ACTION",
+        "SENTINEL_FINDING_STATUS"
+      ],
+      "domain_endpoints": [
+        "/api/incidents/*",
+        "/api/alerts/*",
+        "/api/sentinel/*"
+      ]
+    },
+    "Evolution": {
+      "adapter": "services/control-plane/bff/command_adapters/evolution_adapter.py",
+      "command_types": [
+        "EVOLUTION_PROGRAM_ACTION",
+        "APPROVE_EVOLUTION_DECISION",
+        "EXECUTE_EVOLUTION_ACTION",
+        "APPROVE_MUTATION",
+        "REJECT_MUTATION",
+        "REVIEW_MUTATION",
+        "EXECUTE_MUTATION",
+        "EXPERIMENT_ACTION",
+        "JOB_ACTION"
+      ],
+      "domain_endpoints": [
+        "/api/evolution/proposals/{id}/*",
+        "/api/evolution/programs/{id}/*",
+        "/api/evolution/jobs/{id}/*"
+      ]
+    },
+    "Strategy & Ranking": {
+      "adapter": "services/control-plane/bff/command_adapters/strategy_adapter.py",
+      "command_types": [
+        "STRATEGY_ACTION",
+        "RANKING_FORMULA_ACTION",
+        "RANKING_ACTION",
+        "QUARTERLY_RANKING_RECOMMENDATION_SUBMIT"
+      ],
+      "domain_endpoints": [
+        "/api/strategies/*",
+        "/api/ranking/*"
+      ]
+    },
+    "Capabilities (Fail-Closed Safety)": {
+      "adapter": "services/control-plane/bff/command_adapters/capabilities_adapter.py",
+      "command_types": [
+        "TOOL_ACTION",
+        "MCP_SERVER_ACTION",
+        "SKILL_ACTION"
+      ],
+      "behavior": "Rejects unbacked runtime code/tool mutation attempts with typed ActionUnavailableError (code: CAPABILITY_ACTION_UNAVAILABLE, HTTP 422, userActionable: false). Permits read-only health and connection diagnostic probes."
+    },
+    "Agora & Audit": {
+      "adapters": [
+        "services/control-plane/bff/command_adapters/agora_adapter.py",
+        "services/control-plane/bff/command_adapters/audit_adapter.py"
+      ],
+      "command_types": [
+        "AGORA_SIGNAL_FEEDBACK",
+        "AGORA_MESSAGE_ACTION",
+        "AGORA_INSIGHT_ACTION",
+        "AGORA_MEMORY_ACTION",
+        "AUDIT_EXPORT"
+      ],
+      "domain_endpoints": [
+        "/api/agora/*",
+        "/api/audit/exports"
+      ]
+    }
+  },
+  "validation": {
+    "test_command": "pytest services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_management_domain_actions.py",
+    "total_tests": 61,
+    "status": "PASSED",
+    "verified_cases": [
+      "test_capital_rebalance_action_proposal_submission",
+      "test_capital_rebalance_action_apply",
+      "test_capital_pool_action_create",
+      "test_capital_persona_binding_create",
+      "test_runtime_pause_paper_runtime",
+      "test_runtime_action_restart",
+      "test_deployment_action_create_and_dispatch",
+      "test_persona_advance_lifecycle",
+      "test_incident_action_acknowledge",
+      "test_evolution_program_action_submit",
+      "test_evolution_mutation_review_and_execute",
+      "test_strategy_action_submit_review",
+      "test_ranking_formula_action_update",
+      "test_agora_signal_feedback_action",
+      "test_governance_decision_approve",
+      "test_governance_human_gate_approve",
+      "test_tool_execute_action_raises_typed_unavailable_error",
+      "test_tool_install_action_raises_typed_unavailable_error",
+      "test_mcp_server_restart_raises_typed_unavailable_error",
+      "test_tool_health_check_action_routes_to_probe",
+      "test_upstream_network_error_propagates_correctly",
+      "test_upstream_http_error_propagates_details"
+    ]
+  }
+}
