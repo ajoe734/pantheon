@@ -10,12 +10,12 @@
     "base_branch": "dev",
     "task_branch": "task/PFG-PLAN-FREEZE-20260820",
     "review_file": "docs/deployment/evidence/product-functional-closure/PFG-PLAN-FREEZE-20260820/evidence.json",
-    "evidence_cut_at": "2026-08-20T12:39:39Z"
+    "evidence_cut_at": "2026-08-20T13:16:07Z"
   },
   "scope": {
     "owned_layer": "Independent exact-head plan review evidence and freeze decision.",
     "not_changing": [
-      "PR #5066 plan or catalog source files",
+      "PR #5069 plan or catalog source files",
       "product implementation, runtime mutation, deployment, or capital authority",
       "canonical task state, activity archive, supervisor, or dispatch mechanism",
       "the execute-plans repository"
@@ -33,12 +33,12 @@
     ]
   },
   "review_target": {
-    "pull_request": 5066,
-    "url": "https://github.com/ajoe734/pantheon/pull/5066",
-    "head_branch": "task/PFG-FUNCTIONAL-CLOSURE-PLAN-20260820",
-    "exact_head": "3dbb51db9300545a2c4139582d2cc91f1edc0bb1",
+    "pull_request": 5069,
+    "url": "https://github.com/ajoe734/pantheon/pull/5069",
+    "head_branch": "task/PFG-PLAN-FREEZE-20260820",
+    "exact_head": "4c649f9a2b69a3a31c59000c892745c35d8b55b1",
     "base_branch": "dev",
-    "base_sha": "cd93c201076f7767366a868a1b45d75a91e9317e",
+    "base_sha": "375231141ff7acd34ed5b847b9dcf804de00d69a",
     "mergeable_against_base": true,
     "merge_state_at_review": "blocked_pending_canonical_review",
     "changed_files": [
@@ -93,7 +93,7 @@
       "hosted_frontend_commit": "729baba8f21211074c5aa3983ecd1e79e59c8599",
       "hosted_manifest_bff_commit": "e50af43ab253af80ae1e0c48f9cf5448368fb6ac",
       "public_bff_commit": "26a4fd868d73e49d5a1b37232da189d7ac9bd949",
-      "pantheon_origin_dev": "cd93c201076f7767366a868a1b45d75a91e9317e",
+      "pantheon_origin_dev": "375231141ff7acd34ed5b847b9dcf804de00d69a",
       "identity_drift_confirmed": true,
       "strict_live_read_only_build": true
     }
@@ -101,10 +101,10 @@
   "verification": {
     "commands": [
       "AI_NAME=Codex2 $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show PFG-PLAN-FREEZE-20260820",
-      "gh api repos/ajoe734/pantheon/pulls/5066 --jq head/base/mergeable fields",
-      "git fetch origin task/PFG-FUNCTIONAL-CLOSURE-PLAN-20260820",
-      "git diff --check cd93c201076f7767366a868a1b45d75a91e9317e..3dbb51db9300545a2c4139582d2cc91f1edc0bb1",
-      "git show 3dbb51db9300545a2c4139582d2cc91f1edc0bb1:docs/04/pantheon_product_functional_closure_2026-08-20/execution-tasks.json | sha256sum",
+      "gh api repos/ajoe734/pantheon/pulls/5069 --jq head/base/mergeable fields",
+      "git fetch origin task/PFG-PLAN-FREEZE-20260820",
+      "git diff --check 375231141ff7acd34ed5b847b9dcf804de00d69a..4c649f9a2b69a3a31c59000c892745c35d8b55b1",
+      "git show 4c649f9a2b69a3a31c59000c892745c35d8b55b1:docs/04/pantheon_product_functional_closure_2026-08-20/execution-tasks.json | sha256sum",
       "catalog JSON schema, unique-ID, DAG, repository-boundary, code-disposition, policy, and transitive artifact-overlap validators",
       "exact-head source/paper/BFF/deploy-wrapper code searches",
       "exact-head relative Markdown link validator",
@@ -113,7 +113,7 @@
       "curl --fail --silent --show-error --max-time 15 https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version | jq ."
     ],
     "results": [
-      "PR #5066 is mergeable against reviewed dev base cd93c201076f7767366a868a1b45d75a91e9317e; it is blocked only on canonical review.",
+      "PR #5069 is mergeable against reviewed dev base 375231141ff7acd34ed5b847b9dcf804de00d69a; it is blocked only on canonical review.",
       "Catalog byte digest exactly equals the canonical task-row catalog digest.",
       "The catalog declares the v2 schema, has 27 unique IDs, is acyclic, keeps all implementation work transitively behind plan freeze, and has no unordered artifact overlap.",
       "All 26 implementation tasks provide code-disposition entries; the catalog-wide disposition contract requires caller/store/duplicate evidence before review.",
@@ -128,7 +128,7 @@
     "severity": "resolved",
     "path": "docs/04/pantheon_product_functional_closure_2026-08-20/01_CURRENT_PRODUCT_FUNCTION_GAP_2026-08-20.md",
     "line_context": "Sections 1 and 4.1 distinguish managed-dev reconcile_only from raw Compose reconcile_and_pull fallback, and Section 3 assigns the corrective default change to PFG-DEV-INTEGRATION-20260820.",
-    "evidence": "At 3dbb51db, docker-compose.yml line 242 still resolves SOURCE_INGEST_CONTROLLER_MODE to reconcile_and_pull when absent; scripts/deploy_nonprod_vm.sh injects reconcile_only with denied provider egress for managed dev. The exact-head audit now states both facts and does not treat the raw fallback correction as shipped.",
+    "evidence": "At 4c649f9a, docker-compose.yml line 242 still resolves SOURCE_INGEST_CONTROLLER_MODE to reconcile_and_pull when absent; scripts/deploy_nonprod_vm.sh injects reconcile_only with denied provider egress for managed dev. The exact-plan-head audit states both facts and does not treat the raw fallback correction as shipped.",
     "required_correction": "None for this plan head. PFG-DEV-INTEGRATION-20260820 remains the sole later owner of the raw Compose default change, before functional E2E waves.",
     "non_remediation": [
       "Do not enable continuous provider egress.",
@@ -137,8 +137,8 @@
     ]
   },
   "next_gate": {
-    "waiting_for": "Antigravity2, as task reviewer, to inspect this committed exact-head evidence and record canonical approval against the evidence manifest.",
-    "fresh_review_required": false,
-    "reason": "The previous blocking finding was corrected at 3dbb51db9300545a2c4139582d2cc91f1edc0bb1 and independently revalidated."
+    "waiting_for": "Antigravity2, as task reviewer, to inspect this committed exact-plan-head evidence and record canonical approval against the final manifest-bearing PR head.",
+    "fresh_review_required": true,
+    "reason": "Canonical replacement PR #5069 has a new plan head. This manifest revalidates 4c649f9a2b69a3a31c59000c892745c35d8b55b1; Antigravity2 must bind a fresh independent approval to the final manifest-bearing head through the governed review bridge."
   }
 }
