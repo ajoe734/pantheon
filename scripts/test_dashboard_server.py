@@ -49,6 +49,18 @@ def test_refresh_environment_allows_explicit_operator_actor(monkeypatch) -> None
     assert env["AI_NAME"] == "Ops"
 
 
+def test_refresh_environment_opts_into_local_human_ops(monkeypatch) -> None:
+    """OPS-DASHBOARD-REFRESH-LOCAL-HUMAN-OPS-20260821: without this opt-in,
+    ai_status.py's canonical mutation lease check rejects every refresh
+    (including the no-op "sync" command sync-state.sh runs) with
+    "canonical mutation requires an exact active worker lease or explicit
+    local Human/Ops mode", so every dashboard refresh click 500s."""
+
+    env = dashboard_server.dashboard_refresh_environment(Path("/srv/pantheon"))
+
+    assert env["PANTHEON_LOCAL_HUMAN_OPS"] == "1"
+
+
 def test_activity_get_waits_for_audit_writer_and_returns_complete_tail() -> None:
     with tempfile.TemporaryDirectory(prefix="dashboard-audit-lock-") as tmpdir:
         root = Path(tmpdir)
