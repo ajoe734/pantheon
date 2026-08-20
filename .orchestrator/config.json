@@ -250,7 +250,7 @@
     },
     "max_reassignments_per_cycle": 4,
     "load_balance": {
-      "enabled": false,
+      "enabled": true,
       "min_saturated_seconds": 900
     }
   },
