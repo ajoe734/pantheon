@@ -255,7 +255,8 @@ def test_service_backed_adapter_readback():
             item = res["items"][0]
             assert item["postmortem_id"] == "pm-canonical-101"
             assert item["impact_summary"] == "High latency across ingest pipelines"
-            assert item["severity"] == "canary"
+            assert item["severity"] == "medium"
+            assert item["deployment_stage"] == "canary"
             assert len(item["action_items"]) == 2
             assert item["action_items"][0] == {"id": "act-1", "desc": "Add backpressure buffer"}
             assert item["source_identity"] == "postmortem_store"
@@ -280,3 +281,74 @@ def test_unavailable_degraded_behavior():
             assert body["data"]["items"] == []
             assert body["meta"]["status"] == "unavailable"
             assert "degradation" in body["meta"]
+
+
+def test_file_backed_readback_all_endpoints():
+    with tempfile.TemporaryDirectory() as td:
+        formula_dir = os.path.join(td, "formula")
+        activity_dir = os.path.join(td, "activity")
+        paper_dir = os.path.join(td, "paper")
+        postmortems_dir = os.path.join(td, "postmortems")
+        for d in [formula_dir, activity_dir, paper_dir, postmortems_dir]:
+            os.makedirs(d, exist_ok=True)
+
+        with open(os.path.join(formula_dir, "formula_jobs.json"), "w", encoding="utf-8") as f:
+            json.dump(_SAMPLE_FORMULA_JOBS, f)
+
+        with open(os.path.join(activity_dir, "activity_audit.json"), "w", encoding="utf-8") as f:
+            json.dump(_SAMPLE_ACTIVITIES, f)
+
+        with open(os.path.join(paper_dir, "paper_telemetry.json"), "w", encoding="utf-8") as f:
+            json.dump(_SAMPLE_PAPER_TELEMETRY, f)
+
+        with open(os.path.join(postmortems_dir, "postmortems.json"), "w", encoding="utf-8") as f:
+            json.dump(_SAMPLE_POSTMORTEMS, f)
+
+        old_env = os.environ.copy()
+        os.environ["PANTHEON_BFF_FORMULA_JOBS_STORE"] = os.path.join(formula_dir, "formula_jobs.json")
+        os.environ["PANTHEON_BFF_ACTIVITY_AUDIT_STORE"] = os.path.join(activity_dir, "activity_audit.json")
+        os.environ["PANTHEON_BFF_PAPER_TELEMETRY_STORE"] = os.path.join(paper_dir, "paper_telemetry.json")
+        os.environ["PANTHEON_BFF_POSTMORTEM_STORE"] = os.path.join(postmortems_dir, "postmortems.json")
+
+        try:
+            store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=False,
+            )
+            bff_main.read_store = store
+            client = TestClient(bff_main.app)
+
+            # Test formula jobs file readback
+            r_fj = client.get("/bff/management/formula-jobs", headers=OPERATOR_HEADERS)
+            assert r_fj.status_code == 200
+            data_fj = r_fj.json()["data"]
+            assert data_fj["status"] == "ok"
+            assert len(data_fj["items"]) == 1
+            assert data_fj["items"][0]["job_id"] == "job-f1-001"
+
+            # Test activity file readback
+            r_act = client.get("/bff/management/activity", headers=OPERATOR_HEADERS)
+            assert r_act.status_code == 200
+            data_act = r_act.json()["data"]
+            assert data_act["status"] == "ok"
+            assert len(data_act["items"]) == 1
+            assert data_act["items"][0]["event_id"] == "evt-act-001"
+
+            # Test paper telemetry file readback
+            r_pt = client.get("/bff/management/paper-telemetry", headers=OPERATOR_HEADERS)
+            assert r_pt.status_code == 200
+            data_pt = r_pt.json()["data"]
+            assert data_pt["status"] == "ok"
+            assert len(data_pt["items"]) == 1
+            assert data_pt["items"][0]["strategy_id"] == "strat-momentum-01"
+
+            # Test postmortems file readback
+            r_pm = client.get("/bff/management/postmortems", headers=OPERATOR_HEADERS)
+            assert r_pm.status_code == 200
+            data_pm = r_pm.json()["data"]
+            assert data_pm["status"] == "ok"
+            assert len(data_pm["items"]) == 1
+            assert data_pm["items"][0]["postmortem_id"] == "pm-inc-001"
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)

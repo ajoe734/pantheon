@@ -20428,7 +20428,7 @@ class ReadSurfaceStore:
         available, service_records = self._service.list_records("formula_jobs")
         source = "service" if available else "event_store"
         raw_items = service_records if available else list(self._read_dataset_records("formula_jobs"))
-        
+
         filtered = []
         for item in raw_items:
             if not isinstance(item, dict):
@@ -20458,7 +20458,7 @@ class ReadSurfaceStore:
         available, service_records = self._service.list_records("activity_audit")
         source = "audit" if available else "event_store"
         raw_items = service_records if available else list(self._read_dataset_records("activity_audit"))
-        
+
         filtered = []
         for item in raw_items:
             if not isinstance(item, dict):
@@ -20528,7 +20528,8 @@ class ReadSurfaceStore:
             if "impact_summary" not in item_copy and "incident_evidence_summary" in item_copy:
                 item_copy["impact_summary"] = item_copy.get("incident_evidence_summary")
             if "severity" not in item_copy:
-                item_copy["severity"] = item_copy.get("deployment_stage") or "medium"
+                # Do not relabel deployment_stage as severity; default to real severity field or "medium"
+                item_copy["severity"] = item_copy.get("severity") or "medium"
             if "action_items" in item_copy and isinstance(item_copy["action_items"], list):
                 # Ensure action_items elements are dicts if they were strings
                 norm_actions = []
@@ -20571,4 +20572,3 @@ class ReadSurfaceStore:
             "source": res.get("source") or "missing",
             "item": None,
         }
-
