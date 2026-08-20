@@ -6,7 +6,7 @@
   "summary": "Wired real worker health and error-spike outcomes into the existing BFF monitor. Added file_worker target probing to DownstreamHealthMonitor for schedulers/consumers/paper-signal-producer, attributed paper-signal-producer artifact_store_missing to Capital loop in BFF/Management truth, verified command_executor _post_json/_get_json integration with record_downstream_outcome, and published Loop 12 controller truth.",
   "verification": {
     "test_command": "python3 scripts/dev/provision_python_distribution.py && PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py",
-    "passed": 41,
+    "passed": 55,
     "failed": 0,
     "duration_seconds": 9.17
   },
