@@ -357,6 +357,339 @@ class RiskMetricsWidgetAdapter(BaseWidgetDataAdapter):
         )
 
 
+class SignalDecisionQueueWidgetAdapter(BaseWidgetDataAdapter):
+    """Adapter for signal_decision_queue widget type querying trading decision events."""
+
+    def __init__(self, data_provider: Optional[Any] = None) -> None:
+        self._data_provider = data_provider
+
+    @property
+    def widget_type(self) -> str:
+        return "signal_decision_queue"
+
+    @property
+    def source_name(self) -> str:
+        return "agora.trading.events"
+
+    def query(
+        self,
+        request: WidgetDataQueryRequest,
+        is_live_profile: bool = False,
+        utc_now: Optional[str] = None,
+    ) -> WidgetDataQueryResponse:
+        now_str = utc_now or datetime.now(timezone.utc).isoformat()
+        cutoff_str = request.cutoff or now_str
+
+        events = []
+        data_as_of = None
+        is_stale = False
+
+        if self._data_provider is not None:
+            events, data_as_of, is_stale = self._data_provider.get_decision_events(
+                tenant_id=request.tenant_id,
+                user_id=request.user_id,
+                strategy_id=request.params.get("strategy_id"),
+            )
+        else:
+            try:
+                from ..trading_room.router import _get_store as _get_tr_store
+                tr_store = _get_tr_store()
+                strategy_id = request.params.get("strategy_id")
+                raw_events = tr_store.list_decision_events(strategy_id=strategy_id)
+                events = raw_events.get("items", raw_events) if isinstance(raw_events, dict) else raw_events
+                data_as_of = now_str
+            except Exception:
+                events = []
+
+        if not events and is_live_profile:
+            return WidgetDataQueryResponse(
+                widget_type=self.widget_type,
+                status=WidgetDataStatus.UNAVAILABLE.value,
+                source=self.source_name,
+                as_of=now_str,
+                cutoff=cutoff_str,
+                lineage=[],
+                data={},
+                unavailable_reason=WidgetUnavailableReason.DATA_MISSING.value,
+            )
+
+        cutoff_dt = _parse_iso(cutoff_str)
+        filtered = []
+        if cutoff_dt:
+            for ev in events:
+                ts_dt = _parse_iso(ev.get("triggered_at") or ev.get("created_at") or "")
+                if ts_dt is None or ts_dt <= cutoff_dt:
+                    filtered.append(ev)
+        else:
+            filtered = events
+
+        return WidgetDataQueryResponse(
+            widget_type=self.widget_type,
+            status=WidgetDataStatus.OK.value,
+            source=self.source_name,
+            as_of=data_as_of or now_str,
+            cutoff=cutoff_str,
+            lineage=[
+                WidgetLineageRef(
+                    source_name=self.source_name,
+                    record_count=len(filtered),
+                    point_in_time=cutoff_str,
+                    query_hash=_compute_query_hash(
+                        self.source_name, request.tenant_id, request.user_id, cutoff_str
+                    ),
+                )
+            ],
+            data={"events": filtered, "event_count": len(filtered)},
+            unavailable_reason=None,
+        )
+
+
+class CandidateFunnelWidgetAdapter(BaseWidgetDataAdapter):
+    """Adapter for candidate_funnel widget type querying research candidate pools."""
+
+    def __init__(self, data_provider: Optional[Any] = None) -> None:
+        self._data_provider = data_provider
+
+    @property
+    def widget_type(self) -> str:
+        return "candidate_funnel"
+
+    @property
+    def source_name(self) -> str:
+        return "agora.candidate.members"
+
+    def query(
+        self,
+        request: WidgetDataQueryRequest,
+        is_live_profile: bool = False,
+        utc_now: Optional[str] = None,
+    ) -> WidgetDataQueryResponse:
+        now_str = utc_now or datetime.now(timezone.utc).isoformat()
+        cutoff_str = request.cutoff or now_str
+
+        candidates = []
+        data_as_of = None
+        if self._data_provider is not None:
+            candidates, data_as_of, _ = self._data_provider.get_candidate_members(
+                tenant_id=request.tenant_id,
+                user_id=request.user_id,
+                strategy_id=request.params.get("strategy_id"),
+            )
+        else:
+            try:
+                from ..research.router import _get_store as _get_res_store
+                res_store = _get_res_store()
+                strategy_id = request.params.get("strategy_id")
+                pools = res_store.list_candidate_pools(
+                    user_id=request.user_id,
+                    tenant_id=request.tenant_id,
+                    strategy_id=strategy_id,
+                )
+                if pools:
+                    candidates = pools[0].get("candidates", [])
+                    data_as_of = pools[0].get("snapshot_at")
+            except Exception:
+                candidates = []
+
+        if not candidates and is_live_profile:
+            return WidgetDataQueryResponse(
+                widget_type=self.widget_type,
+                status=WidgetDataStatus.UNAVAILABLE.value,
+                source=self.source_name,
+                as_of=now_str,
+                cutoff=cutoff_str,
+                lineage=[],
+                data={},
+                unavailable_reason=WidgetUnavailableReason.DATA_MISSING.value,
+            )
+
+        counts: Dict[str, int] = {}
+        for c in candidates:
+            state = str(c.get("lifecycle_state") or "discovered")
+            counts[state] = counts.get(state, 0) + 1
+
+        return WidgetDataQueryResponse(
+            widget_type=self.widget_type,
+            status=WidgetDataStatus.OK.value,
+            source=self.source_name,
+            as_of=data_as_of or now_str,
+            cutoff=cutoff_str,
+            lineage=[
+                WidgetLineageRef(
+                    source_name=self.source_name,
+                    record_count=len(candidates),
+                    point_in_time=cutoff_str,
+                    query_hash=_compute_query_hash(
+                        self.source_name, request.tenant_id, request.user_id, cutoff_str
+                    ),
+                )
+            ],
+            data={"funnel_stages": counts, "total_candidates": len(candidates)},
+            unavailable_reason=None,
+        )
+
+
+class CandidateRankingWidgetAdapter(BaseWidgetDataAdapter):
+    """Adapter for candidate_ranking_table widget type."""
+
+    def __init__(self, data_provider: Optional[Any] = None) -> None:
+        self._data_provider = data_provider
+
+    @property
+    def widget_type(self) -> str:
+        return "candidate_ranking_table"
+
+    @property
+    def source_name(self) -> str:
+        return "agora.candidate.members"
+
+    def query(
+        self,
+        request: WidgetDataQueryRequest,
+        is_live_profile: bool = False,
+        utc_now: Optional[str] = None,
+    ) -> WidgetDataQueryResponse:
+        now_str = utc_now or datetime.now(timezone.utc).isoformat()
+        cutoff_str = request.cutoff or now_str
+
+        candidates = []
+        data_as_of = None
+        if self._data_provider is not None:
+            candidates, data_as_of, _ = self._data_provider.get_candidate_members(
+                tenant_id=request.tenant_id,
+                user_id=request.user_id,
+                strategy_id=request.params.get("strategy_id"),
+            )
+        else:
+            try:
+                from ..research.router import _get_store as _get_res_store
+                res_store = _get_res_store()
+                strategy_id = request.params.get("strategy_id")
+                pools = res_store.list_candidate_pools(
+                    user_id=request.user_id,
+                    tenant_id=request.tenant_id,
+                    strategy_id=strategy_id,
+                )
+                if pools:
+                    candidates = pools[0].get("candidates", [])
+                    data_as_of = pools[0].get("snapshot_at")
+            except Exception:
+                candidates = []
+
+        if not candidates and is_live_profile:
+            return WidgetDataQueryResponse(
+                widget_type=self.widget_type,
+                status=WidgetDataStatus.UNAVAILABLE.value,
+                source=self.source_name,
+                as_of=now_str,
+                cutoff=cutoff_str,
+                lineage=[],
+                data={},
+                unavailable_reason=WidgetUnavailableReason.DATA_MISSING.value,
+            )
+
+        return WidgetDataQueryResponse(
+            widget_type=self.widget_type,
+            status=WidgetDataStatus.OK.value,
+            source=self.source_name,
+            as_of=data_as_of or now_str,
+            cutoff=cutoff_str,
+            lineage=[
+                WidgetLineageRef(
+                    source_name=self.source_name,
+                    record_count=len(candidates),
+                    point_in_time=cutoff_str,
+                    query_hash=_compute_query_hash(
+                        self.source_name, request.tenant_id, request.user_id, cutoff_str
+                    ),
+                )
+            ],
+            data={"candidates": candidates, "total": len(candidates)},
+            unavailable_reason=None,
+        )
+
+
+class EvidenceTraceWidgetAdapter(BaseWidgetDataAdapter):
+    """Adapter for evidence_trace widget type."""
+
+    def __init__(self, data_provider: Optional[Any] = None) -> None:
+        self._data_provider = data_provider
+
+    @property
+    def widget_type(self) -> str:
+        return "evidence_trace"
+
+    @property
+    def source_name(self) -> str:
+        return "agora.research.evidence_refs"
+
+    def query(
+        self,
+        request: WidgetDataQueryRequest,
+        is_live_profile: bool = False,
+        utc_now: Optional[str] = None,
+    ) -> WidgetDataQueryResponse:
+        now_str = utc_now or datetime.now(timezone.utc).isoformat()
+        cutoff_str = request.cutoff or now_str
+
+        evidence = []
+        data_as_of = None
+        if self._data_provider is not None:
+            evidence, data_as_of, _ = self._data_provider.get_evidence_traces(
+                tenant_id=request.tenant_id,
+                user_id=request.user_id,
+                strategy_id=request.params.get("strategy_id"),
+            )
+        else:
+            try:
+                from ..research.router import _get_store as _get_res_store
+                res_store = _get_res_store()
+                strategy_id = request.params.get("strategy_id")
+                plans = res_store.list_research_plans(
+                    user_id=request.user_id,
+                    tenant_id=request.tenant_id,
+                    strategy_id=strategy_id,
+                )
+                for p in plans:
+                    for ref in p.get("evidence_refs", []):
+                        evidence.append(ref)
+                data_as_of = now_str
+            except Exception:
+                evidence = []
+
+        if not evidence and is_live_profile:
+            return WidgetDataQueryResponse(
+                widget_type=self.widget_type,
+                status=WidgetDataStatus.UNAVAILABLE.value,
+                source=self.source_name,
+                as_of=now_str,
+                cutoff=cutoff_str,
+                lineage=[],
+                data={},
+                unavailable_reason=WidgetUnavailableReason.DATA_MISSING.value,
+            )
+
+        return WidgetDataQueryResponse(
+            widget_type=self.widget_type,
+            status=WidgetDataStatus.OK.value,
+            source=self.source_name,
+            as_of=data_as_of or now_str,
+            cutoff=cutoff_str,
+            lineage=[
+                WidgetLineageRef(
+                    source_name=self.source_name,
+                    record_count=len(evidence),
+                    point_in_time=cutoff_str,
+                    query_hash=_compute_query_hash(
+                        self.source_name, request.tenant_id, request.user_id, cutoff_str
+                    ),
+                )
+            ],
+            data={"evidence_refs": evidence, "total": len(evidence)},
+            unavailable_reason=None,
+        )
+
+
 class WidgetAdapterRegistry:
     """Registry maintaining allowlisted widget query adapters."""
 

@@ -1,0 +1,66 @@
+{
+  "task_id": "PFG-AGORA-PROJECTIONS-20260820",
+  "milestone": "pantheon_product_functional_closure_2026-08-20",
+  "owner": "Antigravity2",
+  "status": "ready_for_review",
+  "created_at": "2026-08-20T15:52:00Z",
+  "scope": [
+    "services/control-plane/bff/agora/trading_room/",
+    "services/control-plane/bff/agora/research/",
+    "services/control-plane/bff/agora/performance/",
+    "services/control-plane/bff/agora/decision_projection/",
+    "services/control-plane/bff/agora/trading_data/"
+  ],
+  "acceptance_criteria": {
+    "strategy_version_resolves_one_candidate_pool_and_workspace_identity": true,
+    "lens_is_view_recipe_not_candidate_pool_id": true,
+    "candidate_review_and_domain_outcomes_produce_durable_decision_events": true,
+    "paper_telemetry_outcomes_produce_performance_rows_and_suggestions": true,
+    "active_widgets_query_authoritative_data_or_explicit_unavailable_state": true,
+    "direct_test_only_store_callers_inventoried_with_production_producers": true,
+    "no_duplicate_or_widget_local_authorities": true,
+    "zero_broker_order_authority_maintained": true
+  },
+  "producer_inventory": {
+    "decision_event_projection": {
+      "producers": [
+        "DecisionEventProducer (services/control-plane/bff/agora/decision_projection/producer.py)",
+        "CandidateMemberReviewProjector (services/control-plane/bff/agora/research/router.py)"
+      ],
+      "backing_stores": [
+        "TradingRoomStore (services/control-plane/bff/agora/trading_room/store.py)",
+        "DecisionEventStore (services/control-plane/bff/agora/decision_projection/store.py)"
+      ]
+    },
+    "performance_suggestion_projection": {
+      "producers": [
+        "PerformanceSuggestionProducer (services/control-plane/bff/agora/performance/producer.py)"
+      ],
+      "backing_stores": [
+        "PerformanceSuggestionStore (services/control-plane/bff/agora/performance/store.py)",
+        "TradeJourneyStore (canonical trade journey projector)"
+      ]
+    },
+    "widget_data_query": {
+      "producers": [
+        "TradingDataService / WidgetAdapterRegistry (services/control-plane/bff/agora/trading_data/service.py)"
+      ],
+      "registered_active_adapters": [
+        "StrategyPerformanceWidgetAdapter",
+        "AccountPositionsWidgetAdapter",
+        "RiskMetricsWidgetAdapter",
+        "SignalDecisionQueueWidgetAdapter",
+        "CandidateFunnelWidgetAdapter",
+        "CandidateRankingWidgetAdapter",
+        "EvidenceTraceWidgetAdapter"
+      ],
+      "unwired_policy": "explicit UNAVAILABLE with reason unwired_widget_type (fail-closed)"
+    }
+  },
+  "test_execution": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/",
+    "total_passed": 192,
+    "total_skipped": 16,
+    "total_failed": 0
+  }
+}
