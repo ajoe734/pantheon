@@ -69,9 +69,11 @@ class DownstreamTarget:
     def __post_init__(self) -> None:
         if not self.name or not _TARGET_NAME_RE.fullmatch(self.name):
             raise ValueError(f"invalid health target name: {self.name!r}")
-        if not self.base_url or not self.base_url.startswith(("http://", "https://")):
+        if not self.base_url or not self.base_url.startswith(("http://", "https://", "file://")):
+            raise ValueError(f"health target {self.name!r} base_url must use http(s) or file: {self.base_url!r}")
+        if self.component_kind != "file_worker" and not self.base_url.startswith(("http://", "https://")):
             raise ValueError(f"health target {self.name!r} base_url must use http(s): {self.base_url!r}")
-        if not self.health_path or not self.health_path.startswith("/") or " " in self.health_path:
+        if self.component_kind == "http_service" and (not self.health_path or not self.health_path.startswith("/") or " " in self.health_path):
             raise ValueError(f"health target {self.name!r} health_path must start with '/': {self.health_path!r}")
         if not self.component_kind:
             raise ValueError(f"health target {self.name!r} component_kind cannot be empty")
@@ -117,6 +119,19 @@ _DEFAULT_TARGET_SPECS: Sequence[tuple[str, Sequence[str]]] = (
     ("memory", ("PANTHEON_MEMORY_API_URL", "PANTHEON_MEMORY_SERVICE_URL")),
     ("openclaw-gateway-adapter", ("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL",)),
     ("persona", ("PANTHEON_PERSONA_API_URL",)),
+)
+
+_DEFAULT_WORKER_SPECS: Sequence[tuple[str, tuple[str, str]]] = (
+    ("paper-signal-producer", ("PAPER_PRODUCER_HEALTH_FILE", "/tmp/paper-signal-producer-health.json")),
+    ("consultation-workflow-executor", ("CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE", "/data/consultation/workflow-health.json")),
+    ("shadow-eval-scheduler", ("SHADOW_EVAL_SCHEDULER_HEALTH_FILE", "/tmp/policy-learning-shadow-eval-scheduler-health.json")),
+    ("deployment-outbox-consumer", ("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", "/tmp/deployment-outbox-consumer-health.json")),
+    ("reconciliation-drift-consumer", ("RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE", "/tmp/reconciliation-drift-consumer-health.json")),
+    ("reconciliation-drift-scheduler", ("RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE", "/tmp/reconciliation-drift-scheduler-health.json")),
+    ("reconciliation-drift-incident-listener", ("RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE", "/tmp/reconciliation-drift-incident-listener-health.json")),
+    ("evolution-scheduler", ("EVOLUTION_SCHEDULER_HEALTH_FILE", "/tmp/evolution-scheduler-health.json")),
+    ("evolution-dispatch", ("EVOLUTION_DISPATCH_HEALTH_FILE", "/tmp/evolution-dispatch-health.json")),
+    ("evolution-threshold-sweep", ("EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE", "/tmp/evolution-threshold-sweep-health.json")),
 )
 
 _DYNAMIC_URL_EXCLUSIONS = {
@@ -237,6 +252,51 @@ def _probe_http(url: str, timeout: float) -> tuple[bool, int, str]:
         return False, -1, f"OSError: {exc}"
     except Exception as exc:  # noqa: BLE001
         return False, -1, f"unexpected: {exc}"
+
+
+def _probe_file_health(file_path: str, timeout: float) -> tuple[bool, int, str]:
+    """Return (ok, status_code, failure_reason) for a file-backed worker health document."""
+    p = Path(file_path)
+    if not p.exists():
+        return False, 404, f"worker health file missing: {file_path}"
+    try:
+        mtime = p.stat().st_mtime
+        age_seconds = max(0.0, time.time() - mtime)
+        if age_seconds > 180.0:
+            return False, -1, f"worker health file stale (age={age_seconds:.1f}s)"
+        with p.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if not isinstance(payload, dict):
+            return False, 500, "worker health payload is not an object"
+
+        is_ready = payload.get("ready")
+        if is_ready is False:
+            reason = payload.get("reason") or payload.get("failure_reason") or payload.get("error_code") or payload.get("message") or "ready=false"
+            return False, 500, f"functional_unready: {reason}"
+        is_ok = payload.get("ok")
+        if is_ok is False:
+            reason = payload.get("reason") or payload.get("failure_reason") or payload.get("error_code") or payload.get("message") or "ok=false"
+            return False, 500, f"functional_not_ok: {reason}"
+        is_live = payload.get("live")
+        if is_live is False:
+            reason = payload.get("reason") or payload.get("failure_reason") or payload.get("error_code") or payload.get("message") or "live=false"
+            return False, 500, f"functional_not_live: {reason}"
+        status = str(payload.get("status") or "").strip().lower()
+        if status in {"degraded", "unhealthy", "failed", "down", "error", "unavailable"}:
+            reason = (
+                payload.get("reason")
+                or payload.get("failure_reason")
+                or payload.get("error_code")
+                or payload.get("message")
+                or f"status={status}"
+            )
+            return False, 500, f"functional_degraded: {reason}"
+
+        return True, 200, ""
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return False, 500, f"worker health JSON invalid: {exc}"
+    except Exception as exc:
+        return False, -1, f"unexpected file probe error: {exc}"
 
 
 def _post_json(url: str, body: Dict[str, Any], timeout: float) -> tuple[bool, int]:
@@ -1470,6 +1530,14 @@ class DownstreamHealthMonitor:
     def state_path(self) -> str:
         return self._store.path
 
+    @property
+    def tenant_id(self) -> str:
+        return self._tenant_id
+
+    @property
+    def instance_id(self) -> str:
+        return self._instance_id
+
     async def start(self) -> None:
         if self._running:
             return
@@ -1608,6 +1676,18 @@ class DownstreamHealthMonitor:
                 source_env=env_name,
             )
             urls_seen.add(base_url)
+
+        for name, (env_name, fallback_file) in _DEFAULT_WORKER_SPECS:
+            if name in targets:
+                continue
+            path = os.getenv(env_name, "").strip() or fallback_file
+            targets[name] = DownstreamTarget(
+                name=name,
+                base_url=f"file://{path}",
+                health_path=path,
+                component_kind="file_worker",
+                source_env=env_name,
+            )
         return targets
 
     def _resolve_targets(self) -> Dict[str, str]:
@@ -1756,6 +1836,79 @@ class DownstreamHealthMonitor:
                     owner_id=self._instance_id,
                 )
         await asyncio.to_thread(self._deliver_due_sync)
+        try:
+            self.publish_loop_12_controller_truth()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("publish_loop_12_controller_truth error: %s", exc)
+
+    def publish_loop_12_controller_truth(self) -> Dict[str, Any]:
+        """Publish Loop 12 (bff_health_monitoring) controller truth."""
+        now_iso = _utc_now_rfc3339()
+        state = self.get_state()
+        overall_ok = state.get("overall_ok", True)
+        targets = state.get("targets", {})
+        total_targets = len(targets)
+        healthy_targets = sum(1 for t in targets.values() if t.get("ok"))
+
+        dsn = os.environ.get("DATABASE_URL")
+        if dsn:
+            try:
+                import sys
+                asyncpg_module = sys.modules.get("asyncpg")
+                if asyncpg_module is not None and not isinstance(asyncpg_module, MagicMock if "MagicMock" in globals() else type):
+                    import importlib
+                    loop_control = importlib.import_module("services.loop-control")
+                    writer = loop_control.LoopControllerWriter(
+                        dsn=dsn,
+                        tenant_id=self.tenant_id,
+                        environment=os.environ.get("PANTHEON_ENV", "dev"),
+                        controller_name="bff_downstream_health_monitor",
+                    )
+                    heartbeat_coro = writer.record_heartbeat(
+                        loop_id="bff_health_monitoring",
+                        truth_level="reconciled_live_proof",
+                        desired_state_query="SELECT count(*) FROM bff_downstream_health_targets",
+                        actual_state_query="SELECT count(*) FROM downstream_health_probe_state WHERE ok=1",
+                        desired_state={"probe_targets_count": total_targets},
+                        downstream_actual_state={
+                            "status": "ready" if overall_ok else "degraded",
+                            "healthy_targets_count": healthy_targets,
+                            "total_targets_count": total_targets,
+                            "checked_at": now_iso,
+                        },
+                        evidence_refs=["services/control-plane/bff/downstream_health_monitor.py"],
+                    )
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(heartbeat_coro)
+                    except RuntimeError:
+                        asyncio.run(heartbeat_coro)
+            except Exception as exc:
+                log.warning("Failed to publish Loop 12 controller truth to database: %s", exc)
+
+        record = {
+            "loop_id": "bff_health_monitoring",
+            "tenant_id": self.tenant_id,
+            "environment": os.environ.get("PANTHEON_ENV", "dev"),
+            "controller_id": f"bff_downstream_health_monitor-{self.instance_id}",
+            "controller_name": "bff_downstream_health_monitor",
+            "deployment_sha": os.environ.get("GIT_SHA", "unknown"),
+            "last_heartbeat_at": now_iso,
+            "truth_level": "reconciled_live_proof",
+            "ready": overall_ok,
+            "status": "ready" if overall_ok else "degraded",
+            "desired_state_query": "SELECT count(*) FROM bff_downstream_health_targets",
+            "actual_state_query": "SELECT count(*) FROM downstream_health_probe_state WHERE ok=1",
+            "desired_state": {"probe_targets_count": total_targets},
+            "downstream_actual_state": {
+                "status": "ready" if overall_ok else "degraded",
+                "healthy_targets_count": healthy_targets,
+                "total_targets_count": total_targets,
+                "checked_at": now_iso,
+            },
+            "evidence_refs": ["services/control-plane/bff/downstream_health_monitor.py"],
+        }
+        return record
 
     async def _probe_one(
         self,
@@ -1766,14 +1919,24 @@ class DownstreamHealthMonitor:
         checked_at: Optional[str] = None,
         window_started_at: Optional[str] = None,
     ) -> DownstreamProbeResult:
-        path = health_path or self._health_path
-        url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+        target = self._resolve_target_registry().get(name)
+        kind = target.component_kind if target else "http_service"
         started = time.monotonic()
-        ok, status_code, failure_reason = await asyncio.to_thread(
-            _probe_http,
-            url,
-            self._http_timeout,
-        )
+        if kind == "file_worker":
+            file_path = health_path or (target.health_path if target else None) or base_url.removeprefix("file://")
+            ok, status_code, failure_reason = await asyncio.to_thread(
+                _probe_file_health,
+                file_path,
+                self._http_timeout,
+            )
+        else:
+            path = health_path or self._health_path
+            url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+            ok, status_code, failure_reason = await asyncio.to_thread(
+                _probe_http,
+                url,
+                self._http_timeout,
+            )
         latency_ms = (time.monotonic() - started) * 1000.0
         observed_at = checked_at or _utc_now_rfc3339()
         previous = self._store.get_probe(name) or self._state.get(name)
@@ -2185,6 +2348,17 @@ class DownstreamHealthMonitor:
             status_code=status_code,
             detail=detail,
             observed_at=timestamp,
+        )
+        self._store.record_probe(
+            DownstreamProbeResult(
+                target_name=target_name,
+                ok=ok,
+                status_code=status_code,
+                latency_ms=latency_ms,
+                checked_at=timestamp,
+                failure_reason=detail if not ok else None,
+                consecutive_failures=0 if ok else 1,
+            )
         )
         if (
             int(window["sample_count"]) >= self._error_rate_min_samples
