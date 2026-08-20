@@ -68839,6 +68839,18 @@ app.include_router(
     )
 )
 
+from management_read_models import create_management_read_models_router  # noqa: E402
+app.include_router(
+    create_management_read_models_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_meta=_snapshot_meta,
+        utc_now=utc_now,
+    )
+)
+
+
 
 def _include_knowledge_routes() -> None:
     from console_gap.knowledge import create_knowledge_router

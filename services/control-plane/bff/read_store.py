@@ -20374,3 +20374,143 @@ class ReadSurfaceStore:
 
     def list_mcp_tools(self) -> List[Dict[str, Any]]:
         return list(self._read_dataset_records("mcp_tools"))
+
+    # --- Management Read Models (PFG-MGMT-READ-MODELS-20260820) ---
+
+    def get_formula_jobs_read_model(
+        self,
+        *,
+        status: Optional[str] = None,
+        formula_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        available, service_records = self._service.list_records("formula_jobs")
+        source = "service" if available else "event_store"
+        raw_items = service_records if available else list(self._read_dataset_records("formula_jobs"))
+        
+        filtered = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            if status and item.get("status") != status:
+                continue
+            if formula_id and item.get("formula_id") != formula_id:
+                continue
+            item_copy = json.loads(json.dumps(item))
+            if "source_identity" not in item_copy:
+                item_copy["source_identity"] = "formula_job_executor"
+            if "freshness" not in item_copy:
+                item_copy["freshness"] = item_copy.get("submitted_at") or _utc_now_rfc3339()
+            filtered.append(item_copy)
+
+        return {
+            "source": source if (available or filtered) else "missing",
+            "items": filtered,
+        }
+
+    def get_activity_read_model(
+        self,
+        *,
+        event_type: Optional[str] = None,
+        actor_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        available, service_records = self._service.list_records("activity_audit")
+        source = "audit" if available else "event_store"
+        raw_items = service_records if available else list(self._read_dataset_records("activity_audit"))
+        
+        filtered = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            if event_type and item.get("event_type") != event_type:
+                continue
+            if actor_id and item.get("actor_id") != actor_id:
+                continue
+            item_copy = json.loads(json.dumps(item))
+            if "source_identity" not in item_copy:
+                item_copy["source_identity"] = "activity_audit_store"
+            if "freshness" not in item_copy:
+                item_copy["freshness"] = item_copy.get("timestamp") or _utc_now_rfc3339()
+            filtered.append(item_copy)
+
+        return {
+            "source": source if (available or filtered) else "missing",
+            "items": filtered,
+        }
+
+    def get_paper_telemetry_read_model(
+        self,
+        *,
+        strategy_id: Optional[str] = None,
+        persona_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        available, service_records = self._service.list_records("paper_telemetry")
+        source = "service" if available else "store"
+        raw_items = service_records if available else list(self._read_dataset_records("paper_telemetry"))
+
+        filtered = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            if strategy_id and item.get("strategy_id") != strategy_id:
+                continue
+            if persona_id and item.get("persona_id") != persona_id:
+                continue
+            item_copy = json.loads(json.dumps(item))
+            if "source_identity" not in item_copy:
+                item_copy["source_identity"] = "paper_telemetry_store"
+            if "freshness" not in item_copy:
+                item_copy["freshness"] = item_copy.get("last_signal_at") or _utc_now_rfc3339()
+            filtered.append(item_copy)
+
+        return {
+            "source": source if (available or filtered) else "missing",
+            "items": filtered,
+        }
+
+    def get_postmortems_read_model(
+        self,
+        *,
+        severity: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        available, service_records = self._service.list_records("postmortems")
+        source = "store" if available else "event_store"
+        raw_items = service_records if available else list(self._read_dataset_records("postmortems"))
+
+        filtered = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            if severity and item.get("severity") != severity:
+                continue
+            if status and item.get("status") != status:
+                continue
+            item_copy = json.loads(json.dumps(item))
+            if "source_identity" not in item_copy:
+                item_copy["source_identity"] = "postmortem_store"
+            if "freshness" not in item_copy:
+                item_copy["freshness"] = item_copy.get("created_at") or _utc_now_rfc3339()
+            filtered.append(item_copy)
+
+        return {
+            "source": source if (available or filtered) else "missing",
+            "items": filtered,
+        }
+
+    def get_postmortem_detail_read_model(
+        self,
+        postmortem_id: str,
+    ) -> Dict[str, Any]:
+        res = self.get_postmortems_read_model()
+        items = res.get("items") or []
+        for item in items:
+            if item.get("postmortem_id") == postmortem_id:
+                return {
+                    "source": res.get("source") or "store",
+                    "item": item,
+                }
+        return {
+            "source": res.get("source") or "missing",
+            "item": None,
+        }
+
