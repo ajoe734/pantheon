@@ -1041,7 +1041,13 @@ class SharedPlannerContractTests(unittest.TestCase):
         accepted = planner_decision(self.config, task, target="Codex2")
         self.assertTrue(accepted["eligible"])
 
-    def test_review_binding_is_served_once_until_canonical_change(self) -> None:
+    def test_review_binding_retries_after_a_terminal_attempt_left_no_verdict(self) -> None:
+        # A reviewer worker can exit (crash, timeout, silent no-op) without
+        # ever calling approve/reopen. Since a real verdict necessarily
+        # changes task status and therefore the dispatch signature, a
+        # terminal queue record that still matches the current signature is
+        # proof the binding was never resolved -- it must stay retryable,
+        # not get permanently stranded.
         task = task_fixture(status="review", reviewer="Codex2")
         task["delivery_binding"] = {
             "kind": "pull_request",
@@ -1063,9 +1069,8 @@ class SharedPlannerContractTests(unittest.TestCase):
                 "queue": {"events": {"evt-review": {"event_key": event["key"], "status": "completed"}}},
             },
         )
-        rejected = planner_decision(self.config, task, state=state, target="Codex2")
-        self.assertFalse(rejected["eligible"])
-        self.assertEqual(rejected["first_blocking_gate"], "review_binding_already_served")
+        retried = planner_decision(self.config, task, state=state, target="Codex2")
+        self.assertTrue(retried["eligible"])
 
         task["delivery_binding"] = {
             **task["delivery_binding"],
@@ -1073,6 +1078,119 @@ class SharedPlannerContractTests(unittest.TestCase):
         }
         accepted = planner_decision(self.config, task, state=state, target="Codex2")
         self.assertTrue(accepted["eligible"])
+
+    def test_review_binding_in_flight_duplicate_is_still_rejected(self) -> None:
+        # planner_decision() hardcodes events=[] when deriving pending_event_keys,
+        # so an already-queued (non-terminal) intent needs a direct
+        # evaluate_dispatch_candidate() call to exercise duplicate_event.
+        task = task_fixture(status="review", reviewer="Codex2")
+        task["delivery_binding"] = {
+            "kind": "pull_request",
+            "pr": 42,
+            "head_sha": "a" * 40,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex2",
+            supervisor.REASON_REVIEW_READY,
+            {"TASK-1": task},
+        )
+        event.update({"event_id": "evt-review", "event_key": event["key"]})
+        state = with_healthy_delivery_health(
+            self.config,
+            with_queue_intents({"workers": {}}, event),
+        )
+        task_map = {"TASK-1": task}
+        _agents, pending_pairs, pending_keys = supervisor.outstanding_delivery_indexes(
+            self.config, state, None, task_map
+        )
+        pending_ids = {task_id for task_id, _agent in pending_pairs if task_id}
+        rejected = supervisor.evaluate_dispatch_candidate(
+            self.config,
+            state,
+            {"tasks": [task]},
+            task,
+            "Codex2",
+            supervisor.task_resolver_for_config(self.config, task_map),
+            settings=supervisor.ready_dispatch_settings(self.config),
+            active_task_ids=set(),
+            pending_task_ids=pending_ids,
+            pending_event_keys=pending_keys,
+            agent_loads={},
+            active_account_loads={},
+            pending_account_loads={},
+            seen_event_keys={},
+            checked_at="2026-08-11T00:00:01Z",
+            cooldown_seconds=0,
+        )
+        self.assertFalse(rejected["eligible"])
+        self.assertIn(
+            rejected["first_blocking_gate"],
+            {"duplicate_event", "task_pending"},
+        )
+
+    def test_review_binding_terminal_attempt_still_honors_unchanged_cooldown(self) -> None:
+        # Retryable does not mean instantly re-spammed every tick: a terminal
+        # attempt still feeds seen_event_keys, so the same cooldown gate that
+        # protects owned dispatch reasons applies to review too.
+        task = task_fixture(status="review", reviewer="Codex2")
+        task["delivery_binding"] = {
+            "kind": "pull_request",
+            "pr": 42,
+            "head_sha": "a" * 40,
+            "head_branch": "task/TASK-1",
+            "base": "dev",
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex2",
+            supervisor.REASON_REVIEW_READY,
+            {"TASK-1": task},
+        )
+        state = with_healthy_delivery_health(
+            self.config,
+            {
+                "workers": {},
+                "queue": {"events": {"evt-review": {"event_key": event["key"], "status": "completed"}}},
+            },
+        )
+        task_map = {"TASK-1": task}
+        active_statuses = set(
+            supervisor.ready_dispatch_settings(self.config)["active_worker_statuses"]
+        )
+        _agents, pending_pairs, pending_keys = supervisor.outstanding_delivery_indexes(
+            self.config, state, [], task_map
+        )
+        pending_ids = {task_id for task_id, _agent in pending_pairs if task_id}
+
+        def decide(cooldown_seconds: float, seen_event_keys: dict[str, object]) -> dict[str, object]:
+            return supervisor.evaluate_dispatch_candidate(
+                self.config,
+                state,
+                {"tasks": [task]},
+                task,
+                "Codex2",
+                supervisor.task_resolver_for_config(self.config, task_map),
+                settings=supervisor.ready_dispatch_settings(self.config),
+                active_task_ids=set(),
+                pending_task_ids=pending_ids,
+                pending_event_keys=pending_keys,
+                agent_loads={},
+                active_account_loads={},
+                pending_account_loads={},
+                seen_event_keys=seen_event_keys,
+                checked_at="2026-08-11T00:10:00Z",
+                cooldown_seconds=cooldown_seconds,
+            )
+
+        cooling_down = decide(900, {event["key"]: "2026-08-11T00:00:01Z"})
+        self.assertFalse(cooling_down["eligible"])
+        self.assertEqual(cooling_down["first_blocking_gate"], "unchanged_cooldown")
+
+        elapsed = decide(900, {event["key"]: "2026-08-10T23:00:00Z"})
+        self.assertTrue(elapsed["eligible"])
 
 
 class DurableQueueContractTests(unittest.TestCase):

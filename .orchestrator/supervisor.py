@@ -11523,15 +11523,16 @@ def evaluate_dispatch_candidate(
     if event["key"] in pending_event_keys:
         return reject("duplicate_event", "The exact delivery intent already exists")
 
-    if reason == REASON_REVIEW_READY and any(
-        str(record.get("event_key") or "") == event["key"]
-        for record in ((state.get("queue") or {}).get("events") or {}).values()
-        if isinstance(record, Mapping)
-    ):
-        return reject(
-            "review_binding_already_served",
-            "The current review binding already consumed its single delivery intent",
-        )
+    # A terminal (completed/failed) queue record with this exact key only
+    # proves a delivery attempt was made, not that the reviewer recorded a
+    # verdict: approve/reopen necessarily change task status and therefore
+    # the signature, so a genuinely-resolved binding can never recompute the
+    # same key again. Permanently rejecting on any past record (regardless
+    # of outcome) strands a review binding forever whenever the one attempt
+    # exits without acting (crash, timeout, silent no-op). In-flight
+    # duplicates are already covered by the pending_event_keys check above,
+    # so retry for a still-unresolved binding falls through to the same
+    # unchanged-cooldown gate every other dispatch reason uses.
     if dispatch_event_is_in_unchanged_cooldown(
         seen_event_keys,
         event["key"],
