@@ -2124,6 +2124,16 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
       docker compose -p pantheon -f docker-compose.yml up -d --build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    # `up -d --build` only recreates a container Compose judges to need it.
+    # The legacy lifecycle projector runs with `restart: no` (deliberate
+    # anti-OOM containment: it can otherwise consume the host, so it is never
+    # auto-restarted) -- if it hung or died mid-poll on a prior deploy without
+    # its config changing, Compose leaves the stale/hung container in place
+    # and the exact-SHA readiness gate below can never observe a fresh
+    # publish. Force it every root deploy so a wedged projector cannot
+    # silently survive across deploys.
+    docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps loop-run-projector-scheduler \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}" \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     PANTHEON_DEV_REPO="$(pwd)" \
@@ -2242,7 +2252,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
     PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
     PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build --no-deps operator-bff loop-run-projector-scheduler \
+      docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
