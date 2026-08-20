@@ -504,17 +504,18 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     plan_id = plan_data["plan_id"]
     etag = res_create.json()["meta"]["etag"]
 
-    # 2. Approve plan
+    # 2. Approve plan (increments lock_version from 1 to 2)
     res_app = client.post(
         f"/bff/agora/research-plans/{plan_id}/approve",
         headers=_headers(idempotency_key="idemp-e2e-approve", if_match=etag),
     )
     assert res_app.status_code == 200, res_app.text
+    etag_v2 = f'W/"research-plan:{plan_id}:v2"'
 
     # 3. Dispatch stage (creates run & outbox record, then triggers leased consumer drain)
     res_dispatch = client.post(
         f"/bff/agora/research-plans/{plan_id}/runs",
-        headers=_headers(idempotency_key="idemp-e2e-dispatch", if_match=etag),
+        headers=_headers(idempotency_key="idemp-e2e-dispatch", if_match=etag_v2),
     )
     assert res_dispatch.status_code == 202, res_dispatch.text
     dispatch_data = res_dispatch.json()["data"]
