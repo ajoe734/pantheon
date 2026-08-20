@@ -82,15 +82,18 @@ def _loop_health_client(
             env_overrides["PANTHEON_BFF_LOOP_HEALTH_STORE"] = str(health_path)
 
         original_store = bff_main.read_store
+        original_monitor = getattr(bff_main, "downstream_health_monitor", None)
         bff_main.read_store = ReadSurfaceStore(
             str(snapshot_path),
             allow_local_snapshot_fallback=allow_snapshot_fallback,
         )
+        bff_main.downstream_health_monitor = None
         with patch.dict(os.environ, env_overrides, clear=False):
             try:
                 yield TestClient(bff_main.app, raise_server_exceptions=False)
             finally:
                 bff_main.read_store = original_store
+                bff_main.downstream_health_monitor = original_monitor
 
 
 def _truth_source(packet: Dict[str, Any], truth_level: str) -> Dict[str, Any]:
