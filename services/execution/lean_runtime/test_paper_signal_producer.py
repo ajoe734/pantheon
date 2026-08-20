@@ -310,13 +310,27 @@ class TestPaperSignalProducer(unittest.TestCase):
         artifact = _artifact()
         binding = _binding(artifact, binding_id="rb-source-ingest-test", include_market_input=False)
         binding["symbol"] = "AAPL.US"
+        binding["market_data_policy"] = {
+            "owner": "source-ingest",
+            "contract": "latest_stored_normalized",
+            "max_age_seconds": 300,
+            "minimum_closes": 2,
+        }
         
         response = MagicMock()
         response.read.return_value = json.dumps({
             "symbol": "AAPL.US",
             "closes": [100.0, 105.0, 110.0],
-            "source_ref": "source-ingest://snapshots/latest/AAPL.US",
+            "snapshot_id": "mss-source-ingest-test",
+            "event_time": _NOW,
+            "source_ref": "source-ingest://snapshots/mss-source-ingest-test",
             "observed_at": _NOW,
+            "lineage": {
+                "source_ids": ["source-aapl-test"],
+                "connector_ids": ["stored-price-test"],
+                "content_refs": ["source-test://AAPL.US"],
+                "ingest_run_ids": ["run-source-ingest-test"],
+            },
         }).encode("utf-8")
         context = MagicMock()
         context.__enter__.return_value = response
@@ -335,10 +349,65 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual(store.queue_depth(), 1)
         [sig] = store.get_pending()
         self.assertEqual(sig["symbol"], "AAPL.US")
-        self.assertEqual(sig["metadata"]["market_input_ref"], "source-ingest://snapshots/latest/AAPL.US")
+        self.assertEqual(sig["metadata"]["market_input_ref"], "source-ingest://snapshots/mss-source-ingest-test")
+        self.assertEqual(sig["metadata"]["market_input_snapshot_id"], "mss-source-ingest-test")
         self.assertEqual(producer.degraded_bindings, {})
+
+    @patch("urllib.request.urlopen")
+    def test_stale_source_snapshot_emits_no_signal_with_typed_reason(self, mock_urlopen) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
+
+        binding = _binding(_artifact(), binding_id="rb-source-ingest-stale", include_market_input=False)
+        binding["symbol"] = "AAPL.US"
+        binding["market_data_policy"] = {
+            "owner": "source-ingest",
+            "contract": "latest_stored_normalized",
+            "max_age_seconds": 60,
+            "minimum_closes": 2,
+        }
+        response = MagicMock()
+        response.read.return_value = json.dumps(
+            {
+                "symbol": "AAPL.US",
+                "closes": [100.0, 105.0],
+                "snapshot_id": "mss-stale-test",
+                "event_time": "2026-06-14T10:00:00Z",
+                "observed_at": "2026-06-14T10:00:00Z",
+                "source_ref": "source-ingest://snapshots/mss-stale-test",
+                "lineage": {"source_ids": ["old-source"]},
+            }
+        ).encode("utf-8")
+        context = MagicMock()
+        context.__enter__.return_value = response
+        mock_urlopen.return_value = context
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(store_for=lambda _: store, strategy=CurrentArtifactStrategy())
+
+        with patch.dict("os.environ", {"PANTHEON_SOURCE_INGEST_URL": "http://source-ingest:8080"}):
+            count = producer.produce(binding, _NOW)
+
+        self.assertEqual(count, 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertTrue(producer.degraded_bindings["rb-source-ingest-stale"].startswith("market_input_stale:"))
+
+    @patch("urllib.request.urlopen")
+    def test_recent_closes_never_replaces_a_source_snapshot(self, mock_urlopen) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
+
+        binding = _binding(_artifact(), binding_id="rb-no-static-closes", include_market_input=False)
+        binding["recent_closes"] = [100.0, 105.0]
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(store_for=lambda _: store, strategy=CurrentArtifactStrategy())
+
+        count = producer.produce(binding, _NOW)
+
+        self.assertEqual(count, 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertTrue(producer.degraded_bindings["rb-no-static-closes"].startswith("market_input_missing:"))
+        mock_urlopen.assert_not_called()
 
 
 if __name__ == "__main__":
     unittest.main()
-
