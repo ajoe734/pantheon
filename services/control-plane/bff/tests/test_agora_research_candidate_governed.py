@@ -482,3 +482,53 @@ def test_idempotency_conflict_and_cas_checks(monkeypatch: pytest.MonkeyPatch) ->
         headers=_headers(idempotency_key="idemp-cas-approve-ok", if_match=etag),
     )
     assert res_app.status_code == 200, res_app.text
+
+
+def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Validate end-to-end flow: plan create -> approve -> stage dispatch -> outbox record -> leased consumer drain -> execution_status succeeded."""
+    client = _client(monkeypatch)
+
+    # 1. Create plan
+    res_create = client.post(
+        "/bff/agora/workshops/ws-e2e-outbox/research-plans",
+        headers=_headers(idempotency_key="idemp-e2e-create"),
+        json={
+            "spec_version": "1.0",
+            "strategy_id": "strat-e2e",
+            "strategy_spec_registry_id": "reg-e2e",
+            "stages": [{"stage_type": "prototype_backtest"}],
+        },
+    )
+    assert res_create.status_code == 201, res_create.text
+    plan_data = res_create.json()["data"]
+    plan_id = plan_data["plan_id"]
+    etag = res_create.json()["meta"]["etag"]
+
+    # 2. Approve plan
+    res_app = client.post(
+        f"/bff/agora/research-plans/{plan_id}/approve",
+        headers=_headers(idempotency_key="idemp-e2e-approve", if_match=etag),
+    )
+    assert res_app.status_code == 200, res_app.text
+
+    # 3. Dispatch stage (creates run & outbox record, then triggers leased consumer drain)
+    res_dispatch = client.post(
+        f"/bff/agora/research-plans/{plan_id}/runs",
+        headers=_headers(idempotency_key="idemp-e2e-dispatch"),
+    )
+    assert res_dispatch.status_code == 202, res_dispatch.text
+    dispatch_data = res_dispatch.json()["data"]
+    run_id = dispatch_data["run_id"]
+
+    # 4. Verify research run status via GET endpoint (should be succeeded after consumer drain)
+    res_run = client.get(
+        f"/bff/agora/research-runs/{run_id}",
+        headers=_headers(),
+    )
+    assert res_run.status_code == 200, res_run.text
+    run_info = res_run.json()["data"]
+    assert run_info["execution_status"] == "succeeded"
+    assert run_info["outcome"] == "pass"
+    assert run_info["provenance"] == "real"
+    assert len(run_info["artifact_refs"]) == 1
+

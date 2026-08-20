@@ -8,9 +8,10 @@
 - **Merge Target:** `dev`
 
 ## Code Disposition & Implementation Summary
-1. **Existing Dispatcher:** `services/control-plane/bff/agora/research/dispatcher.py` implements outbox record creation, lease acquisition (`acquire_outbox_lease`), adapter resolution (`ALLOWLISTED_STAGE_BACKENDS`), adapter execution, ordered run progress transitions, checksum calculation (`compute_artifact_checksum`), explicit provenance tagging (`real`, `simulation`, `fixture`, `unavailable`), and artifact readback projection.
-2. **Existing Store & Outbox:** `services/control-plane/bff/agora/research/store.py` (`MemoryResearchPlanStore` and `PostgresResearchPlanStore`) implements outbox persistence and atomic lease acquisition.
+1. **Existing Dispatcher & Production Consumer:** `services/control-plane/bff/agora/research/dispatcher.py` implements `drain_outbox`, which queries pending queued outbox records, acquires leases via `acquire_outbox_lease`, executes allowlisted backend adapters via `execute_stage`, and updates stage/run status to completed with explicit provenance (`real`, `simulation`, `fixture`, `unavailable`).
+2. **Router Integration:** `services/control-plane/bff/agora/research/router.py` invokes `dispatcher.drain_outbox` upon plan stage dispatch, ensuring queued outbox records are actively leased and executed by the single existing dispatcher.
 3. **No Facade-Only Fallback:** In `router.py`, production candidate pool creation explicitly returns an empty candidate list with explicit exclusion reasons (`no_authoritative_registry_candidates_discovered`, `no_eligible_research_artifacts_match_filter`) when no real input candidates are supplied, rather than defaulting to hardcoded fixtures.
 4. **Verification Evidence:**
-   - Evaluated unit & integration test suites in `tests/agora_product_journey/` (16 integration tests passing cleanly).
-   - Validated idempotency, lease acquisition, recovery, isolation, and end-to-end lineage.
+   - Evaluated unit & integration test suites in `services/control-plane/bff/tests/test_agora_research_candidate_governed.py` and `tests/agora_product_journey/` (23 tests passing cleanly, including `test_end_to_end_outbox_consumer_dispatch`).
+   - Validated end-to-end flow from plan creation -> approval -> stage dispatch outbox record creation -> leased consumer drain -> execution_status succeeded.
+

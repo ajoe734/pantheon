@@ -4,13 +4,13 @@
     "id": "PFG-AGORA-RESEARCH-CONSUMER-20260820",
     "title": "Drain Agora Research outbox with the existing ResearchDispatcher",
     "owner": "Antigravity",
-    "reviewer": "Codex2",
+    "reviewer": "Claude",
     "status": "in_progress",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/PFG-AGORA-RESEARCH-CONSUMER-20260820",
     "review_file": "docs/deployment/evidence/product-functional-closure/PFG-AGORA-RESEARCH-CONSUMER-20260820/evidence.json",
-    "evidence_cut_at": "2026-08-20T13:32:00Z"
+    "evidence_cut_at": "2026-08-20T13:47:00Z"
   },
   "scope": {
     "owned_layer": "Agora Research outbox consumer and ResearchDispatcher verification",
@@ -20,6 +20,9 @@
       "Canonical architecture rules"
     ],
     "changed_files": [
+      "services/control-plane/bff/agora/research/dispatcher.py",
+      "services/control-plane/bff/agora/research/router.py",
+      "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
       "docs/deployment/evidence/product-functional-closure/PFG-AGORA-RESEARCH-CONSUMER-20260820/README.md",
       "docs/deployment/evidence/product-functional-closure/PFG-AGORA-RESEARCH-CONSUMER-20260820/evidence.json",
       "docs/deployment/evidence/product-functional-closure/PFG-AGORA-RESEARCH-CONSUMER-20260820/evidence.sha256"
@@ -28,11 +31,11 @@
   "verification": {
     "commands": [
       "python3 scripts/dev/provision_python_distribution.py",
-      ".venv-pantheon/bin/python3 -m pytest tests/agora_product_journey/"
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_research_candidate_governed.py tests/agora_product_journey/"
     ],
     "results": [
-      "16 integration tests passed in 9.40s cleanly",
-      "Idempotency, CAS, crash recovery, two-tenant isolation, and complete product journey verified"
+      "23 unit & integration tests passed cleanly",
+      "Idempotency, CAS, outbox consumer lease acquisition, stage execution, crash recovery, two-tenant isolation, and complete product journey verified"
     ]
   },
   "code_disposition": {
@@ -41,3 +44,4 @@
     "facade_fallback_removed_or_fail_closed": true
   }
 }
+

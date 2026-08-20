@@ -23,6 +23,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 logger = logging.getLogger(__name__)
@@ -474,3 +475,65 @@ class ResearchDispatcher:
             )
 
         return {"status": "completed", "result": result}
+
+    def drain_outbox(
+        self,
+        *,
+        worker_id: str = "dispatcher-drain-consumer",
+        lease_duration_seconds: float = DEFAULT_LEASE_DURATION_SECONDS,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Drain queued outbox records by leasing each and executing execute_stage."""
+        if not hasattr(self.store, "list_outbox_records"):
+            return []
+
+        queued_records = self.store.list_outbox_records(
+            status="queued",
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        if limit is not None and limit > 0:
+            queued_records = queued_records[:limit]
+
+        drained_results: List[Dict[str, Any]] = []
+
+        for record in queued_records:
+            plan_id = record.get("plan_id")
+            stage_id = record.get("stage_id")
+            run_id = record.get("run_id")
+            r_tenant = record.get("tenant_id") or tenant_id or "pantheon-dev"
+            r_user = record.get("user_id") or user_id or "agora-user-a"
+
+            if not plan_id or not stage_id or not run_id:
+                continue
+
+            plan = self.store.get_plan(plan_id, tenant_id=r_tenant, user_id=r_user)
+            if not plan:
+                continue
+
+            stage = next((s for s in plan.get("stages", []) if s.get("stage_id") == stage_id), None)
+            if not stage:
+                continue
+
+            scope = SimpleNamespace(tenant_id=r_tenant, user_id=r_user)
+
+            result = self.execute_stage(
+                plan=plan,
+                stage=stage,
+                run_id=run_id,
+                scope=scope,
+                worker_id=worker_id,
+                lease_duration_seconds=lease_duration_seconds,
+            )
+            drained_results.append({
+                "outbox_id": record.get("outbox_id"),
+                "run_id": run_id,
+                "status": result.get("status"),
+                "result": result.get("result"),
+                "error": result.get("error"),
+            })
+
+        return drained_results
+
