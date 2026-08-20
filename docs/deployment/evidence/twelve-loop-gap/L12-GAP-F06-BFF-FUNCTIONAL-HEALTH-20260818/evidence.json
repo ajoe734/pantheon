@@ -1,0 +1,19 @@
+{
+  "task_id": "L12-GAP-F06-BFF-FUNCTIONAL-HEALTH-20260818",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "review_ready",
+  "summary": "Wired real worker health and error-spike outcomes into the existing BFF monitor. Added file_worker target probing to DownstreamHealthMonitor for schedulers/consumers/paper-signal-producer, attributed paper-signal-producer artifact_store_missing to Capital loop in BFF/Management truth, verified command_executor _post_json/_get_json integration with record_downstream_outcome, and published Loop 12 controller truth.",
+  "verification": {
+    "test_command": "python3 scripts/dev/provision_python_distribution.py && PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py",
+    "passed": 41,
+    "failed": 0,
+    "duration_seconds": 9.17
+  },
+  "acceptance_criteria_validated": [
+    "The existing monitor consumes functional health or readback for all real schedulers consumers and paper-signal-producer without adding HTTP microservers for file-backed workers",
+    "artifact_store_missing is attributed to the Capital loop in BFF and Management truth",
+    "production BFF downstream adapters call the existing record_downstream_outcome so the error-spike trigger fires",
+    "Loop 12 publishes its own controller truth and no second sentinel monitor or health store is added"
+  ]
+}

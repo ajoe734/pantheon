@@ -63028,9 +63028,77 @@ async def _async_loop_health_records(
             clean_id = str(loop_id).strip()
             if clean_id not in seen_loops:
                 merged_records.append(r)
+                seen_loops.add(clean_id)
 
-    health_available = db_available or fs_available
-    health_source = "controller_store" if db_available else fs_source
+    monitor = globals().get("downstream_health_monitor")
+    if monitor:
+        try:
+            loop12_rec = monitor.publish_loop_12_controller_truth()
+            if "bff_health_monitoring" not in seen_loops:
+                loop12_rec["_health_source"] = "bff_downstream_health_monitor"
+                merged_records.append(loop12_rec)
+                seen_loops.add("bff_health_monitoring")
+        except Exception as exc:
+            log.warning("Failed publishing Loop 12 truth in _async_loop_health_records: %s", exc)
+
+        try:
+            monitor_state = monitor.get_state()
+            targets_state = monitor_state.get("targets", {})
+            loop_target_map = {
+                "source_ingestion": ["source-ingest", "source-ingest-scheduler"],
+                "strategy_distillation": ["distillation"],
+                "alpha_replication": ["research-orchestrator", "research-worker-gateway"],
+                "persona_teaching": ["persona", "training-session"],
+                "agora_interaction_evidence": ["policy-learning"],
+                "human_imitation_shadow_evaluation": ["shadow-eval-scheduler"],
+                "consultation": ["consultation", "openclaw-gateway-adapter", "consultation-workflow-executor"],
+                "promotion_deployment": ["promotion", "deployment", "deployment-outbox-consumer"],
+                "capital_pool_execution": ["capital", "paper-fleet-reconciler", "paper-signal-producer"],
+                "telemetry_reconciliation": ["telemetry", "reconciliation-drift", "reconciliation-drift-consumer", "reconciliation-drift-scheduler", "reconciliation-drift-incident-listener"],
+                "evolution": ["evolution", "postmortems", "evolution-scheduler", "evolution-dispatch", "evolution-threshold-sweep"],
+                "bff_health_monitoring": ["runtime-manager", "governance"],
+            }
+            records_by_id = {str(r.get("loop_id") or r.get("id") or "").strip(): r for r in merged_records if isinstance(r, dict)}
+            for loop_id, mapped_targets in loop_target_map.items():
+                for t_name in mapped_targets:
+                    t_info = targets_state.get(t_name)
+                    if t_info and isinstance(t_info, dict) and t_info.get("ok") is False:
+                        fail_reason = t_info.get("failure_reason") or "degraded"
+                        target_summary = f"{t_name}: {fail_reason}"
+                        rec = records_by_id.get(loop_id)
+                        if rec is None:
+                            rec = {
+                                "loop_id": loop_id,
+                                "id": loop_id,
+                                "tenant_id": tenant_id,
+                                "environment": environment,
+                                "status": "degraded",
+                                "_health_source": "bff_downstream_health_monitor",
+                            }
+                            merged_records.append(rec)
+                            records_by_id[loop_id] = rec
+                        rec["downstream_actual_state"] = {
+                            "status": "degraded",
+                            "source": "bff_downstream_health_monitor",
+                            "authoritative": True,
+                            "reported_status": "degraded",
+                            "summary": target_summary,
+                            "checked_at": t_info.get("checked_at"),
+                        }
+                        rec["worker_health"] = {
+                            "ready": False,
+                            "ok": False,
+                            "status": "degraded",
+                            "reason": fail_reason,
+                            "worker_name": t_name,
+                        }
+                        rec["truth_note"] = target_summary
+                        break
+        except Exception as exc:
+            log.warning("Failed merging downstream monitor targets in _async_loop_health_records: %s", exc)
+
+    health_available = db_available or fs_available or bool(monitor)
+    health_source = "controller_store" if db_available else (fs_source if fs_available else "bff_downstream_health_monitor")
     return health_available, merged_records, health_source
 
 

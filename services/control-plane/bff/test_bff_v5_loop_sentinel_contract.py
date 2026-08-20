@@ -1100,9 +1100,10 @@ def test_l12_bff_recovery_survives_delivered_history_retention(
     assert restarted.get_state()["delivery"]["backlog"] == 0
 
 
-def test_command_executor_post_json_records_downstream_outcome(tmp_path, monkeypatch):
+def test_command_executor_post_and_get_json_integration_with_downstream_monitor(tmp_path, monkeypatch):
     import command_executor
-    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://127.0.0.1:28097")
+    target_url = "http://127.0.0.1:28097"
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", target_url)
     monitor = DownstreamHealthMonitor(
         state_path=str(tmp_path / "test_downstream.sqlite3"),
         incidents_url="",
@@ -1112,18 +1113,95 @@ def test_command_executor_post_json_records_downstream_outcome(tmp_path, monkeyp
     )
     bff_main.downstream_health_monitor = monitor
 
-    posted = []
-    def accept(url, body, timeout):
-        posted.append(body)
-        return True, 202
+    class MockResponse:
+        def __init__(self, status=200, body=b'{"status":"ok"}'):
+            self.status = status
+            self._body = body
+        def read(self):
+            return self._body
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
 
-    outcome = monitor.record_downstream_outcome(
-        target_name="source-ingest",
-        ok=False,
-        status_code=503,
-        detail="HTTP 503",
+    def mock_urlopen(req, timeout=None):
+        if req.full_url.startswith(target_url):
+            return MockResponse(200, b'{"result":"success"}')
+        raise urllib.error.HTTPError(req.full_url, 500, "Internal Error", {}, None)
+
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+
+    res_post = command_executor._post_json(f"{target_url}/api/ingest", {"test": 1})
+    assert res_post == {"result": "success"}
+
+    res_get = command_executor._get_json(f"{target_url}/api/status")
+    assert res_get == {"result": "success"}
+
+    state = monitor.get_state()
+    target_state = state["targets"].get("source-ingest")
+    assert target_state is not None
+    assert target_state["ok"] is True
+
+
+def test_worker_functional_health_probing_and_paper_signal_producer_attribution(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    health_file = tmp_path / "paper-signal-producer-health.json"
+    health_payload = {
+        "worker_name": "paper-signal-producer",
+        "status": "degraded",
+        "ready": False,
+        "ok": False,
+        "reason": "artifact_store_missing",
+        "ticks": 5,
+    }
+    health_file.write_text(json.dumps(health_payload), encoding="utf-8")
+    monkeypatch.setenv("PAPER_PRODUCER_HEALTH_FILE", str(health_file))
+
+    monitor = DownstreamHealthMonitor(
+        state_path=str(tmp_path / "downstream_worker.sqlite3"),
+        incidents_url="",
     )
-    assert outcome is not None
-    assert outcome["failure_count"] == 1
-    assert outcome["error_rate"] == 1.0
+    bff_main.downstream_health_monitor = monitor
+
+    asyncio.run(monitor._probe_all())
+    state = monitor.get_state()
+    target_info = state["targets"].get("paper-signal-producer")
+    assert target_info is not None
+    assert target_info["ok"] is False
+    assert "artifact_store_missing" in str(target_info.get("failure_reason"))
+
+    with _v5_store(seed_incidents=False) as client:
+        response = client.get("/bff/v5/loop-health", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    items = payload.get("items", [])
+    capital_loop = next((item for item in items if item.get("loop_id") == "capital_pool_execution"), None)
+    assert capital_loop is not None
+    downstream_state = capital_loop.get("downstream_actual_state", {})
+    assert downstream_state.get("status") == "degraded"
+    assert "artifact_store_missing" in str(downstream_state.get("summary"))
+
+
+def test_loop_12_controller_truth_publication(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monitor = DownstreamHealthMonitor(
+        state_path=str(tmp_path / "downstream_loop12.sqlite3"),
+        incidents_url="",
+    )
+    bff_main.downstream_health_monitor = monitor
+
+    record = monitor.publish_loop_12_controller_truth()
+    assert record["loop_id"] == "bff_health_monitoring"
+    assert record["controller_name"] == "bff_downstream_health_monitor"
+    assert record["truth_level"] == "reconciled_live_proof"
+    assert record["status"] in {"ready", "degraded"}
+    assert "downstream_actual_state" in record
+
+    with _v5_store(seed_incidents=False) as client:
+        response = client.get("/bff/v5/loop-health/bff_health_monitoring", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    data = response.json().get("data", {})
+    assert data.get("loop_id") == "bff_health_monitoring"
+    assert data.get("read_model") == "loop_health"
+
 
