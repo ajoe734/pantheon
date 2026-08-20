@@ -2394,6 +2394,115 @@ class LoadBalanceReassignmentTests(unittest.TestCase):
         persisted.assert_not_called()
         self.assertEqual(state.get("load_balance_watch", {}), {})
 
+    @staticmethod
+    def _stale_probe_state() -> dict[str, object]:
+        """Codex healthy, Codex2's probe cache expired (state="healthy" but
+        valid_until in the past) -- reads back as UNKNOWN, not durably
+        terminal, so assignment_terminal_unavailability does NOT fire.
+        """
+        return {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2000-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {"state": "healthy", "valid_until": "2000-01-01T00:00:00Z"},
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+
+    def test_owner_with_expired_probe_does_not_reassign_before_the_hold_duration(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._stale_probe_state()
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+        self.assertIn("TASK-1", state["load_balance_watch"])
+
+    def test_owner_with_expired_probe_reassigns_to_healthy_fallback_after_the_hold_duration(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._stale_probe_state()
+        state["load_balance_watch"] = {
+            "TASK-1": {"first_seen_at": "2000-01-01T00:00:00Z", "owner": "Codex"}
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "persist_task_reassignment", return_value=True
+            ) as persisted,
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("load-balance recovery must not launch"),
+            ),
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertTrue(changed)
+        self.assertEqual(persisted.call_args.kwargs["new_owner"], "Codex2")
+        self.assertIn(
+            "blocked from auto-dispatch",
+            persisted.call_args.kwargs["message"],
+        )
+        self.assertNotIn("TASK-1", state["load_balance_watch"])
+
+    def test_owner_with_expired_probe_does_not_reassign_when_fallback_also_stale(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._stale_probe_state()
+        state["delivery_health"]["endpoints"]["codex2"]["valid_until"] = "2000-01-01T00:00:00Z"
+        state["delivery_health"]["accounts"]["codex2_account"]["valid_until"] = "2000-01-01T00:00:00Z"
+        state["load_balance_watch"] = {
+            "TASK-1": {"first_seen_at": "2000-01-01T00:00:00Z", "owner": "Codex"}
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+
+    def test_healthy_owner_never_treated_as_transiently_blocked(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+            "load_balance_watch": {
+                "TASK-1": {"first_seen_at": "2000-01-01T00:00:00Z", "owner": "Codex"}
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+        self.assertNotIn("TASK-1", state["load_balance_watch"])
+
 
 class RuntimeAndFailureSemanticsTests(unittest.TestCase):
     @staticmethod
