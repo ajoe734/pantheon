@@ -527,7 +527,7 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
         headers=_headers(),
     )
     assert res_run.status_code == 200, res_run.text
-    run_info = res_run.json()["data"]
+    run_info = res_run.json()
     assert run_info["execution_status"] == "succeeded"
     assert run_info["outcome"] == "pass"
     assert run_info["provenance"] == "real"
