@@ -4894,6 +4894,34 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
+def load_balance_settings(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Read-only policy for saturated-but-healthy-lane reassignment.
+
+    Off by default. Every other automatic owner reassignment in this file
+    fires only when the incumbent is durably unavailable (see
+    ``assignment_terminal_unavailability``); it never fires because the
+    incumbent's lane is simply full while healthy. That leaves a full, busy,
+    perfectly healthy lane owning a queue of not-yet-started work while a
+    less-loaded fallback agent sits idle, with no automatic path to move
+    it -- see ``assignment_saturated_recoverable``, which this settles.
+    """
+
+    raw = config.get("worker_reassignment")
+    raw = raw.get("load_balance") if isinstance(raw, Mapping) else None
+    raw = raw if isinstance(raw, Mapping) else {}
+
+    def non_negative(name: str, default: int) -> int:
+        try:
+            return max(0, int(raw.get(name, default)))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "min_saturated_seconds": non_negative("min_saturated_seconds", 900),
+    }
+
+
 def normalized_mapping_values(mapping: dict[str, Any], key: str) -> list[str]:
     target = (key or "").strip().casefold()
     for candidate_key, values in mapping.items():
@@ -8205,6 +8233,43 @@ def assignment_terminal_unavailability(
     return terminal_reasons[0] if terminal_reasons else None
 
 
+LOAD_BALANCE_REASON = "sustained_lane_saturation"
+
+
+def assignment_saturated_recoverable(
+    config: dict[str, Any],
+    owner: str,
+    *,
+    agent_loads: Mapping[str, list[int]],
+    fallback_candidates: list[str],
+) -> str | None:
+    """Return the load-balance reason when a fully-healthy owner lane is
+    saturated and a configured fallback currently has spare capacity.
+
+    This is deliberately narrow and never overlaps
+    ``assignment_terminal_unavailability``: it only looks at current
+    occupancy vs. ``agents.<id>.max_parallel``, never at health/auth/quota,
+    and only returns non-None when a *configured* fallback (not an arbitrary
+    roster agent) is presently under its own capacity. Callers must also
+    hold this condition for a minimum duration before acting on it -- a
+    momentarily full lane is normal dispatch noise, not a load-balance
+    signal, and treating it as one would thrash ownership every cycle.
+    """
+
+    capacity = agent_dispatch_capacity(config, normalize_agent_id(owner))
+    if capacity <= 0:
+        return None
+    if len(agent_loads.get(owner, [])) < capacity:
+        return None
+    for candidate in fallback_candidates:
+        candidate_capacity = agent_dispatch_capacity(config, normalize_agent_id(candidate))
+        if candidate_capacity <= 0:
+            continue
+        if len(agent_loads.get(candidate, [])) < candidate_capacity:
+            return LOAD_BALANCE_REASON
+    return None
+
+
 def unavailable_assignment_fallback_refresh_targets(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -8351,11 +8416,16 @@ def reconcile_unavailable_assignments(
     config: dict[str, Any],
     state: dict[str, Any],
 ) -> bool:
-    """Bounded recovery for assignments on durably unavailable lanes.
+    """Bounded recovery for assignments on durably unavailable lanes, plus
+    optional load-balance recovery for saturated-but-healthy lanes.
 
-    This is the sole automatic assignment mutation path.  It does not infer
-    unavailability from a stale or missing probe, and it never launches work.
-    The normal planner consumes the committed assignment on a later pass.
+    This is the sole automatic assignment mutation path.  The durable branch
+    does not infer unavailability from a stale or missing probe.  The
+    load-balance branch (gated by ``load_balance_settings``, off by default)
+    is the only place occupancy vs. ``agents.<id>.max_parallel`` feeds an
+    assignment decision -- see ``assignment_saturated_recoverable``.  Neither
+    branch launches work; the normal planner consumes the committed
+    assignment on a later pass.
     """
 
     settings = worker_reassignment_settings(config)
@@ -8364,6 +8434,7 @@ def reconcile_unavailable_assignments(
     limit = max(0, int(settings.get("max_reassignments_per_cycle", 4) or 0))
     if limit == 0:
         return False
+    load_balance = load_balance_settings(config)
 
     status = load_status(config)
     tasks = [task for task in status.get("tasks", []) if isinstance(task, dict)]
@@ -8385,9 +8456,17 @@ def reconcile_unavailable_assignments(
             canonical_pending_agent or str(pending_agent).strip()
         )
     eligible_owner_statuses = {"todo", "in_progress", "review_approved", "blocked"}
+    # A load-balance move never touches a task that has already started under
+    # its incumbent (in_progress) or that is on an explicit recovery hold
+    # (blocked) -- only work that has not begun moves for capacity reasons.
+    load_balance_eligible_statuses = {"todo", "review_approved"}
     review_statuses = normalized_status_set(
         ready_dispatch_settings(config).get("review_statuses"), ["review"]
     )
+    agent_loads = agent_dispatch_loads(config, state, active_statuses, task_map=task_map)
+    load_balance_watch = state.setdefault("load_balance_watch", {})
+    for stale_task_id in [tid for tid in load_balance_watch if tid not in task_map]:
+        load_balance_watch.pop(stale_task_id, None)
     changed = False
     actions: list[dict[str, Any]] = []
 
@@ -8409,6 +8488,8 @@ def reconcile_unavailable_assignments(
         role = ""
         unavailable_actor = ""
         unavailable_reason: str | None = None
+        is_load_balance = False
+        load_balance_owner_candidates: list[str] = []
         if task_status in review_statuses and not reviewer_is_explicit_human_gate(reviewer):
             unavailable_reason = assignment_terminal_unavailability(
                 config, state, reviewer
@@ -8423,6 +8504,51 @@ def reconcile_unavailable_assignments(
             if unavailable_reason:
                 role = "owner"
                 unavailable_actor = owner
+            elif (
+                load_balance["enabled"]
+                and owner
+                and task_status in load_balance_eligible_statuses
+            ):
+                fallback_candidates = reassignment_candidate_order(
+                    config,
+                    settings.get("owner_fallbacks", {}) or {},
+                    roots=[owner],
+                    exclude={owner, reviewer},
+                )
+                saturation_reason = assignment_saturated_recoverable(
+                    config,
+                    owner,
+                    agent_loads=agent_loads,
+                    fallback_candidates=fallback_candidates,
+                )
+                if saturation_reason is None:
+                    load_balance_watch.pop(task_id, None)
+                else:
+                    watch_entry = load_balance_watch.get(task_id) or {}
+                    first_seen_at = _parse_iso_utc(str(watch_entry.get("first_seen_at") or ""))
+                    now_at = _parse_iso_utc(utc_now())
+                    if first_seen_at is None:
+                        load_balance_watch[task_id] = {
+                            "first_seen_at": utc_now(),
+                            "owner": owner,
+                        }
+                    elif (
+                        now_at is not None
+                        and (now_at - first_seen_at).total_seconds()
+                        >= load_balance["min_saturated_seconds"]
+                    ):
+                        role = "owner"
+                        unavailable_actor = owner
+                        unavailable_reason = saturation_reason
+                        is_load_balance = True
+                        fallback_candidates.sort(
+                            key=lambda name: (
+                                agent_dispatch_capacity(config, normalize_agent_id(name))
+                                - len(agent_loads.get(name, []))
+                            ),
+                            reverse=True,
+                        )
+                        load_balance_owner_candidates = fallback_candidates
         if not role or not unavailable_reason:
             continue
 
@@ -8460,11 +8586,15 @@ def reconcile_unavailable_assignments(
                 require_owner_ready=False,
             )
         else:
-            candidates = reassignment_candidate_order(
-                config,
-                settings.get("owner_fallbacks", {}) or {},
-                roots=[owner],
-                exclude={owner, reviewer},
+            candidates = (
+                load_balance_owner_candidates
+                if is_load_balance
+                else reassignment_candidate_order(
+                    config,
+                    settings.get("owner_fallbacks", {}) or {},
+                    roots=[owner],
+                    exclude={owner, reviewer},
+                )
             )
             pair = plan_task_assignment_pair(
                 config,
@@ -8476,10 +8606,17 @@ def reconcile_unavailable_assignments(
         if pair is None:
             continue
         new_owner, new_reviewer = pair
-        message = (
-            f"Recovery reassigned {role} from {unavailable_actor} after "
-            f"durable {unavailable_reason}; planner will redispatch normally."
-        )
+        if is_load_balance:
+            message = (
+                f"Load-balanced owner from {unavailable_actor} to {new_owner}: "
+                f"lane was full (>= {load_balance['min_saturated_seconds']}s) while "
+                f"{new_owner} had spare capacity; planner will redispatch normally."
+            )
+        else:
+            message = (
+                f"Recovery reassigned {role} from {unavailable_actor} after "
+                f"durable {unavailable_reason}; planner will redispatch normally."
+            )
         if not persist_task_reassignment(
             config,
             task_id=task_id,
@@ -8499,6 +8636,7 @@ def reconcile_unavailable_assignments(
             expected_generation=task_generation(task),
         ):
             continue
+        load_balance_watch.pop(task_id, None)
         task["owner"] = new_owner
         task["reviewer"] = new_reviewer
         actions.append(
@@ -8509,6 +8647,7 @@ def reconcile_unavailable_assignments(
                 "owner": new_owner,
                 "reviewer": new_reviewer,
                 "reason": unavailable_reason,
+                "trigger": "load_balance" if is_load_balance else "durable_unavailable",
             }
         )
         changed = True

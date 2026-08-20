@@ -248,7 +248,11 @@
         "Antigravity2"
       ]
     },
-    "max_reassignments_per_cycle": 4
+    "max_reassignments_per_cycle": 4,
+    "load_balance": {
+      "enabled": false,
+      "min_saturated_seconds": 900
+    }
   },
   "approvals": {
     "stale_pending_seconds": 1800
