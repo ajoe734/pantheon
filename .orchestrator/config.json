@@ -252,6 +252,12 @@
     "load_balance": {
       "enabled": true,
       "min_saturated_seconds": 900
+    },
+    "failure_loop": {
+      "enabled": true,
+      "max_failures_in_window": 3,
+      "window_seconds": 3600,
+      "max_auto_reassignments": 1
     }
   },
   "approvals": {

@@ -52,6 +52,11 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     # so a live-only enable/threshold edit is exactly the kind of change
     # this allowlist exists to catch.
     "worker_reassignment.load_balance",
+    # failure_loop is the repeated-failure auto-governance policy (see
+    # supervisor.py's reconcile_failure_loops) -- same reasoning as
+    # load_balance above: a live-only change to thresholds or the
+    # auto-reassignment budget must not drift silently from repo.
+    "worker_reassignment.failure_loop",
 )
 
 # Paths where live is ALLOWED to diverge from repo for legitimate
