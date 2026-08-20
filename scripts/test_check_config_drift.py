@@ -124,6 +124,34 @@ def test_task_state_store_mode_drift_is_actionable_by_default() -> None:
     ]
 
 
+def test_worker_reassignment_drift_is_actionable_by_default() -> None:
+    repo = {
+        "worker_reassignment": {
+            "enabled": True,
+            "max_reassignments_per_cycle": 4,
+            "owner_fallbacks": {"Codex": ["Codex2"]},
+            "reviewer_fallbacks": {"Codex": ["Claude"]},
+        }
+    }
+    live = {
+        "worker_reassignment": {
+            "enabled": False,
+            "max_reassignments_per_cycle": 0,
+            "owner_fallbacks": {"Codex": ["Claude", "Antigravity"]},
+            "reviewer_fallbacks": {"Codex": ["Claude"]},
+        }
+    }
+
+    report = find_drift(repo, live)
+
+    assert report["intentional"] == []
+    assert {item["path"] for item in report["drift"]} == {
+        "worker_reassignment.enabled",
+        "worker_reassignment.max_reassignments_per_cycle",
+        "worker_reassignment.owner_fallbacks",
+    }
+
+
 def test_find_drift_missing_flag_is_reported_not_drift() -> None:
     report = find_drift({}, {}, critical_flags=("ready_dispatcher.enabled",), overrides=frozenset())
     assert report["drift"] == []

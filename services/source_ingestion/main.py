@@ -92,7 +92,12 @@ from .controller_state import ControllerStateError, ControllerStateStore, read_c
 from .controller_auth import load_controller_token
 from .persona_source_reconciler import RECONCILIATION_METADATA_KEY, SourceProvisioningReconciler
 from .process_lock import exclusive_file_lock
-from .requirement_state import RequirementSnapshotStore, RequirementStateError
+from .requirement_state import (
+    LatestMarketSnapshotStore,
+    MarketSnapshotStateError,
+    RequirementSnapshotStore,
+    RequirementStateError,
+)
 from .scheduler import IngestBatch, IngestReceipt, IngestionScheduler, JsonlIngestScheduleStore
 from .source_health import (
     SourceHealth,
@@ -130,6 +135,12 @@ CONTROLLER_STATE_PATH = Path(
 REQUIREMENT_STATE_PATH = Path(
     os.getenv("SOURCE_INGEST_REQUIREMENT_STATE_PATH", str(DATA_DIR / "requirement_snapshots.jsonl"))
 )
+LATEST_MARKET_SNAPSHOT_PATH = Path(
+    os.getenv(
+        "SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH",
+        str(DATA_DIR / "latest_market_snapshots.jsonl"),
+    )
+)
 RECONCILE_TRANSACTION_LOCK_PATH = Path(
     os.getenv(
         "SOURCE_INGEST_RECONCILE_TRANSACTION_LOCK_PATH",
@@ -154,6 +165,10 @@ FRONTIER_RUNNING_TIMEOUT_SECONDS = max(
 DEFAULT_STALE_THRESHOLD_SECONDS = max(
     1,
     int(os.getenv("SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS", "86400")),
+)
+MARKET_SNAPSHOT_MAX_CLOSES = max(
+    2,
+    int(os.getenv("SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES", "60")),
 )
 SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = max(
     0,
@@ -180,6 +195,10 @@ replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
 source_health_store = SourceHealthStore.from_jsonl(SOURCE_HEALTH_STORE_PATH)
 source_usage_store = SourceUsageDailyStore.from_jsonl(SOURCE_USAGE_STORE_PATH)
 requirement_snapshot_store = RequirementSnapshotStore(REQUIREMENT_STATE_PATH)
+latest_market_snapshot_store = LatestMarketSnapshotStore(
+    LATEST_MARKET_SNAPSHOT_PATH,
+    max_closes=MARKET_SNAPSHOT_MAX_CLOSES,
+)
 controller_token = load_controller_token(token_path=CONTROLLER_TOKEN_PATH, create=True)
 authoritative_reconcile_lock = threading.RLock()
 audit_store_lock = threading.RLock()
@@ -202,6 +221,8 @@ register_fastapi_health_routes(
         "connector_store_path": str(CONNECTOR_STORE_PATH),
         "source_evidence_path": str(SOURCE_EVIDENCE_STORE_PATH),
         "market_data_storage_root": str(MARKET_DATA_STORAGE_ROOT),
+        "latest_market_snapshot_path": str(LATEST_MARKET_SNAPSHOT_PATH),
+        "market_snapshot_max_closes": MARKET_SNAPSHOT_MAX_CLOSES,
         "dlq_path": str(DLQ_STORE_PATH),
         "audit_path": str(AUDIT_STORE_PATH),
         "scheduler_max_concurrency": SCHEDULER_MAX_CONCURRENCY,
@@ -1765,6 +1786,29 @@ def _persist_market_data_storage_refs(result: Any) -> dict[str, Any]:
     return market_data_storage_writer.write_run(result=result, connector=connector).to_dict()
 
 
+def _persist_latest_market_snapshots(result: Any) -> dict[str, Any]:
+    """Project completed normalized SourceRecords into the read-only paper API.
+
+    This executes only as part of the already-authoritative ingest completion
+    path.  The corresponding GET endpoint only reads this stored projection;
+    it cannot call a provider or start the scheduler.
+    """
+
+    if result.run.status.value != "completed":
+        return {
+            "schema_version": "source_ingest_latest_market_snapshot_batch.v1",
+            "ingest_run_id": result.run.ingest_run_id,
+            "accepted_record_count": 0,
+            "updated_snapshot_count": 0,
+            "snapshots": [],
+        }
+    return latest_market_snapshot_store.append_normalized_records(
+        result.records,
+        ingest_run_id=result.run.ingest_run_id,
+        observed_at=_run_finished_at_iso(result.run),
+    )
+
+
 def _run_finished_at_iso(run: Any) -> str:
     value = run.to_dict().get("finished_at") or run.to_dict().get("started_at")
     return str(value or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
@@ -2057,9 +2101,13 @@ def _run_job(
         post_processing_stage = "market_storage"
         storage_refs = _persist_market_data_storage_refs(result)
         evidence_refs["storage_refs"] = storage_refs
+        post_processing_stage = "latest_market_snapshot"
+        market_snapshots = _persist_latest_market_snapshots(result)
+        evidence_refs["market_snapshots"] = market_snapshots
         post_processing_stage = "source_evidence"
         evidence_refs = _persist_source_evidence_refs(result, storage_refs=storage_refs)
         evidence_refs["storage_refs"] = storage_refs
+        evidence_refs["market_snapshots"] = market_snapshots
         post_processing_stage = "source_health_usage"
         _update_source_health_and_usage(connector=connector, result=result, storage_refs=storage_refs)
         post_processing_stage = "receipt_finalize"
@@ -2539,6 +2587,7 @@ def health() -> dict[str, Any]:
         "connector_store_path": str(CONNECTOR_STORE_PATH),
         "source_evidence_path": str(SOURCE_EVIDENCE_STORE_PATH),
         "market_data_storage_root": str(MARKET_DATA_STORAGE_ROOT),
+        "latest_market_snapshot_path": str(LATEST_MARKET_SNAPSHOT_PATH),
         "dlq_path": str(DLQ_STORE_PATH),
         "audit_path": str(AUDIT_STORE_PATH),
         **runtime_metrics,
@@ -2548,6 +2597,36 @@ def health() -> dict[str, Any]:
         "source_search_posture": PRODUCTION_POSTURE.to_dict(),
         "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
     }
+
+
+@app.get("/api/source-ingest/snapshots/latest")
+def get_latest_market_snapshot(symbol: str) -> dict[str, Any]:
+    """Return the one Source-owned, already-stored normalized snapshot.
+
+    This is intentionally a read-only projection lookup.  It does not invoke
+    a connector, call any provider, or schedule ingestion work.
+    """
+
+    try:
+        snapshot = latest_market_snapshot_store.get(symbol)
+    except (MarketSnapshotStateError, RequirementStateError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "market_snapshot_store_unavailable",
+                "symbol": str(symbol or "").strip(),
+                "detail": str(exc),
+            },
+        ) from exc
+    if snapshot is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "market_snapshot_not_found",
+                "symbol": str(symbol or "").strip().upper(),
+            },
+        )
+    return snapshot.to_public_dict()
 
 
 @app.post("/api/source-ingest/connectors", status_code=201)
