@@ -3171,6 +3171,27 @@ class ServiceBackedReadAdapter:
             "keys": ["tool_id", "id"],
             "snapshot_key": "mcp_tools",
         },
+        "formula_jobs": {
+            "env": "PANTHEON_BFF_FORMULA_JOBS_STORE",
+            "dirs": ("PANTHEON_FORMULA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"),
+            "filenames": ("formula_jobs.json", "formula_jobs.jsonl"),
+            "keys": ["job_id", "id"],
+            "snapshot_key": "formula_jobs",
+        },
+        "activity_audit": {
+            "env": "PANTHEON_BFF_ACTIVITY_AUDIT_STORE",
+            "dirs": ("PANTHEON_AUDIT_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"),
+            "filenames": ("activity_audit.json", "activity_audit.jsonl", "audit_events.jsonl"),
+            "keys": ["event_id", "id"],
+            "snapshot_key": "activity_audit",
+        },
+        "paper_telemetry": {
+            "env": "PANTHEON_BFF_PAPER_TELEMETRY_STORE",
+            "dirs": ("PANTHEON_TELEMETRY_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"),
+            "filenames": ("paper_telemetry.json", "paper_telemetry.jsonl"),
+            "keys": ["strategy_id", "id"],
+            "snapshot_key": "paper_telemetry",
+        },
     }
 
     _HTTP_DATASETS = {
