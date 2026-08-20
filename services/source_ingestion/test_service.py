@@ -115,7 +115,7 @@ def test_health_exposes_storage_contract(client) -> None:
     assert body["audit_path"] == str(data_dir / "source_ingest_audit.jsonl")
 
 
-def test_fleet_freshness_reads_each_store_once_at_production_scale(
+def test_fleet_freshness_readiness_does_not_replay_journals_at_production_scale(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -164,17 +164,16 @@ def test_fleet_freshness_reads_each_store_once_at_production_scale(
     monkeypatch.setattr(module, "connector_store", ConnectorStore())
     monkeypatch.setattr(module, "schedule_config_store", ScheduleStore())
     monkeypatch.setattr(module, "store", IngestStore())
-    module._source_freshness_cache = {"computed_at": 0.0, "payload": None}
-
     result = module._source_freshness_readiness()
 
-    assert calls == {"configs": 1, "schedules": 1, "snapshot": 1}
+    assert calls == {"configs": 0, "schedules": 0, "snapshot": 0}
     assert result == {
-        "status": "ok",
-        "data_ready": True,
+        "status": "not_observed",
+        "data_ready": False,
         "scheduled_connector_count": 0,
         "stale_connector_count": 0,
         "degraded_connector_count": 0,
+        "reason": "controller_state_missing",
     }
 
 
