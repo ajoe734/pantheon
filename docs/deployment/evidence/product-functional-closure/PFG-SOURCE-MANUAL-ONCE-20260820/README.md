@@ -4,8 +4,8 @@
 
 This task delivers safe bounded manual one-tick Source Ingestion pulls for dev acceptance while locking the default dev posture to zero-egress internal reconciliation.
 
-1. **Reconcile-Only Default Posture**:
-   `services/source_ingestion/controller_worker.py` defaults to `RECONCILE_ONLY_MODE` (`SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`) with `scheduled_tick` truth and `MAX_TICKS=0`. Internal connector requirements and state are continuously reconciled with **zero provider egress** (`provider_egress_attempted: false`).
+1. **Reconcile-Only Default Posture & Compose Defaults**:
+   `services/source_ingestion/controller_worker.py` and `docker-compose.yml` (`source-ingest-scheduler`) default to `RECONCILE_ONLY_MODE` (`SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`) with `scheduled_tick` truth, `MAX_TICKS=0`, and `unless-stopped` restart. Internal connector requirements and state are continuously reconciled with **zero provider egress** (`provider_egress_attempted: false`). Default docker-compose startup runs zero-egress internal reconciliation cleanly without requiring provider connector selection.
 
 2. **PR #5064 Candidate Reuse**:
    Reuses and consolidates the candidate architecture from PR #5064 (`OPS-DEV-SOURCE-MANUAL-PULL-20260820-V2`), proving bounded one-shot pull capabilities and fail-closed validation.

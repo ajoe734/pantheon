@@ -244,6 +244,73 @@ def test_reconcile_only_tick_executes_zero_provider_egress(
     assert writer.successes[0]["truth_level"] == "scheduled_tick"
 
 
+def test_rendered_docker_compose_scheduler_defaults_and_zero_egress_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yaml
+
+    compose_path = Path(__file__).resolve().parents[3] / "docker-compose.yml"
+    compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+    scheduler_service = compose["services"]["source-ingest-scheduler"]
+    env_spec = scheduler_service["environment"]
+
+    rendered_env: dict[str, str] = {}
+    for k, v in env_spec.items():
+        if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+            inner = v[2:-1]
+            _var, sep, default_val = inner.partition(":-")
+            if sep == ":-":
+                rendered_env[k] = default_val
+            else:
+                rendered_env[k] = ""
+        else:
+            rendered_env[k] = str(v)
+
+    for k, v in rendered_env.items():
+        monkeypatch.setenv(k, v)
+
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(tmp_path / "controller-state.json"))
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_ALIVE_PATH", str(tmp_path / "controller_alive"))
+    monkeypatch.setattr(
+        controller_worker,
+        "load_controller_token",
+        lambda **kwargs: "token-32-chars-minimum-test-mock",
+    )
+
+    config = controller_worker.config_from_env()
+    assert config.mode == RECONCILE_ONLY_MODE
+    assert config.max_ticks == 0
+    assert config.truth_level == "scheduled_tick"
+    assert config.exclusive_connector_ids == ()
+    assert config.force_connector_ids == ()
+
+    called_schedule = False
+
+    def mock_schedule_tick(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal called_schedule
+        called_schedule = True
+        return _schedule()
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", lambda **kwargs: (_personas(), _desired_meta()))
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: _reconcile())
+    monkeypatch.setattr(controller_worker, "read_actual_state", lambda **kwargs: _actual(1))
+    monkeypatch.setattr(controller_worker, "_validate_due_state_readback", lambda **kwargs: None)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", mock_schedule_tick)
+
+    state = _state()
+    store = ControllerStateStore(config.state_path)
+    writer = RecordingWriter()
+
+    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+
+    assert result["status"] == "ok"
+    assert result["controller_mode"] == RECONCILE_ONLY_MODE
+    assert result["provider_egress_attempted"] is False
+    assert called_schedule is False
+    assert len(writer.successes) == 1
+    assert writer.successes[0]["truth_level"] == "scheduled_tick"
+
+
 def test_reconcile_only_rejects_connector_selection_and_invalid_truth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

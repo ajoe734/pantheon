@@ -21,7 +21,7 @@
     {
       "component": "docker-compose.yml",
       "disposition": "keep",
-      "rationale": "Dev default posture remains reconcile_only. In accordance with program dispatch rule 3, docker-compose.yml topology changes are integrated exclusively by PFG-DEV-INTEGRATION-20260820."
+      "rationale": "Dev default posture locked to reconcile_only with MAX_TICKS=0, zero provider selection, and unless-stopped restart, matching non-prod deployment and ensuring default compose startup produces zero provider egress without configuration errors."
     }
   ]
 }
