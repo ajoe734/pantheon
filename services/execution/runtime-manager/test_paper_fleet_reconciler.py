@@ -202,7 +202,17 @@ class _InstrumentedReconciler:
 
         class _TestReconciler(PaperFleetReconciler):
             def _fetch_fleet_state(inner_self):
-                return (list(self._fake_bindings), set(self._fake_excluded_ids))
+                from paper_fleet_reconciler import validate_executable_binding
+                valid = []
+                excluded = set(self._fake_excluded_ids)
+                for b in self._fake_bindings:
+                    if isinstance(b, dict):
+                        is_val, _ = validate_executable_binding(b)
+                        if is_val:
+                            valid.append(b)
+                        elif b.get("binding_id"):
+                            excluded.add(str(b["binding_id"]))
+                return (valid, excluded)
 
             def _spawn(inner_self, binding_id: str, port: int, env: Any) -> _FakeProcess:
                 pid = self._next_pid
@@ -245,6 +255,13 @@ class TestPaperFleetReconcilerBasic(unittest.TestCase):
         self.assertEqual(snap["running_count"], 1)
         self.assertEqual(len(self.wrapper.spawned), 1)
         self.assertEqual(self.wrapper.spawned[0]["binding_id"], "b-001")
+
+    def test_invalid_binding_no_spawn(self) -> None:
+        invalid_b = _make_binding("b-invalid", runtime_id="")
+        self.wrapper.set_bindings([invalid_b])
+        snap = self.recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(len(self.wrapper.spawned), 0)
 
     def test_second_reconcile_does_not_duplicate(self) -> None:
         self.wrapper.set_bindings([_make_binding("b-001")])
