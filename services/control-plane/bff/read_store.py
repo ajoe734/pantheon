@@ -2754,10 +2754,31 @@ class ServiceBackedReadAdapter:
         "postmortems": {
             "env": "PANTHEON_BFF_POSTMORTEM_STORE",
             "dirs": ("POSTMORTEMS_DATA_DIR", "INCIDENTS_DATA_DIR"),
-            "filenames": ("incidents.json",),
+            "filenames": ("postmortems.json", "incidents.json"),
             "keys": ["postmortem_id", "id"],
             "nested_key": "postmortems",
             "snapshot_key": "postmortems",
+        },
+        "formula_jobs": {
+            "env": "PANTHEON_BFF_FORMULA_JOBS_STORE",
+            "dirs": ("FORMULA_JOBS_DATA_DIR",),
+            "filenames": ("formula_jobs.json", "jobs.json"),
+            "keys": ["job_id", "id"],
+            "snapshot_key": "formula_jobs",
+        },
+        "activity_audit": {
+            "env": "PANTHEON_BFF_ACTIVITY_AUDIT_STORE",
+            "dirs": ("ACTIVITY_AUDIT_DATA_DIR",),
+            "filenames": ("activity_audit.json", "activities.json", "activity.json"),
+            "keys": ["event_id", "id"],
+            "snapshot_key": "activity_audit",
+        },
+        "paper_telemetry": {
+            "env": "PANTHEON_BFF_PAPER_TELEMETRY_STORE",
+            "dirs": ("PAPER_TELEMETRY_DATA_DIR",),
+            "filenames": ("paper_telemetry.json", "telemetry.json"),
+            "keys": ["strategy_id", "paper_ledger_id", "id"],
+            "snapshot_key": "paper_telemetry",
         },
         "kill_switch": {
             "env": "PANTHEON_BFF_KILL_SWITCH_STORE",
@@ -20502,11 +20523,27 @@ class ReadSurfaceStore:
         for item in raw_items:
             if not isinstance(item, dict):
                 continue
-            if severity and item.get("severity") != severity:
-                continue
-            if status and item.get("status") != status:
-                continue
             item_copy = json.loads(json.dumps(item))
+            # Normalize schema differences from canonical postmortem records if present
+            if "impact_summary" not in item_copy and "incident_evidence_summary" in item_copy:
+                item_copy["impact_summary"] = item_copy.get("incident_evidence_summary")
+            if "severity" not in item_copy:
+                item_copy["severity"] = item_copy.get("deployment_stage") or "medium"
+            if "action_items" in item_copy and isinstance(item_copy["action_items"], list):
+                # Ensure action_items elements are dicts if they were strings
+                norm_actions = []
+                for idx, act in enumerate(item_copy["action_items"]):
+                    if isinstance(act, str):
+                        norm_actions.append({"id": f"act-{idx+1}", "desc": act})
+                    elif isinstance(act, dict):
+                        norm_actions.append(act)
+                item_copy["action_items"] = norm_actions
+
+            if severity and item_copy.get("severity") != severity:
+                continue
+            if status and item_copy.get("status") != status:
+                continue
+
             if "source_identity" not in item_copy:
                 item_copy["source_identity"] = "postmortem_store"
             if "freshness" not in item_copy:

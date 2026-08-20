@@ -9,6 +9,7 @@ Verifies endpoints:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -212,6 +213,55 @@ def test_postmortems_endpoints():
         # Detail - not found
         res_nf = client.get("/bff/management/postmortems/non-existent", headers=OPERATOR_HEADERS)
         assert res_nf.status_code == 404
+
+
+def test_service_backed_adapter_readback():
+    with tempfile.TemporaryDirectory() as td:
+        postmortems_dir = os.path.join(td, "postmortems")
+        os.makedirs(postmortems_dir, exist_ok=True)
+        pm_path = os.path.join(postmortems_dir, "postmortems.json")
+        canonical_pm = {
+            "postmortem_id": "pm-canonical-101",
+            "title": "Canonical Incident Postmortem",
+            "status": "published",
+            "created_at": "2026-08-20T12:00:00Z",
+            "incident_id": "inc-101",
+            "binding_id": "bind-101",
+            "deployment_stage": "canary",
+            "deployment_plan_id": "plan-101",
+            "capital_pool_id": "pool-101",
+            "persona_capital_binding_id": "pcb-101",
+            "artifact_id": "art-101",
+            "artifact_version": "1.0.0",
+            "runtime_id": "run-101",
+            "trace_id": "tr-101",
+            "root_cause": "Buffer overflow in streaming ingest",
+            "incident_evidence_summary": "High latency across ingest pipelines",
+            "action_items": ["Add backpressure buffer", "Rate limit requests"],
+        }
+        with open(pm_path, "w", encoding="utf-8") as f:
+            json.dump([canonical_pm], f)
+
+        # Test ReadSurfaceStore reading from file via ServiceBackedReadAdapter
+        os.environ["POSTMORTEMS_DATA_DIR"] = postmortems_dir
+        try:
+            store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=False,
+            )
+            res = store.get_postmortems_read_model()
+            assert res["source"] == "store"
+            assert len(res["items"]) == 1
+            item = res["items"][0]
+            assert item["postmortem_id"] == "pm-canonical-101"
+            assert item["impact_summary"] == "High latency across ingest pipelines"
+            assert item["severity"] == "canary"
+            assert len(item["action_items"]) == 2
+            assert item["action_items"][0] == {"id": "act-1", "desc": "Add backpressure buffer"}
+            assert item["source_identity"] == "postmortem_store"
+            assert item["freshness"] == "2026-08-20T12:00:00Z"
+        finally:
+            os.environ.pop("POSTMORTEMS_DATA_DIR", None)
 
 
 def test_unavailable_degraded_behavior():
