@@ -212,6 +212,30 @@ def _evolution_actor_role(actor_role: str) -> str:
     return "operator"
 
 
+def _record_outcome_for_target(url: str, ok: bool, status_code: int, detail: Optional[str] = None) -> None:
+    try:
+        from downstream_health_monitor import DownstreamTarget
+        import main as bff_main
+        monitor = getattr(bff_main, "downstream_health_monitor", None)
+        if monitor is None:
+            return
+        registry = monitor._resolve_target_registry()
+        matched_target_name = None
+        for name, target in registry.items():
+            if url.startswith(target.base_url):
+                matched_target_name = name
+                break
+        if matched_target_name:
+            monitor.record_downstream_outcome(
+                target_name=matched_target_name,
+                ok=ok,
+                status_code=status_code,
+                detail=detail,
+            )
+    except Exception as exc:
+        log.debug("failed to record downstream outcome for %s: %s", url, exc)
+
+
 def _post_json(
     url: str,
     payload: Dict[str, Any],
@@ -231,8 +255,18 @@ def _post_json(
         headers=headers,
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
+            status_code = int(resp.status)
+            body = json.loads(resp.read().decode("utf-8"))
+            _record_outcome_for_target(url, ok=True, status_code=status_code)
+            return body
+    except urllib.error.HTTPError as exc:
+        _record_outcome_for_target(url, ok=False, status_code=int(exc.code), detail=f"HTTP {exc.code}")
+        raise
+    except Exception as exc:
+        _record_outcome_for_target(url, ok=False, status_code=-1, detail=str(exc))
+        raise
 
 
 def _get_json(
@@ -247,8 +281,18 @@ def _get_json(
     if mfa_token:
         headers["X-MFA-Token"] = mfa_token
     req = urllib.request.Request(url, headers=headers, method="GET")
-    with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
+            status_code = int(resp.status)
+            body = json.loads(resp.read().decode("utf-8"))
+            _record_outcome_for_target(url, ok=True, status_code=status_code)
+            return body
+    except urllib.error.HTTPError as exc:
+        _record_outcome_for_target(url, ok=False, status_code=int(exc.code), detail=f"HTTP {exc.code}")
+        raise
+    except Exception as exc:
+        _record_outcome_for_target(url, ok=False, status_code=-1, detail=str(exc))
+        raise
 
 
 def _owner_post_may_have_committed(exc: Exception) -> bool:

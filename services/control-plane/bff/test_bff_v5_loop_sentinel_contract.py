@@ -8,10 +8,11 @@ import os
 import sys
 import tempfile
 import threading
+import urllib.error
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1097,3 +1098,32 @@ def test_l12_bff_recovery_survives_delivered_history_retention(
     assert resolved["status"] == "resolved"
     assert resolved["incident_id"] == incident["incident_id"]
     assert restarted.get_state()["delivery"]["backlog"] == 0
+
+
+def test_command_executor_post_json_records_downstream_outcome(tmp_path, monkeypatch):
+    import command_executor
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://127.0.0.1:28097")
+    monitor = DownstreamHealthMonitor(
+        state_path=str(tmp_path / "test_downstream.sqlite3"),
+        incidents_url="",
+        error_rate_window_seconds=300,
+        error_rate_threshold=0.5,
+        error_rate_min_samples=1,
+    )
+    bff_main.downstream_health_monitor = monitor
+
+    posted = []
+    def accept(url, body, timeout):
+        posted.append(body)
+        return True, 202
+
+    outcome = monitor.record_downstream_outcome(
+        target_name="source-ingest",
+        ok=False,
+        status_code=503,
+        detail="HTTP 503",
+    )
+    assert outcome is not None
+    assert outcome["failure_count"] == 1
+    assert outcome["error_rate"] == 1.0
+
