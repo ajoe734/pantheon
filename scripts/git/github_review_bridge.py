@@ -561,8 +561,8 @@ def _pr_snapshot(
         raise GitHubReviewBridgeError(f"GitHub PR #{binding.pr} metadata is unavailable")
     if int(payload.get("number") or 0) != binding.pr:
         raise GitHubReviewBridgeError(f"GitHub returned the wrong PR for #{binding.pr}")
-    if str(payload.get("state") or "").upper() != "OPEN":
-        raise GitHubReviewBridgeError(f"GitHub PR #{binding.pr} is not open")
+    if str(payload.get("state") or "").upper() not in {"OPEN", "MERGED"}:
+        raise GitHubReviewBridgeError(f"GitHub PR #{binding.pr} is not open or merged")
     actual_head = str(payload.get("headRefOid") or "").strip().lower()
     actual_branch = str(payload.get("headRefName") or "").strip()
     actual_base = str(payload.get("baseRefName") or "").strip()

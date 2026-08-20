@@ -1940,7 +1940,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             )
             self._write_status_state(
                 worktree,
-                owner="Gemini",
+                owner="Claude2",
                 next_value="stale worktree task must not be read",
             )
             central_log = central / "ai-activity-log.jsonl"
@@ -2329,7 +2329,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             self._copy_status_tooling(code_root)
             self._write_status_state(
                 code_root,
-                owner="Gemini",
+                owner="Claude2",
                 next_value="stale task worktree root",
             )
             command_sha = self._commit_all(code_root)
@@ -2584,7 +2584,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Claude", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
-                {"name": "Gemini", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Claude2", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Copilot", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
             ],
             "tasks": [
@@ -3603,7 +3603,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         *current* reviewer field is trusted, same as Human/Ops always was."""
 
         self.state["tasks"][0]["status"] = "blocked"
-        self.state["tasks"][0]["reviewer"] = "Gemini"
+        self.state["tasks"][0]["reviewer"] = "Claude2"
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaisesRegex(SystemExit, "Only Human/Ops or the task's current reviewer"):
                 _command_reconcile_merged_done(
@@ -3802,7 +3802,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                         "# Task Brief: REG-002\n\n"
                         "- Status: review_approved\n"
                         "- Owner: Codex\n"
-                        "- Reviewer: Gemini\n\n"
+                        "- Reviewer: Claude2\n\n"
                         "Delivery repository: ajoe734/execute-plans\n"
                         f"Delivery commit: {delivery_sha}\n"
                     )
@@ -4072,13 +4072,13 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             audited_reassignment_event(
                 task_id="BROKEN-001",
                 old_owner="Codex2",
-                new_owner="Gemini",
+                new_owner="Claude2",
                 timestamp="2026-07-19T23:00:00Z",
                 message="hop 1",
             ),
             audited_reassignment_event(
                 task_id="BROKEN-001",
-                # Disconnected: the chain left off at Gemini, not Codex.
+                # Disconnected: the chain left off at Claude2, not Codex.
                 old_owner="Codex",
                 new_owner="Antigravity",
                 timestamp="2026-07-19T23:10:00Z",
@@ -4141,13 +4141,13 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         """Editing a real audited event breaks its digest and must be rejected."""
 
         tampered = audited_reassignment_event(task_id="TAMPER-001")
-        tampered["new_owner"] = "Gemini"
+        tampered["new_owner"] = "Claude2"
         self._test_log_file.write_text(json.dumps(tampered) + "\n", encoding="utf-8")
         with self.assertRaisesRegex(SystemExit, "no exact task_reassigned audit event chain"):
             ai_status._verified_owner_reassignment(
-                {"id": "TAMPER-001", "owner": "Gemini", "reviewer": "Claude"},
+                {"id": "TAMPER-001", "owner": "Claude2", "reviewer": "Claude"},
                 evidence_owner="Codex2",
-                current_owner="Gemini",
+                current_owner="Claude2",
             )
 
     def test_handoff_must_go_from_owner_to_reviewer(self) -> None:
@@ -4160,7 +4160,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
             with self.assertRaises(SystemExit):
-                ai_status.command_handoff(self.state, ["REG-002", "Gemini", "Wrong reviewer"])
+                ai_status.command_handoff(self.state, ["REG-002", "Claude2", "Wrong reviewer"])
 
         self.state["tasks"][0]["failure_streak"] = 2
         self.state["tasks"][0]["status"] = "in_progress"
@@ -4480,12 +4480,12 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
     def test_supersede_closes_legacy_blocker_and_resolves_blocker_entries(self) -> None:
         self.state["tasks"][0]["status"] = "blocked"
-        self.state["tasks"][0]["waiting_for"] = "Gemini"
+        self.state["tasks"][0]["waiting_for"] = "Claude2"
         self.state["blockers"] = [
             {
                 "task_id": "REG-002",
                 "owner": "Codex",
-                "waiting_for": "Gemini",
+                "waiting_for": "Claude2",
                 "message": "Legacy lane replaced by newer execution slice",
                 "status": "open",
                 "created_at": "2026-04-06T15:05:00Z",
@@ -5255,7 +5255,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     "status": "review_approved",
                 },
                 actor="Claude",
-                llm_agent="Gemini",
+                llm_agent="Claude2",
                 reviewer="Claude",
                 commit_timestamp="2026-08-05T11:00:00+00:00",
             )
@@ -6580,7 +6580,7 @@ class SidecarTaskTests(unittest.TestCase):
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Claude", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
-                {"name": "Gemini", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Claude2", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Copilot", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Qwen", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
             ],
@@ -6621,7 +6621,7 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_AUTO_CREATED_BY": "supervisor-underutilization",
         }
         with mock.patch.dict(os.environ, env, clear=False):
-            ai_status.command_assign(self.state, ["APP-001-SIDECAR-BFF-HANDOFF", "Gemini", "Copilot"])
+            ai_status.command_assign(self.state, ["APP-001-SIDECAR-BFF-HANDOFF", "Claude2", "Copilot"])
 
         task = ai_status.get_task(self.state, "APP-001-SIDECAR-BFF-HANDOFF")
         self.assertIsNotNone(task)
@@ -6670,7 +6670,7 @@ class SidecarTaskTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "create-only assignment refused"):
                 ai_status.command_assign(
                     self.state,
-                    ["APP-003", "Gemini", "Copilot", "Conflicting contract"],
+                    ["APP-003", "Claude2", "Copilot", "Conflicting contract"],
                 )
 
         self.assertEqual(ai_status.get_task(self.state, "APP-003"), before)
@@ -7099,7 +7099,7 @@ class RuntimeWorkerLivenessTests(unittest.TestCase):
                     "title": "Review stale runtime",
                     "summary_zh": "確認 zombie worker 不會被 dashboard 當成 live。",
                     "owner": "Codex",
-                    "reviewer": "Gemini2",
+                    "reviewer": "Codex2",
                     "status": "review_approved",
                     "depends_on": [],
                     "next": "Owner finalize",
@@ -7902,7 +7902,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             "agents": [
                 {"name": "Codex", "status": "busy", "current_task_ids": ["BP5-SVC-001"], "branch": "", "next": "", "last_update": "2026-04-15T15:32:45Z"},
                 {"name": "Claude", "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": "2026-04-15T15:32:45Z"},
-                {"name": "Gemini", "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": "2026-04-15T15:32:45Z"},
+                {"name": "Claude2", "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": "2026-04-15T15:32:45Z"},
             ],
             "tasks": [
                 {
@@ -7910,7 +7910,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "title": "Lock the deployable service baseline and single-VM topology",
                     "summary_zh": "主線 baseline 定義。",
                     "owner": "Codex",
-                    "reviewer": "Gemini",
+                    "reviewer": "Claude2",
                     "status": "in_progress",
                     "depends_on": [],
                     "artifacts": [],

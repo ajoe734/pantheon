@@ -151,14 +151,6 @@
       "Claude": [
         "Codex"
       ],
-      "Gemini": [
-        "Codex",
-        "Claude"
-      ],
-      "Gemini2": [
-        "Codex",
-        "Claude"
-      ],
       "Codex": [
         "Claude"
       ],
@@ -170,14 +162,6 @@
     "reviewer_fallbacks": {
       "Claude": [
         "Codex"
-      ],
-      "Gemini": [
-        "Codex",
-        "Claude"
-      ],
-      "Gemini2": [
-        "Codex",
-        "Claude"
       ],
       "Codex": [
         "Claude"
@@ -229,9 +213,6 @@
       "Claude": [
         "your-github-handle"
       ],
-      "Gemini": [
-        "your-github-handle"
-      ],
       "Codex": [
         "your-github-handle"
       ],
@@ -261,20 +242,6 @@
       "provider": "claude",
       "max_parallel": 3,
       "adapter": "claude_cli",
-      "wake_template": ".orchestrator/templates/wakeup.txt"
-    },
-    "gemini": {
-      "display_name": "Gemini",
-      "provider": "gemini",
-      "max_parallel": 1,
-      "adapter": "gemini",
-      "wake_template": ".orchestrator/templates/wakeup.txt"
-    },
-    "gemini2": {
-      "display_name": "Gemini2",
-      "provider": "gemini2",
-      "max_parallel": 1,
-      "adapter": "gemini",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex": {
@@ -320,49 +287,6 @@
         "copilot_allow_dangerous_skip": false,
         "rule_default_mode": "acceptEdits",
         "disable_bypass_permissions": true
-      }
-    },
-    "gemini": {
-      "delivery_mode": "gemini",
-      "account": "gemini",
-      "gemini": {
-        "cli": "gemini",
-        "include_directories": true
-      },
-      "approval": {
-        "default_approval_mode": "auto_edit",
-        "workspace_agent_yolo_mode": false,
-        "enable_permanent_tool_approval": true,
-        "auto_add_to_policy_by_default": true,
-        "disable_yolo_mode": false,
-        "disable_always_allow": false
-      }
-    },
-    "gemini2": {
-      "delivery_mode": "gemini",
-      "account": "gemini2",
-      "gemini": {
-        "cli": ".orchestrator/bin/gemini2",
-        "config_home": "~/.gemini2",
-        "home": "~/.gemini2",
-        "include_directories": true,
-        "model": "gemini-2.5-flash-lite",
-        "output_format": "json",
-        "env": {
-          "GEMINI_CLI_TRUST_WORKSPACE": "true",
-          "GOOGLE_GENAI_USE_GCA": "true",
-          "GOOGLE_CLOUD_PROJECT": "YOUR_GEMINI_CODE_ASSIST_PROJECT",
-          "GOOGLE_CLOUD_PROJECT_ID": "YOUR_GEMINI_CODE_ASSIST_PROJECT",
-          "GOOGLE_CLOUD_LOCATION": "us-central1"
-        }
-      },
-      "approval": {
-        "default_approval_mode": "yolo",
-        "workspace_agent_yolo_mode": false,
-        "enable_permanent_tool_approval": true,
-        "auto_add_to_policy_by_default": true,
-        "disable_yolo_mode": false,
-        "disable_always_allow": false
       }
     },
     "codex": {
@@ -448,8 +372,6 @@
     "max_active_workers_per_task": 1,
     "max_concurrent_per_account": {
       "claude": 3,
-      "gemini": 1,
-      "gemini2": 1,
       "codex1": 4,
       "copilot": 1
     },

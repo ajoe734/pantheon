@@ -24,12 +24,12 @@ on:
       tenant_id:
         description: "Dev tenant for the proof-owned resources"
         required: true
-        default: "pantheon-dev"
+        default: "tenant-dev"
         type: string
       foreign_tenant_id:
         description: "Different tenant used only for the negative control"
         required: true
-        default: "pantheon-dev-forbidden-proof"
+        default: "tenant-dev-forbidden-proof"
         type: string
 
 permissions:
