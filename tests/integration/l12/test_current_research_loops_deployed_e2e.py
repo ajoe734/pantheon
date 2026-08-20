@@ -34,7 +34,7 @@ from typing import Any, Callable, Mapping, Sequence
 import pytest
 
 
-TASK_ID = "L12-CURRENT-E2E-RESEARCH-20260814"
+TASK_ID = "L12-GAP-F07-E2E-RESEARCH-20260818"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_REPORT_PATH = (
     REPO_ROOT
@@ -491,22 +491,6 @@ class DeployedResearchHarness:
             "id": connector_id,
             "trace_id": trace_id,
         }
-
-        self._at(
-            "source.job_trigger",
-            lambda: self._http_json(
-                self.source_url,
-                "/api/source-ingest/jobs",
-                method="POST",
-                headers=self._source_ingest_headers(),
-                payload={
-                    "connector_id": connector_id,
-                    "trace_id": trace_id,
-                    "trigger_type": "scheduled",
-                },
-                expected=(201,),
-            ),
-        )
 
         source = self._source_record(
             self._at(
