@@ -510,12 +510,11 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
         headers=_headers(idempotency_key="idemp-e2e-approve", if_match=etag),
     )
     assert res_app.status_code == 200, res_app.text
-    etag_approved = res_app.json()["meta"]["etag"]
 
     # 3. Dispatch stage (creates run & outbox record, then triggers leased consumer drain)
     res_dispatch = client.post(
         f"/bff/agora/research-plans/{plan_id}/runs",
-        headers=_headers(idempotency_key="idemp-e2e-dispatch", if_match=etag_approved),
+        headers=_headers(idempotency_key="idemp-e2e-dispatch", if_match=etag),
     )
     assert res_dispatch.status_code == 202, res_dispatch.text
     dispatch_data = res_dispatch.json()["data"]
