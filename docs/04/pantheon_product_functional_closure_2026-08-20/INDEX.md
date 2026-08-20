@@ -29,7 +29,7 @@
 
 | Surface | Frozen identity / observation |
 |---|---|
-| Pantheon source | `ajoe734/pantheon` `origin/dev` `c50f9a3d1b00fc777a4dc787ccdc81a96b4c9cc8` |
+| Pantheon source | `ajoe734/pantheon` `origin/dev` `cd93c201076f7767366a868a1b45d75a91e9317e` |
 | Frontend source | `ajoe734/execute-plans` `origin/dev` `729baba8f21211074c5aa3983ecd1e79e59c8599` |
 | Hosted frontend | serves FE `729baba8...`; strict live/read-only build |
 | Hosted manifest BFF | declares `e50af43ab253af80ae1e0c48f9cf5448368fb6ac` |

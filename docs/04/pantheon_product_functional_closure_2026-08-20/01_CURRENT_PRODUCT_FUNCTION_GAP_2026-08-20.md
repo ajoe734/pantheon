@@ -8,8 +8,10 @@
 
 產品層級最重要的七個事實是：
 
-1. Source dev 外拉已停在 `reconcile_only`，符合操作者最新方向；但 Source API 因 state/readiness
-   成本過高而 unhealthy。開發與驗收要繼續，外部資料只允許測試時 bounded one-shot。
+1. 受管 dev 部署已把 Source 外拉停在 `reconcile_only`，符合操作者最新方向；但 raw
+   Compose 的 fallback 目前仍是 `reconcile_and_pull`，必須由 integration task 收斂。Source API
+   也因 state/readiness 成本過高而 unhealthy。開發與驗收要繼續，外部資料只允許測試時
+   bounded one-shot。
 2. SourceRecord 到 Distillation durable admission 已在 current code 接上，8/18 的 F02 不再是功能
    缺口；後續只需要隨真實 one-shot stimulus 驗證。
 3. 所謂 executable RuntimeBinding 的舊 task 只合併 evidence；目前 9/9 active paper bindings
@@ -67,8 +69,8 @@
 | Deployment / RuntimeBinding | approval、deployment plan/outbox、Runtime Manager、artifact loader | 正常 pipeline未持久化 execution-required Object Store/checksum/policy；9個 active binding均不可執行 | P0/P1 |
 | Paper execution | paper fleet、producer、order/fill/position/heartbeat owners | snapshot endpoint不存在；lifecycle outbox無 cursor/retention，9 workers反覆掃約179 MB檔；producer unhealthy | P0 |
 | Telemetry / Reconciliation / Evolution | ingest、reconciler、incident、postmortem、evolution workers與多個 observation writer | 上游 execution不工作；缺同一次真實 fill→telemetry→incident/postmortem/evolution deployed proof | P1 |
-| Twelve-loop truth | loop-control store、BFF v5 projection、已合併 Loops 3/4/5/6/7/10/11 observation code | Loops 8/9/12與 functional worker attribution未完成；舊 F06仍在修；static catalog仍混入 runtime/task claims | P1 |
-| Delivery / hosted acceptance | Pantheon-owned FE host、strict live build、release manifest/gates | FE manifest宣稱 BFF `e50af43`，實際 BFF `26a4fd`，source `c50f9a`；部分 integration cases skipped | P0 final gate |
+| Twelve-loop truth | loop-control store、BFF v5 projection、已合併 Loops 3/4/5/6/7/10/11 observation code；F06已把 file-worker health、error outcome與Loop 12 controller truth接入 | Loops 8/9 current journey與跨loop truth仍未驗收；static catalog仍混入 runtime/task claims | P1 |
+| Delivery / hosted acceptance | Pantheon-owned FE host、strict live build、release manifest/gates | FE manifest宣稱 BFF `e50af43`，實際 BFF `26a4fd`，source `cd93c20`；部分 integration cases skipped | P0 final gate |
 
 ## 4. Runtime 現況
 
@@ -82,7 +84,11 @@
 - source volume 約293 MB，其中 `controller_state.json` 約280 MB、schedule journal約8.8 MB。
 - `ControllerStateStore` 保存整份 `reconcile` 與 `actual_readback`；actual readback又包含上一版
   `controller_state`，reconcile也包含 pre/post readback，形成每 tick 巢狀成長。
-- current Compose 的 default仍是 `SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`，這應保留。
+- 受管 non-production deploy wrapper 目前明確注入
+  `SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`，所以 hosted dev 沒有長駐 provider pull；但是
+  raw `docker-compose.yml` 在沒有環境變數時的 fallback 仍是 `reconcile_and_pull`。這不是可接受的
+  最終 default，必須由 `PFG-DEV-INTEGRATION-20260820` 收斂為 `reconcile_only`，而不是另建第二個
+  scheduler/owner。
 
 因此 Source 的第一個 task不是恢復排程外拉，而是把 state投影改成 bounded summary/cursor、
 遷移或重建爆量狀態、讓 readiness能在固定成本內回應。只有這之後才接受測試時手動單次外拉。
@@ -118,7 +124,7 @@
 | 9 Capital | producer與fleet存在，但snapshot endpoint不存在且state loop失控 | canonical snapshot + bounded state/cursor + order/fill/position |
 | 10 Reconciliation | observation code與owner存在 | 從本次真 fill/heartbeat產生 Drift/Incident |
 | 11 Evolution | observation code與owner存在 | 從本次 incident/postmortem產生decision/receipt |
-| 12 BFF health | F06 task仍在修 functional targets；目前不能完整歸因Source/Paper failure | 完成 worker attribution、current owner records與同ID Management readback |
+| 12 BFF health | F06已於`cd93c2010...`完成 functional worker attribution、error outcome與Loop 12 controller truth | 以current owner records和同ID Management readback做跨loop驗收，不重做F06 |
 
 舊 `L12-GAP-F03-EXECUTABLE-RUNTIME-BINDING-20260818` 和
 `L12-GAP-F04-CONTINUOUS-MARKET-INPUT-20260818` 雖為 terminal，但 live readback直接否定其產品
@@ -197,7 +203,7 @@ Read performance snapshot（三次樣本）也顯示功能性問題：cockpit約
 - `VITE_BFF_REAL_WRITES=false`；
 - manifest標記 `accepted`。
 
-實際 public BFF `/bff/version` 是 `26a4fd...`，而 current `origin/dev` 是 `c50f9a...`。
+實際 public BFF `/bff/version` 是 `26a4fd...`，而 current `origin/dev` 是 `cd93c20...`。
 因此這是 functional delivery identity drift。最終驗收必須由同一release manifest指向實際
 服務中的exact SHAs，且所有要求的 authenticated/browser journeys不得skipped。
 
