@@ -4895,15 +4895,20 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_balance_settings(config: Mapping[str, Any]) -> dict[str, Any]:
-    """Read-only policy for saturated-but-healthy-lane reassignment.
+    """Read-only policy for saturated- or transiently-blocked-lane reassignment.
 
     Off by default. Every other automatic owner reassignment in this file
     fires only when the incumbent is durably unavailable (see
     ``assignment_terminal_unavailability``); it never fires because the
-    incumbent's lane is simply full while healthy. That leaves a full, busy,
-    perfectly healthy lane owning a queue of not-yet-started work while a
-    less-loaded fallback agent sits idle, with no automatic path to move
-    it -- see ``assignment_saturated_recoverable``, which this settles.
+    incumbent's lane is simply full while healthy, or merely between health
+    probes. That leaves either a full, busy, perfectly healthy lane, or one
+    stuck on a stale/expired probe with zero active workers, owning
+    not-yet-started work while a less-loaded fallback sits idle -- see
+    ``assignment_saturated_recoverable`` and
+    ``assignment_transiently_blocked_recoverable``, which this settles.
+    ``min_saturated_seconds`` gates both signals identically: most transient
+    blocks self-heal within one probe cycle, so acting on either signal too
+    quickly would churn ownership for something that was about to recover.
     """
 
     raw = config.get("worker_reassignment")
@@ -8270,6 +8275,41 @@ def assignment_saturated_recoverable(
     return None
 
 
+LOAD_BALANCE_TRANSIENT_REASON = "owner_transiently_blocked"
+
+
+def assignment_transiently_blocked_recoverable(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    owner: str,
+    *,
+    state: dict[str, Any],
+    fallback_candidates: list[str],
+) -> str | None:
+    """Return the load-balance reason when the owner cannot take this task
+    right now for ANY reason -- stale/unknown health cache, a short
+    retry-after window, zero capacity -- while a configured fallback
+    currently can.
+
+    Unlike ``assignment_terminal_unavailability`` this does not require the
+    block to be durable: ``agent_can_take_task`` already fails closed on
+    anything short of a currently-healthy endpoint and account, which covers
+    transient states that normally clear on their own within one probe
+    cycle. Precisely because most of these self-heal quickly, callers MUST
+    hold this condition for the same minimum duration as
+    ``assignment_saturated_recoverable`` before acting -- reassigning away
+    from an owner that was about to recover on its own just churns
+    ownership for nothing.
+    """
+
+    if agent_can_take_task(config, owner, task, state=state):
+        return None
+    for candidate in fallback_candidates:
+        if agent_can_take_task(config, candidate, task, state=state):
+            return LOAD_BALANCE_TRANSIENT_REASON
+    return None
+
+
 def unavailable_assignment_fallback_refresh_targets(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -8417,15 +8457,18 @@ def reconcile_unavailable_assignments(
     state: dict[str, Any],
 ) -> bool:
     """Bounded recovery for assignments on durably unavailable lanes, plus
-    optional load-balance recovery for saturated-but-healthy lanes.
+    optional load-balance recovery for saturated or transiently-blocked
+    lanes.
 
     This is the sole automatic assignment mutation path.  The durable branch
     does not infer unavailability from a stale or missing probe.  The
     load-balance branch (gated by ``load_balance_settings``, off by default)
-    is the only place occupancy vs. ``agents.<id>.max_parallel`` feeds an
-    assignment decision -- see ``assignment_saturated_recoverable``.  Neither
-    branch launches work; the normal planner consumes the committed
-    assignment on a later pass.
+    is the only place occupancy vs. ``agents.<id>.max_parallel`` and a
+    non-durable dispatch block both feed an assignment decision -- see
+    ``assignment_saturated_recoverable`` and
+    ``assignment_transiently_blocked_recoverable``.  Neither branch launches
+    work; the normal planner consumes the committed assignment on a later
+    pass.
     """
 
     settings = worker_reassignment_settings(config)
@@ -8520,6 +8563,12 @@ def reconcile_unavailable_assignments(
                     owner,
                     agent_loads=agent_loads,
                     fallback_candidates=fallback_candidates,
+                ) or assignment_transiently_blocked_recoverable(
+                    config,
+                    task,
+                    owner,
+                    state=state,
+                    fallback_candidates=fallback_candidates,
                 )
                 if saturation_reason is None:
                     load_balance_watch.pop(task_id, None)
@@ -8607,9 +8656,13 @@ def reconcile_unavailable_assignments(
             continue
         new_owner, new_reviewer = pair
         if is_load_balance:
+            if unavailable_reason == LOAD_BALANCE_TRANSIENT_REASON:
+                condition = "was blocked from auto-dispatch (unhealthy/stale probe/retry-after)"
+            else:
+                condition = "was full"
             message = (
                 f"Load-balanced owner from {unavailable_actor} to {new_owner}: "
-                f"lane was full (>= {load_balance['min_saturated_seconds']}s) while "
+                f"lane {condition} for >= {load_balance['min_saturated_seconds']}s while "
                 f"{new_owner} had spare capacity; planner will redispatch normally."
             )
         else:
