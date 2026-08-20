@@ -4,6 +4,8 @@
 `ControllerStateStore` now persists a bounded v2 projection: identity
 inventories, counters, schedule summary, and terminal SourceRecord summaries.
 It never persists a raw controller readback or a previous controller state.
+The existing training-session dataset-authority readback consumer accepts both
+the preserved v1 format and the migrated v2 controller identity contract.
 
 On startup, a valid v1 snapshot is read once, compacted to v2, and atomically
 replaced. The prior checksummed v1 envelope is kept read-only beside the state

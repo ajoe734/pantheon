@@ -21,7 +21,8 @@
     "canonical_owner_and_store": {
       "controller_owner": "services/source_ingestion/controller_worker.py",
       "local_restart_store": "services/source_ingestion/controller_state.py:ControllerStateStore",
-      "operator_readback": "services/source_ingestion/main.py:/api/source-ingest/controller/readback"
+      "operator_readback": "services/source_ingestion/main.py:/api/source-ingest/controller/readback",
+      "downstream_readonly_consumer": "services/training-session/source_dataset_authority.py"
     },
     "retired_from_health_probes": [
       "connector_store.list_configs()/read_snapshot() journal replay",
@@ -53,15 +54,16 @@
   },
   "validation": {
     "commands": [
-      "python3 -m py_compile services/source_ingestion/controller_state.py services/source_ingestion/controller_worker.py services/source_ingestion/main.py services/source_ingestion/tests/test_source_readiness_bounded.py",
-      "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/test_service.py services/source_ingestion/tests/test_source_readiness_bounded.py",
+      "python3 -m py_compile services/source_ingestion/controller_state.py services/source_ingestion/controller_worker.py services/source_ingestion/main.py services/training-session/source_dataset_authority.py",
+      "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/test_service.py services/source_ingestion/tests/test_source_readiness_bounded.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py services/source_ingestion/tests/test_product_v2_source_distillation_r3.py services/training-session/tests/test_source_dataset_authority.py",
       "git diff --check"
     ],
     "results": [
-      "86 passed; one upstream FastAPI TestClient deprecation warning.",
+      "166 passed in 156.91 seconds; one upstream FastAPI TestClient deprecation warning and two jsonschema RefResolver deprecation warnings.",
       "The 100-tick failure test keeps the serialized state below 200 KiB and prevents controller_state recursion.",
       "The migration test proves v1 checksum readback, v2 rewrite, read-only legacy backup, connector/schedule/terminal identity preservation, and checksum continuity.",
-      "The 260-connector health/readiness test places a multi-megabyte current journal beside the state file, forbids every journal store access, returns 200 from /readyz and /health, and keeps provider_egress_attempted false."
+      "The 260-connector health/readiness test places a multi-megabyte current journal beside the state file, forbids every journal store access, returns 200 from /readyz and /health, and keeps provider_egress_attempted false.",
+      "The training-session dataset-authority consumer accepts the migrated v2 controller identity contract while retaining v1 compatibility."
     ]
   },
   "review_decision": {
