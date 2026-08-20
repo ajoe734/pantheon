@@ -176,3 +176,24 @@ def test_main_handles_controller_error_and_returns_exit_code_1(
     assert err_payload["status"] == "failed"
     assert err_payload["stage"] == "mock_stage"
     assert "readback validation failed" in err_payload["error"]
+
+
+def test_main_handles_operation_key_conflict(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing_run(**kwargs: Any) -> dict[str, Any]:
+        raise controller_worker.ControllerTickError(
+            "operation_key_conflict",
+            "operation key 'op-123' already executed with different request parameters",
+        )
+
+    monkeypatch.setattr(scheduler_once, "run_controller_once", failing_run)
+
+    rc = scheduler_once.main(["tw-official-market-datasets", "--operation-key", "op-123"])
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    err_payload = json.loads(captured.err)
+    assert err_payload["status"] == "failed"
+    assert err_payload["stage"] == "operation_key_conflict"
+    assert "operation key 'op-123' already executed with different request parameters" in err_payload["error"]

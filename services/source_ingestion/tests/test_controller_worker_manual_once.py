@@ -350,6 +350,68 @@ def test_run_controller_once_pulls_selected_allowlisted_connectors(
     assert loaded.consecutive_failures == 0
 
 
+def _mp_worker_run_controller_once(
+    result_queue: Any,
+    shared_tick_counter: Any,
+    shared_barrier: Any,
+    state_path_str: str,
+    op_key: str,
+    connector_id: str,
+    token: str,
+    delay_in_tick: float = 0.05,
+) -> None:
+    import time
+    from pathlib import Path
+    from services.source_ingestion import controller_worker
+
+    def mock_load_desired_state(**kwargs: Any) -> Any:
+        return (_personas(), _desired_meta())
+
+    def mock_reconcile(**kwargs: Any) -> Any:
+        return _reconcile()
+
+    def mock_read_actual(**kwargs: Any) -> Any:
+        return _actual(1)
+
+    def mock_validate_terminal(**kwargs: Any) -> Any:
+        return None
+
+    def mock_schedule_tick(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        with shared_tick_counter.get_lock():
+            shared_tick_counter.value += 1
+        if delay_in_tick > 0:
+            time.sleep(delay_in_tick)
+        return _schedule()
+
+    controller_worker.load_desired_state = mock_load_desired_state
+    controller_worker.reconcile_desired_state = mock_reconcile
+    controller_worker.read_actual_state = mock_read_actual
+    controller_worker._validate_terminal_readback = mock_validate_terminal
+    controller_worker.run_schedule_tick = mock_schedule_tick
+
+    writer = RecordingWriter()
+
+    try:
+        if shared_barrier is not None:
+            shared_barrier.wait(timeout=5.0)
+        res = controller_worker.run_controller_once(
+            operation_key=op_key,
+            mode=controller_worker.RECONCILE_AND_PULL_MODE,
+            exclusive_connector_ids=[connector_id],
+            state_path=Path(state_path_str),
+            controller_token=token,
+            writer=writer,
+        )
+        result_queue.put({"success": True, "result": res})
+    except Exception as exc:
+        result_queue.put({
+            "success": False,
+            "error_type": type(exc).__name__,
+            "error_msg": str(exc),
+            "stage": getattr(exc, "stage", None),
+        })
+
+
 def test_run_controller_once_idempotent_replay_and_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -390,10 +452,11 @@ def test_run_controller_once_idempotent_replay_and_recovery(
     assert res1["replayed"] is False
     assert res1["deduplicated"] is False
     assert res1["operation_key"] == "op-acceptance-001"
+    assert "request_fingerprint" in res1
     assert schedule_call_count == 1
     assert len(writer1.successes) == 1
 
-    # Second run (replayed with same operation_key)
+    # Second run (replayed with same operation_key and matching fingerprint)
     seq_counter = 2
     writer2 = RecordingWriter()
     res2 = run_controller_once(
@@ -410,6 +473,7 @@ def test_run_controller_once_idempotent_replay_and_recovery(
     assert res2["replayed"] is True
     assert res2["deduplicated"] is True
     assert res2["operation_key"] == "op-acceptance-001"
+    assert res2["request_fingerprint"] == res1["request_fingerprint"]
     assert schedule_call_count == 1  # Schedule tick was NOT invoked a second time!
     assert len(writer2.successes) == 0  # No redundant telemetry tick recorded
 
@@ -420,6 +484,101 @@ def test_run_controller_once_idempotent_replay_and_recovery(
     assert state.sequence_no == 1
     assert state.total_successes == 1
     assert "op-acceptance-001" in state.recent_operations
+    assert state.recent_operations["op-acceptance-001"]["request_fingerprint"] == res1["request_fingerprint"]
+
+
+def test_run_controller_once_rejects_operation_key_conflict_on_mismatched_request_parameters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schedule_call_count = 0
+
+    def mock_schedule(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal schedule_call_count
+        schedule_call_count += 1
+        return _schedule()
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", lambda **kwargs: (_personas(), _desired_meta()))
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: _reconcile())
+    monkeypatch.setattr(controller_worker, "read_actual_state", lambda **kwargs: _actual(1))
+    monkeypatch.setattr(controller_worker, "_validate_terminal_readback", lambda **kwargs: None)
+    monkeypatch.setattr(controller_worker, "_validate_due_state_readback", lambda **kwargs: None)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", mock_schedule)
+
+    state_path = tmp_path / "controller-state.json"
+    token = "test-token-32-chars-minimum-mock"
+    op_key = "op-fixed-key-001"
+
+    # Run 1: initial execution with CONNECTOR_ID
+    res1 = run_controller_once(
+        operation_key=op_key,
+        mode=RECONCILE_AND_PULL_MODE,
+        exclusive_connector_ids=[CONNECTOR_ID],
+        state_path=state_path,
+        controller_token=token,
+        writer=RecordingWriter(),
+    )
+    assert res1["status"] == "ok"
+    assert res1["replayed"] is False
+    assert schedule_call_count == 1
+    fp1 = res1["request_fingerprint"]
+
+    # Replay with IDENTICAL parameters: must succeed with replay
+    res_replay = run_controller_once(
+        operation_key=op_key,
+        mode=RECONCILE_AND_PULL_MODE,
+        exclusive_connector_ids=[CONNECTOR_ID],
+        state_path=state_path,
+        controller_token=token,
+        writer=RecordingWriter(),
+    )
+    assert res_replay["status"] == "ok"
+    assert res_replay["replayed"] is True
+    assert res_replay["deduplicated"] is True
+    assert res_replay["request_fingerprint"] == fp1
+    assert schedule_call_count == 1
+
+    # Conflict 1: Reusing op_key with DIFFERENT connector IDs
+    with pytest.raises(ControllerTickError) as exc_info1:
+        run_controller_once(
+            operation_key=op_key,
+            mode=RECONCILE_AND_PULL_MODE,
+            exclusive_connector_ids=["different-connector-id"],
+            state_path=state_path,
+            controller_token=token,
+            writer=RecordingWriter(),
+        )
+    assert exc_info1.value.stage == "operation_key_conflict"
+    assert "different request parameters" in str(exc_info1.value)
+    assert schedule_call_count == 1
+
+    # Conflict 2: Reusing op_key with DIFFERENT mode (reconcile_only)
+    with pytest.raises(ControllerTickError) as exc_info2:
+        run_controller_once(
+            operation_key=op_key,
+            mode=RECONCILE_ONLY_MODE,
+            exclusive_connector_ids=[],
+            state_path=state_path,
+            controller_token=token,
+            writer=RecordingWriter(),
+        )
+    assert exc_info2.value.stage == "operation_key_conflict"
+    assert "different request parameters" in str(exc_info2.value)
+    assert schedule_call_count == 1
+
+    # Conflict 3: Reusing op_key with DIFFERENT api_url
+    with pytest.raises(ControllerTickError) as exc_info3:
+        run_controller_once(
+            operation_key=op_key,
+            mode=RECONCILE_AND_PULL_MODE,
+            exclusive_connector_ids=[CONNECTOR_ID],
+            api_url="http://different-api-host:9999",
+            state_path=state_path,
+            controller_token=token,
+            writer=RecordingWriter(),
+        )
+    assert exc_info3.value.stage == "operation_key_conflict"
+    assert "different request parameters" in str(exc_info3.value)
+    assert schedule_call_count == 1
 
 
 def test_run_controller_once_records_failure_and_exits(
@@ -454,47 +613,62 @@ def test_run_controller_once_records_failure_and_exits(
     assert "upstream provider network error" in (state.last_failure_reason or "")
 
 
-def test_run_controller_once_cross_process_serialization(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_run_controller_once_concurrent_same_key_multiprocess(
+    tmp_path: Path,
 ) -> None:
-    call_order: list[str] = []
+    import multiprocessing as mp
 
-    def mock_schedule(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        call_order.append("schedule")
-        return _schedule()
-
-    monkeypatch.setattr(controller_worker, "load_desired_state", lambda **kwargs: (_personas(), _desired_meta()))
-    monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: _reconcile())
-    monkeypatch.setattr(controller_worker, "read_actual_state", lambda **kwargs: _actual(1))
-    monkeypatch.setattr(controller_worker, "_validate_terminal_readback", lambda **kwargs: None)
-    monkeypatch.setattr(controller_worker, "run_schedule_tick", mock_schedule)
-
+    ctx = mp.get_context("spawn")
     state_path = tmp_path / "controller-state.json"
-    writer = RecordingWriter()
+    result_queue = ctx.Queue()
+    shared_tick_counter = ctx.Value("i", 0)
+    shared_barrier = ctx.Barrier(2)
+    op_key = "op-concurrent-same-key-999"
+    token = "test-token-32-chars-minimum-mock"
 
-    res1 = run_controller_once(
-        operation_key="op-seq-1",
-        mode=RECONCILE_AND_PULL_MODE,
-        exclusive_connector_ids=[CONNECTOR_ID],
-        state_path=state_path,
-        controller_token="test-token-32-chars-minimum-mock",
-        writer=writer,
+    p1 = ctx.Process(
+        target=_mp_worker_run_controller_once,
+        args=(result_queue, shared_tick_counter, shared_barrier, str(state_path), op_key, CONNECTOR_ID, token, 0.05),
     )
-    res2 = run_controller_once(
-        operation_key="op-seq-2",
-        mode=RECONCILE_AND_PULL_MODE,
-        exclusive_connector_ids=[CONNECTOR_ID],
-        state_path=state_path,
-        controller_token="test-token-32-chars-minimum-mock",
-        writer=writer,
+    p2 = ctx.Process(
+        target=_mp_worker_run_controller_once,
+        args=(result_queue, shared_tick_counter, shared_barrier, str(state_path), op_key, CONNECTOR_ID, token, 0.05),
     )
 
-    assert res1["status"] == "ok"
-    assert res2["status"] == "ok"
-    assert res1["state_sequence_no"] == 1
-    assert res2["state_sequence_no"] == 2
-    assert len(call_order) == 2
+    p1.start()
+    p2.start()
 
-    # Lock file exists
+    p1.join(timeout=10.0)
+    p2.join(timeout=10.0)
+
+    assert p1.exitcode == 0
+    assert p2.exitcode == 0
+
+    results: list[dict[str, Any]] = []
+    while not result_queue.empty():
+        results.append(result_queue.get_nowait())
+
+    assert len(results) == 2
+    for r in results:
+        assert r["success"] is True, f"subprocess failed: {r}"
+        res = r["result"]
+        assert res["status"] == "ok"
+        assert res["operation_key"] == op_key
+        assert "request_fingerprint" in res
+
+    # Exactly ONE provider tick was executed across both processes!
+    assert shared_tick_counter.value == 1
+
+    # Exactly one executed the tick, exactly one received deduplicated replay
+    replayed_flags = [r["result"]["replayed"] for r in results]
+    assert sorted(replayed_flags) == [False, True]
+
+    deduplicated_flags = [r["result"]["deduplicated"] for r in results]
+    assert sorted(deduplicated_flags) == [False, True]
+
+    egress_flags = [r["result"]["provider_egress_attempted"] for r in results]
+    assert sorted(egress_flags) == [False, True]
+
+    # Verify lock file exists
     lock_path = state_path.with_name(f"{state_path.name}.lock")
     assert lock_path.exists()

@@ -842,6 +842,27 @@ def config_from_env() -> ControllerConfig:
     )
 
 
+def compute_request_fingerprint(
+    *,
+    mode: str,
+    exclusive_connector_ids: Sequence[str] = (),
+    force_connector_ids: Sequence[str] = (),
+    api_url: str = "",
+    truth_level: str = "",
+    max_concurrency: int = 2,
+) -> str:
+    """Compute a canonical SHA256 digest of request parameters."""
+    payload = {
+        "api_url": str(api_url).rstrip("/"),
+        "exclusive_connector_ids": sorted(set(str(c).strip() for c in (exclusive_connector_ids or ()) if str(c).strip())),
+        "force_connector_ids": sorted(set(str(c).strip() for c in (force_connector_ids or ()) if str(c).strip())),
+        "max_concurrency": int(max_concurrency),
+        "mode": str(mode),
+        "truth_level": str(truth_level),
+    }
+    return _digest(payload)
+
+
 def run_controller_once(
     *,
     operation_key: str | None = None,
@@ -921,6 +942,15 @@ def run_controller_once(
     lock_path = config.state_path.with_name(f"{config.state_path.name}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
+    request_fingerprint = compute_request_fingerprint(
+        mode=config.mode,
+        exclusive_connector_ids=config.exclusive_connector_ids,
+        force_connector_ids=config.force_connector_ids,
+        api_url=config.api_url,
+        truth_level=config.truth_level,
+        max_concurrency=config.max_concurrency,
+    )
+
     with open(lock_path, "a+", encoding="utf-8") as lock_handle:
         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
         try:
@@ -936,6 +966,21 @@ def run_controller_once(
 
             if resolved_op_key and resolved_op_key in state.recent_operations:
                 cached_op = dict(state.recent_operations[resolved_op_key])
+                cached_fingerprint = str(cached_op.get("request_fingerprint") or "")
+                if cached_fingerprint and cached_fingerprint != request_fingerprint:
+                    raise ControllerTickError(
+                        "operation_key_conflict",
+                        f"operation key '{resolved_op_key}' already executed with different request parameters "
+                        f"(cached fingerprint {cached_fingerprint} != current {request_fingerprint})",
+                        cached_fingerprint=cached_fingerprint,
+                        current_fingerprint=request_fingerprint,
+                    )
+                if not cached_fingerprint and cached_op.get("mode") and cached_op.get("mode") != config.mode:
+                    raise ControllerTickError(
+                        "operation_key_conflict",
+                        f"operation key '{resolved_op_key}' already executed with different mode "
+                        f"(cached mode {cached_op.get('mode')} != current {config.mode})",
+                    )
                 actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
                 replayed_result = dict(cached_op.get("result") or {})
                 replayed_result["status"] = "ok"
@@ -943,6 +988,7 @@ def run_controller_once(
                 replayed_result["provider_egress_attempted"] = False
                 replayed_result["state_sequence_no"] = state.sequence_no
                 replayed_result["operation_key"] = resolved_op_key
+                replayed_result["request_fingerprint"] = request_fingerprint
                 replayed_result["replayed"] = True
                 replayed_result["deduplicated"] = True
                 replayed_result["actual_readback"] = summarize_actual_readback(actual)
@@ -955,12 +1001,14 @@ def run_controller_once(
             result["deduplicated"] = False
             if resolved_op_key:
                 result["operation_key"] = resolved_op_key
+                result["request_fingerprint"] = request_fingerprint
                 state.record_operation(
                     resolved_op_key,
                     {
                         "executed_at": utc_now(),
                         "sequence_no": state.sequence_no,
                         "mode": config.mode,
+                        "request_fingerprint": request_fingerprint,
                         "result": result,
                     },
                 )
