@@ -115,7 +115,7 @@ esac
 if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
   SOURCE_REFRESH_CONTROLLER_MODE="reconcile_and_pull"
   SOURCE_REFRESH_TRUTH_LEVEL="reconciled_live_proof"
-  SOURCE_REFRESH_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
+  SOURCE_REFRESH_MAX_TICKS="1"
   SOURCE_REFRESH_RESTART_POLICY="no"
 else
   # The default owner is a durable internal reconciler. Provider egress stays
@@ -685,9 +685,8 @@ validate_source_refresh_profile() {
     || error "source-ingest-scheduler requires PANTHEON_EXTERNAL_EGRESS=allowlist"
   [[ -n "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
     || error "source-ingest-scheduler requires a reviewed exact host allowlist"
-  [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" =~ ^[0-9]+$ ]] \
-    && (( SOURCE_INGEST_CONTROLLER_MAX_TICKS >= 1 && SOURCE_INGEST_CONTROLLER_MAX_TICKS <= 24 )) \
-    || error "SOURCE_INGEST_CONTROLLER_MAX_TICKS must be between 1 and 24"
+  [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "1" ]] \
+    || error "bounded source refresh must run exactly one controller tick"
   [[ "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-}" =~ ^[0-9]+$ ]] \
     && (( SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY >= 1 && SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4 )) \
     || error "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY must be between 1 and 4"
@@ -729,9 +728,9 @@ PY
 # One required scheduled/async worker per twelve-loop lane. The deploy fails
 # closed if the selected profile set does not resolve every one of these, so a
 # narrowed PANTHEON_DEV_COMPOSE_PROFILES can no longer silently deactivate a
-# loop. source-ingest-scheduler and source-ingest-agora-projector are
-# deliberately absent: they stay opt-in behind the bounded egress profile that
-# validate_source_refresh_profile guards.
+# loop. source-ingest-scheduler remains default-on as the pull-disabled
+# internal reconciler; source-ingest-agora-projector stays opt-in behind the
+# bounded egress profile that validate_source_refresh_profile guards.
 REQUIRED_LOOP_WORKERS=(
   # source_ingestion
   source-ingest
@@ -2024,13 +2023,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     #
     # Operators can narrow scope via PANTHEON_DEV_COMPOSE_PROFILES.
     #
-    # source-ingest-scheduler is the one required worker still gated, and it
-    # stays gated deliberately. It ticks every 60s against third-party
-    # providers (Yahoo, CoinGecko, TWSE/TPEx, MOPS, FinMind, SEC/FRED/FINRA,
-    # stooq); left always-on it is continuous crawling from one cloud egress
-    # IP. Add it explicitly for a bounded run. source-ingest-agora-projector
-    # shares that profile because it must project only after the bounded
-    # refresh completes.
+    # source-ingest-scheduler remains default-on in reconcile_only mode so dev
+    # desired-state maintenance and acceptance can continue without provider
+    # egress. Selecting the logical source-ingest-scheduler profile changes the
+    # same owner to one bounded reconcile_and_pull run against a reviewed exact
+    # host allowlist. source-ingest-agora-projector shares that opt-in profile
+    # because it must project only after the bounded refresh completes.
     PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,smoke,source-search-bounded}"
     validate_source_refresh_profile
     validate_required_loop_workers
