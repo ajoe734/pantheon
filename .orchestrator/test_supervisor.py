@@ -2255,6 +2255,146 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         persist.assert_not_called()
 
 
+class LoadBalanceReassignmentTests(unittest.TestCase):
+    """Saturated-but-healthy-lane reassignment (assignment_saturated_recoverable),
+    the load-balance branch of reconcile_unavailable_assignments. Off by
+    default; only fires once a lane has been continuously full for
+    ``min_saturated_seconds`` and a configured fallback has spare capacity.
+    """
+
+    def setUp(self) -> None:
+        self.config = config_fixture()
+        self.config["worker_reassignment"]["load_balance"] = {
+            "enabled": True,
+            "min_saturated_seconds": 900,
+        }
+
+    @staticmethod
+    def _filler_worker(run_id: str, task_id: str, agent_id: str) -> dict[str, object]:
+        return {
+            "run_id": run_id,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "status": "running",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+
+    def _saturated_state(self) -> dict[str, object]:
+        return {
+            "workers": {
+                "run-a": self._filler_worker("run-a", "TASK-A", "codex"),
+                "run-b": self._filler_worker("run-b", "TASK-B", "codex"),
+            },
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+
+    def test_disabled_by_default_never_reassigns_a_saturated_but_healthy_lane(self) -> None:
+        self.config["worker_reassignment"]["load_balance"]["enabled"] = False
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._saturated_state()
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+
+    def test_saturated_lane_does_not_reassign_before_the_hold_duration(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._saturated_state()
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+        self.assertIn("TASK-1", state["load_balance_watch"])
+        self.assertEqual(state["load_balance_watch"]["TASK-1"]["owner"], "Codex")
+
+    def test_saturated_lane_reassigns_to_idle_fallback_after_the_hold_duration(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._saturated_state()
+        state["load_balance_watch"] = {
+            "TASK-1": {"first_seen_at": "2000-01-01T00:00:00Z", "owner": "Codex"}
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "persist_task_reassignment", return_value=True
+            ) as persisted,
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("load-balance recovery must not launch"),
+            ),
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertTrue(changed)
+        self.assertEqual(persisted.call_args.kwargs["new_owner"], "Codex2")
+        self.assertEqual(persisted.call_args.kwargs["expected_owner"], "Codex")
+        self.assertNotIn("TASK-1", state["load_balance_watch"])
+
+    def test_saturated_lane_does_not_reassign_when_the_fallback_is_also_full(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = self._saturated_state()
+        state["workers"]["run-c"] = self._filler_worker("run-c", "TASK-C", "codex2")
+        state["workers"]["run-d"] = self._filler_worker("run-d", "TASK-D", "codex2")
+        state["load_balance_watch"] = {
+            "TASK-1": {"first_seen_at": "2000-01-01T00:00:00Z", "owner": "Codex"}
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+
+    def test_unsaturated_lane_never_starts_the_hold_timer(self) -> None:
+        task = task_fixture(status="todo", reviewer="Human/Ops")
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "queue_events", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persisted,
+        ):
+            changed = supervisor.reconcile_unavailable_assignments(self.config, state)
+        self.assertFalse(changed)
+        persisted.assert_not_called()
+        self.assertEqual(state.get("load_balance_watch", {}), {})
+
+
 class RuntimeAndFailureSemanticsTests(unittest.TestCase):
     @staticmethod
     def _owner_worker(*, generation: int) -> dict[str, object]:

@@ -38,6 +38,20 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "worker_runtime.worker_lease_seconds",
     "worker_runtime.work_progress_stale_seconds",
     "task_state_store.mode",
+    # worker_reassignment governs who a task's owner/reviewer fails over to
+    # (see supervisor.py's plan_task_assignment_pair / persist_task_reassignment).
+    # Unlike agents.<id>.max_parallel below, it has no per-agent dynamic
+    # expansion, so a hand edit to enabled/limits/fallback graphs during
+    # incident mitigation would otherwise drift silently forever.
+    "worker_reassignment.enabled",
+    "worker_reassignment.max_reassignments_per_cycle",
+    "worker_reassignment.owner_fallbacks",
+    "worker_reassignment.reviewer_fallbacks",
+    # load_balance is the saturated-but-healthy-lane reassignment policy
+    # (see supervisor.py's assignment_saturated_recoverable); off by default,
+    # so a live-only enable/threshold edit is exactly the kind of change
+    # this allowlist exists to catch.
+    "worker_reassignment.load_balance",
 )
 
 # Paths where live is ALLOWED to diverge from repo for legitimate
