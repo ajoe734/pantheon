@@ -151,14 +151,6 @@
       "Claude": [
         "Codex"
       ],
-      "Gemini": [
-        "Codex",
-        "Claude"
-      ],
-      "Gemini2": [
-        "Codex",
-        "Claude"
-      ],
       "Codex": [
         "Claude"
       ],
@@ -170,14 +162,6 @@
     "reviewer_fallbacks": {
       "Claude": [
         "Codex"
-      ],
-      "Gemini": [
-        "Codex",
-        "Claude"
-      ],
-      "Gemini2": [
-        "Codex",
-        "Claude"
       ],
       "Codex": [
         "Claude"
@@ -227,9 +211,6 @@
     ],
     "reviewers": {
       "Claude": [
-        "your-github-handle"
-      ],
-      "Gemini": [
         "your-github-handle"
       ],
       "Codex": [
