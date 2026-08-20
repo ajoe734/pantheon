@@ -2669,6 +2669,15 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
                 )
 
 
+class TestPaperRuntimeLifecycleCursor(unittest.TestCase):
+    def test_lifecycle_cursor_compaction(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outbox_path = Path(tmpdir) / "lifecycle-outbox.json"
+            outbox = LifecycleTelemetryOutbox(outbox_path)
+            self.assertEqual(outbox.snapshot()["pending_count"], 0)
+            self.assertEqual(outbox.snapshot()["chain_count"], 0)
+
+
 if __name__ == "__main__":
 
     unittest.main()

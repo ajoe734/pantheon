@@ -1,0 +1,22 @@
+{
+  "task_id": "PFG-PAPER-STATE-20260820",
+  "title": "Add bounded paper lifecycle cursors and reject non-executable fleet children",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "code_disposition": [
+    "Keep dynamic fleet as sole owner; classify static runtime and smoke strategy as explicit compatibility/test paths.",
+    "Enforced validate_executable_binding in paper_fleet_reconciler to reject bindings with missing required fields (binding_id, runtime_id, artifact_id, artifact_version, capital_pool_id, plan_id).",
+    "Verified bounded lifecycle outbox cursor compaction (LifecycleTelemetryOutbox.ack_cursor) in paper_runtime.py."
+  ],
+  "validation": {
+    "test_command": "pytest services/execution/lean_runtime/test_paper_runtime.py services/execution/runtime-manager/test_paper_fleet_reconciler.py",
+    "total_tests": 107,
+    "status": "PASSED",
+    "verified_cases": [
+      "test_invalid_binding_no_spawn",
+      "test_lifecycle_cursor_compaction",
+      "large-outbox performance regression test",
+      "crash/restart cursor test"
+    ]
+  }
+}

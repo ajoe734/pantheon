@@ -106,6 +106,32 @@ def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def validate_executable_binding(binding: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    """Validate if a paper RuntimeBinding has all required execution fields.
+    
+    Returns (is_valid, rejection_reason). If non-executable, rejection_reason
+    is a typed string describing the missing field.
+    """
+    if not isinstance(binding, dict):
+        return False, "invalid_binding_payload"
+    
+    required_fields = {
+        "binding_id": "missing_binding_id",
+        "runtime_id": "missing_runtime_id",
+        "artifact_id": "missing_artifact_id",
+        "artifact_version": "missing_artifact_version",
+        "capital_pool_id": "missing_capital_pool_id",
+        "plan_id": "missing_plan_id",
+    }
+    
+    for field, reason in required_fields.items():
+        val = binding.get(field)
+        if val is None or not str(val).strip():
+            return False, reason
+
+    return True, None
+
+
 def _binding_persona_id(binding: Dict[str, Any]) -> str:
     metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
     candidates = (
@@ -877,6 +903,12 @@ class PaperFleetReconciler:
         self, binding: Dict[str, Any], restart_count: int = 0
     ) -> bool:
         self._require_current_fence()
+        is_valid, reason = validate_executable_binding(binding)
+        if not is_valid:
+            b_id = str(binding.get("binding_id") or "<unknown>") if isinstance(binding, dict) else "<unknown>"
+            log.warning("cannot start worker for non-executable binding %s: %s", b_id, reason)
+            return True
+
         binding_id = binding["binding_id"]
         port = self._allocate_port()
         env = self._build_worker_env(binding)
@@ -1326,14 +1358,30 @@ class PaperFleetReconciler:
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
-            bindings = payload.get("bindings", []) if isinstance(payload, dict) else []
+            bindings_raw = payload.get("bindings", []) if isinstance(payload, dict) else []
             excluded = payload.get("excluded", []) if isinstance(payload, dict) else []
             excluded_ids: Set[str] = {
                 str(e["binding_id"])
                 for e in excluded
                 if isinstance(e, dict) and e.get("binding_id")
             }
-            return (bindings, excluded_ids)
+            valid_bindings: List[Dict[str, Any]] = []
+            for b in bindings_raw:
+                if not isinstance(b, dict):
+                    continue
+                is_valid, reason = validate_executable_binding(b)
+                if is_valid:
+                    valid_bindings.append(b)
+                else:
+                    b_id = str(b.get("binding_id") or "<unknown>")
+                    log.warning(
+                        "rejecting non-executable paper fleet child binding %s: %s",
+                        b_id,
+                        reason,
+                    )
+                    if b.get("binding_id"):
+                        excluded_ids.add(str(b["binding_id"]))
+            return (valid_bindings, excluded_ids)
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 self._last_error = (

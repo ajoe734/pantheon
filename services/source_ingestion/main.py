@@ -15,7 +15,6 @@ import hmac
 import os
 import re
 import threading
-import time
 import urllib.parse
 import urllib.request
 from dataclasses import replace
@@ -89,7 +88,7 @@ from .ingest_manager import IngestManager
 from .market_data_storage import MarketDataStorageWriter
 from .pg_store import build_source_evidence_repository
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
-from .controller_state import ControllerStateError, read_controller_state
+from .controller_state import ControllerStateError, ControllerStateStore, read_controller_state
 from .controller_auth import load_controller_token
 from .persona_source_reconciler import RECONCILIATION_METADATA_KEY, SourceProvisioningReconciler
 from .process_lock import exclusive_file_lock
@@ -197,24 +196,7 @@ register_fastapi_health_routes(
         "source_search_posture": PRODUCTION_POSTURE.to_dict(),
         "source_freshness": _source_freshness_readiness(),
     },
-    metrics=lambda: {
-        "run_count": len(store.list_runs()),
-        "connector_count": len(connector_store.list_configs()),
-        "source_record_count": len(evidence_repository.list_source_records()),
-        "evidence_item_count": len(evidence_repository.list_evidence_items()),
-        "dlq_count": len(dead_letter_queue.entries()),
-        "pending_dlq_count": len(dead_letter_queue.pending_entries()),
-        "unresolved_dlq_count": sum(
-            len(dead_letter_queue.entries(status=status))
-            for status in (
-                DeadLetterStatus.PENDING,
-                DeadLetterStatus.REPLAY_FAILED,
-                DeadLetterStatus.SCHEMA_REJECTED,
-            )
-        ),
-        "frontier_count": len(store.list_frontier()),
-        "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
-    },
+    metrics=lambda: _source_runtime_metrics(),
     details=lambda: {
         "store_path": str(SCHEDULE_STORE_PATH),
         "connector_store_path": str(CONNECTOR_STORE_PATH),
@@ -843,70 +825,138 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
     )
 
 
-_SOURCE_FRESHNESS_CACHE_TTL_SECONDS = max(
-    1, int(os.getenv("SOURCE_INGEST_FRESHNESS_CACHE_TTL_SECONDS", "30"))
+_SOURCE_READINESS_MAX_STATE_BYTES = max(
+    1,
+    int(os.getenv("SOURCE_INGEST_READINESS_MAX_STATE_BYTES", str(1024 * 1024))),
 )
-_source_freshness_cache: dict[str, Any] = {"computed_at": 0.0, "payload": None}
-_source_freshness_cache_lock = threading.Lock()
+_SOURCE_READINESS_MAX_CONTROLLER_AGE_SECONDS = max(
+    1,
+    int(os.getenv("SOURCE_INGEST_READINESS_MAX_CONTROLLER_AGE_SECONDS", "300")),
+)
 
 
 def _source_freshness_readiness() -> dict[str, Any]:
-    # Read each durable store once. Point lookups intentionally replay their
-    # JSONL source for cross-process consistency, so using them inside this
-    # fleet-wide loop multiplies connector count by journal size and can pin
-    # the service before the first cache entry exists.
-    now = time.monotonic()
-    with _source_freshness_cache_lock:
-        cached_payload = _source_freshness_cache["payload"]
-        cache_age = now - _source_freshness_cache["computed_at"]
-        if cached_payload is not None and cache_age < _SOURCE_FRESHNESS_CACHE_TTL_SECONDS:
-            return cached_payload
+    """Return a fixed-cost readiness projection from the controller snapshot.
 
-    configs = connector_store.list_configs()
-    schedules = {
-        schedule.connector_id: schedule
-        for schedule in schedule_config_store.list_schedules()
-    }
-    snapshot = store.read_freshness_snapshot()
-    runs_by_connector: dict[str, list[Any]] = {}
-    for run in snapshot["runs"]:
-        connector_id = str(getattr(run, "connector_id", ""))
-        runs_by_connector.setdefault(connector_id, []).append(run)
-    receipts_by_connector: dict[str, list[IngestReceipt]] = {}
-    for receipt in snapshot["receipts"]:
-        receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
-    observed_at = datetime.now(timezone.utc)
-    summaries = []
-    for config in configs:
-        connector = config.connector
-        connector_id = connector.connector_id
-        summaries.append(
-            _connector_freshness_summary_from_snapshot(
-                connector_id,
-                connector_metadata=connector.metadata,
-                schedule=schedules.get(connector_id),
-                watermark=snapshot["watermarks"].get(connector_id),
-                runs=runs_by_connector.get(connector_id, ()),
-                receipts=receipts_by_connector.get(connector_id, ()),
-                now=observed_at,
-            )
-        )
-    scheduled = [summary for summary in summaries if summary["schedule_enabled"]]
-    stale = [summary for summary in scheduled if summary["status"] == "stale"]
-    degraded = [summary for summary in scheduled if summary["status"] in {"degraded", "never_ingested"}]
-    payload = {
+    Health probes must not replay source, schedule, connector, or evidence
+    journals.  The controller is the sole writer of this bounded local restart
+    snapshot; it is also the only component allowed to reconcile connectors.
+    """
+
+    try:
+        state_size_bytes = CONTROLLER_STATE_PATH.stat().st_size
+    except FileNotFoundError:
+        return {
+            "status": "not_observed",
+            "data_ready": False,
+            "scheduled_connector_count": 0,
+            "stale_connector_count": 0,
+            "degraded_connector_count": 0,
+            "reason": "controller_state_missing",
+        }
+    except OSError as exc:
+        return {
+            "status": "degraded_data",
+            "data_ready": False,
+            "scheduled_connector_count": 0,
+            "stale_connector_count": 0,
+            "degraded_connector_count": 0,
+            "reason": f"controller_state_stat_failed:{type(exc).__name__}",
+        }
+    if state_size_bytes > _SOURCE_READINESS_MAX_STATE_BYTES:
+        return {
+            "status": "degraded_data",
+            "data_ready": False,
+            "scheduled_connector_count": 0,
+            "stale_connector_count": 0,
+            "degraded_connector_count": 0,
+            "state_size_bytes": state_size_bytes,
+            "reason": "controller_state_exceeds_readiness_budget",
+        }
+    try:
+        state = ControllerStateStore(CONTROLLER_STATE_PATH).load()
+    except ControllerStateError as exc:
+        return {
+            "status": "degraded_data",
+            "data_ready": False,
+            "scheduled_connector_count": 0,
+            "stale_connector_count": 0,
+            "degraded_connector_count": 0,
+            "state_size_bytes": state_size_bytes,
+            "reason": f"controller_state_invalid:{exc}",
+        }
+    if state is None:
+        return {
+            "status": "not_observed",
+            "data_ready": False,
+            "scheduled_connector_count": 0,
+            "stale_connector_count": 0,
+            "degraded_connector_count": 0,
+            "reason": "controller_state_missing",
+        }
+
+    actual = dict(state.actual_readback)
+    terminal_inventory = actual.get("terminal_connectors")
+    terminal_connectors = (
+        terminal_inventory.get("items")
+        if isinstance(terminal_inventory, Mapping) and isinstance(terminal_inventory.get("items"), list)
+        else []
+    )
+    scheduled = [
+        item
+        for item in terminal_connectors
+        if isinstance(item, Mapping) and bool(dict(item.get("schedule") or {}).get("enabled"))
+    ]
+    stale = [
+        item
+        for item in scheduled
+        if str(dict(item.get("freshness") or {}).get("status") or "") == "stale"
+    ]
+    degraded = [
+        item
+        for item in scheduled
+        if str(dict(item.get("freshness") or {}).get("status") or "") in {"degraded", "never_ingested"}
+    ]
+    heartbeat = _parse_utc_datetime(state.heartbeat_at)
+    heartbeat_age_seconds = (
+        max(0, int((datetime.now(timezone.utc) - heartbeat).total_seconds()))
+        if heartbeat is not None
+        else None
+    )
+    controller_stale = (
+        heartbeat_age_seconds is None
+        or heartbeat_age_seconds > _SOURCE_READINESS_MAX_CONTROLLER_AGE_SECONDS
+    )
+    return {
         # Data staleness is visible but does not make the API process unready;
-        # the scheduler depends on API readiness and must be able to repair it.
-        "status": "stale" if stale else ("degraded_data" if degraded else "ok"),
-        "data_ready": not stale and not degraded,
+        # the reconcile-only controller must be able to repair it.
+        "status": "stale" if stale or controller_stale else ("degraded_data" if degraded else "ok"),
+        "data_ready": not stale and not degraded and not controller_stale,
         "scheduled_connector_count": len(scheduled),
         "stale_connector_count": len(stale),
         "degraded_connector_count": len(degraded),
+        "controller_state_size_bytes": state_size_bytes,
+        "controller_heartbeat_age_seconds": heartbeat_age_seconds,
+        "connector_inventory_count": (
+            terminal_inventory.get("count") if isinstance(terminal_inventory, Mapping) else 0
+        ),
+        "connector_inventory_truncated": bool(
+            terminal_inventory.get("truncated") if isinstance(terminal_inventory, Mapping) else False
+        ),
+        "provider_egress_attempted": bool(state.schedule.get("provider_egress_attempted")),
     }
-    with _source_freshness_cache_lock:
-        _source_freshness_cache["computed_at"] = time.monotonic()
-        _source_freshness_cache["payload"] = payload
-    return payload
+
+
+def _source_runtime_metrics() -> dict[str, Any]:
+    readiness = _source_freshness_readiness()
+    return {
+        "controller_state_size_bytes": readiness.get("controller_state_size_bytes", 0),
+        "connector_count": readiness.get("connector_inventory_count", 0),
+        "scheduled_connector_count": readiness.get("scheduled_connector_count", 0),
+        "stale_connector_count": readiness.get("stale_connector_count", 0),
+        "degraded_connector_count": readiness.get("degraded_connector_count", 0),
+        "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
+    }
 
 
 def _connector_schema_hash(connector: SourceConnector, fetch: dict[str, Any] | None) -> str:
@@ -2481,6 +2531,7 @@ def _set_connector_lifecycle(connector_id: str, request: SetConnectorLifecycleRe
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    runtime_metrics = _source_runtime_metrics()
     return {
         "status": "ok",
         "service": "pantheon-source-ingest",
@@ -2490,21 +2541,7 @@ def health() -> dict[str, Any]:
         "market_data_storage_root": str(MARKET_DATA_STORAGE_ROOT),
         "dlq_path": str(DLQ_STORE_PATH),
         "audit_path": str(AUDIT_STORE_PATH),
-        "run_count": len(store.list_runs()),
-        "connector_count": len(connector_store.list_configs()),
-        "source_record_count": len(evidence_repository.list_source_records()),
-        "evidence_item_count": len(evidence_repository.list_evidence_items()),
-        "dlq_count": len(dead_letter_queue.entries()),
-        "pending_dlq_count": len(dead_letter_queue.pending_entries()),
-        "unresolved_dlq_count": sum(
-            len(dead_letter_queue.entries(status=status))
-            for status in (
-                DeadLetterStatus.PENDING,
-                DeadLetterStatus.REPLAY_FAILED,
-                DeadLetterStatus.SCHEMA_REJECTED,
-            )
-        ),
-        "frontier_count": len(store.list_frontier()),
+        **runtime_metrics,
         "scheduler_max_concurrency": SCHEDULER_MAX_CONCURRENCY,
         "frontier_max_attempts": FRONTIER_MAX_ATTEMPTS,
         "frontier_backoff_seconds": FRONTIER_BACKOFF_SECONDS,
