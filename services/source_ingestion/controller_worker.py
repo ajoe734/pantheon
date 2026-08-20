@@ -801,10 +801,11 @@ class ControllerConfig:
 def config_from_env() -> ControllerConfig:
     interval = _env_int("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS", 60, minimum=1)
     alive = str(os.getenv("SOURCE_INGEST_CONTROLLER_ALIVE_PATH") or "").strip()
-    mode = str(os.getenv("SOURCE_INGEST_CONTROLLER_MODE") or RECONCILE_AND_PULL_MODE).strip()
+    mode = str(os.getenv("SOURCE_INGEST_CONTROLLER_MODE") or RECONCILE_ONLY_MODE).strip()
     if mode not in CONTROLLER_MODES:
         raise ValueError("SOURCE_INGEST_CONTROLLER_MODE is invalid")
-    truth_level = str(os.getenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL") or "reconciled_live_proof").strip()
+    default_truth = NON_TERMINAL_TRUTH_LEVEL if mode == RECONCILE_ONLY_MODE else "reconciled_live_proof"
+    truth_level = str(os.getenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL") or default_truth).strip()
     if truth_level not in {"scheduled_tick", "reconciled_live_proof"}:
         raise ValueError("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL is invalid")
     if mode == RECONCILE_ONLY_MODE and truth_level != NON_TERMINAL_TRUTH_LEVEL:
@@ -836,6 +837,84 @@ def config_from_env() -> ControllerConfig:
         force_connector_ids=force_connector_ids,
         exclusive_connector_ids=exclusive_connector_ids,
     )
+
+
+def run_controller_once(
+    *,
+    config: ControllerConfig | None = None,
+    mode: str = RECONCILE_AND_PULL_MODE,
+    exclusive_connector_ids: Sequence[str] | None = None,
+    force_connector_ids: Sequence[str] | None = None,
+    api_url: str | None = None,
+    state_path: Path | str | None = None,
+    controller_token: str | None = None,
+    database_url: str | None = None,
+    timeout_seconds: float = 30.0,
+    max_concurrency: int = 2,
+    truth_level: str | None = None,
+    writer: LoopControllerWriterLike | None = None,
+) -> dict[str, Any]:
+    """Execute exactly one bounded controller tick and return terminal readback summary."""
+    if config is None:
+        if mode not in CONTROLLER_MODES:
+            raise ValueError(f"invalid controller mode: {mode}")
+        resolved_truth = truth_level or (
+            NON_TERMINAL_TRUTH_LEVEL if mode == RECONCILE_ONLY_MODE else "reconciled_live_proof"
+        )
+        if resolved_truth not in {"scheduled_tick", "reconciled_live_proof"}:
+            raise ValueError("invalid truth_level")
+        if mode == RECONCILE_ONLY_MODE and resolved_truth != NON_TERMINAL_TRUTH_LEVEL:
+            raise ValueError("reconcile_only mode must use scheduled_tick truth")
+        exclusive_tuple = tuple(
+            dict.fromkeys(str(c).strip() for c in (exclusive_connector_ids or ()) if str(c).strip())
+        )
+        force_tuple = tuple(
+            dict.fromkeys(str(c).strip() for c in (force_connector_ids or ()) if str(c).strip())
+        )
+        if mode == RECONCILE_ONLY_MODE and (exclusive_tuple or force_tuple):
+            raise ValueError("reconcile_only mode must not select provider connector execution")
+        resolved_state_path = (
+            Path(state_path)
+            if state_path
+            else Path(
+                os.getenv("SOURCE_INGEST_CONTROLLER_STATE_PATH")
+                or "/tmp/pantheon/source-ingest/controller_state.json"
+            )
+        )
+        resolved_api_url = str(api_url or os.getenv("SOURCE_INGEST_API_URL") or "http://127.0.0.1:8097")
+        resolved_db_url = str(database_url if database_url is not None else (os.getenv("DATABASE_URL") or ""))
+        resolved_token = (
+            controller_token
+            if controller_token is not None
+            else load_controller_token(
+                token_path=os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE")
+                or "/data/source-ingest/controller_token",
+                create=False,
+            )
+        )
+        config = ControllerConfig(
+            api_url=resolved_api_url,
+            database_url=resolved_db_url,
+            interval_seconds=60,
+            max_concurrency=max(1, min(4, int(max_concurrency))),
+            max_ticks=1,
+            state_path=resolved_state_path,
+            alive_path=None,
+            timeout_seconds=float(timeout_seconds),
+            lease_seconds=120,
+            truth_level=resolved_truth,
+            controller_token=resolved_token,
+            mode=mode,
+            force_connector_ids=force_tuple,
+            exclusive_connector_ids=exclusive_tuple,
+        )
+
+    store = ControllerStateStore(config.state_path)
+    loaded_state = store.load()
+    state = refresh_runtime_identity(loaded_state) if loaded_state is not None else _new_state()
+    store.save(state)
+    active_writer = writer if writer is not None else build_loop_writer(dsn=config.database_url, state=state)
+    return run_controller_tick(config=config, state=state, store=store, writer=active_writer)
 
 
 def _runtime_deployment() -> dict[str, Any]:

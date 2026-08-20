@@ -1,0 +1,27 @@
+{
+  "schema_version": "pantheon.product_functional_closure.code_disposition.v1",
+  "program_id": "pantheon-product-functional-closure-20260820",
+  "task_id": "PFG-SOURCE-MANUAL-ONCE-20260820",
+  "disposition_audit": [
+    {
+      "component": "services/source_ingestion/controller_worker.py",
+      "disposition": "keep",
+      "rationale": "Retained as the sole canonical desired-state/schedule reconciler. Locked default dev mode to reconcile_only with zero provider egress. Added run_controller_once() for bounded manual execution."
+    },
+    {
+      "component": "services/source_ingestion/scheduler_worker.py",
+      "disposition": "retire-after-proof",
+      "rationale": "Legacy HTTP worker utility. Audited and retained only as an internal library helper; never restored as a background daemon."
+    },
+    {
+      "component": "scripts/source_ingest_scheduler_once.py",
+      "disposition": "consolidate",
+      "rationale": "Consolidated onto controller_worker.py:run_controller_once(). Supports explicit connector selection, one-tick execution, terminal readback, and immediate process exit."
+    },
+    {
+      "component": "docker-compose.yml",
+      "disposition": "keep",
+      "rationale": "Dev default posture remains reconcile_only. In accordance with program dispatch rule 3, docker-compose.yml topology changes are integrated exclusively by PFG-DEV-INTEGRATION-20260820."
+    }
+  ]
+}

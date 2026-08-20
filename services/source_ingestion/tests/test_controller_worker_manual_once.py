@@ -1,0 +1,401 @@
+"""Tests for bounded manual one-tick Source controller execution and reconcile-only default."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from services.source_ingestion import controller_worker
+from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+from services.source_ingestion.controller_worker import (
+    ControllerConfig,
+    ControllerTickError,
+    RECONCILE_AND_PULL_MODE,
+    RECONCILE_ONLY_MODE,
+    run_controller_once,
+    run_controller_tick,
+)
+
+
+CONNECTOR_ID = "tw-official-market-datasets"
+DATASET = "tw_price_daily"
+
+
+def _deployment() -> dict[str, Any]:
+    return {
+        "git_sha": "test-sha-manual-once",
+        "image_digest": "test-image-manual-once",
+        "build_time": "2026-08-20T00:00:00Z",
+        "deployment_id": "test-deployment-manual-once",
+        "runtime_instance_id": "test-runtime-manual-once",
+        "identity_observed_at": "2026-08-20T00:00:00Z",
+        "identity_complete": True,
+    }
+
+
+def _state(**overrides: Any) -> ControllerState:
+    values: dict[str, Any] = {
+        "controller_id": "source-ingestion-test:manual-once",
+        "controller_name": "source-ingestion-controller",
+        "environment": "test",
+        "tenant_id": "tenant-test",
+        "deployment": _deployment(),
+        "started_at": "2026-08-20T00:00:00Z",
+    }
+    values.update(overrides)
+    return ControllerState(**values)
+
+
+def _desired_meta() -> dict[str, Any]:
+    return {
+        "authority": "file:test_desired_state.json",
+        "persona_count": 1,
+        "requirement_count": 1,
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    }
+
+
+def _personas() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "persona_id": "macro-analyst",
+            "required_data_sources": [
+                {
+                    "dataset": DATASET,
+                    "market": "TW",
+                    "cadence": "daily",
+                    "source_class": "live_pull",
+                    "connector_candidates": [CONNECTOR_ID],
+                    "policy_gates": ["public-source-only"],
+                }
+            ],
+        },
+    )
+
+
+def _reconcile() -> dict[str, Any]:
+    return {
+        "desired_state_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "reconciled_at": "2026-08-20T00:00:00Z",
+        "results": [
+            {
+                "action": "active_unchanged",
+                "connector_id": CONNECTOR_ID,
+                "mutated": False,
+                "reason": "already matches desired state",
+            }
+        ],
+        "summary": {
+            "active_unchanged": 1,
+            "created": 0,
+            "retired": 0,
+            "total_desired": 1,
+            "updated": 0,
+        },
+    }
+
+
+def _schedule() -> dict[str, Any]:
+    return {
+        "results": [
+            {
+                "connector_id": CONNECTOR_ID,
+                "records_distilled": 10,
+                "records_ingested": 10,
+                "records_pulled": 10,
+                "status": "success",
+            }
+        ],
+        "summary": {
+            "failed_pulls": 0,
+            "total_connectors": 1,
+            "total_records_ingested": 10,
+            "total_records_pulled": 10,
+            "total_successes": 1,
+        },
+    }
+
+
+def _actual(state_seq: int = 1) -> dict[str, Any]:
+    return {
+        "captured_at": "2026-08-20T00:00:05Z",
+        "connectors": [
+            {
+                "connector_id": CONNECTOR_ID,
+                "status": "active",
+                "latest_source_record": {
+                    "source_id": "src-twse-001",
+                    "collected_at": "2026-08-20T00:00:05Z",
+                    "status": "valid",
+                },
+                "latest_schedule_event": {
+                    "event_type": "scheduled_tick",
+                    "timestamp": "2026-08-20T00:00:05Z",
+                    "status": "success",
+                },
+            }
+        ],
+        "active_connector_count": 1,
+        "total_source_records": 10,
+        "frontier_backlog": 0,
+        "max_lag_seconds": 0,
+        "unresolved_dlq_count": 0,
+        "controller_state": {
+            "controller_id": "source-ingestion-test:manual-once",
+            "sequence_no": state_seq,
+            "deployment": _deployment(),
+        },
+    }
+
+
+class RecordingWriter:
+    def __init__(self) -> None:
+        self.heartbeats: list[dict[str, Any]] = []
+        self.ticks: list[dict[str, Any]] = []
+        self.successes: list[dict[str, Any]] = []
+        self.failures: list[dict[str, Any]] = []
+        self.repairs: list[dict[str, Any]] = []
+
+    async def record_heartbeat(self, loop_id: str, truth_level: str = "scheduled_tick", **kwargs: Any) -> None:
+        self.heartbeats.append({"loop_id": loop_id, "truth_level": truth_level, **kwargs})
+
+    async def record_tick(self, loop_id: str, truth_level: str = "scheduled_tick", **kwargs: Any) -> None:
+        self.ticks.append({"loop_id": loop_id, "truth_level": truth_level, **kwargs})
+
+    async def record_success(self, loop_id: str, truth_level: str = "scheduled_tick", **kwargs: Any) -> None:
+        self.successes.append({"loop_id": loop_id, "truth_level": truth_level, **kwargs})
+
+    async def record_failure(self, loop_id: str, reason: str, truth_level: str = "scheduled_tick", **kwargs: Any) -> None:
+        self.failures.append({"loop_id": loop_id, "reason": reason, "truth_level": truth_level, **kwargs})
+
+    async def record_repair(self, loop_id: str, reason: str, truth_level: str = "scheduled_tick", **kwargs: Any) -> None:
+        self.repairs.append({"loop_id": loop_id, "reason": reason, "truth_level": truth_level, **kwargs})
+
+
+def test_default_config_is_reconcile_only_with_zero_provider_egress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_MODE", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS", raising=False)
+    monkeypatch.setattr(
+        controller_worker,
+        "load_controller_token",
+        lambda **kwargs: "token-32-chars-minimum-test-mock",
+    )
+
+    config = controller_worker.config_from_env()
+
+    assert config.mode == RECONCILE_ONLY_MODE
+    assert config.truth_level == "scheduled_tick"
+    assert config.max_ticks == 0
+    assert config.force_connector_ids == ()
+    assert config.exclusive_connector_ids == ()
+
+
+def test_reconcile_only_tick_executes_zero_provider_egress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called_schedule = False
+
+    def mock_schedule_tick(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal called_schedule
+        called_schedule = True
+        return _schedule()
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", lambda **kwargs: (_personas(), _desired_meta()))
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: _reconcile())
+    monkeypatch.setattr(controller_worker, "read_actual_state", lambda **kwargs: _actual(1))
+    monkeypatch.setattr(controller_worker, "_validate_due_state_readback", lambda **kwargs: None)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", mock_schedule_tick)
+
+    config = ControllerConfig(
+        api_url="http://source-ingest.test:8097",
+        database_url="",
+        interval_seconds=60,
+        max_concurrency=2,
+        max_ticks=0,
+        state_path=tmp_path / "controller-state.json",
+        alive_path=None,
+        timeout_seconds=5.0,
+        lease_seconds=120,
+        truth_level="scheduled_tick",
+        controller_token="token-32-chars-minimum-test-mock",
+        mode=RECONCILE_ONLY_MODE,
+        force_connector_ids=(),
+        exclusive_connector_ids=(),
+    )
+    state = _state()
+    store = ControllerStateStore(config.state_path)
+    writer = RecordingWriter()
+
+    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+
+    assert result["status"] == "ok"
+    assert result["controller_mode"] == RECONCILE_ONLY_MODE
+    assert result["provider_egress_attempted"] is False
+    assert called_schedule is False
+    assert len(writer.successes) == 1
+    assert writer.successes[0]["truth_level"] == "scheduled_tick"
+
+
+def test_reconcile_only_rejects_connector_selection_and_invalid_truth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MODE", RECONCILE_ONLY_MODE)
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", CONNECTOR_ID)
+    with pytest.raises(ValueError, match="must not select provider connector execution"):
+        controller_worker.config_from_env()
+
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", raising=False)
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL", "reconciled_live_proof")
+    with pytest.raises(ValueError, match="reconcile_only mode must use scheduled_tick truth"):
+        controller_worker.config_from_env()
+
+
+def test_reconcile_and_pull_requires_bounded_max_ticks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MODE", RECONCILE_AND_PULL_MODE)
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "0")
+    with pytest.raises(ValueError, match="SOURCE_INGEST_CONTROLLER_MAX_TICKS between 1 and 24"):
+        controller_worker.config_from_env()
+
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "25")
+    with pytest.raises(ValueError, match="SOURCE_INGEST_CONTROLLER_MAX_TICKS between 1 and 24"):
+        controller_worker.config_from_env()
+
+
+def test_run_controller_once_pulls_selected_allowlisted_connectors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    passed_forced: list[str] = []
+    passed_exclusive: list[str] = []
+
+    def mock_schedule_tick(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        passed_forced.extend(kwargs.get("force_connector_ids") or [])
+        passed_exclusive.extend(kwargs.get("exclusive_connector_ids") or [])
+        return _schedule()
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", lambda **kwargs: (_personas(), _desired_meta()))
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: _reconcile())
+    monkeypatch.setattr(controller_worker, "read_actual_state", lambda **kwargs: _actual(1))
+    monkeypatch.setattr(controller_worker, "_validate_terminal_readback", lambda **kwargs: None)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", mock_schedule_tick)
+
+    state_path = tmp_path / "controller-state.json"
+    writer = RecordingWriter()
+    result = run_controller_once(
+        mode=RECONCILE_AND_PULL_MODE,
+        exclusive_connector_ids=[CONNECTOR_ID],
+        api_url="http://source-ingest.test:8097",
+        state_path=state_path,
+        controller_token="test-token-32-chars-minimum-mock",
+        timeout_seconds=5.0,
+        max_concurrency=2,
+        writer=writer,
+    )
+
+    assert result["status"] == "ok"
+    assert result["controller_mode"] == RECONCILE_AND_PULL_MODE
+    assert result["provider_egress_attempted"] is True
+    assert passed_exclusive == [CONNECTOR_ID]
+    assert passed_forced == [CONNECTOR_ID]
+    assert len(writer.successes) == 1
+    assert writer.successes[0]["truth_level"] == "reconciled_live_proof"
+
+    # Verify state store was persisted with sequence increment
+    store = ControllerStateStore(state_path)
+    loaded = store.load()
+    assert loaded is not None
+    assert loaded.sequence_no >= 1
+    assert loaded.total_successes == 1
+    assert loaded.consecutive_failures == 0
+
+
+def test_run_controller_once_idempotent_replay_and_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seq_counter = 0
+
+    def mock_actual(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal seq_counter
+        return _actual(seq_counter)
+
+    monkeypatch.setattr(controller_worker, "load_desired_state", lambda **kwargs: (_personas(), _desired_meta()))
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: _reconcile())
+    monkeypatch.setattr(controller_worker, "read_actual_state", mock_actual)
+    monkeypatch.setattr(controller_worker, "_validate_terminal_readback", lambda **kwargs: None)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", lambda **kwargs: _schedule())
+
+    state_path = tmp_path / "controller-state.json"
+
+    # First run
+    seq_counter = 1
+    writer1 = RecordingWriter()
+    res1 = run_controller_once(
+        mode=RECONCILE_AND_PULL_MODE,
+        exclusive_connector_ids=[CONNECTOR_ID],
+        state_path=state_path,
+        controller_token="test-token-32-chars-minimum-mock",
+        writer=writer1,
+    )
+    assert res1["status"] == "ok"
+    assert res1["state_sequence_no"] == 1
+
+    # Second run (replayed)
+    seq_counter = 2
+    writer2 = RecordingWriter()
+    res2 = run_controller_once(
+        mode=RECONCILE_AND_PULL_MODE,
+        exclusive_connector_ids=[CONNECTOR_ID],
+        state_path=state_path,
+        controller_token="test-token-32-chars-minimum-mock",
+        writer=writer2,
+    )
+    assert res2["status"] == "ok"
+    assert res2["state_sequence_no"] == 2
+
+    # Check store state
+    store = ControllerStateStore(state_path)
+    state = store.load()
+    assert state is not None
+    assert state.sequence_no == 2
+    assert state.total_successes == 2
+
+
+def test_run_controller_once_records_failure_and_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(controller_worker, "load_desired_state", lambda **kwargs: (_personas(), _desired_meta()))
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: _reconcile())
+    monkeypatch.setattr(controller_worker, "read_actual_state", lambda **kwargs: _actual(1))
+
+    def failing_schedule(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("upstream provider network error")
+
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", failing_schedule)
+
+    state_path = tmp_path / "controller-state.json"
+    writer = RecordingWriter()
+
+    with pytest.raises(ControllerTickError, match="upstream provider network error"):
+        run_controller_once(
+            mode=RECONCILE_AND_PULL_MODE,
+            exclusive_connector_ids=[CONNECTOR_ID],
+            state_path=state_path,
+            controller_token="test-token-32-chars-minimum-mock",
+            writer=writer,
+        )
+
+    store = ControllerStateStore(state_path)
+    state = store.load()
+    assert state is not None
+    assert state.consecutive_failures == 1
+    assert state.total_failures == 1
+    assert "upstream provider network error" in (state.last_failure_reason or "")
