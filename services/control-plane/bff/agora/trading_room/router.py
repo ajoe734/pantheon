@@ -1740,10 +1740,32 @@ def create_trading_room_router(
 
     def _error_code_enum() -> Any:
         try:
-            from models import ErrorCode
-        except ModuleNotFoundError:
+            from ...models import ErrorCode
+            return ErrorCode
+        except Exception:
+            pass
+        try:
             from bff.models import ErrorCode
-        return ErrorCode
+            return ErrorCode
+        except Exception:
+            pass
+        try:
+            from models import ErrorCode
+            if hasattr(ErrorCode, "FORBIDDEN"):
+                return ErrorCode
+        except Exception:
+            pass
+        from enum import Enum
+        class FallbackErrorCode(str, Enum):
+            AUTH_REQUIRED = "AUTH_REQUIRED"
+            FORBIDDEN = "FORBIDDEN"
+            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+            VALIDATION_FAILED = "VALIDATION_FAILED"
+            RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
+            PRECONDITION_FAILED = "PRECONDITION_FAILED"
+            OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
+            IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
+        return FallbackErrorCode
 
     def _require_idempotency_key(key: Optional[str]) -> str:
         clean = str(key or "").strip()
@@ -2415,6 +2437,84 @@ def create_trading_room_router(
                 "version": version,
             },
             "meta": _meta(etag=etag, strategy_id=strategy_id, proposal_id=proposal_id),
+        }
+
+    # ------------------------------------------------------------------
+    # GET /bff/agora/trading-room/workspaces/lookup
+    # ------------------------------------------------------------------
+
+    @router.get("/bff/agora/trading-room/workspaces/lookup")
+    def lookup_trading_room_workspace(
+        response: Response,
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        strategy_id: Optional[str] = Query(default=None),
+        strategy_version: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
+        require_read_role(identity)
+        scope = _workspace_scope(identity)
+        if not strategy_id:
+            _validation_failed(["strategy_id query parameter is required for workspace lookup"], status_code=400)
+        workspace = store.get_workspace_for_strategy(
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+        )
+        if workspace is None:
+            ErrorCode = _error_code_enum()
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"No workspace found for strategy '{strategy_id}'",
+                "workspace_not_found",
+            )
+        etag = _workspace_etag(workspace)
+        response.headers["ETag"] = etag
+        return {
+            "data": workspace,
+            "meta": _meta(etag=etag, workspace_id=workspace["id"], strategy_id=strategy_id),
+        }
+
+    # ------------------------------------------------------------------
+    # GET /bff/agora/trading-room/strategies/{strategy_id}/workspace
+    # GET /bff/agora/strategies/{strategy_id}/trading-room/workspace
+    # ------------------------------------------------------------------
+
+    @router.get("/bff/agora/trading-room/strategies/{strategy_id}/workspace")
+    @router.get("/bff/agora/strategies/{strategy_id}/trading-room/workspace")
+    def get_strategy_workspace(
+        strategy_id: str,
+        response: Response,
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        version: Optional[str] = Query(default=None),
+        strategy_version: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        identity = extract_identity(authorization, session_cookie=pantheon_session)
+        require_read_role(identity)
+        scope = _workspace_scope(identity)
+        target_version = version or strategy_version
+        workspace = store.get_workspace_for_strategy(
+            strategy_id=strategy_id,
+            strategy_version=target_version,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+        )
+        if workspace is None:
+            ErrorCode = _error_code_enum()
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"No workspace found for strategy '{strategy_id}'",
+                "workspace_not_found",
+            )
+        etag = _workspace_etag(workspace)
+        response.headers["ETag"] = etag
+        return {
+            "data": workspace,
+            "meta": _meta(etag=etag, workspace_id=workspace["id"], strategy_id=strategy_id),
         }
 
     # ------------------------------------------------------------------

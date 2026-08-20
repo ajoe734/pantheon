@@ -62,12 +62,15 @@ class TradingRoomStore:
     def list_decision_events(
         self,
         *,
+        strategy_id: Optional[str] = None,
         event_kind: Optional[str] = None,
         state: Optional[str] = None,
         page_size: int = 20,
         next_page_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         items = list(self._decision_events.values())
+        if strategy_id:
+            items = [e for e in items if e.get("strategy_id") == strategy_id]
         if event_kind:
             items = [e for e in items if e.get("event_kind") == event_kind]
         if state:
@@ -260,6 +263,45 @@ class TradingRoomStore:
     def get_workspace_record(self, workspace_id: str) -> Optional[Dict[str, Any]]:
         record = self._workspaces.get(workspace_id)
         return copy.deepcopy(record) if record is not None else None
+
+    def get_workspace_for_strategy(
+        self,
+        strategy_id: str,
+        strategy_version: Optional[str] = None,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        matching = self.list_workspaces(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+        )
+        return matching[0] if matching else None
+
+    def list_workspaces(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+        strategy_version: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        for record in self._workspaces.values():
+            if str(record.get("tenant_id") or "") != tenant_id or str(record.get("user_id") or "") != user_id:
+                continue
+            ws = record.get("workspace") or {}
+            ws_strategy_id = str(ws.get("strategyId") or ws.get("strategy_id") or "")
+            if strategy_id and ws_strategy_id != strategy_id:
+                continue
+            ws_strategy_version = str(ws.get("strategyVersion") or ws.get("strategy_version") or "")
+            if strategy_version and ws_strategy_version != strategy_version:
+                continue
+            results.append(copy.deepcopy(ws))
+        results.sort(key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
+        return results
 
     # ------------------------------------------------------------------
     # Widget revision proposals
@@ -491,7 +533,8 @@ class PostgresTradingRoomStore(TradingRoomStore):
             "get_decision_event", "list_decision_events", "get_intent",
             "get_intent_state", "get_handoff", "list_handoffs_for_intent",
             "get_workspace_proposal_record", "get_workspace_proposal_generation_meta",
-            "get_workspace_record", "get_widget_revision_proposal_record",
+            "get_workspace_record", "get_workspace_for_strategy", "list_workspaces",
+            "get_widget_revision_proposal_record",
             "list_workspace_version_records", "get_workspace_version_record",
         }
         if name in mutators or name in readers:

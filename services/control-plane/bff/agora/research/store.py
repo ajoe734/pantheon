@@ -885,21 +885,41 @@ class PostgresResearchPlanStore:
                 continue
             if strategy_id:
                 meta_sid = (pool.get("metadata") or {}).get("strategy_id")
-                candidate_sids = {
-                    c.get("strategy_id") or (c.get("strategy_ref") or "").split("/")[-1]
-                    for c in pool.get("candidates", [])
-                }
-                if meta_sid != strategy_id and strategy_id not in candidate_sids:
+                meta_sref = (pool.get("metadata") or {}).get("strategy_ref") or ""
+                candidate_sids = set()
+                for c in pool.get("candidates", []):
+                    cid = c.get("strategy_id")
+                    if cid:
+                        candidate_sids.add(cid)
+                    sref = c.get("strategy_ref") or ""
+                    if sref:
+                        candidate_sids.add(sref)
+                        candidate_sids.add(sref.split("/")[-1])
+                        parts = sref.split(":")
+                        if len(parts) >= 2:
+                            candidate_sids.add(parts[1])
+                meta_parts = meta_sref.split(":") if meta_sref else []
+                meta_extracted_id = meta_parts[1] if len(meta_parts) >= 2 else (meta_sref.split("/")[-1] if meta_sref else None)
+                if meta_sid != strategy_id and meta_extracted_id != strategy_id and strategy_id not in candidate_sids:
                     continue
             if strategy_version:
                 meta_ver = (pool.get("metadata") or {}).get("strategy_version")
-                candidate_vers = {c.get("strategy_version") for c in pool.get("candidates", [])}
+                candidate_vers = set()
+                for c in pool.get("candidates", []):
+                    cver = c.get("strategy_version")
+                    if cver:
+                        candidate_vers.add(cver)
+                    sref = c.get("strategy_ref") or ""
+                    parts = sref.split(":")
+                    if len(parts) >= 3:
+                        candidate_vers.add(parts[2])
                 if meta_ver != strategy_version and strategy_version not in candidate_vers:
                     continue
             if strategy_ref:
                 candidate_refs = {c.get("strategy_ref") for c in pool.get("candidates", [])}
                 meta_ref = (pool.get("metadata") or {}).get("strategy_ref")
-                if meta_ref != strategy_ref and strategy_ref not in candidate_refs:
+                meta_sid = (pool.get("metadata") or {}).get("strategy_id")
+                if meta_ref != strategy_ref and meta_sid != strategy_ref and strategy_ref not in candidate_refs:
                     continue
             candidates = pool.get("candidates", [])
             if lifecycle_state:
