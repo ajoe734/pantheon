@@ -8,6 +8,12 @@
 Pantheon 程式碼基線：`origin/dev`
 `9aeca3bac97dbda1956b81080570230dead80243`
 
+> 2026-08-20 operator posture override：開發與驗收繼續，dev 的 default owner 只做
+> `reconcile_only` 內部 reconciliation，不得常駐對外拉資料。只有明確選取
+> `source-ingest-scheduler` bounded profile 的測試，才可在 exact-host allowlist、單一 tick、
+> `restart: no` 的限制下手動拉取一次。Loop 1 的 continuous scheduled provider closure
+> 因此是 operator-directed hold，不得以恢復常駐外拉方式修復。
+
 再盤點說明：上一版基線 `d6cdaa2e05947afd29e142a1c20e9749f657e442` 到本版之間只有本目錄
 文件與索引變更，沒有產品程式碼差異；本次仍重新逐一閱讀 trigger、owner、store、consumer、
 Compose 與 E2E，並校正上一版對 Loop 2 與 controller record 的判讀。

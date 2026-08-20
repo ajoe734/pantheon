@@ -91,8 +91,9 @@ def test_bounded_source_refresh_profile_is_fail_closed() -> None:
     assert 'SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "reconciled_live_proof"' in gate
     assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "no"' in gate
     assert "requires a reviewed exact host allowlist" in gate
-    assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS >= 1" in gate
-    assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS <= 24" in gate
+    assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "1"' in gate
+    assert "bounded source refresh must run exactly one controller tick" in gate
+    assert 'SOURCE_REFRESH_MAX_TICKS="1"' in deploy
     assert "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4" in gate
     assert "SOURCE_INGEST_MAX_RECORDS <= 500" in gate
     assert "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS <= 3600" in gate

@@ -37,7 +37,7 @@ def _env(service: str) -> dict[str, str]:
     return environment
 
 
-def test_source_controller_is_the_single_default_durable_owner() -> None:
+def test_source_controller_is_the_single_default_pull_disabled_owner() -> None:
     owner = SERVICES["source-ingest-scheduler"]
 
     assert "profiles" not in owner
@@ -53,15 +53,15 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     ]
     assert (
         owner["environment"]["SOURCE_INGEST_CONTROLLER_MODE"]
-        == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_and_pull}"
+        == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
+    )
+    assert (
+        owner["environment"]["SOURCE_INGEST_CONTROLLER_MAX_TICKS"]
+        == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
     )
     assert (
         owner["environment"]["SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL"]
         == "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-scheduled_tick}"
-    )
-    assert (
-        owner["environment"]["SOURCE_INGEST_CONTROLLER_MAX_TICKS"]
-        == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
     )
 
     matching_commands = [
@@ -71,8 +71,8 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     ]
     assert matching_commands == ["source-ingest-scheduler"]
 
-    # A bounded run remains an explicit override of this same service:
-    # docker compose run --rm -e SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 ...
+    # A bounded run remains an explicit override of this same service. The
+    # deploy gate changes mode to reconcile_and_pull for one exact-host tick.
     assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS" in owner["environment"]
 
 
