@@ -1,0 +1,48 @@
+{
+  "task_id": "PFG-AGORA-RECON-WORKER-20260820",
+  "title": "Wire Workshop messages to the existing reconstruction engine through a durable worker",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "caller_inventory_before": {
+    "engine": "services/control-plane/bff/agora/strategy_workshop/reconstruction.py: reconstruct_strategy_from_events (unchanged)",
+    "callers": [
+      "services/control-plane/bff/agora/strategy_workshop/router.py:2576 POST /bff/agora/workshops/{workshop_id}/reconstruct — the only call site; fully synchronous inline HTTP handler; returned the engine result in the HTTP response body only and persisted nothing"
+    ],
+    "gaps": [
+      "No durable admission of a reconstruction job: message posting and reconstruction were entirely disconnected (no hook from POST /messages into reconstruction)",
+      "No persistence method for StrategyReconstructionResult existed anywhere in store.py",
+      "No worker/runner module for strategy_workshop (interaction/runner.py had no counterpart)",
+      "No wiring from a reconstruction result into a canonical Registry draft"
+    ]
+  },
+  "code_disposition": [
+    "Kept reconstruct_strategy_from_events and its StrategyReconstructionResult schema unmodified (no second reconstruction model).",
+    "Added services/control-plane/bff/agora/strategy_workshop/runner.py: run_reconstruction_worker is the one worker path both callers now go through.",
+    "Reused existing dual-backend durable primitives instead of adding new tables/DDL: store.record_workshop_card (already upsert-by-card_id, already Postgres ON CONFLICT DO UPDATE) persists exactly one effective result per workshop at a deterministic card_id (reconstruction_card_id). No new schema.",
+    "Retired the direct-only normal path: POST /bff/agora/workshops/{workshop_id}/reconstruct (router.py) now calls run_reconstruction_worker instead of calling the engine inline and discarding the result.",
+    "Wired POST /bff/agora/workshops/{workshop_id}/messages (router.py) to call the same run_reconstruction_worker immediately after the message event is durably committed via append_event_cas, best-effort (a reconstruction/Registry hiccup never fails message acceptance).",
+    "Registry draft creation reuses the existing WorkshopCanonicalOperations.create_strategy_spec/get_strategy_spec (operations.py) unchanged; no new Registry authority. A draft is only created when the workshop already has an active_strategy_spec_registry_id and the reconstruction completeness grade is above 'insufficient'; the draft carries the base StrategySpec document forward unmodified, annotated with reconstruction lineage metadata (reconstruction_id, based_on_sequence_no, completeness_grade) rather than synthesizing a new document from the strategy_map."
+  ],
+  "durability_semantics": {
+    "job_identity": "one durable slot per workshop_id via a deterministic card_id (reconstruction_card_id); the persisted payload's based_on_sequence_no is the conversation/version identity",
+    "replay": "if the persisted card is status=completed and its based_on_sequence_no equals the workshop's current max event sequence_no, the worker returns the persisted result unchanged with no engine re-invocation and no repeat Registry call",
+    "stale_result": "a new message advances the max sequence_no; the next worker call detects the mismatch, recomputes, and the upsert overwrites the same card slot so exactly one result stays effective",
+    "crash_and_restart": "a card left status=running (process died mid-flight) is not treated as a terminal state; the next call recomputes the deterministic engine output and completes the same card slot",
+    "concurrency_model": "synchronous-in-request execution, the same pattern services/control-plane/bff/agora/interaction/runner.py uses for persona invocations; no cross-process lease/lock. Durability comes from the workshop_card row being committed to the durable store (Postgres in production) before the response returns; idempotent convergence comes from the deterministic engine plus the create-then-readback Registry call being safe to repeat. This is a documented scope boundary, not a distributed lease."
+  },
+  "validation": {
+    "test_command": "pytest services/control-plane/bff/agora/strategy_workshop/ services/control-plane/bff/agora/interaction/ services/control-plane/bff/tests/test_agora_write_authority.py services/control-plane/bff/tests/test_workshop_stream_ag_be_sw_004.py",
+    "total_tests": 47,
+    "skipped": 2,
+    "status": "PASSED",
+    "new_test_file": "services/control-plane/bff/agora/strategy_workshop/test_reconstruction_worker.py",
+    "new_verified_cases": [
+      "test_worker_persists_one_effective_result_and_replays_without_recompute",
+      "test_worker_recomputes_after_conversation_advances",
+      "test_worker_survives_a_crash_after_running_before_completed",
+      "test_worker_creates_registry_draft_when_active_spec_and_grade_allow",
+      "test_worker_skips_registry_draft_without_active_strategy_spec"
+    ],
+    "regression_note": "services/control-plane/bff/tests/test_agora_strategy_workshop.py times out at the pre-existing dev tip (confirmed via git stash before these changes were applied) and is excluded from this run as a pre-existing condition unrelated to this task."
+  }
+}
