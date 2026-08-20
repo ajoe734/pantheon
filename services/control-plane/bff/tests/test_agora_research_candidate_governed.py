@@ -14,6 +14,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 import pytest
@@ -532,4 +533,214 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     assert run_info["outcome"] == "pass"
     assert run_info["backend"]["mode"] == "real"
     assert len(run_info["artifact_refs"]) == 1
+
+
+def test_drain_outbox_lease_conflict_and_duplicate_idempotency() -> None:
+    """Verify that concurrent worker lease conflict blocks execution and duplicate drain_outbox runs are idempotent."""
+    store = MemoryResearchPlanStore()
+    registry = AdapterRegistry()
+    now = "2026-08-20T14:00:00.000000+00:00"
+    dispatcher = ResearchDispatcher(store=store, adapter_registry=registry, utc_now=lambda: now)
+    scope = SimpleNamespace(tenant_id=_TENANT_A, user_id="agora-user-a")
+
+    # 1. Create plan and outbox record
+    plan = {
+        "plan_id": "plan-idemp-1",
+        "workshop_id": "ws-idemp",
+        "strategy_id": "strat-idemp",
+        "stages": [{"stage_id": "stage-1", "stage_type": "prototype_backtest"}],
+        "lock_version": 1,
+    }
+    store.create_plan(plan)
+
+    stage = plan["stages"][0]
+    run_id = "run-idemp-1"
+    store.create_run({
+        "run_id": run_id,
+        "plan_id": "plan-idemp-1",
+        "stage_id": "stage-1",
+        "tenant_id": scope.tenant_id,
+        "user_id": scope.user_id,
+        "execution_status": "queued",
+    })
+
+    dispatcher.create_outbox_record(
+        plan=plan,
+        stage=stage,
+        run_id=run_id,
+        scope=scope,
+        now=now,
+    )
+
+    outbox_id = f"rob:{plan['plan_id']}:{stage['stage_id']}:{run_id}"
+
+    # 2. Worker B acquires lease first
+    store.acquire_outbox_lease(
+        outbox_id=outbox_id,
+        lease_owner="worker-b",
+        lease_duration_seconds=300.0,
+        now_iso=now,
+    )
+
+    # 3. Worker A attempts drain_outbox on leased record -> returns lease_blocked
+    results = dispatcher.drain_outbox(
+        worker_id="worker-a",
+        tenant_id=scope.tenant_id,
+        user_id=scope.user_id,
+    )
+    assert len(results) == 1
+    assert results[0]["status"] == "lease_blocked"
+    assert "Failed to acquire outbox lease" in results[0]["error"]
+
+    # Outbox status remains queued (or leased by worker-b)
+    outbox = store.get_outbox_record(outbox_id)
+    assert outbox["status"] == "queued"
+    assert outbox["lease_owner"] == "worker-b"
+
+    # 4. Worker B drains outbox -> succeeds
+    results_b = dispatcher.drain_outbox(
+        worker_id="worker-b",
+        tenant_id=scope.tenant_id,
+        user_id=scope.user_id,
+    )
+    assert len(results_b) == 1
+    assert results_b[0]["status"] == "completed"
+
+    outbox_completed = store.get_outbox_record(outbox_id)
+    assert outbox_completed["status"] == "completed"
+
+    # 5. Duplicate drain_outbox call on completed outbox -> list_outbox_records(status='queued') ignores it
+    results_dup = dispatcher.drain_outbox(
+        worker_id="worker-a",
+        tenant_id=scope.tenant_id,
+        user_id=scope.user_id,
+    )
+    assert len(results_dup) == 0
+
+
+def test_drain_outbox_partial_failure_and_outbox_status_update() -> None:
+    """Verify that adapter execution failure updates both run status and outbox record status to failed."""
+    class FailingAdapter:
+        def execute(self, *, stage: Any, plan: Any, context: Any, downstream_key: Any) -> Any:
+            raise RuntimeError("Backend cluster unreachable")
+
+    store = MemoryResearchPlanStore()
+    registry = AdapterRegistry()
+    registry.register("prototype_backtest", FailingAdapter())  # type: ignore[arg-type]
+    dispatcher = ResearchDispatcher(store=store, adapter_registry=registry)
+    scope = SimpleNamespace(tenant_id=_TENANT_A, user_id="agora-user-a")
+    now = "2026-08-20T14:00:00Z"
+
+    plan = {
+        "plan_id": "plan-fail-1",
+        "workshop_id": "ws-fail",
+        "strategy_id": "strat-fail",
+        "stages": [{"stage_id": "stage-fail-1", "stage_type": "prototype_backtest"}],
+        "lock_version": 1,
+    }
+    store.create_plan(plan)
+    stage = plan["stages"][0]
+    run_id = "run-fail-1"
+    store.create_run({
+        "run_id": run_id,
+        "plan_id": "plan-fail-1",
+        "stage_id": "stage-fail-1",
+        "tenant_id": scope.tenant_id,
+        "user_id": scope.user_id,
+        "execution_status": "queued",
+    })
+
+    dispatcher.create_outbox_record(
+        plan=plan,
+        stage=stage,
+        run_id=run_id,
+        scope=scope,
+        now=now,
+    )
+
+    outbox_id = f"rob:{plan['plan_id']}:{stage['stage_id']}:{run_id}"
+
+    results = dispatcher.drain_outbox(
+        worker_id="worker-fail",
+        tenant_id=scope.tenant_id,
+        user_id=scope.user_id,
+    )
+    assert len(results) == 1
+    assert results[0]["status"] == "failed"
+    assert "Backend cluster unreachable" in results[0]["error"]
+
+    outbox = store.get_outbox_record(outbox_id)
+    assert outbox["status"] == "failed"
+    assert outbox["blocking_reasons"] == ["Backend cluster unreachable"]
+
+    run = store.get_run(run_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
+    assert run["execution_status"] == "failed"
+
+
+def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
+    """Verify that restarting store readback preserves outbox status and re-draining completed stages is idempotent."""
+    store = MemoryResearchPlanStore()
+    registry = AdapterRegistry()
+    dispatcher = ResearchDispatcher(store=store, adapter_registry=registry)
+    scope = SimpleNamespace(tenant_id=_TENANT_A, user_id="agora-user-a")
+    now = "2026-08-20T14:00:00Z"
+
+    plan = {
+        "plan_id": "plan-restart-1",
+        "workshop_id": "ws-restart",
+        "strategy_id": "strat-restart",
+        "stages": [{"stage_id": "stage-1", "stage_type": "prototype_backtest"}],
+        "lock_version": 1,
+    }
+    store.create_plan(plan)
+    stage = plan["stages"][0]
+    run_id = "run-restart-1"
+    store.create_run({
+        "run_id": run_id,
+        "plan_id": "plan-restart-1",
+        "stage_id": "stage-1",
+        "tenant_id": scope.tenant_id,
+        "user_id": scope.user_id,
+        "execution_status": "queued",
+    })
+
+    dispatcher.create_outbox_record(
+        plan=plan,
+        stage=stage,
+        run_id=run_id,
+        scope=scope,
+        now=now,
+    )
+
+    outbox_id = f"rob:{plan['plan_id']}:{stage['stage_id']}:{run_id}"
+
+    # Drain stage
+    results = dispatcher.drain_outbox(
+        worker_id="worker-restart",
+        tenant_id=scope.tenant_id,
+        user_id=scope.user_id,
+    )
+    assert len(results) == 1
+    assert results[0]["status"] == "completed"
+
+    # Simulate process restart / re-instantiation of dispatcher on same store
+    new_dispatcher = ResearchDispatcher(store=store, adapter_registry=registry)
+
+    # Re-read outbox records: no queued outbox records remain
+    queued = store.list_outbox_records(status="queued", tenant_id=scope.tenant_id, user_id=scope.user_id)
+    assert len(queued) == 0
+
+    # Direct check on completed outbox record
+    record = store.get_outbox_record(outbox_id)
+    assert record["status"] == "completed"
+    assert record["outbox_id"] == outbox_id
+
+    # Drain on new dispatcher is zero-op
+    results_restart = new_dispatcher.drain_outbox(
+        worker_id="worker-restart-2",
+        tenant_id=scope.tenant_id,
+        user_id=scope.user_id,
+    )
+    assert len(results_restart) == 0
+
 

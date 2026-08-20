@@ -34,8 +34,8 @@
       ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_research_candidate_governed.py tests/agora_product_journey/"
     ],
     "results": [
-      "23 unit & integration tests passed cleanly",
-      "Idempotency, CAS, outbox consumer lease acquisition, stage execution, crash recovery, two-tenant isolation, and complete product journey verified"
+      "26 unit & integration tests passed cleanly",
+      "Outbox consumer lease acquisition guard, lease conflict blocking, duplicate delivery idempotency, partial failure status updates, restart/readback, two-tenant isolation, and complete product journey verified"
     ]
   },
   "code_disposition": {

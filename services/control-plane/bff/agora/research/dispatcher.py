@@ -289,6 +289,11 @@ class ResearchDispatcher:
         else:
             lease = {"lease_owner": worker_id}
 
+        if lease is None:
+            error_msg = f"Failed to acquire outbox lease for outbox_id '{outbox_id}'"
+            logger.warning(error_msg)
+            return {"status": "lease_blocked", "error": error_msg}
+
         # 2. Check allowlist
         if not self.registry.is_allowlisted(stage_type):
             error_msg = f"Stage type '{stage_type}' is not an allowlisted research stage backend"
@@ -305,6 +310,17 @@ class ResearchDispatcher:
                 "updated_at": now,
             }
             self.store.update_run(run_id, failure_updates, tenant_id=scope.tenant_id, user_id=scope.user_id)
+            if hasattr(self.store, "update_outbox_record"):
+                self.store.update_outbox_record(
+                    outbox_id,
+                    {
+                        "status": "failed",
+                        "blocking_reasons": [error_msg],
+                        "updated_at": now,
+                    },
+                    tenant_id=scope.tenant_id,
+                    user_id=scope.user_id,
+                )
             return {"status": "failed", "error": error_msg}
 
         adapter = self.registry.get(stage_type)
@@ -392,6 +408,17 @@ class ResearchDispatcher:
                 tenant_id=scope.tenant_id,
                 user_id=scope.user_id,
             )
+            if hasattr(self.store, "update_outbox_record"):
+                self.store.update_outbox_record(
+                    outbox_id,
+                    {
+                        "status": "failed",
+                        "blocking_reasons": [err],
+                        "updated_at": fail_now,
+                    },
+                    tenant_id=scope.tenant_id,
+                    user_id=scope.user_id,
+                )
             return {"status": "failed", "error": err}
 
         # 6. Apply completed results and artifact checksum readback
