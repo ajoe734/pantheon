@@ -2,7 +2,7 @@
   "task_id": "PFG-MGMT-DOMAIN-ACTIONS-20260820",
   "title": "Map production Management actions to domain owners with typed unavailable failures and authoritative readbacks",
   "owner": "Antigravity2",
-  "reviewer": "Codex",
+  "reviewer": "Antigravity",
   "code_disposition": {
     "task_id": "PFG-MGMT-DOMAIN-ACTIONS-20260820",
     "canonical_owner": "services/control-plane/bff/command_executor.py, services/control-plane/bff/command_adapters/",
