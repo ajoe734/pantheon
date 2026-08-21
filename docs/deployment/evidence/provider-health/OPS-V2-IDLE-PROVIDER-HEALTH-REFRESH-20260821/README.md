@@ -19,8 +19,11 @@ an explicit Human/Ops request was recorded via
 once per cycle so it never becomes an every-cycle probe storm, and it still
 skips any lane that is already healthy.
 
-The committed manifest, [evidence.json](evidence.json), is the review artifact.
-It covers only the source change and deterministic regression proof. The
+The committed manifest, [evidence.json](evidence.json), and its companion
+[evidence.sha256](evidence.sha256) are the review artifact. The manifest binds
+the rebased implementation anchor, source blobs, and deterministic diff hash;
+the companion checksum covers both review files. It covers only the source
+change and deterministic regression proof. The
 post-merge deployment authority must promote the exact merged command runtime,
 run its bounded supervisor cycle (using the explicit Human/Ops trigger if the
 live `codex1` retry_at is still in the future), and record the live

@@ -3,7 +3,7 @@
   "task": {
     "id": "OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821",
     "title": "Refresh stale V2 provider health without unrelated task demand",
-    "owner": "Claude",
+    "owner": "Codex2",
     "reviewer": "Antigravity",
     "repository": "ajoe734/pantheon",
     "target_branch": "dev",
@@ -29,6 +29,17 @@
     "reported_by": "Human/Ops",
     "finding": "The prior head (19836b33d) only refreshed endpoint/account evidence once the existing retry gate already considered it due. Live codex1 stayed closed behind a stale quota_terminal retry_at=2026-08-22T14:09:00Z even though a direct probe already succeeded, because health_gate_for_endpoint intentionally never bypasses a future retry_at.",
     "resolution": "Added an authorized bypass scan (authorized_delivery_health_refresh_targets) that fires only on an exact delivery-topology change or an explicit Human/Ops request, may probe past a cached future retry_at, and is consumed once per cycle so it never becomes an every-cycle probe."
+  },
+  "implementation": {
+    "rebased_base_commit": "281cb12c531290fd0db4dcf75e9c233612b04a84",
+    "validated_implementation_anchor": "787a06db6b71425cc5a4489b523aca635510b2d3",
+    "supervisor_source_blob": "5d0d32af1a267c5431ea2cd762b8672bca987eb5",
+    "supervisor_test_blob": "e4d4e0d22d3a515236d7e958d37b7f4acf618993",
+    "implementation_diff_sha256": "51737763a4876f22a891f34785012b5944d2a0b9c5ced505a70b68c8d34b8e02",
+    "source_scope": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ]
   },
   "contract": {
     "idle_trigger": "build_dispatch_plan adds a pure idle target scan after task and reassignment demand. A startup cycle with an empty task board therefore reaches due stale endpoint/account evidence without manufacturing a queue event or changing canonical task state.",
@@ -79,33 +90,49 @@
   "owner_verification": {
     "commands": [
       {
-        "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+        "command": ".venv-pantheon/bin/python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
         "result": "passed"
       },
       {
-        "command": "PYTHONPATH=.orchestrator python3 -m pytest -q .orchestrator/test_supervisor.py",
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::AccountHealthAndRecoveryContractTests",
+        "result": "18 passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
         "result": "109 passed, 18 subtests passed"
       },
       {
-        "command": "PYTHONPATH=.orchestrator python3 .orchestrator/rewrite/test_provider_health.py -v",
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 .orchestrator/rewrite/test_provider_health.py -v",
         "result": "5 passed"
       },
       {
-        "command": "PYTHONPATH=.orchestrator python3 .orchestrator/rewrite/test_dispatch_admission.py -v",
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 .orchestrator/rewrite/test_dispatch_admission.py -v",
         "result": "16 passed"
       },
       {
-        "command": "PYTHONPATH=.orchestrator python3 -m unittest discover -s .orchestrator -p 'test_runtime_state.py' -v",
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest discover -s .orchestrator -p 'test_runtime_state.py' -v",
         "result": "26 passed"
       },
       {
-        "command": "git diff --check",
+        "command": "git diff --check 281cb12c531290fd0db4dcf75e9c233612b04a84...787a06db6b71425cc5a4489b523aca635510b2d3",
         "result": "passed"
       }
     ]
   },
+  "integrity": {
+    "algorithm": "sha256",
+    "companion_checksum_path": "docs/deployment/evidence/provider-health/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821/evidence.sha256",
+    "checksum_coverage": [
+      "evidence.json",
+      "README.md"
+    ],
+    "source_recompute": "git diff --binary 281cb12c531290fd0db4dcf75e9c233612b04a84...787a06db6b71425cc5a4489b523aca635510b2d3 -- .orchestrator/supervisor.py .orchestrator/test_supervisor.py | sha256sum",
+    "manifest_recompute": "cd docs/deployment/evidence/provider-health/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821 && sha256sum -c evidence.sha256"
+  },
   "review": {
     "decision": "pending",
+    "required_reviewer": "Antigravity",
+    "exact_head_requirement": "Antigravity must bind approval to the final GitHub PR head through the governed REVIEW_PR and REVIEW_HEAD_SHA inputs. This committed manifest intentionally does not self-reference its containing commit; any later source change requires these verification commands and checksums to be refreshed.",
     "required": [
       "Confirm idle target selection and the authorized bypass scan are pure and do not write TaskStore or runtime files.",
       "Confirm the bypass fires only on a genuine topology-fingerprint change or a consumed Human/Ops request, never unconditionally per cycle.",
