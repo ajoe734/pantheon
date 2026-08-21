@@ -138,6 +138,42 @@ class AssignmentTransition:
     reason: str
 
 
+@dataclass(frozen=True)
+class ValidatedAssignmentActivityEvent:
+    """Normalized reassignment audit event accepted by the canonical contract."""
+
+    event_id: str
+    timestamp: str
+    actor: str
+    task_id: str
+    old_owner: str
+    new_owner: str
+    old_reviewer: str
+    new_reviewer: str
+    old_generation: int | None
+    generation: int | None
+    message: str
+    legacy_ungenerated: bool
+
+    def as_dict(self) -> dict[str, object]:
+        event: dict[str, object] = {
+            "event_id": self.event_id,
+            "ts": self.timestamp,
+            "agent": self.actor,
+            "type": "task_reassigned",
+            "task_id": self.task_id,
+            "old_owner": self.old_owner,
+            "new_owner": self.new_owner,
+            "old_reviewer": self.old_reviewer,
+            "new_reviewer": self.new_reviewer,
+            "message": self.message,
+        }
+        if self.old_generation is not None and self.generation is not None:
+            event["old_generation"] = self.old_generation
+            event["generation"] = self.generation
+        return event
+
+
 def assignment_transition(
     current_owner: object,
     current_reviewer: object,
@@ -183,17 +219,39 @@ def assignment_transition(
     )
 
 
-def assignment_activity_event(
+def _assignment_activity_event_digest(
+    *,
+    task_id: str,
+    timestamp: str,
+    old_owner: str,
+    new_owner: str,
+    old_reviewer: str,
+    new_reviewer: str,
+    old_generation: int | None,
+    generation: int | None,
+    message: str,
+) -> str:
+    generation_binding = ""
+    if old_generation is not None and generation is not None:
+        generation_binding = f"{old_generation}\0{generation}\0"
+    payload = (
+        f"{task_id}\0{timestamp}\0"
+        f"{old_owner}\0{new_owner}\0"
+        f"{old_reviewer}\0{new_reviewer}\0"
+        f"{generation_binding}{message}"
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def build_assignment_activity_event(
     *,
     task_id: object,
     timestamp: object,
     assignment: AssignmentTransition,
     old_generation: object,
     new_generation: object,
-    message: object,
-    event_type: object = "task_reassigned",
 ) -> dict[str, object]:
-    """Build the one canonical assignment audit shape for both writers.
+    """Build the one canonical reassignment audit shape for both writers.
 
     Authorization differs between Human/Ops and the bounded Orchestrator
     reconciler, but neither should independently invent event fields or the
@@ -202,8 +260,16 @@ def assignment_activity_event(
 
     normalized_task_id = str(task_id or "").strip()
     normalized_timestamp = str(timestamp or "").strip()
-    normalized_message = str(message or "").strip()
-    normalized_type = str(event_type or "task_reassigned").strip() or "task_reassigned"
+    normalized_message = assignment.reason
+    if (
+        assignment.actor not in {"Orchestrator", "Human/Ops"}
+        or not assignment.new_owner
+        or not assignment.new_reviewer
+        or not normalized_message
+    ):
+        raise TransitionError("assignment event transition is invalid")
+    if isinstance(old_generation, bool) or isinstance(new_generation, bool):
+        raise TransitionError("assignment event generation is invalid")
     try:
         previous_generation = int(old_generation)
         current_generation = int(new_generation)
@@ -217,23 +283,27 @@ def assignment_activity_event(
         or current_generation != previous_generation + 1
     ):
         raise TransitionError("assignment event is not generation-bound")
-    payload = (
-        f"{normalized_task_id}\0{normalized_timestamp}\0"
-        f"{assignment.old_owner}\0{assignment.new_owner}\0"
-        f"{assignment.old_reviewer}\0{assignment.new_reviewer}\0"
-        f"{previous_generation}\0{current_generation}\0{normalized_message}"
+    digest = _assignment_activity_event_digest(
+        task_id=normalized_task_id,
+        timestamp=normalized_timestamp,
+        old_owner=assignment.old_owner,
+        new_owner=assignment.new_owner,
+        old_reviewer=assignment.old_reviewer,
+        new_reviewer=assignment.new_reviewer,
+        old_generation=previous_generation,
+        generation=current_generation,
+        message=normalized_message,
     )
-    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     prefix = (
-        f"supervisor-{normalized_type.replace('_', '-')}-"
+        "supervisor-task-reassigned-"
         if assignment.actor == "Orchestrator"
-        else f"human-ops-{normalized_type.replace('_', '-')}-"
+        else "human-ops-task-reassigned-"
     )
     return {
         "event_id": prefix + digest,
         "ts": normalized_timestamp,
         "agent": assignment.actor,
-        "type": normalized_type,
+        "type": "task_reassigned",
         "task_id": normalized_task_id,
         "old_owner": assignment.old_owner,
         "new_owner": assignment.new_owner,
@@ -243,6 +313,94 @@ def assignment_activity_event(
         "generation": current_generation,
         "message": normalized_message,
     }
+
+
+def validate_assignment_activity_event(
+    event: Mapping[str, object],
+) -> ValidatedAssignmentActivityEvent | None:
+    """Return a normalized canonical reassignment event, or reject it.
+
+    New Orchestrator and Human/Ops events are generation-bound and use their
+    actor-specific canonical prefixes. Historical Orchestrator events without
+    generation fields remain readable under both previously emitted
+    supervisor prefixes; new writes never use that legacy form.
+    """
+
+    if str(event.get("type") or "") != "task_reassigned":
+        return None
+    actor = str(event.get("agent") or "")
+    if actor not in {"Orchestrator", "Human/Ops"}:
+        return None
+
+    event_id = str(event.get("event_id") or "")
+    timestamp = str(event.get("ts") or "")
+    task_id = str(event.get("task_id") or "")
+    old_owner = str(event.get("old_owner") or "")
+    new_owner = str(event.get("new_owner") or "")
+    old_reviewer = str(event.get("old_reviewer") or "")
+    new_reviewer = str(event.get("new_reviewer") or "")
+    message = str(event.get("message") or "")
+    if not event_id or not timestamp or not task_id or not new_owner or not new_reviewer:
+        return None
+    if not message:
+        return None
+
+    raw_old_generation = event.get("old_generation")
+    raw_generation = event.get("generation")
+    legacy_ungenerated = raw_old_generation is None and raw_generation is None
+    if legacy_ungenerated:
+        if actor != "Orchestrator":
+            return None
+        previous_generation = None
+        current_generation = None
+    else:
+        if (
+            not isinstance(raw_old_generation, int)
+            or isinstance(raw_old_generation, bool)
+            or not isinstance(raw_generation, int)
+            or isinstance(raw_generation, bool)
+            or raw_old_generation < 1
+            or raw_generation != raw_old_generation + 1
+        ):
+            return None
+        previous_generation = raw_old_generation
+        current_generation = raw_generation
+
+    digest = _assignment_activity_event_digest(
+        task_id=task_id,
+        timestamp=timestamp,
+        old_owner=old_owner,
+        new_owner=new_owner,
+        old_reviewer=old_reviewer,
+        new_reviewer=new_reviewer,
+        old_generation=previous_generation,
+        generation=current_generation,
+        message=message,
+    )
+    if actor == "Orchestrator":
+        accepted_ids = {
+            f"supervisor-task-reassigned-{digest}",
+            f"supervisor-reassign-{digest}",
+        }
+    else:
+        accepted_ids = {f"human-ops-task-reassigned-{digest}"}
+    if event_id not in accepted_ids:
+        return None
+
+    return ValidatedAssignmentActivityEvent(
+        event_id=event_id,
+        timestamp=timestamp,
+        actor=actor,
+        task_id=task_id,
+        old_owner=old_owner,
+        new_owner=new_owner,
+        old_reviewer=old_reviewer,
+        new_reviewer=new_reviewer,
+        old_generation=previous_generation,
+        generation=current_generation,
+        message=message,
+        legacy_ungenerated=legacy_ungenerated,
+    )
 
 
 # The one lifecycle table used by canonical commands.  Self-transitions are

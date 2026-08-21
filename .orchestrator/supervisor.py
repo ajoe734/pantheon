@@ -7032,19 +7032,6 @@ def _ai_status_activity_event_id_matches(event: Mapping[str, Any]) -> bool:
     return event_id == "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
 
 
-def _supervisor_reassignment_event_id_matches(event: Mapping[str, Any]) -> bool:
-    if event.get("agent") != "Orchestrator" or event.get("type") != "task_reassigned":
-        return False
-    payload = (
-        f"{event.get('task_id') or ''}\0{event.get('ts') or ''}\0"
-        f"{event.get('old_owner') or ''}\0{event.get('new_owner') or ''}\0"
-        f"{event.get('old_reviewer') or ''}\0{event.get('new_reviewer') or ''}\0"
-        f"{event.get('message') or ''}"
-    )
-    expected = "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return str(event.get("event_id") or "") == expected
-
-
 def _governance_event_after_worker_start(
     worker: Mapping[str, Any],
     event: Mapping[str, Any],
@@ -7105,7 +7092,7 @@ def active_worker_governance_lease_decision(
 
     Absence, ambiguity, an ordinary ``assign``/``note``/review transition, or a
     concurrent task mutation all preserve the process. Only terminal lifecycle
-    truth or the latest exact supervisor ``task_reassigned`` event can authorize
+    truth or the latest exact canonical ``task_reassigned`` event can authorize
     responsibility transfer here.
     """
 
@@ -7173,7 +7160,10 @@ def active_worker_governance_lease_decision(
                 worker,
             ),
         }
-    if not _supervisor_reassignment_event_id_matches(latest_assignment):
+    validated_assignment = rewrite_task_machine.validate_assignment_activity_event(
+        latest_assignment
+    )
+    if validated_assignment is None:
         return {
             "action": "preserve",
             "reason_code": "invalid_reassignment_evidence",
@@ -7183,11 +7173,16 @@ def active_worker_governance_lease_decision(
 
     current_owner = canonical_agent_name(config, str(task.get("owner") or ""))
     current_reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
-    new_owner = canonical_agent_name(config, str(latest_assignment.get("new_owner") or ""))
-    new_reviewer = canonical_agent_name(config, str(latest_assignment.get("new_reviewer") or ""))
+    new_owner = canonical_agent_name(config, validated_assignment.new_owner)
+    new_reviewer = canonical_agent_name(config, validated_assignment.new_reviewer)
+    current_generation = task_generation(task)
     if (
         current_owner.casefold() != new_owner.casefold()
         or current_reviewer.casefold() != new_reviewer.casefold()
+        or (
+            validated_assignment.generation is not None
+            and current_generation != validated_assignment.generation
+        )
     ):
         return {
             "action": "preserve",
@@ -7212,14 +7207,14 @@ def active_worker_governance_lease_decision(
     if dispatch_reason == REASON_REVIEW_READY:
         old_actor = canonical_agent_name(
             config,
-            str(latest_assignment.get("old_reviewer") or ""),
+            validated_assignment.old_reviewer,
         )
         new_actor = new_reviewer
         role = "reviewer"
     else:
         old_actor = canonical_agent_name(
             config,
-            str(latest_assignment.get("old_owner") or ""),
+            validated_assignment.old_owner,
         )
         new_actor = new_owner
         role = "owner"
@@ -8157,7 +8152,6 @@ def _persist_task_reassignment_locked(
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
     resolve_open_handoffs: bool = False,
-    activity_event_type: str = "task_reassigned",
     expected_owner: str | None = None,
     expected_reviewer: str | None = None,
     expected_status: str | None = None,
@@ -8252,14 +8246,12 @@ def _persist_task_reassignment_locked(
             }
         )
 
-    event = rewrite_task_machine.assignment_activity_event(
+    event = rewrite_task_machine.build_assignment_activity_event(
         task_id=task_id,
         timestamp=timestamp,
         assignment=assignment,
         old_generation=old_generation,
         new_generation=old_generation + 1,
-        message=message,
-        event_type=activity_event_type,
     )
     status["status_activity_outbox"] = _status_activity_outbox([event])
     write_status(config, status, source="supervisor-reassignment")
@@ -8278,7 +8270,6 @@ def persist_task_reassignment(
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
     resolve_open_handoffs: bool = False,
-    activity_event_type: str = "task_reassigned",
     expected_owner: str | None = None,
     expected_reviewer: str | None = None,
     expected_status: str | None = None,
@@ -8301,7 +8292,6 @@ def persist_task_reassignment(
             handoff_from=handoff_from,
             resolve_open_blockers=resolve_open_blockers,
             resolve_open_handoffs=resolve_open_handoffs,
-            activity_event_type=activity_event_type,
             expected_owner=expected_owner,
             expected_reviewer=expected_reviewer,
             expected_status=expected_status,

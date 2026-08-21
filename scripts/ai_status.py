@@ -5403,14 +5403,12 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
         }
     if old_owner or old_reviewer:
-        event = task_machine.assignment_activity_event(
+        event = task_machine.build_assignment_activity_event(
             task_id=task_id,
             timestamp=timestamp,
             assignment=assignment,
             old_generation=old_generation,
             new_generation=task["generation"],
-            message=assignment_reason,
-            event_type="task_reassigned",
         )
         event["reason"] = assignment_reason
     else:
@@ -5822,19 +5820,13 @@ def _audited_reassignment_events(
 
     audited: list[tuple[datetime, dict[str, Any]]] = []
     for event in events:
-        if (
-            event.get("type") != "task_reassigned"
-            or str(event.get("task_id") or "").strip() != task_id
-            or event.get("agent") not in {"Orchestrator", "Human/Ops"}
-            or not event.get("old_owner")
-            or not event.get("new_owner")
-            or not _supervisor_reassignment_event_id_matches(event)
-        ):
+        validated = task_machine.validate_assignment_activity_event(event)
+        if validated is None or validated.task_id != task_id or not validated.old_owner:
             continue
-        event_timestamp = _parse_utc_timestamp(event.get("ts"))
+        event_timestamp = _parse_utc_timestamp(validated.timestamp)
         if event_timestamp is None:
             continue
-        audited.append((event_timestamp, event))
+        audited.append((event_timestamp, validated.as_dict()))
     audited.sort(key=lambda item: item[0])
     return audited
 
@@ -5966,40 +5958,6 @@ def _verified_owner_reassignment(
     )
 
 
-def _supervisor_reassignment_event_id(event: Mapping[str, Any]) -> str:
-    generation_binding = ""
-    if event.get("old_generation") is not None and event.get("generation") is not None:
-        generation_binding = (
-            f"{event.get('old_generation')}\0{event.get('generation')}\0"
-        )
-    payload = (
-        f"{event.get('task_id') or ''}\0{event.get('ts') or ''}\0"
-        f"{event.get('old_owner') or ''}\0{event.get('new_owner') or ''}\0"
-        f"{event.get('old_reviewer') or ''}\0{event.get('new_reviewer') or ''}\0"
-        f"{generation_binding}"
-        f"{event.get('message') or ''}"
-    )
-    return "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _supervisor_reassignment_event_id_matches(event: Mapping[str, Any]) -> bool:
-    """Accept only actor-bound canonical prefixes with the exact payload digest."""
-
-    expected = _supervisor_reassignment_event_id(event)
-    digest = expected.removeprefix("supervisor-reassign-")
-    actor = str(event.get("agent") or "")
-    if actor == "Orchestrator":
-        accepted_ids = {
-            expected,
-            f"supervisor-task-reassigned-{digest}",
-        }
-    elif actor == "Human/Ops":
-        accepted_ids = {f"human-ops-task-reassigned-{digest}"}
-    else:
-        return False
-    return str(event.get("event_id") or "") in accepted_ids
-
-
 def _verified_done_owner_reassignment(
     task: dict[str, Any],
     *,
@@ -6108,8 +6066,8 @@ def _self_consistent_event_id_matches(event: Mapping[str, Any]) -> bool:
     `_activity_event()` sets `event_id` to `ai-status-event-<sha256 of the
     rest of the event>` whenever the caller does not supply one of its own --
     the scheme a plain `assign` event gets. Recomputing and comparing catches
-    a hand-edited log line the same way `_supervisor_reassignment_event_id_matches`
-    does for the narrower supervisor-reassignment digest.
+    a hand-edited log line the same way the canonical task-machine validator
+    does for reassignment audit events.
     """
 
     payload = {key: value for key, value in event.items() if key != "event_id"}
