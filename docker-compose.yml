@@ -1199,6 +1199,14 @@ services:
       # A stale .env override would let readiness observe the canonical controller
       # while BFF reads remained pinned to legacy snapshots.
       PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: /data/bff/lifecycle-projection/current/trade_journey_events.json
+      # Cutover remains fail-safe by default: JSON is the accepted reader until
+      # target-dev explicitly supplies `postgres` plus a DML-only DSN and an
+      # independently managed cursor-signing secret.  The Postgres reader
+      # never falls back to these legacy files after it is selected.
+      PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND: ${PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND:-json}
+      PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN: ${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN:-}
+      PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA: ${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA:-trade_journey_projection}
+      PANTHEON_BFF_TRADE_JOURNEY_PAGE_TOKEN_SECRET: ${PANTHEON_BFF_TRADE_JOURNEY_PAGE_TOKEN_SECRET:-}
       LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
       LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
       LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH: /data/bff/lifecycle-projection/health_state.json
@@ -1442,6 +1450,12 @@ services:
     stop_grace_period: 30s
     environment:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # The relational writer is disabled until a governed target environment
+      # explicitly selects shadow.  No other enabled value is accepted by the
+      # worker, and a selected writer fails closed when its DML DSN is absent.
+      LIFECYCLE_PROJECTOR_WRITER_BACKEND: ${LIFECYCLE_PROJECTOR_WRITER_BACKEND:-disabled}
+      LIFECYCLE_PROJECTOR_PROJECTION_DSN: ${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-}
+      LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA: ${LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA:-trade_journey_projection}
       LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
       LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
       LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH: /data/bff/lifecycle-projection/health_state.json
