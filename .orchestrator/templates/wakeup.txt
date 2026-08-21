@@ -8,6 +8,13 @@
 
 不要先掃描 `current-work.md` 或整份 `ai-activity-log.jsonl`。只有在 task brief 明確需要時，才回頭查全域摘要或歷史。
 
+這次 dispatch 時的 canonical dependency truth：
+{{dependency_truth}}
+
+如果要回報 blocker：
+- task 有 declared dependencies 時，外部環境／功能問題必須在 blocker 命令最後加 `external`。
+- 只有真的在等 declared task 時，才在最後加 `task_dependency <TASK-ID>`；command 會重新讀 canonical truth，已完成的 dependency 不得把 task 改成 blocked。
+
 進入 task 工作前，先確認你在正確的 branch 上：
 - 預期 branch 名稱：`{{branch_name}}`（從 `{{base_branch}}` 開出的 per-task branch；task id kebab: `{{task_id_kebab}}`）。
 - 如果目前 branch 不對，優先使用 `{{branch_start_command}}`，不要手寫臨時 branch 規則。

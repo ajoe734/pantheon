@@ -31,7 +31,6 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "ready_dispatcher.max_active_workers_per_task",
     "ready_dispatcher.max_concurrent_per_account",
     "ready_dispatcher.max_concurrent_workers",
-    "github_bus.enabled",
     "watchdog.enabled",
     "supervisor.observe_worker_commit_progress",
     "supervisor.lease_requires_work_progress",
@@ -61,13 +60,7 @@ CRITICAL_FLAGS: tuple[str, ...] = (
 
 # Paths where live is ALLOWED to diverge from repo for legitimate
 # environment reasons. Reported as info, never counted as drift, never fixed.
-DEFAULT_INTENTIONAL_OVERRIDES: frozenset[str] = frozenset(
-    {
-        # GitHub event bus is intentionally off on hosts without the relay
-        # wired up.
-        "github_bus.enabled",
-    }
-)
+DEFAULT_INTENTIONAL_OVERRIDES: frozenset[str] = frozenset()
 
 _SENTINEL = object()
 

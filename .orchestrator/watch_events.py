@@ -71,6 +71,20 @@ def render_wakeup_message(
             "不得擴張成主線 governance 或 runtime 修改。\n"
         )
 
+    dependency_truth = [
+        item
+        for item in (task_payload.get("dependency_truth") or [])
+        if isinstance(item, dict) and str(item.get("task_id") or "").strip()
+    ]
+    dependency_lines = "\n".join(
+        "- {task_id}: status={status}, satisfied={satisfied}".format(
+            task_id=str(item.get("task_id") or "").strip(),
+            status=str(item.get("status") or "missing").strip(),
+            satisfied=str(bool(item.get("satisfied"))).lower(),
+        )
+        for item in dependency_truth
+    ) or "- (none)"
+
     branch_workflow = (
         config.get("branch_workflow")
         if isinstance(config.get("branch_workflow"), dict)
@@ -110,6 +124,7 @@ def render_wakeup_message(
         or "- (none inferred)",
         "dispatch_guardrails": role_guardrails.rstrip(),
         "sidecar_guardrails": sidecar_guardrails.rstrip(),
+        "dependency_truth": dependency_lines,
         "target_agent_display_name": display_name_for(config, agent["id"]),
     }
     return render_template(template_path, variables).strip() + "\n"

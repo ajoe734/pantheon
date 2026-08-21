@@ -464,7 +464,7 @@ class GitHubReviewBridgeTests(unittest.TestCase):
         runner = FakeRunner(actual_head="b" * 40)
 
         with self.assertRaisesRegex(
-            bridge.GitHubReviewBridgeError,
+            bridge.ReviewBindingMismatch,
             "no longer matches reviewed identity",
         ):
             bridge.bridge_review_decision(
@@ -477,6 +477,24 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                 runner=runner,
             )
 
+        mutation_calls = [
+            command
+            for command, _payload in runner.calls
+            if "--method" in command and "POST" in command
+        ]
+        self.assertEqual(mutation_calls, [])
+
+    def test_handoff_validator_uses_the_same_exact_pr_snapshot(self) -> None:
+        runner = FakeRunner()
+
+        validated = bridge.validate_review_binding(
+            repository=REPOSITORY,
+            binding=binding(),
+            runner=runner,
+        )
+
+        self.assertEqual(validated.head_sha, HEAD)
+        self.assertEqual(validated.pr, 4269)
         mutation_calls = [
             command
             for command, _payload in runner.calls

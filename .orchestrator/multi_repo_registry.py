@@ -18,7 +18,7 @@ from common import config_status_root
 DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
     "pantheon": {
         "display_name": "Pantheon",
-        "repo": None,
+        "repo": "ajoe734/pantheon",
         "local_path": ".",
         "default_branch": "master",
         "coordination_dir": ".coordination",
@@ -66,9 +66,6 @@ def repositories(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
         current = merged.setdefault(repo_id, {})
         current.update(deepcopy(override or {}))
 
-    pantheon_repo = merged.setdefault("pantheon", {})
-    if not pantheon_repo.get("repo"):
-        pantheon_repo["repo"] = ((config.get("github_bus") or {}).get("repo")) or None
     return merged
 
 

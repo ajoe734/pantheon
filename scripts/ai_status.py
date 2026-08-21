@@ -1617,7 +1617,6 @@ def load_config() -> dict[str, Any]:
                 "dashboard": str(DOCS_SITE_DIR / "index.html"),
                 "state_file": str(ORCHESTRATOR_STATE_FILE),
                 "approval_queue": str(APPROVAL_QUEUE_FILE),
-                "github_bus_state": str(STATUS_ROOT / ".orchestrator" / "github-bus-state.json"),
                 "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
             }
         )
@@ -5524,6 +5523,9 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
         )
     preflight = consume_external_mutation_preflight("reopen", task)
     github_review_bridge = dict(preflight.get(GITHUB_REVIEW_BRIDGE_KEY) or {})
+    binding_mismatch = str(
+        preflight.get(REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY) or ""
+    ).strip()
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "reopen")
     task["last_update"] = timestamp
@@ -5532,8 +5534,11 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     # A reviewer rejection returns the work to the owner.  A subsequent
     # handoff must freeze the new deliverable instead of reusing this head.
     task.pop(DELIVERY_BINDING_KEY, None)
+    task.pop(APPROVAL_BINDING_KEY, None)
     if github_review_bridge:
         task[GITHUB_REVIEW_BRIDGE_KEY] = dict(github_review_bridge)
+    else:
+        task.pop(GITHUB_REVIEW_BRIDGE_KEY, None)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
     if actor == reviewer and owner and owner != reviewer:
@@ -5558,6 +5563,11 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             **(
                 {GITHUB_REVIEW_BRIDGE_KEY: dict(github_review_bridge)}
                 if github_review_bridge
+                else {}
+            ),
+            **(
+                {REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY: binding_mismatch}
+                if binding_mismatch
                 else {}
             ),
         }
@@ -5610,73 +5620,68 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
-def structured_blocker_fields(args: list[str]) -> dict[str, Any]:
-    """Parse the opt-in, machine-checkable portion of a blocker command.
+def validate_blocker_reason(
+    state: dict[str, Any],
+    task: Mapping[str, Any],
+    args: list[str],
+) -> None:
+    """Validate dependency claims synchronously; never create a second scheduler.
 
-    The legacy three-argument ``blocker`` command deliberately remains a
-    prose-only human gate.  A caller has to name one of these forms explicitly
-    before the supervisor may ever reconsider the blocker:
-
-    ``github_pr_ci <pr-number>``
-        Re-sample the named pull request's required CI contexts.
-    ``task_dependency <task-id> [required-status]``
-        Re-sample the named canonical task row (``done`` by default).
+    Dependency readiness already belongs to ``TaskResolver`` and dispatch
+    admission.  A task that declares dependencies must therefore classify a
+    blocker as either ``external`` or ``task_dependency <task-id>``.  The latter
+    is checked against current canonical truth before any lifecycle mutation.
+    Nothing here is persisted for a future reconciler.
     """
 
+    dependencies = [
+        str(item or "").strip()
+        for item in (task.get("depends_on") or [])
+        if str(item or "").strip()
+    ]
     if not args:
-        return {}
-
-    check_kind = str(args[0] or "").strip().lower()
-    if check_kind == "github_pr_ci":
-        if len(args) != 2:
+        if dependencies:
             raise SystemExit(
-                "Usage: blocker <task-id> <message> <waiting-for> "
-                "github_pr_ci <pr-number>"
+                "Tasks with declared dependencies must classify blockers as "
+                "external or task_dependency <task-id>"
             )
-        try:
-            pr_number = int(args[1])
-        except (TypeError, ValueError) as exc:
-            raise SystemExit("github_pr_ci blocker requires a positive PR number") from exc
-        if pr_number <= 0:
-            raise SystemExit("github_pr_ci blocker requires a positive PR number")
-        return {"check_kind": check_kind, "pr_number": pr_number}
+        return
 
-    if check_kind == "task_dependency":
-        if len(args) not in {2, 3}:
+    reason_kind = str(args[0] or "").strip().lower()
+    if reason_kind == "external":
+        if len(args) != 1:
             raise SystemExit(
-                "Usage: blocker <task-id> <message> <waiting-for> "
-                "task_dependency <task-id> [required-status]"
+                "Usage: blocker <task-id> <message> <waiting-for> external"
             )
-        dependency_task_id = str(args[1] or "").strip()
-        required_status = str(args[2] if len(args) == 3 else "done").strip().lower()
-        if not dependency_task_id or not required_status:
-            raise SystemExit(
-                "task_dependency blocker requires a task id and non-empty required status"
-            )
-        return {
-            "check_kind": check_kind,
-            # ``task_id`` is already the identity of the task being blocked.
-            # Keep kind-specific keys nested so a dependency cannot overwrite
-            # that identity while still preserving the structured shape.
-            "check_params": {
-                "task_id": dependency_task_id,
-                "required_status": required_status,
-            },
-        }
+        return
+    if reason_kind != "task_dependency" or len(args) != 2:
+        raise SystemExit(
+            "Usage: blocker <task-id> <message> <waiting-for> "
+            "[external | task_dependency <task-id>]"
+        )
 
-    raise SystemExit(
-        "Unknown blocker check_kind. Supported kinds: github_pr_ci, task_dependency"
-    )
+    dependency_task_id = str(args[1] or "").strip()
+    if dependency_task_id not in dependencies:
+        raise SystemExit(
+            f"{dependency_task_id or '(missing)'} is not a declared dependency of "
+            f"{task.get('id') or '?'}"
+        )
+    resolver = task_resolver(state)
+    dependency_status = resolver.dependency_status(dependency_task_id)
+    if resolver.dependency_satisfied(dependency_task_id):
+        raise SystemExit(
+            f"{dependency_task_id} is already canonically satisfied "
+            f"({dependency_status}); refusing to block {task.get('id') or '?'}"
+        )
 
 
 def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit(
             "Usage: blocker <task-id> <message> <waiting-for> "
-            "[github_pr_ci <pr-number> | task_dependency <task-id> [required-status]]"
+            "[external | task_dependency <task-id>]"
         )
     task_id, message, waiting_for = args[0], args[1], canonical_agent_name(args[2])
-    check_fields = structured_blocker_fields(args[3:])
     actor = current_actor()
     ensure_agent(actor)
     ensure_agent(waiting_for)
@@ -5685,6 +5690,7 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can block {task_id}")
+    validate_blocker_reason(state, task, args[3:])
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "block")
     task["waiting_for"] = waiting_for
@@ -5698,7 +5704,6 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
         "message": message,
         "status": "open",
         "created_at": timestamp,
-        **check_fields,
     }
     state.setdefault("blockers", []).append(blocker)
     append_log({"ts": timestamp, "agent": actor, "type": "blocker", "task_id": task_id, "message": f"Blocked on {waiting_for}: {message}"})
@@ -6589,6 +6594,22 @@ GITHUB_REVIEW_MODES = {
     "pull_request_review_and_required_status",
     "required_commit_status",
 }
+REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY = "review_binding_mismatch"
+
+
+class ReviewBindingMismatchError(RuntimeError):
+    """A persisted review binding definitively differs from GitHub truth."""
+
+
+def _github_review_bridge_module():
+    scripts_git = ROOT / "scripts" / "git"
+    if str(scripts_git) not in sys.path:
+        sys.path.insert(0, str(scripts_git))
+    try:
+        import github_review_bridge
+    except ImportError as exc:  # pragma: no cover - deployment packaging guard
+        raise SystemExit("GitHub review bridge is unavailable") from exc
+    return github_review_bridge
 
 
 def _delivery_contract_payload(task: Mapping[str, Any]) -> dict[str, Any]:
@@ -6609,6 +6630,40 @@ def _validated_pr_binding(binding: Mapping[str, Any], task_id: str) -> dict[str,
         or f"task/{task_id}",
         "base": str(binding.get("base") or DEFAULT_APPROVAL_BASE_BRANCH).strip()
         or DEFAULT_APPROVAL_BASE_BRANCH,
+    }
+
+
+def validate_handoff_pr_delivery_binding(
+    task: Mapping[str, Any],
+    config: dict[str, Any],
+    binding: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return a PR binding only after the shared GitHub validator accepts it."""
+
+    task_id = str(task.get("id") or "").strip()
+    normalized = _validated_pr_binding(binding, task_id)
+    repository_id = task_primary_repository_id(config, dict(task))
+    repository_slug_value = repository_slug(config, repository_id)
+    if repository_id is None or not repository_slug_value:
+        raise SystemExit(
+            "PR handoff requires one delivery repository with a configured "
+            f"GitHub slug for {task_id or '?'}"
+        )
+    github_review_bridge = _github_review_bridge_module()
+    try:
+        validated = github_review_bridge.validate_review_binding(
+            repository=repository_slug_value,
+            binding=normalized,
+        )
+    except github_review_bridge.GitHubReviewBridgeError as exc:
+        raise SystemExit(
+            f"GitHub rejected the proposed delivery binding for {task_id or '?'}: {exc}"
+        ) from exc
+    return {
+        "pr": validated.pr,
+        "head_sha": validated.head_sha,
+        "head_branch": validated.head_branch,
+        "base": validated.base,
     }
 
 
@@ -6694,17 +6749,18 @@ def resolve_handoff_delivery_binding(
         os.environ.get("REVIEW_BASE", "").strip() or DEFAULT_APPROVAL_BASE_BRANCH
     )
     if explicit_pr:
+        candidate = _validated_pr_binding(
+            {
+                "pr": os.environ.get("REVIEW_PR", "").strip().lstrip("#"),
+                "head_sha": os.environ.get("REVIEW_HEAD_SHA", "").strip(),
+                "head_branch": head_branch,
+                "base": base_branch,
+            },
+            task_id,
+        )
         return {
             "kind": "pull_request",
-            **_validated_pr_binding(
-                {
-                    "pr": os.environ.get("REVIEW_PR", "").strip().lstrip("#"),
-                    "head_sha": os.environ.get("REVIEW_HEAD_SHA", "").strip(),
-                    "head_branch": head_branch,
-                    "base": base_branch,
-                },
-                task_id,
-            ),
+            **validate_handoff_pr_delivery_binding(task, config, candidate),
         }
 
     if requires_pr_delivery_binding(task):
@@ -6911,16 +6967,7 @@ def bridge_github_review_decision(
     manufacturing an internal-only approval.
     """
 
-    scripts_git = ROOT / "scripts" / "git"
-    if str(scripts_git) not in sys.path:
-        sys.path.insert(0, str(scripts_git))
-    try:
-        import github_review_bridge
-    except ImportError as exc:  # pragma: no cover - deployment packaging guard
-        raise SystemExit(
-            "GitHub review bridge is unavailable; refusing an internal-only "
-            f"{decision} decision for {task.get('id') or '?'}."
-        ) from exc
+    github_review_bridge = _github_review_bridge_module()
 
     config = load_config()
     repository_id = task_primary_repository_id(config, task)
@@ -6939,6 +6986,8 @@ def bridge_github_review_decision(
             message=message,
             binding=binding,
         )
+    except github_review_bridge.ReviewBindingMismatch as exc:
+        raise ReviewBindingMismatchError(str(exc)) from exc
     except github_review_bridge.GitHubReviewBridgeError as exc:
         raise SystemExit(
             f"GitHub review bridge rejected {decision} for "
@@ -7075,17 +7124,23 @@ def prepare_external_mutation_preflight(
             candidate,
             transition="review_approved",
         )
-        bridge_result = (
-            bridge_github_review_decision(
-                task,
-                actor=actor,
-                decision="approve",
-                message=message,
-                binding=binding,
+        try:
+            bridge_result = (
+                bridge_github_review_decision(
+                    task,
+                    actor=actor,
+                    decision="approve",
+                    message=message,
+                    binding=binding,
+                )
+                if binding
+                else {}
             )
-            if binding
-            else {}
-        )
+        except ReviewBindingMismatchError as exc:
+            raise SystemExit(
+                f"GitHub rejected approval for {task_id}: {exc}. Reopen the task "
+                "and hand off the actual PR head before approving it."
+            ) from exc
         payload.update(
             {
                 "review_notes_zh": review_notes,
@@ -7120,13 +7175,21 @@ def prepare_external_mutation_preflight(
             elif isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
                 binding = dict(task[APPROVAL_BINDING_KEY])
             if binding:
-                bridge_result = bridge_github_review_decision(
-                    task,
-                    actor=actor,
-                    decision="reopen",
-                    message=message,
-                    binding=binding,
-                )
+                try:
+                    bridge_result = bridge_github_review_decision(
+                        task,
+                        actor=actor,
+                        decision="reopen",
+                        message=message,
+                        binding=binding,
+                    )
+                except ReviewBindingMismatchError as exc:
+                    # A definitive PR identity mismatch is itself proof that
+                    # this canonical binding cannot stay reviewable.  Reopen
+                    # through the existing CAS-bound lifecycle command and let
+                    # the owner hand off the actual head.  Network/CLI errors
+                    # remain fail-closed in bridge_github_review_decision.
+                    payload[REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY] = str(exc)
         payload.update(
             {
                 APPROVAL_BINDING_KEY: dict(binding),

@@ -70,6 +70,10 @@ class GitHubReviewBridgeError(RuntimeError):
     """The governed decision could not be represented on GitHub."""
 
 
+class ReviewBindingMismatch(GitHubReviewBridgeError):
+    """The bound PR identity definitively differs from GitHub's current PR."""
+
+
 class JsonRunner(Protocol):
     def run_json(
         self,
@@ -560,9 +564,9 @@ def _pr_snapshot(
     if not isinstance(payload, Mapping):
         raise GitHubReviewBridgeError(f"GitHub PR #{binding.pr} metadata is unavailable")
     if int(payload.get("number") or 0) != binding.pr:
-        raise GitHubReviewBridgeError(f"GitHub returned the wrong PR for #{binding.pr}")
+        raise ReviewBindingMismatch(f"GitHub returned the wrong PR for #{binding.pr}")
     if str(payload.get("state") or "").upper() not in {"OPEN", "MERGED"}:
-        raise GitHubReviewBridgeError(f"GitHub PR #{binding.pr} is not open or merged")
+        raise ReviewBindingMismatch(f"GitHub PR #{binding.pr} is not open or merged")
     actual_head = str(payload.get("headRefOid") or "").strip().lower()
     actual_branch = str(payload.get("headRefName") or "").strip()
     actual_base = str(payload.get("baseRefName") or "").strip()
@@ -574,11 +578,38 @@ def _pr_snapshot(
     if actual_base != binding.base:
         mismatches.append(f"base {actual_base or 'missing'} != {binding.base}")
     if mismatches:
-        raise GitHubReviewBridgeError(
+        raise ReviewBindingMismatch(
             f"GitHub PR #{binding.pr} no longer matches reviewed identity: "
             + "; ".join(mismatches)
         )
     return dict(payload)
+
+
+def validate_review_binding(
+    *,
+    repository: str,
+    binding: Mapping[str, Any] | ReviewBinding,
+    runner: JsonRunner | None = None,
+) -> ReviewBinding:
+    """Verify one proposed canonical binding against GitHub without mutation.
+
+    Handoff calls this before persisting review identity.  Review decisions call
+    the same ``_pr_snapshot`` path before any GitHub write, so exact PR identity
+    has one validator instead of separate handoff and reviewer interpretations.
+    """
+
+    repository = _require_repository_slug(repository)
+    normalized = (
+        binding
+        if isinstance(binding, ReviewBinding)
+        else ReviewBinding.from_mapping(binding)
+    )
+    _pr_snapshot(
+        runner or GhJsonRunner(),
+        repository=repository,
+        binding=normalized,
+    )
+    return normalized
 
 
 def _reviews(

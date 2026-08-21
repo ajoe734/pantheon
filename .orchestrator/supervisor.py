@@ -74,7 +74,6 @@ from dispatch_policy import (
     normalized_status_set,
     ready_dispatch_settings,
 )
-from github_bus import GitHubBusError, resolve_gh_binary, run_gh_process, sync_github_bus
 from multi_repo_registry import (
     artifact_repository_id,
     repository_configured_local_path,
@@ -4093,7 +4092,7 @@ def worker_process_generation_is_current(worker: Mapping[str, Any]) -> bool:
 def normalize_pr_url(config: dict[str, Any], url: str | None) -> str | None:
     if not url:
         return None
-    repo = (((config.get("github_bus") or {}).get("repo")) or "").strip()
+    repo = str(repository_slug(config, "pantheon") or "").strip()
     if not repo:
         return url
     expected = f"github.com/{repo}/"
@@ -11902,6 +11901,12 @@ def build_dispatch_event(
     reason: str,
     task_lookup: TaskResolver | dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    resolver = _task_resolver(task_lookup)
+    dependencies = [
+        str(item or "").strip()
+        for item in (task.get("depends_on") or [])
+        if str(item or "").strip()
+    ]
     task_payload = {
         "id": task.get("id"),
         "generation": task_generation(task),
@@ -11909,6 +11914,15 @@ def build_dispatch_event(
         "reviewer": task.get("reviewer"),
         "artifacts": list(task.get("artifacts", []) or []),
         "next": task.get("next"),
+        "depends_on": dependencies,
+        "dependency_truth": [
+            {
+                "task_id": dependency_id,
+                "status": resolver.dependency_status(dependency_id),
+                "satisfied": resolver.dependency_satisfied(dependency_id),
+            }
+            for dependency_id in dependencies
+        ],
     }
     for key in (
         "task_class",
@@ -12936,15 +12950,6 @@ def run_once(
             maintenance_runtime_snapshot,
             quiet=quiet,
         )
-        github_bus_changed = bool(
-            _safe_phase(
-                "sync_github_bus",
-                sync_github_bus,
-                config,
-                maintenance_runtime_snapshot,
-                quiet=quiet,
-            )
-        )
         maintenance_changed = bool(
             _safe_phase(
                 "apply_post_dispatch_maintenance",
@@ -12962,11 +12967,7 @@ def run_once(
                 quiet=quiet,
             )
         )
-        changed = (
-            maintenance_changed
-            or github_bus_changed
-            or changed
-        )
+        changed = maintenance_changed or changed
         prune_changed = bool(
             _safe_phase(
                 "prune_worktrees_reserved",
