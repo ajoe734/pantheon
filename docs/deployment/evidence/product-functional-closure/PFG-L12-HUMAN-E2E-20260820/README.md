@@ -33,6 +33,14 @@ confirm that the dev worker restart window is clear.  The deployed OpenClaw
 profile and its credentials must already be healthy; the harness does not
 substitute a fake provider when they are unavailable.
 
+When the current dev BFF runs strict auth, obtain a short-lived token through
+its configured `POST /bff/auth/dev-login` client-credentials exchange and put
+only that token in a mode-`0600` secure file. Set
+`PANTHEON_L12_BFF_BEARER_FILE` to the file path when running the suite. Do not
+put the bearer token in shell history, committed evidence, or an inline
+command; the harness reads the file locally and records neither its contents
+nor an environment dump.
+
 ```bash
 PANTHEON_L12_HUMAN_LEARNING_E2E=1 \
 PANTHEON_L12_COMPOSE_PROJECT=<current-dev-project> \
@@ -47,7 +55,7 @@ show exactly one candidate, memo, and Governance handoff for its run token.
 Commit the bounded run report and update `evidence.json` with the exact
 deployed revision before requesting independent review.
 
-## Current execution blocker (2026-08-21)
+## Superseded execution blocker (2026-08-21)
 
 This task worktree has no running local Compose project.  A read-only attempt
 to reach the declared dev VM could not authenticate: the configured `gcloud`

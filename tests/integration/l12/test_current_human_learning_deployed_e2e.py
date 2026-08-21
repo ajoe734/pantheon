@@ -121,9 +121,9 @@ class DeployedHumanLearningHarness:
         self.consultation_url = os.getenv(
             "PANTHEON_L12_CONSULTATION_URL", "http://127.0.0.1:18096"
         ).rstrip("/")
-        self.bff_bearer = os.getenv(
+        self.bff_bearer = self._secret_from_env_or_file(
             "PANTHEON_L12_BFF_BEARER",
-            f"l12-current-e2e:operator,admin:{self.tenant_id}",
+            default=f"l12-current-e2e:operator,admin:{self.tenant_id}",
         )
         self.agora_handoff_token = os.getenv(
             "PANTHEON_L12_AGORA_HANDOFF_TOKEN",
@@ -161,6 +161,30 @@ class DeployedHumanLearningHarness:
             detail = completed.stderr.strip() or completed.stdout.strip() or "command failed"
             raise RuntimeError(f"{argv[0]} exited {completed.returncode}: {_bounded_text(detail)}")
         return completed.stdout
+
+    @staticmethod
+    def _secret_from_env_or_file(name: str, *, default: str) -> str:
+        """Read an opt-in credential without ever placing it in run evidence.
+
+        Strict current-dev BFF deployments require a JWT obtained from the
+        server-bound dev-login exchange. A file input lets the operator pass
+        that short-lived credential without exposing it in an environment
+        dump, command history, pytest report, or committed artifact.
+        """
+
+        inline_value = os.getenv(name, "").strip()
+        file_name = os.getenv(f"{name}_FILE", "").strip()
+        if inline_value and file_name:
+            raise RuntimeError(f"set only one of {name} or {name}_FILE")
+        if file_name:
+            try:
+                value = Path(file_name).read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise RuntimeError(f"could not read {name}_FILE") from exc
+            if not value:
+                raise RuntimeError(f"{name}_FILE is empty")
+            return value
+        return inline_value or default
 
     def _compose_argv(self, *args: str) -> list[str]:
         argv = ["docker", "compose", "-p", self.compose_project]
