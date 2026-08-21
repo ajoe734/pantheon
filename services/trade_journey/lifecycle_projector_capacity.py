@@ -36,7 +36,9 @@ from services.trade_journey.lifecycle_projector import (
     AtomicProjectionBundle,
     ConflictingLifecycleEvent,
     LifecycleProjector,
+    RelationalLifecycleProjector,
 )
+from services.trade_journey.projection_store import ProjectionStore
 
 # Same eight canonical lifecycle stages exercised by
 # ``test_lifecycle_projector.lifecycle_rows``. Every synthetic journey uses a
@@ -343,7 +345,7 @@ def _rss_at_or_before(samples: Sequence[BatchSample], cumulative_events: int) ->
 
 
 def run_capacity_benchmark(
-    projector: LifecycleProjector,
+    projector: LifecycleProjector | RelationalLifecycleProjector,
     *,
     total_events: int = DEFAULT_EVENT_COUNT,
     total_loop_runs: int = DEFAULT_LOOP_RUN_COUNT,
@@ -624,8 +626,17 @@ def run_fault_matrix(
     return results
 
 
-def _write_report(path: Path, report: CapacityReport, faults: list[FaultScenarioResult]) -> None:
+def _write_report(
+    path: Path,
+    report: CapacityReport,
+    faults: list[FaultScenarioResult],
+    *,
+    writer_backend: str,
+    projection_schema: str = "",
+) -> None:
     payload = {
+        "writer_backend": writer_backend,
+        "projection_schema": projection_schema,
         "capacity": report.to_dict(),
         "fault_matrix": [
             {"name": r.name, "passed": r.passed, "detail": r.detail} for r in faults
@@ -643,15 +654,41 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--fault-journey-count", type=int, default=4)
     parser.add_argument("--workdir", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--projection-dsn",
+        default=os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", ""),
+        help="PostgreSQL DML DSN for the relational projector (required)",
+    )
+    parser.add_argument(
+        "--projection-schema",
+        default=os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA", ""),
+        help="existing projection schema to measure (required)",
+    )
+    parser.add_argument(
+        "--bootstrap-projection-schema",
+        action="store_true",
+        help="explicitly create the named schema before the run; test-only",
+    )
     args = parser.parse_args(argv)
+
+    if not args.projection_dsn:
+        parser.error("--projection-dsn or LIFECYCLE_PROJECTOR_PROJECTION_DSN is required")
+    if not args.projection_schema:
+        parser.error(
+            "--projection-schema or LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA is required"
+        )
 
     import tempfile
 
     workdir = args.workdir or Path(tempfile.mkdtemp(prefix="lifecycle-capacity-"))
     workdir.mkdir(parents=True, exist_ok=True)
-    projector = LifecycleProjector(
-        state_path=workdir / "capacity" / "controller_state.json",
-        bundle_root=workdir / "capacity",
+    store = ProjectionStore(
+        args.projection_dsn,
+        schema=args.projection_schema,
+        bootstrap=args.bootstrap_projection_schema,
+    )
+    projector = RelationalLifecycleProjector(
+        store,
         deployment_sha="capacity-benchmark",
     )
     report = run_capacity_benchmark(
@@ -669,7 +706,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     faults = run_fault_matrix(_fault_workdir, journey_count=args.fault_journey_count)
 
     if args.output:
-        _write_report(args.output, report, faults)
+        _write_report(
+            args.output,
+            report,
+            faults,
+            writer_backend="postgres",
+            projection_schema=args.projection_schema,
+        )
 
     failures = report.gate_failures() + [f.name for f in faults if not f.passed]
     for line in json.dumps(report.to_dict(), indent=2, sort_keys=True).splitlines():

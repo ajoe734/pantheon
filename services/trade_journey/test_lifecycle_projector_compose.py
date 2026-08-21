@@ -146,6 +146,12 @@ def test_lifecycle_projector_capacity_benchmark_is_profile_gated_and_bounded():
     assert benchmark["environment"]["TELEMETRY_DB_DSN"].startswith(
         "${TELEMETRY_DB_DSN:-postgresql://"
     )
+    assert benchmark["environment"]["LIFECYCLE_PROJECTOR_PROJECTION_DSN"].startswith(
+        "${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://"
+    )
+    assert benchmark["environment"]["LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"] == (
+        "${LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA:-trade_journey_projection}"
+    )
     assert benchmark["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert benchmark["depends_on"]["telemetry"]["condition"] == "service_healthy"
 

@@ -22,6 +22,7 @@ from services.trade_journey.lifecycle_projector_capacity import (
     _journey_event_types,
     generate_corpus_batches,
     journey_rows,
+    main,
     run_capacity_benchmark,
     run_fault_matrix,
     rss_bytes,
@@ -93,6 +94,11 @@ def test_generate_corpus_batches_covers_exact_scale_in_seq_order():
 
 def test_rss_bytes_is_positive():
     assert rss_bytes() > 0
+
+
+def test_cli_refuses_to_measure_the_legacy_json_projector():
+    with pytest.raises(SystemExit, match="2"):
+        main(["--events", "2", "--loop-runs", "1"])
 
 
 def test_run_capacity_benchmark_projects_full_small_scale_corpus(tmp_path):

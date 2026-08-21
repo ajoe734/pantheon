@@ -1498,6 +1498,11 @@ services:
     mem_limit: ${LIFECYCLE_PROJECTOR_CAPACITY_MEMORY_LIMIT:-4g}
     environment:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # The benchmark measures the bounded relational writer.  It never
+      # silently falls back to the legacy JSON projector when this DML target
+      # is unavailable.
+      LIFECYCLE_PROJECTOR_PROJECTION_DSN: ${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA: ${LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA:-trade_journey_projection}
       GIT_SHA: ${GIT_SHA:-unknown}
     volumes:
       - bff-data:/data/bff
