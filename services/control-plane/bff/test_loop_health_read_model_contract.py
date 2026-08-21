@@ -246,13 +246,20 @@ def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatc
     }
 
     source_loop = next(item for item in payload["items"] if item["loop_id"] == "source_ingestion")
-    assert source_loop["current_maturity"] == "api-only"
-    assert source_loop["target_maturity"] == "reconciled"
+    assert "current_maturity" not in source_loop
+    assert "target_maturity" not in source_loop
     # The catalog declares an implemented controller, so the absence of a
     # record is "unobserved", not "not_implemented" -- and still not live.
     assert source_loop["controller"]["status"] == "implemented"
     assert source_loop["controller_health"]["status"] == "unobserved"
     assert source_loop["controller_health"]["current_record_accepted"] is False
+    assert source_loop["runtime_maturity"] == {
+        "state": "unobserved",
+        "source": "missing",
+        "truth_level": "registry_metadata",
+        "current_record_accepted": False,
+        "reason": "record lacks accepted current controller-runtime provenance",
+    }
     assert source_loop["last_success"] is None
     assert source_loop["last_failure"] is None
 
@@ -590,13 +597,14 @@ def test_loop_health_cannot_combine_lower_live_truth_with_higher_registry_claim(
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     packet = data["evidence_packet"]
-    assert packet["highest_truth_level"] == "proven_live_evidence"
+    assert packet["highest_truth_level"] == "reconciled_live_proof"
     assert packet["operator_truth"]["truth_level"] == "reconciled_live_proof"
     assert packet["operator_truth"]["accepted_as_live"] is True
     assert packet["accepted_live_liveness"] is True
     assert packet["can_claim_reconciled"] is True
     assert packet["can_claim_proven_live"] is False
     assert data["controller_health"]["current_record_accepted"] is True
+    assert data["runtime_maturity"]["state"] == "reconciled"
     assert data["live_status"]["is_reconciled"] is True
     assert data["live_status"]["is_live"] is False
 
@@ -812,27 +820,26 @@ def test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped(
         assert packet["highest_truth_level"] == "reconciled_live_proof", loop_id
         assert packet["archived_task_completion_accepted"] is False, loop_id
 
-        # Nothing is promoted: the catalog does not admit any live claim yet.
-        assert packet["eligible_live_truth_levels"] == [], loop_id
-        assert packet["accepted_live_liveness"] is False, loop_id
-        assert packet["can_claim_reconciled"] is False, loop_id
+        # Current records, not catalog maturity/task claims, decide truth.
+        assert packet["accepted_live_liveness"] is (item["controller"]["status"] == "implemented"), loop_id
+        assert packet["can_claim_reconciled"] is (item["controller"]["status"] == "implemented"), loop_id
         assert packet["can_claim_proven_live"] is False, loop_id
-        assert packet["operator_truth"]["degraded"] is True, loop_id
+        assert packet["operator_truth"]["degraded"] is (item["controller"]["status"] != "implemented"), loop_id
         assert item["live_status"]["is_live"] is False, loop_id
-        assert item["live_status"]["is_reconciled"] is False, loop_id
+        assert item["live_status"]["is_reconciled"] is (item["controller"]["status"] == "implemented"), loop_id
 
         contract_status = item["controller"]["status"]
         if contract_status == "implemented":
-            # The record matches the catalog contract, so it is accepted as a
-            # current controller observation -- but still not as live truth.
+            # The record matches the stable controller contract and is current
+            # runtime truth; no catalog maturity/task field participates.
             assert packet["runtime_controller_record_qualified"] is True, loop_id
             assert health["current_record_accepted"] is True, loop_id
             assert health["status"] == "healthy", loop_id
             assert health["source"] == "controller_store", loop_id
             assert _truth_source(packet, "reconciled_live_proof")["operator_note"] == (
-                "The catalog maturity and controller contract do not admit this "
-                "live claim."
+                "Accepted as live liveness proof."
             ), loop_id
+            assert item["runtime_maturity"]["state"] == "reconciled", loop_id
         else:
             assert contract_status == "not_implemented", loop_id
             assert health["current_record_accepted"] is False, loop_id
