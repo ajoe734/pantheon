@@ -1586,6 +1586,57 @@ def _configured_delivery_endpoints(
     return endpoints
 
 
+def reconcile_delivery_health_topology(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Prune health rows that no longer belong to delivery topology.
+
+    Runtime delivery health is a projection of configured endpoints and the
+    capacity accounts those endpoints reference.  A provider declaration on
+    its own is not a delivery lane and therefore cannot retain an endpoint or
+    account row.  This reconciler deliberately keeps every configured row
+    byte-for-byte and leaves all non-health runtime state untouched.
+
+    The caller owns persistence.  Production calls this only from
+    ``apply_post_dispatch_maintenance``, inside the existing reserved runtime
+    phase and whole-state CAS transaction.
+    """
+
+    health = state.get("delivery_health")
+    if not isinstance(health, Mapping):
+        return False
+
+    endpoints = _configured_delivery_endpoints(config)
+    configured = {
+        "endpoints": {
+            normalize_agent_id(endpoint.endpoint_id) for endpoint in endpoints
+        },
+        "accounts": {
+            normalize_agent_id(endpoint.account_id) for endpoint in endpoints
+        },
+    }
+    updated: dict[str, Any] | None = None
+    for bucket, allowed in configured.items():
+        records = health.get(bucket)
+        if not isinstance(records, Mapping):
+            continue
+        orphaned = [identity for identity in records if str(identity) not in allowed]
+        if not orphaned:
+            continue
+        if updated is None:
+            updated = deepcopy(dict(health))
+        updated_records = dict(records)
+        for identity in orphaned:
+            updated_records.pop(identity, None)
+        updated[bucket] = updated_records
+
+    if updated is None:
+        return False
+    state["delivery_health"] = updated
+    return True
+
+
 def _delivery_health_topology_fingerprint(config: dict[str, Any]) -> str:
     """Hash the exact endpoint/provider/account triples that gate delivery.
 
@@ -13047,6 +13098,10 @@ def apply_post_dispatch_maintenance(
             config, state, delivery_health_observations
         )
     ) or changed
+    # Apply observations first, then remove any row which is not owned by the
+    # current endpoint/account topology.  This order ensures even an obsolete
+    # in-flight observation cannot recreate a provider-only orphan projection.
+    changed = bool(reconcile_delivery_health_topology(config, state)) or changed
     changed = (
         bool(record_delivery_health_refresh_authority_consumed(config, state))
         or changed

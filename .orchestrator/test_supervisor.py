@@ -2080,6 +2080,161 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertEqual(observations[0]["endpoint_id"], "codex")
         probe.assert_called_once_with(self.config, "codex", force=True)
 
+    def test_topology_reconciliation_migrates_shared_claude_health_once(self) -> None:
+        """The former shared Claude row cannot survive a split topology.
+
+        Configured claude1/claude2 records and unrelated runtime state must be
+        preserved exactly.  A second pass is a no-op so an unchanged topology
+        does not manufacture an every-cycle health write.
+        """
+
+        self.config["agents"] = {
+            "claude1": {
+                "display_name": "Claude1",
+                "provider": "claude1",
+                "adapter": "claude_cli",
+                "max_parallel": 1,
+            },
+            "claude2": {
+                "display_name": "Claude2",
+                "provider": "claude2",
+                "adapter": "claude_cli",
+                "max_parallel": 1,
+            },
+        }
+        self.config["providers"] = {
+            "claude1": {"delivery_mode": "claude_cli", "account": "claude1"},
+            "claude2": {"delivery_mode": "claude_cli", "account": "claude2"},
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"] = {
+            "claude1": 1,
+            "claude2": 1,
+        }
+        claude1_health = {
+            "state": "healthy",
+            "valid_until": "2999-01-01T00:00:00Z",
+            "detail": "preserve claude1 evidence",
+        }
+        claude2_health = {
+            "state": "retry_after",
+            "retry_at": "2999-01-01T00:00:00Z",
+            "detail": "preserve claude2 evidence",
+        }
+        state = {
+            "workers": {"unrelated": {"status": "completed"}},
+            "queue": {"events": {}},
+            "watchdog": {"safe_mode_reason": "preserve unrelated state"},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "claude1": dict(claude1_health),
+                    "claude2": dict(claude2_health),
+                    "claude_shared": {
+                        "state": "unavailable",
+                        "detail": "retired endpoint",
+                    },
+                },
+                "accounts": {
+                    "claude1": dict(claude1_health),
+                    "claude2": dict(claude2_health),
+                    "claude_account_shared_max_1": {
+                        "state": "retry_after",
+                        "detail": "retired shared account",
+                    },
+                },
+                "projection_note": "preserve unrelated health metadata",
+            },
+        }
+
+        self.assertTrue(
+            supervisor.reconcile_delivery_health_topology(self.config, state)
+        )
+        self.assertEqual(
+            state["delivery_health"]["endpoints"],
+            {"claude1": claude1_health, "claude2": claude2_health},
+        )
+        self.assertEqual(
+            state["delivery_health"]["accounts"],
+            {"claude1": claude1_health, "claude2": claude2_health},
+        )
+        self.assertEqual(
+            state["delivery_health"]["projection_note"],
+            "preserve unrelated health metadata",
+        )
+        self.assertEqual(state["workers"], {"unrelated": {"status": "completed"}})
+        self.assertEqual(
+            state["watchdog"],
+            {"safe_mode_reason": "preserve unrelated state"},
+        )
+        reconciled = json.loads(json.dumps(state))
+        self.assertFalse(
+            supervisor.reconcile_delivery_health_topology(self.config, state)
+        )
+        self.assertEqual(state, reconciled)
+
+    def test_post_dispatch_maintenance_prunes_provider_only_health_projection(self) -> None:
+        """A provider without a delivery endpoint owns no durable health row."""
+
+        self.config["providers"]["orphan"] = {
+            "delivery_mode": "codex",
+            "account": "orphan_account",
+        }
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": healthy_delivery_health(self.config),
+        }
+        state["delivery_health"]["endpoints"]["orphan"] = {
+            "state": "unavailable",
+        }
+        state["delivery_health"]["accounts"]["orphan_account"] = {
+            "state": "retry_after",
+        }
+
+        maintenance_helpers = (
+            "reconcile_runtime_on_boot",
+            "reconcile_unavailable_assignments",
+            "reconcile_failure_loops",
+            "reconcile_queue_records",
+            "reconcile_queue_intents",
+            "reconcile_ownerless_in_progress_tasks",
+            "maybe_auto_commit_archive",
+        )
+        patches = [
+            mock.patch.object(supervisor, helper, return_value=False)
+            for helper in maintenance_helpers
+        ]
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6],
+        ):
+            self.assertTrue(
+                supervisor.apply_post_dispatch_maintenance(
+                    self.config,
+                    state,
+                    delivery_health_observations=[],
+                    task_state_projection_snapshot=None,
+                    assistant_dev_bridge_snapshot=None,
+                    quiet=True,
+                )
+            )
+
+        self.assertNotIn("orphan", state["delivery_health"]["endpoints"])
+        self.assertNotIn("orphan_account", state["delivery_health"]["accounts"])
+        self.assertEqual(
+            set(state["delivery_health"]["endpoints"]),
+            {"codex", "codex2"},
+        )
+        self.assertEqual(
+            set(state["delivery_health"]["accounts"]),
+            {"codex_account", "codex2_account"},
+        )
+
     def test_authorized_refresh_bypasses_future_retry_at_on_startup(self) -> None:
         """A stale account whose retry_at has not elapsed still blocks the
         due-only scan; the authorized scan targets it anyway on a fresh
