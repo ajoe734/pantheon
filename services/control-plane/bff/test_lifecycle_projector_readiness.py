@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
@@ -141,3 +142,57 @@ def test_bff_readyz_fails_closed_when_read_store_is_not_projector_current(
         "expected_path": str(tmp_path / "current" / "loop_runs.json"),
         "aligned": False,
     }
+
+
+def test_bff_readyz_uses_exact_relational_controller_after_reader_cutover(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _configure_dependencies(monkeypatch, tmp_path)
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres")
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_HEALTH_ENVIRONMENT", "paper")
+    monkeypatch.setenv("GIT_SHA", "deadbeef")
+
+    controller = {
+        "controller_id": "canonical-lifecycle-projector",
+        "checkpoint": 19,
+        "source_high_watermark": 19,
+        "backlog": 0,
+        "generation": 7,
+        "deployment_sha": "deadbeef",
+        "mode": "live",
+        "status": "ready",
+        "accepted_live": True,
+        "last_poll_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "last_error": None,
+        "quarantine_count": 0,
+    }
+
+    class Reader:
+        def controller_freshness(self, **kwargs):
+            assert kwargs == {"tenant_id": "default", "environment": "paper"}
+            return dict(controller)
+
+    monkeypatch.setattr(
+        bff_main.read_store,
+        "trade_journey_projection_reader",
+        lambda: Reader(),
+    )
+
+    response = TestClient(bff_main.app).get("/readyz")
+    assert response.status_code == 200, response.text
+    dependency = response.json()["dependencies"]["lifecycle_projector"]
+    assert dependency["reader_backend"] == "postgres"
+    assert dependency["deployment_sha"] == "deadbeef"
+    assert dependency["checkpoint"] == dependency["source_high_watermark"] == 19
+    assert dependency["legacy_recovery_stores"]["preserved"] is True
+    assert dependency["legacy_recovery_stores"]["accepted_reader"] is False
+
+    controller["deployment_sha"] = "stale-sha"
+    rejected = TestClient(bff_main.app).get("/readyz")
+    assert rejected.status_code == 503
+    rejected_dependency = rejected.json()["dependencies"]["lifecycle_projector"]
+    assert rejected_dependency["ready"] is False
+    assert rejected_dependency["error_reason"] == (
+        "deployment_sha_mismatch:stale-sha!=deadbeef"
+    )

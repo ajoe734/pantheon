@@ -6,6 +6,7 @@ import copy
 import json
 import os
 import random
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -517,5 +518,316 @@ def test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store(
     finally:
         import psycopg  # type: ignore[import]
 
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_backfill_duplicate_and_interruption_against_real_store(
+    postgres_dsn: str, tmp_path: Path
+):
+    """A durable duplicate and a new same-aggregate event share one DB batch.
+
+    The gate proves the third fetch is exactly rows 7--10, so row 9's durable
+    duplicate and row 10's new event cannot accidentally pass in separate
+    transactions. It then checks every relational mutation surface plus
+    category-hash and sampled-row parity against the source window.
+    """
+    from uuid import uuid4
+
+    import psycopg  # type: ignore[import]
+
+    from services.trade_journey.projection_store import ProjectionStore
+
+    schema_name = f"test_migrate_dup_{uuid4().hex[:8]}"
+    store = ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=True)
+    try:
+        base_rows = lifecycle_rows()
+        # Source rows 1--8 are already durable before the final fetch. The ninth
+        # fetched item repeats row 1 exactly (including its database-owned source
+        # sequence); the tenth item is source growth for the same journey/loop.
+        # Assigning a new sequence to the duplicate would fabricate an impossible
+        # telemetry_events row because event_id and ingested_seq are both unique.
+        dup_row = copy.deepcopy(base_rows[0])
+
+        new_event = copy.deepcopy(base_rows[-1])
+        new_event["event_id"] = "evt-paper-009"
+        new_event["ingested_seq"] = 9
+        new_event["created_at"] = "2026-07-15T00:00:09Z"
+        new_event["ingested_at"] = "2026-07-15T00:01:10Z"
+        new_event["payload"]["event_id"] = new_event["event_id"]
+        new_event["payload"]["created_at"] = new_event["created_at"]
+
+        all_rows = base_rows + [dup_row, new_event]
+        snapshot_path = tmp_path / "snapshot.json"
+
+        # Interruption 1: Process batch 1 (size 3) -> rows 1..3
+        coord1 = BackfillCoordinator(
+            store,
+            controller_id="tj-proj-dup-it",
+            tenant_scope="tenant-a",
+            environment_scope="paper",
+            fetch_batch=_paged_fetch(base_rows),
+            snapshot_path=snapshot_path,
+            batch_size=3,
+        )
+        res1 = coord1.run(max_batches=1)
+        assert res1["batches"] == 1
+        assert res1["checkpoint"] == 3
+
+        # Interruption 2: Process batch 2 (size 3) -> rows 4..6
+        coord2 = BackfillCoordinator(
+            store,
+            controller_id="tj-proj-dup-it",
+            tenant_scope="tenant-a",
+            environment_scope="paper",
+            fetch_batch=_paged_fetch(base_rows),
+            snapshot_path=snapshot_path,
+            batch_size=3,
+        )
+        res2 = coord2.run(max_batches=1)
+        assert res2["batches"] == 1
+        assert res2["checkpoint"] == 6
+
+        controller_before = store.get_controller_state(
+            "tj-proj-dup-it-migrate", "tenant-a", "paper"
+        )
+        assert controller_before is not None
+        assert controller_before.checkpoint_seq == 6
+        assert controller_before.projection_revision == 2
+
+        duplicated_event_id = str(base_rows[0]["event_id"])
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT event_id, ingested_seq, fingerprint, disposition,
+                       projection_revision, projected_at
+                FROM {schema_name}.event_receipts
+                WHERE event_id = %s
+                """,
+                (duplicated_event_id,),
+            )
+            duplicate_receipt_before = cur.fetchone()
+            cur.execute(
+                f"""
+                SELECT source_event_id, source_ingested_seq, stage_name,
+                       stage_status, projection_revision, fingerprint, recorded_at
+                FROM {schema_name}.journey_stages
+                WHERE source_event_id = %s
+                ORDER BY stage_name
+                """,
+                (duplicated_event_id,),
+            )
+            duplicate_stages_before = cur.fetchall()
+        assert duplicate_receipt_before is not None
+        assert duplicate_stages_before
+
+        final_fetch_calls: list[tuple[int, int, list[int]]] = []
+        final_window = all_rows[6:]
+
+        def fetch_final_window(after_seq: int, limit: int) -> list[dict[str, Any]]:
+            fetched = final_window if not final_fetch_calls else []
+            # Record source-list ordinals, not ingested_seq: ordinal 9 is the
+            # replay of source row 1 and ordinal 10 owns new source sequence 9.
+            ordinals = [7, 8, 9, 10] if fetched else []
+            final_fetch_calls.append((after_seq, limit, ordinals))
+            return fetched
+
+        # Interruption 3: one size-4 fetch and one projection transaction owns
+        # rows 7--10, including duplicate row 9 and new row 10 together.
+        coord3 = BackfillCoordinator(
+            store,
+            controller_id="tj-proj-dup-it",
+            tenant_scope="tenant-a",
+            environment_scope="paper",
+            fetch_batch=fetch_final_window,
+            snapshot_path=snapshot_path,
+            batch_size=4,
+        )
+        res3 = coord3.run()
+        assert final_fetch_calls == [(6, 4, [7, 8, 9, 10]), (9, 4, [])]
+        assert res3 == {
+            "batches": 1,
+            "accepted": 3,
+            "duplicates": 1,
+            "quarantined": 0,
+            "ignored": 0,
+            "checkpoint": 9,
+        }
+
+        controller = store.get_controller_state(
+            "tj-proj-dup-it-migrate", "tenant-a", "paper"
+        )
+        assert controller is not None
+        assert controller.checkpoint_seq == 9
+        assert controller.source_high_watermark == 9
+        assert controller.backlog_count == 0
+        assert controller.projection_revision == controller_before.projection_revision + 1
+        assert controller.mode == "backfill"
+        assert controller.accepted_live is False
+
+        expected_rows = base_rows + [new_event]
+        expected_event_ids = {str(row["event_id"]) for row in expected_rows}
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT event_id, ingested_seq, source_event_type, disposition,
+                       projection_revision
+                FROM {schema_name}.event_receipts
+                ORDER BY ingested_seq
+                """
+            )
+            receipt_rows = cur.fetchall()
+            cur.execute(
+                f"""
+                SELECT source_event_id, source_ingested_seq, stage_name,
+                       stage_status, projection_revision, fingerprint
+                FROM {schema_name}.journey_stages
+                ORDER BY source_ingested_seq, source_event_id, stage_name
+                """
+            )
+            stage_rows = cur.fetchall()
+            cur.execute(
+                f"""
+                SELECT journey_id, status, last_ingested_seq, loop_run_id,
+                       projection_revision
+                FROM {schema_name}.journeys
+                """
+            )
+            journey_rows = cur.fetchall()
+            cur.execute(
+                f"""
+                SELECT loop_run_id, journey_id, lifecycle_summary,
+                       freshness_lineage, projection_revision
+                FROM {schema_name}.loop_runs
+                """
+            )
+            loop_rows = cur.fetchall()
+            cur.execute(f"SELECT COUNT(*) FROM {schema_name}.controller")
+            controller_count = cur.fetchone()[0]
+            cur.execute(
+                f"""
+                SELECT event_id, ingested_seq, fingerprint, disposition,
+                       projection_revision, projected_at
+                FROM {schema_name}.event_receipts
+                WHERE event_id = %s
+                """,
+                (duplicated_event_id,),
+            )
+            duplicate_receipt_after = cur.fetchone()
+            cur.execute(
+                f"""
+                SELECT source_event_id, source_ingested_seq, stage_name,
+                       stage_status, projection_revision, fingerprint, recorded_at
+                FROM {schema_name}.journey_stages
+                WHERE source_event_id = %s
+                ORDER BY stage_name
+                """,
+                (duplicated_event_id,),
+            )
+            duplicate_stages_after = cur.fetchall()
+
+        # Receipt/stage sets contain each accepted canonical event once. The
+        # duplicate fetched item never becomes a second receipt or stage, the new
+        # event advances the controller, and the durable old rows remain unchanged.
+        assert len(receipt_rows) == len(expected_rows) == 9
+        assert {str(row[0]) for row in receipt_rows} == expected_event_ids
+        assert [int(row[1]) for row in receipt_rows] == [*range(1, 10)]
+        assert all(row[3] == "applied" for row in receipt_rows)
+        assert len(stage_rows) == len(expected_rows) == 9
+        assert {str(row[0]) for row in stage_rows} == expected_event_ids
+        assert len({(row[0], row[2]) for row in stage_rows}) == len(stage_rows)
+        assert duplicate_receipt_after == duplicate_receipt_before
+        assert duplicate_stages_after == duplicate_stages_before
+
+        assert journey_rows == [
+            (
+                "tj-paper-001",
+                "completed",
+                9,
+                "lr-run-paper-001",
+                controller.projection_revision,
+            )
+        ]
+        assert len(loop_rows) == 1
+        assert loop_rows[0][0] == "lr-run-paper-001"
+        assert loop_rows[0][1] == "tj-paper-001"
+        assert loop_rows[0][2]["canonical_event_count"] == len(expected_rows)
+        assert loop_rows[0][3]["last_source_offset"] == 9
+        assert loop_rows[0][4] == controller.projection_revision
+        assert controller_count == 1
+
+        # Stable category hashes and deterministic first/middle/last samples
+        # provide a bounded drill-down in addition to full key/count equality.
+        expected_category_counts = Counter(str(row["event_type"]) for row in expected_rows)
+        actual_category_counts = Counter(str(row[2]) for row in receipt_rows)
+        expected_categories = [
+            {"source_event_type": event_type, "count": count}
+            for event_type, count in sorted(expected_category_counts.items())
+        ]
+        actual_categories = [
+            {"source_event_type": event_type, "count": count}
+            for event_type, count in sorted(actual_category_counts.items())
+        ]
+        sample_source_rows = [
+            expected_rows[0],
+            expected_rows[len(expected_rows) // 2],
+            expected_rows[-1],
+        ]
+        expected_samples = [
+            {
+                "event_id": str(row["event_id"]),
+                "ingested_seq": int(row["ingested_seq"]),
+                "source_event_type": str(row["event_type"]),
+            }
+            for row in sample_source_rows
+        ]
+        sample_ids = {row["event_id"] for row in expected_samples}
+        actual_samples = [
+            {
+                "event_id": str(event_id),
+                "ingested_seq": int(ingested_seq),
+                "source_event_type": str(source_event_type),
+            }
+            for event_id, ingested_seq, source_event_type, _disposition, _revision in receipt_rows
+            if str(event_id) in sample_ids
+        ]
+        parity = summarize_parity(
+            [
+                compare_category(
+                    "receipt_category_counts",
+                    expected_categories,
+                    actual_categories,
+                    key_fields=["source_event_type"],
+                ),
+                compare_category(
+                    "receipt_samples",
+                    expected_samples,
+                    actual_samples,
+                    key_fields=["ingested_seq", "event_id"],
+                ),
+            ]
+        )
+        assert parity["mismatch_count"] == 0, parity
+        assert parity["unexplained_mismatch_count"] == 0, parity
+        assert all(category["match"] for category in parity["categories"].values())
+
+        persisted_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        assert persisted_snapshot["checkpoint"] == 9
+
+        # With the high watermark durably committed, a fresh coordinator sees
+        # backlog zero and performs no additional transaction.
+        coord4 = BackfillCoordinator(
+            store,
+            controller_id="tj-proj-dup-it",
+            tenant_scope="tenant-a",
+            environment_scope="paper",
+            fetch_batch=_paged_fetch(expected_rows),
+            snapshot_path=snapshot_path,
+            batch_size=3,
+        )
+        res4 = coord4.run()
+        assert res4["batches"] == 0
+        assert res4["checkpoint"] == 9
+    finally:
         with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
