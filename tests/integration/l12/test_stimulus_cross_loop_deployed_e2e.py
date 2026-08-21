@@ -4,14 +4,15 @@ Unlike the retained prebuilt-ID verifier, this gate starts all three domain
 E2E suites itself.  Those suites create new records through their deployed
 HTTP owners and emit temporary reports.  The parent gate accepts only reports
 created during this parent run, normalizes their trigger/terminal/authority/
-next-consumer evidence, and then reads the current Management loop-health
-surface.  No test imports a product store or creates a loop state store.
+next-consumer evidence, and accepts the current Management loop-health
+readback produced by that same Runtime run.  No test imports a product store
+or creates a loop state store.
 
 The gate is opt-in because it writes bounded paper-only proof records and
 restarts the isolated runtime worker while validating a functional failure.
 Set ``PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E=1`` along with the existing domain
-suite configuration, ``PANTHEON_L12_STIMULUS_EXPECTED_SHA``, BFF URL/token,
-and a temporary ``PANTHEON_L12_STIMULUS_EVIDENCE_OUTPUT`` path.
+suite configuration, ``PANTHEON_L12_STIMULUS_EXPECTED_SHA``, and a temporary
+``PANTHEON_L12_STIMULUS_EVIDENCE_OUTPUT`` path.
 """
 
 from __future__ import annotations
@@ -22,12 +23,11 @@ import os
 import subprocess
 import sys
 import tempfile
-import urllib.error
-import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 import pytest
@@ -86,24 +86,6 @@ def _required_env(name: str) -> str:
     if not value:
         raise StimulusProofError(f"{name} is required for the stimulus closure gate")
     return value
-
-
-def _read_secret(name: str) -> str:
-    inline = os.getenv(name, "").strip()
-    file_name = os.getenv(f"{name}_FILE", "").strip()
-    if inline and file_name:
-        raise StimulusProofError(f"set only one of {name} or {name}_FILE")
-    if file_name:
-        try:
-            value = Path(file_name).read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise StimulusProofError(f"could not read {name}_FILE") from exc
-        if not value:
-            raise StimulusProofError(f"{name}_FILE is empty")
-        return value
-    if not inline:
-        raise StimulusProofError(f"{name} or {name}_FILE is required")
-    return inline
 
 
 def _sha256(path: Path) -> str:
@@ -189,9 +171,6 @@ def _normalize_case(
 @dataclass(frozen=True)
 class Settings:
     expected_sha: str
-    bff_url: str
-    bff_bearer: str
-    tenant_id: str
     evidence_output: Path
     timeout_seconds: float
 
@@ -212,9 +191,6 @@ class Settings:
             raise StimulusProofError("stimulus timeout must be greater than zero and at most 3600 seconds")
         return cls(
             expected_sha=expected_sha,
-            bff_url=_required_env("PANTHEON_L12_STIMULUS_BFF_URL").rstrip("/"),
-            bff_bearer=_read_secret("PANTHEON_L12_STIMULUS_BFF_BEARER"),
-            tenant_id=_required_env("PANTHEON_L12_STIMULUS_TENANT_ID"),
             evidence_output=output,
             timeout_seconds=timeout_seconds,
         )
@@ -292,6 +268,7 @@ class StimulusDrivenClosureGate:
         env.update(
             {
                 "PANTHEON_L12_CROSS_LOOP_RUN_ID": self.run_id,
+                "PANTHEON_L12_EXPECTED_SHA": self.settings.expected_sha,
                 "PANTHEON_L12_REPORT_PATH": str(report_path),
             }
         )
@@ -358,62 +335,30 @@ class StimulusDrivenClosureGate:
             raise StimulusProofError("stimulus evidence did not normalize all twelve canonical loops")
 
     def _management_readback(self) -> None:
-        request = urllib.request.Request(
-            f"{self.settings.bff_url}/bff/v5/loop-health",
-            headers={
-                "Accept": "application/json",
-                "Authorization": (
-                    self.settings.bff_bearer
-                    if self.settings.bff_bearer.startswith("Bearer ")
-                    else f"Bearer {self.settings.bff_bearer}"
-                ),
-                "X-Tenant-Id": self.settings.tenant_id,
-            },
-            method="GET",
+        loop12_case = _report_cases("runtime", self._reports["runtime"]).get(
+            "loop_12_bff_typed_health"
         )
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                status = response.status
-                payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            status = exc.code
-            payload = json.loads(exc.read().decode("utf-8", errors="replace") or "{}")
-        except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
-            raise StimulusProofError(f"Management loop-health readback failed: {exc}") from exc
-        if status != 200 or not isinstance(payload, Mapping):
-            raise StimulusProofError(f"Management loop-health returned HTTP {status}")
-        raw_items = payload.get("items") or payload.get("data")
-        if not isinstance(raw_items, list):
-            raise StimulusProofError("Management loop-health response has no item list")
-        rows = {
-            str(item.get("loop_id") or ""): item
-            for item in raw_items
-            if isinstance(item, Mapping) and item.get("classification") == "canonical"
-        }
-        if tuple(sorted(rows)) != tuple(sorted(CANONICAL_LOOP_IDS)):
+        if not isinstance(loop12_case, Mapping):
+            raise StimulusProofError("runtime report lacks the BFF Management readback case")
+        management_readback = _required_mapping(
+            (loop12_case.get("next_consumer_readback") or {}).get("management_loop_health"),
+            boundary="BFF Management loop-health readback",
+        )
+        rows = _required_mapping(
+            management_readback.get("rows"),
+            boundary="BFF Management loop-health rows",
+        )
+        if (
+            management_readback.get("endpoint") != "/bff/v5/loop-health"
+            or tuple(sorted(management_readback.get("canonical_loop_ids") or []))
+            != tuple(sorted(CANONICAL_LOOP_IDS))
+            or tuple(sorted(rows)) != tuple(sorted(CANONICAL_LOOP_IDS))
+        ):
             raise StimulusProofError("Management loop-health does not contain exactly twelve canonical rows")
-        retired_static_claims = {
-            "current_maturity",
-            "target_maturity",
-            "maturity",
-            "evidence",
-            "execution_tasks",
-            "maturity_projection",
+        observations = {
+            loop_id: dict(_required_mapping(row, boundary=f"Management row {loop_id}"))
+            for loop_id, row in rows.items()
         }
-        observations = {}
-        for loop_id, row in rows.items():
-            if retired_static_claims.intersection(row):
-                raise StimulusProofError(f"Management row {loop_id} still exposes static runtime/task claims")
-            runtime_maturity = row.get("runtime_maturity")
-            if not isinstance(runtime_maturity, Mapping):
-                raise StimulusProofError(f"Management row {loop_id} lacks current runtime maturity")
-            observations[loop_id] = {
-                "controller_health_accepted": bool(
-                    (row.get("controller_health") or {}).get("current_record_accepted")
-                ),
-                "runtime_maturity": dict(runtime_maturity),
-                "truth_level": (row.get("truth_source") or {}).get("level"),
-            }
         negative = _report_cases("runtime", self._reports["runtime"]).get(
             "negative_typed_worker_failure"
         )
@@ -439,7 +384,7 @@ class StimulusDrivenClosureGate:
             )
         self.evidence.management = {
             "canonical_loop_count": len(rows),
-            "endpoint": "/bff/v5/loop-health",
+            "endpoint": management_readback.get("endpoint"),
             "functional_worker_failure": {
                 "owner_loop": failure_attribution.get("loop_id"),
                 "target": "paper-fleet-reconciler",
@@ -508,6 +453,36 @@ def test_stimulus_gate_normalizes_fresh_owner_receipts() -> None:
     assert research["terminal_output"]["id"] == "source-fresh-1"
     assert runtime["trigger"] == "binding-fresh-1"
     assert runtime["owner_observation"]["service"] == "paper-fleet-reconciler"
+
+
+def test_stimulus_gate_binds_its_expected_sha_to_child_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    expected_sha = "a" * 40
+    gate = StimulusDrivenClosureGate(
+        Settings(
+            expected_sha=expected_sha,
+            evidence_output=tmp_path / "parent-report.json",
+            timeout_seconds=60,
+        )
+    )
+    captured_environment: dict[str, str] = {}
+
+    def fake_run(*_args: Any, **kwargs: Any) -> SimpleNamespace:
+        environment = kwargs["env"]
+        captured_environment.update(environment)
+        Path(environment["PANTHEON_L12_REPORT_PATH"]).write_text(
+            json.dumps({"git_sha": expected_sha, "status": "passed"}),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    gate._run_domain_suite("runtime", tmp_path / "runtime-report.json")
+
+    assert captured_environment["PANTHEON_L12_EXPECTED_SHA"] == expected_sha
+    assert captured_environment["PANTHEON_L12_DEPLOYED_E2E"] == "1"
 
 
 def test_prebuilt_verifier_is_explicitly_not_the_closure_gate() -> None:
