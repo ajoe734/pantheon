@@ -166,6 +166,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "note",
         "reconcile_merged_done",
         "supersede",
+        "retire_archive_collision",
         "sync",
         "archive_correct_review_file",
         "archive_reconcile",
@@ -486,6 +487,7 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "done": 0,
     "reconcile_merged_done": 0,
     "supersede": 0,
+    "retire_archive_collision": 0,
     "approve": 0,
     "archive_correct_review_file": 0,
 }
@@ -7386,6 +7388,184 @@ def command_sync(state: dict[str, Any], _args: list[str]) -> None:
     return None
 
 
+def command_retire_archive_collision(
+    state: dict[str, Any], args: list[str]
+) -> None:
+    """Retire one blocked row that improperly reused an archived task id.
+
+    This is deliberately narrower than ``supersede``.  The immutable archive
+    remains the authority for the original task id, while a distinct completed
+    replacement proves where the later delivery was preserved.  No archive is
+    rewritten and no active scope is declared complete by this repair.
+    """
+
+    if current_actor() != "Human/Ops":
+        raise SystemExit(
+            "Only local Human/Ops may retire an active/archive collision"
+        )
+    if len(args) != 3:
+        raise SystemExit(
+            "Usage: retire_archive_collision "
+            "<task-id> <completed-replacement-task-id> <message>"
+        )
+    task_id = str(args[0] or "").strip()
+    replacement_task_id = str(args[1] or "").strip()
+    message = str(args[2] or "").strip()
+    if (
+        not task_id
+        or not replacement_task_id
+        or task_id == replacement_task_id
+        or not message
+    ):
+        raise SystemExit("Archive-collision retirement fields are invalid")
+
+    active = get_task(state, task_id)
+    if active is None:
+        raise SystemExit(f"Unknown active task: {task_id}")
+    if active.get("status") != "blocked":
+        raise SystemExit(
+            f"Archive-collision retirement requires a blocked active task: {task_id}"
+        )
+
+    normalize_terminal_facts(state)
+    normalize_archive_receipts(state)
+    if has_terminal_fact(state, task_id):
+        raise SystemExit(
+            f"Active task {task_id} already has a terminal fact; use ordinary "
+            "archive recovery instead"
+        )
+    if get_task(state, replacement_task_id) is not None:
+        raise SystemExit(
+            f"Replacement task is still active: {replacement_task_id}"
+        )
+    replacement_fact = state[TERMINAL_FACTS_KEY].get(replacement_task_id)
+    if not isinstance(replacement_fact, Mapping) or (
+        replacement_fact.get("status") != "done"
+        or replacement_fact.get("terminal_outcome") != "completed"
+    ):
+        raise SystemExit(
+            f"Replacement task is not canonically completed: {replacement_task_id}"
+        )
+
+    archived = load_archived_snapshot(task_id)
+    replacement_archive = load_archived_snapshot(replacement_task_id)
+    try:
+        archived = _validate_status_archive_snapshot(archived)
+        replacement_archive = _validate_status_archive_snapshot(
+            replacement_archive
+        )
+    except RuntimeError as exc:
+        raise SystemExit(f"Archive-collision evidence is invalid: {exc}") from exc
+    archived_task = archived["task"]
+    if archived.get("terminal_outcome") != "completed":
+        raise SystemExit(
+            f"Original archive is not completed: {task_id}"
+        )
+    if task_assignment_generation(active) != task_assignment_generation(
+        archived_task
+    ):
+        raise SystemExit(
+            f"Active/archive generation mismatch for {task_id}"
+        )
+    if not _snapshot_matches_terminal_fact(
+        replacement_archive,
+        replacement_fact,
+        task_id=replacement_task_id,
+    ):
+        raise SystemExit(
+            f"Replacement archive conflicts with its terminal fact: "
+            f"{replacement_task_id}"
+        )
+
+    # Rebuild only the derived index, then prove the exact immutable snapshots
+    # still read back before the active row is removed from TaskStore.
+    rebuilt_index = rebuild_archive_index(
+        recent_limit=task_archive_recent_limit()
+    )
+    readback_index = load_archive_index()
+    if _canonical_json_sha256(readback_index) != _canonical_json_sha256(
+        rebuilt_index
+    ):
+        raise RuntimeError("archive index readback mismatch")
+    archived_readback = load_archived_snapshot(task_id)
+    replacement_readback = load_archived_snapshot(replacement_task_id)
+    if (
+        _canonical_json_sha256(archived_readback)
+        != _canonical_json_sha256(archived)
+        or _canonical_json_sha256(replacement_readback)
+        != _canonical_json_sha256(replacement_archive)
+    ):
+        raise RuntimeError("archive snapshot changed during collision retirement")
+
+    recorded_fact = record_terminal_fact(
+        state,
+        archived_task,
+        recorded_at=str(archived["archived_at"]),
+    )
+    state[ARCHIVE_RECEIPTS_KEY][task_id] = _archive_receipt_for_snapshot(
+        archive_root=_archive_root_identity(),
+        snapshot=archived,
+        index=readback_index,
+    )
+
+    active_digest = _canonical_json_sha256(active)
+    active_delivery = deepcopy(active.get(DELIVERY_BINDING_KEY))
+    active_review = deepcopy(active.get(APPROVAL_BINDING_KEY))
+    related_handoffs = sum(
+        handoff.get("task_id") == task_id
+        for handoff in state.get("handoffs", [])
+        if isinstance(handoff, Mapping)
+    )
+    related_blockers = sum(
+        blocker.get("task_id") == task_id
+        for blocker in state.get("blockers", [])
+        if isinstance(blocker, Mapping)
+    )
+    state["tasks"] = [
+        task
+        for task in state.get("tasks", [])
+        if str(task.get("id") or "") != task_id
+    ]
+    state["handoffs"] = [
+        handoff
+        for handoff in state.get("handoffs", [])
+        if str(handoff.get("task_id") or "") != task_id
+    ]
+    state["blockers"] = [
+        blocker
+        for blocker in state.get("blockers", [])
+        if str(blocker.get("task_id") or "") != task_id
+    ]
+    append_log(
+        {
+            "ts": iso_now(),
+            "agent": current_actor(),
+            "type": "active_archive_collision_retired",
+            "task_id": task_id,
+            "replacement_task_id": replacement_task_id,
+            "message": message,
+            "active_task_sha256": active_digest,
+            "archived_snapshot_sha256": _canonical_json_sha256(archived),
+            "replacement_snapshot_sha256": _canonical_json_sha256(
+                replacement_archive
+            ),
+            "terminal_fact": recorded_fact,
+            "removed_handoff_count": related_handoffs,
+            "removed_blocker_count": related_blockers,
+            **(
+                {"active_delivery_binding": active_delivery}
+                if isinstance(active_delivery, Mapping)
+                else {}
+            ),
+            **(
+                {"active_review_binding": active_review}
+                if isinstance(active_review, Mapping)
+                else {}
+            ),
+            **local_human_ops_audit_fields(),
+        }
+    )
+
 
 def command_record_terminal_fact(state: dict[str, Any], args: list[str]) -> None:
     """Record one verified historical terminal dependency without archive lookup.
@@ -8645,6 +8825,7 @@ def main(argv: list[str]) -> int:
         "done": command_done,
         "reconcile_merged_done": command_reconcile_merged_done,
         "supersede": command_supersede,
+        "retire_archive_collision": command_retire_archive_collision,
         "approve": command_approve,
         "record_terminal_fact": command_record_terminal_fact,
         "archive_reconcile": command_archive_reconcile,

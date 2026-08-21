@@ -9487,6 +9487,126 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         )
         self.assertIn("LOCK-ONE", state[ai_status.ARCHIVE_RECEIPTS_KEY])
 
+    def test_retire_archive_collision_preserves_archives_and_links_replacement(
+        self,
+    ) -> None:
+        state = self._fixture_state()
+        active = state["tasks"][0]
+        active.update(
+            {
+                "generation": 2,
+                "status": "blocked",
+                "waiting_for": "Human/Ops",
+                "delivery_binding": {
+                    "kind": "pull_request",
+                    "pr": 5028,
+                    "head_sha": "b" * 40,
+                },
+            }
+        )
+        original_terminal = {
+            **deepcopy(active),
+            "status": "done",
+            "terminal_outcome": "completed",
+        }
+        original_terminal.pop("waiting_for", None)
+        replacement_terminal = {
+            **deepcopy(state["tasks"][1]),
+            "status": "done",
+            "terminal_outcome": "completed",
+        }
+        state["tasks"] = [active]
+        state["handoffs"] = [{"task_id": "LOCK-ONE", "status": "pending"}]
+        state["blockers"] = [{"task_id": "LOCK-ONE", "status": "open"}]
+        ai_status.record_terminal_fact(
+            state,
+            replacement_terminal,
+            recorded_at="2026-07-14T00:04:00Z",
+        )
+        original_snapshot = {
+            "version": 1,
+            "task_id": "LOCK-ONE",
+            "archived_at": "2026-07-14T00:03:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": original_terminal,
+            "handoffs": [],
+            "blockers": [],
+        }
+        replacement_snapshot = {
+            "version": 1,
+            "task_id": "LOCK-TWO",
+            "archived_at": "2026-07-14T00:04:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": replacement_terminal,
+            "handoffs": [],
+            "blockers": [],
+        }
+        original_path = task_archive.ARCHIVE_TASKS_DIR / "LOCK-ONE.json"
+        replacement_path = task_archive.ARCHIVE_TASKS_DIR / "LOCK-TWO.json"
+        original_path.write_text(
+            json.dumps(original_snapshot, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        replacement_path.write_text(
+            json.dumps(replacement_snapshot, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        original_bytes = original_path.read_bytes()
+        replacement_bytes = replacement_path.read_bytes()
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            ai_status.buffer_activity_events() as events,
+        ):
+            ai_status.command_retire_archive_collision(
+                state,
+                ["LOCK-ONE", "LOCK-TWO", "Retire duplicate active row."],
+            )
+
+        self.assertIsNone(ai_status.get_task(state, "LOCK-ONE"))
+        self.assertEqual(state["handoffs"], [])
+        self.assertEqual(state["blockers"], [])
+        self.assertEqual(
+            state[ai_status.TERMINAL_FACTS_KEY]["LOCK-ONE"],
+            {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 2,
+                "recorded_at": "2026-07-14T00:03:00Z",
+            },
+        )
+        self.assertIn("LOCK-ONE", state[ai_status.ARCHIVE_RECEIPTS_KEY])
+        self.assertEqual(original_path.read_bytes(), original_bytes)
+        self.assertEqual(replacement_path.read_bytes(), replacement_bytes)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "active_archive_collision_retired")
+        self.assertEqual(events[0]["replacement_task_id"], "LOCK-TWO")
+        self.assertEqual(events[0]["removed_handoff_count"], 1)
+        self.assertEqual(events[0]["removed_blocker_count"], 1)
+
+    def test_retire_archive_collision_rejects_unfinished_replacement(self) -> None:
+        state = self._fixture_state()
+        state["tasks"][0].update({"generation": 2, "status": "blocked"})
+        before = deepcopy(state)
+
+        with mock.patch.dict(
+            os.environ,
+            {"AI_NAME": "Human/Ops"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(
+                SystemExit,
+                "Replacement task is still active",
+            ):
+                ai_status.command_retire_archive_collision(
+                    state,
+                    ["LOCK-ONE", "LOCK-TWO", "Must fail closed."],
+                )
+
+        self.assertEqual(state, before)
+
     def test_existing_archive_conflict_or_legacy_shape_preserves_active_task(self) -> None:
         # 1. Version 1 snapshot, no conflict (identical)
         existing_no_conflict = {
