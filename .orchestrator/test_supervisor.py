@@ -821,6 +821,31 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                 for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
                     self.assertNotIn("max_parallel", config["agents"][slot_id])
 
+    def test_repo_claude_accounts_are_isolated_at_requested_capacities(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text())
+        expected = {
+            "claude": ("claude1", 3),
+            "claude2": ("claude2", 1),
+        }
+        account_caps = config["ready_dispatcher"]["max_concurrent_per_account"]
+
+        for agent_id, (account_id, capacity) in expected.items():
+            with self.subTest(agent_id=agent_id):
+                self.assertEqual(config["providers"][agent_id]["account"], account_id)
+                self.assertEqual(config["agents"][agent_id]["max_parallel"], capacity)
+                self.assertEqual(account_caps[account_id], capacity)
+                lane = supervisor.delivery_lane_for_agent(config, agent_id)
+                self.assertEqual(lane.max_parallel, capacity)
+                self.assertEqual(
+                    {endpoint.account_id for endpoint in lane.endpoints},
+                    {account_id},
+                )
+
+        self.assertNotEqual(
+            config["providers"]["claude"]["account"],
+            config["providers"]["claude2"]["account"],
+        )
+
     def test_retired_capacity_fields_fail_closed(self) -> None:
         for retired in (
             "disabled_agents",
