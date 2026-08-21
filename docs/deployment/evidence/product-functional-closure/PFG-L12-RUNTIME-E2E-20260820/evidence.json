@@ -99,9 +99,9 @@
     "results": {
       "py_compile": "passed",
       "strict_auth_facade_tests": "3 passed, 80 deselected",
-      "deployed_suite": "11 passed, 0 skipped in 123.77s",
-      "tested_source_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
-      "run_report_sha256": "9de58a3e2aa4041656aea64ea35b0581bdb61bea3a16df1c34c7b38c9ba8a314",
+      "deployed_suite": "11 passed, 0 skipped in 133.16s",
+      "tested_source_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
+      "run_report_sha256": "fb2a4bf01ef10dcdd0287afa310d108f1273a250aa655012ad12c32cd18fa8be",
       "canonical_database_migration": "passed",
       "final_compose_container_count": 0,
       "final_compose_network_count": 0,

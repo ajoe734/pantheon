@@ -5,62 +5,62 @@
         "lifecycle_outbox_bounded": true,
         "no_zombie_fleet_processes": true,
         "non_executable_bindings_rejected": true,
-        "outbox_chain_count": 109,
+        "outbox_chain_count": 111,
         "outbox_pending_count": 0,
         "running_worker_exact": 1,
-        "worker_pid_bound": 48,
+        "worker_pid_bound": 47,
         "worker_port_bound": 8020
       },
       "authority_readback": {
         "lifecycle_outbox": {
-          "chain_count": 109,
+          "chain_count": 111,
           "delivery_error": null,
           "last_error": null,
           "oldest_admission_no": null,
-          "path": "/data/runtime/paper-performance/rb-78e39ba1cb4541b599c263fe0f091c4f-2a0ee70c071d.json.lifecycle-outbox.json",
+          "path": "/data/runtime/paper-performance/rb-4841238f2a5d42bb8c54ce04359096e0-dbbdacd23493.json.lifecycle-outbox.json",
           "pending_count": 0,
           "persistence_error": null,
           "schema_version": "paper_lifecycle_telemetry_outbox.v1",
           "status": "ok"
         },
-        "recent_lifecycle_event_count": 321,
+        "recent_lifecycle_event_count": 329,
         "running_worker_count": 1,
         "used_ports": [],
-        "worker_binding_id": "rb-78e39ba1cb4541b599c263fe0f091c4f",
-        "worker_pid": 48,
+        "worker_binding_id": "rb-4841238f2a5d42bb8c54ce04359096e0",
+        "worker_pid": 47,
         "worker_port": 8020,
-        "worker_runtime_id": "rt-45076d50",
+        "worker_runtime_id": "rt-5a02b805",
         "worker_status": "running"
       },
       "compose_services": [
         "paper-fleet-reconciler",
         "telemetry"
       ],
-      "ended_at": "2026-08-21T14:20:22Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:30:59Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 9,
       "next_consumer_readback": {
-        "outbox_chain_count": 109,
+        "outbox_chain_count": 111,
         "outbox_pending_count": 0,
-        "paper_runtime_id": "rt-45076d50",
+        "paper_runtime_id": "rt-5a02b805",
         "summary_state": "active",
         "worker_port": 8020,
         "worker_status": "running"
       },
       "owner_worker_identity": {
-        "container_id": "4a7775f9529062176bdf71e8b33a1e1e483f3b3bd1e052ccdcb10c7e12cc4c8a",
+        "container_id": "3e25832dc8320aa9a2f2ca0905d915dce69bc9387cf15a35377f58e78a81eb10",
         "container_name": "l12currentruntimee2e-paper-fleet-reconciler-1",
-        "image_id": "sha256:cf6f57d0a7388eb948fffdc6eccfecdc7a59e831256cddd8a06e75f416866a83",
+        "image_id": "sha256:f5534a293671dd3e5a2cf866c2eac4e38467dc2f94088e86b19dc88f7f1c6b70",
         "image_name": "l12currentruntimee2e-paper-fleet-reconciler",
-        "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "revision_evidence": "oci_label",
         "service": "paper-fleet-reconciler",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:20:19Z",
-      "terminal_output_id": "bounded-cursor-rt-45076d50",
-      "trigger_id": "rt-45076d50"
+      "started_at": "2026-08-21T14:30:56Z",
+      "terminal_output_id": "bounded-cursor-rt-5a02b805",
+      "trigger_id": "rt-5a02b805"
     },
     "loop_08_promotion_deployment": {
       "assertions": {
@@ -70,32 +70,32 @@
         "runtime_binding_active": true
       },
       "authority_readback": {
-        "artifact_id": "artifact-l12-positive-8c489bb2f1",
+        "artifact_id": "artifact-l12-positive-6d876b3d2c",
         "artifact_version": "2.1.0",
-        "binding_id": "rb-78e39ba1cb4541b599c263fe0f091c4f",
-        "capital_pool_id": "pool-l12-positive-8c489bb2f1",
+        "binding_id": "rb-4841238f2a5d42bb8c54ce04359096e0",
+        "capital_pool_id": "pool-l12-positive-6d876b3d2c",
         "deployment_mode": "paper",
-        "effective_at": "2026-08-21T14:18:26Z",
+        "effective_at": "2026-08-21T14:29:01Z",
         "execution_mode": "paper",
         "metadata": {
-          "artifact_checksum": "sha256:caa9acae81ac294f0f8d01d75acf771b246031196a7d3247739c79a65b840db9",
+          "artifact_checksum": "sha256:109e5231aff4a71901a816baf1c88b208f96ceb3579ccc551835e61216620d1f",
           "authenticated_actor_id": "l12-current-e2e",
           "authoritative_loader_attestation": {
             "allowed_deployment_scope": "paper",
             "approval_actor_id": "pfg-l12-runtime-e2e-20260820-risk-owner",
-            "approval_decision_id": "approval-l12-positive-8c489bb2f1",
-            "approval_decision_sha256": "sha256:7ec65316a33cc4dd8ff9fecfa459d7ccb6223725e20deade578b01af56869b02",
-            "approval_proof_url": "http://governance:8082/api/governance/approvals/approval-l12-positive-8c489bb2f1",
-            "artifact_checksum": "sha256:caa9acae81ac294f0f8d01d75acf771b246031196a7d3247739c79a65b840db9",
-            "artifact_id": "artifact-l12-positive-8c489bb2f1",
+            "approval_decision_id": "approval-l12-positive-6d876b3d2c",
+            "approval_decision_sha256": "sha256:ff4505a5aea48c5f049ba36eb22190753ca885949db9b7c6d67394dc9f50af51",
+            "approval_proof_url": "http://governance:8082/api/governance/approvals/approval-l12-positive-6d876b3d2c",
+            "artifact_checksum": "sha256:109e5231aff4a71901a816baf1c88b208f96ceb3579ccc551835e61216620d1f",
+            "artifact_id": "artifact-l12-positive-6d876b3d2c",
             "artifact_version": "2.1.0",
             "authority": "canonical_deployment_registry_governance_capital",
-            "capital_admissibility_proof_url": "http://capital:8092/api/bindings/admissibility?persona_id=persona-l12-positive-8c489bb2f1&capital_pool_id=pool-l12-positive-8c489bb2f1&target_stage=paper",
-            "capital_admissibility_sha256": "sha256:208fc35446fa3061b8d233813689a33016c293dffb372c2ee2d08fa215359ba6",
-            "capital_pool_id": "pool-l12-positive-8c489bb2f1",
-            "capital_pool_proof_url": "http://capital:8092/api/capital-pools/pool-l12-positive-8c489bb2f1",
-            "capital_pool_sha256": "sha256:bf350b84b671ce3c8a167d54350c6f75a814f2c24021b17feb4956d1c8a0494a",
-            "deployment_plan_authority_sha256": "sha256:b1d15dc47f9cad8481968fe4fe1462d1669a2a8ca108ee534d77d665d3177f7a",
+            "capital_admissibility_proof_url": "http://capital:8092/api/bindings/admissibility?persona_id=persona-l12-positive-6d876b3d2c&capital_pool_id=pool-l12-positive-6d876b3d2c&target_stage=paper",
+            "capital_admissibility_sha256": "sha256:2e4d9eb0aa332f6b0a4eb9e080e771d1f108d6a25affd8115b5c86b6ce8e2462",
+            "capital_pool_id": "pool-l12-positive-6d876b3d2c",
+            "capital_pool_proof_url": "http://capital:8092/api/capital-pools/pool-l12-positive-6d876b3d2c",
+            "capital_pool_sha256": "sha256:270c0d972558cf46a6b1cde0a02bc43bd0b9cc703f646bdd297ec6f4ba6b2c83",
+            "deployment_plan_authority_sha256": "sha256:3eeecf3b16cff90f604e8e9eb461c3e6b03126c472b9bbbe2ef353df208fd5da",
             "deployment_plan_binding_id": null,
             "deployment_plan_current_stage": "none",
             "deployment_plan_rollback": {
@@ -112,30 +112,30 @@
               "gross_scale_pct": 100.0,
               "ramp_schedule": []
             },
-            "deployment_plan_sha256": "sha256:43f5dc677355b9e7f22f37fa4582633d820685e1e23d3fd016c6797121e0c2a1",
+            "deployment_plan_sha256": "sha256:84083faff3fa9169dbab9ad5a2b80cec7f3fef5cbe8eb9f92ccb3ef3f89c6ff3",
             "deployment_plan_transition_type": "activate",
-            "deployment_proof_url": "http://deployment:8095/api/deployment/plans/plan-l12-positive-8c489bb2f1",
-            "persona_binding_proof_url": "http://capital:8092/api/bindings/pcb-l12-positive-8c489bb2f1",
-            "persona_capital_binding_id": "pcb-l12-positive-8c489bb2f1",
-            "persona_capital_binding_sha256": "sha256:bee1075c22a6b394d777e0316ca49a473b4cd75a2b980fa86ceb9756aa398546",
+            "deployment_proof_url": "http://deployment:8095/api/deployment/plans/plan-l12-positive-6d876b3d2c",
+            "persona_binding_proof_url": "http://capital:8092/api/bindings/pcb-l12-positive-6d876b3d2c",
+            "persona_capital_binding_id": "pcb-l12-positive-6d876b3d2c",
+            "persona_capital_binding_sha256": "sha256:00a3a9b60c1bbaf96970a58c6293089c62e39cb6f8d59f6026b704fe664f75bf",
             "persona_capital_binding_status": "active",
-            "plan_id": "plan-l12-positive-8c489bb2f1",
+            "plan_id": "plan-l12-positive-6d876b3d2c",
             "plan_status": "approved",
             "registry_deployment_stage": "none",
-            "registry_entry_sha256": "sha256:2191a987852d1c8210d113e1de033d2cc63603d038e82d3f8a75e50506b02ce8",
-            "registry_proof_url": "http://registry:8087/api/registry/strategy-artifacts/artifact-l12-positive-8c489bb2f1",
-            "registry_view_sha256": "sha256:a279212f2373a856620543f47a35e2cbdc6a3a840e8ea2b1d53df3c78ca1f81e",
+            "registry_entry_sha256": "sha256:c1b18f6c944c00310f7f709ee30f65c249ee31f633e21038f6bc4eb83ab3489f",
+            "registry_proof_url": "http://registry:8087/api/registry/strategy-artifacts/artifact-l12-positive-6d876b3d2c",
+            "registry_view_sha256": "sha256:80e4f4b68b2a962ad98ee26f3a8cf25300cc3d7a32fd4ef7de68aa13a93d4bf2",
             "single_runtime_enforced": true,
-            "sponsor_persona_id": "persona-l12-positive-8c489bb2f1",
+            "sponsor_persona_id": "persona-l12-positive-6d876b3d2c",
             "status": "passed",
             "strategy_id": "tw_session_momentum",
             "target_stage": "paper",
-            "verified_at": "2026-08-21T14:18:26.398159Z"
+            "verified_at": "2026-08-21T14:29:01.328711Z"
           },
-          "deployment_correlation_id": "correlation-plan-l12-positive-8c489bb2f1",
-          "deployment_outbox_event_id": "deployment-saga-plan-l12-positive-8c489bb2f1-evt-0001",
-          "deployment_saga_id": "deployment-saga-plan-l12-positive-8c489bb2f1",
-          "deployment_trace_id": "e38c3154-b51a-4c26-93a1-d7ebed179cee",
+          "deployment_correlation_id": "correlation-plan-l12-positive-6d876b3d2c",
+          "deployment_outbox_event_id": "deployment-saga-plan-l12-positive-6d876b3d2c-evt-0001",
+          "deployment_saga_id": "deployment-saga-plan-l12-positive-6d876b3d2c",
+          "deployment_trace_id": "1eaf7a7f-611a-4728-9a97-345929168404",
           "environment": "paper",
           "market_data_policy": {
             "contract": "latest_stored_normalized",
@@ -144,12 +144,12 @@
             "owner": "source-ingest"
           },
           "object_store": {
-            "openclaw/registry/tw_session_momentum/2.1.0/artifact.bin": "{\"algorithm_ref\":{\"commit\":\"5ad0249432459c119f26718007e083808ef7995d\",\"engine\":\"lean\",\"entrypoint\":\"pantheon_algo.base:PantheonAlgoBase\",\"logic_interpreter\":\"services.registry.strategy_artifact:evaluate_strategy_action\",\"path\":\"Algorithm.Python/pantheon_algo/base.py\",\"repository\":\"ajoe734/pantheon-lean\",\"signal_interface\":\"services.execution.lean_runtime.paper_signal_producer:Strategy\",\"signal_schema_version\":\"1.0\"},\"artifact_id\":\"artifact-l12-positive-8c489bb2f1\",\"artifact_schema_version\":\"1.0\",\"binding_intent\":{\"evidence_ref\":\"docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json\",\"observed_at\":\"2026-07-14T05:06:07Z\",\"observed_binding_status\":\"active\",\"observed_capital_pool_id\":\"pool-tw-equity-paper\",\"observed_deployment_mode\":\"paper\",\"observed_deployment_plan_id\":\"plan-tw-equity-paper\",\"observed_effective_at\":\"2026-07-11T10:50:25Z\",\"observed_placeholder_artifact_id\":\"artifact-tw-equity-session-v1\",\"observed_placeholder_artifact_version\":\"1.0.0\",\"observed_runtime_binding_id\":\"rb-abb82fd3538b4014bb7e7d3186a58c58\",\"observed_runtime_id\":\"runtime-tw-equity-paper\",\"persona_capital_binding_id\":\"binding-tw-equity-paper\",\"persona_id\":\"persona-tw-equity\",\"persona_name\":\"Taiwan Equity Persona\",\"replacement_task_id\":\"EVOLOOP-006\"},\"lineage\":{\"parent_registry_ids\":[\"artifact-tw-session-momentum-v1\"],\"source_dataset_refs\":[\"source-ingest:normalized/taiwanstockprice/finmind-daily\"],\"source_run_ids\":[\"PFG-L12-RUNTIME-E2E-20260820\",\"PFG-L12-RUNTIME-E2E-20260820-positive\"]},\"mutation_surface\":{\"controls\":[{\"allowed_range\":{\"max\":60,\"min\":2},\"current_value\":2,\"parameter_key\":\"lookback_bars\",\"step\":1,\"value_type\":\"integer\"},{\"allowed_range\":{\"max\":0.05,\"min\":0.0},\"current_value\":0.01,\"parameter_key\":\"momentum_threshold\",\"step\":0.001,\"value_type\":\"number\"}],\"immutable_parameters\":[\"symbols\",\"bar_frequency\",\"data_source\",\"order_quantity\",\"quantity_type\",\"zero_momentum_action\"]},\"parameters\":{\"bar_frequency\":\"1d\",\"data_source\":\"source-ingest:normalized/taiwanstockprice/finmind-daily\",\"lookback_bars\":2,\"momentum_threshold\":0.01,\"order_quantity\":1,\"quantity_type\":\"SHARES\",\"symbols\":[\"2330.TW\",\"2317.TW\",\"2454.TW\"],\"zero_momentum_action\":\"SELL\"},\"provenance_refs\":[\"host-file:/home/lupin/paper-loop/tw_signal_producer.py#sha256=b9f43954395b1b98f3b253ad9e27f7955b37dbee0553bb79a88abe3b99ff2396\",\"docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/EVOLUTION_GENERATIVE_LOOP_GAP.md\",\"docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json\",\"docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T151356Z/reconciliation-snapshot.json\"],\"strategy_id\":\"tw_session_momentum\",\"strategy_logic\":{\"kind\":\"close_to_close_momentum\",\"lookback_parameter\":\"lookback_bars\",\"non_positive_action\":\"SELL\",\"positive_action\":\"BUY\",\"threshold_parameter\":\"momentum_threshold\"},\"version\":\"2.1.0\"}",
+            "openclaw/registry/tw_session_momentum/2.1.0/artifact.bin": "{\"algorithm_ref\":{\"commit\":\"5ad0249432459c119f26718007e083808ef7995d\",\"engine\":\"lean\",\"entrypoint\":\"pantheon_algo.base:PantheonAlgoBase\",\"logic_interpreter\":\"services.registry.strategy_artifact:evaluate_strategy_action\",\"path\":\"Algorithm.Python/pantheon_algo/base.py\",\"repository\":\"ajoe734/pantheon-lean\",\"signal_interface\":\"services.execution.lean_runtime.paper_signal_producer:Strategy\",\"signal_schema_version\":\"1.0\"},\"artifact_id\":\"artifact-l12-positive-6d876b3d2c\",\"artifact_schema_version\":\"1.0\",\"binding_intent\":{\"evidence_ref\":\"docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json\",\"observed_at\":\"2026-07-14T05:06:07Z\",\"observed_binding_status\":\"active\",\"observed_capital_pool_id\":\"pool-tw-equity-paper\",\"observed_deployment_mode\":\"paper\",\"observed_deployment_plan_id\":\"plan-tw-equity-paper\",\"observed_effective_at\":\"2026-07-11T10:50:25Z\",\"observed_placeholder_artifact_id\":\"artifact-tw-equity-session-v1\",\"observed_placeholder_artifact_version\":\"1.0.0\",\"observed_runtime_binding_id\":\"rb-abb82fd3538b4014bb7e7d3186a58c58\",\"observed_runtime_id\":\"runtime-tw-equity-paper\",\"persona_capital_binding_id\":\"binding-tw-equity-paper\",\"persona_id\":\"persona-tw-equity\",\"persona_name\":\"Taiwan Equity Persona\",\"replacement_task_id\":\"EVOLOOP-006\"},\"lineage\":{\"parent_registry_ids\":[\"artifact-tw-session-momentum-v1\"],\"source_dataset_refs\":[\"source-ingest:normalized/taiwanstockprice/finmind-daily\"],\"source_run_ids\":[\"PFG-L12-RUNTIME-E2E-20260820\",\"PFG-L12-RUNTIME-E2E-20260820-positive\"]},\"mutation_surface\":{\"controls\":[{\"allowed_range\":{\"max\":60,\"min\":2},\"current_value\":2,\"parameter_key\":\"lookback_bars\",\"step\":1,\"value_type\":\"integer\"},{\"allowed_range\":{\"max\":0.05,\"min\":0.0},\"current_value\":0.01,\"parameter_key\":\"momentum_threshold\",\"step\":0.001,\"value_type\":\"number\"}],\"immutable_parameters\":[\"symbols\",\"bar_frequency\",\"data_source\",\"order_quantity\",\"quantity_type\",\"zero_momentum_action\"]},\"parameters\":{\"bar_frequency\":\"1d\",\"data_source\":\"source-ingest:normalized/taiwanstockprice/finmind-daily\",\"lookback_bars\":2,\"momentum_threshold\":0.01,\"order_quantity\":1,\"quantity_type\":\"SHARES\",\"symbols\":[\"2330.TW\",\"2317.TW\",\"2454.TW\"],\"zero_momentum_action\":\"SELL\"},\"provenance_refs\":[\"host-file:/home/lupin/paper-loop/tw_signal_producer.py#sha256=b9f43954395b1b98f3b253ad9e27f7955b37dbee0553bb79a88abe3b99ff2396\",\"docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/EVOLUTION_GENERATIVE_LOOP_GAP.md\",\"docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json\",\"docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T151356Z/reconciliation-snapshot.json\"],\"strategy_id\":\"tw_session_momentum\",\"strategy_logic\":{\"kind\":\"close_to_close_momentum\",\"lookback_parameter\":\"lookback_bars\",\"non_positive_action\":\"SELL\",\"positive_action\":\"BUY\",\"threshold_parameter\":\"momentum_threshold\"},\"version\":\"2.1.0\"}",
             "openclaw/registry/tw_session_momentum/2.1.0/metadata.json": {
               "artifact_state": "approved",
               "artifact_type": "execution_bundle",
-              "checksum": "sha256:caa9acae81ac294f0f8d01d75acf771b246031196a7d3247739c79a65b840db9",
-              "created_at": "2026-08-21T14:18:24Z",
+              "checksum": "sha256:109e5231aff4a71901a816baf1c88b208f96ceb3579ccc551835e61216620d1f",
+              "created_at": "2026-08-21T14:28:53Z",
               "deployment_stage": "paper",
               "lineage": {
                 "parent_registry_ids": [
@@ -164,23 +164,23 @@
                 ]
               },
               "promotion_state": "paper",
-              "registry_id": "artifact-l12-positive-8c489bb2f1",
+              "registry_id": "artifact-l12-positive-6d876b3d2c",
               "strategy_id": "tw_session_momentum",
               "version": "2.1.0"
             }
           },
           "paper_only": true,
-          "persona_capital_binding_id": "pcb-l12-positive-8c489bb2f1",
-          "persona_id": "persona-l12-positive-8c489bb2f1",
+          "persona_capital_binding_id": "pcb-l12-positive-6d876b3d2c",
+          "persona_id": "persona-l12-positive-6d876b3d2c",
           "source_task_id": "PFG-L12-RUNTIME-E2E-20260820",
-          "sponsor_persona_id": "persona-l12-positive-8c489bb2f1",
+          "sponsor_persona_id": "persona-l12-positive-6d876b3d2c",
           "strategy_id": "tw_session_momentum",
           "symbol": "2330.TW",
           "tenant_id": "default"
         },
-        "persona_capital_binding_id": "pcb-l12-positive-8c489bb2f1",
-        "plan_id": "plan-l12-positive-8c489bb2f1",
-        "runtime_id": "rt-45076d50",
+        "persona_capital_binding_id": "pcb-l12-positive-6d876b3d2c",
+        "plan_id": "plan-l12-positive-6d876b3d2c",
+        "runtime_id": "rt-5a02b805",
         "status": "active"
       },
       "compose_services": [
@@ -188,124 +188,124 @@
         "deployment-outbox-consumer",
         "runtime-manager"
       ],
-      "ended_at": "2026-08-21T14:19:17Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:29:53Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 8,
       "next_consumer_readback": {
-        "fleet_desired_binding_id": "rb-78e39ba1cb4541b599c263fe0f091c4f",
-        "saga_id": "deployment-saga-plan-l12-positive-8c489bb2f1",
+        "fleet_desired_binding_id": "rb-4841238f2a5d42bb8c54ce04359096e0",
+        "saga_id": "deployment-saga-plan-l12-positive-6d876b3d2c",
         "saga_status": "completed"
       },
       "owner_worker_identity": {
-        "container_id": "90a3ac5ace1de7cdad4b307a8a884e4cfb0e22053b9f82c97356df475e8d6feb",
+        "container_id": "60570bb9b3a00dd029a365a4a93ac5c64b88f30d2a1ec2aa3a6924d3f5489fed",
         "container_name": "l12currentruntimee2e-deployment-outbox-consumer-1",
-        "image_id": "sha256:56a75bcf58357080f8f4ca9f7c9b2638ddea0ba8100e1b185c09000026becfe9",
+        "image_id": "sha256:a9b4bc2586d184e335c8b1654c8f0b390f0bd16ef46c7d300f45cb8c5f14d192",
         "image_name": "l12currentruntimee2e-deployment-outbox-consumer",
-        "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "revision_evidence": "oci_label",
         "service": "deployment-outbox-consumer",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:18:24Z",
-      "terminal_output_id": "rb-78e39ba1cb4541b599c263fe0f091c4f",
-      "trigger_id": "plan-l12-positive-8c489bb2f1"
+      "started_at": "2026-08-21T14:28:53Z",
+      "terminal_output_id": "rb-4841238f2a5d42bb8c54ce04359096e0",
+      "trigger_id": "plan-l12-positive-6d876b3d2c"
     },
     "loop_09_capital_artifact_execution": {
       "assertions": {
-        "approved_checksum": "sha256:caa9acae81ac294f0f8d01d75acf771b246031196a7d3247739c79a65b840db9",
+        "approved_checksum": "sha256:109e5231aff4a71901a816baf1c88b208f96ceb3579ccc551835e61216620d1f",
         "artifact_signal_not_smoke": true,
         "is_real_capital": false,
         "is_real_order": false,
         "source_snapshot_driven": true
       },
       "authority_readback": {
-        "aggregate_id": "tj_b99ab271-1a18-4592-9827-62361be6aed3",
+        "aggregate_id": "tj_046b931d-f739-40ee-a8b1-e5a9597fb11a",
         "aggregate_type": "trade_journey",
-        "artifact_id": "artifact-l12-positive-8c489bb2f1",
+        "artifact_id": "artifact-l12-positive-6d876b3d2c",
         "artifact_version": "2.1.0",
         "authority_refs": {
           "authority_source": "runtime_binding",
-          "persona_id": "persona-l12-positive-8c489bb2f1",
+          "persona_id": "persona-l12-positive-6d876b3d2c",
           "runtime_mode": "paper",
           "runtime_role": "pantheon-lean-paper-runtime",
           "write_owner": "runtime-manager"
         },
-        "binding_id": "rb-78e39ba1cb4541b599c263fe0f091c4f",
-        "capital_pool_id": "pool-l12-positive-8c489bb2f1",
-        "causal_parent_id": "6391c2a0-11f2-5752-8540-5df069173623",
+        "binding_id": "rb-4841238f2a5d42bb8c54ce04359096e0",
+        "capital_pool_id": "pool-l12-positive-6d876b3d2c",
+        "causal_parent_id": "e9669da6-7545-5cd4-873d-6384824cd93b",
         "correlation_envelope": {
-          "causation_event_id": "6391c2a0-11f2-5752-8540-5df069173623",
-          "correlation_id": "b75b88c1-5818-4026-8531-ef51183dbf9d",
+          "causation_event_id": "e9669da6-7545-5cd4-873d-6384824cd93b",
+          "correlation_id": "9256d984-48a7-451f-939d-e86da5ff8a46",
           "environment": "paper",
-          "event_id": "91875e94-96d6-47e2-84f8-84d27ac3f64c",
-          "event_time": "2026-08-21T14:19:16Z",
-          "journey_id": "tj_b99ab271-1a18-4592-9827-62361be6aed3",
+          "event_id": "4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+          "event_time": "2026-08-21T14:29:53Z",
+          "journey_id": "tj_046b931d-f739-40ee-a8b1-e5a9597fb11a",
           "producer": "execution.paper_runtime",
           "producer_revision": 1,
-          "received_at": "2026-08-21T14:19:16Z",
+          "received_at": "2026-08-21T14:29:53Z",
           "schema_version": "trade-journey-envelope/1",
           "tenant_id": "default",
-          "trace_id": "031dc193-62ec-4a52-b671-3f13db678339"
+          "trace_id": "ab6f0f67-5c88-41f5-9b05-9270a56bd250"
         },
-        "created_at": "2026-08-21T14:19:16Z",
+        "created_at": "2026-08-21T14:29:53Z",
         "deployment_stage": "paper",
         "environment": "paper",
-        "event_id": "91875e94-96d6-47e2-84f8-84d27ac3f64c",
+        "event_id": "4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
         "event_type": "paper_fill_simulated",
         "execution_mode": "paper",
-        "fill_id": "paper-fill-91875e94-96d6-47e2-84f8-84d27ac3f64c",
-        "journey_id": "tj_b99ab271-1a18-4592-9827-62361be6aed3",
-        "loop_run_id": "lr-run-rb-78e39ba1cb4541b599c263fe0f091c4f-2026-08-21T14:19:12Z-45",
+        "fill_id": "paper-fill-4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+        "journey_id": "tj_046b931d-f739-40ee-a8b1-e5a9597fb11a",
+        "loop_run_id": "lr-run-rb-4841238f2a5d42bb8c54ce04359096e0-2026-08-21T14:29:48Z-46",
         "metadata": {
           "adapter": "shioaji",
-          "binding_id": "rb-78e39ba1cb4541b599c263fe0f091c4f",
+          "binding_id": "rb-4841238f2a5d42bb8c54ce04359096e0",
           "broker": "shioaji_paper",
-          "broker_order_id": "26712736fd7743449018a2ae106df07c",
+          "broker_order_id": "febc5263ec00481985d4a57917052441",
           "broker_submission_status": "filled",
           "capital_scale_pct": 0,
-          "causal_parent_id": "6391c2a0-11f2-5752-8540-5df069173623",
+          "causal_parent_id": "e9669da6-7545-5cd4-873d-6384824cd93b",
           "context_source": "env_vars",
           "contract_symbol": "2330",
           "correlation_envelope": {
-            "causation_event_id": "50bb136d-4ce2-5443-981a-514364068c5a",
-            "correlation_id": "b75b88c1-5818-4026-8531-ef51183dbf9d",
+            "causation_event_id": "124aecac-f116-5951-903d-18ebd22d4bf3",
+            "correlation_id": "9256d984-48a7-451f-939d-e86da5ff8a46",
             "environment": "paper",
-            "event_id": "6391c2a0-11f2-5752-8540-5df069173623",
-            "event_time": "2026-08-21T14:19:16Z",
-            "journey_id": "tj_b99ab271-1a18-4592-9827-62361be6aed3",
+            "event_id": "e9669da6-7545-5cd4-873d-6384824cd93b",
+            "event_time": "2026-08-21T14:29:53Z",
+            "journey_id": "tj_046b931d-f739-40ee-a8b1-e5a9597fb11a",
             "producer": "execution.paper_runtime",
             "producer_revision": 1,
-            "received_at": "2026-08-21T14:19:16Z",
+            "received_at": "2026-08-21T14:29:53Z",
             "schema_version": "trade-journey-envelope/1",
             "tenant_id": "default",
-            "trace_id": "031dc193-62ec-4a52-b671-3f13db678339"
+            "trace_id": "ab6f0f67-5c88-41f5-9b05-9270a56bd250"
           },
           "currency": "TWD",
           "environment": "paper",
           "exchange": "TSE",
-          "fill_id": "paper-fill-91875e94-96d6-47e2-84f8-84d27ac3f64c",
+          "fill_id": "paper-fill-4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
           "is_real_capital": false,
           "is_real_order": false,
-          "journey_id": "tj_b99ab271-1a18-4592-9827-62361be6aed3",
+          "journey_id": "tj_046b931d-f739-40ee-a8b1-e5a9597fb11a",
           "ledger_committed": true,
-          "ledger_fill_count": 45,
-          "loop_run_id": "lr-run-rb-78e39ba1cb4541b599c263fe0f091c4f-2026-08-21T14:19:12Z-45",
-          "order_id": "paper-order-50bb136d-4ce2-5443-981a-514364068c5a",
+          "ledger_fill_count": 46,
+          "loop_run_id": "lr-run-rb-4841238f2a5d42bb8c54ce04359096e0-2026-08-21T14:29:48Z-46",
+          "order_id": "paper-order-124aecac-f116-5951-903d-18ebd22d4bf3",
           "order_type": "MARKET",
-          "persona_id": "persona-l12-positive-8c489bb2f1",
-          "position_quantity": 45.0,
+          "persona_id": "persona-l12-positive-6d876b3d2c",
+          "position_quantity": 46.0,
           "quantity_type": "SHARES",
           "requested_quantity": 1.0,
-          "run_id": "run-rb-78e39ba1cb4541b599c263fe0f091c4f-2026-08-21T14:19:12Z-45",
-          "runtime_binding_effective_at": "2026-08-21T14:18:26Z",
+          "run_id": "run-rb-4841238f2a5d42bb8c54ce04359096e0-2026-08-21T14:29:48Z-46",
+          "runtime_binding_effective_at": "2026-08-21T14:29:01Z",
           "runtime_package": "paper_execution_runtime",
           "runtime_role": "pantheon-lean-paper-runtime",
           "sec_type": "equity",
           "sequence_no": 6,
-          "shioaji_trade_id": "26712736fd7743449018a2ae106df07c",
+          "shioaji_trade_id": "febc5263ec00481985d4a57917052441",
           "side": "buy",
-          "signal_id": "15fe6799-9252-53a6-a907-90f19958d468",
+          "signal_id": "337e76d4-5c45-5b9e-84ad-76bfd2c8e8f7",
           "sim_fill_flag": true,
           "source_mode": "live",
           "source_worker": "paper-signal-producer",
@@ -321,24 +321,24 @@
           "fill_quantity": 1.0,
           "submitted_to_broker": true
         },
-        "order_id": "paper-order-50bb136d-4ce2-5443-981a-514364068c5a",
-        "persona_capital_binding_id": "pcb-l12-positive-8c489bb2f1",
-        "plan_id": "plan-l12-positive-8c489bb2f1",
-        "run_id": "run-rb-78e39ba1cb4541b599c263fe0f091c4f-2026-08-21T14:19:12Z-45",
-        "runtime_id": "rt-45076d50",
+        "order_id": "paper-order-124aecac-f116-5951-903d-18ebd22d4bf3",
+        "persona_capital_binding_id": "pcb-l12-positive-6d876b3d2c",
+        "plan_id": "plan-l12-positive-6d876b3d2c",
+        "run_id": "run-rb-4841238f2a5d42bb8c54ce04359096e0-2026-08-21T14:29:48Z-46",
+        "runtime_id": "rt-5a02b805",
         "sequence_no": 6,
-        "signal_id": "15fe6799-9252-53a6-a907-90f19958d468",
+        "signal_id": "337e76d4-5c45-5b9e-84ad-76bfd2c8e8f7",
         "source_mode": "live",
         "symbol": "2330.TW",
         "target": {
           "artifact_type": "execution_bundle",
           "artifact_version": "2.1.0",
           "promotion_state": "paper",
-          "registry_id": "artifact-l12-positive-8c489bb2f1",
+          "registry_id": "artifact-l12-positive-6d876b3d2c",
           "strategy_id": "tw_session_momentum"
         },
         "tenant_id": "default",
-        "trace_id": "031dc193-62ec-4a52-b671-3f13db678339"
+        "trace_id": "ab6f0f67-5c88-41f5-9b05-9270a56bd250"
       },
       "compose_services": [
         "paper-signal-producer",
@@ -347,85 +347,85 @@
         "source-ingest",
         "telemetry"
       ],
-      "ended_at": "2026-08-21T14:19:17Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:29:53Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 9,
       "next_consumer_readback": {
-        "last_heartbeat_event_id": "94469df3-f504-433b-ac05-bcb112d96f62",
-        "runtime_id": "rt-45076d50",
+        "last_heartbeat_event_id": "533d28a8-484d-43be-8a66-324f05ef0f06",
+        "runtime_id": "rt-5a02b805",
         "state": "active"
       },
       "owner_worker_identity": {
-        "container_id": "770da39ffa9e1c1edefc2f4fd63cec97ac1ada28b740f92ca96551e6877860f7",
+        "container_id": "f7747fc6a3548ac80a9c498c8c95531dd2402e3376f5b62ff8c97061d27d3a97",
         "container_name": "l12currentruntimee2e-paper-signal-producer-1",
-        "image_id": "sha256:f994d3dd041734b185881568eac215068df6a0341d8d94408f332afeb52feb27",
+        "image_id": "sha256:b2bc110ca17d9f67588019ea61ebb07c7e7154ce082e2bd723306ac1f0742e8d",
         "image_name": "l12currentruntimee2e-paper-signal-producer",
-        "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "revision_evidence": "oci_label",
         "runtime_worker": {
-          "binding_id": "rb-78e39ba1cb4541b599c263fe0f091c4f",
-          "capital_pool_id": "pool-l12-positive-8c489bb2f1",
+          "binding_id": "rb-4841238f2a5d42bb8c54ce04359096e0",
+          "capital_pool_id": "pool-l12-positive-6d876b3d2c",
           "fence_token": 1,
           "heartbeat_status": "active",
           "last_error": null,
           "last_exit_code": null,
-          "last_heartbeat_at": "2026-08-21T14:19:14Z",
-          "monitoring_session_id": "prmon-rb-78e39ba1cb4541b599c263fe0f091c4f-8b207be2",
-          "pid": 40,
+          "last_heartbeat_at": "2026-08-21T14:29:51Z",
+          "monitoring_session_id": "prmon-rb-4841238f2a5d42bb8c54ce04359096e0-6efe66f0",
+          "pid": 48,
           "port": 8020,
           "restart_count": 0,
-          "runtime_id": "rt-45076d50",
-          "started_at": "2026-08-21T14:18:26Z",
+          "runtime_id": "rt-5a02b805",
+          "started_at": "2026-08-21T14:29:01Z",
           "status": "running"
         },
         "service": "paper-signal-producer",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:19:17Z",
-      "terminal_output_id": "91875e94-96d6-47e2-84f8-84d27ac3f64c",
-      "trigger_id": "rb-78e39ba1cb4541b599c263fe0f091c4f"
+      "started_at": "2026-08-21T14:29:53Z",
+      "terminal_output_id": "4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+      "trigger_id": "rb-4841238f2a5d42bb8c54ce04359096e0"
     },
     "loop_10_telemetry_reconciliation_incident": {
       "assertions": {
-        "incident_id": "inc-drift-6e06bfb4a353",
+        "incident_id": "inc-drift-84553e230c6b",
         "real_runtime_event_preserved": true,
         "severity": "critical"
       },
       "authority_readback": {
-        "artifact_id": "artifact-l12-positive-8c489bb2f1",
+        "artifact_id": "artifact-l12-positive-6d876b3d2c",
         "artifact_version": "2.1.0",
         "baseline_ref": "governed-runtime-baseline",
-        "binding_id": "rb-78e39ba1cb4541b599c263fe0f091c4f",
-        "capital_pool_id": "pool-l12-positive-8c489bb2f1",
+        "binding_id": "rb-4841238f2a5d42bb8c54ce04359096e0",
+        "capital_pool_id": "pool-l12-positive-6d876b3d2c",
         "correlation_envelope": {
-          "causation_event_id": "91875e94-96d6-47e2-84f8-84d27ac3f64c",
-          "correlation_id": "b75b88c1-5818-4026-8531-ef51183dbf9d",
+          "causation_event_id": "4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+          "correlation_id": "9256d984-48a7-451f-939d-e86da5ff8a46",
           "environment": "paper",
-          "event_id": "recon-91875e94-96d6-47e2-84f8-84d27ac3f64c",
-          "event_time": "2026-08-21T14:19:18Z",
-          "journey_id": "tj_b99ab271-1a18-4592-9827-62361be6aed3",
+          "event_id": "recon-4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+          "event_time": "2026-08-21T14:29:54Z",
+          "journey_id": "tj_046b931d-f739-40ee-a8b1-e5a9597fb11a",
           "producer": "reconciliation.drift",
           "producer_revision": 1,
-          "received_at": "2026-08-21T14:19:18Z",
+          "received_at": "2026-08-21T14:29:54Z",
           "schema_version": "trade-journey-envelope/1",
           "tenant_id": "default",
-          "trace_id": "031dc193-62ec-4a52-b671-3f13db678339"
+          "trace_id": "ab6f0f67-5c88-41f5-9b05-9270a56bd250"
         },
-        "current_ref": "91875e94-96d6-47e2-84f8-84d27ac3f64c",
-        "deployment_plan_id": "plan-l12-positive-8c489bb2f1",
+        "current_ref": "4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+        "deployment_plan_id": "plan-l12-positive-6d876b3d2c",
         "deployment_stage": "paper",
-        "drift_report_id": "drift-91875e94-96d6-47e2-84f8-84d27ac3f64c",
+        "drift_report_id": "drift-4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
         "drift_type": "execution",
         "evidence_refs": [
-          "telemetry_event:91875e94-96d6-47e2-84f8-84d27ac3f64c",
-          "runtime_binding:rb-78e39ba1cb4541b599c263fe0f091c4f",
-          "artifact:artifact-l12-positive-8c489bb2f1@2.1.0",
-          "drift_report:drift-91875e94-96d6-47e2-84f8-84d27ac3f64c",
-          "reconciliation_record:recon-91875e94-96d6-47e2-84f8-84d27ac3f64c"
+          "telemetry_event:4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+          "runtime_binding:rb-4841238f2a5d42bb8c54ce04359096e0",
+          "artifact:artifact-l12-positive-6d876b3d2c@2.1.0",
+          "drift_report:drift-4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+          "reconciliation_record:recon-4f7f70de-8a99-486a-b8ec-034b0fee8f8e"
         ],
-        "generated_at": "2026-08-21T14:19:18Z",
-        "id": "drift-91875e94-96d6-47e2-84f8-84d27ac3f64c",
+        "generated_at": "2026-08-21T14:29:54Z",
+        "id": "drift-4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
         "incident_cluster_id": "drift:fill_price",
         "metrics": {
           "baseline_metrics": {
@@ -451,11 +451,11 @@
           ],
           "worst_metric": "fill_price"
         },
-        "persona_capital_binding_id": "pcb-l12-positive-8c489bb2f1",
+        "persona_capital_binding_id": "pcb-l12-positive-6d876b3d2c",
         "recommended_action": "rerun_research",
-        "recon_run_id": "recon-91875e94-96d6-47e2-84f8-84d27ac3f64c",
-        "runtime_id": "rt-45076d50",
-        "scope_ref": "rb-78e39ba1cb4541b599c263fe0f091c4f",
+        "recon_run_id": "recon-4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+        "runtime_id": "rt-5a02b805",
+        "scope_ref": "rb-4841238f2a5d42bb8c54ce04359096e0",
         "severity": "critical",
         "source_contract": {
           "derived_only": true,
@@ -464,60 +464,60 @@
         },
         "status": "open",
         "telemetry_event_ids": [
-          "91875e94-96d6-47e2-84f8-84d27ac3f64c"
+          "4f7f70de-8a99-486a-b8ec-034b0fee8f8e"
         ],
         "tenant_id": "default",
-        "trace_id": "031dc193-62ec-4a52-b671-3f13db678339"
+        "trace_id": "ab6f0f67-5c88-41f5-9b05-9270a56bd250"
       },
       "compose_services": [
         "telemetry",
         "reconciliation-drift-svc",
         "incidents"
       ],
-      "ended_at": "2026-08-21T14:19:18Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:29:54Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 10,
       "next_consumer_readback": {
-        "artifact_id": "artifact-l12-positive-8c489bb2f1",
+        "artifact_id": "artifact-l12-positive-6d876b3d2c",
         "artifact_version": "2.1.0",
-        "binding_id": "rb-78e39ba1cb4541b599c263fe0f091c4f",
-        "capital_pool_id": "pool-l12-positive-8c489bb2f1",
-        "created_at": "2026-08-21T14:19:18Z",
-        "deployment_plan_id": "plan-l12-positive-8c489bb2f1",
+        "binding_id": "rb-4841238f2a5d42bb8c54ce04359096e0",
+        "capital_pool_id": "pool-l12-positive-6d876b3d2c",
+        "created_at": "2026-08-21T14:29:54Z",
+        "deployment_plan_id": "plan-l12-positive-6d876b3d2c",
         "deployment_stage": "paper",
-        "evidence_summary": "DriftReport drift-91875e94-96d6-47e2-84f8-84d27ac3f64c; cluster=drift:fill_price; reconciliation_ids=drift-91875e94-96d6-47e2-84f8-84d27ac3f64c,recon-91875e94-96d6-47e2-84f8-84d27ac3f64c; telemetry_event_ids=91875e94-96d6-47e2-84f8-84d27ac3f64c; worst_metric=fill_price",
+        "evidence_summary": "DriftReport drift-4f7f70de-8a99-486a-b8ec-034b0fee8f8e; cluster=drift:fill_price; reconciliation_ids=drift-4f7f70de-8a99-486a-b8ec-034b0fee8f8e,recon-4f7f70de-8a99-486a-b8ec-034b0fee8f8e; telemetry_event_ids=4f7f70de-8a99-486a-b8ec-034b0fee8f8e; worst_metric=fill_price",
         "incident_cluster_id": "drift:fill_price",
-        "incident_id": "inc-drift-6e06bfb4a353",
-        "lineage_ref": "artifact-l12-positive-8c489bb2f1@2.1.0",
-        "persona_capital_binding_id": "pcb-l12-positive-8c489bb2f1",
+        "incident_id": "inc-drift-84553e230c6b",
+        "lineage_ref": "artifact-l12-positive-6d876b3d2c@2.1.0",
+        "persona_capital_binding_id": "pcb-l12-positive-6d876b3d2c",
         "reconciliation_ids": [
-          "drift-91875e94-96d6-47e2-84f8-84d27ac3f64c",
-          "recon-91875e94-96d6-47e2-84f8-84d27ac3f64c"
+          "drift-4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+          "recon-4f7f70de-8a99-486a-b8ec-034b0fee8f8e"
         ],
         "resolved_at": null,
-        "runtime_id": "rt-45076d50",
+        "runtime_id": "rt-5a02b805",
         "severity": "critical",
         "status": "open",
         "telemetry_event_ids": [
-          "91875e94-96d6-47e2-84f8-84d27ac3f64c"
+          "4f7f70de-8a99-486a-b8ec-034b0fee8f8e"
         ],
-        "title": "Drift threshold breach: drift:fill_price for rb-78e39ba1cb4541b599c263fe0f091c4f",
-        "trace_id": "031dc193-62ec-4a52-b671-3f13db678339"
+        "title": "Drift threshold breach: drift:fill_price for rb-4841238f2a5d42bb8c54ce04359096e0",
+        "trace_id": "ab6f0f67-5c88-41f5-9b05-9270a56bd250"
       },
       "owner_worker_identity": {
-        "container_id": "01a98ac73c2f5458a2c8ae4642abcd984f1619ad544682cb76495d9bc38aaf8c",
+        "container_id": "9323b55ce120b9e2d6e4f28c2ae96486b7f7ce12b0fe80ece3370ff5c8c1867b",
         "container_name": "l12currentruntimee2e-reconciliation-drift-svc-1",
-        "image_id": "sha256:9a1e7ba4fb7e1c2b7e73209fa649ee7dbf3cae5c027138b95c64110dc31ec56f",
+        "image_id": "sha256:ccda8f2a3d940f37636e0d2f1744c5931a5c333deccc769277d3b5e795e5b1b5",
         "image_name": "l12currentruntimee2e-reconciliation-drift-svc",
         "oci_revision": "",
         "revision_evidence": "compose_source_head",
         "service": "reconciliation-drift-svc",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:19:17Z",
-      "terminal_output_id": "drift-91875e94-96d6-47e2-84f8-84d27ac3f64c",
-      "trigger_id": "91875e94-96d6-47e2-84f8-84d27ac3f64c"
+      "started_at": "2026-08-21T14:29:54Z",
+      "terminal_output_id": "drift-4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
+      "trigger_id": "4f7f70de-8a99-486a-b8ec-034b0fee8f8e"
     },
     "loop_11_evolution_decision": {
       "assertions": {
@@ -528,18 +528,18 @@
       "authority_readback": {
         "action_type": "freeze",
         "approval_decision_id": null,
-        "capital_pool_id": "pool-l12-positive-8c489bb2f1",
+        "capital_pool_id": "pool-l12-positive-6d876b3d2c",
         "cooldown_ends_at": null,
         "cooldown_started_at": null,
-        "created_at": "2026-08-21T14:19:18Z",
+        "created_at": "2026-08-21T14:29:54Z",
         "created_by_id": "evolution-daily-sweep",
         "created_by_role": "evolution_controller",
-        "decision_id": "evo-sweep-inc-drift-6e06bfb4a353",
+        "decision_id": "evo-sweep-inc-drift-84553e230c6b",
         "decision_state": "proposed",
         "evidence_refs": [
           {
             "note": "IncidentCase evidence snapshot for daily evolution sweep proposal.",
-            "ref_id": "inc-drift-6e06bfb4a353",
+            "ref_id": "inc-drift-84553e230c6b",
             "ref_type": "manual_review_ticket",
             "storage_ref": {
               "backend": "incident_store",
@@ -548,7 +548,7 @@
           },
           {
             "note": "Telemetry event linked to the threshold-triggered incident.",
-            "ref_id": "91875e94-96d6-47e2-84f8-84d27ac3f64c",
+            "ref_id": "4f7f70de-8a99-486a-b8ec-034b0fee8f8e",
             "ref_type": "telemetry_summary",
             "storage_ref": {
               "backend": "telemetry",
@@ -558,23 +558,23 @@
         ],
         "execution_result": null,
         "is_active": true,
-        "linked_incident_id": "inc-drift-6e06bfb4a353",
+        "linked_incident_id": "inc-drift-84553e230c6b",
         "linked_postmortem_id": null,
         "metadata": {
           "broker_order_allowed": false,
           "capital_binding_mutation_allowed": false,
-          "deployment_plan_id": "plan-l12-positive-8c489bb2f1",
+          "deployment_plan_id": "plan-l12-positive-6d876b3d2c",
           "deployment_stage_snapshot": "paper",
           "live_mutation_allowed": false,
-          "persona_capital_binding_id": "pcb-l12-positive-8c489bb2f1",
+          "persona_capital_binding_id": "pcb-l12-positive-6d876b3d2c",
           "proposal_only": true,
-          "runtime_binding_id": "rb-78e39ba1cb4541b599c263fe0f091c4f",
+          "runtime_binding_id": "rb-4841238f2a5d42bb8c54ce04359096e0",
           "runtime_binding_mutation_allowed": false,
-          "runtime_id": "rt-45076d50",
+          "runtime_id": "rt-5a02b805",
           "source": "evolution_daily_sweep",
-          "source_incident_id": "inc-drift-6e06bfb4a353",
-          "source_trace_id": "031dc193-62ec-4a52-b671-3f13db678339",
-          "sweep_id": "sweep-pfg-l12-runtime-e2e-20260820-8c489bb2f1",
+          "source_incident_id": "inc-drift-84553e230c6b",
+          "source_trace_id": "ab6f0f67-5c88-41f5-9b05-9270a56bd250",
+          "sweep_id": "sweep-pfg-l12-runtime-e2e-20260820-6d876b3d2c",
           "threshold_evaluation": {
             "committee_review_required": false,
             "notes": [],
@@ -587,12 +587,12 @@
         "observation_window_ends_at": null,
         "observation_window_started_at": null,
         "persona_id": null,
-        "rationale": "Daily evolution sweep derived a governed freeze proposal from incident inc-drift-6e06bfb4a353. The proposal is review-gated and has no runtime, broker, or capital-binding side effects.",
+        "rationale": "Daily evolution sweep derived a governed freeze proposal from incident inc-drift-84553e230c6b. The proposal is review-gated and has no runtime, broker, or capital-binding side effects.",
         "review_chain": [],
         "risk_level": "medium",
         "superseded_by": null,
         "supersedes_decision_id": null,
-        "target_id": "artifact-l12-positive-8c489bb2f1",
+        "target_id": "artifact-l12-positive-6d876b3d2c",
         "target_stage": "paper",
         "target_type": "candidate_artifact",
         "target_version": "2.1.0",
@@ -615,8 +615,8 @@
         "incidents",
         "evolution"
       ],
-      "ended_at": "2026-08-21T14:19:18Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:29:54Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 11,
       "next_consumer_readback": {
         "proposal_only": true,
@@ -624,19 +624,19 @@
         "runtime_binding_mutation_allowed": false
       },
       "owner_worker_identity": {
-        "container_id": "7d207abbb414952f526b7dbe0702baea299704670eb1f9574babff07ec3983bc",
+        "container_id": "fd59116836b7463cddfcd5d28c33a696f5234329276845d52db544706d70c3cd",
         "container_name": "l12currentruntimee2e-evolution-1",
-        "image_id": "sha256:3cf65f2e4dfcbfdcbdd0e5e3d4707e6a9d5bb28ddc70f7c225f078ea37e2216d",
+        "image_id": "sha256:1b7586e5f4a74f0d13bec4ea3743ce86cc4a1b447bc2ae325f7e0b7290b7f876",
         "image_name": "l12currentruntimee2e-evolution",
         "oci_revision": "",
         "revision_evidence": "compose_source_head",
         "service": "evolution",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:19:18Z",
-      "terminal_output_id": "evo-sweep-inc-drift-6e06bfb4a353",
-      "trigger_id": "inc-drift-6e06bfb4a353"
+      "started_at": "2026-08-21T14:29:54Z",
+      "terminal_output_id": "evo-sweep-inc-drift-84553e230c6b",
+      "trigger_id": "inc-drift-84553e230c6b"
     },
     "loop_12_bff_typed_health": {
       "assertions": {
@@ -645,12 +645,12 @@
         "uses_generic_health_guess": false
       },
       "authority_readback": {
-        "checked_at": "2026-08-21T14:19:16Z",
+        "checked_at": "2026-08-21T14:29:52Z",
         "consecutive_failures": 0,
         "error_rate": 0.0,
         "failure_count": 0,
         "failure_reason": null,
-        "latency_ms": 41.9,
+        "latency_ms": 25.3,
         "ok": true,
         "probe_kind": "interval_probe",
         "registry": {
@@ -664,23 +664,23 @@
         "sample_count": 1,
         "status_code": 200,
         "target_name": "paper-fleet-reconciler",
-        "window_started_at": "2026-08-21T14:19:16Z"
+        "window_started_at": "2026-08-21T14:29:52Z"
       },
       "compose_services": [
         "operator-bff",
         "paper-fleet-reconciler",
         "runtime-manager"
       ],
-      "ended_at": "2026-08-21T14:19:18Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:29:54Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 12,
       "next_consumer_readback": {
-        "checked_at": "2026-08-21T14:19:16Z",
+        "checked_at": "2026-08-21T14:29:52Z",
         "consecutive_failures": 0,
         "error_rate": 0.0,
         "failure_count": 0,
         "failure_reason": null,
-        "latency_ms": 36.7,
+        "latency_ms": 41.6,
         "ok": true,
         "probe_kind": "interval_probe",
         "registry": {
@@ -694,22 +694,22 @@
         "sample_count": 1,
         "status_code": 200,
         "target_name": "runtime-manager",
-        "window_started_at": "2026-08-21T14:19:16Z"
+        "window_started_at": "2026-08-21T14:29:52Z"
       },
       "owner_worker_identity": {
-        "container_id": "535bc7384904bfa16500c80aa3e13507d5b17d6180001272a162eb62206ea0d6",
+        "container_id": "7a16303b55be305edeba2b8e746f514101376d9b313b4c36bc859b5d2d4f8446",
         "container_name": "l12currentruntimee2e-operator-bff-1",
-        "image_id": "sha256:f38ba7e8d79edf9da5051945c449d66dae53f5f5a138af63ebb96698fc43b0da",
+        "image_id": "sha256:9b3f7aa3e619b212366bdaecc93dbc4071dbb317f0228d77e8606742dc8a5f00",
         "image_name": "l12currentruntimee2e-operator-bff",
-        "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "revision_evidence": "oci_label",
         "service": "operator-bff",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:19:18Z",
+      "started_at": "2026-08-21T14:29:54Z",
       "terminal_output_id": "paper-fleet-reconciler",
-      "trigger_id": "bff-health-8c489bb2f1"
+      "trigger_id": "bff-health-6d876b3d2c"
     },
     "migration_invalid_bindings_prerequisite": {
       "assertions": {
@@ -726,27 +726,27 @@
         "runtime-manager",
         "paper-fleet-reconciler"
       ],
-      "ended_at": "2026-08-21T14:18:24Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:28:52Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 8,
       "next_consumer_readback": {
         "fleet_desired_sanitized": true,
         "retired_binding_ids": []
       },
       "owner_worker_identity": {
-        "container_id": "22808a665638c9081e9211c01ed8beb9a97ee58d565c614915949b68db61f7cc",
+        "container_id": "1ac71719c49b25cfc1acbfd47cfe9159181bad3314e4204b8f8aceaddeca205d",
         "container_name": "l12currentruntimee2e-runtime-manager-1",
-        "image_id": "sha256:d4aebb387d29950ae08f468c4a820b03c6b7969eed8010b8f23670c9970e6023",
+        "image_id": "sha256:9ade582163d30daed3433f3e398098eef98b4899e1dbc35bc19945240745b56b",
         "image_name": "l12currentruntimee2e-runtime-manager",
-        "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "revision_evidence": "oci_label",
         "service": "runtime-manager",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:18:23Z",
+      "started_at": "2026-08-21T14:28:52Z",
       "terminal_output_id": "retired-0-invalid-bindings",
-      "trigger_id": "migration-preflight-8c489bb2f1"
+      "trigger_id": "migration-preflight-6d876b3d2c"
     },
     "negative_missing_artifact_checksum": {
       "assertions": {
@@ -755,8 +755,8 @@
         "signals_enqueued_for_binding": 0
       },
       "authority_readback": {
-        "artifact_id": "artifact-l12-missing-checksum-8c489bb2f1",
-        "binding_id": "rb-6bc6b911f5f74fd885f8536452f992a2",
+        "artifact_id": "artifact-l12-missing-checksum-6d876b3d2c",
+        "binding_id": "rb-0325747745a544b5a1ed357cb31d39fb",
         "fleet_exclusion_reason": "non_executable_missing_artifact_checksum",
         "projection_checksum_present": false
       },
@@ -765,28 +765,28 @@
         "paper-fleet-reconciler",
         "signal-store"
       ],
-      "ended_at": "2026-08-21T14:19:17Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:29:54Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 9,
       "next_consumer_readback": {
         "fleet_active_count": 1,
         "queue_depth": 0,
-        "queue_key": "pantheon:signals:pending:rb-6bc6b911f5f74fd885f8536452f992a2"
+        "queue_key": "pantheon:signals:pending:rb-0325747745a544b5a1ed357cb31d39fb"
       },
       "owner_worker_identity": {
-        "container_id": "770da39ffa9e1c1edefc2f4fd63cec97ac1ada28b740f92ca96551e6877860f7",
+        "container_id": "f7747fc6a3548ac80a9c498c8c95531dd2402e3376f5b62ff8c97061d27d3a97",
         "container_name": "l12currentruntimee2e-paper-signal-producer-1",
-        "image_id": "sha256:f994d3dd041734b185881568eac215068df6a0341d8d94408f332afeb52feb27",
+        "image_id": "sha256:b2bc110ca17d9f67588019ea61ebb07c7e7154ce082e2bd723306ac1f0742e8d",
         "image_name": "l12currentruntimee2e-paper-signal-producer",
-        "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "revision_evidence": "oci_label",
         "service": "paper-signal-producer",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:19:17Z",
-      "terminal_output_id": "rb-6bc6b911f5f74fd885f8536452f992a2",
-      "trigger_id": "rb-6bc6b911f5f74fd885f8536452f992a2"
+      "started_at": "2026-08-21T14:29:53Z",
+      "terminal_output_id": "rb-0325747745a544b5a1ed357cb31d39fb",
+      "trigger_id": "rb-0325747745a544b5a1ed357cb31d39fb"
     },
     "negative_missing_market_symbol": {
       "assertions": {
@@ -795,8 +795,8 @@
         "signals_enqueued_for_binding": 0
       },
       "authority_readback": {
-        "artifact_id": "artifact-l12-missing-market-symbol-8c489bb2f1",
-        "binding_id": "rb-3d3859c910034fd191a8a4de62b511b8",
+        "artifact_id": "artifact-l12-missing-market-symbol-6d876b3d2c",
+        "binding_id": "rb-90aa8e4a857c4967aeb706994bef54c5",
         "fleet_exclusion_reason": "non_executable_missing_market_symbol",
         "market_symbol_present": false
       },
@@ -805,28 +805,28 @@
         "paper-fleet-reconciler",
         "signal-store"
       ],
-      "ended_at": "2026-08-21T14:19:17Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:29:54Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 9,
       "next_consumer_readback": {
         "fleet_active_count": 1,
         "queue_depth": 0,
-        "queue_key": "pantheon:signals:pending:rb-3d3859c910034fd191a8a4de62b511b8"
+        "queue_key": "pantheon:signals:pending:rb-90aa8e4a857c4967aeb706994bef54c5"
       },
       "owner_worker_identity": {
-        "container_id": "4a7775f9529062176bdf71e8b33a1e1e483f3b3bd1e052ccdcb10c7e12cc4c8a",
+        "container_id": "3e25832dc8320aa9a2f2ca0905d915dce69bc9387cf15a35377f58e78a81eb10",
         "container_name": "l12currentruntimee2e-paper-fleet-reconciler-1",
-        "image_id": "sha256:cf6f57d0a7388eb948fffdc6eccfecdc7a59e831256cddd8a06e75f416866a83",
+        "image_id": "sha256:f5534a293671dd3e5a2cf866c2eac4e38467dc2f94088e86b19dc88f7f1c6b70",
         "image_name": "l12currentruntimee2e-paper-fleet-reconciler",
-        "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "revision_evidence": "oci_label",
         "service": "paper-fleet-reconciler",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:19:17Z",
-      "terminal_output_id": "rb-3d3859c910034fd191a8a4de62b511b8",
-      "trigger_id": "rb-3d3859c910034fd191a8a4de62b511b8"
+      "started_at": "2026-08-21T14:29:53Z",
+      "terminal_output_id": "rb-90aa8e4a857c4967aeb706994bef54c5",
+      "trigger_id": "rb-90aa8e4a857c4967aeb706994bef54c5"
     },
     "negative_typed_worker_failure": {
       "assertions": {
@@ -835,12 +835,12 @@
         "worker_failure_visible": true
       },
       "authority_readback": {
-        "checked_at": "2026-08-21T14:19:50Z",
+        "checked_at": "2026-08-21T14:30:27Z",
         "consecutive_failures": 1,
         "error_rate": 1.0,
         "failure_count": 1,
         "failure_reason": "URLError: [Errno -3] Temporary failure in name resolution",
-        "latency_ms": 43.4,
+        "latency_ms": 51.2,
         "ok": false,
         "probe_kind": "interval_probe",
         "registry": {
@@ -854,23 +854,23 @@
         "sample_count": 1,
         "status_code": -1,
         "target_name": "paper-fleet-reconciler",
-        "window_started_at": "2026-08-21T14:19:50Z"
+        "window_started_at": "2026-08-21T14:30:27Z"
       },
       "compose_services": [
         "operator-bff",
         "paper-fleet-reconciler",
         "runtime-manager"
       ],
-      "ended_at": "2026-08-21T14:19:51Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:30:27Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 12,
       "next_consumer_readback": {
-        "checked_at": "2026-08-21T14:19:50Z",
+        "checked_at": "2026-08-21T14:30:27Z",
         "consecutive_failures": 0,
         "error_rate": 0.0,
         "failure_count": 0,
         "failure_reason": null,
-        "latency_ms": 42.1,
+        "latency_ms": 34.3,
         "ok": true,
         "probe_kind": "interval_probe",
         "registry": {
@@ -884,22 +884,22 @@
         "sample_count": 1,
         "status_code": 200,
         "target_name": "runtime-manager",
-        "window_started_at": "2026-08-21T14:19:50Z"
+        "window_started_at": "2026-08-21T14:30:27Z"
       },
       "owner_worker_identity": {
-        "container_id": "535bc7384904bfa16500c80aa3e13507d5b17d6180001272a162eb62206ea0d6",
+        "container_id": "7a16303b55be305edeba2b8e746f514101376d9b313b4c36bc859b5d2d4f8446",
         "container_name": "l12currentruntimee2e-operator-bff-1",
-        "image_id": "sha256:f38ba7e8d79edf9da5051945c449d66dae53f5f5a138af63ebb96698fc43b0da",
+        "image_id": "sha256:9b3f7aa3e619b212366bdaecc93dbc4071dbb317f0228d77e8606742dc8a5f00",
         "image_name": "l12currentruntimee2e-operator-bff",
-        "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "revision_evidence": "oci_label",
         "service": "operator-bff",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:19:18Z",
+      "started_at": "2026-08-21T14:29:54Z",
       "terminal_output_id": "paper-fleet-reconciler:unhealthy",
-      "trigger_id": "4a7775f9529062176bdf71e8b33a1e1e483f3b3bd1e052ccdcb10c7e12cc4c8a"
+      "trigger_id": "3e25832dc8320aa9a2f2ca0905d915dce69bc9387cf15a35377f58e78a81eb10"
     },
     "strict_bff_authentication": {
       "assertions": {
@@ -970,39 +970,39 @@
           ],
           "tenantId": "default"
         },
-        "source_commit_sha": "bf300ef1bd47edcb184238989390aec0a0538782"
+        "source_commit_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce"
       },
       "compose_services": [
         "operator-bff"
       ],
-      "ended_at": "2026-08-21T14:19:18Z",
-      "git_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "ended_at": "2026-08-21T14:29:54Z",
+      "git_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "loop": 12,
       "next_consumer_readback": {
         "protected_route": "/bff/v5/downstream-health",
         "token_format": "jwt_hs256"
       },
       "owner_worker_identity": {
-        "container_id": "535bc7384904bfa16500c80aa3e13507d5b17d6180001272a162eb62206ea0d6",
+        "container_id": "7a16303b55be305edeba2b8e746f514101376d9b313b4c36bc859b5d2d4f8446",
         "container_name": "l12currentruntimee2e-operator-bff-1",
-        "image_id": "sha256:f38ba7e8d79edf9da5051945c449d66dae53f5f5a138af63ebb96698fc43b0da",
+        "image_id": "sha256:9b3f7aa3e619b212366bdaecc93dbc4071dbb317f0228d77e8606742dc8a5f00",
         "image_name": "l12currentruntimee2e-operator-bff",
-        "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "revision_evidence": "oci_label",
         "service": "operator-bff",
-        "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+        "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
         "state": "running"
       },
-      "started_at": "2026-08-21T14:19:18Z",
+      "started_at": "2026-08-21T14:29:54Z",
       "terminal_output_id": "pfg-l12-runtime-e2e-20260820-operator",
-      "trigger_id": "bff-strict-auth-8c489bb2f1"
+      "trigger_id": "bff-strict-auth-6d876b3d2c"
     }
   },
   "compose_project": "l12currentruntimee2e",
-  "ended_at": "2026-08-21T14:20:22Z",
+  "ended_at": "2026-08-21T14:30:59Z",
   "environment": "isolated_compose_paper",
   "error": null,
-  "expected_sha": "bf300ef1bd47edcb184238989390aec0a0538782",
+  "expected_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
   "harness": {
     "database_migration": {
       "command": [
@@ -1090,141 +1090,141 @@
   },
   "identities": {
     "broker": {
-      "container_id": "5b138ff210e5bc17f58f28d8d7a963c181e784ee8d0547df0568e81697d9884a",
+      "container_id": "7ae0316d3108ae0ebbfd2d3e34fbad80c9d0f80a124bbe6ea3169682faa1d059",
       "container_name": "l12currentruntimee2e-broker-1",
-      "image_id": "sha256:20122fbeabd6ff6e75b99685bd65460aa6a7c84413359b7311bb5e073b10e5af",
+      "image_id": "sha256:ce7bd067f34fdf99d5b4613d91c6a102c53674e524a1ef88dfde67edebc68890",
       "image_name": "l12currentruntimee2e-broker",
-      "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "revision_evidence": "oci_label",
       "service": "broker",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "deployment": {
-      "container_id": "6f9ce139becab38a5f80ef3887015213ff5bb0e1ee639f6e163f29bb9a6852f0",
+      "container_id": "dfb513919d76e79993f07eabb4a71e2190444c0d137b0ca322b36fc5cc910018",
       "container_name": "l12currentruntimee2e-deployment-1",
-      "image_id": "sha256:c6b64add882f0510f2f8ac51c597cf0a7229d476174ad593136795ad6c2d9bb4",
+      "image_id": "sha256:85f8ec0c0cb16abf75683ab4d5d0684bb872a54b3929dda4be990326d58fa1b9",
       "image_name": "l12currentruntimee2e-deployment",
-      "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "revision_evidence": "oci_label",
       "service": "deployment",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "deployment-outbox-consumer": {
-      "container_id": "90a3ac5ace1de7cdad4b307a8a884e4cfb0e22053b9f82c97356df475e8d6feb",
+      "container_id": "60570bb9b3a00dd029a365a4a93ac5c64b88f30d2a1ec2aa3a6924d3f5489fed",
       "container_name": "l12currentruntimee2e-deployment-outbox-consumer-1",
-      "image_id": "sha256:56a75bcf58357080f8f4ca9f7c9b2638ddea0ba8100e1b185c09000026becfe9",
+      "image_id": "sha256:a9b4bc2586d184e335c8b1654c8f0b390f0bd16ef46c7d300f45cb8c5f14d192",
       "image_name": "l12currentruntimee2e-deployment-outbox-consumer",
-      "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "revision_evidence": "oci_label",
       "service": "deployment-outbox-consumer",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "evolution": {
-      "container_id": "7d207abbb414952f526b7dbe0702baea299704670eb1f9574babff07ec3983bc",
+      "container_id": "fd59116836b7463cddfcd5d28c33a696f5234329276845d52db544706d70c3cd",
       "container_name": "l12currentruntimee2e-evolution-1",
-      "image_id": "sha256:3cf65f2e4dfcbfdcbdd0e5e3d4707e6a9d5bb28ddc70f7c225f078ea37e2216d",
+      "image_id": "sha256:1b7586e5f4a74f0d13bec4ea3743ce86cc4a1b447bc2ae325f7e0b7290b7f876",
       "image_name": "l12currentruntimee2e-evolution",
       "oci_revision": "",
       "revision_evidence": "compose_source_head",
       "service": "evolution",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "incidents": {
-      "container_id": "6eedfa456c88dc2ca189a6cbb8fcddf1200af3a0c7bb3564a3aa7a18d5d6febf",
+      "container_id": "63250dcea9fad6ce80e27fd2a3dc2bbf8f934fb9534b48e42a6aea4629df5cfc",
       "container_name": "l12currentruntimee2e-incidents-1",
-      "image_id": "sha256:92fe8c5770d5b0eba42c38d62c4aa542eac146dc8880b321ebea63e5dc8a4cba",
+      "image_id": "sha256:ffa23a7f7e02e423332219cd8f7707dbd4c344cfa3d4e1122e5b4ae6cb8d27bc",
       "image_name": "l12currentruntimee2e-incidents",
       "oci_revision": "",
       "revision_evidence": "compose_source_head",
       "service": "incidents",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "operator-bff": {
-      "container_id": "535bc7384904bfa16500c80aa3e13507d5b17d6180001272a162eb62206ea0d6",
+      "container_id": "7a16303b55be305edeba2b8e746f514101376d9b313b4c36bc859b5d2d4f8446",
       "container_name": "l12currentruntimee2e-operator-bff-1",
-      "image_id": "sha256:f38ba7e8d79edf9da5051945c449d66dae53f5f5a138af63ebb96698fc43b0da",
+      "image_id": "sha256:9b3f7aa3e619b212366bdaecc93dbc4071dbb317f0228d77e8606742dc8a5f00",
       "image_name": "l12currentruntimee2e-operator-bff",
-      "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "revision_evidence": "oci_label",
       "service": "operator-bff",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "paper-fleet-reconciler": {
-      "container_id": "4a7775f9529062176bdf71e8b33a1e1e483f3b3bd1e052ccdcb10c7e12cc4c8a",
+      "container_id": "3e25832dc8320aa9a2f2ca0905d915dce69bc9387cf15a35377f58e78a81eb10",
       "container_name": "l12currentruntimee2e-paper-fleet-reconciler-1",
-      "image_id": "sha256:cf6f57d0a7388eb948fffdc6eccfecdc7a59e831256cddd8a06e75f416866a83",
+      "image_id": "sha256:f5534a293671dd3e5a2cf866c2eac4e38467dc2f94088e86b19dc88f7f1c6b70",
       "image_name": "l12currentruntimee2e-paper-fleet-reconciler",
-      "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "revision_evidence": "oci_label",
       "service": "paper-fleet-reconciler",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "paper-signal-producer": {
-      "container_id": "770da39ffa9e1c1edefc2f4fd63cec97ac1ada28b740f92ca96551e6877860f7",
+      "container_id": "f7747fc6a3548ac80a9c498c8c95531dd2402e3376f5b62ff8c97061d27d3a97",
       "container_name": "l12currentruntimee2e-paper-signal-producer-1",
-      "image_id": "sha256:f994d3dd041734b185881568eac215068df6a0341d8d94408f332afeb52feb27",
+      "image_id": "sha256:b2bc110ca17d9f67588019ea61ebb07c7e7154ce082e2bd723306ac1f0742e8d",
       "image_name": "l12currentruntimee2e-paper-signal-producer",
-      "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "revision_evidence": "oci_label",
       "service": "paper-signal-producer",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "reconciliation-drift-svc": {
-      "container_id": "01a98ac73c2f5458a2c8ae4642abcd984f1619ad544682cb76495d9bc38aaf8c",
+      "container_id": "9323b55ce120b9e2d6e4f28c2ae96486b7f7ce12b0fe80ece3370ff5c8c1867b",
       "container_name": "l12currentruntimee2e-reconciliation-drift-svc-1",
-      "image_id": "sha256:9a1e7ba4fb7e1c2b7e73209fa649ee7dbf3cae5c027138b95c64110dc31ec56f",
+      "image_id": "sha256:ccda8f2a3d940f37636e0d2f1744c5931a5c333deccc769277d3b5e795e5b1b5",
       "image_name": "l12currentruntimee2e-reconciliation-drift-svc",
       "oci_revision": "",
       "revision_evidence": "compose_source_head",
       "service": "reconciliation-drift-svc",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "runtime-manager": {
-      "container_id": "22808a665638c9081e9211c01ed8beb9a97ee58d565c614915949b68db61f7cc",
+      "container_id": "1ac71719c49b25cfc1acbfd47cfe9159181bad3314e4204b8f8aceaddeca205d",
       "container_name": "l12currentruntimee2e-runtime-manager-1",
-      "image_id": "sha256:d4aebb387d29950ae08f468c4a820b03c6b7969eed8010b8f23670c9970e6023",
+      "image_id": "sha256:9ade582163d30daed3433f3e398098eef98b4899e1dbc35bc19945240745b56b",
       "image_name": "l12currentruntimee2e-runtime-manager",
-      "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "revision_evidence": "oci_label",
       "service": "runtime-manager",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "source-ingest": {
-      "container_id": "7eb8a658801cf19352924222eb9fd84be345aa630f9f307587da0c0dcb44fa69",
+      "container_id": "c57eacd855358f2bbd4106ea57629f01c85d96e2de1a1c79885179a0620f4f83",
       "container_name": "l12currentruntimee2e-source-ingest-1",
-      "image_id": "sha256:10f839c5ffb7dc16105efbb208f2a4057cb2bd729eeb05f66ec06886789f7742",
+      "image_id": "sha256:2782f2ed47cb7c54793ab3e80dc37e7e9e9a3fb2445c3a2b9c001e127086b435",
       "image_name": "l12currentruntimee2e-source-ingest",
       "oci_revision": "",
       "revision_evidence": "compose_source_head",
       "service": "source-ingest",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     },
     "telemetry": {
-      "container_id": "c37aca9dc9e24079d8f35cca94bddc9fd6144cf90e7ad206cd9a550351f6d76b",
+      "container_id": "b1b85c25baa68eb50e830e5ac7babbfe4e54cbd4013790d055e2f40539cc91e5",
       "container_name": "l12currentruntimee2e-telemetry-1",
-      "image_id": "sha256:caeb2dbeb8b0da4b85c69f8a1d36559c3c4b58bdb5aacbf3e4032cae430c92bb",
+      "image_id": "sha256:c43195dcf340b6eecfbf5dc865c34c4288fc53ac77bebcf9e1d51ecc4855bbb8",
       "image_name": "l12currentruntimee2e-telemetry",
-      "oci_revision": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "oci_revision": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "revision_evidence": "oci_label",
       "service": "telemetry",
-      "source_head": "bf300ef1bd47edcb184238989390aec0a0538782",
+      "source_head": "06bad27a7b51340ab7c3164b968353a1e7182fce",
       "state": "running"
     }
   },
   "live_broker_enabled": false,
   "live_capital_enabled": false,
-  "started_at": "2026-08-21T14:18:20Z",
+  "started_at": "2026-08-21T14:28:47Z",
   "status": "passed",
   "task_id": "PFG-L12-RUNTIME-E2E-20260820"
 }
