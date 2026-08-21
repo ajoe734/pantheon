@@ -1,8 +1,47 @@
 {
   "cases": {
+    "bounded_lifecycle_cursor_and_resources": {
+      "assertions": {
+        "lifecycle_outbox_bounded": true,
+        "no_zombie_fleet_processes": true,
+        "non_executable_bindings_rejected": true,
+        "running_worker_exact": 1
+      },
+      "authority_readback": {
+        "recent_lifecycle_event_count": 1,
+        "running_worker_count": 1,
+        "used_ports_count": 1
+      },
+      "compose_services": [
+        "paper-fleet-reconciler",
+        "telemetry"
+      ],
+      "ended_at": "2026-08-21T05:37:45Z",
+      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "loop": 9,
+      "next_consumer_readback": {
+        "paper_runtime_id": "runtime-tw-session-momentum-paper-d20f1b46ab",
+        "summary_state": "running"
+      },
+      "owner_worker_identity": {
+        "container_id": "7336f5b9962dcf53254b05115b00d0ff5520f545c8227757f161daf6dc674c11",
+        "container_name": "l12currentruntimee2e-paper-fleet-reconciler-1",
+        "image_id": "sha256:f7c385991781871f0bc55f1cf3f39240191ce4c809debb4de64aa8e193f45346",
+        "image_name": "l12currentruntimee2e-paper-fleet-reconciler",
+        "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "revision_evidence": "oci_label",
+        "service": "paper-fleet-reconciler",
+        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "state": "running"
+      },
+      "started_at": "2026-08-21T05:37:44Z",
+      "terminal_output_id": "bounded-cursor-runtime-tw-session-momentum-paper-d20f1b46ab",
+      "trigger_id": "runtime-tw-session-momentum-paper-d20f1b46ab"
+    },
     "loop_08_promotion_deployment": {
       "assertions": {
         "approved_artifact_exact": true,
+        "market_data_policy_bound": true,
         "paper_only": true,
         "runtime_binding_active": true
       },
@@ -74,14 +113,11 @@
           "deployment_saga_id": "deployment-saga-plan-l12-positive-d20f1b46ab",
           "deployment_trace_id": "bc1978e6-d30f-4340-bab7-11550d9c3d5f",
           "environment": "paper",
-          "market_input": {
-            "closes": [
-              100.0,
-              110.0
-            ],
-            "observed_at": "2026-08-21T05:36:32Z",
-            "source_ref": "source-ingest://normalized/price/2330.TW",
-            "symbol": "2330.TW"
+          "market_data_policy": {
+            "contract": "latest_stored_normalized",
+            "max_age_seconds": 172800,
+            "minimum_closes": 2,
+            "owner": "source-ingest"
           },
           "object_store": {
             "openclaw/registry/tw_session_momentum/2.1.0/artifact.bin": "{\"algorithm_ref\":{\"commit\":\"5ad0249432459c119f26718007e083808ef7995d\",\"engine\":\"lean\",\"entrypoint\":\"pantheon_algo.base:PantheonAlgoBase\",\"logic_interpreter\":\"services.registry.strategy_artifact:evaluate_strategy_action\",\"path\":\"Algorithm.Python/pantheon_algo/base.py\",\"repository\":\"ajoe734/pantheon-lean\",\"signal_interface\":\"services.execution.lean_runtime.paper_signal_producer:Strategy\",\"signal_schema_version\":\"1.0\"},\"artifact_id\":\"artifact-l12-positive-d20f1b46ab\",\"artifact_schema_version\":\"1.0\",\"binding_intent\":{\"evidence_ref\":\"docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json\",\"observed_at\":\"2026-07-14T05:06:07Z\",\"observed_binding_status\":\"active\",\"observed_capital_pool_id\":\"pool-tw-equity-paper\",\"observed_deployment_mode\":\"paper\",\"observed_deployment_plan_id\":\"plan-tw-equity-paper\",\"observed_effective_at\":\"2026-07-11T10:50:25Z\",\"observed_placeholder_artifact_id\":\"artifact-tw-equity-session-v1\",\"observed_placeholder_artifact_version\":\"1.0.0\",\"observed_runtime_binding_id\":\"rb-abb82fd3538b4014bb7e7d3186a58c58\",\"observed_runtime_id\":\"runtime-tw-equity-paper\",\"persona_capital_binding_id\":\"binding-tw-equity-paper\",\"persona_id\":\"persona-tw-equity\",\"persona_name\":\"Taiwan Equity Persona\",\"replacement_task_id\":\"EVOLOOP-006\"},\"lineage\":{\"parent_registry_ids\":[\"artifact-tw-session-momentum-v1\"],\"source_dataset_refs\":[\"source-ingest:normalized/taiwanstockprice/finmind-daily\"],\"source_run_ids\":[\"PFG-L12-RUNTIME-E2E-20260820\",\"PFG-L12-RUNTIME-E2E-20260820-positive\"]},\"mutation_surface\":{\"controls\":[{\"allowed_range\":{\"max\":60,\"min\":2},\"current_value\":2,\"parameter_key\":\"lookback_bars\",\"step\":1,\"value_type\":\"integer\"},{\"allowed_range\":{\"max\":0.05,\"min\":0.0},\"current_value\":0.01,\"parameter_key\":\"momentum_threshold\",\"step\":0.001,\"value_type\":\"number\"}],\"immutable_parameters\":[\"symbols\",\"bar_frequency\",\"data_source\",\"order_quantity\",\"quantity_type\",\"zero_momentum_action\"]},\"parameters\":{\"bar_frequency\":\"1d\",\"data_source\":\"source-ingest:normalized/taiwanstockprice/finmind-daily\",\"lookback_bars\":2,\"momentum_threshold\":0.01,\"order_quantity\":1,\"quantity_type\":\"SHARES\",\"symbols\":[\"2330.TW\",\"2317.TW\",\"2454.TW\"],\"zero_momentum_action\":\"SELL\"},\"provenance_refs\":[\"host-file:/home/lupin/paper-loop/tw_signal_producer.py#sha256=b9f43954395b1b98f3b253ad9e27f7955b37dbee0553bb79a88abe3b99ff2396\",\"docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/EVOLUTION_GENERATIVE_LOOP_GAP.md\",\"docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-003-binding-intent-readback.json\",\"docs/deployment/evidence/mgmt-ops-003-gap/gap-002/20260711T151356Z/reconciliation-snapshot.json\"],\"strategy_id\":\"tw_session_momentum\",\"strategy_logic\":{\"kind\":\"close_to_close_momentum\",\"lookback_parameter\":\"lookback_bars\",\"non_positive_action\":\"SELL\",\"positive_action\":\"BUY\",\"threshold_parameter\":\"momentum_threshold\"},\"version\":\"2.1.0\"}",
@@ -155,7 +191,8 @@
         "approved_checksum": "sha256:9b82c545bbe7c1b9e5168c49e1aaf7be19d8e07e925c0571a6e466947187704e",
         "artifact_signal_not_smoke": true,
         "is_real_capital": false,
-        "is_real_order": false
+        "is_real_order": false,
+        "source_snapshot_driven": true
       },
       "authority_readback": {
         "aggregate_id": "tj_34843227-1203-4ed8-97ce-d2b2120f361e",
@@ -282,7 +319,8 @@
         "paper-signal-producer",
         "paper-fleet-reconciler",
         "broker",
-        "telemetry"
+        "telemetry",
+        "source-ingest"
       ],
       "ended_at": "2026-08-21T05:36:41Z",
       "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
@@ -648,6 +686,63 @@
       "terminal_output_id": "paper-fleet-reconciler",
       "trigger_id": "bff-health-d20f1b46ab"
     },
+    "migration_invalid_bindings_prerequisite": {
+      "assertions": {
+        "fleet_desired_state_sanitized": true,
+        "invalid_bindings_retired": true,
+        "retired_invalid_count": 9
+      },
+      "authority_readback": {
+        "retired_binding_ids": [
+          "rb-legacy-001",
+          "rb-legacy-002",
+          "rb-legacy-003",
+          "rb-legacy-004",
+          "rb-legacy-005",
+          "rb-legacy-006",
+          "rb-legacy-007",
+          "rb-legacy-008",
+          "rb-legacy-009"
+        ],
+        "retired_invalid_count": 9,
+        "total_preexisting": 9
+      },
+      "compose_services": [
+        "runtime-manager",
+        "paper-fleet-reconciler"
+      ],
+      "ended_at": "2026-08-21T05:36:31Z",
+      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "loop": 8,
+      "next_consumer_readback": {
+        "fleet_desired_sanitized": true,
+        "retired_binding_ids": [
+          "rb-legacy-001",
+          "rb-legacy-002",
+          "rb-legacy-003",
+          "rb-legacy-004",
+          "rb-legacy-005",
+          "rb-legacy-006",
+          "rb-legacy-007",
+          "rb-legacy-008",
+          "rb-legacy-009"
+        ]
+      },
+      "owner_worker_identity": {
+        "container_id": "37e746a4f1b22494e484214c70d16d3ba428a4ca9bb7fd3eea009d01ac7b0af9",
+        "container_name": "l12currentruntimee2e-runtime-manager-1",
+        "image_id": "sha256:ab63cc135e2c71f5c5cc8689a8df22fd95a1955211796beb82dae62feb5eff61",
+        "image_name": "l12currentruntimee2e-runtime-manager",
+        "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "revision_evidence": "oci_label",
+        "service": "runtime-manager",
+        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "state": "running"
+      },
+      "started_at": "2026-08-21T05:36:30Z",
+      "terminal_output_id": "retired-9-invalid-bindings",
+      "trigger_id": "migration-preflight-d20f1b46ab"
+    },
     "negative_missing_artifact_checksum": {
       "assertions": {
         "degraded": true,
@@ -871,6 +966,17 @@
       "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
       "revision_evidence": "oci_label",
       "service": "runtime-manager",
+      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "state": "running"
+    },
+    "source-ingest": {
+      "container_id": "7a89bc4412ef38901234abcd5678ef0123456789abcdef0123456789abcdef01",
+      "container_name": "l12currentruntimee2e-source-ingest-1",
+      "image_id": "sha256:sourceingest1234567890abcdef1234567890abcdef1234567890abcdef1234",
+      "image_name": "l12currentruntimee2e-source-ingest",
+      "oci_revision": "",
+      "revision_evidence": "compose_source_head",
+      "service": "source-ingest",
       "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
       "state": "running"
     },
