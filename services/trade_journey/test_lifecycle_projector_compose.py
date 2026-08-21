@@ -118,6 +118,43 @@ def test_default_paper_signal_producer_uses_package_safe_module_entrypoint():
     )
 
 
+def test_lifecycle_projector_capacity_benchmark_is_profile_gated_and_bounded():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    benchmark = services["lifecycle-projector-capacity-benchmark"]
+
+    # LIFECYCLE-PROJ-CAPACITY-001: the benchmark is a distinct, opt-in job. It
+    # must never start with the default stack and must never share a writer
+    # role with the canonical projector service.
+    assert benchmark["profiles"] == ["lifecycle-capacity-benchmark"]
+    assert benchmark["restart"] == "no"
+    assert benchmark["mem_limit"] == "${LIFECYCLE_PROJECTOR_CAPACITY_MEMORY_LIMIT:-4g}"
+    assert benchmark["build"]["dockerfile"] == "services/telemetry/Dockerfile"
+    assert benchmark["command"] == [
+        "python",
+        "-m",
+        "services.trade_journey.lifecycle_projector_capacity",
+        "--events",
+        "${LIFECYCLE_PROJECTOR_CAPACITY_EVENTS:-1000000}",
+        "--loop-runs",
+        "${LIFECYCLE_PROJECTOR_CAPACITY_LOOP_RUNS:-150000}",
+        "--batch-size",
+        "${LIFECYCLE_PROJECTOR_CAPACITY_BATCH_SIZE:-500}",
+        "--output",
+        "/data/bff/lifecycle-capacity/evidence.json",
+    ]
+    assert benchmark["environment"]["TELEMETRY_DB_DSN"].startswith(
+        "${TELEMETRY_DB_DSN:-postgresql://"
+    )
+    assert benchmark["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert benchmark["depends_on"]["telemetry"]["condition"] == "service_healthy"
+
+    default_services = yaml.safe_load(
+        (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )["services"]
+    assert "profiles" not in default_services["loop-run-projector-scheduler"]
+
+
 def test_hosted_lifecycle_probe_uses_mfa_bound_governed_operator():
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
