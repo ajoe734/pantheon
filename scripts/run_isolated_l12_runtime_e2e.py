@@ -25,6 +25,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Mapping
 
+import time
+
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_COMPOSE_PROJECT = "l12currentruntimee2e"
@@ -36,6 +38,27 @@ DEFAULT_EVIDENCE_DEST = (
     / "product-functional-closure"
     / TASK_ID
 )
+
+REQUIRED_COMPOSE_SERVICES = [
+    "postgres",
+    "nats",
+    "signal-store",
+    "source-ingest",
+    "registry",
+    "governance",
+    "capital",
+    "deployment",
+    "deployment-outbox-consumer",
+    "runtime-manager",
+    "paper-fleet-reconciler",
+    "paper-signal-producer",
+    "broker",
+    "telemetry",
+    "reconciliation-drift-svc",
+    "incidents",
+    "evolution",
+    "operator-bff",
+]
 
 SERVICES = {
     "bff": {"port": 8000, "health": "/readyz"},
@@ -100,6 +123,24 @@ def main() -> int:
         help="Compose file(s) to pass to docker compose -f (default: ./docker-compose.yml)",
     )
     parser.add_argument(
+        "--provision-services",
+        "--up",
+        action="store_true",
+        dest="provision_services",
+        help="Automatically provision and start required isolated Compose services before test execution",
+    )
+    parser.add_argument(
+        "--down",
+        action="store_true",
+        help="Stop and tear down the isolated Compose stack",
+    )
+    parser.add_argument(
+        "--ready-timeout",
+        type=float,
+        default=60.0,
+        help="Maximum seconds to wait for service readiness when provisioning (default: 60)",
+    )
+    parser.add_argument(
         "--evidence-output",
         type=Path,
         default=Path("/tmp/l12-current-runtime-e2e-proof.json"),
@@ -119,6 +160,24 @@ def main() -> int:
     args = parser.parse_args()
 
     compose_files = args.compose_files or [str(REPO_ROOT / "docker-compose.yml")]
+
+    if args.down:
+        cmd = ["docker", "compose", "-p", args.compose_project]
+        for cf in compose_files:
+            cmd.extend(["-f", cf])
+        cmd.append("down")
+        print(f"[*] Stopping isolated Compose project {args.compose_project}: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+        return 0
+
+    if args.provision_services:
+        cmd = ["docker", "compose", "-p", args.compose_project]
+        for cf in compose_files:
+            cmd.extend(["-f", cf])
+        cmd.extend(["up", "-d"] + REQUIRED_COMPOSE_SERVICES)
+        print(f"[*] Provisioning isolated Compose services: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+
     expected_sha = _run(["git", "rev-parse", "HEAD"])
     print(f"[*] Harness starting for Task {TASK_ID}")
     print(f"[*] Repository Root: {REPO_ROOT}")
@@ -136,14 +195,36 @@ def main() -> int:
         urls[name] = env_val or f"http://127.0.0.1:{spec['port']}"
 
     print("[*] Verifying service readiness across HTTP boundaries...")
+    deadline = time.time() + (args.ready_timeout if args.provision_services else 5.0)
+    all_ready = False
+    unready: dict[str, str] = {}
+    while time.time() < deadline:
+        unready.clear()
+        for name, url in urls.items():
+            spec = SERVICES[name]
+            ready_url = f"{url}{spec['health']}"
+            health = _get_json(ready_url)
+            if "error" in health:
+                unready[name] = f"{ready_url} -> {health['error']}"
+        if not unready:
+            all_ready = True
+            break
+        time.sleep(2.0)
+
     for name, url in urls.items():
-        spec = SERVICES[name]
-        ready_url = f"{url}{spec['health']}"
-        health = _get_json(ready_url)
-        if "error" in health:
-            print(f"[-] Service {name} not ready at {ready_url}: {health['error']}")
-        else:
+        if name not in unready:
             print(f"[+] Service {name} ready at {url}")
+        else:
+            print(f"[-] Service {name} not ready: {unready[name]}")
+
+    if not all_ready:
+        print("\n[-] Warning: One or more services are not ready.", file=sys.stderr)
+        print(f"[-] To provision them, run with --provision-services or execute:", file=sys.stderr)
+        compose_args = " ".join(f"-f {f}" for f in compose_files)
+        services_args = " ".join(REQUIRED_COMPOSE_SERVICES)
+        print(f"    docker compose -p {args.compose_project} {compose_args} up -d {services_args}\n", file=sys.stderr)
+        if args.provision_services:
+            return 1
 
     # Environment for pytest execution
     test_env = os.environ.copy()

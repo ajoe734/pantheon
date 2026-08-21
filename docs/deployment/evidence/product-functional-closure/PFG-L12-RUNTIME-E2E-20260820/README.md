@@ -61,7 +61,7 @@ Approved Registry Artifact (Loop 8)
 
 ## Verification & Isolated-Compose Harness
 
-Run from the repository root:
+Run unit and contract verification from the repository root:
 
 ```bash
 python3 scripts/dev/provision_python_distribution.py
@@ -77,12 +77,35 @@ PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-pyth
   services/deployment/test_l12_mfc_r4_deploy_001_contract.py
 ```
 
-To run the reproducible isolated-Compose harness:
+### Standalone Isolated Startup Path
+
+The isolated Compose stack (`l12currentruntimee2e`) runs all 18 production services on isolated container ports and Redis/NATS backends without mutating the persistent dev stack.
+
+To provision and start the isolated services manually:
+
+```bash
+docker compose -p l12currentruntimee2e -f docker-compose.yml up -d \
+  postgres nats signal-store source-ingest registry governance capital \
+  deployment deployment-outbox-consumer runtime-manager \
+  paper-fleet-reconciler paper-signal-producer broker \
+  telemetry reconciliation-drift-svc incidents evolution operator-bff
+```
+
+Or execute the harness with automated service provisioning:
 
 ```bash
 python3 scripts/run_isolated_l12_runtime_e2e.py \
   --compose-project l12currentruntimee2e \
+  --provision-services \
   --sync-evidence
+```
+
+To stop the isolated stack after the run:
+
+```bash
+python3 scripts/run_isolated_l12_runtime_e2e.py \
+  --compose-project l12currentruntimee2e \
+  --down
 ```
 
 ## Deployed Execution & Evidence Output
@@ -91,5 +114,5 @@ The complete 9-case deployed suite was executed in an isolated Compose environme
 - `docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/run-report.json`
 - `docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/run-report.sha256`
 
-contains all case readbacks, exact service container identities, authority proofs, and exact commit SHA. Reviewer metadata is assigned to `Codex2`.
+contains all 9 case readbacks, exact service container identities, authority proofs, and exact commit SHA. Reviewer metadata is assigned to `Codex2`.
 
