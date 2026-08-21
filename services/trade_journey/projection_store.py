@@ -277,18 +277,30 @@ class ProjectionStore:
 
     def get_receipt(self, event_id: str) -> Optional[EventReceiptRow]:
         """Gets an event receipt by event_id."""
+        return self.get_receipts((event_id,)).get(event_id)
+
+    def get_receipts(self, event_ids: list[str] | tuple[str, ...]) -> dict[str, EventReceiptRow]:
+        """Load a batch's existing receipts with one indexed query.
+
+        The relational projector performs this preflight before it starts
+        reduction.  Keeping it set-based is important: a 500-row source poll
+        must not turn into 500 short-lived database connections just to learn
+        that all of its event IDs are new.
+        """
+
+        requested = tuple(sorted({str(event_id) for event_id in event_ids if event_id}))
+        if not requested:
+            return {}
         sql = f"""
         SELECT event_id, ingested_seq, fingerprint, tenant_id, environment, journey_id, loop_run_id,
                source_event_type, created_at, disposition, projection_revision, projected_at
         FROM {self.schema}.event_receipts
-        WHERE event_id=%s
+        WHERE event_id = ANY(%s)
+        ORDER BY event_id
         """
         with self._connect(self.dsn) as conn, conn.cursor() as cur:
-            cur.execute(sql, (event_id,))
-            row = cur.fetchone()
-            if not row:
-                return None
-            return EventReceiptRow(*row)
+            cur.execute(sql, (list(requested),))
+            return {str(row[0]): EventReceiptRow(*row) for row in cur.fetchall()}
 
     def load_journey_stage_events(
         self, tenant_id: str, environment: str, journey_id: str
@@ -301,31 +313,72 @@ class ProjectionStore:
         next summary.
         """
 
+        key = (tenant_id, environment, journey_id)
+        return self.load_journey_stage_events_bulk((key,))[key]
+
+    @staticmethod
+    def _decode_stage_contract_fields(value: Any) -> dict[str, Any]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError as exc:
+                raise ProjectionStoreException(
+                    "stored journey stage contract_fields is not valid JSON"
+                ) from exc
+        if not isinstance(value, Mapping):
+            raise ProjectionStoreException(
+                "stored journey stage contract_fields is not an object"
+            )
+        return dict(value)
+
+    def load_journey_stage_events_bulk(
+        self, keys: list[tuple[str, str, str]] | tuple[tuple[str, str, str], ...],
+    ) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
+        """Hydrate every aggregate touched by one batch with one bounded read.
+
+        The request CTE keeps the lookup bounded to the current batch's
+        aggregate keys while avoiding one connection/query per journey.  A
+        ``LEFT JOIN`` intentionally retains keys with no durable stages so
+        callers can distinguish an empty new aggregate from a missing result.
+        """
+
+        requested = tuple(sorted(set(keys)))
+        result: dict[tuple[str, str, str], list[dict[str, Any]]] = {
+            key: [] for key in requested
+        }
+        if not requested:
+            return result
+        tenant_ids, environments, journey_ids = zip(*requested)
         sql = f"""
-        SELECT contract_fields
-        FROM {self.schema}.journey_stages
-        WHERE tenant_id=%s AND environment=%s AND journey_id=%s
-        ORDER BY event_sequence, stage_ordinal, occurred_at, source_ingested_seq,
-                 source_event_id
+        WITH requested(tenant_id, environment, journey_id) AS (
+            SELECT * FROM unnest(%s::text[], %s::text[], %s::text[])
+        )
+        SELECT requested.tenant_id, requested.environment, requested.journey_id,
+               stage.contract_fields
+        FROM requested
+        LEFT JOIN {self.schema}.journey_stages AS stage
+          ON stage.tenant_id = requested.tenant_id
+         AND stage.environment = requested.environment
+         AND stage.journey_id = requested.journey_id
+        ORDER BY requested.tenant_id, requested.environment, requested.journey_id,
+                 stage.event_sequence, stage.stage_ordinal, stage.occurred_at,
+                 stage.source_ingested_seq, stage.source_event_id
         """
         with self._connect(self.dsn) as conn, conn.cursor() as cur:
-            cur.execute(sql, (tenant_id, environment, journey_id))
+            cur.execute(sql, (list(tenant_ids), list(environments), list(journey_ids)))
             rows = cur.fetchall()
-        result: list[dict[str, Any]] = []
         for row in rows:
-            value = row[0] if isinstance(row, tuple) else row.get("contract_fields")
-            if isinstance(value, str):
-                try:
-                    value = json.loads(value)
-                except ValueError as exc:
-                    raise ProjectionStoreException(
-                        "stored journey stage contract_fields is not valid JSON"
-                    ) from exc
-            if not isinstance(value, Mapping):
-                raise ProjectionStoreException(
-                    "stored journey stage contract_fields is not an object"
-                )
-            result.append(dict(value))
+            if isinstance(row, tuple):
+                tenant_id, environment, journey_id, value = row
+            else:
+                tenant_id = row["tenant_id"]
+                environment = row["environment"]
+                journey_id = row["journey_id"]
+                value = row["contract_fields"]
+            if value is None:
+                continue
+            key = (str(tenant_id), str(environment), str(journey_id))
+            result[key].append(self._decode_stage_contract_fields(value))
         return result
 
     def execute_batch_transaction(
@@ -525,75 +578,104 @@ class ProjectionStore:
                     unique_receipts[receipt.event_id] = receipt
 
                 claimed_revision = curr_revision + 1
-                for receipt in sorted(
-                    unique_receipts.values(), key=lambda item: item.event_id
-                ):
-                    cur.execute(
-                        f"SELECT fingerprint FROM {self.schema}.event_receipts WHERE event_id=%s",
-                        (receipt.event_id,),
-                    )
-                    existing_r = cur.fetchone()
-                    if existing_r is not None:
-                        existing_fp = existing_r[0]
-                        if existing_fp != receipt.fingerprint:
-                            raise ConflictingDuplicateException(
-                                f"Event {receipt.event_id} reused with conflicting fingerprint {receipt.fingerprint} vs {existing_fp}"
-                            )
-                        # Exact duplicate
-                        exact_duplicate_receipts.append(receipt)
+                ordered_receipts = tuple(
+                    sorted(unique_receipts.values(), key=lambda item: item.event_id)
+                )
+                event_ids = [receipt.event_id for receipt in ordered_receipts]
+                # Set-based preflight preserves the old distinction between a
+                # durable exact retry and an input fingerprint conflict, while
+                # avoiding one round trip for every event in a 500-row poll.
+                cur.execute(
+                    f"SELECT event_id, fingerprint FROM {self.schema}.event_receipts "
+                    "WHERE event_id = ANY(%s)",
+                    (event_ids,),
+                )
+                existing_fingerprints = {
+                    str(event_id): str(fingerprint)
+                    for event_id, fingerprint in cur.fetchall()
+                }
+                receipts_to_claim: list[EventReceiptRow] = []
+                for receipt in ordered_receipts:
+                    existing_fp = existing_fingerprints.get(receipt.event_id)
+                    if existing_fp is None:
+                        receipts_to_claim.append(receipt)
                         continue
+                    if existing_fp != receipt.fingerprint:
+                        raise ConflictingDuplicateException(
+                            f"Event {receipt.event_id} reused with conflicting fingerprint "
+                            f"{receipt.fingerprint} vs {existing_fp}"
+                        )
+                    exact_duplicate_receipts.append(receipt)
 
+                if receipts_to_claim:
+                    values_sql = ", ".join(
+                        "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        for _ in receipts_to_claim
+                    )
+                    insert_params: list[Any] = []
+                    for receipt in receipts_to_claim:
+                        insert_params.extend(
+                            (
+                                receipt.event_id,
+                                receipt.ingested_seq,
+                                receipt.fingerprint,
+                                receipt.tenant_id,
+                                receipt.environment,
+                                receipt.journey_id,
+                                receipt.loop_run_id,
+                                receipt.source_event_type,
+                                receipt.created_at,
+                                receipt.disposition,
+                                claimed_revision,
+                                now,
+                            )
+                        )
                     cur.execute(
                         f"""
                         INSERT INTO {self.schema}.event_receipts (
                             event_id, ingested_seq, fingerprint, tenant_id, environment,
                             journey_id, loop_run_id, source_event_type, created_at, disposition,
                             projection_revision, projected_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES {values_sql}
                         ON CONFLICT DO NOTHING
-                        RETURNING fingerprint
+                        RETURNING event_id, fingerprint
                         """,
-                        (
-                            receipt.event_id,
-                            receipt.ingested_seq,
-                            receipt.fingerprint,
-                            receipt.tenant_id,
-                            receipt.environment,
-                            receipt.journey_id,
-                            receipt.loop_run_id,
-                            receipt.source_event_type,
-                            receipt.created_at,
-                            receipt.disposition,
-                            claimed_revision,
-                            now,
-                        ),
+                        tuple(insert_params),
                     )
-                    claimed = cur.fetchone()
-                    if claimed is not None:
-                        new_receipts.append(receipt)
-                        continue
-
-                    cur.execute(
-                        f"SELECT fingerprint FROM {self.schema}.event_receipts WHERE event_id=%s",
-                        (receipt.event_id,),
+                    claimed_fingerprints = {
+                        str(event_id): str(fingerprint)
+                        for event_id, fingerprint in cur.fetchall()
+                    }
+                    lost_claims = [
+                        receipt
+                        for receipt in receipts_to_claim
+                        if receipt.event_id not in claimed_fingerprints
+                    ]
+                    new_receipts.extend(
+                        receipt
+                        for receipt in receipts_to_claim
+                        if claimed_fingerprints.get(receipt.event_id) == receipt.fingerprint
                     )
-                    concurrent_receipt = cur.fetchone()
-                    if (
-                        concurrent_receipt is None
-                        or concurrent_receipt[0] != receipt.fingerprint
-                    ):
-                        existing_fingerprint = (
-                            concurrent_receipt[0]
-                            if concurrent_receipt is not None
-                            else "<missing>"
+                    if lost_claims:
+                        cur.execute(
+                            f"SELECT event_id, fingerprint FROM {self.schema}.event_receipts "
+                            "WHERE event_id = ANY(%s)",
+                            ([receipt.event_id for receipt in lost_claims],),
                         )
-                        raise ConflictingDuplicateException(
-                            f"Event {receipt.event_id} lost its receipt claim with fingerprint "
-                            f"{receipt.fingerprint} vs {existing_fingerprint}"
+                        concurrent_fingerprints = {
+                            str(event_id): str(fingerprint)
+                            for event_id, fingerprint in cur.fetchall()
+                        }
+                        receipt = lost_claims[0]
+                        existing_fp = concurrent_fingerprints.get(receipt.event_id)
+                        if existing_fp != receipt.fingerprint:
+                            raise ConflictingDuplicateException(
+                                f"Event {receipt.event_id} lost its receipt claim with fingerprint "
+                                f"{receipt.fingerprint} vs {existing_fp or '<missing>'}"
+                            )
+                        raise ConcurrentReceiptClaimException(
+                            f"Event {receipt.event_id} was claimed concurrently by another projection transaction"
                         )
-                    raise ConcurrentReceiptClaimException(
-                        f"Event {receipt.event_id} was claimed concurrently by another projection transaction"
-                    )
 
                 if mutation.receipts and not new_receipts:
                     # Every event is already durable with the same fingerprint. Ignore
