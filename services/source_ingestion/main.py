@@ -2706,7 +2706,8 @@ def source_ingest_controller_readback() -> dict[str, Any]:
     """Return authoritative connector/schedule/record/health actual state."""
 
     try:
-        return _controller_readback_payload()
+        with authoritative_reconcile_lock:
+            return _controller_readback_payload()
     except ControllerStateError as exc:
         raise HTTPException(status_code=503, detail=f"controller state is invalid: {exc}") from exc
 

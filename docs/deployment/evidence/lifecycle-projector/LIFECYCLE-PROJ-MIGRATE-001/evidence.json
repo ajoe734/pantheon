@@ -1,0 +1,61 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-migrate-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-MIGRATE-001",
+    "title": "Backfill, shadow, and prove lifecycle projection parity",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "task_branch": "task/LIFECYCLE-PROJ-MIGRATE-001",
+    "depends_on": ["LIFECYCLE-PROJ-REDUCER-001", "LIFECYCLE-PROJ-BFF-001"]
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/projection_migration.py",
+      "services/trade_journey/test_projection_migration.py",
+      "scripts/lifecycle_projector_migrate.py",
+      "scripts/lifecycle_projector_parity.py",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-MIGRATE-001/"
+    ],
+    "not_changing": [
+      "telemetry_events canonical source schema (read-only in this task)",
+      "services/trade_journey/projection_store.py (LIFECYCLE-PROJ-STORE-001 owns the relational schema/repository)",
+      "BFF read routes, feature flags, or the live controller row (LIFECYCLE-PROJ-CUTOVER-001 owns cutover)",
+      "the legacy JSON lifecycle_projector.py write path"
+    ],
+    "composes_with": [
+      "LIFECYCLE-PROJ-STORE-001 relational schema and ProjectionStore repository",
+      "LIFECYCLE-PROJ-REDUCER-001 bounded IncrementalLifecycleMaterializer/JourneyMaterializer reduction",
+      "LIFECYCLE-PROJ-CAPACITY-001 (parallel), LIFECYCLE-PROJ-CUTOVER-001 (downstream)"
+    ]
+  },
+  "design": {
+    "migration_watermark": "A distinct controller row `<controller_id>-migrate` in the same additive trade_journey_projection.controller table (migration_controller_id()). BackfillCoordinator never reads or advances the live controller identity.",
+    "reduction_reuse": "reduce_source_rows() reuses LifecycleProjector._source_event/_validate_fixture_event/_identity/_sequence_no directly, and folding reuses IncrementalLifecycleMaterializer.stage_batch -- the identical pure per-batch fold the live JSON projector uses. Relational rows are mapped from the same BoundedAggregateState/JourneyProjection the legacy bundle renders from, so parity is a property of shared reduction rather than a second hand-written mapping.",
+    "resumability": "BackfillCoordinator persists {checkpoint, aggregates: IncrementalLifecycleMaterializer.serialize_aggregates()} to a local snapshot file after every committed batch (the same to_dict/from_dict restore shape the live projector already supports). A restart reloads that snapshot instead of replaying from ingested_seq 0, so restart cost stays bounded by the batch the crash interrupted. Re-submitting an already-applied batch is additionally idempotent because ProjectionStore.execute_batch_transaction treats a repeated exact receipt as a no-op duplicate.",
+    "shadow_boundary": "reduce_source_rows() raises ValueError for mode='live'; build_batch_mutation() hardcodes mode='backfill' and accepted_live=False. This tool cannot manufacture live freshness or flip a BFF read flag by construction; BFF cutover is LIFECYCLE-PROJ-CUTOVER-001."
+  },
+  "parity_categories": {
+    "controller_backlog": "Proven by BackfillCoordinator tests: backlog reaches zero in one pass over a fixed source window, and re-running against a fully-applied window advances zero batches (test_backfill_coordinator_runs_to_backlog_zero_in_one_pass, test_backfill_coordinator_resubmitting_an_applied_batch_is_a_no_op).",
+    "identity_stage_journey_loop_quarantine": "Proven end-to-end by test_legacy_and_projection_adapters_agree_across_all_categories, which folds one real lifecycle event set once and compares the legacy JSON read-model shape (agg.journey_events / agg.loop_record / reduced.quarantine) against the relational rows build_batch_mutation derives from the identical aggregate, via stable_hash per category. unexplained_mismatch_count asserted 0.",
+    "duplicate": "test_reduce_source_rows_conflicting_duplicate_raises_when_staged (conflicting content fails closed) and test_build_batch_mutation_duplicate_only_batch_writes_nothing_new / test_backfill_coordinator_resubmitting_an_applied_batch_is_a_no_op (exact duplicate is a no-op).",
+    "replay_out_of_order": "test_out_of_order_delivery_converges_to_the_same_journey_row: shuffled delivery order produces an identical journey row (status, stage_coverage, first/last ingested_seq) to sequential delivery.",
+    "recovery_interruption_restart": "test_backfill_coordinator_resumes_from_local_snapshot_across_restarts (unit, fake store) and test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store (DB-gated, real ProjectionStore/Postgres: bootstraps an isolated schema, runs one batch, constructs a fresh BackfillCoordinator instance simulating a process restart, and asserts it resumes from the durable snapshot to backlog zero, then that a further run is a no-op)."
+  },
+  "residual_risk": {
+    "db_gated_test_not_executed_in_this_environment": "test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store requires TEST_DATABASE_URL (a real Postgres instance with LIFECYCLE-PROJ-STORE-001's bootstrap_schema applied); this auto-worker sandbox has no Postgres available, so the test is present, reviewed, and structurally verified (imports and pytest-collects cleanly) but was not observed to pass against a live database in this run. It follows the exact skip/fixture pattern already accepted for services/trade_journey/test_projection_store.py.",
+    "identity_link_first_last_granularity": "IdentityLinkRow first/last ingested_seq and occurred_at are computed per (identifier_type, identifier_value) from the bounded aggregate's own journey_events, not from a separate globally-tracked value on BoundedAggregateState (which deliberately does not retain that to stay bounded). This is correct for a single backfill/shadow run scope but means a value cannot be tightened further across a restart boundary without re-deriving from the persisted stage rows; acceptable for shadow-mode parity proof, and CUTOVER-001 should re-verify before any read is served from these rows.",
+    "no_bulk_read_api_added_to_projection_store": "scripts/lifecycle_projector_parity.py reads the relational side via direct read-only SQL SELECT against the additive schema instead of a new ProjectionStore method, to keep projection_store.py (LIFECYCLE-PROJ-STORE-001's owned surface) unchanged in this task."
+  },
+  "commands_run": [
+    "PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); $PANTHEON_PY -m pytest -q services/trade_journey/test_projection_migration.py",
+    "$PANTHEON_PY -m pytest -q services/trade_journey/",
+    "$PANTHEON_PY scripts/lifecycle_projector_migrate.py --help",
+    "$PANTHEON_PY scripts/lifecycle_projector_parity.py --help"
+  ],
+  "results": {
+    "test_projection_migration": "19 passed, 1 skipped (TEST_DATABASE_URL not set) in this environment",
+    "full_trade_journey_suite": "152 passed, 19 skipped, 1 failed -- the failure (test_bff_only_deploy_rebuilds_its_lifecycle_projector_only in test_lifecycle_projector_compose.py) is pre-existing and unrelated: it asserts on scripts/deploy_nonprod_vm.sh, which this task does not touch, confirmed by `git status --short` showing only this task's new files (no changes to scripts/deploy_nonprod_vm.sh)."
+  }
+}
