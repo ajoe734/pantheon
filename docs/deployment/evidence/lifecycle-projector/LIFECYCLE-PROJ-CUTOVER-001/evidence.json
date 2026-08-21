@@ -1,0 +1,38 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-cutover-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-CUTOVER-001",
+    "title": "Canary and cut over target-dev lifecycle reads",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "task_branch": "task/LIFECYCLE-PROJ-CUTOVER-001",
+    "depends_on": [
+      "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801",
+      "LIFECYCLE-PROJ-MIGRATE-001",
+      "LIFECYCLE-PROJ-CAPACITY-001"
+    ]
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/projection_migration.py",
+      "services/trade_journey/test_lifecycle_projector_compose.py",
+      "docs/operations/lifecycle-projector-incremental-runbook.md",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CUTOVER-001/"
+    ],
+    "not_changing": [
+      "services/trade_journey/projection_store.py",
+      "scripts/deploy_nonprod_vm.sh"
+    ]
+  },
+  "pre_switch_verification": {
+    "real_postgres_migration_test": "PASSED: test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store verified against real PostgreSQL instance on port 15432.",
+    "trade_journey_suite": "PASSED: 181 passed, 34 skipped in 36.21s.",
+    "runbook_created": "docs/operations/lifecycle-projector-incremental-runbook.md created with complete operational steps and rollback procedures."
+  },
+  "cutover_status": {
+    "code_fix_and_runbook": "complete",
+    "canary_readiness": "ready for 24-hour observation"
+  }
+}
