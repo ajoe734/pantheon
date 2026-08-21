@@ -326,6 +326,48 @@ def test_managed_runtime_probe_rejects_module_outside_clean_worktree(tmp_path):
         capacity_module._provision_clean_capacity_runtime(tmp_path, runner=fake_runner)
 
 
+def test_managed_runtime_probe_uses_empty_unique_cwd_and_clean_bindings(tmp_path, monkeypatch):
+    provisioner = tmp_path / "scripts" / "dev" / "provision_python_distribution.py"
+    provisioner.parent.mkdir(parents=True)
+    provisioner.write_text("# test fixture\n", encoding="utf-8")
+    clean_python = tmp_path / ".venv-pantheon" / "bin" / "python"
+    clean_python.parent.mkdir(parents=True)
+    clean_python.touch()
+    clean_module = tmp_path / "services" / "trade_journey" / "lifecycle_projector_capacity.py"
+    clean_module.parent.mkdir(parents=True)
+    clean_module.touch()
+
+    contaminated_temp_root = tmp_path / "contaminated-tmp"
+    shadowed_services = contaminated_temp_root / "services"
+    shadowed_services.mkdir(parents=True)
+    (shadowed_services / "__init__.py").write_text("# foreign shadow\n", encoding="utf-8")
+    monkeypatch.setattr(capacity_module.tempfile, "tempdir", str(contaminated_temp_root))
+    recorded: dict[str, object] = {}
+
+    def fake_runner(command, **kwargs):
+        if command[1] == str(provisioner):
+            return subprocess.CompletedProcess(command, 0, f"{clean_python}\n", "")
+        probe_cwd = Path(str(kwargs["cwd"]))
+        recorded["cwd"] = probe_cwd
+        assert probe_cwd.parent == contaminated_temp_root
+        assert probe_cwd != contaminated_temp_root
+        assert list(probe_cwd.iterdir()) == []
+        assert not (probe_cwd / "services").exists()
+        assert kwargs["env"].get("PYTHONPATH") is None
+        assert command[:2] == [str(clean_python), "-c"]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            '{"python": "' + str(clean_python) + '", "module_file": "' + str(clean_module) + '"}',
+            "",
+        )
+
+    runtime = capacity_module._provision_clean_capacity_runtime(tmp_path, runner=fake_runner)
+
+    assert runtime == {"python": str(clean_python.absolute()), "module_file": str(clean_module.resolve())}
+    assert not Path(str(recorded["cwd"])).exists()
+
+
 def test_managed_worker_records_result_before_systemd_cleanup(tmp_path, monkeypatch):
     paths = _managed_state_paths(tmp_path)
     manifest = {

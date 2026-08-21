@@ -1400,12 +1400,18 @@ def _provision_clean_capacity_runtime(
     )
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
-    probed = _run_checked(
-        [str(python), "-c", probe_source],
-        runner=runner,
-        cwd=tempfile.gettempdir(),
-        env=environment,
-    )
+    # Do not use the shared temporary root itself as ``cwd``.  A stale
+    # ``/tmp/services`` package would be first on ``sys.path`` and could make
+    # this probe bless a foreign checkout.  A newly-created child directory is
+    # both unique and empty, so the editable install in ``clean_root`` is the
+    # only source that can satisfy the import after PYTHONPATH is removed.
+    with tempfile.TemporaryDirectory(prefix="pantheon-capacity-import-") as probe_cwd:
+        probed = _run_checked(
+            [str(python), "-c", probe_source],
+            runner=runner,
+            cwd=probe_cwd,
+            env=environment,
+        )
     try:
         runtime = json.loads(probed.stdout)
         module_file = Path(str(runtime["module_file"])).resolve()
