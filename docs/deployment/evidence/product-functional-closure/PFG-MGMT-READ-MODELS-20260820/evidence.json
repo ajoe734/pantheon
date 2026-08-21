@@ -41,7 +41,7 @@
   },
   "validation": {
     "test_command": "pytest services/control-plane/bff/tests/test_management_real_read_models.py",
-    "total_tests": 7,
+    "total_tests": 8,
     "status": "PASSED"
   }
 }

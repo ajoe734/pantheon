@@ -20426,7 +20426,14 @@ class ReadSurfaceStore:
         formula_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         available, service_records = self._service.list_records("formula_jobs")
-        source = "service" if available else "event_store"
+        cached_source = self._service.cached_source("formula_jobs")
+        if available and cached_source in ("canonical", "service_client"):
+            source = "service"
+        elif available:
+            source = "service"
+        else:
+            source = "missing"
+
         raw_items = service_records if available else list(self._read_dataset_records("formula_jobs"))
 
         filtered = []
@@ -20456,7 +20463,14 @@ class ReadSurfaceStore:
         actor_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         available, service_records = self._service.list_records("activity_audit")
-        source = "audit" if available else "event_store"
+        cached_source = self._service.cached_source("activity_audit")
+        if available and cached_source in ("canonical", "service_client"):
+            source = "audit"
+        elif available:
+            source = "audit"
+        else:
+            source = "missing"
+
         raw_items = service_records if available else list(self._read_dataset_records("activity_audit"))
 
         filtered = []
@@ -20486,7 +20500,14 @@ class ReadSurfaceStore:
         persona_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         available, service_records = self._service.list_records("paper_telemetry")
-        source = "service" if available else "store"
+        cached_source = self._service.cached_source("paper_telemetry")
+        if available and cached_source in ("canonical", "service_client"):
+            source = "service"
+        elif available:
+            source = "service"
+        else:
+            source = "missing"
+
         raw_items = service_records if available else list(self._read_dataset_records("paper_telemetry"))
 
         filtered = []
@@ -20516,7 +20537,14 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
     ) -> Dict[str, Any]:
         available, service_records = self._service.list_records("postmortems")
-        source = "store" if available else "event_store"
+        cached_source = self._service.cached_source("postmortems")
+        if available and cached_source in ("canonical", "service_client"):
+            source = "store"
+        elif available:
+            source = "store"
+        else:
+            source = "missing"
+
         raw_items = service_records if available else list(self._read_dataset_records("postmortems"))
 
         filtered = []

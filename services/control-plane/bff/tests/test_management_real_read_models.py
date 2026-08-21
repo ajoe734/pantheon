@@ -352,3 +352,57 @@ def test_file_backed_readback_all_endpoints():
         finally:
             os.environ.clear()
             os.environ.update(old_env)
+
+
+def test_readback_freshness_and_restart():
+    with tempfile.TemporaryDirectory() as td:
+        formula_dir = os.path.join(td, "formula")
+        os.makedirs(formula_dir, exist_ok=True)
+        store_file = os.path.join(formula_dir, "formula_jobs.json")
+
+        initial_jobs = [
+            {
+                "job_id": "job-init-01",
+                "formula_id": "form-v1",
+                "status": "completed",
+                "submitted_at": "2026-08-21T00:00:00Z",
+            }
+        ]
+        with open(store_file, "w", encoding="utf-8") as f:
+            json.dump(initial_jobs, f)
+
+        old_env = os.environ.copy()
+        os.environ["PANTHEON_BFF_FORMULA_JOBS_STORE"] = store_file
+        try:
+            # 1. First initialization/readback
+            store1 = ReadSurfaceStore(os.path.join(td, "read_surfaces.json"), allow_local_snapshot_fallback=False)
+            res1 = store1.get_formula_jobs_read_model()
+            assert res1["source"] == "service"
+            assert len(res1["items"]) == 1
+            assert res1["items"][0]["job_id"] == "job-init-01"
+            assert res1["items"][0]["freshness"] == "2026-08-21T00:00:00Z"
+
+            # 2. Update store file on disk (simulate producer update)
+            updated_jobs = [
+                *initial_jobs,
+                {
+                    "job_id": "job-init-02",
+                    "formula_id": "form-v2",
+                    "status": "running",
+                    "submitted_at": "2026-08-21T01:00:00Z",
+                },
+            ]
+            with open(store_file, "w", encoding="utf-8") as f:
+                json.dump(updated_jobs, f)
+
+            # 3. Process restart / new ReadSurfaceStore instance reading updated store
+            store2 = ReadSurfaceStore(os.path.join(td, "read_surfaces.json"), allow_local_snapshot_fallback=False)
+            res2 = store2.get_formula_jobs_read_model()
+            assert res2["source"] == "service"
+            assert len(res2["items"]) == 2
+            assert res2["items"][1]["job_id"] == "job-init-02"
+            assert res2["items"][1]["freshness"] == "2026-08-21T01:00:00Z"
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+
