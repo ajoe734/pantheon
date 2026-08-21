@@ -3,7 +3,7 @@
   "task": {
     "id": "LIFECYCLE-PROJ-CUTOVER-001",
     "title": "Canary and cut over target-dev lifecycle reads",
-    "owner": "Antigravity",
+    "owner": "Codex",
     "reviewer": "Codex2",
     "status": "in_progress",
     "base_branch": "dev",
@@ -27,20 +27,63 @@
     ]
   },
   "artifact_checksums_sha256": {
-    "services/trade_journey/projection_migration.py": "33c892d1fa9cb14472b51ba9cd447c57b56a2304e42d8199b54a99dbd699373a",
-    "services/trade_journey/test_projection_migration.py": "c752f1d176117207ce400809ae26e37b886540d8fc57e3c1a927d062137651f8",
+    "services/trade_journey/projection_migration.py": "385ff45b5b9a8e1e396a4723c490291d2ac0e859036ee5eefa6a99ef40539d42",
+    "services/trade_journey/test_projection_migration.py": "baa97e26fb025ad19a09845163ae274cab7147fae1d929f09df298722b120693",
     "docs/operations/lifecycle-projector-incremental-runbook.md": "e855db2d65e9e03db9e31dd50e1c52db5e1165b3acee3d5d88fcd1160021edad"
   },
   "pre_switch_verification": {
-    "real_postgres_migration_test": "PASSED: test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store verified against real PostgreSQL.",
-    "real_postgres_duplicate_interruption_test": "PASSED: test_backfill_duplicate_and_interruption_against_real_store verified duplicate event, source growth, and 3-stage interruption/resume against real PostgreSQL.",
-    "trade_journey_suite": "PASSED: 19 passed, 2 skipped in 2.00s.",
-    "runbook_created": "docs/operations/lifecycle-projector-incremental-runbook.md created with complete operational steps and rollback procedures."
+    "verified_at_utc": "2026-08-21T20:08:33Z",
+    "database_gate": {
+      "command": "TEST_DATABASE_URL=<redacted-test-postgres-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_migration.py -rs",
+      "result": "21 passed in 3.12s",
+      "skipped": 0,
+      "non_skipped_real_postgres_tests": [
+        "test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store",
+        "test_backfill_duplicate_and_interruption_against_real_store"
+      ]
+    },
+    "adjacent_store_gate": {
+      "command": "TEST_DATABASE_URL=<redacted-test-postgres-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_store.py::test_projection_store_mixed_batch_filters_duplicate_owned_mutations services/trade_journey/test_projection_store.py::test_projection_store_contiguous_checkpoint_advancement -rs",
+      "result": "2 passed in 1.16s",
+      "skipped": 0
+    },
+    "mixed_batch_assertions": {
+      "fetched_source_ordinals": [
+        7,
+        8,
+        9,
+        10
+      ],
+      "ordinal_9": "exact re-delivery of durable source row 1 with its original ingested_seq",
+      "ordinal_10": "new same-journey and same-loop event at ingested_seq 9",
+      "single_projection_revision_increment": true,
+      "accepted": 3,
+      "duplicates": 1,
+      "receipt_count": 9,
+      "stage_count": 9,
+      "journey_count": 1,
+      "loop_run_count": 1,
+      "controller_count": 1,
+      "checkpoint": 9,
+      "source_high_watermark": 9,
+      "backlog_count": 0,
+      "duplicate_receipt_and_stage_unchanged": true,
+      "category_hash_mismatch_count": 0,
+      "sample_hash_mismatch_count": 0,
+      "unexplained_mismatch_count": 0
+    },
+    "runbook": "docs/operations/lifecycle-projector-incremental-runbook.md"
   },
   "cutover_status": {
     "code_fix_and_runbook": "complete",
     "pre_switch_verification": "passed",
-    "canary_readiness": "ready for independent review and subsequent 24-hour observation"
+    "shadow_exact_merged_deployment": "not_run",
+    "authorized_target_dev_paper_canary": "not_run",
+    "all_target_dev_paper_reads": "not_run",
+    "authenticated_real_paper_lifecycle": "not_run",
+    "negative_probes": "not_run",
+    "rollback_and_forward_recovery": "not_run",
+    "observation_24h": "not_started",
+    "canary_readiness": "not_claimed_before deployment and hosted gates"
   }
 }
-

@@ -188,7 +188,7 @@ def _stage_rows_for_aggregate(
     agg: BoundedAggregateState,
     *,
     projection_revision: int,
-    batch_event_ids: "set[str] | None" = None,
+    owned_event_ids: "set[str] | None" = None,
 ) -> list[JourneyStageRow]:
     rows: list[JourneyStageRow] = []
     for journey_event in agg.journey_events:
@@ -196,7 +196,7 @@ def _stage_rows_for_aggregate(
         if not stage:
             continue
         canonical_event_id = journey_event["canonical_event_id"]
-        if batch_event_ids is not None and canonical_event_id not in batch_event_ids:
+        if owned_event_ids is not None and canonical_event_id not in owned_event_ids:
             continue
         rows.append(
             JourneyStageRow(
@@ -289,12 +289,12 @@ def _receipts_and_identity_links(
     agg: BoundedAggregateState,
     *,
     projection_revision: int,
-    batch_event_ids: "set[str] | None" = None,
+    owned_event_ids: "set[str] | None" = None,
 ) -> tuple[list[EventReceiptRow], list[IdentityLinkRow]]:
     by_canonical: dict[str, dict[str, Any]] = {}
     for journey_event in agg.journey_events:
         canonical_id = journey_event["canonical_event_id"]
-        if batch_event_ids is not None and canonical_id not in batch_event_ids:
+        if owned_event_ids is not None and canonical_id not in owned_event_ids:
             continue
         by_canonical.setdefault(canonical_id, journey_event)
     receipts = [
@@ -380,6 +380,7 @@ def build_batch_mutation(
     reduced: ReducedBatch,
     *,
     affected: "set[str] | None" = None,
+    accepted_event_ids: "set[str] | None" = None,
     projection_revision: int,
     source_high_watermark: int,
     backlog_count: int,
@@ -401,16 +402,20 @@ def build_batch_mutation(
     touched = staged.values() if affected is None else (
         agg for journey_id, agg in staged.items() if journey_id in affected
     )
-    batch_event_ids = {entry["event"]["event_id"] for entry in reduced.entries}
+    owned_event_ids = (
+        {entry["event"]["event_id"] for entry in reduced.entries}
+        if accepted_event_ids is None
+        else set(accepted_event_ids)
+    )
     for agg in touched:
         receipts, identity_links = _receipts_and_identity_links(
-            agg, projection_revision=projection_revision, batch_event_ids=batch_event_ids
+            agg, projection_revision=projection_revision, owned_event_ids=owned_event_ids
         )
         mutation.receipts.extend(receipts)
         mutation.identity_links.extend(identity_links)
         mutation.stages.extend(
             _stage_rows_for_aggregate(
-                agg, projection_revision=projection_revision, batch_event_ids=batch_event_ids
+                agg, projection_revision=projection_revision, owned_event_ids=owned_event_ids
             )
         )
         journey_row = _journey_row_for_aggregate(agg, projection_revision=projection_revision)
@@ -505,20 +510,28 @@ class BackfillCoordinator:
             if not rows:
                 break
             reduced = reduce_source_rows(rows, mode="backfill")
-            staged, _affected, accepted, duplicates = self._materializer.stage_batch(reduced.entries)
-            if accepted == 0 and duplicates > 0:
-                # Batch contained only duplicate events already staged in materializer
-                checkpoint = reduced.high_watermark
-                self._write_snapshot(checkpoint)
-                totals["duplicates"] += duplicates
-                totals["quarantined"] += len(reduced.quarantine)
-                totals["ignored"] += reduced.ignored
-                continue
-
+            # ``stage_batch`` reports a count but intentionally does not expose
+            # accepted event IDs. Derive the bounded ownership set against only
+            # the aggregates touched by this source window before staging. A
+            # durable duplicate may share a journey and loop with a new event;
+            # it must contribute to duplicate accounting and the source high
+            # watermark, but it must not own a receipt, stage, aggregate, or
+            # loop mutation in the transaction for the new event.
+            accepted_event_ids: set[str] = set()
+            for entry in reduced.entries:
+                event_id = str(entry["event"]["event_id"])
+                journey_id = str((entry.get("identity") or {}).get("journey_id") or "")
+                current = self._materializer.aggregates.get(journey_id)
+                if current is None or event_id not in current.event_fingerprints:
+                    accepted_event_ids.add(event_id)
+            staged, _affected, accepted, duplicates = self._materializer.stage_batch(
+                reduced.entries
+            )
             mutation = build_batch_mutation(
                 staged,
                 reduced,
                 affected=_affected,
+                accepted_event_ids=accepted_event_ids,
                 projection_revision=totals["batches"] + 1,
                 source_high_watermark=reduced.high_watermark,
                 backlog_count=0,
