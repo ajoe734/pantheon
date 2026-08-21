@@ -5403,14 +5403,12 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
         }
     if old_owner or old_reviewer:
-        event = task_machine.assignment_activity_event(
+        event = task_machine.build_assignment_activity_event(
             task_id=task_id,
             timestamp=timestamp,
             assignment=assignment,
             old_generation=old_generation,
             new_generation=task["generation"],
-            message=assignment_reason,
-            event_type="task_reassigned",
         )
         event["reason"] = assignment_reason
     else:
@@ -5799,15 +5797,15 @@ def _audited_reassignment_events(
     source: str,
     unavailable_message: str,
 ) -> list[tuple[datetime, dict[str, Any]]]:
-    """Return supervisor-audited `task_reassigned` events for a task, oldest first.
+    """Return canonical audited `task_reassigned` events for a task, oldest first.
 
-    Only the events the supervisor itself wrote through
-    `persist_task_reassignment` qualify: they carry the `Orchestrator` actor and
-    an `event_id` that is a digest over their own payload, so a hand-appended
-    activity line cannot manufacture a reassignment hop. The narrative
-    `task_reassigned` lines `write_activity_log` emits alongside them use
-    `from_owner`/`to_owner` keys and carry no identity digest; they are skipped
-    on purpose.
+    Events written by the supervisor and the local Human/Ops assignment command
+    both qualify because they use the shared canonical assignment writer. Their
+    actor-specific `event_id` is a digest over the event payload, so a
+    hand-appended activity line cannot manufacture a reassignment hop. The
+    narrative `task_reassigned` lines `write_activity_log` emits alongside them
+    use `from_owner`/`to_owner` keys and carry no identity digest; they are
+    skipped on purpose.
 
     The search spans the live tail *and* the rotated archives. Reading only
     LOG_FILE made a legitimate, audited reassignment vanish the moment routine
@@ -5822,19 +5820,13 @@ def _audited_reassignment_events(
 
     audited: list[tuple[datetime, dict[str, Any]]] = []
     for event in events:
-        if (
-            event.get("type") != "task_reassigned"
-            or str(event.get("task_id") or "").strip() != task_id
-            or event.get("agent") != "Orchestrator"
-            or not event.get("old_owner")
-            or not event.get("new_owner")
-            or not _supervisor_reassignment_event_id_matches(event)
-        ):
+        validated = task_machine.validate_assignment_activity_event(event)
+        if validated is None or validated.task_id != task_id or not validated.old_owner:
             continue
-        event_timestamp = _parse_utc_timestamp(event.get("ts"))
+        event_timestamp = _parse_utc_timestamp(validated.timestamp)
         if event_timestamp is None:
             continue
-        audited.append((event_timestamp, event))
+        audited.append((event_timestamp, validated.as_dict()))
     audited.sort(key=lambda item: item[0])
     return audited
 
@@ -5966,33 +5958,6 @@ def _verified_owner_reassignment(
     )
 
 
-def _supervisor_reassignment_event_id(event: Mapping[str, Any]) -> str:
-    generation_binding = ""
-    if event.get("old_generation") is not None and event.get("generation") is not None:
-        generation_binding = (
-            f"{event.get('old_generation')}\0{event.get('generation')}\0"
-        )
-    payload = (
-        f"{event.get('task_id') or ''}\0{event.get('ts') or ''}\0"
-        f"{event.get('old_owner') or ''}\0{event.get('new_owner') or ''}\0"
-        f"{event.get('old_reviewer') or ''}\0{event.get('new_reviewer') or ''}\0"
-        f"{generation_binding}"
-        f"{event.get('message') or ''}"
-    )
-    return "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _supervisor_reassignment_event_id_matches(event: Mapping[str, Any]) -> bool:
-    """Accept only the two canonical prefixes bound to the exact payload digest."""
-
-    expected = _supervisor_reassignment_event_id(event)
-    digest = expected.removeprefix("supervisor-reassign-")
-    return str(event.get("event_id") or "") in {
-        expected,
-        f"supervisor-task-reassigned-{digest}",
-    }
-
-
 def _verified_done_owner_reassignment(
     task: dict[str, Any],
     *,
@@ -6000,7 +5965,7 @@ def _verified_done_owner_reassignment(
     current_owner: str,
     commit_timestamp: str,
 ) -> dict[str, Any]:
-    """Prove that audited supervisor reassignments explain owner drift at done.
+    """Prove that canonical audited reassignments explain owner drift at done.
 
     Owner reassignment is a normal, recurring event rather than an anomaly: a
     provider hits its quota or goes unreachable and the supervisor hands the
@@ -6019,7 +5984,7 @@ def _verified_done_owner_reassignment(
         source="canonical done owner reassignment evidence",
         unavailable_message=(
             "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
-            "audited supervisor task_reassigned event, but the activity audit is unavailable."
+            "canonical audited task_reassigned event, but the activity audit is unavailable."
         ),
     )
     if not any(
@@ -6029,7 +5994,7 @@ def _verified_done_owner_reassignment(
     ):
         raise SystemExit(
             "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
-            "audited supervisor task_reassigned event."
+            "canonical audited task_reassigned event."
         )
 
     chain = _walk_audited_role_chain(
@@ -6101,8 +6066,8 @@ def _self_consistent_event_id_matches(event: Mapping[str, Any]) -> bool:
     `_activity_event()` sets `event_id` to `ai-status-event-<sha256 of the
     rest of the event>` whenever the caller does not supply one of its own --
     the scheme a plain `assign` event gets. Recomputing and comparing catches
-    a hand-edited log line the same way `_supervisor_reassignment_event_id_matches`
-    does for the narrower supervisor-reassignment digest.
+    a hand-edited log line the same way the canonical task-machine validator
+    does for reassignment audit events.
     """
 
     payload = {key: value for key, value in event.items() if key != "event_id"}
@@ -6194,7 +6159,7 @@ def _verified_done_reviewer_reassignment(
     current_reviewer: str,
     commit_timestamp: str,
 ) -> dict[str, Any]:
-    """Prove that audited supervisor reassignments explain reviewer drift at done.
+    """Prove that canonical audited reassignments explain reviewer drift at done.
 
     A delivered commit whose `LLM-Agent` trailer went stale almost always has a
     stale `Reviewer` trailer too, because the supervisor reassigns the pair
@@ -6255,7 +6220,7 @@ def _verified_done_reviewer_reassignment(
         source="canonical done reviewer reassignment evidence",
         unavailable_message=(
             "Cannot finalize task: prior-reviewer Reviewer trailer requires an exact "
-            "audited supervisor task_reassigned event, but the activity audit is unavailable."
+            "canonical audited task_reassigned event, but the activity audit is unavailable."
         ),
     )
     chain = _walk_audited_role_chain(
