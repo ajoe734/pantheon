@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Header, Query
 
@@ -14,6 +14,7 @@ def create_datasources_router(
     require_read_role: Callable,
     snapshot_meta: Callable,
     utc_now: Callable,
+    read_source_connector_registry: Optional[Callable[[Any], Awaitable[Dict[str, Any]]]] = None,
 ) -> APIRouter:
     """Factory for the GET /bff/management/data-sources route.
 
@@ -43,7 +44,10 @@ def create_datasources_router(
 
         snapshot_at = utc_now()
         store = get_read_store()
-        registry = store.get_source_connector_registry()
+        if read_source_connector_registry is None:
+            registry = store.get_source_connector_registry()
+        else:
+            registry = await read_source_connector_registry(store)
 
         source: str = str(registry.get("source") or "missing")
         items: List[Dict[str, Any]] = list(registry.get("connectors") or [])
@@ -57,6 +61,8 @@ def create_datasources_router(
             "status": surface_state,
             "source": source,
         }
+        if registry.get("reason"):
+            surface["reason"] = registry["reason"]
         if surface_state == "unavailable":
             surface["message"] = "Source-ingest registry is unavailable or unconfigured."
             surface["staleness"] = {
@@ -76,7 +82,7 @@ def create_datasources_router(
         }
         if surface_state == "unavailable":
             meta["degradation"] = {
-                "reason": "management data sources are currently unavailable.",
+                "reason": registry.get("reason") or "management data sources are currently unavailable.",
             }
 
         start = 0

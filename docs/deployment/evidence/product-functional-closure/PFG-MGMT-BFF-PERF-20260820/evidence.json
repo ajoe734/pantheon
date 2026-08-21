@@ -1,0 +1,121 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "PFG-MGMT-BFF-PERF-20260820",
+    "title": "Bound functional Management BFF read latency and payload cost",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-MGMT-BFF-PERF-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-MGMT-BFF-PERF-20260820/evidence.json",
+    "evidence_cut_at": "2026-08-21T04:24:38Z"
+  },
+  "scope": {
+    "owned_layer": [
+      "Management BFF Cockpit composition and its shared alerts/runtime-health projections.",
+      "Management operations read-model composition for an individually requested persona.",
+      "Bounded async adaptation of the Source Ingest connector-registry read used by the Management data-sources surface.",
+      "Focused functional read-budget regressions and closure evidence."
+    ],
+    "not_changing": [
+      "Source Ingest connector-registry ownership, refresh policy, persistence, or provider egress.",
+      "ReadSurfaceStore's role as a read adapter, existing Management API schema, frontend behavior, or pagination contract.",
+      "A general cache, cache invalidation authority, background refresh worker, load-test program, or live-capital path."
+    ],
+    "composes_with": [
+      "PFG-MGMT-READ-MODELS-20260820 canonical Management read models.",
+      "PFG-MGMT-AI-PROVIDER-20260820 bounded Management BFF read conventions.",
+      "Existing MGMT-LOAD-005 bounded synchronous-read isolation contract."
+    ],
+    "changed_files": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/console_gap/datasources.py",
+      "services/control-plane/bff/tests/test_management_read_budget.py",
+      "docs/deployment/evidence/product-functional-closure/PFG-MGMT-BFF-PERF-20260820/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-MGMT-BFF-PERF-20260820/evidence.json"
+    ]
+  },
+  "duplication_inventory": {
+    "cockpit": {
+      "before": "Cockpit built alerts and runtime health, then Operator Home built both projections again.",
+      "after": "Cockpit passes its one completed alerts and runtime-health projection into Operator Home.",
+      "regression": "test_cockpit_reuses_alert_and_health_composition asserts one call per projection."
+    },
+    "operations_persona": {
+      "before": "A request for one persona built the 500-row Persona Fleet list and selected its row.",
+      "after": "The request uses the requested canonical persona plus its direct persona-league entry; it never invokes the full-fleet builder.",
+      "regression": "test_operations_read_model_never_expands_full_persona_fleet makes full-fleet expansion a test failure."
+    },
+    "telemetry": {
+      "before": "Performance attribution and the Fleet list could call get_telemetry_summary once per runtime/persona.",
+      "after": "Each composition preloads list_telemetry_summaries once and indexes that bounded in-memory projection for its calculation when it contains canonical rows; only older no-list fixtures retain their historical record lookup.",
+      "regression": "test_attribution_reuses_bulk_telemetry_projection makes every per-runtime telemetry read a test failure."
+    },
+    "data_sources": {
+      "before": "The async BFF handler synchronously waited for Source Ingest's registry read, inheriting its downstream latency.",
+      "after": "The handler uses a two-slot worker read and a 750ms production-default wait budget; timed-out or saturated reads return source=unavailable and an explicit reason.",
+      "regression": "test_data_sources_times_out_as_typed_unavailable_not_a_healthy_cache uses a 300ms registry read with a 50ms budget and requires a <=250ms typed unavailable endpoint envelope."
+    }
+  },
+  "freshness_and_degradation": {
+    "canonical_registry_authority": "Source Ingest get_source_connector_registry remains the only registry read. No cache is introduced.",
+    "timeout": "source=unavailable, status=unavailable, meta.surfaces.data_sources.reason=read_timeout, and meta.degradation.reason=read_timeout.",
+    "saturation": "source=unavailable with reason=read_capacity_saturated; no late or prior connector list is labelled healthy.",
+    "late_worker_behavior": "A synchronous worker cannot be forcibly cancelled after starting, so its slot remains reserved until completion. This prevents unbounded queued late work."
+  },
+  "functional_budget": {
+    "cockpit": "One alerts build and one runtime-health build per Cockpit composition; no repeated downstream fan-out through Operator Home.",
+    "operations_persona": "No 500-row fleet materialisation for an individual persona response.",
+    "fleet_and_attribution": "One bulk telemetry-summary projection per composition, rather than N per-runtime reads when that projection is available; record lookup is legacy no-list compatibility only.",
+    "data_sources": "750ms production-default wait budget, two concurrently admitted reads, and a 250ms focused test envelope when the budget is configured to 50ms.",
+    "payload": "Existing list page bounds and response schemas are retained; the single-persona operation no longer constructs the discarded full-list payload."
+  },
+  "validation": {
+    "environment": "task-local Python 3.12 virtual environment; isolated ReadSurfaceStore fixtures; no provider credentials or live-capital authority used.",
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/console_gap/datasources.py services/control-plane/bff/operations_read_model.py services/control-plane/bff/tests/test_management_read_budget.py",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_read_budget.py",
+        "result": "4 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py",
+        "result": "11 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_persona_fleet.py services/control-plane/bff/tests/test_bff_management_data_sources_contract.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+        "result": "25 passed when run as the four focused suites (9 + 5 + 2 + 9)."
+      },
+      {
+        "command": "git diff --check",
+        "result": "pass"
+      }
+    ],
+    "three_sample_dev_smoke": {
+      "status": "pending_exact_candidate_deployment",
+      "reason": "The current Pantheon-owned dev BFF does not yet serve this task branch. PFG-DEV-INTEGRATION-20260820 owns the Compose/deployment admission; treating an older dev SHA or an isolated fixture as exact-candidate hosted proof would be misleading.",
+      "required_after_deployment": "For Cockpit, persona-fleet, and data-sources, take three authenticated read-only samples from the deployed task merge SHA; record elapsed time, serialized response bytes, status/source/degradation state, and the hosted deployment identity. Confirm unavailable Source Ingest remains unavailable rather than healthy-empty."
+    }
+  },
+  "rollback": {
+    "code": "Revert this task's two commits together. The prior direct Source registry read resumes; no stored cache state, migration, or schema rollback exists.",
+    "operational": "If a deployed registry-read budget is too restrictive, adjust PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS within the documented bounded behavior; unavailable remains explicit."
+  },
+  "review": {
+    "status": "owner_validation_passed_pending_independent_reviewer",
+    "reviewer_instruction": "Antigravity must independently inspect this committed manifest and exact PR head, rerun the focused suite, and bind canonical approval with AI_NAME=Antigravity REVIEW_FILE=<this path> through the governed approve command before merge.",
+    "owner_claim": "Owner validation is complete; this manifest makes no approval claim."
+  },
+  "delivery": {
+    "anchor_commit": {
+      "sha": "7f586c6369e0ff90aad126bcfd63e69801f82f01",
+      "subject": "PFG-MGMT-BFF-PERF-20260820: anchor bounded reads"
+    },
+    "pull_request": "pending"
+  }
+}
