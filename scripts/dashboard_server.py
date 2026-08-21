@@ -47,6 +47,11 @@ def dashboard_refresh_environment(repo_root: Path) -> dict[str, str]:
     env["PANTHEON_STATUS_ROOT"] = str(repo_root)
     for name in WORKER_CONTEXT_ENV_NAMES:
         env.pop(name, None)
+    # ai_status.py's canonical mutation lease check rejects every command
+    # (including the no-op "sync" this refresh runs) unless it sees either an
+    # active worker lease (ORCH_RUN_ID, stripped above) or this explicit local
+    # Human/Ops opt-in. Without it every dashboard refresh 500s.
+    env["PANTHEON_LOCAL_HUMAN_OPS"] = "1"
     return env
 
 
