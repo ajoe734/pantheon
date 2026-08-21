@@ -1203,13 +1203,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
         "bff_reads": bff_reads.to_dict(),
         "bff_explain": explain_plans,
+        "bff_explain_gate_enforced": (
+            args.events >= DEFAULT_EVENT_COUNT
+            and args.loop_runs >= DEFAULT_LOOP_RUN_COUNT
+        ),
         "fault_matrix": [
             {"name": result.name, "passed": result.passed, "detail": result.detail}
             for result in faults
         ],
         "teardown": {"schema_dropped": teardown},
     }
-    failures = report.gate_failures() + bff_reads.gate_failures() + _plan_failures(explain_plans)
+    failures = report.gate_failures() + bff_reads.gate_failures()
+    if payload["bff_explain_gate_enforced"]:
+        failures.extend(_plan_failures(explain_plans))
     if args.catch_up_events and catchup_elapsed > CATCH_UP_100K_LIMIT_SECONDS:
         failures.append(
             f"catch-up {catchup_elapsed:.3f}s exceeds {CATCH_UP_100K_LIMIT_SECONDS}s"

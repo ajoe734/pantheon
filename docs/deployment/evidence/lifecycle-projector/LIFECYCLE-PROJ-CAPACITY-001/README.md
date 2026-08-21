@@ -94,7 +94,10 @@ contain:
 
 `evidence.json.sha256` binds the byte-identical raw evidence. Any non-empty
 `gate_failures` list is a failed capacity proof and must not be relaxed or
-reported as pass.
+reported as pass. The harness still records plans for a small batch-500 smoke,
+but only enforces indexed-plan selection at the full 1M/150k cardinality:
+small tables legitimately use sequential scans and cannot prove the
+large-corpus access path.
 
 ## Focused verification
 
