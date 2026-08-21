@@ -185,7 +185,10 @@ _STAGE_CONTRACT_FIELD_ALLOWLIST = (
 
 
 def _stage_rows_for_aggregate(
-    agg: BoundedAggregateState, *, projection_revision: int
+    agg: BoundedAggregateState,
+    *,
+    projection_revision: int,
+    batch_event_ids: "set[str] | None" = None,
 ) -> list[JourneyStageRow]:
     rows: list[JourneyStageRow] = []
     for journey_event in agg.journey_events:
@@ -193,6 +196,8 @@ def _stage_rows_for_aggregate(
         if not stage:
             continue
         canonical_event_id = journey_event["canonical_event_id"]
+        if batch_event_ids is not None and canonical_event_id not in batch_event_ids:
+            continue
         rows.append(
             JourneyStageRow(
                 tenant_id=agg.tenant_id,
@@ -281,11 +286,17 @@ def _loop_run_row_for_aggregate(
 
 
 def _receipts_and_identity_links(
-    agg: BoundedAggregateState, *, projection_revision: int
+    agg: BoundedAggregateState,
+    *,
+    projection_revision: int,
+    batch_event_ids: "set[str] | None" = None,
 ) -> tuple[list[EventReceiptRow], list[IdentityLinkRow]]:
     by_canonical: dict[str, dict[str, Any]] = {}
     for journey_event in agg.journey_events:
-        by_canonical.setdefault(journey_event["canonical_event_id"], journey_event)
+        canonical_id = journey_event["canonical_event_id"]
+        if batch_event_ids is not None and canonical_id not in batch_event_ids:
+            continue
+        by_canonical.setdefault(canonical_id, journey_event)
     receipts = [
         EventReceiptRow(
             event_id=canonical_id,
@@ -390,13 +401,18 @@ def build_batch_mutation(
     touched = staged.values() if affected is None else (
         agg for journey_id, agg in staged.items() if journey_id in affected
     )
+    batch_event_ids = {entry["event"]["event_id"] for entry in reduced.entries}
     for agg in touched:
         receipts, identity_links = _receipts_and_identity_links(
-            agg, projection_revision=projection_revision
+            agg, projection_revision=projection_revision, batch_event_ids=batch_event_ids
         )
         mutation.receipts.extend(receipts)
         mutation.identity_links.extend(identity_links)
-        mutation.stages.extend(_stage_rows_for_aggregate(agg, projection_revision=projection_revision))
+        mutation.stages.extend(
+            _stage_rows_for_aggregate(
+                agg, projection_revision=projection_revision, batch_event_ids=batch_event_ids
+            )
+        )
         journey_row = _journey_row_for_aggregate(agg, projection_revision=projection_revision)
         if journey_row is not None:
             mutation.journeys.append(journey_row)
@@ -490,6 +506,15 @@ class BackfillCoordinator:
                 break
             reduced = reduce_source_rows(rows, mode="backfill")
             staged, _affected, accepted, duplicates = self._materializer.stage_batch(reduced.entries)
+            if accepted == 0 and duplicates > 0:
+                # Batch contained only duplicate events already staged in materializer
+                checkpoint = reduced.high_watermark
+                self._write_snapshot(checkpoint)
+                totals["duplicates"] += duplicates
+                totals["quarantined"] += len(reduced.quarantine)
+                totals["ignored"] += reduced.ignored
+                continue
+
             mutation = build_batch_mutation(
                 staged,
                 reduced,
