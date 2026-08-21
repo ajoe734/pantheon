@@ -51,6 +51,12 @@ only accepted topology is:
   `/home/lupin/pantheon-ci-deploy/coordination-root`;
 - mutable staging checkout: `/home/lupin/pantheon-ci-deploy/dev-root`.
 
+Promotion removes write permission from every non-symlink entry in the exact
+command runtime before stopping the incumbent supervisor. Auto workers read
+and execute this tree, but all task source edits belong in their isolated task
+worktrees. A write attempt against `PANTHEON_COMMAND_ROOT` must therefore fail
+without making later worker launches reject a dirty shared runtime.
+
 `sync-dev-root.sh` never reads `/proc/<pid>/cwd` or a product-root PID file to
 infer authority. It refreshes staging, materializes the exact command runtime,
 then invokes the promoter with the explicit coordination root. The promoter

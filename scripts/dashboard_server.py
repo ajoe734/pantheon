@@ -18,7 +18,7 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
-from common import read_activity_log_tail_bytes
+from common import load_config, read_activity_log_tail_bytes
 
 
 DASHBOARD_REFRESH_ACTOR_ENV = "PANTHEON_DASHBOARD_REFRESH_ACTOR"
@@ -53,6 +53,31 @@ def dashboard_refresh_environment(repo_root: Path) -> dict[str, str]:
     # Human/Ops opt-in. Without it every dashboard refresh 500s.
     env["PANTHEON_LOCAL_HUMAN_OPS"] = "1"
     return env
+
+
+def repo_root_is_authoritatively_governed(repo_root: Path) -> bool:
+    """True when a live supervisor/worker fleet already keeps this root current.
+
+    A journal-governed root's projection is rewritten by every governed
+    mutation (task done/approve/reassign/etc), so it is already as fresh as
+    this process can observe. Running the refresh subprocess against it
+    anyway would use ai_status.py's *non*-authoritative fallback path (this
+    dashboard has no journal identity of its own to run authoritatively
+    with) -- diverging from the journal that real workers treat as ground
+    truth, exactly the drain-without-audit condition the journal's own
+    task_state_drain marker check exists to reject. Skip the subprocess
+    entirely rather than risk that divergence; there is nothing for it to
+    usefully refresh here.
+    """
+
+    try:
+        config = load_config(str(repo_root / ".orchestrator" / "config.json"))
+    except (OSError, ValueError):
+        return False
+    store = config.get("task_state_store")
+    if not isinstance(store, dict):
+        return False
+    return str(store.get("mode") or "").strip().lower() == "authoritative"
 
 
 class NoCacheRequestHandler(SimpleHTTPRequestHandler):
@@ -113,6 +138,22 @@ class NoCacheRequestHandler(SimpleHTTPRequestHandler):
         repo_root = self.repo_root
         if repo_root is None:
             self.send_error(500, "Repo root not configured")
+            return
+        if repo_root_is_authoritatively_governed(repo_root):
+            payload = {
+                "ok": True,
+                "stdout": (
+                    "Skipped: this projection is a journal-governed live root "
+                    "kept current by the fleet itself; no refresh needed."
+                ),
+                "stderr": "",
+            }
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         try:
             result = subprocess.run(
