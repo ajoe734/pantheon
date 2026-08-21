@@ -1169,3 +1169,42 @@ def test_trigger_enforces_bounded_batch_size(client) -> None:
 
     assert response.status_code == 413
     assert "SOURCE_INGEST_MAX_RECORDS=3" in response.json()["detail"]
+
+
+def test_trigger_jobs_payload_forbids_extra_fields(client) -> None:
+    test_client, _, _ = client
+    response = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "conn-openalex",
+            "mode": "bounded_pull",
+            "trace_id": "trace-extra-field",
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert "extra_forbidden" in json.dumps(body) or "extra fields not permitted" in json.dumps(body).lower()
+
+
+def test_controller_readback_thread_safety(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_client, _, module = client
+    lock_acquired = False
+
+    original_payload_func = module._controller_readback_payload
+
+    def mock_payload():
+        nonlocal lock_acquired
+        # Since RLock is reentrant, acquiring non-blocking from within the lock holder returns True:
+        acquired_again = module.authoritative_reconcile_lock.acquire(blocking=False)
+        if acquired_again:
+            lock_acquired = True
+            module.authoritative_reconcile_lock.release()
+        return original_payload_func()
+
+    monkeypatch.setattr(module, "_controller_readback_payload", mock_payload)
+
+    response = test_client.get("/api/source-ingest/controller/readback")
+    assert response.status_code == 200
+    assert lock_acquired is True
+
