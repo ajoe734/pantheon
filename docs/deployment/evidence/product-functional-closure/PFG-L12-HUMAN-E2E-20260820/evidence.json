@@ -3,7 +3,7 @@
   "task": {
     "id": "PFG-L12-HUMAN-E2E-20260820",
     "title": "Prove deployed Loops 5 through 7 with real Agora, policy, Research, and Consultation owners",
-    "owner": "Claude",
+    "owner": "Antigravity2",
     "reviewer": "Antigravity",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
@@ -61,7 +61,7 @@
   "deployment": {
     "target": "current dev Compose and paper environment",
     "deployed_run_report": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/deployed-run.json",
-    "status": "tenant_fix_landed_redeploy_blocked_worktree_access",
+    "status": "tenant_fix_landed_pipeline_delivery_in_progress",
     "admission_rule": "Do not claim deployed proof or request approval until a committed bounded run report records status=passed against the exact review head.",
     "execution_access": {
       "attempted_at": "2026-08-21",
@@ -77,6 +77,11 @@
         "ssh_access": "No authorized SSH key is available in this worktree for the declared dev VM, consistent with the prior access blocker recorded on this task.",
         "direct_http_access": "A direct HTTPS probe of the dev host requires outbound network permission this background worker session cannot grant itself (no interactive approver attached).",
         "conclusion": "The dev-login/downstream tenant mismatch is fixed and structurally verified in this worktree, but redeploying operator-bff and rerunning the opt-in PANTHEON_L12_HUMAN_LEARNING_E2E=1 suite against the real current-dev Compose project requires dev-host access this worktree does not have. Handing off for a session or operator with that access to redeploy operator-bff only and rerun this suite."
+      },
+      "delivery_pipeline_20260821c": {
+        "attempted_at": "2026-08-21",
+        "access_blocker_cleared": true,
+        "delivery_lane": "Repository delivery proceeds through task PR, review, and the GitHub nonprod deployment pipeline rather than ad-hoc worker gcloud/SSH. Continuing exact-head delivery and hosted E2E."
       }
     }
   },

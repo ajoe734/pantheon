@@ -103,6 +103,13 @@ limitation of the current worktree, not a defect in the tenant fix. A session
 or operator with current-dev-host access should redeploy `operator-bff` (env
 change only, no image rebuild required) and rerun this suite.
 
+## Repository delivery and nonprod deployment pipeline (2026-08-21)
+
+The implementation and tenant fix commits are preserved locally on task branch
+`task/PFG-L12-HUMAN-E2E-20260820`. Repository delivery proceeds through
+standard task push, pull request creation, review, and the GitHub nonprod
+deployment lane rather than ad-hoc worker gcloud/SSH.
+
 ## Code disposition
 
 The existing `policy-learning-shadow-eval-scheduler` and Consultation
