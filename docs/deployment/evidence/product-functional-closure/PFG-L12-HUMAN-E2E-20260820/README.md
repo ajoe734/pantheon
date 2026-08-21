@@ -55,16 +55,29 @@ show exactly one candidate, memo, and Governance handoff for its run token.
 Commit the bounded run report and update `evidence.json` with the exact
 deployed revision before requesting independent review.
 
-## Superseded execution blocker (2026-08-21)
+## Current execution blocker (2026-08-21)
 
-This task worktree has no running local Compose project.  A read-only attempt
-to reach the declared dev VM could not authenticate: the configured `gcloud`
-identity requires interactive reauthentication, and the direct non-interactive
-SSH attempt was refused for lack of an authorized public key.  No deployed run
-report has therefore been created.  A supervisor or operator with the current
-dev-host credentials must run the command above and return the bounded report
-to this task branch; do not replace that proof with a fixture or a local
-in-process run.
+The dev host, Compose owners, strict dev-login exchange, and paper-only Agora
+write are reachable. The deployed BFF accepts the configured operator
+dev-login JWT for `tenant-dev` and `pantheon-dev`, and it returned `201` for
+the real interaction-evidence submission. However, its deployed Agora service
+boundary is configured with `AGORA_HANDOFF_SERVICE_TENANTS=pantheon-local`;
+the deployed policy scheduler also uses
+`POLICY_LEARNING_AGORA_TENANT_ID=pantheon-local`. All five configured
+dev-login identities were read back without exposing their tokens; none is
+authorized for `pantheon-local`.
+
+Consequently, a user-authorized evidence write cannot be read by the durable
+policy service boundary: using either authorized tenant reaches the internal
+handoff route but is rejected with `403` tenant-outside-authority. The test
+was stopped before either worker restart, so no replay claim is made and no
+incomplete run report is retained as evidence.
+
+A dev deployment owner must align the BFF Agora service allowlist and policy
+scheduler tenant with an authorized strict-auth tenant (for example
+`pantheon-dev`), then redeploy those current-dev owners. Rerun this suite only
+after that rollout; do not replace it with a fixture, direct store access, or
+a fake provider.
 
 ## Code disposition
 
