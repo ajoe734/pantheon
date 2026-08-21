@@ -1,0 +1,66 @@
+{
+  "schema_version": "pantheon.product_functional_closure.cross_loop_truth_evidence.v1",
+  "task": {
+    "id": "PFG-L12-TRUTH-CROSSLOOP-20260820",
+    "title": "Project one stimulus-driven cross-loop run into current Management truth",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-L12-TRUTH-CROSSLOOP-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-TRUTH-CROSSLOOP-20260820/evidence.json",
+    "evidence_status": "owner_validation_passed_deployed_closure_pending"
+  },
+  "scope": {
+    "owned_layer": [
+      "Stimulus-driven twelve-loop deployed closure gate",
+      "Current-record-derived BFF loop-health runtime maturity",
+      "Functional worker-failure attribution evidence"
+    ],
+    "not_changing": [
+      "Live broker or capital execution",
+      "New loop state storage",
+      "Task-state projection as product truth",
+      "Automatic repair"
+    ],
+    "composes_with": [
+      "PFG-L12-RESEARCH-E2E-20260820",
+      "PFG-L12-HUMAN-E2E-20260820",
+      "PFG-L12-RUNTIME-E2E-20260820",
+      "L12-GAP-F06-BFF-FUNCTIONAL-HEALTH-20260818"
+    ]
+  },
+  "acceptance": {
+    "fresh_owner_identities": "The closure gate starts the three domain E2E suites itself and accepts only their same-run, exact-SHA temporary reports; it accepts no prebuilt input manifest.",
+    "twelve_loop_receipts": "Every canonical loop requires non-empty trigger, terminal output, owner observation, authority readback, and next receipt before the parent report can pass.",
+    "management_truth": "The strict-auth BFF loop-health readback must contain exactly twelve canonical rows with current-record-derived runtime_maturity and no static maturity/task/evidence projection fields.",
+    "functional_failure_attribution": "During the isolated Runtime worker failure, BFF loop-health must attribute paper-fleet-reconciler degradation to capital_pool_execution (Loop 9).",
+    "legacy_verifier_separation": "The retained prebuilt-ID suite has a separate opt-in flag and report role; it is not a closure gate."
+  },
+  "code_disposition_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-TRUTH-CROSSLOOP-20260820/code-disposition.json",
+  "validation": {
+    "completed": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "result": "25 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile tests/integration/l12/test_current_runtime_loops_deployed_e2e.py tests/integration/l12/test_current_cross_loop_deployed_e2e.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
+        "result": "passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q tests/integration/l12/test_current_cross_loop_deployed_e2e.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+        "result": "2 passed, 17 skipped (deployed cases remain opt-in)"
+      }
+    ],
+    "required_before_review": [
+      "Run PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E=1 against the exact controlled dev-paper deployment with all three domain suite configurations.",
+      "Commit the resulting bounded deployed run report, report SHA-256, exact deployed SHA, and final pass status before requesting independent review.",
+      "Reviewer independently reruns the focused local contracts and inspects that the committed run report contains twelve fresh loop receipts and BFF failure attribution."
+    ]
+  },
+  "review_decision": {
+    "decision": "owner_validation_passed_deployed_closure_pending",
+    "reviewer_action_required": "Do not approve until a committed exact-SHA deployed stimulus report records status=passed and this manifest is updated on the reviewed head."
+  }
+}

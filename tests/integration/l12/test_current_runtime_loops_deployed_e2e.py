@@ -1059,6 +1059,14 @@ class RuntimeChain:
             headers=self.bff_headers,
         )
 
+    def _bff_loop_health(self) -> dict[str, Any]:
+        return self.http.request(
+            "bff",
+            "GET",
+            "/bff/v5/loop-health",
+            headers=self.bff_headers,
+        )
+
     def _bff_auth_readiness(self) -> dict[str, Any]:
         return self.http.request(
             "bff",
@@ -1573,6 +1581,29 @@ class RuntimeChain:
                     timeout=120,
                 )
                 targets = failed["data"]["targets"]
+                loop_health = self._bff_loop_health()
+                loop_items = loop_health.get("items") or loop_health.get("data") or []
+                capital_loop = next(
+                    (
+                        item
+                        for item in loop_items
+                        if isinstance(item, Mapping)
+                        and item.get("loop_id") == "capital_pool_execution"
+                    ),
+                    None,
+                )
+                if not isinstance(capital_loop, Mapping):
+                    raise DeployedProofError(
+                        "BFF loop-health did not publish the Capital loop during worker failure"
+                    )
+                downstream_state = capital_loop.get("downstream_actual_state") or {}
+                if (
+                    downstream_state.get("status") != "degraded"
+                    or "paper-fleet-reconciler" not in str(downstream_state.get("summary") or "")
+                ):
+                    raise DeployedProofError(
+                        "BFF did not attribute the paper fleet worker failure to Capital loop"
+                    )
                 self.evidence.add_case(
                     "negative_typed_worker_failure",
                     loop=12,
@@ -1580,7 +1611,14 @@ class RuntimeChain:
                     owner_worker=self.evidence.identities["operator-bff"],
                     terminal_output_id="paper-fleet-reconciler:unhealthy",
                     authority_readback=targets["paper-fleet-reconciler"],
-                    next_consumer_readback=targets["runtime-manager"],
+                    next_consumer_readback={
+                        "failure_attribution": {
+                            "loop_id": capital_loop.get("loop_id"),
+                            "summary": downstream_state.get("summary"),
+                            "status": downstream_state.get("status"),
+                        },
+                        "runtime_manager": targets["runtime-manager"],
+                    },
                     started_at=loop12_started,
                     compose_services=["operator-bff", "paper-fleet-reconciler", "runtime-manager"],
                     assertions={
@@ -1849,7 +1887,11 @@ def test_typed_worker_failure_does_not_mask_api_readiness(
 ) -> None:
     case = deployed_runtime_chain["cases"]["negative_typed_worker_failure"]
     assert case["authority_readback"]["ok"] is False
-    assert case["next_consumer_readback"]["ok"] is True
+    assert case["next_consumer_readback"]["runtime_manager"]["ok"] is True
+    attribution = case["next_consumer_readback"]["failure_attribution"]
+    assert attribution["loop_id"] == "capital_pool_execution"
+    assert attribution["status"] == "degraded"
+    assert "paper-fleet-reconciler" in attribution["summary"]
 
 
 def test_bounded_lifecycle_cursor_and_resource_limits(
