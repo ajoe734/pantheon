@@ -92,7 +92,7 @@
     ],
     "results": {
       "py_compile": "passed",
-      "unit_and_contract_tests": "121 passed, 9 skipped, 27 subtests passed in 29.05s",
+      "unit_and_contract_tests": "134 passed, 9 skipped, 27 subtests passed in 40.16s",
       "harness_executable": "scripts/run_isolated_l12_runtime_e2e.py"
     }
   },

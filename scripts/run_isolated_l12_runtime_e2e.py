@@ -61,18 +61,18 @@ REQUIRED_COMPOSE_SERVICES = [
 ]
 
 SERVICES = {
-    "bff": {"port": 8000, "health": "/readyz"},
-    "capital": {"port": 8092, "health": "/readyz"},
-    "deployment": {"port": 8095, "health": "/readyz"},
-    "evolution": {"port": 8090, "health": "/readyz"},
-    "fleet": {"port": 8011, "health": "/readyz"},
-    "governance": {"port": 8082, "health": "/readyz"},
-    "incidents": {"port": 8094, "health": "/readyz"},
-    "reconciliation": {"port": 8088, "health": "/readyz"},
-    "registry": {"port": 8087, "health": "/readyz"},
-    "runtime": {"port": 8001, "health": "/readyz"},
-    "source_ingest": {"port": 8097, "health": "/readyz"},
-    "telemetry": {"port": 8085, "health": "/readyz"},
+    "bff": {"port": 18001, "health": "/readyz"},
+    "capital": {"port": 18092, "health": "/readyz"},
+    "deployment": {"port": 18095, "health": "/readyz"},
+    "evolution": {"port": 18093, "health": "/readyz"},
+    "fleet": {"port": 18011, "health": "/readyz"},
+    "governance": {"port": 18082, "health": "/readyz"},
+    "incidents": {"port": 18090, "health": "/readyz"},
+    "reconciliation": {"port": 18102, "health": "/readyz"},
+    "registry": {"port": 18087, "health": "/readyz"},
+    "runtime": {"port": 18081, "health": "/readyz"},
+    "source_ingest": {"port": 18097, "health": "/readyz"},
+    "telemetry": {"port": 18083, "health": "/readyz"},
 }
 
 
