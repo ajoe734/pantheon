@@ -75,7 +75,6 @@ BFF_VERIFICATION_STEPS = [
 GENERATED_EXACT_PATHS = {
     ".orchestrator/approval-queue.json",
     ".orchestrator/approval-queue.lock",
-    ".orchestrator/github-bus-state.json",
     ".orchestrator/provider_capabilities.json",
     ".orchestrator/state.json",
     ".orchestrator/supervisor.pid",

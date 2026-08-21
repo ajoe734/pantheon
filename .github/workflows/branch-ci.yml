@@ -269,7 +269,7 @@ jobs:
         if: steps.boundary.outputs.tooling_only == 'true'
         run: |
           PYTHONPATH=.orchestrator python3 -m unittest \
-            test_supervisor test_runtime_state test_approval_queue test_github_bus \
+            test_supervisor test_runtime_state test_approval_queue \
             scripts.test_ai_status scripts.test_check_config_drift scripts.test_component_boundary
 
       - name: Run product or mixed smoke gate
