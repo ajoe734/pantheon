@@ -1,0 +1,70 @@
+{
+  "schema_version": "pantheon.product_functional_closure.deployed_human_learning_evidence.v1",
+  "task": {
+    "id": "PFG-L12-HUMAN-E2E-LIVE-R2-20260821",
+    "title": "Recover post-merge dev deployment and hosted Human E2E proof",
+    "owner": "Antigravity2",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-L12-HUMAN-E2E-LIVE-R2-20260821",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Post-merge dev deployment orchestration, pipeline diagnosis, and hosted Human E2E proof recovery",
+    "not_changing": [
+      "Merged tenant implementation and product code",
+      "Canonical downstream Agora, Policy Learning, Research, Consultation, OpenClaw, or Governance boundaries",
+      "Live broker, capital, or production authority"
+    ],
+    "composes_with": [
+      "PFG-L12-HUMAN-E2E-20260820",
+      "PFG-DEV-INTEGRATION-20260820"
+    ],
+    "changed_files": [
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/evidence.json",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/evidence.sha256"
+    ]
+  },
+  "acceptance": {
+    "dev_deploy_exact_sha": {
+      "status": "blocked_on_external_gcp_billing",
+      "target_backend_sha": "bb83df12e3cec11de0f441850f08a179ddd7394a",
+      "target_frontend_sha": "8b5a7bbe868f9e3a56a4ed7baf818b642d57ba74",
+      "workflow_run_id": "32485613630",
+      "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/32485613630",
+      "error": "gcloud compute ssh failed with: This API method requires billing to be enabled. Please enable billing on project #pantheon-lupin-dev-20260719."
+    },
+    "hosted_version_readback": {
+      "status": "pending_deploy_success"
+    },
+    "hosted_human_learning_e2e": {
+      "status": "pending_deploy_success"
+    },
+    "restart_replay_identity_stable": {
+      "status": "pending_deploy_success"
+    },
+    "source_scheduler_and_egress_guard": {
+      "status": "pending_deploy_success"
+    }
+  },
+  "deployment": {
+    "target": "current dev Compose and paper environment",
+    "status": "blocked_on_external_gcp_billing",
+    "execution_access": {
+      "attempted_at": "2026-08-21T13:12:08Z",
+      "run_id": "32485613630",
+      "backend_sha": "bb83df12e3cec11de0f441850f08a179ddd7394a",
+      "frontend_sha": "8b5a7bbe868f9e3a56a4ed7baf818b642d57ba74",
+      "dev_auth_profile": "strict",
+      "step_failed": "Deploy dev VM stack under lease",
+      "failure_reason": "GCP Compute Engine API rejected instance SSH metadata update: billing disabled on project pantheon-lupin-dev-20260719."
+    }
+  },
+  "blocker": {
+    "waiting_for": "Human/Ops",
+    "reason_kind": "external",
+    "summary": "Pantheon Nonprod Deploy run 32485613630 failed at gcloud compute ssh: GCP project pantheon-lupin-dev-20260719 requires billing to be enabled before deployment can SSH to the dev VM."
+  }
+}
