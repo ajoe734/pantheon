@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -244,19 +245,101 @@ def _write_evidence(path: Path | None, result: Mapping[str, Any]) -> None:
 
 def _sync_directory_tree(source: Path, dest: Path) -> None:
     if dest.exists():
+        _make_tree_owner_writable(dest)
         shutil.rmtree(dest)
     if source.exists():
         shutil.copytree(source, dest)
+        _make_tree_owner_writable(dest)
+
+
+def _make_tree_owner_writable(root: Path) -> None:
+    """Keep the coordination-root code mirror mutable after a sealed copy."""
+
+    if root.is_symlink() or not root.exists():
+        return
+    for current_root, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
+        current = Path(current_root)
+        for name in filenames:
+            path = current / name
+            if not path.is_symlink():
+                mode = stat.S_IMODE(path.stat(follow_symlinks=False).st_mode)
+                os.chmod(path, mode | stat.S_IWUSR, follow_symlinks=False)
+        for name in dirnames:
+            path = current / name
+            if not path.is_symlink():
+                mode = stat.S_IMODE(path.stat(follow_symlinks=False).st_mode)
+                os.chmod(
+                    path,
+                    mode | stat.S_IWUSR | stat.S_IXUSR,
+                    follow_symlinks=False,
+                )
+        mode = stat.S_IMODE(current.stat(follow_symlinks=False).st_mode)
+        os.chmod(
+            current,
+            mode | stat.S_IWUSR | stat.S_IXUSR,
+            follow_symlinks=False,
+        )
 
 
 def _sync_top_level_py_files(source_dir: Path, dest_dir: Path) -> None:
     dest_dir.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(dest_dir.stat(follow_symlinks=False).st_mode)
+    os.chmod(
+        dest_dir,
+        mode | stat.S_IWUSR | stat.S_IXUSR,
+        follow_symlinks=False,
+    )
     wanted = {path.name for path in source_dir.glob("*.py")} if source_dir.exists() else set()
     existing = {path.name for path in dest_dir.glob("*.py")}
     for name in existing - wanted:
         (dest_dir / name).unlink()
     for name in wanted:
-        shutil.copy2(source_dir / name, dest_dir / name)
+        destination = dest_dir / name
+        shutil.copy2(source_dir / name, destination)
+        mode = stat.S_IMODE(destination.stat(follow_symlinks=False).st_mode)
+        os.chmod(destination, mode | stat.S_IWUSR, follow_symlinks=False)
+
+
+def seal_command_runtime(root: Path) -> dict[str, Any]:
+    """Remove write bits from one validated immutable command runtime.
+
+    Auto workers execute status commands from this tree but never need to
+    mutate it.  Sealing every non-symlink entry turns an accidental edit into
+    an immediate permission error instead of poisoning every later worker's
+    command-runtime integrity check.  Execute bits and all read bits are
+    preserved.
+    """
+
+    root = root.expanduser().absolute()
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError(f"command runtime seal target must be a direct directory: {root}")
+    root = root.resolve()
+    changed_paths = 0
+    sealed_paths = 0
+    for current_root, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
+        current = Path(current_root)
+        for name in (*filenames, *dirnames):
+            path = current / name
+            if path.is_symlink():
+                continue
+            mode = stat.S_IMODE(path.stat(follow_symlinks=False).st_mode)
+            sealed_mode = mode & ~0o222
+            if mode != sealed_mode:
+                os.chmod(path, sealed_mode, follow_symlinks=False)
+                changed_paths += 1
+            sealed_paths += 1
+    root_mode = stat.S_IMODE(root.stat(follow_symlinks=False).st_mode)
+    sealed_root_mode = root_mode & ~0o222
+    if root_mode != sealed_root_mode:
+        os.chmod(root, sealed_root_mode, follow_symlinks=False)
+        changed_paths += 1
+    sealed_paths += 1
+    return {
+        "outcome": "sealed",
+        "root": str(root),
+        "sealed_paths": sealed_paths,
+        "changed_paths": changed_paths,
+    }
 
 
 def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict[str, Any]:
@@ -346,6 +429,10 @@ def replace_supervisor(
         "outcome": "failed",
     }
     try:
+        # The candidate is already identity- and cleanliness-validated above.
+        # Seal it before TERM so a failure cannot interrupt the incumbent, and
+        # so workers can only read the exact command source after launch.
+        result["command_runtime_seal"] = seal_command_runtime(Path(identity["root"]))
         # Workers require this split-root marker before their adapter starts.
         # Creating it is idempotent and happens before TERM, so a malformed
         # coordination root cannot turn a healthy incumbent into an outage.
