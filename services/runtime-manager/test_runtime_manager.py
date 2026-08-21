@@ -1224,12 +1224,29 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.assertEqual(history_payload["rollbacks"][0]["rollback_action_type"], "replace")
 
     def test_runtime_fleet_desired_state_route_returns_active_and_excluded(self):
+        fleet_metadata = {
+            "strategy_id": "strategy-alpha",
+            "symbol": "2330.TW",
+            "market_data_policy": {
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+            },
+            "object_store": {
+                "openclaw/registry/strategy-alpha/1.0.0/metadata.json": {
+                    "registry_id": "artifact-alpha",
+                    "strategy_id": "strategy-alpha",
+                    "version": "1.0.0",
+                    "checksum": "sha256:" + "a" * 64,
+                }
+            },
+        }
         paper = self.client.post(
             "/api/runtimes/deploy",
             json=_valid_deploy_request(
                 plan_id="plan-fleet-paper",
                 capital_pool_id="pool-fleet-paper",
                 runtime_id="rt-fleet-paper",
+                metadata=fleet_metadata,
             ),
             headers=self.auth,
         ).get_json()
@@ -1240,6 +1257,7 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
                 capital_pool_id="pool-fleet-canary",
                 runtime_id="rt-fleet-canary",
                 promotion_gate=_valid_activation_gate(),
+                metadata=fleet_metadata,
             ),
             _allow_non_paper_deploy=True,
         ).to_dict()
@@ -1249,6 +1267,7 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
                 plan_id="plan-fleet-paused",
                 capital_pool_id="pool-fleet-paused",
                 runtime_id="rt-fleet-paused",
+                metadata=fleet_metadata,
             ),
             headers=self.auth,
         ).get_json()

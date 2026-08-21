@@ -915,6 +915,8 @@ services:
       # for audit cross-references; the runtime-manager itself does not write
       # to the governance service from this path.
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
+      PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-runtime-manager:service}
+      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-default}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_CAPITAL_API_URL: http://capital:8092
@@ -939,7 +941,7 @@ services:
     # require them at boot. ApproveDeployment requests fail cleanly with
     # DEPLOYMENT_API_UNAVAILABLE if the deployment service is unreachable.
     ports:
-      - "18081:8081"
+      - "${RUNTIME_MANAGER_PORT:-${RUNTIME_PORT:-18081}}:8081"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/readyz', timeout=5).read()"]
       interval: 10s
@@ -987,7 +989,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18082:8082"
+      - "${GOVERNANCE_PORT:-18082}:8082"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/readyz', timeout=5).read()"]
       interval: 10s
@@ -1026,7 +1028,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18083:8083"
+      - "${TELEMETRY_PORT:-18083}:8083"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/readyz', timeout=20).read()"]
       interval: 15s
@@ -1071,7 +1073,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18090:8090"
+      - "${INCIDENTS_PORT:-18090}:8090"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/readyz', timeout=5).read()"]
       interval: 10s
@@ -1115,7 +1117,7 @@ services:
       minio:
         condition: service_healthy
     ports:
-      - "18091:8091"
+      - "${POSTMORTEMS_PORT:-18091}:8091"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/readyz', timeout=5).read()"]
       interval: 10s
@@ -1219,6 +1221,7 @@ services:
       PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/lifecycle-projection/current/loop_runs.json
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
+      PANTHEON_BFF_HEALTH_PROBE_INTERVAL_SECONDS: ${PANTHEON_BFF_HEALTH_PROBE_INTERVAL_SECONDS:-30}
       # Every configured owner URL has an exact existing health route. This
       # disables the generic /__health__ guess that returned deterministic
       # 404s for FastAPI owners and preserves component identity in emitted
@@ -1408,7 +1411,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18001:8001"
+      - "${OPERATOR_BFF_PORT:-${BFF_PORT:-18001}}:8001"
     healthcheck:
       # Compose only owns process liveness. Exact deployment/projector
       # readiness is revision-bound and bounded by deploy_nonprod_vm.sh after
@@ -1533,7 +1536,7 @@ services:
       minio:
         condition: service_healthy
     ports:
-      - "18002:8002"
+      - "${PERSONA_PORT:-18002}:8002"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/readyz', timeout=5).read()"]
       interval: 10s
@@ -1557,7 +1560,7 @@ services:
       governance:
         condition: service_healthy
     ports:
-      - "18003:8001"
+      - "${ROUTER_PORT:-18003}:8001"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=5).read()"]
       interval: 10s
@@ -1605,7 +1608,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18084:8084"
+      - "${EVALUATION_PORT:-18084}:8084"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/readyz', timeout=5).read()"]
       interval: 10s
@@ -1624,7 +1627,7 @@ services:
     volumes:
       - feedback-data:/data/feedback
     ports:
-      - "18085:8085"
+      - "${FEEDBACK_PORT:-18085}:8085"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/readyz', timeout=5).read()"]
       interval: 10s
@@ -1660,7 +1663,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18086:8086"
+      - "${MEMORY_PORT:-18086}:8086"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8086/readyz', timeout=5).read()"]
       interval: 10s
@@ -1689,7 +1692,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18087:8087"
+      - "${REGISTRY_PORT:-18087}:8087"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8087/readyz', timeout=5).read()"]
       interval: 10s
@@ -1716,7 +1719,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18088:8088"
+      - "${OPTIMIZER_PORT:-18088}:8088"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/readyz', timeout=5).read()"]
       interval: 10s
@@ -1747,7 +1750,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "18089:8089"
+      - "${PROMOTION_PORT:-18089}:8089"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/readyz', timeout=5).read()"]
       interval: 10s
@@ -1786,7 +1789,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "18092:8092"
+      - "${CAPITAL_PORT:-18092}:8092"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/readyz', timeout=5).read()"]
       interval: 10s
@@ -1809,6 +1812,7 @@ services:
       PANTHEON_CAPITAL_POOL_STORE_PATH: /data/capital/capital_pools.json
       PANTHEON_PERSONA_BINDING_STORE_PATH: /data/capital/persona_capital_bindings.json
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
+      PANTHEON_DEPLOYMENT_AUTH_MODE: ${PANTHEON_DEPLOYMENT_AUTH_MODE:-permissive}
     volumes:
       - governance-data:/data/governance
       - capital-data:/data/capital:ro
@@ -1817,7 +1821,7 @@ services:
       governance:
         condition: service_healthy
     ports:
-      - "18095:8095"
+      - "${DEPLOYMENT_PORT:-18095}:8095"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/readyz', timeout=5).read()"]
       interval: 10s
@@ -1907,7 +1911,7 @@ services:
       governance:
         condition: service_healthy
     ports:
-      - "18093:8093"
+      - "${EVOLUTION_PORT:-18093}:8093"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/readyz', timeout=5).read()"]
       interval: 10s
@@ -2019,7 +2023,7 @@ services:
     volumes:
       - lineage-data:/data/lineage
     ports:
-      - "18094:8094"
+      - "${LINEAGE_READ_PORT:-18094}:8094"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/readyz', timeout=5).read()"]
       interval: 10s

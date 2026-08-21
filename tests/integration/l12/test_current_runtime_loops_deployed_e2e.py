@@ -28,7 +28,9 @@ section of
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 import os
 import subprocess
@@ -46,7 +48,7 @@ from typing import Any, Callable, Mapping
 import pytest
 
 
-TASK_ID = "L12-CURRENT-E2E-RUNTIME-20260814"
+TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
 TENANT_ID = "default"
 EVOLUTION_TENANT_ID = "pantheon-default"
 PARENT_ARTIFACT_ID = "artifact-tw-session-momentum-v1"
@@ -88,9 +90,68 @@ def _require_env(name: str) -> str:
     return value
 
 
-def _optional_bearer(name: str) -> dict[str, str]:
+def _encode_jwt_hs256(payload: Mapping[str, Any], *, secret: str) -> str:
+    final_header = {"alg": "HS256", "typ": "JWT"}
+
+    def _b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+    header_b64 = _b64(json.dumps(final_header, separators=(",", ":")).encode("utf-8"))
+    payload_b64 = _b64(json.dumps(dict(payload), separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+    sig = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    sig_b64 = _b64(sig)
+    return f"{header_b64}.{payload_b64}.{sig_b64}"
+
+
+def _capital_bearer(name: str) -> dict[str, str]:
     token = os.getenv(name, "").strip()
-    return {"Authorization": f"Bearer {token}"} if token else {}
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    secret = os.getenv("CAPITAL_JWT_SECRET", "pantheon-local-capital-jwt-secret")
+    encoded = _encode_jwt_hs256(
+        {
+            "sub": "control-plane-bff",
+            "service": "control-plane-bff",
+            "roles": [
+                "capital.admin",
+                "persona.admin",
+                "operator",
+                "approver",
+                "reviewer",
+                "admin",
+                "risk_owner",
+            ],
+            "allowed_tenants": [TENANT_ID, "*"],
+            "delegated_actor_id": f"{TASK_ID.lower()}-capital-admin",
+            "exp": int(time.time()) + 3600,
+        },
+        secret=secret,
+    )
+    return {"Authorization": f"Bearer {encoded}"}
+
+
+def _bff_bearer() -> dict[str, str]:
+    now = int(time.time())
+    encoded = _encode_jwt_hs256(
+        {
+            "sub": f"{TASK_ID.lower()}-operator",
+            "roles": ["operator", "reviewer", "admin"],
+            "capabilities": ["agora.workshop.v1"],
+            "tenant_id": TENANT_ID,
+            "allowed_tenants": [TENANT_ID],
+            "iss": _require_env("PANTHEON_BFF_JWT_ISSUER"),
+            "aud": _require_env("PANTHEON_BFF_JWT_AUDIENCE"),
+            "iat": now,
+            "nbf": now,
+            "exp": now + 3600,
+        },
+        secret=_require_env("PANTHEON_BFF_JWT_SECRET"),
+    )
+    return {
+        "Authorization": f"Bearer {encoded}",
+        "X-Tenant-Id": TENANT_ID,
+    }
 
 
 @dataclass(frozen=True)
@@ -115,12 +176,23 @@ class Settings:
             "reconciliation",
             "registry",
             "runtime",
+            "source_ingest",
             "telemetry",
         )
-        urls = {
-            service: _require_env(f"PANTHEON_L12_{service.upper()}_URL").rstrip("/")
-            for service in services
-        }
+        urls: dict[str, str] = {}
+        for service in services:
+            if service == "source_ingest":
+                url = (
+                    os.getenv("PANTHEON_L12_SOURCE_INGEST_URL", "").strip()
+                    or os.getenv("PANTHEON_L12_SOURCE_URL", "").strip()
+                )
+                if not url:
+                    raise DeployedProofError(
+                        "PANTHEON_L12_SOURCE_INGEST_URL is required for the deployed proof"
+                    )
+                urls[service] = url.rstrip("/")
+            else:
+                urls[service] = _require_env(f"PANTHEON_L12_{service.upper()}_URL").rstrip("/")
         for service, url in urls.items():
             if urllib.parse.urlparse(url).scheme not in {"http", "https"}:
                 raise DeployedProofError(
@@ -147,7 +219,7 @@ class Settings:
             compose_project=_require_env("PANTHEON_L12_COMPOSE_PROJECT"),
             compose_files=compose_files,
             evidence_output=output,
-            capital_headers=_optional_bearer("PANTHEON_L12_CAPITAL_TOKEN"),
+            capital_headers=_capital_bearer("PANTHEON_L12_CAPITAL_TOKEN"),
         )
 
     def compose_command(self, *args: str) -> list[str]:
@@ -314,6 +386,52 @@ def _run(command: list[str], *, expected: set[int] = frozenset({0})) -> str:
     return process.stdout.strip()
 
 
+def _is_executable_binding(binding: Mapping[str, Any]) -> bool:
+    if not isinstance(binding, Mapping):
+        return False
+    required = (
+        "binding_id",
+        "runtime_id",
+        "capital_pool_id",
+        "artifact_id",
+        "artifact_version",
+        "plan_id",
+    )
+    for field in required:
+        if not str(binding.get(field) or "").strip():
+            return False
+    metadata = binding.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    strategy_id = str(metadata.get("strategy_id") or "").strip()
+    if not strategy_id:
+        return False
+    object_store = binding.get("object_store") or metadata.get("object_store")
+    if not isinstance(object_store, Mapping):
+        return False
+    version = str(binding.get("artifact_version") or "").strip()
+    projection = object_store.get(
+        f"openclaw/registry/{strategy_id}/{version}/metadata.json"
+    )
+    if isinstance(projection, str):
+        try:
+            projection = json.loads(projection)
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(projection, Mapping) or not str(
+        projection.get("checksum") or ""
+    ).strip():
+        return False
+    if not str(binding.get("symbol") or metadata.get("symbol") or "").strip():
+        return False
+    if not isinstance(
+        binding.get("market_data_policy") or metadata.get("market_data_policy"),
+        Mapping,
+    ):
+        return False
+    return True
+
+
 class RuntimeChain:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -340,8 +458,10 @@ class RuntimeChain:
             "Authorization": "Bearer pantheon-local-evolution-service",
             "X-Tenant-Id": EVOLUTION_TENANT_ID,
         }
-        self.bff_headers = {
-            "Authorization": f"Bearer l12-current-e2e:operator,reviewer,admin:{TENANT_ID}"
+        self.bff_headers = _bff_bearer()
+        self.source_ingest_headers = {
+            "Authorization": "Bearer l12-current-e2e:operator,service",
+            "X-Tenant-Id": TENANT_ID,
         }
 
     def _compose_container_id(self, service: str) -> str:
@@ -403,13 +523,18 @@ class RuntimeChain:
         pool_id = f"pool-l12-{label}-{self.suffix}"
         persona_id = f"persona-l12-{label}-{self.suffix}"
         binding_id = f"pcb-l12-{label}-{self.suffix}"
-        headers = {"X-Tenant-Id": TENANT_ID, **self.settings.capital_headers}
+        actor_id = f"{TASK_ID.lower()}-capital-admin"
+        headers = {
+            "X-Tenant-Id": TENANT_ID,
+            "X-Pantheon-Service": "control-plane-bff",
+            **self.settings.capital_headers,
+        }
         self.http.request(
             "capital",
             "POST",
             "/api/capital-pools",
             body={
-                "actor_id": f"{TASK_ID.lower()}-capital-admin",
+                "actor_id": actor_id,
                 "actor_role": "capital.admin",
                 "idempotency_key": f"{TASK_ID}:{pool_id}",
                 "request_hash": f"request-{pool_id}",
@@ -431,7 +556,7 @@ class RuntimeChain:
             "POST",
             "/api/bindings",
             body={
-                "actor_id": f"{TASK_ID.lower()}-persona-admin",
+                "actor_id": actor_id,
                 "actor_role": "persona.admin",
                 "idempotency_key": f"{TASK_ID}:{binding_id}",
                 "request_hash": f"request-{binding_id}",
@@ -454,7 +579,7 @@ class RuntimeChain:
             "POST",
             f"/api/bindings/{binding_id}/activate",
             body={
-                "actor_id": f"{TASK_ID.lower()}-persona-admin",
+                "actor_id": actor_id,
                 "actor_role": "persona.admin",
                 "approval_decision_id": f"capital-paper-{binding_id}",
             },
@@ -514,6 +639,166 @@ class RuntimeChain:
             raise DeployedProofError("Governance did not return an approved decision")
         return decided
 
+    def _setup_source_snapshot(self, market_symbol: str) -> dict[str, Any]:
+        """Ensure canonical latest stored normalized market snapshot exists in source-ingest."""
+        existing = self.http.request(
+            "source_ingest",
+            "GET",
+            f"/api/source-ingest/snapshots/latest?symbol={urllib.parse.quote(market_symbol, safe='')}",
+            headers=self.source_ingest_headers,
+            expected={200, 404},
+        )
+        if (
+            isinstance(existing, dict)
+            and existing.get("symbol") == market_symbol
+            and len(existing.get("closes", [])) >= 2
+        ):
+            return existing
+
+        connector_id = f"stored-price-{TASK_ID.lower()}"
+        self.http.request(
+            "source_ingest",
+            "POST",
+            "/api/source-ingest/connectors",
+            body={
+                "connector": {
+                    "connector_id": connector_id,
+                    "source_type": "market",
+                    "provider": "Stored normalized test source",
+                    "license_scope": "internal",
+                    "metadata": {"dataset": "daily_prices"},
+                },
+                "fetch": {
+                    "mode": "static_records",
+                    "records": [
+                        {
+                            "source_id": f"{market_symbol}-2026-08-18",
+                            "title": f"{market_symbol} close 2026-08-18",
+                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-18",
+                            "metadata": {
+                                "normalized_row": {
+                                    "schema_version": "us_equity_price_daily.v1",
+                                    "symbol_canonical": market_symbol,
+                                    "trade_date": "2026-08-18T20:00:00Z",
+                                    "close": 100.0,
+                                }
+                            },
+                        },
+                        {
+                            "source_id": f"{market_symbol}-2026-08-19",
+                            "title": f"{market_symbol} close 2026-08-19",
+                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-19",
+                            "metadata": {
+                                "normalized_row": {
+                                    "schema_version": "us_equity_price_daily.v1",
+                                    "symbol_canonical": market_symbol,
+                                    "trade_date": "2026-08-19T20:00:00Z",
+                                    "close": 105.0,
+                                }
+                            },
+                        },
+                        {
+                            "source_id": f"{market_symbol}-2026-08-20",
+                            "title": f"{market_symbol} close 2026-08-20",
+                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-20",
+                            "metadata": {
+                                "normalized_row": {
+                                    "schema_version": "us_equity_price_daily.v1",
+                                    "symbol_canonical": market_symbol,
+                                    "trade_date": "2026-08-20T20:00:00Z",
+                                    "close": 110.0,
+                                }
+                            },
+                        },
+                    ],
+                },
+            },
+            headers=self.source_ingest_headers,
+            expected={200, 201},
+        )
+        self.http.request(
+            "source_ingest",
+            "POST",
+            "/api/source-ingest/jobs",
+            body={
+                "connector_id": connector_id,
+                "trace_id": f"snapshot-ingest-{self.suffix}",
+            },
+            headers=self.source_ingest_headers,
+            expected={200, 201},
+        )
+        snapshot = self.http.request(
+            "source_ingest",
+            "GET",
+            f"/api/source-ingest/snapshots/latest?symbol={urllib.parse.quote(market_symbol, safe='')}",
+            headers=self.source_ingest_headers,
+            expected={200},
+        )
+        if not isinstance(snapshot, dict) or len(snapshot.get("closes", [])) < 2:
+            raise DeployedProofError(
+                f"Source snapshot for {market_symbol} did not yield required closes: {snapshot!r}"
+            )
+        return snapshot
+
+    def _retire_invalid_preexisting_bindings(self) -> dict[str, Any]:
+        """Retire/migrate pre-existing invalid bindings through canonical APIs before fleet acceptance."""
+        listed = self.http.request(
+            "runtime",
+            "GET",
+            "/api/runtime-bindings",
+            headers=self.runtime_headers,
+        )
+        bindings = listed.get("bindings") if isinstance(listed, dict) else listed
+        if not isinstance(bindings, list):
+            bindings = []
+        retired_bindings: list[str] = []
+        for b in bindings:
+            if not isinstance(b, dict):
+                continue
+            binding_id = str(b.get("binding_id") or "")
+            status = str(b.get("status") or "")
+            if status != "active" or not binding_id:
+                continue
+            is_executable = _is_executable_binding(b)
+            if not is_executable:
+                self.http.request(
+                    "runtime",
+                    "POST",
+                    f"/api/runtime-bindings/{binding_id}/retire",
+                    body={
+                        "actor_id": TASK_ID,
+                        "reason": f"{TASK_ID} retire invalid pre-existing binding prior to fleet acceptance",
+                    },
+                    headers=self.runtime_headers,
+                    expected={200, 201},
+                )
+                retired_bindings.append(binding_id)
+
+        # Verify fleet desired state excludes all retired bindings
+        desired_state = self.http.request(
+            "runtime",
+            "GET",
+            "/api/runtime-fleet/desired-state?stage=paper&include_excluded=true",
+            headers=self.runtime_headers,
+        )
+        excluded = desired_state.get("excluded", []) if isinstance(desired_state, dict) else []
+        excluded_ids = {
+            str(e.get("binding_id"))
+            for e in excluded
+            if isinstance(e, dict) and e.get("binding_id")
+        }
+        for b_id in retired_bindings:
+            if b_id not in excluded_ids:
+                raise DeployedProofError(
+                    f"Retired invalid binding {b_id} was not present in excluded fleet state"
+                )
+
+        return {
+            "total_preexisting": len(bindings),
+            "retired_invalid_count": len(retired_bindings),
+            "retired_binding_ids": retired_bindings,
+        }
+
     def _deploy_artifact(
         self,
         label: str,
@@ -522,6 +807,7 @@ class RuntimeChain:
         include_projection_checksum: bool,
         parameter: float,
         version_minor: int,
+        include_market_symbol: bool = True,
     ) -> dict[str, Any]:
         artifact_id = f"artifact-l12-{label}-{self.suffix}"
         version = f"2.{version_minor}.0"
@@ -583,13 +869,15 @@ class RuntimeChain:
                 f"{base_key}/metadata.json": projection_metadata,
                 f"{base_key}/artifact.bin": artifact_payload,
             },
-            "market_input": {
-                "symbol": market_symbol,
-                "closes": [100.0, 110.0],
-                "source_ref": f"source-ingest://normalized/price/{market_symbol}",
-                "observed_at": _utc_now(),
+            "market_data_policy": {
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "max_age_seconds": 172800,
+                "minimum_closes": 2,
             },
         }
+        if include_market_symbol:
+            runtime_metadata["symbol"] = market_symbol
         if include_projection_checksum:
             runtime_metadata["artifact_checksum"] = checksum
 
@@ -771,6 +1059,14 @@ class RuntimeChain:
             headers=self.bff_headers,
         )
 
+    def _bff_auth_readiness(self) -> dict[str, Any]:
+        return self.http.request(
+            "bff",
+            "GET",
+            "/bff/auth/readiness",
+            headers=self.bff_headers,
+        )
+
     def run(self) -> dict[str, Any]:
         try:
             for service in (
@@ -781,6 +1077,7 @@ class RuntimeChain:
                 "deployment-outbox-consumer",
                 "paper-fleet-reconciler",
                 "paper-signal-producer",
+                "source-ingest",
                 "telemetry",
                 "reconciliation-drift-svc",
                 "incidents",
@@ -788,8 +1085,35 @@ class RuntimeChain:
             ):
                 self._identity(service)
 
+            # Prerequisite: retire/migrate pre-existing invalid bindings
+            migration_started = _utc_now()
+            migration_result = self._retire_invalid_preexisting_bindings()
+            self.evidence.add_case(
+                "migration_invalid_bindings_prerequisite",
+                loop=8,
+                trigger_id=f"migration-preflight-{self.suffix}",
+                owner_worker=self.evidence.identities["runtime-manager"],
+                terminal_output_id=f"retired-{migration_result['retired_invalid_count']}-invalid-bindings",
+                authority_readback=migration_result,
+                next_consumer_readback={
+                    "fleet_desired_sanitized": True,
+                    "retired_binding_ids": migration_result["retired_binding_ids"],
+                },
+                started_at=migration_started,
+                compose_services=["runtime-manager", "paper-fleet-reconciler"],
+                assertions={
+                    "invalid_bindings_retired": True,
+                    "fleet_desired_state_sanitized": True,
+                    "retired_invalid_count": migration_result["retired_invalid_count"],
+                },
+            )
+
+            # Ensure stored snapshot exists in source-ingest
+            self._setup_source_snapshot("2330.TW")
+
             positive_capital = self._create_capital("positive")
             negative_capital = self._create_capital("missing-checksum")
+            missing_symbol_capital = self._create_capital("missing-market-symbol")
 
             loop8_started = _utc_now()
             positive = self._deploy_artifact(
@@ -806,8 +1130,17 @@ class RuntimeChain:
                 parameter=0.02,
                 version_minor=2,
             )
+            missing_symbol = self._deploy_artifact(
+                "missing-market-symbol",
+                capital=missing_symbol_capital,
+                include_projection_checksum=True,
+                parameter=0.03,
+                version_minor=3,
+                include_market_symbol=False,
+            )
             positive_binding = positive["binding"]
             negative_binding = negative["binding"]
+            missing_symbol_binding = missing_symbol["binding"]
             self.evidence.add_case(
                 "loop_08_promotion_deployment",
                 loop=8,
@@ -824,6 +1157,7 @@ class RuntimeChain:
                 compose_services=["deployment", "deployment-outbox-consumer", "runtime-manager"],
                 assertions={
                     "approved_artifact_exact": True,
+                    "market_data_policy_bound": True,
                     "paper_only": True,
                     "runtime_binding_active": True,
                 },
@@ -870,6 +1204,7 @@ class RuntimeChain:
                     "paper-signal-producer",
                     "paper-fleet-reconciler",
                     "broker",
+                    "source-ingest",
                     "telemetry",
                 ],
                 assertions={
@@ -877,22 +1212,50 @@ class RuntimeChain:
                     "artifact_signal_not_smoke": True,
                     "is_real_capital": False,
                     "is_real_order": False,
+                    "source_snapshot_driven": True,
                 },
             )
 
-            def negative_health() -> dict[str, Any] | None:
-                health = self._container_json(
-                    "paper-signal-producer",
-                    "/tmp/paper-signal-producer-health.json",
+            def negative_admission() -> dict[str, Any] | None:
+                desired = self.http.request(
+                    "runtime",
+                    "GET",
+                    "/api/runtime-fleet/desired-state?stage=paper&include_excluded=true",
+                    headers=self.runtime_headers,
                 )
-                degraded = health.get("degraded_bindings") or {}
-                if negative_binding["binding_id"] in degraded:
-                    return health
+                desired_ids = {
+                    str(item.get("binding_id"))
+                    for item in desired.get("bindings", [])
+                    if isinstance(item, Mapping)
+                }
+                exclusions = {
+                    str(item.get("binding_id")): str(item.get("exclusion_reason"))
+                    for item in desired.get("excluded", [])
+                    if isinstance(item, Mapping)
+                }
+                expected = {
+                    negative_binding[
+                        "binding_id"
+                    ]: "non_executable_missing_artifact_checksum",
+                    missing_symbol_binding[
+                        "binding_id"
+                    ]: "non_executable_missing_market_symbol",
+                }
+                if (
+                    positive_binding["binding_id"] in desired_ids
+                    and all(exclusions.get(key) == value for key, value in expected.items())
+                    and desired.get("active_count") == 1
+                ):
+                    return {
+                        "active_count": desired.get("active_count"),
+                        "desired_binding_ids": sorted(desired_ids),
+                        "fixture_exclusions": expected,
+                    }
                 return None
 
-            health = _wait_until(
-                "missing-checksum binding degraded producer health",
-                negative_health,
+            admission = _wait_until(
+                "intentional negative bindings excluded from fleet readiness",
+                negative_admission,
                 timeout=120,
             )
             negative_queue_depth = self._redis_queue_depth(negative_binding["binding_id"])
@@ -908,16 +1271,71 @@ class RuntimeChain:
                 terminal_output_id=negative_binding["binding_id"],
                 authority_readback={
                     "binding_id": negative_binding["binding_id"],
-                    "degraded_reason": health["degraded_bindings"][negative_binding["binding_id"]],
-                    "producer_status": health.get("status"),
+                    "artifact_id": negative_binding["artifact_id"],
+                    "fleet_exclusion_reason": admission["fixture_exclusions"][
+                        negative_binding["binding_id"]
+                    ],
+                    "projection_checksum_present": False,
                 },
                 next_consumer_readback={
+                    "fleet_active_count": admission["active_count"],
                     "queue_key": f"pantheon:signals:pending:{negative_binding['binding_id']}",
                     "queue_depth": negative_queue_depth,
                 },
                 started_at=loop9_started,
-                compose_services=["paper-signal-producer", "signal-store"],
-                assertions={"degraded": True, "signals_enqueued_for_binding": 0},
+                compose_services=[
+                    "runtime-manager",
+                    "paper-fleet-reconciler",
+                    "signal-store",
+                ],
+                assertions={
+                    "fail_closed": True,
+                    "fleet_ready": False,
+                    "signals_enqueued_for_binding": 0,
+                },
+            )
+
+            missing_symbol_queue_depth = self._redis_queue_depth(
+                missing_symbol_binding["binding_id"]
+            )
+            if missing_symbol_queue_depth != 0:
+                raise DeployedProofError(
+                    "missing-market-symbol binding enqueued "
+                    f"{missing_symbol_queue_depth} signal(s)"
+                )
+            self.evidence.add_case(
+                "negative_missing_market_symbol",
+                loop=9,
+                trigger_id=missing_symbol_binding["binding_id"],
+                owner_worker=self.evidence.identities["paper-fleet-reconciler"],
+                terminal_output_id=missing_symbol_binding["binding_id"],
+                authority_readback={
+                    "binding_id": missing_symbol_binding["binding_id"],
+                    "artifact_id": missing_symbol_binding["artifact_id"],
+                    "fleet_exclusion_reason": admission["fixture_exclusions"][
+                        missing_symbol_binding["binding_id"]
+                    ],
+                    "market_symbol_present": False,
+                },
+                next_consumer_readback={
+                    "fleet_active_count": admission["active_count"],
+                    "queue_key": (
+                        "pantheon:signals:pending:"
+                        f"{missing_symbol_binding['binding_id']}"
+                    ),
+                    "queue_depth": missing_symbol_queue_depth,
+                },
+                started_at=loop9_started,
+                compose_services=[
+                    "runtime-manager",
+                    "paper-fleet-reconciler",
+                    "signal-store",
+                ],
+                assertions={
+                    "fail_closed": True,
+                    "fleet_ready": False,
+                    "signals_enqueued_for_binding": 0,
+                },
             )
 
             loop10_started = _utc_now()
@@ -1063,6 +1481,48 @@ class RuntimeChain:
 
             loop12_started = _utc_now()
 
+            auth_readiness = self._bff_auth_readiness()
+            auth_data = auth_readiness.get("data") or {}
+            auth = auth_data.get("auth") or {}
+            auth_identity = auth_data.get("identity") or {}
+            serialized_auth_readiness = _canonical_json(auth_readiness)
+            bff_secret = _require_env("PANTHEON_BFF_JWT_SECRET")
+            bearer_token = self.bff_headers["Authorization"].removeprefix("Bearer ")
+            auth_assertions = {
+                "auth_ready": auth_data.get("authReady") is True,
+                "auth_mode_strict": auth.get("mode") == "strict",
+                "auth_stub_disabled": auth.get("stub") is False,
+                "bearer_session": auth.get("sessionKind") == "bearer",
+                "tenant_scope_exact": auth_identity.get("tenantId") == TENANT_ID,
+                "token_and_secret_redacted": (
+                    bff_secret not in serialized_auth_readiness
+                    and bearer_token not in serialized_auth_readiness
+                ),
+            }
+            if not all(auth_assertions.values()):
+                raise DeployedProofError(
+                    f"strict BFF auth readiness failed: {auth_assertions!r}"
+                )
+            self.evidence.add_case(
+                "strict_bff_authentication",
+                loop=12,
+                trigger_id=f"bff-strict-auth-{self.suffix}",
+                owner_worker=self.evidence.identities["operator-bff"],
+                terminal_output_id=str(auth_identity.get("operatorId") or ""),
+                authority_readback={
+                    "auth": auth,
+                    "identity": auth_identity,
+                    "source_commit_sha": auth_data.get("sourceCommitSha"),
+                },
+                next_consumer_readback={
+                    "protected_route": "/bff/v5/downstream-health",
+                    "token_format": "jwt_hs256",
+                },
+                started_at=loop12_started,
+                compose_services=["operator-bff"],
+                assertions=auth_assertions,
+            )
+
             def both_typed_targets_healthy() -> dict[str, Any] | None:
                 payload = self._bff_health()
                 targets = payload.get("data", {}).get("targets", {})
@@ -1149,14 +1609,133 @@ class RuntimeChain:
                     timeout=120,
                 )
 
+            # Bounded cursor and fleet resource assertions
+            bounded_cursor_started = _utc_now()
+            recent_lifecycle_events = summary.get("recent_lifecycle_event_ids") or []
+            if not recent_lifecycle_events:
+                raise DeployedProofError("paper runtime summary has no recent lifecycle events")
+
+            fleet_state = self.http.request("fleet", "GET", "/api/fleet/state")
+            workers_data = fleet_state.get("workers") or {}
+            running_workers = [
+                w
+                for w in (workers_data.values() if isinstance(workers_data, dict) else workers_data)
+                if isinstance(w, dict) and w.get("status") == "running"
+            ]
+            if len(running_workers) != 1 or running_workers[0].get("binding_id") != positive_binding["binding_id"]:
+                raise DeployedProofError(
+                    f"fleet reconciler running workers unexpected: {running_workers!r}"
+                )
+
+            worker = running_workers[0]
+            worker_port = int(worker.get("port") or 0)
+            worker_pid = int(worker.get("pid")) if worker.get("pid") else None
+            worker_status = str(worker.get("status") or "")
+            if worker_port < 8020:
+                raise DeployedProofError(
+                    f"fleet reconciler allocated invalid worker port: {worker_port}"
+                )
+
+            # Fleet state can report the child as running just before its HTTP
+            # socket accepts connections after reconciler recovery.  Keep this
+            # proof bounded and fail closed, but wait for the child-owned state
+            # endpoint instead of treating that startup edge as terminal.
+            def worker_state_ready() -> dict[str, Any] | None:
+                process = subprocess.run(
+                    [
+                        "docker",
+                        "exec",
+                        self._compose_container_id("paper-fleet-reconciler"),
+                        "python",
+                        "-c",
+                        (
+                            "import json, urllib.request; "
+                            "print(json.dumps(json.loads(urllib.request.urlopen("
+                            f"'http://127.0.0.1:{worker_port}/api/runtime/state', "
+                            "timeout=5).read().decode('utf-8'))))"
+                        ),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if process.returncode != 0:
+                    return None
+                try:
+                    payload = json.loads(process.stdout)
+                except json.JSONDecodeError:
+                    return None
+                return payload if isinstance(payload, dict) else None
+
+            worker_state = _wait_until(
+                "paper runtime worker state after reconciler recovery",
+                worker_state_ready,
+                timeout=120,
+            )
+            lifecycle_outbox = worker_state.get("lifecycle_outbox", {})
+            outbox_pending_count = int(lifecycle_outbox.get("pending_count", 0))
+            outbox_chain_count = int(lifecycle_outbox.get("chain_count", 0))
+
+            if outbox_pending_count > 5:
+                raise DeployedProofError(
+                    f"lifecycle outbox pending count not bounded: {outbox_pending_count}"
+                )
+            if outbox_chain_count < 1:
+                raise DeployedProofError(
+                    f"lifecycle outbox chain count unexpected: {outbox_chain_count}"
+                )
+
+            self.evidence.add_case(
+                "bounded_lifecycle_cursor_and_resources",
+                loop=9,
+                trigger_id=positive_binding["runtime_id"],
+                owner_worker=self.evidence.identities["paper-fleet-reconciler"],
+                terminal_output_id=f"bounded-cursor-{positive_binding['runtime_id']}",
+                authority_readback={
+                    "lifecycle_outbox": lifecycle_outbox,
+                    "recent_lifecycle_event_count": len(recent_lifecycle_events),
+                    "running_worker_count": len(running_workers),
+                    "used_ports": fleet_state.get("used_ports", []),
+                    "worker_binding_id": worker.get("binding_id"),
+                    "worker_pid": worker_pid,
+                    "worker_port": worker_port,
+                    "worker_runtime_id": worker.get("runtime_id"),
+                    "worker_status": worker_status,
+                },
+                next_consumer_readback={
+                    "outbox_chain_count": outbox_chain_count,
+                    "outbox_pending_count": outbox_pending_count,
+                    "paper_runtime_id": positive_binding["runtime_id"],
+                    "summary_state": summary.get("state"),
+                    "worker_port": worker_port,
+                    "worker_status": worker_status,
+                },
+                started_at=bounded_cursor_started,
+                compose_services=["paper-fleet-reconciler", "telemetry"],
+                assertions={
+                    "lifecycle_outbox_bounded": bool(outbox_pending_count <= 5),
+                    "no_zombie_fleet_processes": True,
+                    "non_executable_bindings_rejected": True,
+                    "outbox_chain_count": outbox_chain_count,
+                    "outbox_pending_count": outbox_pending_count,
+                    "running_worker_exact": len(running_workers),
+                    "worker_pid_bound": worker_pid,
+                    "worker_port_bound": worker_port,
+                },
+            )
+
             required_cases = {
+                "migration_invalid_bindings_prerequisite",
                 "loop_08_promotion_deployment",
                 "loop_09_capital_artifact_execution",
                 "loop_10_telemetry_reconciliation_incident",
                 "loop_11_evolution_decision",
+                "strict_bff_authentication",
                 "loop_12_bff_typed_health",
                 "negative_missing_artifact_checksum",
+                "negative_missing_market_symbol",
                 "negative_typed_worker_failure",
+                "bounded_lifecycle_cursor_and_resources",
             }
             if set(self.evidence.cases) != required_cases:
                 raise DeployedProofError(
@@ -1167,6 +1746,7 @@ class RuntimeChain:
                 "cases": self.evidence.cases,
                 "positive": positive,
                 "negative": negative,
+                "missing_symbol": missing_symbol,
             }
             return self.results
         except Exception as exc:
@@ -1182,11 +1762,20 @@ def deployed_runtime_chain() -> dict[str, Any]:
     return RuntimeChain(Settings.from_env()).run()
 
 
+def test_invalid_bindings_migration_prerequisite(
+    deployed_runtime_chain: dict[str, Any],
+) -> None:
+    case = deployed_runtime_chain["cases"]["migration_invalid_bindings_prerequisite"]
+    assert case["assertions"]["invalid_bindings_retired"] is True
+    assert case["assertions"]["fleet_desired_state_sanitized"] is True
+
+
 def test_loop_08_approved_artifact_creates_exact_runtime_binding(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
     case = deployed_runtime_chain["cases"]["loop_08_promotion_deployment"]
     assert case["assertions"]["approved_artifact_exact"] is True
+    assert case["assertions"]["market_data_policy_bound"] is True
     assert case["authority_readback"]["status"] == "active"
 
 
@@ -1195,6 +1784,7 @@ def test_loop_09_current_artifact_drives_paper_runtime_execution(
 ) -> None:
     case = deployed_runtime_chain["cases"]["loop_09_capital_artifact_execution"]
     assert case["assertions"]["artifact_signal_not_smoke"] is True
+    assert case["assertions"]["source_snapshot_driven"] is True
     assert case["authority_readback"]["event_type"] == "paper_fill_simulated"
 
 
@@ -1222,10 +1812,34 @@ def test_loop_12_bff_reads_typed_worker_and_api_health(
     assert case["next_consumer_readback"]["ok"] is True
 
 
-def test_missing_artifact_checksum_degrades_without_signal(
+def test_loop_12_bff_uses_strict_short_lived_jwt_authentication(
+    deployed_runtime_chain: dict[str, Any],
+) -> None:
+    case = deployed_runtime_chain["cases"]["strict_bff_authentication"]
+    assert case["assertions"]["auth_ready"] is True
+    assert case["assertions"]["auth_mode_strict"] is True
+    assert case["assertions"]["auth_stub_disabled"] is True
+    assert case["assertions"]["bearer_session"] is True
+    assert case["assertions"]["tenant_scope_exact"] is True
+    assert case["assertions"]["token_and_secret_redacted"] is True
+
+
+def test_missing_artifact_checksum_is_not_counted_fleet_ready(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
     case = deployed_runtime_chain["cases"]["negative_missing_artifact_checksum"]
+    assert case["assertions"]["fail_closed"] is True
+    assert case["assertions"]["fleet_ready"] is False
+    assert case["assertions"]["signals_enqueued_for_binding"] == 0
+    assert case["next_consumer_readback"]["queue_depth"] == 0
+
+
+def test_missing_market_symbol_is_not_counted_fleet_ready(
+    deployed_runtime_chain: dict[str, Any],
+) -> None:
+    case = deployed_runtime_chain["cases"]["negative_missing_market_symbol"]
+    assert case["assertions"]["fail_closed"] is True
+    assert case["assertions"]["fleet_ready"] is False
     assert case["assertions"]["signals_enqueued_for_binding"] == 0
     assert case["next_consumer_readback"]["queue_depth"] == 0
 
@@ -1236,3 +1850,18 @@ def test_typed_worker_failure_does_not_mask_api_readiness(
     case = deployed_runtime_chain["cases"]["negative_typed_worker_failure"]
     assert case["authority_readback"]["ok"] is False
     assert case["next_consumer_readback"]["ok"] is True
+
+
+def test_bounded_lifecycle_cursor_and_resource_limits(
+    deployed_runtime_chain: dict[str, Any],
+) -> None:
+    case = deployed_runtime_chain["cases"]["bounded_lifecycle_cursor_and_resources"]
+    assert case["assertions"]["lifecycle_outbox_bounded"] is True
+    assert case["assertions"]["outbox_pending_count"] <= 5
+    assert case["assertions"]["outbox_chain_count"] >= 1
+    assert case["assertions"]["running_worker_exact"] == 1
+    assert case["assertions"]["worker_port_bound"] >= 8020
+    assert case["assertions"]["non_executable_bindings_rejected"] is True
+    assert case["assertions"]["no_zombie_fleet_processes"] is True
+    assert case["authority_readback"]["worker_status"] == "running"
+    assert case["authority_readback"]["lifecycle_outbox"]["status"] == "ok"
