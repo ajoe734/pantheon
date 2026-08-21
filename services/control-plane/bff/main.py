@@ -43883,6 +43883,59 @@ def _mgmt_nl_extract_provider_answer(payload: Dict[str, Any]) -> Optional[str]:
     return _mgmt_nl_text_from_provider_value(payload)
 
 
+_MGMT_NL_COMPLETED_PROVIDER_STATES = {"completed", "ok", "success", "succeeded"}
+_MGMT_NL_PROVIDER_DEADLINE_DEFAULT_SECONDS = 45.0
+
+
+def _mgmt_nl_provider_deadline_seconds() -> float:
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_PROVIDER_DEADLINE_SECONDS")
+    if raw is None or not str(raw).strip():
+        return _MGMT_NL_PROVIDER_DEADLINE_DEFAULT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _MGMT_NL_PROVIDER_DEADLINE_DEFAULT_SECONDS
+    return min(300.0, max(0.1, value))
+
+
+def _mgmt_nl_provider_candidates(primary: str) -> List[str]:
+    configured: List[str] = [str(primary or "").strip().lower()]
+    for env_name in (
+        "PANTHEON_MANAGEMENT_NL_ASSISTANT_FALLBACK_PROVIDERS",
+        "PANTHEON_MGMT_NL_ASSISTANT_FALLBACK_PROVIDERS",
+    ):
+        raw = os.getenv(env_name, "")
+        configured.extend(item.strip().lower() for item in raw.split(","))
+    candidates: List[str] = []
+    for provider in configured:
+        if provider and provider not in candidates:
+            candidates.append(provider)
+    return candidates
+
+
+def _mgmt_nl_provider_attempt_summary(status: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "provider": status.get("provider"),
+        "status": status.get("status"),
+        "used": bool(status.get("used")),
+        "reason": status.get("reason"),
+        "run_id": status.get("run_id"),
+    }
+
+
+def _mgmt_nl_provider_degraded_reason(payload: Dict[str, Any]) -> str:
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    output = data.get("output") if isinstance(data, dict) else {}
+    for source in (output, data, payload):
+        if not isinstance(source, dict):
+            continue
+        for key in ("error_code", "reason", "degraded_reason", "diagnostic_reason"):
+            value = str(source.get(key) or "").strip()
+            if value:
+                return value.upper()
+    return "PROVIDER_RESPONSE_DEGRADED"
+
+
 def _mgmt_nl_maybe_provider_answer(
     *,
     provider: str,
@@ -43897,6 +43950,74 @@ def _mgmt_nl_maybe_provider_answer(
     audit_id: Optional[str],
     allowed_action_kinds: Set[str],
     current_user_attachments: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[str], Dict[str, Any], List[Dict[str, Any]]]:
+    candidates = _mgmt_nl_provider_candidates(provider)
+    deadline_seconds = _mgmt_nl_provider_deadline_seconds()
+    deadline = time.monotonic() + deadline_seconds
+    attempts: List[Dict[str, Any]] = []
+    primary_status: Optional[Dict[str, Any]] = None
+
+    for attempt_index, candidate in enumerate(candidates):
+        answer, status, actions = _mgmt_nl_attempt_provider_answer(
+            provider=candidate,
+            question=question,
+            focus=focus,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            session_id=session_id,
+            message_id=message_id,
+            trace_id=trace_id,
+            context_pack=context_pack,
+            audit_id=audit_id,
+            allowed_action_kinds=allowed_action_kinds,
+            current_user_attachments=current_user_attachments,
+            provider_deadline=deadline,
+            provider_attempt=attempt_index,
+        )
+        attempt_summary = _mgmt_nl_provider_attempt_summary(status)
+        attempts.append(attempt_summary)
+        if primary_status is None:
+            primary_status = status
+        if answer and status.get("used") is True:
+            status["attempted_providers"] = attempts
+            status["deadline_seconds"] = deadline_seconds
+            if attempt_index:
+                status["fallback"] = "provider_failover"
+                status["fallback_from"] = str(provider or "").strip().lower()
+                status["fallback_reason"] = primary_status.get("reason") if primary_status else None
+            return answer, status, actions
+        if str(status.get("status") or "").lower() == "disabled":
+            break
+        if time.monotonic() >= deadline:
+            break
+
+    terminal_status = dict(primary_status or _mgmt_nl_provider_status(
+        provider=provider,
+        enabled=True,
+        status="degraded",
+        reason="provider_deadline_exhausted",
+    ))
+    terminal_status["attempted_providers"] = attempts
+    terminal_status["deadline_seconds"] = deadline_seconds
+    return None, terminal_status, []
+
+
+def _mgmt_nl_attempt_provider_answer(
+    *,
+    provider: str,
+    question: str,
+    focus: str,
+    identity: OperatorIdentity,
+    caller_tenant_id: str,
+    session_id: str,
+    message_id: str,
+    trace_id: str,
+    context_pack: Dict[str, Any],
+    audit_id: Optional[str],
+    allowed_action_kinds: Set[str],
+    current_user_attachments: Optional[List[Dict[str, Any]]] = None,
+    provider_deadline: Optional[float] = None,
+    provider_attempt: int = 0,
 ) -> Tuple[Optional[str], Dict[str, Any], List[Dict[str, Any]]]:
     enabled = _mgmt_nl_provider_feature_enabled()
     if provider in {"none", "off", "disabled", "deterministic"}:
@@ -43954,7 +44075,15 @@ def _mgmt_nl_maybe_provider_answer(
             reason="unsupported_provider",
         ), []
 
-    run_id = trace_id
+    run_id = trace_id if provider_attempt == 0 else f"{trace_id}:fallback:{provider_attempt}"
+    if provider_deadline is not None and time.monotonic() >= provider_deadline:
+        return None, _mgmt_nl_provider_status(
+            provider=provider,
+            enabled=True,
+            status="degraded",
+            reason="provider_deadline_exhausted",
+            run_id=run_id,
+        ), []
     provider_mode = _mgmt_nl_provider_mode_from_context(context_pack)
     prompt = _mgmt_nl_provider_prompt(
         question=question,
@@ -44056,6 +44185,17 @@ def _mgmt_nl_maybe_provider_answer(
         "trace_id": run_id,
         "metadata": metadata,
     }
+    if provider_deadline is not None:
+        remaining_seconds = provider_deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            return _provider_failure(
+                OpenClawOpsClientError(
+                    "Management AI provider deadline elapsed before invocation.",
+                    status_code=504,
+                    error_code="PROVIDER_DEADLINE_EXHAUSTED",
+                )
+            )
+        invoke_kwargs["timeout_seconds"] = remaining_seconds
     if multimodal_supported and multimodal_payload:
         invoke_kwargs["messages"] = multimodal_payload.get("messages")
         invoke_kwargs["attachments"] = multimodal_payload.get("attachments")
@@ -44087,26 +44227,53 @@ def _mgmt_nl_maybe_provider_answer(
                 "multimodal": multimodal_summary,
             }
         )
+        retry_kwargs: Dict[str, Any] = {
+            "provider": provider,
+            "mode": provider_mode,
+            "prompt": prompt,
+            "context_pack": context_pack,
+            "operator_id": identity.operator_id,
+            "trace_id": run_id,
+            "metadata": metadata,
+        }
+        if provider_deadline is not None:
+            remaining_seconds = provider_deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                return _provider_failure(
+                    OpenClawOpsClientError(
+                        "Management AI provider deadline elapsed before multimodal retry.",
+                        status_code=504,
+                        error_code="PROVIDER_DEADLINE_EXHAUSTED",
+                    )
+                )
+            retry_kwargs["timeout_seconds"] = remaining_seconds
         try:
             provider_payload = OpenClawOpsClient().invoke_assistant_provider(
-                provider=provider,
-                mode=provider_mode,
-                prompt=prompt,
-                context_pack=context_pack,
-                operator_id=identity.operator_id,
-                trace_id=run_id,
-                metadata=metadata,
+                **retry_kwargs,
             )
         except OpenClawOpsClientError as retry_exc:
             return _provider_failure(retry_exc)
 
+    data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
+    provider_state = str((data or {}).get("status") or provider_payload.get("status") or "ok")
+    if provider_state.strip().lower() not in _MGMT_NL_COMPLETED_PROVIDER_STATES:
+        output = (data or {}).get("output") if isinstance(data, dict) else {}
+        message = ""
+        if isinstance(output, dict):
+            message = str(output.get("message") or output.get("diagnostic_message") or "").strip()
+        return _provider_failure(
+            OpenClawOpsClientError(
+                message or "Assistant provider returned a non-terminal answer state.",
+                status_code=200,
+                error_code=_mgmt_nl_provider_degraded_reason(provider_payload),
+                payload=provider_payload,
+            )
+        )
     answer = _mgmt_nl_extract_provider_answer(provider_payload)
     actions = _mgmt_nl_extract_provider_actions(
         provider_payload,
         allowed_action_kinds=allowed_action_kinds,
     )
-    data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
-    provider_state = str((data or {}).get("status") or provider_payload.get("status") or "ok")
     duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
     _management_ai_record_event(
         {
@@ -68656,7 +68823,7 @@ def _agora_ask_deterministic_fallback(prompt: str) -> str:
 def _assistant_provider_readiness() -> Dict[str, Any]:
     provider = _mgmt_nl_provider_name()
     try:
-        return OpenClawOpsClient().get_assistant_readiness(provider=provider)
+        return OpenClawOpsClient().get_assistant_readiness(provider=provider, auth_probe=True)
     except OpenClawOpsClientError as exc:
         return {
             "provider": provider,

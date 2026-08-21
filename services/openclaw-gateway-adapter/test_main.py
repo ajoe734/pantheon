@@ -2959,16 +2959,17 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
         self.assertEqual(data["status"], "degraded")
         self.assertEqual(data["output"]["reason"], "OPENCLAW_GATEWAY_UNREACHABLE")
 
-    def test_openclaw_readiness_ready_when_url_configured(self):
+    def test_openclaw_readiness_is_not_ready_until_answer_probe_runs(self):
         with patch.dict(os.environ, {"OPENCLAW_GATEWAY_URL": "http://openclaw-gateway:18789"}):
             # Re-read via the readiness endpoint directly
             from assistant_openclaw_provider import AssistantOpenClawProvider
             prov = AssistantOpenClawProvider(gateway_url="http://openclaw-gateway:18789")
             result = prov.readiness(auth_probe=False)
 
-        self.assertEqual(result["status"], "ready")
-        self.assertTrue(result["ready"])
+        self.assertEqual(result["status"], "not_checked")
+        self.assertFalse(result["ready"])
         self.assertEqual(result["provider"], "openclaw")
+        self.assertEqual(result["reason"], "answer_probe_not_run")
 
     def test_openclaw_readiness_not_configured_when_url_absent(self):
         from assistant_openclaw_provider import AssistantOpenClawProvider
