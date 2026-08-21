@@ -26,6 +26,15 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     assert environment["TELEMETRY_DB_DSN"].startswith(
         "${TELEMETRY_DB_DSN:-postgresql://"
     )
+    assert environment["LIFECYCLE_PROJECTOR_WRITER_BACKEND"] == (
+        "${LIFECYCLE_PROJECTOR_WRITER_BACKEND:-disabled}"
+    )
+    assert environment["LIFECYCLE_PROJECTOR_PROJECTION_DSN"] == (
+        "${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-}"
+    )
+    assert environment["LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"] == (
+        "${LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA:-trade_journey_projection}"
+    )
     assert environment["LIFECYCLE_PROJECTION_ROOT"] == "/data/bff/lifecycle-projection"
     assert (
         environment["LIFECYCLE_PROJECTOR_STATE_PATH"]
@@ -68,6 +77,18 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     bff_environment = bff["environment"]
     assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"] == (
         "/data/bff/lifecycle-projection/current/trade_journey_events.json"
+    )
+    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND"] == (
+        "${PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND:-json}"
+    )
+    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN"] == (
+        "${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN:-}"
+    )
+    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA"] == (
+        "${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA:-trade_journey_projection}"
+    )
+    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_PAGE_TOKEN_SECRET"] == (
+        "${PANTHEON_BFF_TRADE_JOURNEY_PAGE_TOKEN_SECRET:-}"
     )
     assert bff_environment["PANTHEON_BFF_LOOP_RUN_STORE"] == (
         "/data/bff/lifecycle-projection/current/loop_runs.json"
@@ -230,7 +251,7 @@ def test_bff_only_deploy_rebuilds_its_lifecycle_projector_only():
 
     compose_up = (
         "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --build --no-deps operator-bff loop-run-projector-scheduler"
+        "up -d --build --force-recreate --no-deps operator-bff loop-run-projector-scheduler"
     )
     assert bff_block.count(compose_up) == 1
     assert "runtime-manager" not in compose_up
