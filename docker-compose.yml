@@ -1470,6 +1470,55 @@ services:
       retries: 20
       start_period: 600s
 
+  lifecycle-projector-capacity-benchmark:
+    # LIFECYCLE-PROJ-CAPACITY-001: opt-in, run-once harness that proves the
+    # section 14 resource/latency/fault gates. Never started with the default
+    # stack; it is a distinct benchmark job, not a second projector writer.
+    # Run it only when the host is otherwise quiet (see the task's admission
+    # guard note) with:
+    #   docker compose -p pantheon -f docker-compose.yml \
+    #     --profile lifecycle-capacity-benchmark run --rm \
+    #     lifecycle-projector-capacity-benchmark
+    profiles: ["lifecycle-capacity-benchmark"]
+    build:
+      context: .
+      dockerfile: services/telemetry/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    command:
+      - python
+      - -m
+      - services.trade_journey.lifecycle_projector_capacity
+      - --events
+      - ${LIFECYCLE_PROJECTOR_CAPACITY_EVENTS:-1000000}
+      - --loop-runs
+      - ${LIFECYCLE_PROJECTOR_CAPACITY_LOOP_RUNS:-150000}
+      - --batch-size
+      - ${LIFECYCLE_PROJECTOR_CAPACITY_BATCH_SIZE:-500}
+      - --output
+      - /data/bff/lifecycle-capacity/evidence.json
+    restart: "no"
+    mem_limit: ${LIFECYCLE_PROJECTOR_CAPACITY_MEMORY_LIMIT:-4g}
+    environment:
+      TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # The benchmark measures the bounded relational writer.  It never
+      # silently falls back to the legacy JSON projector when this DML target
+      # is unavailable.
+      LIFECYCLE_PROJECTOR_PROJECTION_DSN: ${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # The harness refuses any shared projection schema. It generates a
+      # lifecycle_capacity_* schema when this is blank, and tears that schema
+      # down after the run. Supplying an existing schema is a hard error.
+      LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA: ${LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA:-}
+      GIT_SHA: ${GIT_SHA:-unknown}
+      LIFECYCLE_CAPACITY_GIT_DIRTY: ${LIFECYCLE_CAPACITY_GIT_DIRTY:-unknown}
+    volumes:
+      - bff-data:/data/bff
+    depends_on:
+      postgres:
+        condition: service_healthy
+      telemetry:
+        condition: service_healthy
+
   persona:
     build:
       context: .

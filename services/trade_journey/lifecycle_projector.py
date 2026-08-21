@@ -1668,10 +1668,12 @@ class RelationalLifecycleProjector:
             )
             for entry in entries
         }
-        for tenant_id, environment, journey_id in sorted(affected):
+        affected_keys = tuple(sorted(affected))
+        prior_events = self.store.load_journey_stage_events_bulk(affected_keys)
+        for tenant_id, environment, journey_id in affected_keys:
             materializer.hydrate_aggregate(
                 journey_id,
-                self.store.load_journey_stage_events(tenant_id, environment, journey_id),
+                prior_events[(tenant_id, environment, journey_id)],
             )
         # Hydration is a bounded read of the current batch's aggregates, not
         # reduction work for this poll.  The reported counters begin at the
@@ -1907,6 +1909,9 @@ class RelationalLifecycleProjector:
             int(source_high_watermark or 0),
             int(self._controller().source_high_watermark),
         )
+        known_receipts = self.store.get_receipts(
+            [self._row_event_id(row) for row in ordered_records]
+        )
         receipts: list[EventReceiptRow] = []
         quarantines: list[QuarantineRow] = []
         accepted_entries: list[dict[str, Any]] = []
@@ -1925,7 +1930,7 @@ class RelationalLifecycleProjector:
                 fingerprint = self._row_fingerprint(row, event)
             except InvalidLifecycleEvent as exc:
                 fingerprint = self._row_fingerprint(row, None)
-                known = self.store.get_receipt(event_id)
+                known = known_receipts.get(event_id)
                 if known is not None:
                     if known.fingerprint != fingerprint:
                         raise ConflictingLifecycleEvent(
@@ -1964,7 +1969,7 @@ class RelationalLifecycleProjector:
                     )
                 duplicates += 1
                 continue
-            known = self.store.get_receipt(event_id)
+            known = known_receipts.get(event_id)
             if known is not None:
                 if known.fingerprint != fingerprint:
                     raise ConflictingLifecycleEvent(
