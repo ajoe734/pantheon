@@ -21,7 +21,7 @@ hash itself.
 ## Rebase verification
 
 The existing PR was rebased onto `origin/dev` commit
-`bb83df12e3cec11de0f441850f08a179ddd7394a` before fresh review. The focused
+`f2bc165bdce98df2cf40d06d268533a860e598d3` before fresh review. The focused
 real-Postgres restart/duplicate/ignored-receipt regression passed again.
 
 The full `services/trade_journey` suite against a throwaway local PostgreSQL
@@ -30,5 +30,6 @@ task's diff and are present in the rebased `origin/dev` surface: the BFF-only
 deployment contract still expects a compose command without the now-present
 `--force-recreate`, and migration restart submits a mixed duplicate/new batch
 that the already-merged ProjectionStore correctly rejects. They are recorded
-in `evidence.json` for the fresh independent reviewer; they are not presented
-as a passing task verification.
+in `evidence.json` for the fresh independent reviewer and were reproduced by
+running only those two tests from a clean detached worktree at the exact base
+commit; they are not presented as a passing task verification.

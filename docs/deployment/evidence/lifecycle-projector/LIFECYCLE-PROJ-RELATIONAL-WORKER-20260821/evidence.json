@@ -3,13 +3,14 @@
   "task": {
     "id": "LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821",
     "title": "Connect the bounded reducer to the relational projection store",
-    "owner": "Codex2",
+    "owner": "Codex",
     "reviewer": "Antigravity2",
     "status": "implementation_complete_pending_independent_review",
     "base_branch": "dev",
-    "rebase_base_commit": "bb83df12e3cec11de0f441850f08a179ddd7394a",
+    "rebase_base_commit": "f2bc165bdce98df2cf40d06d268533a860e598d3",
     "task_branch": "task/LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821",
-    "evidence_cut_commit": "737bf1402d6a965e3e15f9202ed9feb8c48a93e5",
+    "evidence_cut_commit": "6b3aa5f0a3dd94fae0e3e7ac37096a06ac48f680",
+    "validated_rebased_head_before_evidence_refresh": "568fe1c9f993a50b7163529b55a587dea62eb39f",
     "head_binding": "The reviewer must bind this committed manifest to the exact final PR head; this pre-review artifact deliberately does not claim a future merge SHA."
   },
   "scope": {
@@ -45,39 +46,45 @@
   },
   "verification": [
     {
-      "command": "TEST_DATABASE_URL=<isolated-local-e2e-postgres> python -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts",
-      "result": "pass; 1 passed",
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts",
+      "result": "pass; 1 passed in 1.18s",
       "coverage": "real PostgreSQL transaction, restart hydration, exact duplicate no-rewrite, ignored receipt, contiguous checkpoint, and no controller_state.json write"
     },
     {
-      "command": "TEST_DATABASE_URL=<isolated-local-e2e-postgres> TEST_DATABASE_ADMIN_URL=<isolated-local-e2e-postgres> python -m pytest -q services/trade_journey",
-      "result": "pass; process exit 0",
-      "coverage": "focused lifecycle, reducer, projection-store, canonical paper integration, and adjacent Trade Journey suites"
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+      "result": "pass; 40 passed in 7.96s",
+      "coverage": "unit and real-Postgres worker composition, transaction-failure non-advance, static no-legacy-serialization assertion, and canonical paper lifecycle compatibility"
     },
     {
-      "command": "python -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
-      "result": "pass; 38 passed, 1 TEST_DATABASE_URL-gated integration skipped",
-      "coverage": "unit composition, transaction-failure non-advance, static no legacy snapshot serialization assertion, and existing lifecycle compatibility"
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> TEST_DATABASE_ADMIN_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py services/trade_journey/test_materializer.py",
+      "result": "pass; 28 passed in 7.79s",
+      "coverage": "affected ProjectionStore transaction rules plus bounded materializer behavior"
     },
     {
-      "command": "python -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py services/trade_journey/projection_store.py && git diff --check",
+      "command": "./.venv-pantheon/bin/python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py services/trade_journey/projection_store.py && git diff --check origin/dev...HEAD",
       "result": "pass"
     }
   ],
   "rebase_verification": {
     "focused_real_postgres": {
-      "command": "TEST_DATABASE_URL=<isolated-local-e2e-postgres> python -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts",
-      "result": "pass; 1 passed",
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts",
+      "result": "pass; 1 passed in 1.18s",
       "coverage": "restart hydration, exact duplicate no-rewrite, ignored receipt, contiguous checkpoint, and no legacy controller-state write after rebasing"
     },
     "full_trade_journey_suite": {
-      "command": "TEST_DATABASE_URL=<throwaway-local-postgres> TEST_DATABASE_ADMIN_URL=<throwaway-local-postgres-superuser> python -m pytest -q services/trade_journey",
-      "result": "176 passed, 2 failed; exit 1",
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> TEST_DATABASE_ADMIN_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey",
+      "result": "176 passed, 2 failed in 40.29s; exit 1",
       "failures": [
         "test_bff_only_deploy_rebuilds_its_lifecycle_projector_only: rebased origin/dev deploy script contains --force-recreate while its unchanged contract test expects the older compose invocation",
         "test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store: unchanged migration restart produces a mixed duplicate/new batch that the already-merged ProjectionStore rejects"
       ],
-      "scope_assessment": "Both failing test/source paths are unchanged by this task relative to rebase_base_commit. The task-specific real-Postgres regression passed; fresh independent review must evaluate these upstream baseline failures separately."
+      "scope_assessment": "The failing compose test/deploy script and migration test/coordinator are unchanged by this task relative to rebase_base_commit; the ProjectionStore mixed-batch rejection guard reached by the migration test is also unchanged. The task-specific real-Postgres regression and affected store/materializer suites passed; fresh independent review must evaluate the upstream baseline failures separately."
+    },
+    "base_failure_reproduction": {
+      "base_commit": "f2bc165bdce98df2cf40d06d268533a860e598d3",
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> TEST_DATABASE_ADMIN_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector_compose.py::test_bff_only_deploy_rebuilds_its_lifecycle_projector_only services/trade_journey/test_projection_migration.py::test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store",
+      "result": "2 failed in 1.18s from a clean detached worktree at base_commit",
+      "coverage": "reproduces both full-suite failures without this task branch"
     }
   },
   "review": {
