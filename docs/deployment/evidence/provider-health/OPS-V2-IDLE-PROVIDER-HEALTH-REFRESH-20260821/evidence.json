@@ -1,0 +1,100 @@
+{
+  "schema_version": "pantheon.supervisor.idle-provider-health.v1",
+  "task": {
+    "id": "OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821",
+    "title": "Refresh stale V2 provider health without unrelated task demand",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "task_branch": "task/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821",
+    "review_file": "docs/deployment/evidence/provider-health/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821/evidence.json"
+  },
+  "status": "ready_for_independent_review",
+  "scope": {
+    "owned_layer": "Supervisor Authority V2 idle delivery-health target selection, bounded live probing, and the existing runtime-state observation projection.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "not_changing": [
+      "TaskStore or canonical task lifecycle write ownership",
+      "runtime-state lock and atomic-write primitives",
+      "provider credentials or account configuration",
+      "retired V1 pause, recovery, or capacity control planes",
+      "product services, frontend, production, or capital authority"
+    ]
+  },
+  "contract": {
+    "idle_trigger": "build_dispatch_plan adds a pure idle target scan after task and reassignment demand. A startup cycle with an empty task board therefore reaches due stale endpoint/account evidence without manufacturing a queue event or changing canonical task state.",
+    "target_boundary": "Only configured logical delivery lanes and their configured endpoints are considered. A provider configured without a delivery endpoint, even when it shares an account, cannot create a probe demand.",
+    "bounded_io": "probe_demanded_delivery_health continues to deduplicate exact endpoint IDs and invokes no more than delivery_health.refresh_max_per_cycle live probes in one cycle. Task and reassignment demand remain first in the combined target order.",
+    "fail_closed": "A fresh live success updates endpoint and account evidence together through apply_delivery_health_observations. A failed auth probe writes the endpoint unavailable; no stale or synthetic cached readiness is admitted.",
+    "write_authority": "The target scan is read-only. Live probes remain post-delivery I/O, and health observations are committed only through apply_post_dispatch_maintenance inside the existing reserved runtime-maintenance transaction. No TaskStore, state-file, or activity-log writer was added."
+  },
+  "acceptance": {
+    "idle_without_task_demand": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_idle_health_refresh_targets_due_configured_endpoints_without_tasks",
+      "proof": "An empty task board yields exact codex1 and claude2 targets from expired auth/quota evidence, then successful live observations set both endpoint and distinct account records healthy."
+    },
+    "bounded_and_orphan_safe": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_idle_health_refresh_excludes_orphan_provider_and_respects_probe_bound",
+      "proof": "A configured-but-undeliverable provider sharing codex_account is absent from the target list; refresh_max_per_cycle=1 produces exactly one live probe."
+    },
+    "failed_probe_fail_closed": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_failed_idle_probe_keeps_endpoint_unavailable",
+      "proof": "A live auth-material failure records codex as unavailable and does not invent an account-health success."
+    },
+    "v2_regression_boundary": {
+      "status": "proven",
+      "proof": "Full Supervisor Authority V2, runtime-state, provider-health, and dispatch-admission suites remain green; the established account-first TTL/retry predicate is reused rather than duplicated."
+    }
+  },
+  "owner_verification": {
+    "commands": [
+      {
+        "command": "python3 .orchestrator/test_supervisor.py -v",
+        "result": "106 passed"
+      },
+      {
+        "command": "python3 .orchestrator/rewrite/test_provider_health.py -v",
+        "result": "5 passed"
+      },
+      {
+        "command": "python3 .orchestrator/rewrite/test_dispatch_admission.py -v",
+        "result": "16 passed"
+      },
+      {
+        "command": "python3 -m unittest discover -s .orchestrator -p 'test_runtime_state.py' -v",
+        "result": "26 passed"
+      },
+      {
+        "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py && git diff --check",
+        "result": "passed"
+      }
+    ]
+  },
+  "review": {
+    "decision": "pending",
+    "required": [
+      "Confirm idle target selection is pure and does not write TaskStore or runtime files.",
+      "Confirm configured endpoint/account separation and the account-first retry gate are preserved.",
+      "Confirm the bounded probe cap is applied only at the existing post-delivery live-probe boundary.",
+      "Confirm no V1 pause or recovery control plane is reintroduced."
+    ]
+  },
+  "post_merge_rollout": {
+    "required": true,
+    "authority": "Human/Ops or the supervisor deployment authority",
+    "action": "Promote the exact merged dev command runtime, run one bounded supervisor cycle, then read the live runtime delivery_health state.",
+    "acceptance_readback": [
+      "codex1 account has a fresh healthy live observation from a configured codex1 endpoint",
+      "claude2 endpoint and its distinct claude2 account have fresh healthy live observations",
+      "no provider-only shared-account orphan appears in delivery_health"
+    ],
+    "rollback": "Promote the last accepted command runtime. V2 remains fail-closed on stale evidence; no credential or TaskStore rollback is required."
+  }
+}
