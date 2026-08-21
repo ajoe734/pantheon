@@ -20425,34 +20425,68 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
         formula_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        available, service_records = self._service.list_records("formula_jobs")
-        cached_source = self._service.cached_source("formula_jobs")
-        if available and cached_source in ("canonical", "service_client"):
-            source = "service"
-        elif available:
-            source = "service"
-        else:
-            source = "missing"
+        # Reuse canonical jobs owner and formula_jobs dataset
+        jobs_avail, jobs_records = self._service.list_records("jobs")
+        fj_avail, fj_records = self._service.list_records("formula_jobs")
 
-        raw_items = service_records if available else list(self._read_dataset_records("formula_jobs"))
+        source = "missing"
+        if jobs_avail:
+            cached_source = self._service.cached_source("jobs")
+            source = "service" if cached_source in ("canonical", "service_client") else "service"
+        elif fj_avail:
+            cached_source = self._service.cached_source("formula_jobs")
+            source = "service" if cached_source in ("canonical", "service_client") else "service"
+
+        raw_items: List[Dict[str, Any]] = []
+        if jobs_avail:
+            raw_items.extend(jobs_records)
+        else:
+            raw_items.extend(self._read_dataset_records("jobs"))
+
+        if fj_avail:
+            raw_items.extend(fj_records)
+        else:
+            raw_items.extend(self._read_dataset_records("formula_jobs"))
 
         filtered = []
+        seen_job_ids = set()
         for item in raw_items:
             if not isinstance(item, dict):
                 continue
-            if status and item.get("status") != status:
+            job_id = str(item.get("job_id") or item.get("run_id") or item.get("id") or "")
+            if not job_id or job_id in seen_job_ids:
                 continue
-            if formula_id and item.get("formula_id") != formula_id:
+            seen_job_ids.add(job_id)
+
+            item_status = str(item.get("status") or "admitted")
+            item_formula_id = str(item.get("formula_id") or item.get("target_id") or item.get("entity_id") or item.get("name") or "formula-default")
+
+            if status and item_status != status:
                 continue
-            item_copy = json.loads(json.dumps(item))
-            if "source_identity" not in item_copy:
-                item_copy["source_identity"] = "formula_job_executor"
-            if "freshness" not in item_copy:
-                item_copy["freshness"] = item_copy.get("submitted_at") or _utc_now_rfc3339()
+            if formula_id and item_formula_id != formula_id:
+                continue
+
+            item_copy = {
+                "job_id": job_id,
+                "formula_id": item_formula_id,
+                "formula_version": str(item.get("formula_version") or item.get("version") or "1.0.0"),
+                "owner_id": str(item.get("owner_id") or item.get("actor_id") or item.get("user_id") or item.get("owner") or "formula_job_executor"),
+                "status": item_status,
+                "submitted_at": str(item.get("submitted_at") or item.get("created_at") or _utc_now_rfc3339()),
+                "started_at": item.get("started_at"),
+                "finished_at": item.get("finished_at") or item.get("completed_at"),
+                "metrics": item.get("metrics") or (item.get("result", {}).get("metrics") if isinstance(item.get("result"), dict) else {}) or {},
+                "chart_lineage": item.get("chart_lineage") or item.get("lineage") or [],
+                "source_identity": str(item.get("source_identity") or "formula_job_executor"),
+                "freshness": str(item.get("freshness") or item.get("submitted_at") or item.get("created_at") or _utc_now_rfc3339()),
+            }
             filtered.append(item_copy)
 
+        if source == "missing" and filtered:
+            source = "store"
+
         return {
-            "source": source if (available or filtered) else "missing",
+            "source": source,
             "items": filtered,
         }
 
@@ -20462,34 +20496,103 @@ class ReadSurfaceStore:
         event_type: Optional[str] = None,
         actor_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        available, service_records = self._service.list_records("activity_audit")
-        cached_source = self._service.cached_source("activity_audit")
-        if available and cached_source in ("canonical", "service_client"):
-            source = "audit"
-        elif available:
-            source = "audit"
-        else:
-            source = "missing"
+        # Reuse canonical governance audit events, telemetry events, and activity_audit
+        raw_items: List[Dict[str, Any]] = []
+        source = "missing"
 
-        raw_items = service_records if available else list(self._read_dataset_records("activity_audit"))
+        # 1. Direct activity_audit dataset
+        act_avail, act_records = self._service.list_records("activity_audit")
+        if act_avail:
+            cached_source = self._service.cached_source("activity_audit")
+            source = "audit" if cached_source in ("canonical", "service_client") else "audit"
+            raw_items.extend(act_records)
+        else:
+            raw_items.extend(self._read_dataset_records("activity_audit"))
+
+        # 2. Canonical governance audit events
+        try:
+            gov_events = self.list_governance_audit_events(
+                actor=actor_id,
+                action_types=[event_type] if event_type else None,
+                include_fixture_pack=True,
+            )
+            for gev in gov_events:
+                raw_items.append({
+                    "event_id": str(gev.get("event_id") or gev.get("id") or ""),
+                    "event_type": str(gev.get("action_type") or gev.get("event_type") or "governance.audit"),
+                    "aggregate_id": str(gev.get("target_id") or gev.get("aggregate_id") or ""),
+                    "actor_id": str(gev.get("actor") or gev.get("actor_id") or "system"),
+                    "timestamp": str(gev.get("timestamp") or _utc_now_rfc3339()),
+                    "summary": str(gev.get("summary") or f"Governance action {gev.get('action_type', '')}"),
+                    "details": gev.get("details") or gev.get("payload") or {},
+                    "source_identity": str(gev.get("source_identity") or "governance_audit_store"),
+                    "freshness": str(gev.get("timestamp") or _utc_now_rfc3339()),
+                })
+            if gov_events and source == "missing":
+                source = "audit"
+        except Exception:
+            pass
+
+        # 3. Canonical telemetry events
+        try:
+            tel_src, tel_events = self.list_telemetry_events_with_source()
+            if tel_src != "missing" and source == "missing":
+                source = "telemetry"
+            for tev in tel_events:
+                tev_type = str(tev.get("type") or tev.get("event_type") or "telemetry")
+                tev_actor = str(tev.get("actor_id") or tev.get("persona_id") or "telemetry_ingest")
+                raw_items.append({
+                    "event_id": str(tev.get("id") or tev.get("event_id") or ""),
+                    "event_type": tev_type,
+                    "aggregate_id": str(tev.get("runtime_id") or tev.get("aggregate_id") or ""),
+                    "actor_id": tev_actor,
+                    "timestamp": str(tev.get("timestamp") or _utc_now_rfc3339()),
+                    "summary": str(tev.get("summary") or f"Telemetry event for runtime {tev.get('runtime_id', '')}"),
+                    "details": tev.get("details") or tev.get("metrics") or {},
+                    "source_identity": str(tev.get("source_identity") or "telemetry_event_store"),
+                    "freshness": str(tev.get("timestamp") or _utc_now_rfc3339()),
+                })
+        except Exception:
+            pass
 
         filtered = []
+        seen_event_ids = set()
         for item in raw_items:
             if not isinstance(item, dict):
                 continue
-            if event_type and item.get("event_type") != event_type:
+            eid = str(item.get("event_id") or item.get("id") or "")
+            if not eid or eid in seen_event_ids:
                 continue
-            if actor_id and item.get("actor_id") != actor_id:
+            seen_event_ids.add(eid)
+
+            itype = str(item.get("event_type") or item.get("action_type") or item.get("type") or "activity")
+            iactor = str(item.get("actor_id") or item.get("actor") or "system")
+
+            if event_type and itype != event_type:
                 continue
-            item_copy = json.loads(json.dumps(item))
-            if "source_identity" not in item_copy:
-                item_copy["source_identity"] = "activity_audit_store"
-            if "freshness" not in item_copy:
-                item_copy["freshness"] = item_copy.get("timestamp") or _utc_now_rfc3339()
+            if actor_id and iactor != actor_id:
+                continue
+
+            item_copy = {
+                "event_id": eid,
+                "event_type": itype,
+                "aggregate_id": str(item.get("aggregate_id") or item.get("target_id") or item.get("runtime_id") or ""),
+                "actor_id": iactor,
+                "timestamp": str(item.get("timestamp") or item.get("occurred_at") or _utc_now_rfc3339()),
+                "summary": str(item.get("summary") or item.get("description") or f"Activity {itype}"),
+                "details": item.get("details") or item.get("payload") or {},
+                "source_identity": str(item.get("source_identity") or "activity_audit_store"),
+                "freshness": str(item.get("freshness") or item.get("timestamp") or _utc_now_rfc3339()),
+            }
             filtered.append(item_copy)
 
+        filtered.sort(key=lambda x: str(x.get("timestamp") or ""), reverse=True)
+
+        if source == "missing" and filtered:
+            source = "audit"
+
         return {
-            "source": source if (available or filtered) else "missing",
+            "source": source,
             "items": filtered,
         }
 
@@ -20499,34 +20602,108 @@ class ReadSurfaceStore:
         strategy_id: Optional[str] = None,
         persona_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        available, service_records = self._service.list_records("paper_telemetry")
-        cached_source = self._service.cached_source("paper_telemetry")
-        if available and cached_source in ("canonical", "service_client"):
-            source = "service"
-        elif available:
-            source = "service"
-        else:
-            source = "missing"
+        # Reuse canonical telemetry_events, runtime_bindings, and paper_telemetry
+        raw_items: List[Dict[str, Any]] = []
+        source = "missing"
 
-        raw_items = service_records if available else list(self._read_dataset_records("paper_telemetry"))
+        # 1. Direct paper_telemetry dataset
+        pt_avail, pt_records = self._service.list_records("paper_telemetry")
+        if pt_avail:
+            cached_source = self._service.cached_source("paper_telemetry")
+            source = "service" if cached_source in ("canonical", "service_client") else "service"
+            raw_items.extend(pt_records)
+        else:
+            raw_items.extend(self._read_dataset_records("paper_telemetry"))
+
+        # 2. Canonical runtime bindings + telemetry events
+        try:
+            bindings = self.list_runtime_bindings()
+            tel_events = self.list_telemetry_events()
+            for b in bindings:
+                b_strat = str(b.get("strategy_id") or b.get("id") or "")
+                b_persona = b.get("persona_id")
+                b_ledger = str(b.get("paper_ledger_id") or f"ledger-{b.get('binding_id') or b.get('id')}")
+
+                # Match telemetry events for this binding or strategy
+                matching_events = [
+                    e for e in tel_events
+                    if str(e.get("runtime_id") or e.get("strategy_id") or "") in (b_strat, str(b.get("binding_id") or b.get("id")), str(b.get("runtime_id") or ""))
+                ]
+                series = []
+                for me in matching_events:
+                    ts = str(me.get("timestamp") or me.get("occurred_at") or _utc_now_rfc3339())
+                    m = me.get("metrics") or me.get("details") or me
+                    if isinstance(m, dict) and any(k in m for k in ("equity", "drawdown_pct", "open_positions", "daily_pnl")):
+                        series.append({
+                            "timestamp": ts,
+                            "equity": float(m.get("equity") or 0.0),
+                            "drawdown_pct": float(m.get("drawdown_pct") or 0.0),
+                            "open_positions": int(m.get("open_positions") or 0),
+                            "daily_pnl": float(m.get("daily_pnl") or 0.0),
+                        })
+                last_sig = matching_events[-1].get("timestamp") if matching_events else b.get("last_signal_at")
+                raw_items.append({
+                    "strategy_id": b_strat,
+                    "persona_id": b_persona,
+                    "paper_ledger_id": b_ledger,
+                    "status": str(b.get("status") or "active"),
+                    "last_signal_at": last_sig,
+                    "series": series,
+                    "metrics": b.get("metrics") or (matching_events[-1].get("metrics") if matching_events else {}),
+                    "source_identity": "paper_telemetry_store",
+                    "freshness": str(last_sig or b.get("created_at") or _utc_now_rfc3339()),
+                })
+            if bindings and source == "missing":
+                source = "service"
+        except Exception:
+            pass
 
         filtered = []
+        seen_strat_ids = set()
         for item in raw_items:
             if not isinstance(item, dict):
                 continue
-            if strategy_id and item.get("strategy_id") != strategy_id:
+            strat = str(item.get("strategy_id") or item.get("id") or "")
+            if not strat or strat in seen_strat_ids:
                 continue
-            if persona_id and item.get("persona_id") != persona_id:
+            seen_strat_ids.add(strat)
+
+            p_id = item.get("persona_id")
+            if strategy_id and strat != strategy_id:
                 continue
-            item_copy = json.loads(json.dumps(item))
-            if "source_identity" not in item_copy:
-                item_copy["source_identity"] = "paper_telemetry_store"
-            if "freshness" not in item_copy:
-                item_copy["freshness"] = item_copy.get("last_signal_at") or _utc_now_rfc3339()
+            if persona_id and p_id != persona_id:
+                continue
+
+            raw_series = item.get("series") or []
+            norm_series = []
+            for pt in raw_series:
+                if isinstance(pt, dict):
+                    norm_series.append({
+                        "timestamp": str(pt.get("timestamp") or _utc_now_rfc3339()),
+                        "equity": float(pt.get("equity") or 0.0),
+                        "drawdown_pct": float(pt.get("drawdown_pct") or 0.0),
+                        "open_positions": int(pt.get("open_positions") or 0),
+                        "daily_pnl": float(pt.get("daily_pnl") or 0.0),
+                    })
+
+            item_copy = {
+                "strategy_id": strat,
+                "persona_id": p_id,
+                "paper_ledger_id": str(item.get("paper_ledger_id") or f"ledger-{strat}"),
+                "status": str(item.get("status") or "active"),
+                "last_signal_at": item.get("last_signal_at"),
+                "series": norm_series,
+                "metrics": item.get("metrics") or {},
+                "source_identity": str(item.get("source_identity") or "paper_telemetry_store"),
+                "freshness": str(item.get("freshness") or item.get("last_signal_at") or _utc_now_rfc3339()),
+            }
             filtered.append(item_copy)
 
+        if source == "missing" and filtered:
+            source = "service"
+
         return {
-            "source": source if (available or filtered) else "missing",
+            "source": source,
             "items": filtered,
         }
 
@@ -20548,18 +20725,27 @@ class ReadSurfaceStore:
         raw_items = service_records if available else list(self._read_dataset_records("postmortems"))
 
         filtered = []
+        seen_pm_ids = set()
         for item in raw_items:
             if not isinstance(item, dict):
                 continue
             item_copy = json.loads(json.dumps(item))
+            pm_id = str(item_copy.get("postmortem_id") or item_copy.get("id") or item_copy.get("report_id") or "")
+            if not pm_id or pm_id in seen_pm_ids:
+                continue
+            seen_pm_ids.add(pm_id)
+            item_copy["postmortem_id"] = pm_id
+            item_copy["incident_id"] = str(item_copy.get("incident_id") or "")
+            item_copy["title"] = str(item_copy.get("title") or "Postmortem Analysis")
+            item_copy["status"] = str(item_copy.get("status") or "resolved")
+            item_copy["created_at"] = str(item_copy.get("created_at") or _utc_now_rfc3339())
+
             # Normalize schema differences from canonical postmortem records if present
             if "impact_summary" not in item_copy and "incident_evidence_summary" in item_copy:
                 item_copy["impact_summary"] = item_copy.get("incident_evidence_summary")
-            if "severity" not in item_copy:
-                # Do not relabel deployment_stage as severity; default to real severity field or "medium"
-                item_copy["severity"] = item_copy.get("severity") or "medium"
+            if "severity" not in item_copy or not item_copy.get("severity"):
+                item_copy["severity"] = "medium"
             if "action_items" in item_copy and isinstance(item_copy["action_items"], list):
-                # Ensure action_items elements are dicts if they were strings
                 norm_actions = []
                 for idx, act in enumerate(item_copy["action_items"]):
                     if isinstance(act, str):
@@ -20579,8 +20765,11 @@ class ReadSurfaceStore:
                 item_copy["freshness"] = item_copy.get("created_at") or _utc_now_rfc3339()
             filtered.append(item_copy)
 
+        if source == "missing" and filtered:
+            source = "store"
+
         return {
-            "source": source if (available or filtered) else "missing",
+            "source": source,
             "items": filtered,
         }
 

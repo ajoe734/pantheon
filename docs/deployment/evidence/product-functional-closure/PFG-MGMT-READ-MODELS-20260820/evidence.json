@@ -1,47 +1,47 @@
 {
   "task_id": "PFG-MGMT-READ-MODELS-20260820",
   "title": "Expose real Formula, activity, paper telemetry, and postmortem read models",
-  "owner": "Antigravity",
+  "owner": "Antigravity2",
   "reviewer": "Codex2",
   "code_disposition": {
     "task_id": "PFG-MGMT-READ-MODELS-20260820",
     "canonical_owner": "services/control-plane/bff/management_read_models/, services/control-plane/bff/read_store.py",
-    "stores_and_queues": "formula_jobs, activity_audit, paper_telemetry, postmortems datasets in ServiceBackedReadAdapter",
+    "stores_and_queues": "canonical jobs, governance_audit_events, telemetry_events, runtime_bindings, postmortems datasets in ReadSurfaceStore",
     "production_callers": "BFF /bff/management/formula-jobs, /bff/management/activity, /bff/management/paper-telemetry, /bff/management/postmortems, /bff/management/postmortems/{id}",
     "duplicate_paths": "None; synthetic Management console fallbacks replaced by backend dataset read models with degradation envelopes",
     "retired_after_proof": "Synthetic frontend static arrays in Management views",
-    "retained_with_reason": "ReadSurfaceStore ServiceBackedReadAdapter delegation to backend dataset files/stores with typed empty/degraded states",
+    "retained_with_reason": "ReadSurfaceStore ServiceBackedReadAdapter delegation to canonical backend dataset files/stores with typed empty/degraded states",
     "new_parallel_owner_created": false
   },
   "read_model_matrix": {
     "formula_jobs": {
       "endpoint": "/bff/management/formula-jobs",
-      "dataset": "formula_jobs",
+      "dataset": "jobs, formula_jobs",
       "source_identity": "formula_job_executor",
-      "adapter": "ServiceBackedReadAdapter"
+      "adapter": "ReadSurfaceStore"
     },
     "activity": {
       "endpoint": "/bff/management/activity",
-      "dataset": "activity_audit",
-      "source_identity": "activity_audit_store",
-      "adapter": "ServiceBackedReadAdapter"
+      "dataset": "governance_audit_events, telemetry_events, activity_audit",
+      "source_identity": "activity_audit_store, governance_audit_store, telemetry_event_store",
+      "adapter": "ReadSurfaceStore"
     },
     "paper_telemetry": {
       "endpoint": "/bff/management/paper-telemetry",
-      "dataset": "paper_telemetry",
+      "dataset": "telemetry_events, runtime_bindings, paper_telemetry",
       "source_identity": "paper_telemetry_store",
-      "adapter": "ServiceBackedReadAdapter"
+      "adapter": "ReadSurfaceStore"
     },
     "postmortems": {
       "endpoint": "/bff/management/postmortems",
       "dataset": "postmortems",
       "source_identity": "postmortem_store",
-      "adapter": "ServiceBackedReadAdapter"
+      "adapter": "ReadSurfaceStore"
     }
   },
   "validation": {
-    "test_command": "pytest services/control-plane/bff/tests/test_management_real_read_models.py",
-    "total_tests": 8,
+    "test_command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_management_real_read_models.py",
+    "total_tests": 9,
     "status": "PASSED"
   }
 }

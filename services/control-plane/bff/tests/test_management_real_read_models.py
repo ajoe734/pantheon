@@ -406,3 +406,92 @@ def test_readback_freshness_and_restart():
             os.environ.clear()
             os.environ.update(old_env)
 
+
+def test_canonical_owners_projection():
+    """Verify that canonical jobs, audit events, telemetry events, and runtime bindings are projected into read models."""
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        # Mock canonical datasets on store
+        store._service.list_records = lambda dataset, *args, **kwargs: {
+            "jobs": (True, [{
+                "job_id": "job-canon-01",
+                "formula_id": "formula-alpha",
+                "status": "completed",
+                "created_at": "2026-08-21T02:00:00Z",
+                "metrics": {"ic": 0.08},
+            }]),
+            "formula_jobs": (False, []),
+            "activity_audit": (False, []),
+            "paper_telemetry": (False, []),
+            "postmortems": (True, [{
+                "id": "pm-canon-01",
+                "incident_id": "inc-01",
+                "title": "Ingest lag",
+                "incident_evidence_summary": "High lag",
+                "action_items": ["Scale worker"],
+            }]),
+            "telemetry_events": (True, [{
+                "id": "tel-01",
+                "type": "telemetry.runtime",
+                "runtime_id": "strat-canon-01",
+                "timestamp": "2026-08-21T02:05:00Z",
+                "metrics": {
+                    "equity": 102000.0,
+                    "drawdown_pct": 0.01,
+                    "open_positions": 2,
+                    "daily_pnl": 500.0,
+                },
+            }]),
+        }.get(dataset, (False, []))
+        store._service.cached_source = lambda dataset: "canonical"
+
+        store.list_governance_audit_events = lambda **kwargs: [{
+            "event_id": "gov-aud-01",
+            "action_type": "policy.override",
+            "target_id": "pol-01",
+            "actor": "admin-01",
+            "timestamp": "2026-08-21T02:01:00Z",
+            "summary": "Override policy threshold",
+        }]
+
+        store.list_runtime_bindings = lambda **kwargs: [{
+            "strategy_id": "strat-canon-01",
+            "persona_id": "persona-1",
+            "paper_ledger_id": "ledger-paper-canon-01",
+            "status": "active",
+            "deployment_stage": "paper",
+        }]
+
+        # 1. Test formula-jobs projecting from canonical jobs
+        fj_res = store.get_formula_jobs_read_model()
+        assert fj_res["source"] == "service"
+        assert len(fj_res["items"]) == 1
+        assert fj_res["items"][0]["job_id"] == "job-canon-01"
+        assert fj_res["items"][0]["formula_id"] == "formula-alpha"
+
+        # 2. Test activity projecting from canonical governance audit and telemetry
+        act_res = store.get_activity_read_model()
+        assert act_res["source"] in ("audit", "telemetry")
+        assert len(act_res["items"]) >= 2
+        eids = [x["event_id"] for x in act_res["items"]]
+        assert "gov-aud-01" in eids
+        assert "tel-01" in eids
+
+        # 3. Test paper telemetry projecting from runtime bindings + telemetry events
+        pt_res = store.get_paper_telemetry_read_model()
+        assert pt_res["source"] == "service"
+        assert len(pt_res["items"]) == 1
+        assert pt_res["items"][0]["strategy_id"] == "strat-canon-01"
+        assert len(pt_res["items"][0]["series"]) == 1
+        assert pt_res["items"][0]["series"][0]["equity"] == 102000.0
+
+        # 4. Test postmortem projecting from canonical postmortems
+        pm_res = store.get_postmortems_read_model()
+        assert pm_res["source"] == "store"
+        assert len(pm_res["items"]) == 1
+        assert pm_res["items"][0]["postmortem_id"] == "pm-canon-01"
+        assert pm_res["items"][0]["impact_summary"] == "High lag"
+        assert pm_res["items"][0]["action_items"][0] == {"id": "act-1", "desc": "Scale worker"}
