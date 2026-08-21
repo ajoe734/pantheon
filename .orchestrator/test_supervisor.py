@@ -2711,6 +2711,81 @@ class FailureLoopAutoGovernanceTests(unittest.TestCase):
         self.assertNotIn("TASK-1", state["failure_loop_watch"])
 
 
+class CanonicalReassignmentGovernanceTests(unittest.TestCase):
+    @staticmethod
+    def _owner_worker() -> dict[str, object]:
+        return {
+            "run_id": "run-owner",
+            "task_id": "TASK-1",
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "status": "running",
+            "lease_acquired_at": "2026-08-21T08:00:00Z",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+
+    @staticmethod
+    def _event(actor: str) -> dict[str, object]:
+        transition = supervisor.rewrite_task_machine.assignment_transition(
+            "Codex",
+            "Codex2",
+            "Codex2",
+            "Codex",
+            actor=actor,
+            reason="Move the active owner lane",
+        )
+        return supervisor.rewrite_task_machine.build_assignment_activity_event(
+            task_id="TASK-1",
+            timestamp="2026-08-21T08:01:00Z",
+            assignment=transition,
+            old_generation=1,
+            new_generation=2,
+        )
+
+    def test_both_canonical_writers_end_the_reassigned_owner_lease(self) -> None:
+        config = config_fixture()
+        task = task_fixture(owner="Codex2", reviewer="Codex") | {"generation": 2}
+        for actor in ("Orchestrator", "Human/Ops"):
+            with self.subTest(actor=actor):
+                event = self._event(actor)
+                decision = supervisor.active_worker_governance_lease_decision(
+                    config,
+                    self._owner_worker(),
+                    task,
+                    activity_events=[event],
+                )
+
+                self.assertEqual(decision["action"], "terminate")
+                self.assertEqual(decision["reason_code"], "exact_owner_reassignment")
+                self.assertEqual(decision["source_event_id"], event["event_id"])
+
+    def test_payload_mutation_cannot_end_the_active_worker_lease(self) -> None:
+        event = self._event("Human/Ops")
+        event["new_owner"] = "Codex"
+
+        decision = supervisor.active_worker_governance_lease_decision(
+            config_fixture(),
+            self._owner_worker(),
+            task_fixture(owner="Codex2", reviewer="Codex") | {"generation": 2},
+            activity_events=[event],
+        )
+
+        self.assertEqual(decision["action"], "preserve")
+        self.assertEqual(decision["reason_code"], "invalid_reassignment_evidence")
+
+    def test_stale_assignment_generation_cannot_end_the_current_worker_lease(self) -> None:
+        decision = supervisor.active_worker_governance_lease_decision(
+            config_fixture(),
+            self._owner_worker(),
+            task_fixture(owner="Codex2", reviewer="Codex") | {"generation": 3},
+            activity_events=[self._event("Orchestrator")],
+        )
+
+        self.assertEqual(decision["action"], "preserve")
+        self.assertEqual(decision["reason_code"], "concurrent_assignment_mutation")
+
+
 class RuntimeAndFailureSemanticsTests(unittest.TestCase):
     @staticmethod
     def _owner_worker(*, generation: int) -> dict[str, object]:
