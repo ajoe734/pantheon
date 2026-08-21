@@ -1764,6 +1764,7 @@ services:
       PANTHEON_CAPITAL_POOL_STORE_PATH: /data/capital/capital_pools.json
       PANTHEON_PERSONA_BINDING_STORE_PATH: /data/capital/persona_capital_bindings.json
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
+      PANTHEON_DEPLOYMENT_AUTH_MODE: ${PANTHEON_DEPLOYMENT_AUTH_MODE:-permissive}
     volumes:
       - governance-data:/data/governance
       - capital-data:/data/capital:ro
