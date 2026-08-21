@@ -30,7 +30,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, Callable, Iterator, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 import uuid
 
 from services.trade_journey.correlation_envelope import (
