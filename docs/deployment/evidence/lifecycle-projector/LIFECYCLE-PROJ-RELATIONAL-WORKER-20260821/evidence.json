@@ -7,9 +7,9 @@
     "reviewer": "Antigravity2",
     "status": "implementation_complete_pending_independent_review",
     "base_branch": "dev",
-    "rebase_base_commit": "840cd989b37878804a4fcf9df6793cab2408f750",
+    "rebase_base_commit": "bb83df12e3cec11de0f441850f08a179ddd7394a",
     "task_branch": "task/LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821",
-    "evidence_cut_commit": "6d3aad6e8d5b676b1c53395d3ea637573b035393",
+    "evidence_cut_commit": "737bf1402d6a965e3e15f9202ed9feb8c48a93e5",
     "head_binding": "The reviewer must bind this committed manifest to the exact final PR head; this pre-review artifact deliberately does not claim a future merge SHA."
   },
   "scope": {
