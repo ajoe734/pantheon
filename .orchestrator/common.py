@@ -730,7 +730,9 @@ def normalize_github_repo_slug(value: str | None) -> str:
 
 
 def status_command_expected_remote(config: dict[str, Any]) -> str:
-    configured = str(((config.get("github_bus") or {}).get("repo")) or "").strip()
+    repositories = (config.get("coordination") or {}).get("repositories") or {}
+    pantheon = repositories.get("pantheon") or {}
+    configured = str(pantheon.get("repo") or "").strip()
     return configured or "ajoe734/pantheon"
 
 

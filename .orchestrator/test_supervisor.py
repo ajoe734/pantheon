@@ -211,6 +211,24 @@ class V2StartupCacheTests(unittest.TestCase):
 
         self.assertEqual(first, second)
 
+    def test_dispatch_payload_projects_canonical_dependency_truth(self) -> None:
+        task = task_fixture(depends_on=["DEP"])
+        dependency = task_fixture(task_id="DEP", status="done")
+        dependency["terminal_outcome"] = "completed"
+
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_READY,
+            {"TASK-1": task, "DEP": dependency},
+        )
+
+        self.assertEqual(event["task"]["depends_on"], ["DEP"])
+        self.assertEqual(
+            event["task"]["dependency_truth"],
+            [{"task_id": "DEP", "status": "done", "satisfied": True}],
+        )
+
     def test_reserved_phase_can_publish_launch_intent_after_state_reload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -559,7 +577,6 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
             config.update(
                 {
                     "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
-                    "github_bus": {"repo": "ajoe734/pantheon"},
                     "worker_worktrees": {
                         "enabled": True,
                         "root": str(root / "worker-worktrees"),
@@ -569,6 +586,7 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
                     },
                     "coordination": {
                         "repositories": {
+                            "pantheon": {"repo": "ajoe734/pantheon"},
                             "execute_plans": {"local_path": str(execute_root)}
                         }
                     },
@@ -3022,8 +3040,7 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
 
     def test_run_once_orders_launch_before_slow_maintenance(self) -> None:
         source = inspect.getsource(supervisor.run_once)
-        self.assertLess(source.index('"dispatch_plan_transaction"'), source.index('"sync_github_bus"'))
-        self.assertLess(source.index('"process_queue_reserved"'), source.index('"sync_github_bus"'))
+        self.assertNotIn('"sync_github_bus"', source)
         self.assertNotIn('"reconcile_blocked_tasks"', source)
         self.assertLess(source.index('"process_queue_reserved"'), source.index("probe_demanded_delivery_health"))
         self.assertNotIn("dispatch_chair_review", source)

@@ -2911,6 +2911,30 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn("github_review_bridge", task)
         self.assertEqual(self._approval_events(), [])
 
+    def test_approve_binding_mismatch_requires_reopen_and_preserves_state(self) -> None:
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "bridge_github_review_decision",
+                side_effect=ai_status.ReviewBindingMismatchError(
+                    "GitHub PR #4269 head differs"
+                ),
+            ),
+            self.assertRaisesRegex(SystemExit, "Reopen the task"),
+        ):
+            _command_approve(
+                self.state,
+                ["REG-002", "Do not approve a substituted head."],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn(ai_status.APPROVAL_BINDING_KEY, task)
+        self.assertNotIn(ai_status.GITHUB_REVIEW_BRIDGE_KEY, task)
+        self.assertEqual(self._approval_events(), [])
+
     def test_approve_uses_only_the_handoff_pr_binding(self) -> None:
         binding = {
             "pr": 4218,
@@ -4239,6 +4263,10 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "REVIEW_HEAD_SHA": "a" * 40,
             },
             clear=False,
+        ), mock.patch.object(
+            ai_status,
+            "validate_handoff_pr_delivery_binding",
+            side_effect=lambda _task, _config, binding: dict(binding),
         ):
             ai_status.command_handoff(
                 self.state,
@@ -4335,7 +4363,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             task[ai_status.DELIVERY_BINDING_KEY]["kind"], "artifact_contract"
         )
 
-    def test_handoff_prefers_explicit_review_pr_over_discovery(self) -> None:
+    def test_handoff_verifies_explicit_review_pr_without_discovery(self) -> None:
         task = self.state["tasks"][0]
         task["status"] = "in_progress"
         with (
@@ -4349,13 +4377,44 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "_discover_open_pull_request_for_branch",
                 return_value={"pr": 4820, "head_sha": "a" * 40},
             ) as discover,
+            mock.patch.object(
+                ai_status,
+                "validate_handoff_pr_delivery_binding",
+                side_effect=lambda _task, _config, binding: dict(binding),
+            ) as validate,
         ):
             ai_status.command_handoff(
                 self.state,
                 ["REG-002", "Claude", "Explicit binding wins."],
             )
         discover.assert_not_called()
+        validate.assert_called_once()
         self.assertEqual(task[ai_status.DELIVERY_BINDING_KEY]["pr"], 9999)
+
+    def test_handoff_rejects_explicit_binding_that_github_does_not_confirm(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        original_binding = deepcopy(task[ai_status.DELIVERY_BINDING_KEY])
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Codex", "REVIEW_PR": "9999", "REVIEW_HEAD_SHA": "b" * 40},
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status,
+                "validate_handoff_pr_delivery_binding",
+                side_effect=SystemExit("GitHub head mismatch"),
+            ),
+            self.assertRaisesRegex(SystemExit, "GitHub head mismatch"),
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Do not persist an invented head."],
+            )
+
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task[ai_status.DELIVERY_BINDING_KEY], original_binding)
 
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
@@ -4415,6 +4474,57 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             binding=binding,
         )
 
+    def test_reviewer_reopen_recovers_definitive_binding_mismatch_once(self) -> None:
+        binding = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        task = self.state["tasks"][0]
+        task["status"] = "review"
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+        task[ai_status.APPROVAL_BINDING_KEY] = dict(binding)
+        task[ai_status.GITHUB_REVIEW_BRIDGE_KEY] = {"decision": "approve"}
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "bridge_github_review_decision",
+                side_effect=ai_status.ReviewBindingMismatchError(
+                    "GitHub PR #4269 head differs"
+                ),
+            ),
+        ):
+            _command_reopen(
+                self.state,
+                ["REG-002", "Binding is stale; return the task to its owner."],
+            )
+
+        self.assertEqual(task["status"], "in_progress")
+        self.assertNotIn(ai_status.DELIVERY_BINDING_KEY, task)
+        self.assertNotIn(ai_status.APPROVAL_BINDING_KEY, task)
+        self.assertNotIn(ai_status.GITHUB_REVIEW_BRIDGE_KEY, task)
+
+    def test_reviewer_reopen_keeps_state_on_transient_github_failure(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review"
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+        frozen = deepcopy(task[ai_status.DELIVERY_BINDING_KEY])
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "bridge_github_review_decision",
+                side_effect=SystemExit("GitHub review bridge timed out"),
+            ),
+            self.assertRaisesRegex(SystemExit, "timed out"),
+        ):
+            _command_reopen(self.state, ["REG-002", "Try again later."])
+
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task[ai_status.DELIVERY_BINDING_KEY], frozen)
+
     def test_reviewer_reopen_ignores_historical_pr_provenance(self) -> None:
         self.state["tasks"][0]["source_ref"] = {
             "pr": 4269,
@@ -4461,7 +4571,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         )
 
-    def test_blocker_without_check_kind_remains_a_legacy_human_gate(self) -> None:
+    def test_task_without_dependencies_keeps_plain_human_blocker(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
             ai_status.command_blocker(
                 self.state,
@@ -4472,37 +4582,98 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn("check_kind", blocker)
         self.assertEqual(blocker["task_id"], "REG-002")
 
-    def test_blocker_records_structured_pr_ci_and_dependency_checks(self) -> None:
-        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+    def test_declared_dependency_requires_explicit_blocker_classification(self) -> None:
+        task = self.state["tasks"][0]
+        task["depends_on"] = ["DEP-001"]
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "must classify blockers"),
+        ):
             ai_status.command_blocker(
                 self.state,
-                ["REG-002", "Awaiting PR CI", "Claude", "github_pr_ci", "4582"],
+                ["REG-002", "Unsure what is blocking", "Claude"],
             )
+
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(self.state["blockers"], [])
+
+    def test_completed_declared_dependency_cannot_block_task(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task["depends_on"] = ["DEP-001"]
+        self.state["terminal_facts"] = {
+            "DEP-001": {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 2,
+                "recorded_at": "2026-08-21T00:00:00Z",
+            }
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "already canonically satisfied"),
+        ):
             ai_status.command_blocker(
                 self.state,
                 [
                     "REG-002",
-                    "Awaiting schema task",
+                    "Waiting for stale context",
                     "Claude",
                     "task_dependency",
-                    "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
-                    "done",
+                    "DEP-001",
                 ],
             )
 
-        pr_blocker, dependency_blocker = self.state["blockers"][-2:]
-        self.assertEqual(
-            {"check_kind": pr_blocker["check_kind"], "pr_number": pr_blocker["pr_number"]},
-            {"check_kind": "github_pr_ci", "pr_number": 4582},
-        )
-        self.assertEqual(dependency_blocker["task_id"], "REG-002")
-        self.assertEqual(
-            dependency_blocker["check_params"],
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(self.state["blockers"], [])
+
+    def test_unresolved_declared_dependency_records_normal_blocker_only(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task["depends_on"] = ["DEP-001"]
+        self.state["tasks"].append(
             {
-                "task_id": "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
-                "required_status": "done",
-            },
+                "id": "DEP-001",
+                "owner": "Claude2",
+                "reviewer": "Copilot",
+                "status": "todo",
+                "depends_on": [],
+            }
         )
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_blocker(
+                self.state,
+                [
+                    "REG-002",
+                    "Waiting for declared dependency",
+                    "Claude",
+                    "task_dependency",
+                    "DEP-001",
+                ],
+            )
+
+        blocker = self.state["blockers"][-1]
+        self.assertEqual(task["status"], "blocked")
+        self.assertNotIn("check_kind", blocker)
+        self.assertNotIn("check_params", blocker)
+
+    def test_external_blocker_remains_available_for_task_with_dependencies(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task["depends_on"] = ["DEP-001"]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_blocker(
+                self.state,
+                [
+                    "REG-002",
+                    "Dev endpoint is unavailable",
+                    "Claude",
+                    "external",
+                ],
+            )
+
+        self.assertEqual(task["status"], "blocked")
+        self.assertEqual(self.state["blockers"][-1]["message"], "Dev endpoint is unavailable")
 
     def test_normalize_handoffs_adds_finalize_handoff_for_approved_task(self) -> None:
         self.state["tasks"][0]["status"] = "review_approved"
@@ -4986,9 +5157,9 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
         )
         config: dict[str, object] = {
             "paths": {"status_file": str(status_root / "ai-status.json")},
-            "github_bus": {"repo": "ajoe734/pantheon"},
             "coordination": {
                 "repositories": {
+                    "pantheon": {"repo": "ajoe734/pantheon"},
                     "execute_plans": {"local_path": str(source_root)}
                 }
             },
