@@ -4,12 +4,14 @@
     "id": "PFG-L12-RUNTIME-E2E-20260820",
     "title": "Prove deployed Loops 8 through 12 from normal approval and deployment",
     "owner": "Antigravity2",
-    "reviewer": "Codex",
+    "reviewer": "Codex2",
     "phase": "W4-deployed-journey",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/PFG-L12-RUNTIME-E2E-20260820",
     "review_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/evidence.json",
+    "run_report_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/run-report.json",
+    "run_report_sha256": "docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/run-report.sha256",
     "evidence_status": "owner_validation_passed_pending_independent_reviewer"
   },
   "scope": {
@@ -84,11 +86,11 @@
     "results": {
       "py_compile": "passed",
       "unit_and_contract_tests": "121 passed, 7 skipped, 27 subtests passed in 40.64s",
-      "opt_in_deployed_e2e": "7 items collected; opt-in gate verified"
+      "opt_in_deployed_e2e": "7 passed in 77.16s in isolated paper Compose environment at commit 36a7ad184661a28cc610f00d292b24680c1fce9b with full case readbacks and exact SHA written to run-report.json"
     }
   },
   "review_decision": {
     "decision": "owner_validation_passed_pending_independent_reviewer",
-    "reviewer_action_required": "Codex must independently inspect this committed manifest and exact task-branch head, rerun the focused test suite, and bind canonical approval with this review_file before merge."
+    "reviewer_action_required": "Codex2 must independently inspect this committed manifest, run-report.json, and exact task-branch head, rerun the focused test suite, and bind canonical approval with this review_file before merge."
   }
 }

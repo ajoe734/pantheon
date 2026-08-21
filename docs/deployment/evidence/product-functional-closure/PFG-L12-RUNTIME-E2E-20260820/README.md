@@ -68,3 +68,12 @@ PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-pyth
   services/execution/lean_runtime/test_paper_runtime.py \
   services/deployment/test_l12_mfc_r4_deploy_001_contract.py
 ```
+
+## Deployed Execution & Evidence Output
+
+The complete 7-case deployed suite was executed in an isolated Compose environment running all 18 production services. The atomic result artifact:
+- `docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/run-report.json`
+- `docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/run-report.sha256`
+
+contains all case readbacks, exact service container identities, authority proofs, and exact commit SHA. Reviewer metadata is assigned to `Codex2`.
+
