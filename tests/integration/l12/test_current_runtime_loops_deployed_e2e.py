@@ -52,6 +52,20 @@ TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
 TENANT_ID = "default"
 EVOLUTION_TENANT_ID = "pantheon-default"
 PARENT_ARTIFACT_ID = "artifact-tw-session-momentum-v1"
+CANONICAL_LOOP_IDS = {
+    "source_ingestion",
+    "strategy_distillation",
+    "alpha_replication",
+    "persona_teaching",
+    "agora_interaction_evidence",
+    "human_imitation_shadow_evaluation",
+    "consultation",
+    "promotion_deployment",
+    "capital_pool_execution",
+    "telemetry_reconciliation",
+    "evolution",
+    "bff_health_monitoring",
+}
 
 pytestmark = pytest.mark.skipif(
     os.getenv("PANTHEON_L12_DEPLOYED_E2E", "").strip().lower()
@@ -1546,6 +1560,43 @@ class RuntimeChain:
                 timeout=120,
             )
             healthy_targets = healthy["data"]["targets"]
+            management_readback = self._bff_loop_health()
+            management_items = management_readback.get("items") or management_readback.get("data") or []
+            management_rows = {
+                str(item.get("loop_id") or ""): item
+                for item in management_items
+                if isinstance(item, Mapping) and item.get("classification") == "canonical"
+            }
+            if set(management_rows) != CANONICAL_LOOP_IDS:
+                raise DeployedProofError(
+                    "BFF loop-health did not publish exactly twelve canonical Management rows"
+                )
+            retired_static_claims = {
+                "current_maturity",
+                "target_maturity",
+                "maturity",
+                "evidence",
+                "execution_tasks",
+                "maturity_projection",
+            }
+            management_projection = {}
+            for loop_id, row in management_rows.items():
+                if retired_static_claims.intersection(row):
+                    raise DeployedProofError(
+                        f"BFF loop-health row {loop_id} retained static runtime/task claims"
+                    )
+                runtime_maturity = row.get("runtime_maturity")
+                if not isinstance(runtime_maturity, Mapping):
+                    raise DeployedProofError(
+                        f"BFF loop-health row {loop_id} lacks current runtime maturity"
+                    )
+                management_projection[loop_id] = {
+                    "controller_health_accepted": bool(
+                        (row.get("controller_health") or {}).get("current_record_accepted")
+                    ),
+                    "runtime_maturity": dict(runtime_maturity),
+                    "truth_level": (row.get("truth_source") or {}).get("level"),
+                }
             self.evidence.add_case(
                 "loop_12_bff_typed_health",
                 loop=12,
@@ -1553,7 +1604,14 @@ class RuntimeChain:
                 owner_worker=self.evidence.identities["operator-bff"],
                 terminal_output_id="paper-fleet-reconciler",
                 authority_readback=healthy_targets["paper-fleet-reconciler"],
-                next_consumer_readback=healthy_targets["runtime-manager"],
+                next_consumer_readback={
+                    "management_loop_health": {
+                        "canonical_loop_ids": sorted(management_rows),
+                        "endpoint": "/bff/v5/loop-health",
+                        "rows": management_projection,
+                    },
+                    "runtime_manager": healthy_targets["runtime-manager"],
+                },
                 started_at=loop12_started,
                 compose_services=["operator-bff", "paper-fleet-reconciler", "runtime-manager"],
                 assertions={
@@ -1847,7 +1905,11 @@ def test_loop_12_bff_reads_typed_worker_and_api_health(
 ) -> None:
     case = deployed_runtime_chain["cases"]["loop_12_bff_typed_health"]
     assert case["authority_readback"]["ok"] is True
-    assert case["next_consumer_readback"]["ok"] is True
+    assert case["next_consumer_readback"]["runtime_manager"]["ok"] is True
+    management = case["next_consumer_readback"]["management_loop_health"]
+    assert management["endpoint"] == "/bff/v5/loop-health"
+    assert set(management["canonical_loop_ids"]) == CANONICAL_LOOP_IDS
+    assert set(management["rows"]) == CANONICAL_LOOP_IDS
 
 
 def test_loop_12_bff_uses_strict_short_lived_jwt_authentication(

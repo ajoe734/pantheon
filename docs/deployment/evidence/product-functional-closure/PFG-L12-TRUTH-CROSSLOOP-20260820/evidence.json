@@ -33,7 +33,7 @@
   "acceptance": {
     "fresh_owner_identities": "The closure gate starts the three domain E2E suites itself and accepts only their same-run, exact-SHA temporary reports; it accepts no prebuilt input manifest.",
     "twelve_loop_receipts": "Every canonical loop requires non-empty trigger, terminal output, owner observation, authority readback, and next receipt before the parent report can pass.",
-    "management_truth": "The strict-auth BFF loop-health readback must contain exactly twelve canonical rows with current-record-derived runtime_maturity and no static maturity/task/evidence projection fields.",
+    "management_truth": "The Runtime suite's same-run strict-auth BFF loop-health readback must contain exactly twelve canonical rows with current-record-derived runtime_maturity and no static maturity/task/evidence projection fields.",
     "functional_failure_attribution": "During the isolated Runtime worker failure, BFF loop-health must attribute paper-fleet-reconciler degradation to capital_pool_execution (Loop 9).",
     "legacy_verifier_separation": "The retained prebuilt-ID suite has a separate opt-in flag and report role; it is not a closure gate."
   },
@@ -50,7 +50,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q tests/integration/l12/test_current_cross_loop_deployed_e2e.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
-        "result": "2 passed, 17 skipped (deployed cases remain opt-in)"
+        "result": "3 passed, 17 skipped (deployed cases remain opt-in)"
       }
     ],
     "required_before_review": [

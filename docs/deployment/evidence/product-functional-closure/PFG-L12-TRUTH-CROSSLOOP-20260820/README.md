@@ -2,8 +2,8 @@
 
 This task replaces no product owner. It adds the closure gate that launches
 the existing deployed Research (Loops 1–4), Human (Loops 5–7), and Runtime
-(Loops 8–12) suites in one parent run, then reads the current Management
-loop-health projection.
+(Loops 8–12) suites in one parent run, then accepts the current Management
+loop-health projection captured by that same Runtime run.
 
 ## Evidence boundaries
 
@@ -15,8 +15,9 @@ loop-health projection.
   `status=passed` reports at the exact expected SHA, and records each loop's
   trigger, terminal output, authority readback, next receipt, and owner
   observation.
-- The gate reads `/bff/v5/loop-health` through strict BFF authentication. The
-  static catalog provides only loop/spec/owner contract; each Management
+- The Runtime suite reads `/bff/v5/loop-health` through its existing strict
+  BFF authentication and passes that same-run readback to the parent gate.
+  The static catalog provides only loop/spec/owner contract; each Management
   row's `runtime_maturity` is derived from its current controller record.
 - The Runtime suite stops `paper-fleet-reconciler` only in its isolated Compose
   run. While it is unhealthy, it reads BFF loop-health and proves the failure
@@ -41,15 +42,14 @@ python3 scripts/dev/provision_python_distribution.py
 ## Deployed closure command
 
 Use the existing three domain-suite configuration for the controlled dev-paper
-environment. In addition, provide a strict BFF bearer token through a file and
-keep the result outside checked-in evidence:
+environment, including the Runtime suite's strict BFF credentials and isolated
+Compose configuration. The parent passes its expected SHA to Runtime and
+consumes Runtime's same-run Management readback; keep the result outside
+checked-in evidence:
 
 ```bash
 export PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E=1
 export PANTHEON_L12_STIMULUS_EXPECTED_SHA=<exact-40-character-deployed-sha>
-export PANTHEON_L12_STIMULUS_BFF_URL=<operator-bff-origin>
-export PANTHEON_L12_STIMULUS_BFF_BEARER_FILE=<short-lived-token-file>
-export PANTHEON_L12_STIMULUS_TENANT_ID=<authorized-tenant>
 export PANTHEON_L12_STIMULUS_EVIDENCE_OUTPUT=/tmp/pfg-l12-truth-crossloop-run.json
 .venv-pantheon/bin/python3 -m pytest -q \
   tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py
