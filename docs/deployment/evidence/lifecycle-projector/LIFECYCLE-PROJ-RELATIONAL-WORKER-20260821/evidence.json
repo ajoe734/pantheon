@@ -1,0 +1,105 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-relational-worker-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821",
+    "title": "Connect the bounded reducer to the relational projection store",
+    "owner": "Codex",
+    "reviewer": "Antigravity2",
+    "status": "implementation_complete_pending_independent_review",
+    "base_branch": "dev",
+    "rebase_base_commit": "f2bc165bdce98df2cf40d06d268533a860e598d3",
+    "task_branch": "task/LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821",
+    "evidence_cut_commit": "6b3aa5f0a3dd94fae0e3e7ac37096a06ac48f680",
+    "validated_rebased_head_before_evidence_refresh": "568fe1c9f993a50b7163529b55a587dea62eb39f",
+    "head_binding": "The reviewer must bind this committed manifest to the exact final PR head; this pre-review artifact deliberately does not claim a future merge SHA."
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/incremental_materializer.py",
+      "services/trade_journey/projection_store.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821/"
+    ],
+    "not_changing": [
+      "BFF reader selection or route behavior",
+      "telemetry_events source mutation",
+      "production cutover",
+      "legacy JSON data deletion"
+    ],
+    "composes_with": [
+      "LIFECYCLE-PROJ-STORE-001",
+      "LIFECYCLE-PROJ-REDUCER-001",
+      "LIFECYCLE-PROJ-BFF-001",
+      "LIFECYCLE-PROJ-MIGRATE-001",
+      "LIFECYCLE-PROJ-CAPACITY-001",
+      "LIFECYCLE-PROJ-CUTOVER-001"
+    ]
+  },
+  "runtime_contract": {
+    "activation": "Only LIFECYCLE_PROJECTOR_WRITER_BACKEND=shadow constructs RelationalLifecycleProjector; disabled, json, and legacy_json retain the legacy worker. Any other enabled value fails closed.",
+    "credential_boundary": "LIFECYCLE_PROJECTOR_PROJECTION_DSN is required for shadow writes and ProjectionStore bootstrap remains false, so the worker performs no runtime DDL.",
+    "source_and_checkpoint": "The shadow worker reads bounded global telemetry sequence batches. Every row receives one durable applied, ignored, or quarantined receipt, allowing ProjectionStore to advance only its database-derived contiguous checkpoint.",
+    "bounded_state": "A poll hydrates only each journey touched by the batch from journey_stages.contract_fields, resets bounded reducer counters after hydration, and discards that batch-local materializer on the next poll. It does not read, serialize, or advance controller_state.json, aggregate JSON, or generation bundles.",
+    "atomicity": "Receipts, quarantine rows, identity links, stages, journey summary, loop summary, controller revision, source high watermark, and contiguous checkpoint are passed together to one ProjectionStore.execute_batch_transaction call.",
+    "rollback": "Leave the BFF reader on its accepted backend and stop the shadow writer. The additive relational schema and last legacy JSON generation remain read-only rollback evidence; no legacy truth is advanced by this worker."
+  },
+  "verification": [
+    {
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts",
+      "result": "pass; 1 passed in 1.18s",
+      "coverage": "real PostgreSQL transaction, restart hydration, exact duplicate no-rewrite, ignored receipt, contiguous checkpoint, and no controller_state.json write"
+    },
+    {
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+      "result": "pass; 40 passed in 7.96s",
+      "coverage": "unit and real-Postgres worker composition, transaction-failure non-advance, static no-legacy-serialization assertion, and canonical paper lifecycle compatibility"
+    },
+    {
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> TEST_DATABASE_ADMIN_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py services/trade_journey/test_materializer.py",
+      "result": "pass; 28 passed in 7.79s",
+      "coverage": "affected ProjectionStore transaction rules plus bounded materializer behavior"
+    },
+    {
+      "command": "./.venv-pantheon/bin/python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py services/trade_journey/projection_store.py && git diff --check origin/dev...HEAD",
+      "result": "pass"
+    }
+  ],
+  "rebase_verification": {
+    "focused_real_postgres": {
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts",
+      "result": "pass; 1 passed in 1.18s",
+      "coverage": "restart hydration, exact duplicate no-rewrite, ignored receipt, contiguous checkpoint, and no legacy controller-state write after rebasing"
+    },
+    "full_trade_journey_suite": {
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> TEST_DATABASE_ADMIN_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey",
+      "result": "176 passed, 2 failed in 40.29s; exit 1",
+      "failures": [
+        "test_bff_only_deploy_rebuilds_its_lifecycle_projector_only: rebased origin/dev deploy script contains --force-recreate while its unchanged contract test expects the older compose invocation",
+        "test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store: unchanged migration restart produces a mixed duplicate/new batch that the already-merged ProjectionStore rejects"
+      ],
+      "scope_assessment": "The failing compose test/deploy script and migration test/coordinator are unchanged by this task relative to rebase_base_commit; the ProjectionStore mixed-batch rejection guard reached by the migration test is also unchanged. The task-specific real-Postgres regression and affected store/materializer suites passed; fresh independent review must evaluate the upstream baseline failures separately."
+    },
+    "base_failure_reproduction": {
+      "base_commit": "f2bc165bdce98df2cf40d06d268533a860e598d3",
+      "command": "TEST_DATABASE_URL=<isolated-task-postgres-16> TEST_DATABASE_ADMIN_URL=<isolated-task-postgres-16> ./.venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector_compose.py::test_bff_only_deploy_rebuilds_its_lifecycle_projector_only services/trade_journey/test_projection_migration.py::test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store",
+      "result": "2 failed in 1.18s from a clean detached worktree at base_commit",
+      "coverage": "reproduces both full-suite failures without this task branch"
+    }
+  },
+  "review": {
+    "status": "pending_fresh_independent_review_after_rebase",
+    "required_checks": [
+      "verify shadow is the only accepted relational writer activation",
+      "reproduce the real-Postgres restart/duplicate/ignored receipt regression",
+      "inspect that RelationalLifecycleProjector has no legacy controller-state or full-corpus serialization path",
+      "verify one mutation contains only batch receipts and affected journey rows",
+      "bind this manifest to the exact PR head in the governed approve command"
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_file": "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821/SHA256SUMS",
+    "self_hash_omitted": true
+  }
+}
