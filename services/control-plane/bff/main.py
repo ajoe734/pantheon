@@ -32727,14 +32727,16 @@ def _pm12_performance_attribution_sources() -> Dict[str, Any]:
     }
 
     # A single telemetry-list projection is the canonical bounded source for
-    # this aggregate.  Do not issue one whole-store record read per runtime.
-    # The record lookup fallback is retained only for older stores that expose
-    # no list projection at all (including isolated legacy test fixtures).
+    # this aggregate.  Do not issue one record read per runtime when that
+    # projection supplied rows.  The record lookup fallback is retained for
+    # older stores that expose no telemetry-list rows at all (including
+    # isolated legacy fixtures that only expose the historical record lookup).
     telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
     try:
         telemetry_summaries = list(read_store.list_telemetry_summaries() or [])
     except Exception:
         telemetry_summaries = []
+    has_bulk_telemetry_projection = bool(telemetry_summaries)
     for telemetry in telemetry_summaries:
         if not isinstance(telemetry, dict):
             continue
@@ -32753,7 +32755,7 @@ def _pm12_performance_attribution_sources() -> Dict[str, Any]:
         if not runtime_id:
             continue
         telemetry = telemetry_by_runtime_id.get(runtime_id)
-        if telemetry is None and not telemetry_by_runtime_id:
+        if telemetry is None and not has_bulk_telemetry_projection:
             telemetry = read_store.get_telemetry_summary(runtime_id)
         if telemetry is not None:
             telemetry_by_runtime_id[runtime_id] = telemetry
