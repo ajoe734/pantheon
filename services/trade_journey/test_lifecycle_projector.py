@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import inspect
 import json
 import os
 from pathlib import Path
@@ -25,11 +26,13 @@ from services.trade_journey.lifecycle_projector import (
     LIFECYCLE_EVENT_TYPE_QUERY,
     LifecycleProjector,
     PostgresLifecycleSource,
+    RelationalLifecycleProjector,
     _fingerprint,
     _record_worker_failure,
     projector_readiness,
 )
 from services.trade_journey.materializer import JourneyMaterializer
+from services.trade_journey.projection_store import ControllerStateRow, ProjectionStore
 
 
 IDENTITY = {
@@ -151,6 +154,243 @@ def _projector(tmp_path: Path, **kwargs) -> LifecycleProjector:
 
 def _current_json(tmp_path: Path, filename: str) -> dict:
     return json.loads((tmp_path / "current" / filename).read_text(encoding="utf-8"))
+
+
+class _RecordingRelationalStore:
+    """In-memory transaction recorder for relational worker unit coverage."""
+
+    def __init__(self, *, fail_transactions: bool = False) -> None:
+        self.fail_transactions = fail_transactions
+        self.controller: ControllerStateRow | None = None
+        self.receipts: dict[str, object] = {}
+        self.stage_events: dict[tuple[str, str, str], list[dict]] = {}
+        self.mutations: list[object] = []
+        self.load_calls: list[tuple[str, str, str]] = []
+
+    def get_controller_state(self, *_args):
+        return self.controller
+
+    def get_receipt(self, event_id: str):
+        return self.receipts.get(event_id)
+
+    def load_journey_stage_events(self, tenant_id: str, environment: str, journey_id: str):
+        key = (tenant_id, environment, journey_id)
+        self.load_calls.append(key)
+        return [dict(event) for event in self.stage_events.get(key, [])]
+
+    def execute_batch_transaction(self, controller_id, tenant_scope, environment_scope, mutation):
+        self.mutations.append(mutation)
+        if self.fail_transactions:
+            raise OSError("injected relational transaction failure")
+        for receipt in mutation.receipts:
+            self.receipts[receipt.event_id] = receipt
+        for stage in mutation.stages:
+            key = (stage.tenant_id, stage.environment, stage.journey_id)
+            events = self.stage_events.setdefault(key, [])
+            if not any(event.get("event_id") == stage.contract_fields.get("event_id") for event in events):
+                events.append(dict(stage.contract_fields))
+        prior = self.controller
+        checkpoint = 0 if prior is None else prior.checkpoint_seq
+        while any(receipt.ingested_seq == checkpoint + 1 for receipt in self.receipts.values()):
+            checkpoint += 1
+        revision = (0 if prior is None else prior.projection_revision) + bool(mutation.receipts)
+        source_high = max(
+            0 if prior is None else prior.source_high_watermark,
+            mutation.source_high_watermark,
+            checkpoint,
+        )
+        self.controller = ControllerStateRow(
+            controller_id=controller_id,
+            tenant_scope=tenant_scope,
+            environment_scope=environment_scope,
+            checkpoint_seq=checkpoint,
+            source_high_watermark=source_high,
+            backlog_count=max(0, source_high - checkpoint),
+            projection_revision=revision,
+            deployment_sha=mutation.deployment_sha,
+            mode=mutation.mode,
+            status=mutation.status,
+            accepted_live=mutation.accepted_live,
+            unresolved_quarantine_count=len(mutation.quarantines),
+        )
+        return self.controller
+
+
+def test_relational_projector_writes_one_bounded_transaction_without_json_state(tmp_path):
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store, deployment_sha="relational-test", clock=lambda: NOW
+    )
+    rows = lifecycle_rows()
+
+    first = projector.project_records(rows[:2], mode="live", source_high_watermark=2)
+    assert first.checkpoint == 2
+    assert first.accepted == 2
+    assert len(store.mutations) == 1
+    mutation = store.mutations[-1]
+    assert len(mutation.receipts) == 2
+    assert len(mutation.journeys) == 1
+    assert len(mutation.stages) == 2
+    assert len(mutation.loop_runs) == 1
+    assert not hasattr(projector, "state")
+    assert not (tmp_path / "controller_state.json").exists()
+
+    # Restart hydrates only this batch's one aggregate from relational stage
+    # contract fields; it never restores a controller-wide JSON snapshot.
+    restarted = RelationalLifecycleProjector(store, deployment_sha="relational-test")
+    second = restarted.project_records(rows[2:3], mode="live", source_high_watermark=3)
+    assert second.checkpoint == 3
+    assert second.accepted == 1
+    assert store.load_calls == [
+        (IDENTITY["tenant_id"], IDENTITY["environment"], "tj-paper-001"),
+        (IDENTITY["tenant_id"], IDENTITY["environment"], "tj-paper-001"),
+    ]
+    assert restarted._materializer.stats == {
+        "entries_derived": 1,
+        "aggregates_rematerialized": 1,
+        "aggregates_snapshotted": 1,
+    }
+
+    duplicate = restarted.project_records(rows[:1], mode="live", source_high_watermark=3)
+    assert duplicate.accepted == 0
+    assert duplicate.duplicates == 1
+    assert not store.mutations[-1].receipts
+    assert not store.mutations[-1].journeys
+    assert not store.mutations[-1].stages
+
+
+def test_relational_projector_commits_ignored_and_quarantined_receipts_atomically():
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    ignored = {
+        "ingested_seq": 1,
+        "ingested_at": NOW,
+        "event_id": "ignored-source-event",
+        "event_type": "unrelated_telemetry",
+        "created_at": NOW,
+        "payload": {
+            "event_id": "ignored-source-event",
+            "event_type": "unrelated_telemetry",
+            "created_at": NOW,
+        },
+    }
+    invalid = {
+        "ingested_seq": 2,
+        "ingested_at": NOW,
+        "event_id": "invalid-lifecycle-event",
+        "event_type": "signal_generation",
+        "created_at": NOW,
+        "payload": {
+            "event_id": "invalid-lifecycle-event",
+            "event_type": "signal_generation",
+            "created_at": NOW,
+        },
+    }
+    result = projector.project_records([ignored, invalid], mode="recovery", source_high_watermark=2)
+    mutation = store.mutations[-1]
+    assert result.checkpoint == 2
+    assert result.ignored == 1
+    assert result.quarantined == 1
+    assert {receipt.disposition for receipt in mutation.receipts} == {"ignored", "quarantined"}
+    assert len(mutation.quarantines) == 1
+
+
+def test_relational_projector_does_not_advance_memory_after_transaction_failure():
+    store = _RecordingRelationalStore(fail_transactions=True)
+    projector = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    with pytest.raises(OSError, match="injected relational transaction failure"):
+        projector.project_records(lifecycle_rows()[:1], mode="live", source_high_watermark=1)
+    assert projector.checkpoint == 0
+    assert projector._materializer.aggregates == {}
+
+
+def test_relational_projector_has_no_legacy_snapshot_serialization_path(monkeypatch):
+    source = inspect.getsource(RelationalLifecycleProjector)
+    assert "serialize_aggregates" not in source
+    assert "render_full_payloads" not in source
+    assert "AtomicProjectionBundle" not in source
+    assert "state_path" not in source
+
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "active")
+    with pytest.raises(RuntimeError, match="cutover is not authorized"):
+        lifecycle_projector_module._configured_relational_projector()
+
+
+@pytest.fixture
+def relational_postgres_dsn() -> str:
+    dsn = os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    return dsn
+
+
+def test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts(
+    relational_postgres_dsn: str, tmp_path
+):
+    """Exercise the active worker composition against a real transaction store."""
+
+    schema = f"test_relational_worker_{uuid.uuid4().hex[:8]}"
+    store = ProjectionStore(relational_postgres_dsn, schema=schema, bootstrap=True)
+    try:
+        rows = lifecycle_rows()
+        first = RelationalLifecycleProjector(store, deployment_sha="relational-pg")
+        result = first.project_records(rows[:2], mode="live", source_high_watermark=2)
+        assert result.checkpoint == 2
+        assert result.accepted == 2
+        assert not (tmp_path / "controller_state.json").exists()
+
+        restarted = RelationalLifecycleProjector(store, deployment_sha="relational-pg")
+        result = restarted.project_records(rows[2:3], mode="live", source_high_watermark=3)
+        assert result.checkpoint == 3
+        assert result.accepted == 1
+        revision_before_duplicate = result.generation
+
+        duplicate = restarted.project_records(rows[:1], mode="live", source_high_watermark=3)
+        assert duplicate.checkpoint == 3
+        assert duplicate.accepted == 0
+        assert duplicate.duplicates == 1
+        assert duplicate.generation == revision_before_duplicate
+
+        ignored = {
+            "ingested_seq": 4,
+            "ingested_at": NOW,
+            "event_id": "ignored-relational-worker-event",
+            "event_type": "unrelated_telemetry",
+            "created_at": NOW,
+            "payload": {
+                "event_id": "ignored-relational-worker-event",
+                "event_type": "unrelated_telemetry",
+                "created_at": NOW,
+            },
+        }
+        ignored_result = restarted.project_records(
+            [ignored], mode="live", source_high_watermark=4
+        )
+        assert ignored_result.checkpoint == 4
+        assert ignored_result.ignored == 1
+
+        import psycopg
+
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM {schema}.event_receipts")
+            assert cur.fetchone()[0] == 4
+            cur.execute(f"SELECT COUNT(*) FROM {schema}.journey_stages")
+            assert cur.fetchone()[0] == 3
+            cur.execute(
+                f"SELECT stage_coverage FROM {schema}.journeys WHERE journey_id=%s",
+                ("tj-paper-001",),
+            )
+            coverage = cur.fetchone()[0]
+            assert set(coverage) == {
+                "signal_generation",
+                "trade_decision",
+                "risk_evaluation",
+            }
+    finally:
+        import psycopg
+
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
 
 
 def test_postgres_lifecycle_source_filters_watermark_and_fetch(monkeypatch):

@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -290,6 +290,44 @@ class ProjectionStore:
                 return None
             return EventReceiptRow(*row)
 
+    def load_journey_stage_events(
+        self, tenant_id: str, environment: str, journey_id: str
+    ) -> list[dict[str, Any]]:
+        """Load one aggregate's bounded stage contract slice for reduction.
+
+        This is intentionally a per-journey lookup, never a whole-projection
+        snapshot.  The relational worker uses it only to hydrate an aggregate
+        touched by its current source batch before it derives that aggregate's
+        next summary.
+        """
+
+        sql = f"""
+        SELECT contract_fields
+        FROM {self.schema}.journey_stages
+        WHERE tenant_id=%s AND environment=%s AND journey_id=%s
+        ORDER BY event_sequence, stage_ordinal, occurred_at, source_ingested_seq,
+                 source_event_id
+        """
+        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(sql, (tenant_id, environment, journey_id))
+            rows = cur.fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            value = row[0] if isinstance(row, tuple) else row.get("contract_fields")
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except ValueError as exc:
+                    raise ProjectionStoreException(
+                        "stored journey stage contract_fields is not valid JSON"
+                    ) from exc
+            if not isinstance(value, Mapping):
+                raise ProjectionStoreException(
+                    "stored journey stage contract_fields is not an object"
+                )
+            result.append(dict(value))
+        return result
+
     def execute_batch_transaction(
         self,
         controller_id: str,
@@ -460,9 +498,11 @@ class ProjectionStore:
                     )
                     curr_checkpoint_seq = 0
                     curr_revision = 0
+                    curr_source_high_watermark = 0
                 else:
                     curr_checkpoint_seq = ctrl_row[3]
                     curr_revision = ctrl_row[6]
+                    curr_source_high_watermark = ctrl_row[4]
 
                 now = datetime.now(timezone.utc)
 
@@ -902,6 +942,14 @@ class ProjectionStore:
                     ),
                 )
                 target_checkpoint_seq = cur.fetchone()[0]
+                next_source_high_watermark = max(
+                    int(curr_source_high_watermark),
+                    int(mutation.source_high_watermark),
+                    int(target_checkpoint_seq or 0),
+                )
+                effective_backlog_count = max(
+                    0, next_source_high_watermark - int(target_checkpoint_seq or 0)
+                )
 
                 # Compute controller-scoped unresolved quarantine truth.
                 cur.execute(
@@ -963,9 +1011,9 @@ class ProjectionStore:
                     """,
                     (
                         target_checkpoint_seq,
-                        mutation.source_high_watermark,
+                        next_source_high_watermark,
                         target_checkpoint_seq,
-                        mutation.backlog_count,
+                        effective_backlog_count,
                         next_revision,
                         mutation.deployment_sha,
                         mutation.mode,

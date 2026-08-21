@@ -37,7 +37,21 @@ from services.trade_journey.correlation_envelope import (
     validate_envelope,
 )
 from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
-from services.trade_journey.materializer import JourneyMaterializer
+from services.trade_journey.materializer import (
+    IDENTIFIER_FIELDS,
+    TERMINAL_STATUSES,
+    JourneyMaterializer,
+)
+from services.trade_journey.projection_store import (
+    BatchProjectionMutation,
+    EventReceiptRow,
+    IdentityLinkRow,
+    JourneyRow,
+    JourneyStageRow,
+    LoopRunRow,
+    ProjectionStore,
+    QuarantineRow,
+)
 
 
 STATE_SCHEMA = "pantheon.lifecycle-projector-state.v1"
@@ -56,6 +70,14 @@ DEFAULT_HEALTH_MAX_BACKLOG = 5000
 DEFAULT_HEALTH_MIN_FREE_BYTES = 128 * 1024 * 1024
 DEFAULT_HEALTH_MIN_FREE_PERCENT = 5.0
 DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS = 10.0
+RELATIONAL_WRITER_BACKEND_ENV = "LIFECYCLE_PROJECTOR_WRITER_BACKEND"
+RELATIONAL_WRITER_DSN_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_DSN"
+RELATIONAL_WRITER_SCHEMA_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"
+RELATIONAL_WRITER_BACKEND_SHADOW = "shadow"
+RELATIONAL_WRITER_DEFAULT_SCHEMA = "trade_journey_projection"
+RELATIONAL_CONTROLLER_ID = "canonical-lifecycle-projector"
+RELATIONAL_CONTROLLER_TENANT_SCOPE = "*"
+RELATIONAL_CONTROLLER_ENVIRONMENT_SCOPE = "*"
 
 LIFECYCLE_EVENT_TYPES = frozenset(
     {
@@ -1490,6 +1512,616 @@ class LifecycleProjector:
             return [("reconciliation", "failed")]
         return []
 
+
+class RelationalLifecycleProjector:
+    """Bounded relational lifecycle writer used only in explicit shadow mode.
+
+    Unlike :class:`LifecycleProjector`, this worker does not create, read, or
+    advance ``controller_state.json``.  Its durable cursor, receipts,
+    quarantines, aggregate summaries, and controller revision all live in the
+    projection schema and are committed by one ``ProjectionStore`` transaction.
+    A poll holds at most its input rows and the already-materialized stage slice
+    for the journeys that batch touches.
+    """
+
+    def __init__(
+        self,
+        store: ProjectionStore,
+        *,
+        deployment_sha: str = "unknown",
+        clock: Callable[[], str] = _utc_now,
+        controller_id: str = RELATIONAL_CONTROLLER_ID,
+        tenant_scope: str = RELATIONAL_CONTROLLER_TENANT_SCOPE,
+        environment_scope: str = RELATIONAL_CONTROLLER_ENVIRONMENT_SCOPE,
+    ) -> None:
+        self.store = store
+        self.deployment_sha = str(deployment_sha or "unknown")
+        self.clock = clock
+        self.controller_id = str(controller_id)
+        self.tenant_scope = str(tenant_scope)
+        self.environment_scope = str(environment_scope)
+        self._controller_state = self.store.get_controller_state(
+            self.controller_id, self.tenant_scope, self.environment_scope
+        )
+        self._materializer = IncrementalLifecycleMaterializer(
+            journey_events_fn=LifecycleProjector._journey_events
+        )
+
+    @property
+    def checkpoint(self) -> int:
+        return int(self._controller().checkpoint_seq)
+
+    @property
+    def controller(self) -> dict[str, Any]:
+        state = self._controller()
+        return {
+            "controller_id": state.controller_id,
+            "checkpoint": state.checkpoint_seq,
+            "source_high_watermark": state.source_high_watermark,
+            "backlog": state.backlog_count,
+            "generation": state.projection_revision,
+            "deployment_sha": state.deployment_sha,
+            "mode": state.mode,
+            "status": state.status,
+            "accepted_live": state.accepted_live,
+            "quarantine_count": state.unresolved_quarantine_count,
+            "last_error": state.last_error_message or None,
+        }
+
+    def _controller(self):
+        if self._controller_state is None:
+            # A read before the first transaction has no durable row yet.  The
+            # source cursor is consequently zero until the first atomically
+            # committed receipt/controller mutation creates it.
+            from services.trade_journey.projection_store import ControllerStateRow
+
+            return ControllerStateRow(
+                controller_id=self.controller_id,
+                tenant_scope=self.tenant_scope,
+                environment_scope=self.environment_scope,
+                checkpoint_seq=0,
+                source_high_watermark=0,
+                backlog_count=0,
+                projection_revision=0,
+                deployment_sha=self.deployment_sha,
+                mode="recovery",
+                status="initializing",
+                accepted_live=False,
+            )
+        return self._controller_state
+
+    @staticmethod
+    def _row_event_id(row: Mapping[str, Any]) -> str:
+        payload = row.get("payload")
+        candidate = row.get("event_id")
+        if candidate in (None, "") and isinstance(payload, Mapping):
+            candidate = payload.get("event_id")
+        value = str(candidate or "").strip()
+        if not value:
+            raise InvalidLifecycleEvent("source row missing event_id")
+        return value
+
+    @staticmethod
+    def _row_event_type(row: Mapping[str, Any]) -> str:
+        payload = row.get("payload")
+        candidate = row.get("event_type")
+        if candidate in (None, "") and isinstance(payload, Mapping):
+            candidate = payload.get("event_type")
+        return str(candidate or "unknown")
+
+    def _row_fingerprint(self, row: Mapping[str, Any], event: Mapping[str, Any] | None) -> str:
+        if event is not None:
+            return _fingerprint(
+                {
+                    "event_id": event.get("event_id"),
+                    "event_type": event.get("event_type"),
+                    "created_at": event.get("created_at"),
+                    "payload": event,
+                }
+            )
+        return _fingerprint(
+            {
+                "event_id": self._row_event_id(row),
+                "event_type": self._row_event_type(row),
+                "created_at": row.get("created_at"),
+                "payload": row.get("payload"),
+            }
+        )
+
+    def _receipt(
+        self,
+        *,
+        event_id: str,
+        ingested_seq: int,
+        fingerprint: str,
+        source_event_type: str,
+        created_at: datetime,
+        disposition: str,
+        identity: Mapping[str, str] | None = None,
+    ) -> EventReceiptRow:
+        identity = identity or {}
+        return EventReceiptRow(
+            event_id=event_id,
+            ingested_seq=ingested_seq,
+            fingerprint=fingerprint,
+            tenant_id=str(identity.get("tenant_id") or ""),
+            environment=str(identity.get("environment") or ""),
+            journey_id=str(identity.get("journey_id") or ""),
+            loop_run_id=str(identity.get("loop_run_id") or ""),
+            source_event_type=source_event_type,
+            created_at=created_at,
+            disposition=disposition,
+            projection_revision=0,
+        )
+
+    def _hydrate_materializer(
+        self, entries: Sequence[Mapping[str, Any]]
+    ) -> IncrementalLifecycleMaterializer:
+        materializer = IncrementalLifecycleMaterializer(
+            journey_events_fn=LifecycleProjector._journey_events
+        )
+        affected = {
+            (
+                str(entry["identity"]["tenant_id"]),
+                str(entry["identity"]["environment"]),
+                str(entry["identity"]["journey_id"]),
+            )
+            for entry in entries
+        }
+        for tenant_id, environment, journey_id in sorted(affected):
+            materializer.hydrate_aggregate(
+                journey_id,
+                self.store.load_journey_stage_events(tenant_id, environment, journey_id),
+            )
+        # Hydration is a bounded read of the current batch's aggregates, not
+        # reduction work for this poll.  The reported counters begin at the
+        # first staged source entry.
+        materializer.reset_stats()
+        return materializer
+
+    @staticmethod
+    def _identity_links_for_aggregate(agg: Any) -> list[IdentityLinkRow]:
+        observations: dict[tuple[str, str], list[tuple[int, datetime]]] = {}
+        for event in agg.journey_events:
+            occurred_at = _parse_iso(event.get("occurred_at"))
+            source_offset = int(event.get("source_offset") or 0)
+            if source_offset <= 0:
+                continue
+            values: dict[str, Any] = {
+                "journey_id": event.get("journey_id"),
+                "run_id": event.get("run_id"),
+                "loop_run_id": event.get("loop_run_id"),
+                "signal_id": event.get("signal_id"),
+                "strategy_id": event.get("strategy_id"),
+                "runtime_id": event.get("runtime_id"),
+                "binding_id": event.get("binding_id"),
+                "capital_pool_id": event.get("capital_pool_id"),
+                "persona_id": event.get("persona_id"),
+                "persona_capital_binding_id": event.get("persona_capital_binding_id"),
+                "artifact_id": event.get("artifact_id"),
+                "artifact_version": event.get("artifact_version"),
+                "plan_id": event.get("plan_id"),
+                "trace_id": event.get("trace_id"),
+            }
+            values.update(
+                {
+                    identifier: event.get(identifier)
+                    for identifier in IDENTIFIER_FIELDS
+                }
+            )
+            for identifier_type, value in values.items():
+                if isinstance(value, str) and value:
+                    observations.setdefault((identifier_type, value), []).append(
+                        (source_offset, occurred_at)
+                    )
+        links: list[IdentityLinkRow] = []
+        for (identifier_type, identifier_value), values in sorted(observations.items()):
+            links.append(
+                IdentityLinkRow(
+                    tenant_id=agg.tenant_id,
+                    environment=agg.environment,
+                    identifier_type=identifier_type,
+                    identifier_value=identifier_value,
+                    journey_id=agg.journey_id,
+                    first_ingested_seq=min(value[0] for value in values),
+                    last_ingested_seq=max(value[0] for value in values),
+                    first_occurred_at=min(value[1] for value in values),
+                    last_occurred_at=max(value[1] for value in values),
+                )
+            )
+        return links
+
+    def _aggregate_mutations(
+        self,
+        staged: Mapping[str, Any],
+        entries: Sequence[Mapping[str, Any]],
+        *,
+        mode: str,
+        accepted_live: bool,
+    ) -> tuple[list[IdentityLinkRow], list[JourneyRow], list[JourneyStageRow], list[LoopRunRow]]:
+        entries_by_event_id = {
+            str(entry["event"]["event_id"]): entry for entry in entries
+        }
+        identity_links: list[IdentityLinkRow] = []
+        journeys: list[JourneyRow] = []
+        stages: list[JourneyStageRow] = []
+        loop_runs: list[LoopRunRow] = []
+        for journey_id, agg in sorted(staged.items()):
+            source_event_ids = {
+                str(entry["event"]["event_id"])
+                for entry in entries
+                if str(entry["identity"]["journey_id"]) == journey_id
+            }
+            if not source_event_ids:
+                continue
+            identity_links.extend(self._identity_links_for_aggregate(agg))
+            reducer = JourneyMaterializer()
+            reducer.rebuild(agg.journey_events)
+            projection = reducer.get(
+                journey_id, tenant_id=agg.tenant_id, environment=agg.environment
+            )
+            if projection is None:
+                continue
+            snapshot = projection.snapshot
+            journeys.append(
+                JourneyRow(
+                    tenant_id=agg.tenant_id,
+                    environment=agg.environment,
+                    journey_id=journey_id,
+                    status=str(snapshot.get("status") or "incomplete"),
+                    stage_coverage=dict(snapshot.get("stages") or {}),
+                    is_terminal=str(snapshot.get("status") or "") in TERMINAL_STATUSES,
+                    first_occurred_at=_parse_iso(snapshot["created_at"]),
+                    last_occurred_at=_parse_iso(snapshot["updated_at"]),
+                    first_ingested_seq=min(
+                        int(event.get("source_offset") or 0)
+                        for event in agg.journey_events
+                        if int(event.get("source_offset") or 0) > 0
+                    ),
+                    last_ingested_seq=max(
+                        int(event.get("source_offset") or 0)
+                        for event in agg.journey_events
+                    ),
+                    current_identity_summary={"identifiers": snapshot.get("identifiers") or {}},
+                    evidence_summary={
+                        "event_count": len(agg.journey_events),
+                        "stage_event_ids": [
+                            event.get("event_id") for event in projection.timeline
+                        ],
+                    },
+                    diagnostic_summary={"diagnostics": projection.diagnostics},
+                    loop_run_id=str(agg.identity.get("loop_run_id") or ""),
+                )
+            )
+            for stage_event in agg.journey_events:
+                canonical_event_id = str(stage_event.get("canonical_event_id") or "")
+                if canonical_event_id not in source_event_ids:
+                    continue
+                entry = entries_by_event_id[canonical_event_id]
+                source_sequence = int(stage_event.get("source_sequence_no") or 0)
+                stage_sequence = int(stage_event.get("sequence_no") or 0)
+                evidence_refs = stage_event.get("evidence_refs")
+                stages.append(
+                    JourneyStageRow(
+                        tenant_id=agg.tenant_id,
+                        environment=agg.environment,
+                        journey_id=journey_id,
+                        source_event_id=canonical_event_id,
+                        stage_name=str(stage_event.get("stage") or ""),
+                        stage_status=str(stage_event.get("stage_status") or "unknown"),
+                        stage_ordinal=max(0, stage_sequence - source_sequence * 100),
+                        source_ingested_seq=int(stage_event.get("source_offset") or 0),
+                        event_sequence=source_sequence,
+                        occurred_at=_parse_iso(stage_event["occurred_at"]),
+                        contract_fields=dict(stage_event),
+                        evidence_references=(
+                            list(evidence_refs)
+                            if isinstance(evidence_refs, list)
+                            else []
+                        ),
+                        fingerprint=_fingerprint(
+                            {
+                                "canonical_fingerprint": entry["fingerprint"],
+                                "stage": stage_event.get("stage"),
+                            }
+                        ),
+                    )
+                )
+            if agg.loop_record:
+                loop_record = dict(agg.loop_record)
+                freshness = {
+                    "mode": mode,
+                    "accepted_live": accepted_live,
+                    "source_modes": loop_record.get("source_modes") or [],
+                    "last_source_offset": loop_record.get("last_source_offset"),
+                }
+                loop_runs.append(
+                    LoopRunRow(
+                        tenant_id=agg.tenant_id,
+                        environment=agg.environment,
+                        loop_run_id=str(loop_record["loop_run_id"]),
+                        journey_id=journey_id,
+                        status=str(loop_record.get("status") or "active"),
+                        lifecycle_summary=loop_record,
+                        freshness_lineage=freshness,
+                        contract_payload=loop_record,
+                    )
+                )
+        return identity_links, journeys, stages, loop_runs
+
+    def _controller_mutation(
+        self,
+        *,
+        source_high_watermark: int,
+        mode: str,
+        quarantined: int,
+        error_message: str = "",
+    ) -> BatchProjectionMutation:
+        previous = self._controller()
+        optimistic_backlog = max(
+            0,
+            int(source_high_watermark) - int(previous.checkpoint_seq),
+        )
+        accepted_live = (
+            mode == "live"
+            and optimistic_backlog == 0
+            and quarantined == 0
+            and int(previous.unresolved_quarantine_count) == 0
+            and not error_message
+        )
+        status = (
+            "failed"
+            if error_message
+            else "degraded"
+            if quarantined or int(previous.unresolved_quarantine_count) > 0
+            else "ready"
+            if accepted_live
+            else "recovering"
+            if mode == "recovery" or optimistic_backlog
+            else "repair_only"
+        )
+        return BatchProjectionMutation(
+            source_high_watermark=max(0, int(source_high_watermark)),
+            backlog_count=optimistic_backlog,
+            mode=mode,
+            status=status,
+            accepted_live=accepted_live,
+            deployment_sha=self.deployment_sha,
+            error_message=error_message,
+        )
+
+    def project_records(
+        self,
+        records: Iterable[Mapping[str, Any]],
+        *,
+        mode: str,
+        source_high_watermark: int | None = None,
+    ) -> ProjectionResult:
+        if mode not in PROJECTION_MODES:
+            raise ValueError(f"unsupported projection mode: {mode}")
+        ordered_records = sorted(
+            (dict(record) for record in records),
+            key=lambda row: (int(row.get("ingested_seq") or 0), self._row_event_id(row)),
+        )
+        source_high = max(
+            int(source_high_watermark or 0),
+            int(self._controller().source_high_watermark),
+        )
+        receipts: list[EventReceiptRow] = []
+        quarantines: list[QuarantineRow] = []
+        accepted_entries: list[dict[str, Any]] = []
+        batch_fingerprints: dict[str, str] = {}
+        duplicates = ignored = quarantined = 0
+
+        for row in ordered_records:
+            sequence = int(row.get("ingested_seq") or 0)
+            if sequence <= 0:
+                raise InvalidLifecycleEvent("committed source row requires positive ingested_seq")
+            source_high = max(source_high, sequence)
+            event_id = self._row_event_id(row)
+            event: dict[str, Any] | None = None
+            try:
+                event = LifecycleProjector._source_event(row)
+                fingerprint = self._row_fingerprint(row, event)
+            except InvalidLifecycleEvent as exc:
+                fingerprint = self._row_fingerprint(row, None)
+                known = self.store.get_receipt(event_id)
+                if known is not None:
+                    if known.fingerprint != fingerprint:
+                        raise ConflictingLifecycleEvent(
+                            f"conflicting canonical event_id: {event_id}"
+                        )
+                    duplicates += 1
+                    continue
+                receipts.append(
+                    self._receipt(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        fingerprint=fingerprint,
+                        source_event_type=self._row_event_type(row),
+                        created_at=_parse_iso(row.get("created_at") or self.clock()),
+                        disposition="quarantined",
+                    )
+                )
+                quarantines.append(
+                    QuarantineRow(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        reason_code="INVALID_LIFECYCLE_EVENT",
+                        reason_detail=str(exc),
+                        source_event_type=self._row_event_type(row),
+                        fingerprint=fingerprint,
+                    )
+                )
+                quarantined += 1
+                continue
+
+            known_fingerprint = batch_fingerprints.get(event_id)
+            if known_fingerprint is not None:
+                if known_fingerprint != fingerprint:
+                    raise ConflictingLifecycleEvent(
+                        f"conflicting canonical event_id: {event_id}"
+                    )
+                duplicates += 1
+                continue
+            known = self.store.get_receipt(event_id)
+            if known is not None:
+                if known.fingerprint != fingerprint:
+                    raise ConflictingLifecycleEvent(
+                        f"conflicting canonical event_id: {event_id}"
+                    )
+                duplicates += 1
+                continue
+            batch_fingerprints[event_id] = fingerprint
+            created_at = _parse_iso(event["created_at"])
+            if event["event_type"] not in LIFECYCLE_EVENT_TYPES:
+                receipts.append(
+                    self._receipt(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        fingerprint=fingerprint,
+                        source_event_type=str(event["event_type"]),
+                        created_at=created_at,
+                        disposition="ignored",
+                    )
+                )
+                ignored += 1
+                continue
+            try:
+                LifecycleProjector._validate_fixture_event(event)
+                identity = LifecycleProjector._identity(event)
+                source_sequence = LifecycleProjector._sequence_no(event)
+            except InvalidLifecycleEvent as exc:
+                receipts.append(
+                    self._receipt(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        fingerprint=fingerprint,
+                        source_event_type=str(event["event_type"]),
+                        created_at=created_at,
+                        disposition="quarantined",
+                    )
+                )
+                quarantines.append(
+                    QuarantineRow(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        reason_code="INVALID_LIFECYCLE_EVENT",
+                        reason_detail=str(exc),
+                        source_event_type=str(event["event_type"]),
+                        fingerprint=fingerprint,
+                    )
+                )
+                quarantined += 1
+                continue
+            accepted_entries.append(
+                {
+                    "fingerprint": fingerprint,
+                    "event": event,
+                    "identity": identity,
+                    "sequence_no": source_sequence,
+                    "ingested_seq": sequence,
+                    "ingested_at": str(row.get("ingested_at") or self.clock()),
+                    "source_mode": mode,
+                    "accepted_live": mode == "live",
+                }
+            )
+            receipts.append(
+                self._receipt(
+                    event_id=event_id,
+                    ingested_seq=sequence,
+                    fingerprint=fingerprint,
+                    source_event_type=str(event["event_type"]),
+                    created_at=created_at,
+                    disposition="applied",
+                    identity=identity,
+                )
+            )
+
+        materializer = self._hydrate_materializer(accepted_entries)
+        staged, _affected, accepted, staged_duplicates = materializer.stage_batch(
+            accepted_entries,
+            journey_events_fn=LifecycleProjector._journey_events,
+        )
+        duplicates += staged_duplicates
+        mutation = self._controller_mutation(
+            source_high_watermark=source_high,
+            mode=mode,
+            quarantined=quarantined,
+        )
+        mutation.receipts = receipts
+        mutation.quarantines = quarantines
+        (
+            mutation.identity_links,
+            mutation.journeys,
+            mutation.stages,
+            mutation.loop_runs,
+        ) = self._aggregate_mutations(
+            staged,
+            accepted_entries,
+            mode=mode,
+            accepted_live=mutation.accepted_live,
+        )
+        self._controller_state = self.store.execute_batch_transaction(
+            self.controller_id,
+            self.tenant_scope,
+            self.environment_scope,
+            mutation,
+        )
+        self._materializer = materializer
+        current = self._controller()
+        return ProjectionResult(
+            checkpoint=int(current.checkpoint_seq),
+            accepted=accepted,
+            duplicates=duplicates,
+            ignored=ignored,
+            quarantined=quarantined,
+            journey_count=len(mutation.journeys),
+            loop_run_count=len(mutation.loop_runs),
+            generation=int(current.projection_revision),
+            mode=mode,
+        )
+
+    def record_poll(
+        self,
+        *,
+        source_high_watermark: int,
+        backlog: int,
+        mode: str,
+    ) -> None:
+        if mode not in PROJECTION_MODES:
+            raise ValueError(f"unsupported projection mode: {mode}")
+        mutation = self._controller_mutation(
+            source_high_watermark=source_high_watermark,
+            mode=mode,
+            quarantined=0,
+        )
+        mutation.backlog_count = max(0, int(backlog))
+        self._controller_state = self.store.execute_batch_transaction(
+            self.controller_id,
+            self.tenant_scope,
+            self.environment_scope,
+            mutation,
+        )
+
+    def record_source_failure(self, error: str, *, backlog: int | None = None) -> None:
+        previous = self._controller()
+        mutation = self._controller_mutation(
+            source_high_watermark=int(previous.source_high_watermark),
+            mode=str(previous.mode or "recovery"),
+            quarantined=0,
+            error_message=str(error),
+        )
+        if backlog is not None:
+            mutation.backlog_count = max(0, int(backlog))
+        self._controller_state = self.store.execute_batch_transaction(
+            self.controller_id,
+            self.tenant_scope,
+            self.environment_scope,
+            mutation,
+        )
+
+
 def _stage_status(value: Any) -> str:
     token = str(value or "unknown").strip().lower()
     if token in {"ok", "accepted", "submitted", "filled", "resolved", "complete", "completed", "succeeded"}:
@@ -1514,9 +2146,16 @@ class PostgresLifecycleSource:
     greater than an empty retained window is valid, not a source rewind.
     """
 
-    def __init__(self, dsn: str, *, channel: str = DEFAULT_CHANNEL) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        channel: str = DEFAULT_CHANNEL,
+        include_non_lifecycle: bool = False,
+    ) -> None:
         self.dsn = dsn
         self.channel = channel
+        self.include_non_lifecycle = bool(include_non_lifecycle)
         self._listener: Any = None
         self._wake = asyncio.Event()
 
@@ -1572,6 +2211,13 @@ class PostgresLifecycleSource:
 
         conn = await asyncpg.connect(self.dsn)
         try:
+            if self.include_non_lifecycle:
+                return int(
+                    await conn.fetchval(
+                        "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
+                    )
+                    or 0
+                )
             return int(
                 await conn.fetchval(
                     "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
@@ -1588,15 +2234,24 @@ class PostgresLifecycleSource:
 
         conn = await asyncpg.connect(self.dsn)
         try:
-            rows = await conn.fetch(
-                "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
-                "FROM telemetry_events WHERE ingested_seq > $1 "
-                "AND event_type = ANY($2::text[]) "
-                "ORDER BY ingested_seq ASC LIMIT $3",
-                int(checkpoint),
-                list(LIFECYCLE_EVENT_TYPE_QUERY),
-                int(limit),
-            )
+            if self.include_non_lifecycle:
+                rows = await conn.fetch(
+                    "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
+                    "FROM telemetry_events WHERE ingested_seq > $1 "
+                    "ORDER BY ingested_seq ASC LIMIT $2",
+                    int(checkpoint),
+                    int(limit),
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
+                    "FROM telemetry_events WHERE ingested_seq > $1 "
+                    "AND event_type = ANY($2::text[]) "
+                    "ORDER BY ingested_seq ASC LIMIT $3",
+                    int(checkpoint),
+                    list(LIFECYCLE_EVENT_TYPE_QUERY),
+                    int(limit),
+                )
         finally:
             await conn.close()
         result: list[dict[str, Any]] = []
@@ -1641,7 +2296,7 @@ class PostgresLifecycleSource:
             self._listener = None
 
 
-def _record_worker_failure(projector: LifecycleProjector, error: BaseException) -> bool:
+def _record_worker_failure(projector: Any, error: BaseException) -> bool:
     """Publish one durable error transition without allowing it to crash the worker."""
 
     error_message = f"{type(error).__name__}: {error}"
@@ -1649,18 +2304,19 @@ def _record_worker_failure(projector: LifecycleProjector, error: BaseException) 
         projector.record_source_failure(error_message)
         return True
     except Exception as record_error:  # noqa: BLE001 - disk recovery happens in-loop
-        now = projector.clock()
-        controller = projector.state.setdefault("controller", {})
-        controller.update(
-            {
-                "status": "degraded",
-                "last_failure_at": now,
-                "last_error": error_message,
-                "error_publication_failure": (
-                    f"{type(record_error).__name__}: {record_error}"
-                ),
-            }
-        )
+        if isinstance(projector, LifecycleProjector):
+            now = projector.clock()
+            controller = projector.state.setdefault("controller", {})
+            controller.update(
+                {
+                    "status": "degraded",
+                    "last_failure_at": now,
+                    "last_error": error_message,
+                    "error_publication_failure": (
+                        f"{type(record_error).__name__}: {record_error}"
+                    ),
+                }
+            )
         print(
             "lifecycle projector error publication failed; retaining worker for retry: "
             f"{type(record_error).__name__}: {record_error}",
@@ -1670,25 +2326,71 @@ def _record_worker_failure(projector: LifecycleProjector, error: BaseException) 
         return False
 
 
+def _relational_writer_backend() -> str:
+    return os.getenv(RELATIONAL_WRITER_BACKEND_ENV, "disabled").strip().lower()
+
+
+def _configured_relational_projector() -> RelationalLifecycleProjector | None:
+    """Build the disabled-by-default relational shadow writer.
+
+    No value silently enables a writer.  In particular, an invalid backend or
+    missing projection DML DSN is a configuration error rather than a fallback
+    to the legacy JSON publisher.
+    """
+
+    backend = _relational_writer_backend()
+    if backend in {"", "disabled", "legacy_json", "json"}:
+        return None
+    if backend != RELATIONAL_WRITER_BACKEND_SHADOW:
+        raise RuntimeError(
+            f"{RELATIONAL_WRITER_BACKEND_ENV} must be disabled or "
+            f"{RELATIONAL_WRITER_BACKEND_SHADOW!r}; cutover is not authorized"
+        )
+    dsn = os.getenv(RELATIONAL_WRITER_DSN_ENV, "").strip()
+    if not dsn:
+        raise RuntimeError(
+            f"{RELATIONAL_WRITER_DSN_ENV} is required for relational shadow writing"
+        )
+    store = ProjectionStore(
+        dsn,
+        schema=os.getenv(RELATIONAL_WRITER_SCHEMA_ENV, RELATIONAL_WRITER_DEFAULT_SCHEMA),
+        bootstrap=False,
+    )
+    return RelationalLifecycleProjector(
+        store,
+        deployment_sha=os.getenv("GIT_SHA", "unknown"),
+    )
+
+
 async def run_worker() -> int:
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     if not dsn:
         raise RuntimeError("TELEMETRY_DB_DSN is required")
-    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
-    state_path = Path(os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json")))
-    health_state_path = Path(
-        os.getenv(
-            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
-            str(root / "health_state.json"),
+    relational_projector = _configured_relational_projector()
+    if relational_projector is None:
+        root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
+        state_path = Path(
+            os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json"))
         )
+        health_state_path = Path(
+            os.getenv(
+                "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+                str(root / "health_state.json"),
+            )
+        )
+        projector: LifecycleProjector | RelationalLifecycleProjector = LifecycleProjector(
+            state_path=state_path,
+            health_state_path=health_state_path,
+            bundle_root=root,
+            deployment_sha=os.getenv("GIT_SHA", "unknown"),
+        )
+    else:
+        projector = relational_projector
+    source = (
+        PostgresLifecycleSource(dsn, include_non_lifecycle=True)
+        if relational_projector is not None
+        else PostgresLifecycleSource(dsn)
     )
-    projector = LifecycleProjector(
-        state_path=state_path,
-        health_state_path=health_state_path,
-        bundle_root=root,
-        deployment_sha=os.getenv("GIT_SHA", "unknown"),
-    )
-    source = PostgresLifecycleSource(dsn)
     interval = max(0.1, float(os.getenv("LIFECYCLE_PROJECTOR_POLL_SECONDS", "1")))
     batch_size = max(1, int(os.getenv("LIFECYCLE_PROJECTOR_BATCH_SIZE", "500")))
     max_ticks = max(0, int(os.getenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "0")))
@@ -1729,6 +2431,27 @@ async def run_worker() -> int:
 
 
 def healthcheck() -> int:
+    relational_projector = _configured_relational_projector()
+    if relational_projector is not None:
+        controller = relational_projector.controller
+        ready = (
+            controller["status"] == "ready"
+            and bool(controller["accepted_live"])
+            and controller["mode"] == "live"
+            and int(controller["backlog"]) == 0
+            and int(controller["quarantine_count"]) == 0
+        )
+        payload = {
+            "schema_version": "pantheon.lifecycle-projector-relational-health.v1",
+            "writer_backend": RELATIONAL_WRITER_BACKEND_SHADOW,
+            "ready": ready,
+            "controller": controller,
+        }
+        if not ready:
+            print(f"lifecycle relational projector unhealthy: {_canonical_json(payload)}")
+            return 1
+        print(_canonical_json(payload))
+        return 0
     root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
     state_path = Path(
         os.getenv(
