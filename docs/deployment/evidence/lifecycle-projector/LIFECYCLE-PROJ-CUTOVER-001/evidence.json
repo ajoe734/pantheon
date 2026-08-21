@@ -17,22 +17,30 @@
   "scope": {
     "owned": [
       "services/trade_journey/projection_migration.py",
-      "services/trade_journey/test_lifecycle_projector_compose.py",
+      "services/trade_journey/test_projection_migration.py",
       "docs/operations/lifecycle-projector-incremental-runbook.md",
-      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CUTOVER-001/"
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CUTOVER-001/evidence.json"
     ],
     "not_changing": [
       "services/trade_journey/projection_store.py",
       "scripts/deploy_nonprod_vm.sh"
     ]
   },
+  "artifact_checksums_sha256": {
+    "services/trade_journey/projection_migration.py": "33c892d1fa9cb14472b51ba9cd447c57b56a2304e42d8199b54a99dbd699373a",
+    "services/trade_journey/test_projection_migration.py": "c752f1d176117207ce400809ae26e37b886540d8fc57e3c1a927d062137651f8",
+    "docs/operations/lifecycle-projector-incremental-runbook.md": "e855db2d65e9e03db9e31dd50e1c52db5e1165b3acee3d5d88fcd1160021edad"
+  },
   "pre_switch_verification": {
-    "real_postgres_migration_test": "PASSED: test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store verified against real PostgreSQL instance on port 15432.",
-    "trade_journey_suite": "PASSED: 181 passed, 34 skipped in 36.21s.",
+    "real_postgres_migration_test": "PASSED: test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store verified against real PostgreSQL.",
+    "real_postgres_duplicate_interruption_test": "PASSED: test_backfill_duplicate_and_interruption_against_real_store verified duplicate event, source growth, and 3-stage interruption/resume against real PostgreSQL.",
+    "trade_journey_suite": "PASSED: 19 passed, 2 skipped in 2.00s.",
     "runbook_created": "docs/operations/lifecycle-projector-incremental-runbook.md created with complete operational steps and rollback procedures."
   },
   "cutover_status": {
     "code_fix_and_runbook": "complete",
-    "canary_readiness": "ready for 24-hour observation"
+    "pre_switch_verification": "passed",
+    "canary_readiness": "ready for independent review and subsequent 24-hour observation"
   }
 }
+

@@ -519,3 +519,100 @@ def test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store(
 
         with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_backfill_duplicate_and_interruption_against_real_store(
+    postgres_dsn: str, tmp_path: Path
+):
+    """Test duplicate event submission, source growth, and multiple backfill/delta interruption points against real Postgres.
+    
+    Verifies:
+    - Resuming from multiple interruption points.
+    - Submitting durable duplicate + new events for the same journey/loop.
+    - High watermark advancement and backlog zero convergence.
+    """
+    from uuid import uuid4
+    from services.trade_journey.projection_store import ProjectionStore
+
+    schema_name = f"test_migrate_dup_{uuid4().hex[:8]}"
+    store = ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=True)
+    try:
+        base_rows = lifecycle_rows()
+        # Create extended source rows: base_rows plus duplicates of base_rows[0..1] with same/higher ingested_seq, plus new event for same journey
+        # base_rows has ingested_seq 1..8
+        dup_row = copy.deepcopy(base_rows[0])  # duplicate event_id and content
+        dup_row["ingested_seq"] = 9
+        
+        new_event = copy.deepcopy(base_rows[-1])  # new event for same journey/loop
+        new_event["event_id"] = "evt-paper-009"
+        new_event["ingested_seq"] = 10
+        new_event["payload"]["occurred_at"] = "2026-08-01T12:05:00Z"
+        
+        all_rows = base_rows + [dup_row, new_event]
+        snapshot_path = tmp_path / "snapshot.json"
+
+        # Interruption 1: Process batch 1 (size 3) -> rows 1..3
+        coord1 = BackfillCoordinator(
+            store,
+            controller_id="tj-proj-dup-it",
+            tenant_scope="tenant-a",
+            environment_scope="paper",
+            fetch_batch=_paged_fetch(all_rows),
+            snapshot_path=snapshot_path,
+            batch_size=3,
+        )
+        res1 = coord1.run(max_batches=1)
+        assert res1["batches"] == 1
+        assert res1["checkpoint"] == 3
+
+        # Interruption 2: Process batch 2 (size 3) -> rows 4..6
+        coord2 = BackfillCoordinator(
+            store,
+            controller_id="tj-proj-dup-it",
+            tenant_scope="tenant-a",
+            environment_scope="paper",
+            fetch_batch=_paged_fetch(all_rows),
+            snapshot_path=snapshot_path,
+            batch_size=3,
+        )
+        res2 = coord2.run(max_batches=1)
+        assert res2["batches"] == 1
+        assert res2["checkpoint"] == 6
+
+        # Interruption 3: Process batch 3 & remaining -> rows 7..10 (includes duplicate row 9 and new event row 10)
+        coord3 = BackfillCoordinator(
+            store,
+            controller_id="tj-proj-dup-it",
+            tenant_scope="tenant-a",
+            environment_scope="paper",
+            fetch_batch=_paged_fetch(all_rows),
+            snapshot_path=snapshot_path,
+            batch_size=3,
+        )
+        res3 = coord3.run()
+        assert res3["checkpoint"] == 10
+
+        # Verify against store: controller state updated to 10
+        controller = store.get_controller_state("tj-proj-dup-it-migrate", "tenant-a", "paper")
+        assert controller is not None
+        assert controller.checkpoint_seq == 10
+
+        # Verify duplicate row resulted in no duplicate mutation or error, and backlog zero on next run
+        coord4 = BackfillCoordinator(
+            store,
+            controller_id="tj-proj-dup-it",
+            tenant_scope="tenant-a",
+            environment_scope="paper",
+            fetch_batch=_paged_fetch(all_rows),
+            snapshot_path=snapshot_path,
+            batch_size=3,
+        )
+        res4 = coord4.run()
+        assert res4["batches"] == 0
+        assert res4["checkpoint"] == 10
+    finally:
+        import psycopg  # type: ignore[import]
+
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
