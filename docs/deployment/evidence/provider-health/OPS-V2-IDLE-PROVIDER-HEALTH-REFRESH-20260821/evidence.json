@@ -1,0 +1,155 @@
+{
+  "schema_version": "pantheon.supervisor.idle-provider-health.v1",
+  "task": {
+    "id": "OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821",
+    "title": "Refresh stale V2 provider health without unrelated task demand",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "task_branch": "task/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821",
+    "review_file": "docs/deployment/evidence/provider-health/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821/evidence.json"
+  },
+  "status": "ready_for_independent_review",
+  "scope": {
+    "owned_layer": "Supervisor Authority V2 idle delivery-health target selection, an authorized bounded bypass of a cached future retry_at, and the existing runtime-state observation projection.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "not_changing": [
+      "TaskStore or canonical task lifecycle write ownership",
+      "runtime-state lock and atomic-write primitives",
+      "provider credentials or account configuration",
+      "retired V1 pause, recovery, or capacity control planes",
+      "product services, frontend, production, or capital authority"
+    ]
+  },
+  "prior_round_gap": {
+    "reported_by": "Human/Ops",
+    "finding": "The prior head (19836b33d) only refreshed endpoint/account evidence once the existing retry gate already considered it due. Live codex1 stayed closed behind a stale quota_terminal retry_at=2026-08-22T14:09:00Z even though a direct probe already succeeded, because health_gate_for_endpoint intentionally never bypasses a future retry_at.",
+    "resolution": "Added an authorized bypass scan (authorized_delivery_health_refresh_targets) that fires only on an exact delivery-topology change or an explicit Human/Ops request, may probe past a cached future retry_at, and is consumed once per cycle so it never becomes an every-cycle probe."
+  },
+  "implementation": {
+    "rebased_base_commit": "281cb12c531290fd0db4dcf75e9c233612b04a84",
+    "validated_implementation_anchor": "787a06db6b71425cc5a4489b523aca635510b2d3",
+    "supervisor_source_blob": "5d0d32af1a267c5431ea2cd762b8672bca987eb5",
+    "supervisor_test_blob": "e4d4e0d22d3a515236d7e958d37b7f4acf618993",
+    "implementation_diff_sha256": "51737763a4876f22a891f34785012b5944d2a0b9c5ced505a70b68c8d34b8e02",
+    "source_scope": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "contract": {
+    "idle_trigger": "build_dispatch_plan adds a pure idle target scan after task and reassignment demand. A startup cycle with an empty task board therefore reaches due stale endpoint/account evidence without manufacturing a queue event or changing canonical task state.",
+    "authorized_bypass_trigger": "authorized_delivery_health_refresh_targets returns targets only when the exact endpoint/provider/account topology fingerprint differs from the last one this process recorded (covers supervisor startup, since a fresh state has no prior fingerprint, and any real config-topology change), or when request_delivery_health_refresh has recorded a pending Human/Ops request. It skips any lane whose endpoint and account are both already healthy, and never runs unconditionally.",
+    "bypass_consumption": "record_delivery_health_refresh_authority_consumed persists the current topology fingerprint and clears a spent Human/Ops request inside the same apply_post_dispatch_maintenance transaction that commits this cycle's probe observations, so an unchanged topology cannot retrigger the bypass on the next cycle.",
+    "human_ops_entry_point": "supervisor.py --request-delivery-health-refresh records the request through runtime_state_update (the governed locked read-modify-write primitive) and exits without starting the poll loop; it never edits state.json by hand.",
+    "target_boundary": "Only configured logical delivery lanes and their configured endpoints are considered (shared _configured_delivery_endpoints helper). A provider configured without a delivery endpoint, even when it shares an account, cannot create a probe demand.",
+    "bounded_io": "probe_demanded_delivery_health continues to deduplicate exact endpoint IDs and invokes no more than delivery_health.refresh_max_per_cycle live probes in one cycle. Task and reassignment demand remain first in the combined target order; the authorized bypass targets are folded in alongside the due-only idle targets, still capped by the same refresh_max_per_cycle bound.",
+    "fail_closed": "A fresh live success updates endpoint and account evidence together through apply_delivery_health_observations, atomically clearing the prior stale state. A failed auth probe writes the endpoint unavailable; no stale or synthetic cached readiness is admitted regardless of which scan proposed the probe.",
+    "write_authority": "Both target scans are read-only. Live probes remain post-delivery I/O, and health observations plus the refresh-authority bookkeeping are committed only through apply_post_dispatch_maintenance inside the existing reserved runtime-maintenance transaction. No TaskStore, state-file, or activity-log writer was added."
+  },
+  "acceptance": {
+    "idle_without_task_demand": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_idle_health_refresh_targets_due_configured_endpoints_without_tasks",
+      "proof": "An empty task board yields exact codex1 and claude2 targets from expired auth/quota evidence, then successful live observations set both endpoint and distinct account records healthy."
+    },
+    "bounded_and_orphan_safe": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_idle_health_refresh_excludes_orphan_provider_and_respects_probe_bound",
+      "proof": "A configured-but-undeliverable provider sharing codex_account is absent from the target list; refresh_max_per_cycle=1 produces exactly one live probe."
+    },
+    "failed_probe_fail_closed": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_failed_idle_probe_keeps_endpoint_unavailable",
+      "proof": "A live auth-material failure records codex as unavailable and does not invent an account-health success."
+    },
+    "authorized_bypass_of_future_retry_at": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_authorized_refresh_bypasses_future_retry_at_on_startup",
+      "proof": "With a codex account stuck at retry_after/quota_terminal and retry_at in the year 2999, the due-only scan returns no target, but the authorized scan on a fresh (startup) state returns exactly the codex endpoint and skips the already-healthy codex2 lane."
+    },
+    "bypass_bounded_not_every_cycle": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_authorized_refresh_consumed_once_per_topology",
+      "proof": "After the bypass fires once and is consumed, an unchanged topology yields no target on the next call; adding a real delivery endpoint changes the topology fingerprint and authorizes exactly one more bypass."
+    },
+    "human_ops_explicit_request": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_human_ops_request_bypasses_future_retry_at_without_topology_change",
+      "proof": "With topology already recorded (no startup/topology trigger), request_delivery_health_refresh alone authorizes one bypass of the future retry_at; consuming it clears the request so the next cycle does not re-fire."
+    },
+    "v2_regression_boundary": {
+      "status": "proven",
+      "proof": "Full Supervisor Authority V2, runtime-state, provider-health, and dispatch-admission suites remain green; the established account-first TTL/retry predicate is reused rather than duplicated."
+    }
+  },
+  "owner_verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+        "result": "passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::AccountHealthAndRecoveryContractTests",
+        "result": "18 passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+        "result": "109 passed, 18 subtests passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 .orchestrator/rewrite/test_provider_health.py -v",
+        "result": "5 passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 .orchestrator/rewrite/test_dispatch_admission.py -v",
+        "result": "16 passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest discover -s .orchestrator -p 'test_runtime_state.py' -v",
+        "result": "26 passed"
+      },
+      {
+        "command": "git diff --check 281cb12c531290fd0db4dcf75e9c233612b04a84...787a06db6b71425cc5a4489b523aca635510b2d3",
+        "result": "passed"
+      }
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "companion_checksum_path": "docs/deployment/evidence/provider-health/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821/evidence.sha256",
+    "checksum_coverage": [
+      "evidence.json",
+      "README.md"
+    ],
+    "source_recompute": "git diff --binary 281cb12c531290fd0db4dcf75e9c233612b04a84...787a06db6b71425cc5a4489b523aca635510b2d3 -- .orchestrator/supervisor.py .orchestrator/test_supervisor.py | sha256sum",
+    "manifest_recompute": "cd docs/deployment/evidence/provider-health/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821 && sha256sum -c evidence.sha256"
+  },
+  "review": {
+    "decision": "pending",
+    "required_reviewer": "Antigravity",
+    "exact_head_requirement": "Antigravity must bind approval to the final GitHub PR head through the governed REVIEW_PR and REVIEW_HEAD_SHA inputs. This committed manifest intentionally does not self-reference its containing commit; any later source change requires these verification commands and checksums to be refreshed.",
+    "required": [
+      "Confirm idle target selection and the authorized bypass scan are pure and do not write TaskStore or runtime files.",
+      "Confirm the bypass fires only on a genuine topology-fingerprint change or a consumed Human/Ops request, never unconditionally per cycle.",
+      "Confirm a fresh live success still atomically clears prior stale endpoint/account state, and a failed probe stays fail-closed, for targets proposed by either scan.",
+      "Confirm the bounded probe cap (refresh_max_per_cycle) still applies once bypass targets are folded into the combined demand.",
+      "Confirm no V1 pause or recovery control plane is reintroduced."
+    ]
+  },
+  "post_merge_rollout": {
+    "required": true,
+    "authority": "Human/Ops or the supervisor deployment authority",
+    "action": "Promote the exact merged dev command runtime. If the live codex1 quota_terminal retry_at is still in the future, run `.orchestrator/supervisor.py --request-delivery-health-refresh` once against the live runtime state, then run one bounded supervisor cycle and read the live runtime delivery_health state.",
+    "acceptance_readback": [
+      "codex1 account has a fresh healthy live observation from a configured codex1 endpoint, even though its prior retry_at was still in the future",
+      "claude2 endpoint and its distinct claude2 account have fresh healthy live observations",
+      "no provider-only shared-account orphan appears in delivery_health"
+    ],
+    "rollback": "Promote the last accepted command runtime. V2 remains fail-closed on stale evidence; no credential or TaskStore rollback is required."
+  }
+}

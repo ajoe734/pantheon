@@ -526,6 +526,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
+    parser.add_argument(
+        "--request-delivery-health-refresh",
+        action="store_true",
+        help=(
+            "Record an explicit Human/Ops request that authorizes the next "
+            "cycle to probe delivery health even past a cached future "
+            "retry_at, then exit without starting the poll loop."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1493,6 +1502,199 @@ def evaluate_task_delivery_admission(
         ),
         requested_endpoint_id=requested_endpoint_id,
     )
+
+
+def idle_delivery_health_refresh_targets(
+    config: dict[str, Any],
+    state: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    """Return due probes for configured endpoints without task demand.
+
+    Admission demand is intentionally still preferred by the caller: it is the
+    closest proof needed to unblock a real queue intent.  It cannot, however,
+    be the only source of fresh delivery evidence.  A quiet fleet otherwise
+    leaves an expired auth or quota observation closed until an unrelated task
+    happens to target that lane.
+
+    This remains a pure projection over the runtime snapshot.  The slow probe
+    runs after delivery, and the resulting observation is committed only by
+    the existing reserved runtime-maintenance transaction.  Enumerating
+    ``delivery_lane_for_agent`` also means an orphaned physical-agent record
+    which is not a configured delivery endpoint never receives a probe.
+    """
+
+    health = runtime_delivery_health(state)
+    endpoint_health = _admission_health_records(health, "endpoints")
+    account_health = _admission_health_records(health, "accounts")
+    now = datetime.now(timezone.utc)
+    targets: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for logical_agent_id in dispatch_loop_agent_ids(config):
+        lane = delivery_lane_for_agent(config, logical_agent_id)
+        for endpoint in lane.endpoints:
+            endpoint_id = normalize_agent_id(endpoint.endpoint_id)
+            if (
+                not endpoint_id
+                or endpoint_id in seen
+                or not endpoint.enabled
+                or not endpoint.can_auto_deliver
+                or not endpoint.provider_id
+                or not endpoint.account_id
+            ):
+                continue
+            _reason, target = rewrite_dispatch_admission.health_gate_for_endpoint(
+                endpoint_id=endpoint_id,
+                account_id=endpoint.account_id,
+                endpoint_health=endpoint_health,
+                account_health=account_health,
+                now=now,
+            )
+            if target is None or target.scope is not rewrite_dispatch_admission.HealthScope.ENDPOINT:
+                continue
+            seen.add(endpoint_id)
+            targets.append({"scope": target.scope.value, "id": endpoint_id})
+    return targets
+
+
+def _configured_delivery_endpoints(
+    config: dict[str, Any],
+) -> list[rewrite_dispatch_admission.DeliveryEndpoint]:
+    """Return the exact deliverable endpoints, deduplicated by endpoint id.
+
+    Shared by the due-only scan above and the authorized bypass scan below so
+    the two never enumerate a different endpoint set.
+    """
+
+    endpoints: list[rewrite_dispatch_admission.DeliveryEndpoint] = []
+    seen: set[str] = set()
+    for logical_agent_id in dispatch_loop_agent_ids(config):
+        lane = delivery_lane_for_agent(config, logical_agent_id)
+        for endpoint in lane.endpoints:
+            endpoint_id = normalize_agent_id(endpoint.endpoint_id)
+            if (
+                not endpoint_id
+                or endpoint_id in seen
+                or not endpoint.enabled
+                or not endpoint.can_auto_deliver
+                or not endpoint.provider_id
+                or not endpoint.account_id
+            ):
+                continue
+            seen.add(endpoint_id)
+            endpoints.append(endpoint)
+    return endpoints
+
+
+def _delivery_health_topology_fingerprint(config: dict[str, Any]) -> str:
+    """Hash the exact endpoint/provider/account triples that gate delivery.
+
+    Used to detect a genuine config-topology change so the authorized bypass
+    below fires once per new topology instead of every cycle.
+    """
+
+    parts = sorted(
+        f"{endpoint.endpoint_id}:{endpoint.provider_id}:{endpoint.account_id}"
+        for endpoint in _configured_delivery_endpoints(config)
+    )
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def _delivery_health_refresh_authority(state: Mapping[str, Any]) -> dict[str, Any]:
+    supervisor_state = state.get("supervisor") if isinstance(state, Mapping) else None
+    authority = (
+        supervisor_state.get("delivery_health_refresh_authority")
+        if isinstance(supervisor_state, Mapping)
+        else None
+    )
+    return dict(authority) if isinstance(authority, Mapping) else {}
+
+
+def authorized_delivery_health_refresh_targets(
+    config: dict[str, Any],
+    state: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    """Return an exact, bounded refresh scan that may bypass a future retry_at.
+
+    ``idle_delivery_health_refresh_targets`` only proposes a target once its
+    own cached retry/refresh deadline has already arrived, which is correct
+    steady-state behaviour but leaves a lane closed until that deadline even
+    when a live probe would now succeed -- for example right after supervisor
+    startup, after the delivery topology itself changed, or when Human/Ops
+    has explicitly asked for a fresh read. This scan authorizes exactly those
+    three cases and nothing else: it returns targets only when the exact
+    delivery topology fingerprint differs from the last one this process
+    recorded, or an explicit Human/Ops refresh request is pending. Both
+    signals are consumed by
+    ``record_delivery_health_refresh_authority_consumed`` in the same cycle
+    that folds these targets into the probe demand, so an unchanged topology
+    never retriggers the bypass on a later cycle. It never returns a target
+    for a lane whose cached evidence is already healthy -- there is nothing
+    to repair, so bypassing its retry_at would only spend a probe for no
+    reason.
+    """
+
+    authority = _delivery_health_refresh_authority(state)
+    fingerprint = _delivery_health_topology_fingerprint(config)
+    topology_changed = str(authority.get("topology_fingerprint") or "") != fingerprint
+    human_ops_requested = bool(authority.get("human_ops_refresh_requested_at"))
+    if not topology_changed and not human_ops_requested:
+        return []
+
+    health = runtime_delivery_health(state)
+    healthy = rewrite_provider_health.DeliveryHealthState.HEALTHY.value
+    targets: list[dict[str, str]] = []
+    for endpoint in _configured_delivery_endpoints(config):
+        endpoint_entry = rewrite_provider_health.endpoint_health_entry(
+            health, endpoint.endpoint_id
+        )
+        account_entry = rewrite_provider_health.account_health_entry(
+            health, endpoint.account_id
+        )
+        if endpoint_entry.get("state") == healthy and account_entry.get("state") == healthy:
+            continue
+        targets.append(
+            {"scope": rewrite_dispatch_admission.HealthScope.ENDPOINT.value, "id": endpoint.endpoint_id}
+        )
+    return targets
+
+
+def record_delivery_health_refresh_authority_consumed(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Persist the topology fingerprint and clear a spent Human/Ops request.
+
+    Must run once per cycle, after ``authorized_delivery_health_refresh_targets``
+    has already been folded into that same cycle's probe demand, so the
+    bypass it authorized cannot fire again for an unchanged topology or a
+    request that was already honoured.
+    """
+
+    supervisor_state = state.setdefault("supervisor", {})
+    authority = supervisor_state.setdefault("delivery_health_refresh_authority", {})
+    fingerprint = _delivery_health_topology_fingerprint(config)
+    changed = False
+    if authority.get("topology_fingerprint") != fingerprint:
+        authority["topology_fingerprint"] = fingerprint
+        changed = True
+    if authority.get("human_ops_refresh_requested_at"):
+        authority["human_ops_refresh_requested_at"] = None
+        changed = True
+    return changed
+
+
+def request_delivery_health_refresh(state: dict[str, Any]) -> bool:
+    """Record an explicit Human/Ops request for the authorized bypass scan.
+
+    Callers must hold the runtime-state lock (``runtime_state_update``); this
+    function only mutates the given in-memory snapshot.
+    """
+
+    supervisor_state = state.setdefault("supervisor", {})
+    authority = supervisor_state.setdefault("delivery_health_refresh_authority", {})
+    authority["human_ops_refresh_requested_at"] = utc_now()
+    return True
 
 
 def probe_demanded_delivery_health(
@@ -12498,6 +12700,20 @@ def build_dispatch_plan(
     ):
         if target not in refresh_targets:
             refresh_targets.append(target)
+    # A startup or otherwise idle supervisor still needs to repair due
+    # evidence.  Keep these targets after task/fallback demand so bounded
+    # probing spends the current cycle on an immediately blocked task first.
+    for target in idle_delivery_health_refresh_targets(config, scratch):
+        if target not in refresh_targets:
+            refresh_targets.append(target)
+    # Startup, a config-topology change, or an explicit Human/Ops request may
+    # authorize probing a lane whose cached retry_at has not yet elapsed.
+    # This bypass is bounded to those exact triggers (see
+    # ``authorized_delivery_health_refresh_targets``); it is not a
+    # every-cycle probe path.
+    for target in authorized_delivery_health_refresh_targets(config, scratch):
+        if target not in refresh_targets:
+            refresh_targets.append(target)
     dispatcher_state = scratch.get("ready_dispatcher")
     cursor = (
         dispatcher_state.get("dispatch_cursor")
@@ -12831,6 +13047,10 @@ def apply_post_dispatch_maintenance(
             config, state, delivery_health_observations
         )
     ) or changed
+    changed = (
+        bool(record_delivery_health_refresh_authority_consumed(config, state))
+        or changed
+    )
     changed = bool(reconcile_unavailable_assignments(config, state)) or changed
     changed = bool(reconcile_failure_loops(config, state)) or changed
     if isinstance(assistant_dev_bridge_snapshot, dict):
@@ -13630,6 +13850,15 @@ def main() -> int:
     config = load_config(args.config)
     validate_provider_accounts(config)
     check_status_root_consistency(config, allow_isolated=args.allow_isolated_status_root)
+    if args.request_delivery_health_refresh:
+        with runtime_state_update(config) as state:
+            request_delivery_health_refresh(state)
+        console_log(
+            "recorded an explicit delivery-health refresh request for the "
+            "next supervisor cycle",
+            quiet=args.quiet,
+        )
+        return 0
     if not acquire_singleton_lock(config):
         console_log(
             "another supervisor already holds the singleton lock; exiting without "
