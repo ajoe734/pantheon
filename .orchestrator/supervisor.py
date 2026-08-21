@@ -3422,6 +3422,55 @@ def start_worker_for_request(
     return True, worker_run_id, result.as_dict()
 
 
+def inspect_command_runtime_health(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the existing command-runtime admission result for this cycle."""
+
+    checked_at = utc_now()
+    try:
+        issued_env = status_command_runtime_env(config)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return {
+            "healthy": False,
+            "checked_at": checked_at,
+            "reason": "command_runtime_integrity_failed",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    return {
+        "healthy": True,
+        "checked_at": checked_at,
+        "reason": "healthy",
+        "error": None,
+        "runtime": status_command_runtime_record_from_env(issued_env),
+    }
+
+
+def record_command_runtime_health(
+    state: dict[str, Any],
+    health: Mapping[str, Any],
+) -> bool:
+    """Publish command-runtime health in the existing Supervisor state."""
+
+    normalized = deepcopy(dict(health))
+    supervisor_state = state.setdefault("supervisor", {})
+    if supervisor_state.get("command_runtime_health") == normalized:
+        return False
+    supervisor_state["command_runtime_health"] = normalized
+    return True
+
+
+def command_runtime_dispatch_block_reason(state: Mapping[str, Any]) -> str | None:
+    """Return a global dispatch hold only for an explicit failed health probe."""
+
+    supervisor_state = state.get("supervisor")
+    if not isinstance(supervisor_state, Mapping):
+        return None
+    health = supervisor_state.get("command_runtime_health")
+    if not isinstance(health, Mapping) or health.get("healthy") is not False:
+        return None
+    detail = str(health.get("error") or health.get("reason") or "unknown error").strip()
+    return f"Command runtime integrity is unhealthy: {detail}"
+
+
 def process_queue(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -3447,6 +3496,8 @@ def process_queue(
     if delivery_outcome is not None:
         delivery_outcome["launched"] = False
     if not bool(ready_dispatch_settings(config).get("enabled", False)):
+        return False
+    if command_runtime_dispatch_block_reason(state):
         return False
     changed = False
     task_map = task_index_from_status(config, load_status(config))
@@ -10780,9 +10831,19 @@ def schedule_missing_process_retry(
     state: dict[str, Any],
     worker: dict[str, Any],
     reason: str,
+    *,
+    status: Mapping[str, Any] | None = None,
+    task: Mapping[str, Any] | None = None,
 ) -> bool:
     """Schedule a reconstructable missing-process retry within its total budget."""
 
+    if (
+        isinstance(status, Mapping)
+        and isinstance(task, Mapping)
+        and str(task.get("status") or "").strip().lower() == "blocked"
+        and task_has_explicit_recovery_hold(status, task)
+    ):
+        return False
     retry = worker_retry_settings(
         config,
         str(worker.get("provider") or worker.get("agent_id") or ""),
@@ -11018,8 +11079,10 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         "stale_queue_records_completed": 0,
     }
     try:
-        task_map = task_index_from_status(config, load_status(config))
+        status_snapshot = load_status(config)
+        task_map = task_index_from_status(config, status_snapshot)
     except KeyError:
+        status_snapshot = {}
         task_map = {}
     workers = state.setdefault("workers", {})
 
@@ -11059,6 +11122,31 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             else "Worker process missing during supervisor boot reconciliation."
         )
         task = task_map.get(str(worker.get("task_id") or ""))
+        if (
+            isinstance(task, Mapping)
+            and str(task.get("status") or "").strip().lower() == "blocked"
+            and task_has_explicit_recovery_hold(status_snapshot, task)
+        ):
+            worker["status"] = "completed"
+            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            worker.pop("last_error", None)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed_on_explicit_task_hold",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": (
+                        "Worker process ended after the canonical task entered "
+                        "an explicit blocked hold; automatic retry suppressed."
+                    ),
+                    "worker_run_id": run_id,
+                    "waiting_for": task.get("waiting_for"),
+                },
+            )
+            changed = True
+            continue
         handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
         if handoff_status is not None:
             worker["status"] = "completed"
@@ -11157,6 +11245,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     state,
                     worker,
                     retry_reason,
+                    status=status_snapshot,
+                    task=task,
                 ):
                     worker["last_error_raw_ref"] = raw_ref
                     write_activity_log(
@@ -11193,7 +11283,14 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             )
 
         if missing_process:
-            if schedule_missing_process_retry(config, state, worker, reason):
+            if schedule_missing_process_retry(
+                config,
+                state,
+                worker,
+                reason,
+                status=status_snapshot,
+                task=task,
+            ):
                 write_activity_log(
                     config,
                     {
@@ -12122,12 +12219,16 @@ def dispatch_global_block_reason(
     config: dict[str, Any],
     settings: dict[str, Any],
     *,
+    state: Mapping[str, Any] | None = None,
     live_total: int,
     active_task_ids: set[str],
     pending_task_ids: set[str],
 ) -> str | None:
     if not settings.get("enabled", True):
         return "Dispatch planner is disabled"
+    runtime_block = command_runtime_dispatch_block_reason(state or {})
+    if runtime_block:
+        return runtime_block
     maximum = ready_dispatch_max_concurrent_workers(config)
     pending_only = len(pending_task_ids - active_task_ids)
     if maximum is not None and live_total + pending_only >= maximum:
@@ -12427,6 +12528,8 @@ def reserve_dispatch_plan(
     events = plan.get("events")
     if not isinstance(events, list) or not events:
         return False
+    if command_runtime_dispatch_block_reason(state):
+        return False
     settings = ready_dispatch_settings(config)
     active_statuses = normalized_status_set(settings.get("active_worker_statuses"), [])
     queued_events = queue_events(state)
@@ -12572,6 +12675,7 @@ def explain_dispatch_for_task(
     global_block = dispatch_global_block_reason(
         config,
         settings,
+        state=state,
         live_total=live_total,
         active_task_ids=active_task_ids,
         pending_task_ids=pending_task_ids,
@@ -12812,6 +12916,36 @@ def run_once(
         )
         changed = pre_plan_poll_changed or changed
 
+        command_runtime_health = _safe_phase(
+            "inspect_command_runtime_health",
+            inspect_command_runtime_health,
+            config,
+            quiet=quiet,
+            critical=True,
+        )
+        if not isinstance(command_runtime_health, dict):
+            command_runtime_health = {
+                "healthy": False,
+                "checked_at": utc_now(),
+                "reason": "command_runtime_health_unavailable",
+                "error": "Supervisor could not produce a command-runtime health result",
+            }
+        runtime_health_changed = bool(
+            _safe_phase(
+                "record_command_runtime_health_reserved",
+                _run_reserved_runtime_phase,
+                config,
+                "command_runtime_health",
+                lambda state: record_command_runtime_health(
+                    state,
+                    command_runtime_health,
+                ),
+                quiet=quiet,
+                critical=True,
+            )
+        )
+        changed = runtime_health_changed or changed
+
         dispatch_status_snapshot = _safe_phase(
             "load_dispatch_status_snapshot", load_status, config, quiet=quiet,
             critical=True,
@@ -12837,16 +12971,28 @@ def run_once(
         if not isinstance(planning_runtime_snapshot, dict):
             planning_runtime_snapshot = {}
         dispatch_queue_snapshot = queue_events(planning_runtime_snapshot)
-        dispatch_plan = _safe_phase(
-            "build_dispatch_plan",
-            build_dispatch_plan,
-            config,
-            planning_runtime_snapshot,
-            dispatch_status_snapshot,
-            dispatch_queue_snapshot,
-            live_total=live_total_snapshot,
-            quiet=quiet,
-            critical=True,
+        dispatch_plan = (
+            _safe_phase(
+                "build_dispatch_plan",
+                build_dispatch_plan,
+                config,
+                planning_runtime_snapshot,
+                dispatch_status_snapshot,
+                dispatch_queue_snapshot,
+                live_total=live_total_snapshot,
+                quiet=quiet,
+                critical=True,
+            )
+            if command_runtime_health.get("healthy") is True
+            else {
+                "planned_at": utc_now(),
+                "events": [],
+                "live_total": live_total_snapshot,
+                "health_refresh_targets": [],
+                "global_block_reason": command_runtime_dispatch_block_reason(
+                    {"supervisor": {"command_runtime_health": command_runtime_health}}
+                ),
+            }
         )
         if not isinstance(dispatch_plan, dict):
             dispatch_plan = {"events": []}

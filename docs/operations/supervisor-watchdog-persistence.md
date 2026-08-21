@@ -52,10 +52,19 @@ only accepted topology is:
 - mutable staging checkout: `/home/lupin/pantheon-ci-deploy/dev-root`.
 
 Promotion removes write permission from every non-symlink entry in the exact
-command runtime before stopping the incumbent supervisor. Auto workers read
-and execute this tree, but all task source edits belong in their isolated task
-worktrees. A write attempt against `PANTHEON_COMMAND_ROOT` must therefore fail
-without making later worker launches reject a dirty shared runtime.
+command runtime before stopping the incumbent supervisor. This mode-bit seal
+is the first guard against accidental writes. Because workers run under the
+same Unix account, `worker_runner.py` also launches every provider child under
+`bubblewrap`: the host view remains compatible for the task worktree, status
+root, credentials, and caches, while the exact `PANTHEON_COMMAND_ROOT` is
+over-mounted read-only in a private PID/mount namespace. The runner remains
+outside that namespace so heartbeat and terminal status writes continue.
+
+Promotion probes this exact namespace before terminating the incumbent and
+fails closed when `bwrap` is absent or user namespaces are unavailable. All
+task source edits belong in isolated task worktrees; even a provider attempt
+to restore write bits with `chmod` must fail without dirtying the shared
+runtime or poisoning later worker launches.
 
 `sync-dev-root.sh` never reads `/proc/<pid>/cwd` or a product-root PID file to
 infer authority. It refreshes staging, materializes the exact command runtime,
@@ -101,6 +110,14 @@ The deployment runbook must fail the replacement unless the user-systemd timer
 heartbeat all become healthy. For user systemd it also enables and verifies
 login linger, so the timer starts after a reboot without requiring an
 interactive login.
+
+The host must provide `bwrap` (the `bubblewrap` package) and permit
+unprivileged user namespaces. Check both before a first install:
+
+```bash
+command -v bwrap
+bwrap --unshare-pid --ro-bind / / --dev /dev --proc /proc -- /bin/true
+```
 
 Before the old supervisor is stopped, split-root promotion also creates the
 ignored canonical `.orchestrator/approval-queue.json` marker when it is absent.

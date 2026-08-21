@@ -342,6 +342,49 @@ def seal_command_runtime(root: Path) -> dict[str, Any]:
     }
 
 
+def verify_worker_sandbox(root: Path) -> dict[str, Any]:
+    """Prove bubblewrap can enforce the provider's read-only runtime mount."""
+
+    binary = shutil.which("bwrap")
+    if not binary:
+        raise ValueError(
+            "bubblewrap (bwrap) is required before promoting a worker command runtime"
+        )
+    runtime_root = root.expanduser().resolve()
+    probe = subprocess.run(
+        [
+            binary,
+            "--die-with-parent",
+            "--unshare-pid",
+            "--bind",
+            "/",
+            "/",
+            "--dev-bind",
+            "/dev",
+            "/dev",
+            "--ro-bind",
+            str(runtime_root),
+            str(runtime_root),
+            "--proc",
+            "/proc",
+            "--",
+            "/bin/true",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    if probe.returncode != 0:
+        detail = (probe.stderr or probe.stdout or "bubblewrap probe failed").strip()
+        raise ValueError(f"worker command-runtime sandbox is unavailable: {detail}")
+    return {
+        "outcome": "available",
+        "binary": str(Path(binary).resolve()),
+        "command_root": str(runtime_root),
+    }
+
+
 def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict[str, Any]:
     """Best-effort refresh of status_root's own governance-tool code.
 
@@ -433,6 +476,13 @@ def replace_supervisor(
         # Seal it before TERM so a failure cannot interrupt the incumbent, and
         # so workers can only read the exact command source after launch.
         result["command_runtime_seal"] = seal_command_runtime(Path(identity["root"]))
+        # The provider boundary is enforced by worker_runner, not by mode bits
+        # alone. Prove the host can create that namespace before TERM so a
+        # missing/disabled bubblewrap cannot replace a healthy incumbent with
+        # a supervisor that is unable to launch any worker safely.
+        result["worker_sandbox_preflight"] = verify_worker_sandbox(
+            Path(identity["root"])
+        )
         # Workers require this split-root marker before their adapter starts.
         # Creating it is idempotent and happens before TERM, so a malformed
         # coordination root cannot turn a healthy incumbent into an outage.

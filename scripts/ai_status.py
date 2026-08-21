@@ -23,6 +23,11 @@ from threading import local
 from typing import Any, Generator, Mapping
 from zoneinfo import ZoneInfo
 
+# Status-command integrity validation runs after repo-local imports. Prevent
+# those imports from creating an untracked __pycache__ that would make the
+# command runtime fail its own dirty executable/import check.
+sys.dont_write_bytecode = True
+
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 

@@ -170,6 +170,118 @@ class V2StartupCacheTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(worker.get("status"), "retry_backoff")
 
+    def test_missing_process_retry_honors_canonical_explicit_hold(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="blocked")
+        task["waiting_for"] = "Human/Ops"
+        status = {
+            "tasks": [task],
+            "blockers": [
+                {
+                    "task_id": "TASK-1",
+                    "status": "open",
+                    "waiting_for": "Human/Ops",
+                }
+            ],
+        }
+        state = {"workers": {}, "queue": {"events": {}}}
+        worker = {
+            "provider": "codex",
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "wake",
+            },
+        }
+
+        with mock.patch.object(
+            supervisor,
+            "request_for_worker",
+            side_effect=AssertionError("explicit hold must stop before retry reconstruction"),
+        ):
+            result = supervisor.schedule_missing_process_retry(
+                config,
+                state,
+                worker,
+                "worker process missing",
+                status=status,
+                task=task,
+            )
+
+        self.assertFalse(result)
+        self.assertNotIn("status", worker)
+
+    def test_boot_reconciliation_completes_worker_on_explicit_task_hold(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="blocked")
+        task["waiting_for"] = "Human/Ops"
+        status = {
+            "tasks": [task],
+            "blockers": [
+                {
+                    "task_id": "TASK-1",
+                    "status": "open",
+                    "waiting_for": "Human/Ops",
+                }
+            ],
+        }
+        worker = {
+            "run_id": "run-finalize",
+            "status": "running",
+            "task_id": "TASK-1",
+            "provider": "codex",
+            "agent_id": "codex",
+            "pid": 999999,
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        state = {"workers": {"run-finalize": worker}, "queue": {"events": {}}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize,
+            mock.patch.object(supervisor, "write_activity_log") as activity,
+            mock.patch.object(
+                supervisor,
+                "schedule_missing_process_retry",
+                side_effect=AssertionError("explicit canonical hold must not retry"),
+            ),
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "completed")
+        finalize.assert_called_once_with(config, state, worker, "completed")
+        self.assertEqual(
+            activity.call_args.args[1]["type"],
+            "worker_completed_on_explicit_task_hold",
+        )
+
+    def test_command_runtime_health_failure_is_one_global_dispatch_hold(self) -> None:
+        config = config_fixture()
+        with mock.patch.object(
+            supervisor,
+            "status_command_runtime_env",
+            side_effect=RuntimeError(
+                "PANTHEON_COMMAND_ROOT contains dirty executable/import file: scripts/ai_status.py"
+            ),
+        ):
+            health = supervisor.inspect_command_runtime_health(config)
+
+        state = {"supervisor": {}}
+        self.assertTrue(supervisor.record_command_runtime_health(state, health))
+        reason = supervisor.command_runtime_dispatch_block_reason(state)
+        self.assertFalse(health["healthy"])
+        self.assertIn("scripts/ai_status.py", reason)
+        with mock.patch.object(
+            supervisor,
+            "load_status",
+            side_effect=AssertionError("blocked queue must not read or launch task work"),
+        ):
+            self.assertFalse(supervisor.process_queue(config, state))
+
     def test_terminal_facts_satisfy_dependencies_without_archive_lookup(self) -> None:
         config = config_fixture()
         child = task_fixture(task_id="CHILD", depends_on=["MERGED-LEGACY"])
