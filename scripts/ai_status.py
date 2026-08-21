@@ -5799,15 +5799,15 @@ def _audited_reassignment_events(
     source: str,
     unavailable_message: str,
 ) -> list[tuple[datetime, dict[str, Any]]]:
-    """Return supervisor-audited `task_reassigned` events for a task, oldest first.
+    """Return canonical audited `task_reassigned` events for a task, oldest first.
 
-    Only the events the supervisor itself wrote through
-    `persist_task_reassignment` qualify: they carry the `Orchestrator` actor and
-    an `event_id` that is a digest over their own payload, so a hand-appended
-    activity line cannot manufacture a reassignment hop. The narrative
-    `task_reassigned` lines `write_activity_log` emits alongside them use
-    `from_owner`/`to_owner` keys and carry no identity digest; they are skipped
-    on purpose.
+    Events written by the supervisor and the local Human/Ops assignment command
+    both qualify because they use the shared canonical assignment writer. Their
+    actor-specific `event_id` is a digest over the event payload, so a
+    hand-appended activity line cannot manufacture a reassignment hop. The
+    narrative `task_reassigned` lines `write_activity_log` emits alongside them
+    use `from_owner`/`to_owner` keys and carry no identity digest; they are
+    skipped on purpose.
 
     The search spans the live tail *and* the rotated archives. Reading only
     LOG_FILE made a legitimate, audited reassignment vanish the moment routine
@@ -5825,7 +5825,7 @@ def _audited_reassignment_events(
         if (
             event.get("type") != "task_reassigned"
             or str(event.get("task_id") or "").strip() != task_id
-            or event.get("agent") != "Orchestrator"
+            or event.get("agent") not in {"Orchestrator", "Human/Ops"}
             or not event.get("old_owner")
             or not event.get("new_owner")
             or not _supervisor_reassignment_event_id_matches(event)
@@ -5983,14 +5983,21 @@ def _supervisor_reassignment_event_id(event: Mapping[str, Any]) -> str:
 
 
 def _supervisor_reassignment_event_id_matches(event: Mapping[str, Any]) -> bool:
-    """Accept only the two canonical prefixes bound to the exact payload digest."""
+    """Accept only actor-bound canonical prefixes with the exact payload digest."""
 
     expected = _supervisor_reassignment_event_id(event)
     digest = expected.removeprefix("supervisor-reassign-")
-    return str(event.get("event_id") or "") in {
-        expected,
-        f"supervisor-task-reassigned-{digest}",
-    }
+    actor = str(event.get("agent") or "")
+    if actor == "Orchestrator":
+        accepted_ids = {
+            expected,
+            f"supervisor-task-reassigned-{digest}",
+        }
+    elif actor == "Human/Ops":
+        accepted_ids = {f"human-ops-task-reassigned-{digest}"}
+    else:
+        return False
+    return str(event.get("event_id") or "") in accepted_ids
 
 
 def _verified_done_owner_reassignment(
@@ -6000,7 +6007,7 @@ def _verified_done_owner_reassignment(
     current_owner: str,
     commit_timestamp: str,
 ) -> dict[str, Any]:
-    """Prove that audited supervisor reassignments explain owner drift at done.
+    """Prove that canonical audited reassignments explain owner drift at done.
 
     Owner reassignment is a normal, recurring event rather than an anomaly: a
     provider hits its quota or goes unreachable and the supervisor hands the
@@ -6019,7 +6026,7 @@ def _verified_done_owner_reassignment(
         source="canonical done owner reassignment evidence",
         unavailable_message=(
             "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
-            "audited supervisor task_reassigned event, but the activity audit is unavailable."
+            "canonical audited task_reassigned event, but the activity audit is unavailable."
         ),
     )
     if not any(
@@ -6029,7 +6036,7 @@ def _verified_done_owner_reassignment(
     ):
         raise SystemExit(
             "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
-            "audited supervisor task_reassigned event."
+            "canonical audited task_reassigned event."
         )
 
     chain = _walk_audited_role_chain(
@@ -6194,7 +6201,7 @@ def _verified_done_reviewer_reassignment(
     current_reviewer: str,
     commit_timestamp: str,
 ) -> dict[str, Any]:
-    """Prove that audited supervisor reassignments explain reviewer drift at done.
+    """Prove that canonical audited reassignments explain reviewer drift at done.
 
     A delivered commit whose `LLM-Agent` trailer went stale almost always has a
     stale `Reviewer` trailer too, because the supervisor reassigns the pair
@@ -6255,7 +6262,7 @@ def _verified_done_reviewer_reassignment(
         source="canonical done reviewer reassignment evidence",
         unavailable_message=(
             "Cannot finalize task: prior-reviewer Reviewer trailer requires an exact "
-            "audited supervisor task_reassigned event, but the activity audit is unavailable."
+            "canonical audited task_reassigned event, but the activity audit is unavailable."
         ),
     )
     chain = _walk_audited_role_chain(
