@@ -166,6 +166,10 @@ services:
       SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
       SOURCE_INGEST_REQUIREMENT_STATE_PATH: /data/source-ingest/requirement_snapshots.jsonl
       SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
+      # The canonical Source-owned stored-snapshot projection shares this
+      # durable volume with completed ingest. Paper reads it only through the
+      # Source API; no paper service receives a provider credential or feed.
+      SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH: /data/source-ingest/latest_market_snapshots.jsonl
       # Shared with strategy-distillation-worker: a normalized SourceRecord
       # commit here admits its job to the same durable queue that controller
       # tick's catch_up polls, so the two never diverge into separate queues.
@@ -1375,6 +1379,8 @@ services:
         condition: service_healthy
       openclaw-gateway-adapter:
         condition: service_healthy
+      paper-fleet-reconciler:
+        condition: service_healthy
       governance:
         condition: service_healthy
       runtime-manager:
@@ -2033,6 +2039,10 @@ services:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      # CurrentArtifactStrategy only accepts the Source-owned persisted
+      # snapshot contract.  The default remains paper-only and fails closed
+      # when a binding lacks an executable artifact or a valid snapshot.
+      PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
       PAPER_SIGNAL_STRATEGY: ${PAPER_SIGNAL_STRATEGY:-artifact}
@@ -2043,6 +2053,8 @@ services:
       runtime-manager:
         condition: service_healthy
       signal-store:
+        condition: service_healthy
+      source-ingest:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-m", "services.execution.lean_runtime.paper_signal_producer", "healthcheck"]
