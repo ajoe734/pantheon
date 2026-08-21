@@ -208,8 +208,16 @@ def main() -> int:
 
     compose_files = args.compose_files or [str(REPO_ROOT / "docker-compose.yml")]
 
-    # Build compose environment with parameterized isolated ports
+    expected_sha = _run(["git", "rev-parse", "HEAD"])
+    print(f"[*] Harness starting for Task {TASK_ID}")
+    print(f"[*] Repository Root: {REPO_ROOT}")
+    print(f"[*] Current SHA: {expected_sha}")
+    print(f"[*] Compose Project: {args.compose_project}")
+    print(f"[*] Port Offset: +{args.port_offset}")
+
+    # Build compose environment with parameterized isolated ports and exact git sha
     compose_env = os.environ.copy()
+    compose_env["GIT_SHA"] = expected_sha
     for port_name, default_port in DEFAULT_PORTS.items():
         if port_name not in compose_env:
             compose_env[port_name] = str(default_port + args.port_offset)
@@ -227,16 +235,9 @@ def main() -> int:
         cmd = ["docker", "compose", "-p", args.compose_project]
         for cf in compose_files:
             cmd.extend(["-f", cf])
-        cmd.extend(["up", "-d"] + REQUIRED_COMPOSE_SERVICES)
+        cmd.extend(["up", "-d", "--build"] + REQUIRED_COMPOSE_SERVICES)
         print(f"[*] Provisioning isolated Compose services (offset +{args.port_offset}): {' '.join(cmd)}")
         subprocess.run(cmd, env=compose_env, check=True)
-
-    expected_sha = _run(["git", "rev-parse", "HEAD"])
-    print(f"[*] Harness starting for Task {TASK_ID}")
-    print(f"[*] Repository Root: {REPO_ROOT}")
-    print(f"[*] Current SHA: {expected_sha}")
-    print(f"[*] Compose Project: {args.compose_project}")
-    print(f"[*] Port Offset: +{args.port_offset}")
 
     # Build URLs mapping
     urls: dict[str, str] = {}
