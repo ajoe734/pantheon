@@ -79,6 +79,30 @@ scheduler tenant with an authorized strict-auth tenant (for example
 after that rollout; do not replace it with a fixture, direct store access, or
 a fake provider.
 
+## Tenant fix landed; redeploy blocked on worktree access (2026-08-21)
+
+Per the guidance above, `operator-bff`'s `pantheon-local` downstream boundary
+(`AGORA_HANDOFF_SERVICE_TENANTS`, `POLICY_LEARNING_AGORA_TENANT_ID`) is the
+canonical value and was left unchanged. Instead, `docker-compose.yml` now
+adds `pantheon-local` to the `viewer`/`operator_a`/`operator_b` dev-login
+identities' `_ALLOWED_TENANTS` defaults (alongside the existing
+`tenant-dev,pantheon-dev`), so a strict-auth token minted for any of those
+identities can reach the `pantheon-local`-scoped internal handoff route. A new
+compose contract test,
+`services/control-plane/bff/tests/test_dev_login_pantheon_local_tenant_contract.py`,
+asserts both that default and that the downstream tenant boundary itself did
+not move.
+
+This worktree could not redeploy `operator-bff` or rerun the suite against the
+real current-dev host to confirm the fix live: `gcloud` (snap) fails before
+any auth step with a sandbox-level `cannot create transient scope: DBus error
+UnixProcessIdUnknown`, no SSH key is authorized for the declared dev VM, and
+this background worker session has no interactive approver to grant outbound
+network access for a direct HTTPS probe. This is an access/environment
+limitation of the current worktree, not a defect in the tenant fix. A session
+or operator with current-dev-host access should redeploy `operator-bff` (env
+change only, no image rebuild required) and rerun this suite.
+
 ## Code disposition
 
 The existing `policy-learning-shadow-eval-scheduler` and Consultation
