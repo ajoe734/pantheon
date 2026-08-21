@@ -21,7 +21,7 @@ hash itself.
 ## Rebase verification
 
 The existing PR was rebased onto `origin/dev` commit
-`840cd989b37878804a4fcf9df6793cab2408f750` before fresh review. The focused
+`bb83df12e3cec11de0f441850f08a179ddd7394a` before fresh review. The focused
 real-Postgres restart/duplicate/ignored-receipt regression passed again.
 
 The full `services/trade_journey` suite against a throwaway local PostgreSQL
