@@ -96,7 +96,7 @@ from rewrite.task_state_store import (
     load_snapshot,
     snapshot_transaction,
 )
-from rewrite import task_machine
+from rewrite import task_machine, task_state_store
 from common import (
     ActivityAuditInvariantError,
     CANONICAL_TASK_STATE_IDENTITY_ENV,
@@ -7508,6 +7508,13 @@ def command_retire_archive_collision(
         index=readback_index,
     )
 
+    retired_at = iso_now()
+    state[task_state_store.DRAIN_MARKER_KEY] = {
+        "reason": message,
+        "actor": current_actor(),
+        "approved_at": retired_at,
+        "task_ids": [task_id],
+    }
     active_digest = _canonical_json_sha256(active)
     active_delivery = deepcopy(active.get(DELIVERY_BINDING_KEY))
     active_review = deepcopy(active.get(APPROVAL_BINDING_KEY))
@@ -7538,7 +7545,7 @@ def command_retire_archive_collision(
     ]
     append_log(
         {
-            "ts": iso_now(),
+            "ts": retired_at,
             "agent": current_actor(),
             "type": "active_archive_collision_retired",
             "task_id": task_id,

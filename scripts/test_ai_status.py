@@ -30,7 +30,7 @@ import ai_status
 import task_archive
 import common
 from common import rotate_activity_log_unlocked
-from rewrite import task_machine
+from rewrite import task_machine, task_state_store
 
 
 def _canonical_state_identity_json(status_root: Path, event_log: Path) -> str:
@@ -9555,6 +9555,7 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
         )
         original_bytes = original_path.read_bytes()
         replacement_bytes = replacement_path.read_bytes()
+        before = deepcopy(state)
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
@@ -9565,6 +9566,7 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
                 ["LOCK-ONE", "LOCK-TWO", "Retire duplicate active row."],
             )
 
+        task_state_store.validate_state_transition(state, before)
         self.assertIsNone(ai_status.get_task(state, "LOCK-ONE"))
         self.assertEqual(state["handoffs"], [])
         self.assertEqual(state["blockers"], [])
@@ -9578,6 +9580,15 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
             },
         )
         self.assertIn("LOCK-ONE", state[ai_status.ARCHIVE_RECEIPTS_KEY])
+        self.assertEqual(
+            state[task_state_store.DRAIN_MARKER_KEY],
+            {
+                "reason": "Retire duplicate active row.",
+                "actor": "Human/Ops",
+                "approved_at": events[0]["ts"],
+                "task_ids": ["LOCK-ONE"],
+            },
+        )
         self.assertEqual(original_path.read_bytes(), original_bytes)
         self.assertEqual(replacement_path.read_bytes(), replacement_bytes)
         self.assertEqual(len(events), 1)
