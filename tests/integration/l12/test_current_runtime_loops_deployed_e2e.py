@@ -383,17 +383,28 @@ def _is_executable_binding(binding: Mapping[str, Any]) -> bool:
     strategy_id = str(metadata.get("strategy_id") or "").strip()
     if not strategy_id:
         return False
-    artifact_checksum = str(
-        binding.get("artifact_checksum")
-        or metadata.get("artifact_checksum")
-        or (
-            metadata.get("authoritative_loader_attestation", {}).get("artifact_checksum")
-            if isinstance(metadata.get("authoritative_loader_attestation"), Mapping)
-            else ""
-        )
-        or ""
-    ).strip()
-    if not artifact_checksum:
+    object_store = binding.get("object_store") or metadata.get("object_store")
+    if not isinstance(object_store, Mapping):
+        return False
+    version = str(binding.get("artifact_version") or "").strip()
+    projection = object_store.get(
+        f"openclaw/registry/{strategy_id}/{version}/metadata.json"
+    )
+    if isinstance(projection, str):
+        try:
+            projection = json.loads(projection)
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(projection, Mapping) or not str(
+        projection.get("checksum") or ""
+    ).strip():
+        return False
+    if not str(binding.get("symbol") or metadata.get("symbol") or "").strip():
+        return False
+    if not isinstance(
+        binding.get("market_data_policy") or metadata.get("market_data_policy"),
+        Mapping,
+    ):
         return False
     return True
 
@@ -775,6 +786,7 @@ class RuntimeChain:
         include_projection_checksum: bool,
         parameter: float,
         version_minor: int,
+        include_market_symbol: bool = True,
     ) -> dict[str, Any]:
         artifact_id = f"artifact-l12-{label}-{self.suffix}"
         version = f"2.{version_minor}.0"
@@ -843,6 +855,8 @@ class RuntimeChain:
                 "minimum_closes": 2,
             },
         }
+        if include_market_symbol:
+            runtime_metadata["symbol"] = market_symbol
         if include_projection_checksum:
             runtime_metadata["artifact_checksum"] = checksum
 
@@ -1070,6 +1084,7 @@ class RuntimeChain:
 
             positive_capital = self._create_capital("positive")
             negative_capital = self._create_capital("missing-checksum")
+            missing_symbol_capital = self._create_capital("missing-market-symbol")
 
             loop8_started = _utc_now()
             positive = self._deploy_artifact(
@@ -1086,8 +1101,17 @@ class RuntimeChain:
                 parameter=0.02,
                 version_minor=2,
             )
+            missing_symbol = self._deploy_artifact(
+                "missing-market-symbol",
+                capital=missing_symbol_capital,
+                include_projection_checksum=True,
+                parameter=0.03,
+                version_minor=3,
+                include_market_symbol=False,
+            )
             positive_binding = positive["binding"]
             negative_binding = negative["binding"]
+            missing_symbol_binding = missing_symbol["binding"]
             self.evidence.add_case(
                 "loop_08_promotion_deployment",
                 loop=8,
@@ -1163,19 +1187,46 @@ class RuntimeChain:
                 },
             )
 
-            def negative_health() -> dict[str, Any] | None:
-                health = self._container_json(
-                    "paper-signal-producer",
-                    "/tmp/paper-signal-producer-health.json",
+            def negative_admission() -> dict[str, Any] | None:
+                desired = self.http.request(
+                    "runtime",
+                    "GET",
+                    "/api/runtime-fleet/desired-state?stage=paper&include_excluded=true",
+                    headers=self.runtime_headers,
                 )
-                degraded = health.get("degraded_bindings") or {}
-                if negative_binding["binding_id"] in degraded:
-                    return health
+                desired_ids = {
+                    str(item.get("binding_id"))
+                    for item in desired.get("bindings", [])
+                    if isinstance(item, Mapping)
+                }
+                exclusions = {
+                    str(item.get("binding_id")): str(item.get("exclusion_reason"))
+                    for item in desired.get("excluded", [])
+                    if isinstance(item, Mapping)
+                }
+                expected = {
+                    negative_binding[
+                        "binding_id"
+                    ]: "non_executable_missing_artifact_checksum",
+                    missing_symbol_binding[
+                        "binding_id"
+                    ]: "non_executable_missing_market_symbol",
+                }
+                if (
+                    positive_binding["binding_id"] in desired_ids
+                    and all(exclusions.get(key) == value for key, value in expected.items())
+                    and desired.get("active_count") == 1
+                ):
+                    return {
+                        "active_count": desired.get("active_count"),
+                        "desired_binding_ids": sorted(desired_ids),
+                        "fixture_exclusions": expected,
+                    }
                 return None
 
-            health = _wait_until(
-                "missing-checksum binding degraded producer health",
-                negative_health,
+            admission = _wait_until(
+                "intentional negative bindings excluded from fleet readiness",
+                negative_admission,
                 timeout=120,
             )
             negative_queue_depth = self._redis_queue_depth(negative_binding["binding_id"])
@@ -1191,16 +1242,71 @@ class RuntimeChain:
                 terminal_output_id=negative_binding["binding_id"],
                 authority_readback={
                     "binding_id": negative_binding["binding_id"],
-                    "degraded_reason": health["degraded_bindings"][negative_binding["binding_id"]],
-                    "producer_status": health.get("status"),
+                    "artifact_id": negative_binding["artifact_id"],
+                    "fleet_exclusion_reason": admission["fixture_exclusions"][
+                        negative_binding["binding_id"]
+                    ],
+                    "projection_checksum_present": False,
                 },
                 next_consumer_readback={
+                    "fleet_active_count": admission["active_count"],
                     "queue_key": f"pantheon:signals:pending:{negative_binding['binding_id']}",
                     "queue_depth": negative_queue_depth,
                 },
                 started_at=loop9_started,
-                compose_services=["paper-signal-producer", "signal-store"],
-                assertions={"degraded": True, "signals_enqueued_for_binding": 0},
+                compose_services=[
+                    "runtime-manager",
+                    "paper-fleet-reconciler",
+                    "signal-store",
+                ],
+                assertions={
+                    "fail_closed": True,
+                    "fleet_ready": False,
+                    "signals_enqueued_for_binding": 0,
+                },
+            )
+
+            missing_symbol_queue_depth = self._redis_queue_depth(
+                missing_symbol_binding["binding_id"]
+            )
+            if missing_symbol_queue_depth != 0:
+                raise DeployedProofError(
+                    "missing-market-symbol binding enqueued "
+                    f"{missing_symbol_queue_depth} signal(s)"
+                )
+            self.evidence.add_case(
+                "negative_missing_market_symbol",
+                loop=9,
+                trigger_id=missing_symbol_binding["binding_id"],
+                owner_worker=self.evidence.identities["paper-fleet-reconciler"],
+                terminal_output_id=missing_symbol_binding["binding_id"],
+                authority_readback={
+                    "binding_id": missing_symbol_binding["binding_id"],
+                    "artifact_id": missing_symbol_binding["artifact_id"],
+                    "fleet_exclusion_reason": admission["fixture_exclusions"][
+                        missing_symbol_binding["binding_id"]
+                    ],
+                    "market_symbol_present": False,
+                },
+                next_consumer_readback={
+                    "fleet_active_count": admission["active_count"],
+                    "queue_key": (
+                        "pantheon:signals:pending:"
+                        f"{missing_symbol_binding['binding_id']}"
+                    ),
+                    "queue_depth": missing_symbol_queue_depth,
+                },
+                started_at=loop9_started,
+                compose_services=[
+                    "runtime-manager",
+                    "paper-fleet-reconciler",
+                    "signal-store",
+                ],
+                assertions={
+                    "fail_closed": True,
+                    "fleet_ready": False,
+                    "signals_enqueued_for_binding": 0,
+                },
             )
 
             loop10_started = _utc_now()
@@ -1529,6 +1635,7 @@ class RuntimeChain:
                 "loop_11_evolution_decision",
                 "loop_12_bff_typed_health",
                 "negative_missing_artifact_checksum",
+                "negative_missing_market_symbol",
                 "negative_typed_worker_failure",
                 "bounded_lifecycle_cursor_and_resources",
             }
@@ -1541,6 +1648,7 @@ class RuntimeChain:
                 "cases": self.evidence.cases,
                 "positive": positive,
                 "negative": negative,
+                "missing_symbol": missing_symbol,
             }
             return self.results
         except Exception as exc:
@@ -1606,10 +1714,22 @@ def test_loop_12_bff_reads_typed_worker_and_api_health(
     assert case["next_consumer_readback"]["ok"] is True
 
 
-def test_missing_artifact_checksum_degrades_without_signal(
+def test_missing_artifact_checksum_is_not_counted_fleet_ready(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
     case = deployed_runtime_chain["cases"]["negative_missing_artifact_checksum"]
+    assert case["assertions"]["fail_closed"] is True
+    assert case["assertions"]["fleet_ready"] is False
+    assert case["assertions"]["signals_enqueued_for_binding"] == 0
+    assert case["next_consumer_readback"]["queue_depth"] == 0
+
+
+def test_missing_market_symbol_is_not_counted_fleet_ready(
+    deployed_runtime_chain: dict[str, Any],
+) -> None:
+    case = deployed_runtime_chain["cases"]["negative_missing_market_symbol"]
+    assert case["assertions"]["fail_closed"] is True
+    assert case["assertions"]["fleet_ready"] is False
     assert case["assertions"]["signals_enqueued_for_binding"] == 0
     assert case["next_consumer_readback"]["queue_depth"] == 0
 

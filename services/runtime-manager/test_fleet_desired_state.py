@@ -49,6 +49,26 @@ def _b(
     effective_at: str = "2026-01-01T00:00:00Z",
     **extra,
 ) -> dict:
+    strategy_id = "strategy-1"
+    metadata = {
+        "strategy_id": strategy_id,
+        "symbol": "2330.TW",
+        "market_data_policy": {
+            "owner": "source-ingest",
+            "contract": "latest_stored_normalized",
+        },
+        "object_store": {
+            f"openclaw/registry/{strategy_id}/{artifact_version}/metadata.json": {
+                "registry_id": artifact_id,
+                "strategy_id": strategy_id,
+                "version": artifact_version,
+                "checksum": "sha256:" + "a" * 64,
+            }
+        },
+    }
+    metadata_override = extra.pop("metadata", None)
+    if isinstance(metadata_override, dict):
+        metadata.update(metadata_override)
     d = {
         "binding_id": binding_id,
         "runtime_id": runtime_id,
@@ -60,6 +80,7 @@ def _b(
         "artifact_version": artifact_version,
         "persona_capital_binding_id": persona_capital_binding_id,
         "effective_at": effective_at,
+        "metadata": metadata,
     }
     d.update(extra)
     return d
@@ -82,6 +103,37 @@ class TestFleetMembership(unittest.TestCase):
         self.assertEqual(state.active_count, 1)
         self.assertEqual(state.bindings[0].deployment_mode, "canary")
         self.assertEqual(state.excluded_count, 0)
+
+    def test_active_missing_projection_checksum_is_not_fleet_ready(self):
+        binding = _b()
+        projected = next(iter(binding["metadata"]["object_store"].values()))
+        projected.pop("checksum")
+        binding["metadata"]["authoritative_loader_attestation"] = {
+            "status": "passed",
+            "artifact_checksum": "sha256:" + "b" * 64,
+        }
+
+        state = build_fleet_desired_state([binding])
+
+        self.assertEqual(state.active_count, 0)
+        self.assertEqual(state.excluded_count, 1)
+        self.assertEqual(
+            state.excluded[0].exclusion_reason,
+            "non_executable_missing_artifact_checksum",
+        )
+
+    def test_active_missing_market_symbol_is_not_fleet_ready(self):
+        binding = _b()
+        binding["metadata"].pop("symbol")
+
+        state = build_fleet_desired_state([binding])
+
+        self.assertEqual(state.active_count, 0)
+        self.assertEqual(state.excluded_count, 1)
+        self.assertEqual(
+            state.excluded[0].exclusion_reason,
+            "non_executable_missing_market_symbol",
+        )
 
     def test_active_live_is_excluded(self):
         state = build_fleet_desired_state([_b(deployment_mode="live", status="active")])
