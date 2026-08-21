@@ -64464,6 +64464,13 @@ async def sem_bff_version():
         "dev_login_enabled": _dev_login_enabled(),
         "mfa_required": _bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
         "assistant_kernel_enabled": _bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
+        "trade_journey_reader_backend": os.getenv(
+            "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "json"
+        ).strip().lower(),
+        "trade_journey_projection_schema": os.getenv(
+            "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA",
+            "trade_journey_projection",
+        ).strip(),
     }
 
     return {

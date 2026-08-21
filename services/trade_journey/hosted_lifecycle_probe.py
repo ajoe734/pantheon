@@ -30,8 +30,8 @@ from services.trade_journey.lifecycle_projector import (
 )
 
 
-SCHEMA_VERSION = "pantheon.loop-prod-tel-002-hosted-proof.v1"
-TASK_ID = "LOOP-PROD-TEL-002"
+SCHEMA_VERSION = "pantheon.lifecycle-proj-cutover-hosted-proof.v1"
+TASK_ID = "LIFECYCLE-PROJ-CUTOVER-001"
 REQUIRED_EVENT_TYPES = (
     "signal_generation",
     "trade_decision",
