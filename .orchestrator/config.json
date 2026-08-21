@@ -6,7 +6,6 @@
     "dashboard": "docs-site/index.html",
     "state_file": ".orchestrator/state.json",
     "approval_queue": ".orchestrator/approval-queue.json",
-    "github_bus_state": ".orchestrator/github-bus-state.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
@@ -108,6 +107,9 @@
   },
   "coordination": {
     "repositories": {
+      "pantheon": {
+        "repo": "ajoe734/pantheon"
+      },
       "execute_plans": {
         "local_path": "../code/execute-plans"
       }
@@ -263,27 +265,6 @@
   "approvals": {
     "stale_pending_seconds": 1800
   },
-  "github_bus": {
-    "enabled": true,
-    "command_timeout_seconds": 8,
-    "poll_interval_seconds": 30,
-    "repo": "ajoe734/pantheon",
-    "offline_backoff_seconds": 300,
-    "reviewers": {
-      "Claude": [
-        "ajoe734"
-      ],
-      "Antigravity": [
-        "ajoe734"
-      ],
-      "Codex": [
-        "ajoe734"
-      ],
-      "Copilot": [
-        "ajoe734"
-      ]
-    }
-  },
   "schema": {
     "tasks_path": "tasks",
     "handoffs_path": "handoffs",
@@ -299,14 +280,14 @@
     "claude": {
       "display_name": "Claude",
       "provider": "claude",
-      "max_parallel": 4,
+      "max_parallel": 3,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "claude2": {
       "display_name": "Claude2",
       "provider": "claude2",
-      "max_parallel": 4,
+      "max_parallel": 1,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
@@ -425,7 +406,7 @@
   "providers": {
     "claude": {
       "delivery_mode": "claude_cli",
-      "account": "claude_account_shared_max_1",
+      "account": "claude1",
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -460,7 +441,7 @@
     },
     "claude2": {
       "delivery_mode": "claude_cli",
-      "account": "claude_account_shared_max_1",
+      "account": "claude2",
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -783,7 +764,8 @@
     "max_dispatches_per_tick": 10,
     "max_active_workers_per_task": 1,
     "max_concurrent_per_account": {
-      "claude_account_shared_max_1": 4,
+      "claude1": 3,
+      "claude2": 1,
       "antigravity": 4,
       "antigravity2": 4,
       "codex1": 2,

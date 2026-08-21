@@ -9,6 +9,24 @@ import multi_repo_registry
 
 
 class MultiRepoRegistryTests(unittest.TestCase):
+    def test_default_registry_has_canonical_pantheon_github_slug(self) -> None:
+        repo = multi_repo_registry.resolve_repository({}, "pantheon")
+
+        self.assertEqual(repo["repo"], "ajoe734/pantheon")
+
+    def test_coordination_registry_overrides_pantheon_github_slug(self) -> None:
+        config = {
+            "coordination": {
+                "repositories": {
+                    "pantheon": {"repo": "example/pantheon-fork"}
+                }
+            }
+        }
+
+        repo = multi_repo_registry.resolve_repository(config, "pantheon")
+
+        self.assertEqual(repo["repo"], "example/pantheon-fork")
+
     def test_default_registry_includes_execute_plans_checkout(self) -> None:
         repo = multi_repo_registry.resolve_repository({}, "execute_plans")
 

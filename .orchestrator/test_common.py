@@ -24,6 +24,28 @@ from urllib.error import HTTPError
 import common
 
 
+class StatusCommandRepositoryConfigTests(unittest.TestCase):
+    def test_expected_remote_uses_coordination_registry(self) -> None:
+        config = {
+            "coordination": {
+                "repositories": {
+                    "pantheon": {"repo": "example/pantheon-fork"}
+                }
+            }
+        }
+
+        self.assertEqual(
+            common.status_command_expected_remote(config),
+            "example/pantheon-fork",
+        )
+
+    def test_expected_remote_has_pantheon_default(self) -> None:
+        self.assertEqual(
+            common.status_command_expected_remote({}),
+            "ajoe734/pantheon",
+        )
+
+
 class WorkerSpawnAuthorityBoundaryTests(unittest.TestCase):
     def test_final_spawn_boundary_removes_control_plane_signing_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

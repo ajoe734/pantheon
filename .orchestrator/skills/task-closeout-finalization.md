@@ -1,7 +1,7 @@
 # Task Closeout Finalization Spec
 
 Status: active operating rule for execution tasks
-Last updated: 2026-05-17 (per-task PR model)
+Last updated: 2026-08-21 (non-retryable governance holds)
 
 This spec applies when a task is in `review_approved` or a worker is
 dispatched with `owned_finalize_dispatch`.
@@ -62,6 +62,30 @@ REVIEW_FILE=<repo-relative-task-evidence-path> \
 If no evidence manifest was committed before review started, stop and get a
 fresh review of a commit that includes one -- do not paper over the gap with
 a post-approval evidence commit.
+
+## Non-Retryable Governance Gate Rule
+
+If the governed `done` command rejects finalization because a review,
+reassignment, evidence, identity, or policy binding is missing or invalid,
+that is a canonical governance hold, not an implementation invitation. Do
+not edit `$PANTHEON_COMMAND_ROOT`, its scripts, or its imported modules; do not
+patch the guard that rejected the transition; and do not repeatedly invoke
+`done` with the same evidence.
+
+Record the existing canonical blocker and stop the worker cleanly:
+
+```bash
+AI_NAME=<Owner> \
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" blocker \
+  "$TASK" "<exact failed gate and required corrective evidence>" "<required actor>"
+```
+
+Use the actor named by the failed gate. Use `Human/Ops` only when operator
+evidence or a policy decision is genuinely required. The canonical `blocker`
+transition sets `status=blocked`, `waiting_for`, and an open blocker record;
+Supervisor boot reconciliation treats that existing explicit hold as the
+worker's durable outcome and must not reconstruct or retry the same finalize
+request. Reopen the task only after the named corrective evidence exists.
 
 ## Generated Task-Brief Rule
 

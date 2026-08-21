@@ -368,6 +368,16 @@ def evaluate_runtime_health(
     actual_source_commit = str(environment.get("PANTHEON_COMMAND_RUNTIME_SHA") or "").strip() or None
     root_head = _git_head(expected_root) if expected_root is not None else None
     expected_commit = expected_source_commit or root_head
+    command_runtime_health = (
+        supervisor.get("command_runtime_health")
+        if isinstance(supervisor.get("command_runtime_health"), Mapping)
+        else {}
+    )
+    reported_runtime = (
+        command_runtime_health.get("runtime")
+        if isinstance(command_runtime_health.get("runtime"), Mapping)
+        else {}
+    )
 
     identity_checks = [
         check("identity_config_readable", config_error is None, {"config_path": str(config_path_resolved), "error": config_error}),
@@ -398,6 +408,14 @@ def evaluate_runtime_health(
             "identity_supervisor_argv_exact",
             bool(expected_argv) and process_argv == expected_argv,
             {"argv": list(process_argv), "expected_argv": list(expected_argv)},
+        ),
+        check(
+            "identity_command_runtime_integrity_healthy",
+            command_runtime_health.get("healthy") is True
+            and str(reported_runtime.get("command_root") or "")
+            == (str(expected_root) if expected_root is not None else "")
+            and str(reported_runtime.get("source_sha") or "") == str(expected_commit or ""),
+            {"command_runtime_health": command_runtime_health},
         ),
     ]
 
