@@ -3,8 +3,8 @@
   "task": {
     "id": "LIFECYCLE-PROJ-MIGRATE-001",
     "title": "Backfill, shadow, and prove lifecycle projection parity",
-    "owner": "Claude",
-    "reviewer": "Codex",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
     "status": "in_progress",
     "base_branch": "dev",
     "task_branch": "task/LIFECYCLE-PROJ-MIGRATE-001",
