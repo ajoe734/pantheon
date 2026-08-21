@@ -17,3 +17,18 @@ legacy `controller_state.json` file.
 
 `SHA256SUMS` is generated from the repository root. It intentionally does not
 hash itself.
+
+## Rebase verification
+
+The existing PR was rebased onto `origin/dev` commit
+`840cd989b37878804a4fcf9df6793cab2408f750` before fresh review. The focused
+real-Postgres restart/duplicate/ignored-receipt regression passed again.
+
+The full `services/trade_journey` suite against a throwaway local PostgreSQL
+16 container produced `176 passed, 2 failed`. Both failures are outside this
+task's diff and are present in the rebased `origin/dev` surface: the BFF-only
+deployment contract still expects a compose command without the now-present
+`--force-recreate`, and migration restart submits a mixed duplicate/new batch
+that the already-merged ProjectionStore correctly rejects. They are recorded
+in `evidence.json` for the fresh independent reviewer; they are not presented
+as a passing task verification.

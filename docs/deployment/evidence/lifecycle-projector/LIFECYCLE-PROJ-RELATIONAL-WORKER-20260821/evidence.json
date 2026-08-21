@@ -7,8 +7,9 @@
     "reviewer": "Antigravity2",
     "status": "implementation_complete_pending_independent_review",
     "base_branch": "dev",
+    "rebase_base_commit": "840cd989b37878804a4fcf9df6793cab2408f750",
     "task_branch": "task/LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821",
-    "evidence_cut_commit": "5c2e91f8c9976d165236917c2b96d88c637afc97",
+    "evidence_cut_commit": "6d3aad6e8d5b676b1c53395d3ea637573b035393",
     "head_binding": "The reviewer must bind this committed manifest to the exact final PR head; this pre-review artifact deliberately does not claim a future merge SHA."
   },
   "scope": {
@@ -63,8 +64,24 @@
       "result": "pass"
     }
   ],
+  "rebase_verification": {
+    "focused_real_postgres": {
+      "command": "TEST_DATABASE_URL=<isolated-local-e2e-postgres> python -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts",
+      "result": "pass; 1 passed",
+      "coverage": "restart hydration, exact duplicate no-rewrite, ignored receipt, contiguous checkpoint, and no legacy controller-state write after rebasing"
+    },
+    "full_trade_journey_suite": {
+      "command": "TEST_DATABASE_URL=<throwaway-local-postgres> TEST_DATABASE_ADMIN_URL=<throwaway-local-postgres-superuser> python -m pytest -q services/trade_journey",
+      "result": "176 passed, 2 failed; exit 1",
+      "failures": [
+        "test_bff_only_deploy_rebuilds_its_lifecycle_projector_only: rebased origin/dev deploy script contains --force-recreate while its unchanged contract test expects the older compose invocation",
+        "test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store: unchanged migration restart produces a mixed duplicate/new batch that the already-merged ProjectionStore rejects"
+      ],
+      "scope_assessment": "Both failing test/source paths are unchanged by this task relative to rebase_base_commit. The task-specific real-Postgres regression passed; fresh independent review must evaluate these upstream baseline failures separately."
+    }
+  },
   "review": {
-    "status": "pending_independent_review",
+    "status": "pending_fresh_independent_review_after_rebase",
     "required_checks": [
       "verify shadow is the only accepted relational writer activation",
       "reproduce the real-Postgres restart/duplicate/ignored receipt regression",
