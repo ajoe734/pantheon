@@ -100,21 +100,31 @@ metrics, checksums, image/config identity, and teardown record.
    PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
    "$PANTHEON_PY" -m pytest -q services/trade_journey/test_lifecycle_projector_capacity.py
    ```
-   Result: re-run required after the relational bulk-path change.
+   Result: PASS as part of the exact committed focused run below.
 
 2. Compose contract test:
    ```bash
    "$PANTHEON_PY" -m pytest -q services/trade_journey/test_lifecycle_projector_compose.py
    ```
-   Result: re-run required after the relational bulk-path change. The known
+   Result: the capacity benchmark contract passes. The known
    `test_bff_only_deploy_rebuilds_its_lifecycle_projector_only` deployment
-   script assertion is outside this task's declared artifacts.
+   script assertion still fails identically and is outside this task's
+   declared artifacts.
 
 3. Full `services/trade_journey` suite:
    ```bash
    "$PANTHEON_PY" -m pytest -q services/trade_journey
    ```
-   Result: not re-run after the relational bulk-path change.
+   Result: the exact committed focused relational run was:
+   ```bash
+   TEST_DATABASE_URL=<isolated dev-Postgres endpoint> "$PANTHEON_PY" -m pytest -q \
+     services/trade_journey/test_lifecycle_projector_capacity.py \
+     services/trade_journey/test_lifecycle_projector.py \
+     services/trade_journey/test_projection_store.py
+   ```
+   `74 passed, 1 skipped` — this includes real PostgreSQL duplicate/conflict,
+   transaction rollback, and second-writer coverage. It does not claim a
+   host-capacity p95 measurement.
 
 4. Manual small-scale end-to-end smoke of the CLI:
    ```bash
@@ -123,7 +133,9 @@ metrics, checksums, image/config identity, and teardown record.
      --projection-dsn "$LIFECYCLE_PROJECTOR_PROJECTION_DSN" \
      --projection-schema "$LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"
    ```
-   Result: re-run required after the relational bulk-path change.
+   Result: not run. The batch=500 p95 smoke and the full run remain subject
+   to the host admission gate above; no capacity JSON report or checksum has
+   been emitted from this worker while unrelated E2E networks remain.
 
 ## What is not yet true
 
