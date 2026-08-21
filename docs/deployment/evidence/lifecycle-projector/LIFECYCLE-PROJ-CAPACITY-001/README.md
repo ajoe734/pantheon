@@ -146,6 +146,10 @@ batches, and a 100,000-event catch-up).
 
 - The primary batch p95 was 3.282376 seconds; backlog p95 was 0 seconds; and
   steady/peak RSS were both 50,958,336 bytes.
+- The raw `capacity.samples` checkpoint at 500,000 events records RSS
+  50,958,336 bytes; the 1,000,000-event checkpoint also records
+  50,958,336 bytes. The measured 500k-to-1M growth is therefore 0 bytes,
+  which is within the `<= 268,435,456`-byte (256 MiB) acceptance limit.
 - The 100,000-event catch-up completed in 452.369965 seconds (limit: 1,800
   seconds), with a 2.692051-second batch p95.
 - The slowest BFF read was the bounded journey-list query at 0.168668 seconds
@@ -160,6 +164,15 @@ The byte-identical `evidence.json` is checked by its sidecar checksum.  The
 copied run manifest, log, collection record, and raw evidence were checked for
 DSNs, authorization headers, bearer tokens, private keys, and common secret
 assignments; none were present.
+
+## Verification result correction
+
+The combined real-PostgreSQL capacity and compose command reported **41
+passed**, plus **one known unrelated legacy deployment assertion failure**.
+The earlier `32 passed` wording in the preceding anchor commit was incomplete
+and is superseded by this result. This correction changes only this
+human-readable evidence index: the checked raw `evidence.json` and its
+SHA-256 sidecar remain byte-identical.
 
 ## Evidence contract
 
