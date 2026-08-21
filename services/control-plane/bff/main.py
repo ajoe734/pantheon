@@ -64250,6 +64250,7 @@ async def sem_bff_health_alias():
     return _sem_bff_health_payload()
 
 
+@app.get("/readyz")
 @app.get("/bff/readyz")
 async def sem_bff_readiness_alias():
     payload = _sem_bff_health_payload()
