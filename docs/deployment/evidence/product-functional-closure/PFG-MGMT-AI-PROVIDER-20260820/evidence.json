@@ -1,0 +1,93 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "PFG-MGMT-AI-PROVIDER-20260820",
+    "title": "Make Management AI return an actual provider answer with bounded degradation",
+    "owner": "Codex2",
+    "reviewer": "Antigravity2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-MGMT-AI-PROVIDER-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-MGMT-AI-PROVIDER-20260820/evidence.json",
+    "evidence_cut_at": "2026-08-21T03:48:26Z"
+  },
+  "scope": {
+    "owned_layer": "Management NL provider orchestration, OpenClaw answer-readiness truth, and durable conversation replay verification",
+    "not_changing": [
+      "The existing POST /bff/management/nl/ask endpoint and ManagementAiConversationStore ownership",
+      "Product BFF development-tooling or repository access",
+      "Kernel debug write authority, UI action routing, security redesign, or live-capital behavior"
+    ],
+    "changed_files": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/openclaw_ops_client.py",
+      "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+      "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+      "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+      "services/openclaw-gateway-adapter/test_main.py",
+      "docs/deployment/evidence/product-functional-closure/PFG-MGMT-AI-PROVIDER-20260820/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-MGMT-AI-PROVIDER-20260820/evidence.json"
+    ],
+    "composes_with": [
+      "PFG-MGMT-READ-MODELS-20260820 Management context pack inputs",
+      "PFG-MGMT-DOMAIN-ACTIONS-20260820 UI action owner routing",
+      "PFG-DEV-INTEGRATION-20260820 dev Compose and hosted deployment admission"
+    ]
+  },
+  "provider_inventory": {
+    "single_management_nl_orchestration_path": "main.py::_mgmt_nl_maybe_provider_answer",
+    "primary_provider": "PANTHEON_ASSISTANT_PROVIDER",
+    "explicit_fallback_providers": "PANTHEON_MANAGEMENT_NL_ASSISTANT_FALLBACK_PROVIDERS or PANTHEON_MGMT_NL_ASSISTANT_FALLBACK_PROVIDERS",
+    "adapter_routes": {
+      "openclaw": "POST /api/openclaw-adapter/assistant/providers/openclaw/invoke",
+      "codex_cli": "POST /api/openclaw-adapter/assistant/providers/codex/invoke",
+      "claude_cli": "POST /api/openclaw-adapter/assistant/claude/invoke"
+    },
+    "readiness_contract": "OpenClaw ready=true requires a completed non-empty bounded CLI answer probe; URL-only inventory reads report not_checked.",
+    "fallback_contract": "Only an explicitly configured fallback that returns a completed non-empty answer is used. Otherwise the primary typed degraded reason remains visible with deterministic_synthesis fallback."
+  },
+  "behavioral_proof": {
+    "inner_degraded_response": "An outer adapter status=ok with data.status=degraded is classified as failed. Its message cannot be exposed as a provider answer.",
+    "deadline": "A single monotonic deadline is shared by the primary and all configured fallback attempts; the BFF client receives only the remaining per-attempt timeout.",
+    "correlation_and_replay": "Fallback attempts retain the exchange trace_id and use distinct provider_run_id values. Durable idempotency replay reloads the conversation store without invoking a provider or appending a duplicate assistant turn.",
+    "degradation": "When no configured provider returns a completed non-empty answer, POST /bff/management/nl/ask retains typed provider_status and serves the existing deterministic synthesis."
+  },
+  "validation": {
+    "environment": "task-local Python 3.12 virtualenv; no provider credentials or live-capital authority used",
+    "commands": [
+      {
+        "command": "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/openclaw_ops_client.py services/openclaw-gateway-adapter/assistant_openclaw_provider.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py services/openclaw-gateway-adapter/test_main.py",
+        "result": "pass"
+      },
+      {
+        "command": ".tmp task virtualenv/bin/python -m pytest -q -x services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+        "result": "59 passed"
+      },
+      {
+        "command": ".tmp task virtualenv/bin/python -m pytest -q -x services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py services/openclaw-gateway-adapter/test_main.py",
+        "result": "140 passed, 4 skipped, 18 subtests passed"
+      },
+      {
+        "command": "Focused provider-failover, typed-inner-degradation, restart-replay, OpenClaw bounded-answer readiness, and inventory-not-ready tests",
+        "result": "6 passed"
+      }
+    ],
+    "real_provider_dev_smoke": {
+      "status": "pending_current_pr_deployment",
+      "required_probe": "After this exact PR head is deployed to dev, send an authenticated Management NL question and verify a completed non-empty provider answer, or a typed degraded result within the configured deadline."
+    }
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Antigravity2 REVIEW_FILE=<this path> through the governed approve command only after independently checking the exact PR head.",
+    "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
+  },
+  "delivery": {
+    "anchor_commit": {
+      "sha": "bd82aeb5c8edd15234f186e1ae08edd870822481",
+      "subject": "PFG-MGMT-AI-PROVIDER-20260820: anchor answer readiness"
+    },
+    "pull_request": "pending"
+  }
+}

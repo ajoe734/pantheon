@@ -42,6 +42,7 @@ OPENCLAW_PROVIDER_ID = "openclaw"
 PROVIDER_RUNTIME = "openclaw_gateway_agent_cli"
 DEFAULT_AGENT_ID = "main"
 DEFAULT_TIMEOUT_SECONDS = 90
+DEFAULT_READINESS_ANSWER_TIMEOUT_SECONDS = 20
 DEFAULT_OPENCLAW_BIN = "openclaw"
 CODEX_DELEGATED_KERNEL_MODES = frozenset({"kernel_debug"})
 # `openclaw agent` accepts the prompt ONLY as an argv string (`-m/--message
@@ -54,6 +55,7 @@ _MAX_ARGV_PROMPT_BYTES = 96 * 1024
 # Canonical docker-compose service name — used when no URL is configured.
 _DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_READINESS_PROMPT = "Reply with exactly: PANTHEON_PROVIDER_READY"
 
 
 def _openclaw_cli_state_env(environment: Dict[str, str]) -> Dict[str, str]:
@@ -130,9 +132,11 @@ class AssistantOpenClawProvider:
 
     Readiness semantics:
     - not_configured: OPENCLAW_GATEWAY_URL is not set
-    - ready (auth_probe=False): URL is set; binary/token not checked (light probe)
-    - ready (auth_probe=True): URL set, binary found, token set, gateway health OK
-    - degraded: URL set but binary/token missing or gateway unreachable
+    - not_checked: a cheap inventory read was requested; it never claims that
+      an agent can answer a Management AI prompt
+    - ready (auth_probe=True): a bounded, non-empty OpenClaw agent answer was
+      received through the same CLI invocation path used by Management AI
+    - degraded: the configured provider could not produce that bounded answer
 
     The provider does not depend on local credential mounts — the auth token is
     supplied via OPENCLAW_GATEWAY_TOKEN.
@@ -175,6 +179,7 @@ class AssistantOpenClawProvider:
 
     def readiness(self, *, auth_probe: bool = False) -> Dict[str, Any]:
         usage = provider_usage_snapshot(OPENCLAW_PROVIDER_ID, OPENCLAW_PROVIDER)
+        answer_timeout = self._readiness_answer_timeout_seconds()
         base: Dict[str, Any] = {
             "provider": OPENCLAW_PROVIDER,
             "provider_id": OPENCLAW_PROVIDER_ID,
@@ -183,6 +188,10 @@ class AssistantOpenClawProvider:
             "gateway_url_configured": bool(self._gateway_url),
             "usage": usage,
             "quota": usage,
+            "answer_probe": {
+                "status": "not_run",
+                "deadline_seconds": answer_timeout,
+            },
         }
         if not self._gateway_url:
             return {
@@ -192,10 +201,15 @@ class AssistantOpenClawProvider:
                 "reason": "OPENCLAW_GATEWAY_URL is not set",
             }
         if not auth_probe:
-            # Light probe: URL is set, assume the binary and token will be
-            # available at invocation time (mirrors old provider behaviour).
-            return {**base, "ready": True, "status": "ready"}
-        # Full auth probe: verify binary, token, and gateway health.
+            # A configured URL or a gateway health endpoint does not prove that
+            # the selected upstream model session can return an answer.
+            return {
+                **base,
+                "ready": False,
+                "status": "not_checked",
+                "reason": "answer_probe_not_run",
+            }
+        # Full probe: exercise the actual answer path inside one bounded budget.
         binary = self._openclaw_bin()
         if not binary:
             return {
@@ -204,6 +218,11 @@ class AssistantOpenClawProvider:
                 "status": "degraded",
                 "reason": "openclaw_binary_not_found",
                 "binary_path": DEFAULT_OPENCLAW_BIN,
+                "answer_probe": {
+                    "status": "failed",
+                    "reason": "openclaw_binary_not_found",
+                    "deadline_seconds": answer_timeout,
+                },
             }
         if not self._token:
             return {
@@ -212,17 +231,64 @@ class AssistantOpenClawProvider:
                 "status": "degraded",
                 "reason": "OPENCLAW_GATEWAY_TOKEN_not_set",
                 "binary_path": binary,
+                "answer_probe": {
+                    "status": "failed",
+                    "reason": "OPENCLAW_GATEWAY_TOKEN_not_set",
+                    "deadline_seconds": answer_timeout,
+                },
             }
-        probe = self._probe_gateway()
-        if probe.get("reachable"):
-            return {**base, "ready": True, "status": "ready", "probe": probe, "binary_path": binary}
+        started_at = time.monotonic()
+        try:
+            result = self.invoke(
+                _READINESS_PROMPT,
+                mode="user",
+                operator_id="management-ai-readiness",
+                timeout_seconds=answer_timeout,
+            )
+        except OpenClawProviderError as exc:
+            duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
+            return {
+                **base,
+                "ready": False,
+                "status": "degraded",
+                "reason": exc.error_code,
+                "binary_path": binary,
+                "answer_probe": {
+                    "status": "failed",
+                    "reason": exc.error_code,
+                    "deadline_seconds": answer_timeout,
+                    "duration_ms": duration_ms,
+                },
+            }
+        answer = self._result_text(result)
+        duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
+        if not answer:
+            return {
+                **base,
+                "ready": False,
+                "status": "degraded",
+                "reason": "openclaw_answer_probe_empty",
+                "binary_path": binary,
+                "answer_probe": {
+                    "status": "failed",
+                    "reason": "openclaw_answer_probe_empty",
+                    "deadline_seconds": answer_timeout,
+                    "duration_ms": duration_ms,
+                },
+            }
         return {
             **base,
-            "ready": False,
-            "status": "degraded",
-            "reason": probe.get("reason", "gateway_unreachable"),
-            "probe": probe,
+            "ready": True,
+            "status": "ready",
+            "auth": "account_session",
+            "auth_status": "ready",
             "binary_path": binary,
+            "answer_probe": {
+                "status": "completed",
+                "deadline_seconds": answer_timeout,
+                "duration_ms": duration_ms,
+                "reply_bytes": len(answer.encode("utf-8")),
+            },
         }
 
     def invoke(
@@ -237,6 +303,7 @@ class AssistantOpenClawProvider:
         messages: Optional[List[Dict[str, Any]]] = None,
         operator_id: Optional[str] = None,
         trace_id: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> OpenClawProviderResult:
         if delegates_kernel_mode_to_codex(mode):
             raise OpenClawProviderError(
@@ -285,6 +352,15 @@ class AssistantOpenClawProvider:
 
         request_id = str(uuid.uuid4())
         started_at = time.monotonic()
+        invocation_timeout = float(self._timeout)
+        if timeout_seconds is not None:
+            invocation_timeout = min(invocation_timeout, float(timeout_seconds))
+        if invocation_timeout <= 0:
+            raise OpenClawProviderError(
+                "openclaw agent invocation exhausted its bounded deadline.",
+                status_code=504,
+                error_code="OPENCLAW_GATEWAY_TIMEOUT",
+            )
 
         # OpenClaw 2026.6.8 `agent` reads the gateway URL + token from the
         # environment (OPENCLAW_GATEWAY_URL / OPENCLAW_GATEWAY_TOKEN); it does
@@ -304,7 +380,7 @@ class AssistantOpenClawProvider:
             *(["--session-id", session_id] if session_id else []),
             "--message", prompt,
             "--json",
-            "--timeout", str(self._timeout),
+            "--timeout", str(max(1, int(invocation_timeout))),
         ]
 
         # Pass the normalized ws:// URL + token explicitly via the env the CLI
@@ -322,12 +398,12 @@ class AssistantOpenClawProvider:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=self._timeout,
+                timeout=invocation_timeout,
                 env=run_env,
             )
         except subprocess.TimeoutExpired as exc:
             raise OpenClawProviderError(
-                f"openclaw agent invocation timed out after {self._timeout}s.",
+                f"openclaw agent invocation timed out after {invocation_timeout:g}s.",
                 status_code=504,
                 error_code="OPENCLAW_GATEWAY_TIMEOUT",
             ) from exc
@@ -512,6 +588,30 @@ class AssistantOpenClawProvider:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _readiness_answer_timeout_seconds(self) -> float:
+        raw = os.getenv(
+            "OPENCLAW_ASSISTANT_READINESS_TIMEOUT_SECONDS",
+            str(DEFAULT_READINESS_ANSWER_TIMEOUT_SECONDS),
+        )
+        try:
+            configured = float(raw)
+        except (TypeError, ValueError):
+            configured = float(DEFAULT_READINESS_ANSWER_TIMEOUT_SECONDS)
+        return min(float(self._timeout), max(1.0, configured))
+
+    @staticmethod
+    def _result_text(result: OpenClawProviderResult) -> str:
+        output = result.output if isinstance(result.output, dict) else {}
+        for event in output.get("json_events") or []:
+            if not isinstance(event, dict):
+                continue
+            item = event.get("item")
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+                if text:
+                    return text
+        return ""
 
     def _probe_gateway(self) -> Dict[str, Any]:
         # Derive the HTTP base URL from the WS URL for the health probe.

@@ -391,7 +391,11 @@ class OpenClawOpsClient:
         agent_id: Optional[str] = None,
         persona_admission: Optional[Dict[str, Any]] = None,
         idempotency_key: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
+        provider_timeout = self._assistant_timeout_seconds()
+        if timeout_seconds is not None:
+            provider_timeout = min(provider_timeout, max(float(timeout_seconds), 0.1))
         normalized = str(provider or "").strip().lower()
         headers: Dict[str, str] = {"X-Operator-Id": operator_id}
         if trace_id:
@@ -430,7 +434,7 @@ class OpenClawOpsClient:
                 body=body,
                 headers=headers,
                 expected_status={200},
-                timeout_seconds=self._assistant_timeout_seconds(),
+                timeout_seconds=provider_timeout,
             )
         if normalized in {"codex", "codex_cli"}:
             body = {
@@ -449,7 +453,7 @@ class OpenClawOpsClient:
                 body=body,
                 headers=headers,
                 expected_status={200},
-                timeout_seconds=self._assistant_timeout_seconds(),
+                timeout_seconds=provider_timeout,
             )
         if normalized in {"claude", "claude_cli"}:
             # Claude invoke route uses a different URL pattern from Codex.
@@ -465,7 +469,7 @@ class OpenClawOpsClient:
                 },
                 headers=headers,
                 expected_status={200},
-                timeout_seconds=self._assistant_timeout_seconds(),
+                timeout_seconds=provider_timeout,
             )
         raise OpenClawOpsClientError(
             f"Assistant provider {provider!r} is not supported by the BFF OpenClaw client.",
