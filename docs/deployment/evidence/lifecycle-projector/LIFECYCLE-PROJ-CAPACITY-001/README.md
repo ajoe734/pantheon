@@ -92,12 +92,14 @@ LIFECYCLE_PROJECTOR_PROJECTION_DSN='postgresql://pantheon_app:pantheon_app@127.0
 
 It refuses relaxed cardinality, batch, fault, catch-up, or read-repeat values.
 Before submitting it also fails closed when the user systemd manager or Docker
-admission probe is unavailable, or when an E2E/task container or network is
-present. The normal product stack is allowed. The launcher creates a fresh,
-detached worktree at the exact current commit, proves that worktree is clean,
-and records a run-specific `lifecycle_capacity_*` schema before starting the
-service. Therefore an untracked generated task brief or an auto-worker token
-expiry cannot change the measured source tree.
+admission probe is unavailable, when an E2E/task container or network is
+present, or when one-minute host load or available memory is unsafe for a
+4-GiB capacity job. The normal product stack is allowed. The launcher creates
+a fresh, detached worktree at the exact current commit, provisions a
+checkout-scoped Python in that worktree, and asserts the launched module's
+`__file__` is under the clean repository root before systemd receives the
+command. Therefore an untracked generated task brief, editable worker Python,
+or auto-worker token expiry cannot change the measured source tree.
 
 The command prints the run id, user-systemd unit, and task-artifact paths. By
 default these are under
@@ -109,11 +111,13 @@ default these are under
 - `evidence.json` and `evidence.json.sha256` — the raw redacted proof; and
 - `collection.json` — post-run checksum and gate collection.
 
-The DSN is only written to `service.env` with mode `0600`; it is not embedded
-in the manifest, log command, or evidence. On every service stop, including a
-terminated benchmark process, systemd runs `managed-cleanup`: it attempts the
-recorded schema teardown again, removes the detached source worktree, and only
-releases the host admission lock after both operations succeed. A failed
+The DSN is only written to a mode-`0600` service environment file outside the
+repository and task evidence tree; it is not embedded in the manifest, log
+command, or evidence. On every service stop, including a terminated benchmark
+process, systemd runs `managed-cleanup`: it attempts the recorded schema
+teardown again, removes the detached source worktree and private environment
+file, and only releases the host admission lock after all operations succeed.
+Launcher-failure handling also removes the private environment file. A failed
 cleanup leaves that lock in place and is a fail-stopped investigation, not a
 license to launch another proof.
 
@@ -126,6 +130,11 @@ the printed state directory); they must not launch a duplicate run:
 "$PANTHEON_PY" -m services.trade_journey.lifecycle_projector_capacity \
   managed-collect --state-dir /absolute/path/to/managed-runs/<run-id>
 ```
+
+`managed-collect` rejects rather than summarizes a proof when the service
+result or benchmark exit code is nonzero, `gate_failures` is nonempty, cleanup
+or systemd status failed, or the evidence checksum, full git identity, schema,
+or teardown state differs from the submitted run.
 
 ## Evidence contract
 

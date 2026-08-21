@@ -163,7 +163,12 @@ def test_managed_launch_binds_clean_commit_and_private_dsn(tmp_path, monkeypatch
     args = _managed_args(tmp_path)
     identity = _managed_identity()
     recorded: list[list[str]] = []
+    runtime = {
+        "python": str(tmp_path / "clean-python"),
+        "module_file": str(tmp_path / "clean" / "services" / "trade_journey" / "lifecycle_projector_capacity.py"),
+    }
 
+    monkeypatch.setattr(capacity_module, "MANAGED_SECRET_ROOT", tmp_path / "runtime-secrets")
     monkeypatch.setattr(capacity_module, "_git_identity", lambda _root: identity)
     monkeypatch.setattr(
         capacity_module,
@@ -174,6 +179,11 @@ def test_managed_launch_binds_clean_commit_and_private_dsn(tmp_path, monkeypatch
         capacity_module,
         "_create_clean_capacity_worktree",
         lambda *_args, **_kwargs: identity,
+    )
+    monkeypatch.setattr(
+        capacity_module,
+        "_provision_clean_capacity_runtime",
+        lambda *_args, **_kwargs: runtime,
     )
 
     def fake_runner(command, **_kwargs):
@@ -192,13 +202,17 @@ def test_managed_launch_binds_clean_commit_and_private_dsn(tmp_path, monkeypatch
         "read_repeats": 10,
         "fault_journey_count": 4,
     }
-    assert recorded and recorded[0][:5] == ["systemd-run", "--user", "--unit", manifest["unit"], "--collect"]
+    assert recorded and recorded[0][:4] == ["systemd-run", "--user", "--unit", manifest["unit"]]
     assert "--no-block" in recorded[0]
+    assert "--setenv=PYTHONPATH=" in recorded[0]
     assert any(part.startswith("--property=ExecStopPost=") for part in recorded[0])
+    assert runtime["python"] in recorded[0]
+    assert manifest["runtime"] == runtime
     private_environment = Path(manifest["paths"]["private_environment"])
     assert private_environment.stat().st_mode & 0o777 == 0o600
     assert args.projection_dsn in private_environment.read_text(encoding="utf-8")
     assert args.projection_dsn not in Path(manifest["paths"]["status"]).read_text(encoding="utf-8")
+    assert not str(private_environment).startswith(str(tmp_path / "docs"))
     assert Path(args.admission_lock).exists()
 
 
@@ -212,6 +226,104 @@ def test_managed_admission_rejects_e2e_or_task_resources():
 
     with pytest.raises(RuntimeError, match="admission rejected"):
         _assert_quiet_managed_host(runner=fake_runner)
+
+
+def test_managed_admission_rejects_unsafe_load_or_memory(monkeypatch):
+    monkeypatch.setattr(
+        capacity_module,
+        "_managed_host_resources",
+        lambda: {
+            "cpu_count": 8,
+            "load_1m": 8.0,
+            "load_per_cpu": 1.0,
+            "available_memory_bytes": 16 * 1024**3,
+        },
+    )
+
+    def fake_runner(command, **_kwargs):
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(RuntimeError, match="unsafe host load"):
+        _assert_quiet_managed_host(runner=fake_runner)
+
+    monkeypatch.setattr(
+        capacity_module,
+        "_managed_host_resources",
+        lambda: {
+            "cpu_count": 8,
+            "load_1m": 0.0,
+            "load_per_cpu": 0.0,
+            "available_memory_bytes": 1,
+        },
+    )
+    with pytest.raises(RuntimeError, match="insufficient available memory"):
+        _assert_quiet_managed_host(runner=fake_runner)
+
+
+def test_managed_launch_failure_removes_secret_schema_and_worktree(tmp_path, monkeypatch):
+    args = _managed_args(tmp_path)
+    identity = _managed_identity()
+    removed: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(capacity_module, "MANAGED_SECRET_ROOT", tmp_path / "runtime-secrets")
+    monkeypatch.setattr(capacity_module, "_git_identity", lambda _root: identity)
+    monkeypatch.setattr(capacity_module, "_assert_quiet_managed_host", lambda **_kwargs: {})
+    monkeypatch.setattr(capacity_module, "_create_clean_capacity_worktree", lambda *_args, **_kwargs: identity)
+    monkeypatch.setattr(
+        capacity_module,
+        "_provision_clean_capacity_runtime",
+        lambda *_args, **_kwargs: {"python": str(tmp_path / "clean-python"), "module_file": str(tmp_path / "module.py")},
+    )
+    monkeypatch.setattr(capacity_module, "_fresh_capacity_schema", lambda *_args: "lifecycle_capacity_launch_failure")
+    monkeypatch.setattr(capacity_module, "_teardown_capacity_schema", lambda *_args: True)
+    monkeypatch.setattr(
+        capacity_module,
+        "_remove_clean_capacity_worktree",
+        lambda root, clean, **_kwargs: removed.append((root, clean)),
+    )
+
+    def failing_runner(command, **_kwargs):
+        if command[0] == "systemd-run":
+            raise subprocess.CalledProcessError(1, command, stderr="submission failed")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        launch_managed_capacity_run(args, runner=failing_runner)
+
+    manifests = list((tmp_path / "docs" / "managed-runs").glob("*/run.json"))
+    assert len(manifests) == 1
+    failed = capacity_module._read_json_object(manifests[0])
+    assert failed["state"] == "launcher_failed"
+    assert failed["cleanup"] == {
+        "schema_dropped": True,
+        "worktree_removed": True,
+        "private_environment_removed": True,
+        "error": None,
+    }
+    assert not list((tmp_path / "runtime-secrets").glob("*.env"))
+    assert removed == [(tmp_path, MANAGED_WORKTREE_ROOT / failed["run_id"])]
+    assert not Path(args.admission_lock).exists()
+
+
+def test_managed_runtime_probe_rejects_module_outside_clean_worktree(tmp_path):
+    provisioner = tmp_path / "scripts" / "dev" / "provision_python_distribution.py"
+    provisioner.parent.mkdir(parents=True)
+    provisioner.write_text("# test fixture\n", encoding="utf-8")
+    clean_python = tmp_path / ".venv-pantheon" / "bin" / "python"
+    clean_python.parent.mkdir(parents=True)
+    clean_python.touch()
+
+    def fake_runner(command, **_kwargs):
+        if command[1] == str(provisioner):
+            return subprocess.CompletedProcess(command, 0, f"{clean_python}\n", "")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            '{"python": "' + str(clean_python) + '", "module_file": "/foreign/module.py"}',
+            "",
+        )
+
+    with pytest.raises(RuntimeError, match="outside the clean worktree"):
+        capacity_module._provision_clean_capacity_runtime(tmp_path, runner=fake_runner)
 
 
 def test_managed_worker_records_result_before_systemd_cleanup(tmp_path, monkeypatch):
@@ -240,6 +352,7 @@ def test_managed_worker_records_result_before_systemd_cleanup(tmp_path, monkeypa
         return 0
 
     monkeypatch.setattr(capacity_module, "main", fake_main)
+    monkeypatch.setattr(capacity_module, "_assert_managed_worker_binding", lambda _manifest: None)
 
     assert run_managed_capacity_worker(tmp_path) == 0
     assert "--projection-schema" in received
@@ -252,6 +365,14 @@ def test_managed_worker_records_result_before_systemd_cleanup(tmp_path, monkeypa
 def test_managed_cleanup_tears_down_recorded_schema_and_releases_lock(tmp_path, monkeypatch):
     lock_path = tmp_path / "capacity.lock"
     lock_path.write_text("managed-test\n", encoding="utf-8")
+    monkeypatch.setattr(capacity_module, "MANAGED_SECRET_ROOT", tmp_path / "runtime-secrets")
+    paths = _managed_state_paths(tmp_path)
+    private_environment = Path(paths["private_environment"])
+    private_environment.parent.mkdir(parents=True)
+    private_environment.write_text(
+        "LIFECYCLE_PROJECTOR_PROJECTION_DSN=postgresql://capacity:test@localhost/db\n",
+        encoding="utf-8",
+    )
     manifest = {
         "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
         "run_id": "managed-test",
@@ -260,6 +381,7 @@ def test_managed_cleanup_tears_down_recorded_schema_and_releases_lock(tmp_path, 
         "clean_repository_root": str(MANAGED_WORKTREE_ROOT / "managed-test"),
         "schema": "lifecycle_capacity_managed_test",
         "admission": {"lock_path": str(lock_path)},
+        "paths": paths,
     }
     _write_json_atomically(tmp_path / "run.json", manifest)
     removed: list[tuple[Path, Path]] = []
@@ -275,11 +397,13 @@ def test_managed_cleanup_tears_down_recorded_schema_and_releases_lock(tmp_path, 
     assert cleanup_managed_capacity_run(tmp_path)
     assert removed == [(Path("/repository"), MANAGED_WORKTREE_ROOT / "managed-test")]
     assert not lock_path.exists()
+    assert not private_environment.exists()
     cleaned = capacity_module._read_json_object(tmp_path / "run.json")
     assert cleaned["state"] == "cleaned"
     assert cleaned["cleanup"] == {
         "schema_dropped": True,
         "worktree_removed": True,
+        "private_environment_removed": True,
         "error": None,
     }
 
@@ -307,7 +431,17 @@ def test_collect_managed_result_verifies_checksum_commit_schema_and_teardown(tmp
         "schema": "lifecycle_capacity_managed_collect",
         "paths": paths,
         "benchmark_exit_code": 0,
-        "cleanup": {"schema_dropped": True, "worktree_removed": True},
+        "cleanup": {
+            "schema_dropped": True,
+            "worktree_removed": True,
+            "private_environment_removed": True,
+            "error": None,
+        },
+        "systemd": {
+            "returncode": 0,
+            "status": "ActiveState=inactive\nResult=success\nExecMainStatus=0",
+            "stderr": "",
+        },
     }
     monkeypatch.setattr(capacity_module, "managed_capacity_status", lambda _state: manifest)
 
@@ -316,6 +450,91 @@ def test_collect_managed_result_verifies_checksum_commit_schema_and_teardown(tmp
     assert collection["evidence_sha256"] == checksum
     assert collection["gate_failures"] == []
     assert (tmp_path / "collection.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        ({"benchmark_exit_code": 1}, "exit code is nonzero"),
+        ({"cleanup": {"schema_dropped": True, "worktree_removed": False}}, "cleanup did not complete"),
+        ({"systemd": {"returncode": 0, "status": "Result=exit-code\nExecMainStatus=1"}}, "systemd result"),
+    ],
+)
+def test_managed_collect_rejects_failed_execution_state(tmp_path, monkeypatch, mutation, error):
+    identity = _managed_identity("d" * 40)
+    paths = _managed_state_paths(tmp_path)
+    evidence = {
+        "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+        "git": identity,
+        "projection_schema": "lifecycle_capacity_managed_collect_failure",
+        "teardown": {"schema_dropped": True},
+        "gate_failures": [],
+    }
+    result_path = Path(paths["result"])
+    _write_json_atomically(result_path, evidence)
+    Path(paths["result_checksum"]).write_text(
+        f"{capacity_module.hashlib.sha256(result_path.read_bytes()).hexdigest()}  evidence.json\n",
+        encoding="utf-8",
+    )
+    manifest = {
+        "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+        "run_id": "managed-collect-failure",
+        "git": identity,
+        "schema": "lifecycle_capacity_managed_collect_failure",
+        "paths": paths,
+        "benchmark_exit_code": 0,
+        "cleanup": {
+            "schema_dropped": True,
+            "worktree_removed": True,
+            "private_environment_removed": True,
+            "error": None,
+        },
+        "systemd": {"returncode": 0, "status": "Result=success\nExecMainStatus=0"},
+    }
+    manifest.update(mutation)
+    monkeypatch.setattr(capacity_module, "managed_capacity_status", lambda _state: manifest)
+
+    with pytest.raises(RuntimeError, match=error):
+        collect_managed_capacity_result(tmp_path)
+
+
+def test_managed_collect_rejects_nonempty_gate_failures(tmp_path, monkeypatch):
+    identity = _managed_identity("e" * 40)
+    paths = _managed_state_paths(tmp_path)
+    evidence = {
+        "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+        "git": identity,
+        "projection_schema": "lifecycle_capacity_managed_collect_gates",
+        "teardown": {"schema_dropped": True},
+        "gate_failures": ["peak RSS"],
+    }
+    result_path = Path(paths["result"])
+    _write_json_atomically(result_path, evidence)
+    Path(paths["result_checksum"]).write_text(
+        f"{capacity_module.hashlib.sha256(result_path.read_bytes()).hexdigest()}  evidence.json\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        capacity_module,
+        "managed_capacity_status",
+        lambda _state: {
+            "run_id": "managed-collect-gates",
+            "git": identity,
+            "schema": evidence["projection_schema"],
+            "paths": paths,
+            "benchmark_exit_code": 0,
+            "cleanup": {
+                "schema_dropped": True,
+                "worktree_removed": True,
+                "private_environment_removed": True,
+                "error": None,
+            },
+            "systemd": {"returncode": 0, "status": "Result=success\nExecMainStatus=0"},
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="nonempty gate failures"):
+        collect_managed_capacity_result(tmp_path)
 
 
 def test_run_capacity_benchmark_projects_full_small_scale_corpus(capacity_dsn):

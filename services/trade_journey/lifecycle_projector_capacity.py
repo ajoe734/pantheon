@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 import resource
 import signal
+import shlex
 import statistics
 import subprocess
 import sys
@@ -93,9 +94,17 @@ MANAGED_RUNS_RELATIVE_ROOT = Path(
     "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/managed-runs"
 )
 MANAGED_WORKTREE_ROOT = Path(tempfile.gettempdir()) / "pantheon-lifecycle-capacity-worktrees"
+MANAGED_SECRET_ROOT = Path(tempfile.gettempdir()) / "pantheon-lifecycle-capacity-secrets"
 MANAGED_ADMISSION_LOCK = Path(tempfile.gettempdir()) / "pantheon-lifecycle-capacity.lock"
 MANAGED_UNIT_PREFIX = "lifecycle-capacity-"
 _QUIET_HOST_FORBIDDEN_PATTERN = ("e2e", "task-")
+# A 4-GiB constrained job must have enough headroom to avoid measuring host
+# reclamation/pressure instead of the projector.  The launcher therefore only
+# admits a host with at least two job limits free and a modest one-minute load
+# per CPU.  These are admission safeguards, not capacity acceptance gates.
+MANAGED_MIN_AVAILABLE_MEMORY_BYTES = 8 * (1024 ** 3)
+MANAGED_MAX_LOAD_PER_CPU = 0.75
+_MANAGED_MODULE_NAME = "services.trade_journey.lifecycle_projector_capacity"
 
 
 def _deterministic_uuid(namespace: str, index: int) -> str:
@@ -1174,6 +1183,18 @@ def _write_private_environment(path: Path, values: Mapping[str, str]) -> None:
         raise
 
 
+def _remove_private_environment(path: Path) -> bool:
+    """Remove a launcher-owned secret file without accepting arbitrary paths."""
+
+    if not _is_under(path, MANAGED_SECRET_ROOT):
+        raise RuntimeError(f"refusing to remove unmanaged private environment: {path}")
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return True
+    return not path.exists()
+
+
 def _is_under(path: Path, parent: Path) -> bool:
     try:
         path.resolve().relative_to(parent.resolve())
@@ -1183,6 +1204,10 @@ def _is_under(path: Path, parent: Path) -> bool:
 
 
 def _managed_state_paths(state_dir: Path) -> dict[str, str]:
+    # Runtime credentials may never be persisted below the task evidence tree:
+    # the state directory is designed to be committed after a successful run.
+    # ``state_dir.name`` is the generated run id, not operator-controlled input.
+    private_environment = MANAGED_SECRET_ROOT / f"{state_dir.name}.env"
     return {
         "status": str(state_dir / "run.json"),
         "log": str(state_dir / "run.log"),
@@ -1190,7 +1215,7 @@ def _managed_state_paths(state_dir: Path) -> dict[str, str]:
         "result_checksum": str(state_dir / "evidence.json.sha256"),
         # The path is useful to an operator investigating a stopped unit, but
         # never expose the contents in the status manifest or collected proof.
-        "private_environment": str(state_dir / "service.env"),
+        "private_environment": str(private_environment),
     }
 
 
@@ -1212,9 +1237,37 @@ def _admission_output(
     return completed.stdout.strip()
 
 
+def _available_memory_bytes() -> int:
+    """Return Linux ``MemAvailable`` or fail closed when it cannot be read."""
+
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            key, value, unit = line.split()
+            if key == "MemAvailable:" and unit == "kB":
+                return int(value) * 1024
+    except (OSError, ValueError):
+        pass
+    raise RuntimeError("managed capacity admission could not determine MemAvailable")
+
+
+def _managed_host_resources() -> dict[str, float | int]:
+    """Capture the host-pressure inputs that make a capacity run reproducible."""
+
+    cpu_count = os.cpu_count()
+    if not cpu_count or cpu_count < 1:
+        raise RuntimeError("managed capacity admission could not determine CPU count")
+    load_1m = float(os.getloadavg()[0])
+    return {
+        "cpu_count": cpu_count,
+        "load_1m": load_1m,
+        "load_per_cpu": load_1m / cpu_count,
+        "available_memory_bytes": _available_memory_bytes(),
+    }
+
+
 def _assert_quiet_managed_host(
     *, runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run
-) -> dict[str, list[str]]:
+) -> dict[str, Any]:
     """Fail closed unless the user systemd manager and host admission are clear.
 
     The normal product stack is permitted.  Dedicated E2E/task containers and
@@ -1248,7 +1301,18 @@ def _assert_quiet_managed_host(
             "managed capacity admission rejected E2E/task Docker resources: "
             + ", ".join(conflicts)
         )
-    return {"containers": containers, "networks": networks}
+    resources = _managed_host_resources()
+    if float(resources["load_per_cpu"]) > MANAGED_MAX_LOAD_PER_CPU:
+        raise RuntimeError(
+            "managed capacity admission rejected unsafe host load: "
+            f"{resources['load_per_cpu']:.3f} per CPU exceeds {MANAGED_MAX_LOAD_PER_CPU:.3f}"
+        )
+    if int(resources["available_memory_bytes"]) < MANAGED_MIN_AVAILABLE_MEMORY_BYTES:
+        raise RuntimeError(
+            "managed capacity admission rejected insufficient available memory: "
+            f"{resources['available_memory_bytes']} < {MANAGED_MIN_AVAILABLE_MEMORY_BYTES}"
+        )
+    return {"containers": containers, "networks": networks, "resources": resources}
 
 
 def _acquire_managed_admission_lock(lock_path: Path, run_id: str) -> None:
@@ -1302,6 +1366,84 @@ def _create_clean_capacity_worktree(
     if identity["commit"] != commit or identity["dirty"]:
         raise RuntimeError("managed capacity source worktree is not clean at the requested commit")
     return identity
+
+
+def _provision_clean_capacity_runtime(
+    clean_root: Path,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, str]:
+    """Provision and prove the interpreter/systemd module binding for ``clean_root``.
+
+    A worker's ``sys.executable`` can be a shared or editable interpreter that
+    resolves ``services`` from a different checkout.  Provisioning creates the
+    repository-scoped virtual environment in the detached worktree, then a
+    foreign-cwd probe proves the *actual module file* is inside that worktree.
+    The returned interpreter is the only one passed to ``systemd-run``.
+    """
+
+    provisioner = clean_root / "scripts" / "dev" / "provision_python_distribution.py"
+    if not provisioner.is_file():
+        raise RuntimeError(f"managed capacity worktree lacks provisioner: {provisioner}")
+    provisioned = _run_checked(
+        [str(sys.executable), str(provisioner), "--print-python"],
+        runner=runner,
+        cwd=str(clean_root),
+    )
+    python = Path(provisioned.stdout.strip())
+    if not python.is_absolute() or not python.exists():
+        raise RuntimeError("managed capacity provisioner did not return an executable path")
+    probe_source = (
+        "import json, sys; "
+        f"import {_MANAGED_MODULE_NAME} as module; "
+        "print(json.dumps({'python': sys.executable, 'module_file': module.__file__}))"
+    )
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    probed = _run_checked(
+        [str(python), "-c", probe_source],
+        runner=runner,
+        cwd=tempfile.gettempdir(),
+        env=environment,
+    )
+    try:
+        runtime = json.loads(probed.stdout)
+        module_file = Path(str(runtime["module_file"])).resolve()
+        runtime_python = Path(str(runtime["python"])).absolute()
+    except (KeyError, TypeError, ValueError, OSError) as exc:
+        raise RuntimeError("managed capacity runtime binding probe was unreadable") from exc
+    if not _is_under(module_file, clean_root):
+        raise RuntimeError(
+            "managed capacity runtime resolves its module outside the clean worktree: "
+            f"{module_file}"
+        )
+    if runtime_python != python.absolute():
+        raise RuntimeError(
+            "managed capacity runtime probe did not execute the provisioned interpreter: "
+            f"{runtime_python} != {python.absolute()}"
+        )
+    return {"python": str(python.absolute()), "module_file": str(module_file)}
+
+
+def _assert_managed_worker_binding(manifest: Mapping[str, Any]) -> None:
+    """Fail the service before benchmark work if it is not running clean source."""
+
+    clean_root = Path(str(manifest["clean_repository_root"])).resolve()
+    expected = manifest.get("runtime") or {}
+    expected_python = Path(str(expected.get("python") or "")).absolute()
+    expected_module = Path(str(expected.get("module_file") or "")).resolve()
+    actual_python = Path(sys.executable).absolute()
+    actual_module = Path(__file__).resolve()
+    if (
+        not expected_python.is_absolute()
+        or actual_python != expected_python
+        or not _is_under(actual_module, clean_root)
+        or actual_module != expected_module
+    ):
+        raise RuntimeError(
+            "managed capacity worker is not using the exact clean-worktree runtime: "
+            f"python={actual_python}, module={actual_module}, clean_root={clean_root}"
+        )
 
 
 def _remove_clean_capacity_worktree(
@@ -1383,30 +1525,33 @@ def launch_managed_capacity_run(
 
     _acquire_managed_admission_lock(lock_path, run_id)
     clean_worktree_created = False
+    schema: str | None = None
+    private_environment: Path | None = None
+    manifest_path: Path | None = None
     try:
         admission = _assert_quiet_managed_host(runner=runner)
         clean_identity = _create_clean_capacity_worktree(
             repository_root, clean_root, commit, runner=runner
         )
         clean_worktree_created = True
+        runtime = _provision_clean_capacity_runtime(clean_root, runner=runner)
 
         state_dir.mkdir(parents=True, mode=0o700)
         paths = _managed_state_paths(state_dir)
-        _write_private_environment(
-            Path(paths["private_environment"]),
-            {"LIFECYCLE_PROJECTOR_PROJECTION_DSN": dsn},
-        )
-        schema = _fresh_capacity_schema(dsn, f"managed_{run_id}")
+        private_environment = Path(paths["private_environment"])
+        private_environment.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        os.chmod(private_environment.parent, 0o700)
         manifest: dict[str, Any] = {
             "task_id": TASK_ID,
             "run_id": run_id,
-            "state": "submitting",
+            "state": "preparing",
             "created_at": _utc_now(),
             "unit": unit,
             "repository_root": str(repository_root),
             "clean_repository_root": str(clean_root),
             "git": clean_identity,
-            "schema": schema,
+            "runtime": runtime,
+            "schema": None,
             "paths": paths,
             "admission": {"lock_path": str(lock_path), **admission},
             "requested": {
@@ -1420,12 +1565,18 @@ def launch_managed_capacity_run(
         }
         manifest_path = Path(paths["status"])
         _write_json_atomically(manifest_path, manifest)
+        _write_private_environment(
+            private_environment,
+            {"LIFECYCLE_PROJECTOR_PROJECTION_DSN": dsn},
+        )
+        schema = _fresh_capacity_schema(dsn, f"managed_{run_id}")
+        _update_managed_manifest(manifest_path, state="submitting", schema=schema)
 
-        cleanup_command = " ".join(
+        cleanup_command = shlex.join(
             [
-                str(sys.executable),
+                runtime["python"],
                 "-m",
-                "services.trade_journey.lifecycle_projector_capacity",
+                _MANAGED_MODULE_NAME,
                 "managed-cleanup",
                 "--state-dir",
                 str(state_dir),
@@ -1436,16 +1587,16 @@ def launch_managed_capacity_run(
             "--user",
             "--unit",
             unit,
-            "--collect",
             "--no-block",
+            "--setenv=PYTHONPATH=",
             f"--working-directory={clean_root}",
             f"--property=EnvironmentFile={paths['private_environment']}",
             f"--property=StandardOutput=append:{paths['log']}",
             f"--property=StandardError=append:{paths['log']}",
             f"--property=ExecStopPost={cleanup_command}",
-            str(sys.executable),
+            runtime["python"],
             "-m",
-            "services.trade_journey.lifecycle_projector_capacity",
+            _MANAGED_MODULE_NAME,
             "managed-run",
             "--state-dir",
             str(state_dir),
@@ -1459,24 +1610,52 @@ def launch_managed_capacity_run(
         )
         return manifest
     except BaseException as exc:
-        if state_dir.exists():
-            manifest_path = state_dir / "run.json"
-            if manifest_path.exists():
-                _update_managed_manifest(
-                    manifest_path,
-                    state="launcher_failed",
-                    launcher_failed_at=_utc_now(),
-                    launcher_failure=f"{type(exc).__name__}: {exc}",
+        cleanup_errors: list[str] = []
+        schema_dropped = schema is None
+        worktree_removed = not clean_worktree_created
+        private_environment_removed = private_environment is None
+        if private_environment is not None:
+            try:
+                private_environment_removed = _remove_private_environment(private_environment)
+            except Exception as cleanup_exc:
+                cleanup_errors.append(
+                    f"private environment: {type(cleanup_exc).__name__}: {cleanup_exc}"
                 )
+        if schema is not None:
+            try:
+                schema_dropped = _teardown_capacity_schema(dsn, schema)
+                if not schema_dropped:
+                    cleanup_errors.append("schema teardown returned false")
+            except Exception as cleanup_exc:
+                cleanup_errors.append(f"schema: {type(cleanup_exc).__name__}: {cleanup_exc}")
         if clean_worktree_created:
             try:
                 _remove_clean_capacity_worktree(repository_root, clean_root, runner=runner)
-            except Exception:
-                # Preserve the original admission/launch exception.  The
-                # transient source contains no benchmark schema before the
-                # managed service has been submitted.
-                pass
-        _release_managed_admission_lock(lock_path, run_id)
+                worktree_removed = True
+            except Exception as cleanup_exc:
+                cleanup_errors.append(f"worktree: {type(cleanup_exc).__name__}: {cleanup_exc}")
+        cleanup = {
+            "schema_dropped": schema_dropped,
+            "worktree_removed": worktree_removed,
+            "private_environment_removed": private_environment_removed,
+            "error": "; ".join(cleanup_errors) or None,
+        }
+        if manifest_path is not None and manifest_path.exists():
+            _update_managed_manifest(
+                manifest_path,
+                state="launcher_failed",
+                launcher_failed_at=_utc_now(),
+                launcher_failure=f"{type(exc).__name__}: {exc}",
+                cleanup=cleanup,
+            )
+        if all(
+            (
+                cleanup["schema_dropped"],
+                cleanup["worktree_removed"],
+                cleanup["private_environment_removed"],
+            )
+        ):
+            _release_managed_admission_lock(lock_path, run_id)
         raise
 
 
@@ -1485,6 +1664,7 @@ def run_managed_capacity_worker(state_dir: Path) -> int:
 
     manifest_path = state_dir / "run.json"
     manifest = _read_json_object(manifest_path)
+    _assert_managed_worker_binding(manifest)
     requested = manifest.get("requested") or {}
     paths = manifest.get("paths") or {}
     _update_managed_manifest(manifest_path, state="benchmark_running", started_at=_utc_now())
@@ -1540,8 +1720,11 @@ def cleanup_managed_capacity_run(
     manifest = _read_json_object(manifest_path)
     lock_path = Path(str((manifest.get("admission") or {})["lock_path"]))
     dsn = str(os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN") or "")
+    paths = manifest.get("paths") or {}
+    private_environment = Path(str(paths.get("private_environment") or ""))
     schema_dropped = False
     worktree_removed = False
+    private_environment_removed = False
     error: str | None = None
     try:
         if not dsn:
@@ -1555,17 +1738,25 @@ def cleanup_managed_capacity_run(
         worktree_removed = True
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
+    finally:
+        try:
+            private_environment_removed = _remove_private_environment(private_environment)
+        except Exception as cleanup_exc:
+            detail = f"private environment: {type(cleanup_exc).__name__}: {cleanup_exc}"
+            error = f"{error}; {detail}" if error else detail
+    cleaned = schema_dropped and worktree_removed and private_environment_removed
     _update_managed_manifest(
         manifest_path,
-        state="cleaned" if schema_dropped and worktree_removed else "cleanup_failed",
+        state="cleaned" if cleaned else "cleanup_failed",
         cleanup_at=_utc_now(),
         cleanup={
             "schema_dropped": schema_dropped,
             "worktree_removed": worktree_removed,
+            "private_environment_removed": private_environment_removed,
             "error": error,
         },
     )
-    if schema_dropped and worktree_removed:
+    if cleaned:
         _release_managed_admission_lock(lock_path, str(manifest["run_id"]))
         return True
     return False
@@ -1604,6 +1795,22 @@ def collect_managed_capacity_result(state_dir: Path) -> dict[str, Any]:
     """Verify the completed raw evidence before a later worker reviews it."""
 
     manifest = managed_capacity_status(state_dir)
+    systemd = manifest.get("systemd") or {}
+    systemd_status = str(systemd.get("status") or "")
+    if int(systemd.get("returncode", 1)) != 0:
+        raise RuntimeError("managed capacity systemd status could not be read")
+    if "Result=success" not in systemd_status or "ExecMainStatus=0" not in systemd_status:
+        raise RuntimeError("managed capacity systemd result is not successful")
+    if int(manifest.get("benchmark_exit_code", 1)) != 0:
+        raise RuntimeError("managed capacity benchmark exit code is nonzero")
+    cleanup = manifest.get("cleanup") or {}
+    if not (
+        cleanup.get("schema_dropped")
+        and cleanup.get("worktree_removed")
+        and cleanup.get("private_environment_removed")
+        and cleanup.get("error") is None
+    ):
+        raise RuntimeError("managed capacity cleanup did not complete successfully")
     paths = manifest.get("paths") or {}
     result_path = Path(str(paths["result"]))
     checksum_path = Path(str(paths["result_checksum"]))
@@ -1616,18 +1823,23 @@ def collect_managed_capacity_result(state_dir: Path) -> dict[str, Any]:
     evidence = _read_json_object(result_path)
     if evidence.get("task_id") != TASK_ID:
         raise RuntimeError("managed capacity result has the wrong task id")
-    if evidence.get("git", {}).get("commit") != manifest.get("git", {}).get("commit"):
+    if evidence.get("git") != manifest.get("git"):
         raise RuntimeError("managed capacity result is not bound to the launched clean commit")
     if evidence.get("projection_schema") != manifest.get("schema"):
         raise RuntimeError("managed capacity result did not use the launched capacity schema")
     if not (evidence.get("teardown") or {}).get("schema_dropped"):
         raise RuntimeError("managed capacity result does not prove schema teardown")
+    if not cleanup.get("schema_dropped"):
+        raise RuntimeError("managed capacity result teardown does not match cleanup state")
+    gate_failures = evidence.get("gate_failures")
+    if not isinstance(gate_failures, list) or gate_failures:
+        raise RuntimeError("managed capacity result has nonempty gate failures")
     collection = {
         "task_id": TASK_ID,
         "run_id": manifest["run_id"],
         "collected_at": _utc_now(),
         "evidence_sha256": actual,
-        "gate_failures": evidence.get("gate_failures", []),
+        "gate_failures": gate_failures,
         "benchmark_exit_code": manifest.get("benchmark_exit_code"),
         "cleanup": manifest.get("cleanup"),
     }
