@@ -52,7 +52,7 @@ CASE_NAMES = (
     "persona_teaching",
 )
 OWNER_SERVICES = {
-    "source_ingestion": "source-ingest-scheduler",
+    "source_ingestion": "source-ingest",
     "strategy_distillation": "strategy-distillation-worker",
     "alpha_replication": "alpha-replication-worker",
     "persona_teaching": "training-session-preview-worker",
