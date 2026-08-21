@@ -46,7 +46,7 @@ from typing import Any, Callable, Mapping
 import pytest
 
 
-TASK_ID = "L12-CURRENT-E2E-RUNTIME-20260814"
+TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
 TENANT_ID = "default"
 EVOLUTION_TENANT_ID = "pantheon-default"
 PARENT_ARTIFACT_ID = "artifact-tw-session-momentum-v1"
