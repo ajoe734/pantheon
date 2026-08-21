@@ -1221,6 +1221,7 @@ services:
       PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/lifecycle-projection/current/loop_runs.json
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
+      PANTHEON_BFF_HEALTH_PROBE_INTERVAL_SECONDS: ${PANTHEON_BFF_HEALTH_PROBE_INTERVAL_SECONDS:-30}
       # Every configured owner URL has an exact existing health route. This
       # disables the generic /__health__ guess that returned deterministic
       # 404s for FastAPI owners and preserves component identity in emitted

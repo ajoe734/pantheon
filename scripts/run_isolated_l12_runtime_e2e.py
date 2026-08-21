@@ -62,6 +62,15 @@ REQUIRED_COMPOSE_SERVICES = [
     "operator-bff",
 ]
 DB_MIGRATION_SERVICE = "source-ingest-controller-migrate"
+ISOLATED_SAFE_CONTROLS = {
+    "BROKER_PAPER_ENABLED": "true",
+    "BROKER_SHIOAJI_SANDBOX_ENABLED": "false",
+    "PANTHEON_CANARY_EXECUTION_ENABLED": "false",
+    "PANTHEON_LIVE_BROKER_ENABLED": "false",
+    "PANTHEON_BFF_HEALTH_PROBE_INTERVAL_SECONDS": "1",
+    "PAPER_PRODUCER_INTERVAL_SECONDS": "1",
+    "RECONCILER_POLL_INTERVAL_SECONDS": "1",
+}
 
 DEFAULT_PORTS: dict[str, int] = {
     "POSTGRES_PORT": 15432,
@@ -310,6 +319,7 @@ def _augment_report(
     report["harness"] = {
         "main_negative_binding_retirement": dict(main_retirement or {}),
         "database_migration": dict(database_migration or {}),
+        "isolated_safe_controls": dict(ISOLATED_SAFE_CONTROLS),
         "preclean": dict(preclean or {}),
         "teardown": dict(teardown or {}),
     }
@@ -429,6 +439,7 @@ def main() -> int:
     # Build compose environment with parameterized isolated ports and exact git sha
     compose_env = os.environ.copy()
     compose_env["GIT_SHA"] = expected_sha
+    compose_env.update(ISOLATED_SAFE_CONTROLS)
     for port_name, default_port in DEFAULT_PORTS.items():
         if port_name not in compose_env:
             compose_env[port_name] = str(default_port + args.port_offset)
