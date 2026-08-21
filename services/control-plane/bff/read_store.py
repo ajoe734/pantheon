@@ -2379,6 +2379,20 @@ class CanonicalSnapshotAdapter:
             "keys": ["artifact_id", "registry_id", "id"],
             "snapshot_key": "registry_entries",
         },
+        "governance_audit_events": {
+            "env": "PANTHEON_BFF_GOVERNANCE_AUDIT_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR", "GOVERNANCE_DATA_DIR"),
+            "filenames": ("governance_audit_events.json", "governance_audit.json", "audit_events.json"),
+            "keys": ["entry_id", "event_id", "auditId", "audit_id", "id"],
+            "snapshot_key": "governance_audit_events",
+        },
+        "activity_audit": {
+            "env": "PANTHEON_BFF_ACTIVITY_AUDIT_STORE",
+            "dirs": ("PANTHEON_AUDIT_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"),
+            "filenames": ("activity_audit.json", "activities.json", "activity.json"),
+            "keys": ["entry_id", "event_id", "auditId", "audit_id", "id"],
+            "snapshot_key": "activity_audit",
+        },
     }
 
     _HTTP_DATASETS = {
@@ -2759,24 +2773,59 @@ class ServiceBackedReadAdapter:
             "nested_key": "postmortems",
             "snapshot_key": "postmortems",
         },
+        "governance_audit_events": {
+            "env": "PANTHEON_BFF_GOVERNANCE_AUDIT_STORE",
+            "dirs": (
+                "PANTHEON_GOVERNANCE_DATA_DIR",
+                "PANTHEON_AUDIT_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+                "GOVERNANCE_DATA_DIR",
+            ),
+            "filenames": (
+                "governance_audit_events.json",
+                "governance_audit.json",
+                "audit_events.jsonl",
+                "audit_events.json",
+            ),
+            "keys": ["entry_id", "event_id", "auditId", "audit_id", "id"],
+            "snapshot_key": "governance_audit_events",
+        },
         "formula_jobs": {
             "env": "PANTHEON_BFF_FORMULA_JOBS_STORE",
-            "dirs": ("FORMULA_JOBS_DATA_DIR",),
-            "filenames": ("formula_jobs.json", "jobs.json"),
+            "dirs": (
+                "FORMULA_JOBS_DATA_DIR",
+                "PANTHEON_FORMULA_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": ("formula_jobs.json", "formula_jobs.jsonl", "jobs.json"),
             "keys": ["job_id", "id"],
             "snapshot_key": "formula_jobs",
         },
         "activity_audit": {
             "env": "PANTHEON_BFF_ACTIVITY_AUDIT_STORE",
-            "dirs": ("ACTIVITY_AUDIT_DATA_DIR",),
-            "filenames": ("activity_audit.json", "activities.json", "activity.json"),
-            "keys": ["event_id", "id"],
+            "dirs": (
+                "ACTIVITY_AUDIT_DATA_DIR",
+                "PANTHEON_AUDIT_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": (
+                "activity_audit.json",
+                "activity_audit.jsonl",
+                "activities.json",
+                "activity.json",
+                "audit_events.jsonl",
+            ),
+            "keys": ["entry_id", "event_id", "auditId", "audit_id", "id"],
             "snapshot_key": "activity_audit",
         },
         "paper_telemetry": {
             "env": "PANTHEON_BFF_PAPER_TELEMETRY_STORE",
-            "dirs": ("PAPER_TELEMETRY_DATA_DIR",),
-            "filenames": ("paper_telemetry.json", "telemetry.json"),
+            "dirs": (
+                "PAPER_TELEMETRY_DATA_DIR",
+                "PANTHEON_TELEMETRY_DATA_DIR",
+                "PANTHEON_CONTROL_PLANE_DATA_DIR",
+            ),
+            "filenames": ("paper_telemetry.json", "paper_telemetry.jsonl", "telemetry.json"),
             "keys": ["strategy_id", "paper_ledger_id", "id"],
             "snapshot_key": "paper_telemetry",
         },
@@ -3191,27 +3240,6 @@ class ServiceBackedReadAdapter:
             "filenames": ("mcp_tools.json",),
             "keys": ["tool_id", "id"],
             "snapshot_key": "mcp_tools",
-        },
-        "formula_jobs": {
-            "env": "PANTHEON_BFF_FORMULA_JOBS_STORE",
-            "dirs": ("PANTHEON_FORMULA_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"),
-            "filenames": ("formula_jobs.json", "formula_jobs.jsonl"),
-            "keys": ["job_id", "id"],
-            "snapshot_key": "formula_jobs",
-        },
-        "activity_audit": {
-            "env": "PANTHEON_BFF_ACTIVITY_AUDIT_STORE",
-            "dirs": ("PANTHEON_AUDIT_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"),
-            "filenames": ("activity_audit.json", "activity_audit.jsonl", "audit_events.jsonl"),
-            "keys": ["event_id", "id"],
-            "snapshot_key": "activity_audit",
-        },
-        "paper_telemetry": {
-            "env": "PANTHEON_BFF_PAPER_TELEMETRY_STORE",
-            "dirs": ("PANTHEON_TELEMETRY_DATA_DIR", "PANTHEON_CONTROL_PLANE_DATA_DIR"),
-            "filenames": ("paper_telemetry.json", "paper_telemetry.jsonl"),
-            "keys": ["strategy_id", "id"],
-            "snapshot_key": "paper_telemetry",
         },
     }
 
@@ -16784,9 +16812,19 @@ class ReadSurfaceStore:
         to_ts: Optional[datetime] = None,
         include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
-        events = list(self._local_fallback("governance_audit_events") or [])
-        if not include_fixture_pack:
-            events = [event for event in events if not _is_fixture_pack_record(event)]
+        available, service_events = self._service.list_records(
+            "governance_audit_events",
+            include_snapshot_fallback=include_fixture_pack,
+        )
+        if available and service_events:
+            events = [
+                event for event in service_events
+                if isinstance(event, dict) and (include_fixture_pack or not _is_fixture_pack_record(event))
+            ]
+        elif include_fixture_pack:
+            events = list(self._local_fallback("governance_audit_events") or [])
+        else:
+            events = []
 
         if actor:
             events = [event for event in events if event.get("actor") == actor]
@@ -20426,27 +20464,26 @@ class ReadSurfaceStore:
         formula_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         # Reuse canonical jobs owner and formula_jobs dataset
-        jobs_avail, jobs_records = self._service.list_records("jobs")
-        fj_avail, fj_records = self._service.list_records("formula_jobs")
+        jobs_avail, jobs_records = self._service.list_records("jobs", include_snapshot_fallback=False)
+        fj_avail, fj_records = self._service.list_records("formula_jobs", include_snapshot_fallback=False)
 
-        source = "missing"
-        if jobs_avail:
-            cached_source = self._service.cached_source("jobs")
-            source = "service" if cached_source in ("canonical", "service_client") else "service"
-        elif fj_avail:
-            cached_source = self._service.cached_source("formula_jobs")
-            source = "service" if cached_source in ("canonical", "service_client") else "service"
-
+        contributing_sources: List[str] = []
         raw_items: List[Dict[str, Any]] = []
-        if jobs_avail:
-            raw_items.extend(jobs_records)
-        else:
-            raw_items.extend(self._read_dataset_records("jobs"))
 
+        if jobs_avail:
+            jobs_src = self._service.source("jobs") or "service"
+            contributing_sources.append(jobs_src)
+            raw_items.extend(jobs_records)
         if fj_avail:
+            fj_src = self._service.source("formula_jobs") or "service"
+            contributing_sources.append(fj_src)
             raw_items.extend(fj_records)
-        else:
-            raw_items.extend(self._read_dataset_records("formula_jobs"))
+
+        if not jobs_avail and not fj_avail:
+            return {
+                "source": "unavailable",
+                "items": [],
+            }
 
         filtered = []
         seen_job_ids = set()
@@ -20482,8 +20519,8 @@ class ReadSurfaceStore:
             }
             filtered.append(item_copy)
 
-        if source == "missing" and filtered:
-            source = "store"
+        filtered.sort(key=lambda x: str(x.get("submitted_at") or ""), reverse=True)
+        source = "service"
 
         return {
             "source": source,
@@ -20498,69 +20535,98 @@ class ReadSurfaceStore:
     ) -> Dict[str, Any]:
         # Reuse canonical governance audit events, telemetry events, and activity_audit
         raw_items: List[Dict[str, Any]] = []
-        source = "missing"
+        contributing_sources: List[str] = []
+        surfaces: Dict[str, Any] = {}
 
-        # 1. Direct activity_audit dataset
-        act_avail, act_records = self._service.list_records("activity_audit")
-        if act_avail:
-            cached_source = self._service.cached_source("activity_audit")
-            source = "audit" if cached_source in ("canonical", "service_client") else "audit"
+        # 1. Direct activity_audit dataset (without static fallback)
+        act_avail, act_records = self._service.list_records("activity_audit", include_snapshot_fallback=False)
+        act_src = self._service.source("activity_audit") if act_avail else "missing"
+        if act_avail and act_records:
+            contributing_sources.append(act_src or "audit")
+            surfaces["activity_audit"] = {"status": "ok", "source": act_src}
             raw_items.extend(act_records)
+        elif act_avail:
+            surfaces["activity_audit"] = {"status": "degraded", "source": act_src}
         else:
-            raw_items.extend(self._read_dataset_records("activity_audit"))
+            surfaces["activity_audit"] = {"status": "unavailable", "source": "missing"}
 
-        # 2. Canonical governance audit events
+        # 2. Canonical governance audit events (without static fallback)
         try:
-            gov_events = self.list_governance_audit_events(
-                actor=actor_id,
-                action_types=[event_type] if event_type else None,
-                include_fixture_pack=True,
-            )
-            for gev in gov_events:
-                raw_items.append({
-                    "event_id": str(gev.get("event_id") or gev.get("id") or ""),
-                    "event_type": str(gev.get("action_type") or gev.get("event_type") or "governance.audit"),
-                    "aggregate_id": str(gev.get("target_id") or gev.get("aggregate_id") or ""),
-                    "actor_id": str(gev.get("actor") or gev.get("actor_id") or "system"),
-                    "timestamp": str(gev.get("timestamp") or _utc_now_rfc3339()),
-                    "summary": str(gev.get("summary") or f"Governance action {gev.get('action_type', '')}"),
-                    "details": gev.get("details") or gev.get("payload") or {},
-                    "source_identity": str(gev.get("source_identity") or "governance_audit_store"),
-                    "freshness": str(gev.get("timestamp") or _utc_now_rfc3339()),
-                })
-            if gov_events and source == "missing":
-                source = "audit"
+            gov_avail, gov_records = self._service.list_records("governance_audit_events", include_snapshot_fallback=False)
+            gov_src = self._service.source("governance_audit_events") if gov_avail else "missing"
+            if gov_avail and gov_records:
+                contributing_sources.append(gov_src or "audit")
+                surfaces["governance_audit"] = {"status": "ok", "source": gov_src}
+                for gev in gov_records:
+                    if not isinstance(gev, dict):
+                        continue
+                    eid = str(gev.get("entry_id") or gev.get("event_id") or gev.get("auditId") or gev.get("audit_id") or gev.get("id") or "")
+                    raw_items.append({
+                        "event_id": eid,
+                        "entry_id": eid,
+                        "event_type": str(gev.get("action_type") or gev.get("event_type") or "governance.audit"),
+                        "aggregate_id": str(gev.get("target_id") or gev.get("aggregate_id") or ""),
+                        "actor_id": str(gev.get("actor") or gev.get("actor_id") or "system"),
+                        "timestamp": str(gev.get("timestamp") or _utc_now_rfc3339()),
+                        "summary": str(gev.get("summary") or f"Governance action {gev.get('action_type', '')}"),
+                        "details": gev.get("details") or gev.get("payload") or gev.get("audit_context") or {},
+                        "source_identity": str(gev.get("source_identity") or "governance_audit_store"),
+                        "freshness": str(gev.get("timestamp") or _utc_now_rfc3339()),
+                    })
+            elif gov_avail:
+                surfaces["governance_audit"] = {"status": "degraded", "source": gov_src}
+            else:
+                surfaces["governance_audit"] = {"status": "unavailable", "source": "missing"}
         except Exception:
-            pass
+            surfaces["governance_audit"] = {"status": "unavailable", "source": "missing"}
 
         # 3. Canonical telemetry events
         try:
             tel_src, tel_events = self.list_telemetry_events_with_source()
-            if tel_src != "missing" and source == "missing":
-                source = "telemetry"
-            for tev in tel_events:
-                tev_type = str(tev.get("type") or tev.get("event_type") or "telemetry")
-                tev_actor = str(tev.get("actor_id") or tev.get("persona_id") or "telemetry_ingest")
-                raw_items.append({
-                    "event_id": str(tev.get("id") or tev.get("event_id") or ""),
-                    "event_type": tev_type,
-                    "aggregate_id": str(tev.get("runtime_id") or tev.get("aggregate_id") or ""),
-                    "actor_id": tev_actor,
-                    "timestamp": str(tev.get("timestamp") or _utc_now_rfc3339()),
-                    "summary": str(tev.get("summary") or f"Telemetry event for runtime {tev.get('runtime_id', '')}"),
-                    "details": tev.get("details") or tev.get("metrics") or {},
-                    "source_identity": str(tev.get("source_identity") or "telemetry_event_store"),
-                    "freshness": str(tev.get("timestamp") or _utc_now_rfc3339()),
-                })
+            if tel_src not in ("missing", "unavailable") and tel_events:
+                contributing_sources.append(tel_src)
+                surfaces["telemetry_events"] = {"status": "ok", "source": tel_src}
+                for tev in tel_events:
+                    if not isinstance(tev, dict):
+                        continue
+                    tev_id = str(tev.get("id") or tev.get("event_id") or tev.get("telemetry_event_id") or "")
+                    tev_type = str(tev.get("type") or tev.get("event_type") or "telemetry")
+                    tev_actor = str(tev.get("actor_id") or tev.get("persona_id") or "telemetry_ingest")
+                    raw_items.append({
+                        "event_id": tev_id,
+                        "entry_id": tev_id,
+                        "event_type": tev_type,
+                        "aggregate_id": str(tev.get("runtime_id") or tev.get("aggregate_id") or ""),
+                        "actor_id": tev_actor,
+                        "timestamp": str(tev.get("timestamp") or _utc_now_rfc3339()),
+                        "summary": str(tev.get("summary") or f"Telemetry event for runtime {tev.get('runtime_id', '')}"),
+                        "details": tev.get("details") or tev.get("metrics") or {},
+                        "source_identity": str(tev.get("source_identity") or "telemetry_event_store"),
+                        "freshness": str(tev.get("timestamp") or _utc_now_rfc3339()),
+                    })
+            elif tel_src not in ("missing", "unavailable"):
+                surfaces["telemetry_events"] = {"status": "degraded", "source": tel_src}
+            else:
+                surfaces["telemetry_events"] = {"status": "unavailable", "source": "missing"}
         except Exception:
-            pass
+            surfaces["telemetry_events"] = {"status": "unavailable", "source": "missing"}
+
+        if not act_avail and not gov_avail and (tel_src in ("missing", "unavailable")):
+            return {
+                "source": "unavailable",
+                "items": [],
+                "surfaces": surfaces,
+            }
 
         filtered = []
         seen_event_ids = set()
+        has_audit_items = False
+        has_telemetry_items = False
+
         for item in raw_items:
             if not isinstance(item, dict):
                 continue
-            eid = str(item.get("event_id") or item.get("id") or "")
+            eid = str(item.get("entry_id") or item.get("event_id") or item.get("auditId") or item.get("audit_id") or item.get("id") or "")
             if not eid or eid in seen_event_ids:
                 continue
             seen_event_ids.add(eid)
@@ -20573,27 +20639,41 @@ class ReadSurfaceStore:
             if actor_id and iactor != actor_id:
                 continue
 
+            src_ident = str(item.get("source_identity") or "activity_audit_store")
+            if "telemetry" in src_ident:
+                has_telemetry_items = True
+            else:
+                has_audit_items = True
+
             item_copy = {
                 "event_id": eid,
+                "entry_id": eid,
                 "event_type": itype,
                 "aggregate_id": str(item.get("aggregate_id") or item.get("target_id") or item.get("runtime_id") or ""),
                 "actor_id": iactor,
                 "timestamp": str(item.get("timestamp") or item.get("occurred_at") or _utc_now_rfc3339()),
                 "summary": str(item.get("summary") or item.get("description") or f"Activity {itype}"),
-                "details": item.get("details") or item.get("payload") or {},
-                "source_identity": str(item.get("source_identity") or "activity_audit_store"),
+                "details": item.get("details") or item.get("payload") or item.get("audit_context") or {},
+                "source_identity": src_ident,
                 "freshness": str(item.get("freshness") or item.get("timestamp") or _utc_now_rfc3339()),
             }
             filtered.append(item_copy)
 
         filtered.sort(key=lambda x: str(x.get("timestamp") or ""), reverse=True)
 
-        if source == "missing" and filtered:
+        if has_audit_items:
+            source = "audit"
+        elif has_telemetry_items:
+            source = "telemetry"
+        elif contributing_sources:
+            source = contributing_sources[0]
+        else:
             source = "audit"
 
         return {
             "source": source,
             "items": filtered,
+            "surfaces": surfaces,
         }
 
     def get_paper_telemetry_read_model(
@@ -20604,59 +20684,69 @@ class ReadSurfaceStore:
     ) -> Dict[str, Any]:
         # Reuse canonical telemetry_events, runtime_bindings, and paper_telemetry
         raw_items: List[Dict[str, Any]] = []
-        source = "missing"
+        contributing_sources: List[str] = []
 
         # 1. Direct paper_telemetry dataset
-        pt_avail, pt_records = self._service.list_records("paper_telemetry")
-        if pt_avail:
-            cached_source = self._service.cached_source("paper_telemetry")
-            source = "service" if cached_source in ("canonical", "service_client") else "service"
+        pt_avail, pt_records = self._service.list_records("paper_telemetry", include_snapshot_fallback=False)
+        if pt_avail and pt_records:
+            pt_src = self._service.source("paper_telemetry") or "service"
+            contributing_sources.append(pt_src)
             raw_items.extend(pt_records)
-        else:
-            raw_items.extend(self._read_dataset_records("paper_telemetry"))
 
         # 2. Canonical runtime bindings + telemetry events
+        bindings_avail = False
         try:
-            bindings = self.list_runtime_bindings()
-            tel_events = self.list_telemetry_events()
-            for b in bindings:
-                b_strat = str(b.get("strategy_id") or b.get("id") or "")
-                b_persona = b.get("persona_id")
-                b_ledger = str(b.get("paper_ledger_id") or f"ledger-{b.get('binding_id') or b.get('id')}")
+            rb_avail, bindings = self._service.list_records("runtime_bindings", include_snapshot_fallback=False)
+            if not rb_avail or not bindings:
+                bindings = self.list_runtime_bindings()
+                if bindings:
+                    rb_avail = True
+            if rb_avail and bindings:
+                bindings_avail = True
+                contributing_sources.append("service")
+                tel_events = self.list_telemetry_events()
+                for b in bindings:
+                    b_strat = str(b.get("strategy_id") or b.get("id") or "")
+                    b_persona = b.get("persona_id")
+                    b_ledger = str(b.get("paper_ledger_id") or f"ledger-{b.get('binding_id') or b.get('id')}")
 
-                # Match telemetry events for this binding or strategy
-                matching_events = [
-                    e for e in tel_events
-                    if str(e.get("runtime_id") or e.get("strategy_id") or "") in (b_strat, str(b.get("binding_id") or b.get("id")), str(b.get("runtime_id") or ""))
-                ]
-                series = []
-                for me in matching_events:
-                    ts = str(me.get("timestamp") or me.get("occurred_at") or _utc_now_rfc3339())
-                    m = me.get("metrics") or me.get("details") or me
-                    if isinstance(m, dict) and any(k in m for k in ("equity", "drawdown_pct", "open_positions", "daily_pnl")):
-                        series.append({
-                            "timestamp": ts,
-                            "equity": float(m.get("equity") or 0.0),
-                            "drawdown_pct": float(m.get("drawdown_pct") or 0.0),
-                            "open_positions": int(m.get("open_positions") or 0),
-                            "daily_pnl": float(m.get("daily_pnl") or 0.0),
-                        })
-                last_sig = matching_events[-1].get("timestamp") if matching_events else b.get("last_signal_at")
-                raw_items.append({
-                    "strategy_id": b_strat,
-                    "persona_id": b_persona,
-                    "paper_ledger_id": b_ledger,
-                    "status": str(b.get("status") or "active"),
-                    "last_signal_at": last_sig,
-                    "series": series,
-                    "metrics": b.get("metrics") or (matching_events[-1].get("metrics") if matching_events else {}),
-                    "source_identity": "paper_telemetry_store",
-                    "freshness": str(last_sig or b.get("created_at") or _utc_now_rfc3339()),
-                })
-            if bindings and source == "missing":
-                source = "service"
+                    # Match telemetry events for this binding or strategy
+                    matching_events = [
+                        e for e in tel_events
+                        if str(e.get("runtime_id") or e.get("strategy_id") or "") in (b_strat, str(b.get("binding_id") or b.get("id")), str(b.get("runtime_id") or ""))
+                    ]
+                    series = []
+                    for me in matching_events:
+                        ts = str(me.get("timestamp") or me.get("occurred_at") or _utc_now_rfc3339())
+                        m = me.get("metrics") or me.get("details") or me
+                        if isinstance(m, dict) and any(k in m for k in ("equity", "drawdown_pct", "open_positions", "daily_pnl")):
+                            series.append({
+                                "timestamp": ts,
+                                "equity": float(m.get("equity") or 0.0),
+                                "drawdown_pct": float(m.get("drawdown_pct") or 0.0),
+                                "open_positions": int(m.get("open_positions") or 0),
+                                "daily_pnl": float(m.get("daily_pnl") or 0.0),
+                            })
+                    last_sig = matching_events[-1].get("timestamp") if matching_events else b.get("last_signal_at")
+                    raw_items.append({
+                        "strategy_id": b_strat,
+                        "persona_id": b_persona,
+                        "paper_ledger_id": b_ledger,
+                        "status": str(b.get("status") or "active"),
+                        "last_signal_at": last_sig,
+                        "series": series,
+                        "metrics": b.get("metrics") or (matching_events[-1].get("metrics") if matching_events else {}),
+                        "source_identity": "paper_telemetry_store",
+                        "freshness": str(last_sig or b.get("created_at") or _utc_now_rfc3339()),
+                    })
         except Exception:
             pass
+
+        if not pt_avail and not bindings_avail:
+            return {
+                "source": "unavailable",
+                "items": [],
+            }
 
         filtered = []
         seen_strat_ids = set()
@@ -20699,8 +20789,7 @@ class ReadSurfaceStore:
             }
             filtered.append(item_copy)
 
-        if source == "missing" and filtered:
-            source = "service"
+        source = "service"
 
         return {
             "source": source,
@@ -20713,16 +20802,14 @@ class ReadSurfaceStore:
         severity: Optional[str] = None,
         status: Optional[str] = None,
     ) -> Dict[str, Any]:
-        available, service_records = self._service.list_records("postmortems")
-        cached_source = self._service.cached_source("postmortems")
-        if available and cached_source in ("canonical", "service_client"):
-            source = "store"
-        elif available:
-            source = "store"
-        else:
-            source = "missing"
-
-        raw_items = service_records if available else list(self._read_dataset_records("postmortems"))
+        available, service_records = self._service.list_records("postmortems", include_snapshot_fallback=False)
+        if not available:
+            return {
+                "source": "unavailable",
+                "items": [],
+            }
+        source = "store"
+        raw_items = service_records
 
         filtered = []
         seen_pm_ids = set()
@@ -20765,9 +20852,6 @@ class ReadSurfaceStore:
                 item_copy["freshness"] = item_copy.get("created_at") or _utc_now_rfc3339()
             filtered.append(item_copy)
 
-        if source == "missing" and filtered:
-            source = "store"
-
         return {
             "source": source,
             "items": filtered,
@@ -20778,6 +20862,11 @@ class ReadSurfaceStore:
         postmortem_id: str,
     ) -> Dict[str, Any]:
         res = self.get_postmortems_read_model()
+        if res.get("source") == "unavailable":
+            return {
+                "source": "unavailable",
+                "item": None,
+            }
         items = res.get("items") or []
         for item in items:
             if item.get("postmortem_id") == postmortem_id:

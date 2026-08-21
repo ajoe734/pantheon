@@ -15,8 +15,9 @@ Delivered backend read model endpoints to replace synthetic Management console d
 7. Cleaned whitespace and trailing newlines to ensure `git diff --check` passes cleanly.
 
 ## Verification & Contract Tests
-- Ran `services/control-plane/bff/tests/test_management_real_read_models.py` (9/9 passed).
-- Verified canonical dataset projection for `jobs`, `governance_audit_events`, `telemetry_events`, `runtime_bindings`, and `postmortems`.
-- Verified non-mock file-backed `ServiceBackedReadAdapter` readback with canonical postmortem schema mapping and freshness attribution.
+- Ran `services/control-plane/bff/tests/test_management_real_read_models.py` (13/13 passed).
+- Verified canonical dataset projection for `jobs`, `governance_audit_events` (preserving `entry_id`), `telemetry_events`, `runtime_bindings`, and `postmortems`.
+- Verified real non-mock file-backed `ServiceBackedReadAdapter` readback with canonical postmortem and governance audit schema mapping and freshness attribution.
+- Verified dynamic source derivation (`source: "audit"` vs `source: "telemetry"`) and contributing surface degradation envelopes.
 - Verified typed empty / unavailable / degraded envelope structures with source attribution (`source_identity`, `freshness`, `degradation` reason).
 - Verified `git diff --check origin/dev` passes cleanly with zero whitespace errors.

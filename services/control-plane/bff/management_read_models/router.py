@@ -153,6 +153,7 @@ def create_management_read_models_router(
             "source": source,
             "surfaces": {
                 "activity": surface,
+                **(raw_res.get("surfaces") or {}),
             },
         }
         if surface_state == "unavailable":

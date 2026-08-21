@@ -400,8 +400,9 @@ def test_readback_freshness_and_restart():
             res2 = store2.get_formula_jobs_read_model()
             assert res2["source"] == "service"
             assert len(res2["items"]) == 2
-            assert res2["items"][1]["job_id"] == "job-init-02"
-            assert res2["items"][1]["freshness"] == "2026-08-21T01:00:00Z"
+            assert res2["items"][0]["job_id"] == "job-init-02"
+            assert res2["items"][0]["freshness"] == "2026-08-21T01:00:00Z"
+            assert res2["items"][1]["job_id"] == "job-init-01"
         finally:
             os.environ.clear()
             os.environ.update(old_env)
@@ -425,6 +426,14 @@ def test_canonical_owners_projection():
             }]),
             "formula_jobs": (False, []),
             "activity_audit": (False, []),
+            "governance_audit_events": (True, [{
+                "entry_id": "gov-aud-01",
+                "action_type": "policy.override",
+                "target_id": "pol-01",
+                "actor": "admin-01",
+                "timestamp": "2026-08-21T02:01:00Z",
+                "summary": "Override policy threshold",
+            }]),
             "paper_telemetry": (False, []),
             "postmortems": (True, [{
                 "id": "pm-canon-01",
@@ -448,15 +457,6 @@ def test_canonical_owners_projection():
         }.get(dataset, (False, []))
         store._service.cached_source = lambda dataset: "canonical"
 
-        store.list_governance_audit_events = lambda **kwargs: [{
-            "event_id": "gov-aud-01",
-            "action_type": "policy.override",
-            "target_id": "pol-01",
-            "actor": "admin-01",
-            "timestamp": "2026-08-21T02:01:00Z",
-            "summary": "Override policy threshold",
-        }]
-
         store.list_runtime_bindings = lambda **kwargs: [{
             "strategy_id": "strat-canon-01",
             "persona_id": "persona-1",
@@ -472,9 +472,9 @@ def test_canonical_owners_projection():
         assert fj_res["items"][0]["job_id"] == "job-canon-01"
         assert fj_res["items"][0]["formula_id"] == "formula-alpha"
 
-        # 2. Test activity projecting from canonical governance audit and telemetry
+        # 2. Test activity projecting from canonical governance audit (using entry_id) and telemetry
         act_res = store.get_activity_read_model()
-        assert act_res["source"] in ("audit", "telemetry")
+        assert act_res["source"] == "audit"
         assert len(act_res["items"]) >= 2
         eids = [x["event_id"] for x in act_res["items"]]
         assert "gov-aud-01" in eids
@@ -495,3 +495,186 @@ def test_canonical_owners_projection():
         assert pm_res["items"][0]["postmortem_id"] == "pm-canon-01"
         assert pm_res["items"][0]["impact_summary"] == "High lag"
         assert pm_res["items"][0]["action_items"][0] == {"id": "act-1", "desc": "Scale worker"}
+
+
+def test_activity_canonical_governance_audit_entry_id_preservation():
+    """Verify that canonical governance audit records with entry_id are fully preserved without dropping rows."""
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        canonical_audit_records = [
+            {
+                "entry_id": "audit-pack-a-strategy-approved",
+                "action_type": "ApproveDecision",
+                "target_type": "ApprovalDecision",
+                "target_id": "dec-001",
+                "actor": "operator-01",
+                "timestamp": "2026-08-20T08:00:00Z",
+                "outcome": "success",
+                "audit_context": {"reason": "Met all criteria"},
+            },
+            {
+                "entry_id": "audit-pack-a-persona-policy",
+                "action_type": "UpdatePolicy",
+                "target_type": "Policy",
+                "target_id": "pol-002",
+                "actor": "governance-lead",
+                "timestamp": "2026-08-20T08:30:00Z",
+                "outcome": "success",
+                "audit_context": {"reason": "Risk threshold tightening"},
+            },
+        ]
+        store._service.list_records = lambda dataset, *args, **kwargs: {
+            "governance_audit_events": (True, canonical_audit_records),
+            "activity_audit": (False, []),
+        }.get(dataset, (False, []))
+        store._service.cached_source = lambda dataset: "canonical"
+
+        act_res = store.get_activity_read_model()
+        assert act_res["source"] == "audit"
+        assert len(act_res["items"]) == 2
+        assert act_res["items"][0]["event_id"] == "audit-pack-a-persona-policy"
+        assert act_res["items"][0]["entry_id"] == "audit-pack-a-persona-policy"
+        assert act_res["items"][0]["actor_id"] == "governance-lead"
+        assert act_res["items"][0]["event_type"] == "UpdatePolicy"
+        assert act_res["items"][0]["source_identity"] == "governance_audit_store"
+        assert act_res["items"][1]["event_id"] == "audit-pack-a-strategy-approved"
+        assert act_res["items"][1]["entry_id"] == "audit-pack-a-strategy-approved"
+
+
+def test_activity_source_derivation_telemetry_only_vs_audit():
+    """Verify that when only telemetry events exist, source is telemetry; when audit exists, source is audit."""
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+
+        # 1. Telemetry only
+        store._service.list_records = lambda dataset, *args, **kwargs: {
+            "governance_audit_events": (False, []),
+            "activity_audit": (False, []),
+            "telemetry_events": (True, [{
+                "id": "tel-only-01",
+                "type": "telemetry.runtime",
+                "runtime_id": "strat-01",
+                "timestamp": "2026-08-21T01:00:00Z",
+                "metrics": {"equity": 100000.0},
+            }]),
+        }.get(dataset, (False, []))
+        store._service.cached_source = lambda dataset: "canonical"
+
+        res_tel_only = store.get_activity_read_model()
+        assert res_tel_only["source"] == "telemetry"
+        assert len(res_tel_only["items"]) == 1
+        assert res_tel_only["items"][0]["event_id"] == "tel-only-01"
+        assert res_tel_only["surfaces"]["telemetry_events"]["status"] == "ok"
+        assert res_tel_only["surfaces"]["governance_audit"]["status"] == "unavailable"
+
+        # 2. Both telemetry and audit
+        store._service.list_records = lambda dataset, *args, **kwargs: {
+            "governance_audit_events": (True, [{
+                "entry_id": "gov-01",
+                "action_type": "Approve",
+                "timestamp": "2026-08-21T01:05:00Z",
+                "actor": "admin",
+            }]),
+            "activity_audit": (False, []),
+            "telemetry_events": (True, [{
+                "id": "tel-01",
+                "type": "telemetry.runtime",
+                "timestamp": "2026-08-21T01:00:00Z",
+            }]),
+        }.get(dataset, (False, []))
+
+        res_both = store.get_activity_read_model()
+        assert res_both["source"] == "audit"
+        assert len(res_both["items"]) == 2
+        assert res_both["surfaces"]["telemetry_events"]["status"] == "ok"
+        assert res_both["surfaces"]["governance_audit"]["status"] == "ok"
+
+
+def test_governance_audit_file_backed_readback():
+    """Verify non-mocked on-disk governance audit file readback through FastAPI endpoint."""
+    with tempfile.TemporaryDirectory() as td:
+        gov_dir = os.path.join(td, "governance")
+        os.makedirs(gov_dir, exist_ok=True)
+        gov_file = os.path.join(gov_dir, "governance_audit_events.json")
+
+        sample_gov_records = [
+            {
+                "entry_id": "audit-canon-file-01",
+                "action_type": "ApproveDeployment",
+                "target_type": "DeploymentPlan",
+                "target_id": "dp-20260821-01",
+                "actor": "op-reviewer-01",
+                "timestamp": "2026-08-21T02:30:00Z",
+                "outcome": "success",
+                "audit_context": {"reason": "Passed risk thresholds"},
+            }
+        ]
+        with open(gov_file, "w", encoding="utf-8") as f:
+            json.dump(sample_gov_records, f)
+
+        old_env = os.environ.copy()
+        os.environ["PANTHEON_BFF_GOVERNANCE_AUDIT_STORE"] = gov_file
+        try:
+            store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=False,
+            )
+            bff_main.read_store = store
+            client = TestClient(bff_main.app)
+
+            res = client.get("/bff/management/activity", headers=OPERATOR_HEADERS)
+            assert res.status_code == 200
+            body = res.json()
+            data = body["data"]
+            assert data["status"] == "ok"
+            assert data["source"] == "audit"
+            assert len(data["items"]) == 1
+            item = data["items"][0]
+            assert item["event_id"] == "audit-canon-file-01"
+            assert item["entry_id"] == "audit-canon-file-01"
+            assert item["event_type"] == "ApproveDeployment"
+            assert item["actor_id"] == "op-reviewer-01"
+            assert item["source_identity"] == "governance_audit_store"
+            assert body["meta"]["surfaces"]["governance_audit"]["status"] == "ok"
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+
+
+def test_activity_empty_degraded_when_stores_empty():
+    """Verify that when store file is readable but empty ([]), endpoint returns degraded state with source=audit."""
+    with tempfile.TemporaryDirectory() as td:
+        gov_dir = os.path.join(td, "governance")
+        os.makedirs(gov_dir, exist_ok=True)
+        gov_file = os.path.join(gov_dir, "governance_audit_events.json")
+
+        with open(gov_file, "w", encoding="utf-8") as f:
+            json.dump([], f)
+
+        old_env = os.environ.copy()
+        os.environ["PANTHEON_BFF_GOVERNANCE_AUDIT_STORE"] = gov_file
+        try:
+            store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=False,
+            )
+            bff_main.read_store = store
+            client = TestClient(bff_main.app)
+
+            res = client.get("/bff/management/activity", headers=OPERATOR_HEADERS)
+            assert res.status_code == 200
+            body = res.json()
+            data = body["data"]
+            assert data["status"] == "degraded"
+            assert data["source"] == "audit"
+            assert data["items"] == []
+            assert body["meta"]["status"] == "degraded"
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)

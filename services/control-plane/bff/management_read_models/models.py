@@ -57,6 +57,7 @@ class FormulaJobsEnvelope(BaseModel):
 # Activity models
 class ActivityItem(BaseModel):
     event_id: str
+    entry_id: Optional[str] = None
     event_type: str
     aggregate_id: Optional[str] = None
     actor_id: str

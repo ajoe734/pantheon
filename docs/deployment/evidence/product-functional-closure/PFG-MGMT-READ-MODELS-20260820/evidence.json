@@ -41,7 +41,7 @@
   },
   "validation": {
     "test_command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_management_real_read_models.py",
-    "total_tests": 9,
+    "total_tests": 13,
     "status": "PASSED"
   }
 }
