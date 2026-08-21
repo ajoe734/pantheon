@@ -4659,6 +4659,63 @@ class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(result["event_id"], event["event_id"])
 
+    def test_accepts_canonical_human_ops_event_from_shared_writer(self) -> None:
+        assignment = ai_status.task_machine.assignment_transition(
+            "Antigravity",
+            "Codex2",
+            "Antigravity",
+            "Antigravity2",
+            actor="Human/Ops",
+            reason="Capacity rebalance after reviewer authentication failure",
+        )
+        event = ai_status.task_machine.assignment_activity_event(
+            task_id="PFG-PAPER-STATE-20260820",
+            timestamp="2026-08-20T13:40:29Z",
+            assignment=assignment,
+            old_generation=4,
+            new_generation=5,
+            message=assignment.reason,
+        )
+
+        audited = self._audited_events(event, task_id=event["task_id"])
+
+        self.assertEqual(len(audited), 1)
+        self.assertTrue(
+            event["event_id"].startswith("human-ops-task-reassigned-")
+        )
+        result = ai_status._verified_done_reviewer_reassignment(
+            {
+                "id": event["task_id"],
+                "owner": event["new_owner"],
+                "reviewer": event["new_reviewer"],
+            },
+            commit_reviewer=event["old_reviewer"],
+            current_reviewer=event["new_reviewer"],
+            commit_timestamp="2026-08-20T13:00:00+00:00",
+        )
+        self.assertEqual(result["event_id"], event["event_id"])
+
+    def test_rejects_human_ops_event_with_wrong_digest(self) -> None:
+        event = audited_reassignment_event()
+        event["agent"] = "Human/Ops"
+        event["event_id"] = "human-ops-task-reassigned-" + "0" * 64
+
+        self.assertEqual(self._audited_events(event), [])
+
+    def test_rejects_actor_prefix_authority_mismatch(self) -> None:
+        base_event = audited_reassignment_event()
+        cases = (
+            ("Human/Ops", "supervisor-task-reassigned-"),
+            ("Orchestrator", "human-ops-task-reassigned-"),
+            ("Codex", "human-ops-task-reassigned-"),
+        )
+        for actor, prefix in cases:
+            with self.subTest(actor=actor, prefix=prefix):
+                event = dict(base_event)
+                event["agent"] = actor
+                event = self._with_prefix(event, prefix)
+                self.assertEqual(self._audited_events(event), [])
+
     def test_rejects_wrong_digest_and_wrong_prefix(self) -> None:
         base_event = audited_reassignment_event()
         digest = ai_status._supervisor_reassignment_event_id(base_event).removeprefix(
@@ -5007,7 +5064,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
             with (
                 mock.patch.object(ai_status, "LOG_FILE", log_file),
-                self.assertRaisesRegex(SystemExit, "exact audited supervisor task_reassigned"),
+                self.assertRaisesRegex(SystemExit, "exact canonical audited task_reassigned"),
             ):
                 ai_status._verified_done_owner_reassignment(
                     {
