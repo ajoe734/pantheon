@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -67,8 +68,10 @@ ISOLATED_SAFE_CONTROLS = {
     "BROKER_SHIOAJI_SANDBOX_ENABLED": "false",
     "PANTHEON_CANARY_EXECUTION_ENABLED": "false",
     "PANTHEON_LIVE_BROKER_ENABLED": "false",
-    "PANTHEON_BFF_AUTH_MODE": "permissive",
-    "PANTHEON_BFF_AUTH_STUB": "true",
+    "PANTHEON_BFF_AUTH_MODE": "strict",
+    "PANTHEON_BFF_AUTH_STUB": "false",
+    "PANTHEON_BFF_JWT_ISSUER": "pantheon-l12-isolated-e2e",
+    "PANTHEON_BFF_JWT_AUDIENCE": "pantheon-operator-bff",
     "PANTHEON_BFF_HEALTH_PROBE_INTERVAL_SECONDS": "1",
     "PAPER_PRODUCER_INTERVAL_SECONDS": "1",
     "RECONCILER_POLL_INTERVAL_SECONDS": "1",
@@ -442,6 +445,11 @@ def main() -> int:
     compose_env = os.environ.copy()
     compose_env["GIT_SHA"] = expected_sha
     compose_env.update(ISOLATED_SAFE_CONTROLS)
+    # Use a fresh task-local signing secret for every isolated run.  It is
+    # inherited by the BFF container and deployed test only, and is deliberately
+    # excluded from ISOLATED_SAFE_CONTROLS because that mapping is written to
+    # the evidence report.
+    compose_env["PANTHEON_BFF_JWT_SECRET"] = secrets.token_urlsafe(48)
     for port_name, default_port in DEFAULT_PORTS.items():
         if port_name not in compose_env:
             compose_env[port_name] = str(default_port + args.port_offset)

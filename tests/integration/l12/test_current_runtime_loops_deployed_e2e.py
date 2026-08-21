@@ -131,6 +131,29 @@ def _capital_bearer(name: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {encoded}"}
 
 
+def _bff_bearer() -> dict[str, str]:
+    now = int(time.time())
+    encoded = _encode_jwt_hs256(
+        {
+            "sub": f"{TASK_ID.lower()}-operator",
+            "roles": ["operator", "reviewer", "admin"],
+            "capabilities": ["agora.workshop.v1"],
+            "tenant_id": TENANT_ID,
+            "allowed_tenants": [TENANT_ID],
+            "iss": _require_env("PANTHEON_BFF_JWT_ISSUER"),
+            "aud": _require_env("PANTHEON_BFF_JWT_AUDIENCE"),
+            "iat": now,
+            "nbf": now,
+            "exp": now + 3600,
+        },
+        secret=_require_env("PANTHEON_BFF_JWT_SECRET"),
+    )
+    return {
+        "Authorization": f"Bearer {encoded}",
+        "X-Tenant-Id": TENANT_ID,
+    }
+
+
 @dataclass(frozen=True)
 class Settings:
     urls: dict[str, str]
@@ -435,9 +458,7 @@ class RuntimeChain:
             "Authorization": "Bearer pantheon-local-evolution-service",
             "X-Tenant-Id": EVOLUTION_TENANT_ID,
         }
-        self.bff_headers = {
-            "Authorization": f"Bearer l12-current-e2e:operator,reviewer,admin:{TENANT_ID}"
-        }
+        self.bff_headers = _bff_bearer()
         self.source_ingest_headers = {
             "Authorization": "Bearer l12-current-e2e:operator,service",
             "X-Tenant-Id": TENANT_ID,
@@ -1038,6 +1059,14 @@ class RuntimeChain:
             headers=self.bff_headers,
         )
 
+    def _bff_auth_readiness(self) -> dict[str, Any]:
+        return self.http.request(
+            "bff",
+            "GET",
+            "/bff/auth/readiness",
+            headers=self.bff_headers,
+        )
+
     def run(self) -> dict[str, Any]:
         try:
             for service in (
@@ -1452,6 +1481,48 @@ class RuntimeChain:
 
             loop12_started = _utc_now()
 
+            auth_readiness = self._bff_auth_readiness()
+            auth_data = auth_readiness.get("data") or {}
+            auth = auth_data.get("auth") or {}
+            auth_identity = auth_data.get("identity") or {}
+            serialized_auth_readiness = _canonical_json(auth_readiness)
+            bff_secret = _require_env("PANTHEON_BFF_JWT_SECRET")
+            bearer_token = self.bff_headers["Authorization"].removeprefix("Bearer ")
+            auth_assertions = {
+                "auth_ready": auth_data.get("authReady") is True,
+                "auth_mode_strict": auth.get("mode") == "strict",
+                "auth_stub_disabled": auth.get("stub") is False,
+                "bearer_session": auth.get("sessionKind") == "bearer",
+                "tenant_scope_exact": auth_identity.get("tenantId") == TENANT_ID,
+                "token_and_secret_redacted": (
+                    bff_secret not in serialized_auth_readiness
+                    and bearer_token not in serialized_auth_readiness
+                ),
+            }
+            if not all(auth_assertions.values()):
+                raise DeployedProofError(
+                    f"strict BFF auth readiness failed: {auth_assertions!r}"
+                )
+            self.evidence.add_case(
+                "strict_bff_authentication",
+                loop=12,
+                trigger_id=f"bff-strict-auth-{self.suffix}",
+                owner_worker=self.evidence.identities["operator-bff"],
+                terminal_output_id=str(auth_identity.get("operatorId") or ""),
+                authority_readback={
+                    "auth": auth,
+                    "identity": auth_identity,
+                    "source_commit_sha": auth_data.get("sourceCommitSha"),
+                },
+                next_consumer_readback={
+                    "protected_route": "/bff/v5/downstream-health",
+                    "token_format": "jwt_hs256",
+                },
+                started_at=loop12_started,
+                compose_services=["operator-bff"],
+                assertions=auth_assertions,
+            )
+
             def both_typed_targets_healthy() -> dict[str, Any] | None:
                 payload = self._bff_health()
                 targets = payload.get("data", {}).get("targets", {})
@@ -1633,6 +1704,7 @@ class RuntimeChain:
                 "loop_09_capital_artifact_execution",
                 "loop_10_telemetry_reconciliation_incident",
                 "loop_11_evolution_decision",
+                "strict_bff_authentication",
                 "loop_12_bff_typed_health",
                 "negative_missing_artifact_checksum",
                 "negative_missing_market_symbol",
@@ -1712,6 +1784,18 @@ def test_loop_12_bff_reads_typed_worker_and_api_health(
     case = deployed_runtime_chain["cases"]["loop_12_bff_typed_health"]
     assert case["authority_readback"]["ok"] is True
     assert case["next_consumer_readback"]["ok"] is True
+
+
+def test_loop_12_bff_uses_strict_short_lived_jwt_authentication(
+    deployed_runtime_chain: dict[str, Any],
+) -> None:
+    case = deployed_runtime_chain["cases"]["strict_bff_authentication"]
+    assert case["assertions"]["auth_ready"] is True
+    assert case["assertions"]["auth_mode_strict"] is True
+    assert case["assertions"]["auth_stub_disabled"] is True
+    assert case["assertions"]["bearer_session"] is True
+    assert case["assertions"]["tenant_scope_exact"] is True
+    assert case["assertions"]["token_and_secret_redacted"] is True
 
 
 def test_missing_artifact_checksum_is_not_counted_fleet_ready(
