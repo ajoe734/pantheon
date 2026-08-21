@@ -1636,16 +1636,42 @@ class RuntimeChain:
                     f"fleet reconciler allocated invalid worker port: {worker_port}"
                 )
 
-            # Query the spawned worker on its port inside the paper-fleet-reconciler container
-            worker_state_raw = _run([
-                "docker",
-                "exec",
-                self._compose_container_id("paper-fleet-reconciler"),
-                "python",
-                "-c",
-                f"import json, urllib.request; print(json.dumps(json.loads(urllib.request.urlopen('http://127.0.0.1:{worker_port}/api/runtime/state', timeout=5).read().decode('utf-8'))))",
-            ])
-            worker_state = json.loads(worker_state_raw)
+            # Fleet state can report the child as running just before its HTTP
+            # socket accepts connections after reconciler recovery.  Keep this
+            # proof bounded and fail closed, but wait for the child-owned state
+            # endpoint instead of treating that startup edge as terminal.
+            def worker_state_ready() -> dict[str, Any] | None:
+                process = subprocess.run(
+                    [
+                        "docker",
+                        "exec",
+                        self._compose_container_id("paper-fleet-reconciler"),
+                        "python",
+                        "-c",
+                        (
+                            "import json, urllib.request; "
+                            "print(json.dumps(json.loads(urllib.request.urlopen("
+                            f"'http://127.0.0.1:{worker_port}/api/runtime/state', "
+                            "timeout=5).read().decode('utf-8'))))"
+                        ),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if process.returncode != 0:
+                    return None
+                try:
+                    payload = json.loads(process.stdout)
+                except json.JSONDecodeError:
+                    return None
+                return payload if isinstance(payload, dict) else None
+
+            worker_state = _wait_until(
+                "paper runtime worker state after reconciler recovery",
+                worker_state_ready,
+                timeout=120,
+            )
             lifecycle_outbox = worker_state.get("lifecycle_outbox", {})
             outbox_pending_count = int(lifecycle_outbox.get("pending_count", 0))
             outbox_chain_count = int(lifecycle_outbox.get("chain_count", 0))
