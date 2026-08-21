@@ -315,6 +315,9 @@ def _clear_provider_env(monkeypatch) -> None:
         "PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS",
         "PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED",
         "PANTHEON_MGMT_NL_ASSISTANT_PROVIDER_ENABLED",
+        "PANTHEON_MANAGEMENT_NL_ASSISTANT_FALLBACK_PROVIDERS",
+        "PANTHEON_MGMT_NL_ASSISTANT_FALLBACK_PROVIDERS",
+        "PANTHEON_MANAGEMENT_NL_PROVIDER_DEADLINE_SECONDS",
     ):
         monkeypatch.delenv(env_name, raising=False)
 
@@ -2548,6 +2551,59 @@ def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
         bff_main._sse_buffers["ask"].clear()
 
 
+def test_management_ai_idempotency_replay_survives_store_restart_without_duplicate_turns(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    fake = FakeProviderClient()
+    conversation_path = str(tmp_path / "management-ai-conversations.json")
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
+            storage_path=conversation_path,
+            attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+        )
+        payload = {
+            "question": "Will restart replay preserve one correlated assistant turn?",
+            "focus": "portfolio",
+            "sessionId": "mgmt-restart-replay",
+            "traceId": "mnl-restart-correlation",
+        }
+        headers = {**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-restart-replay"}
+
+        first = client.post("/bff/management/nl/ask", json=payload, headers=headers)
+        assert first.status_code == 202, first.text
+
+        # Reconstruct the durable store and clear only the process-local cache,
+        # mirroring a BFF restart between the original request and its replay.
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
+            storage_path=conversation_path,
+            attachment_store=bff_main.ManagementAiAttachmentStore(storage_path="off"),
+        )
+        replay = client.post("/bff/management/nl/ask", json=payload, headers=headers)
+
+        assert replay.status_code == 202, replay.text
+        assert replay.json() == first.json()
+        turns = bff_main._management_ai_conversation_store().list_turns("mgmt-restart-replay")
+        assert [turn["role"] for turn in turns] == ["user", "assistant"]
+        assert [turn["trace_id"] for turn in turns] == [
+            "mnl-restart-correlation",
+            "mnl-restart-correlation",
+        ]
+        assert len(fake.calls) == 1
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
 def test_management_ai_conversation_missing_session_returns_404(
     tmp_path,
     monkeypatch,
@@ -2740,6 +2796,131 @@ def test_provider_degraded_falls_back_to_deterministic_answer(tmp_path, monkeypa
         assert provider_status["fallback"] == "deterministic_synthesis"
         assert provider_status["used"] is False
         assert len(fake.calls) == 1
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_inner_degraded_response_uses_configured_provider_failover(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FailoverProviderClient(FakeProviderClient):
+        def invoke_assistant_provider(self, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(kwargs)
+            if kwargs["provider"] == "openclaw":
+                return {
+                    "status": "ok",
+                    "data": {
+                        "provider": "openclaw",
+                        "status": "degraded",
+                        "output": {
+                            "reason": "CLAUDE_AUTH_UNAVAILABLE",
+                            "message": "Claude service-user session expired.",
+                        },
+                    },
+                }
+            return {
+                "status": "ok",
+                "data": {
+                    "provider": "codex_cli",
+                    "status": "completed",
+                    "output": {"json_events": [{"final": "Fallback provider answer."}]},
+                },
+            }
+
+    original_store = bff_main.read_store
+    fake = FailoverProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "openclaw")
+        monkeypatch.setenv(
+            "PANTHEON_MANAGEMENT_NL_ASSISTANT_FALLBACK_PROVIDERS",
+            "codex_cli",
+        )
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_PROVIDER_DEADLINE_SECONDS", "7")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "What is the scoped portfolio?", "focus": "portfolio"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-provider-failover"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["answer"] == "Fallback provider answer."
+        status = body["data"]["provider_status"]
+        assert status["provider"] == "codex_cli"
+        assert status["used"] is True
+        assert status["fallback"] == "provider_failover"
+        assert status["fallback_from"] == "openclaw"
+        assert status["fallback_reason"] == "CLAUDE_AUTH_UNAVAILABLE"
+        assert [item["provider"] for item in status["attempted_providers"]] == [
+            "openclaw",
+            "codex_cli",
+        ]
+        assert status["deadline_seconds"] == 7.0
+        assert [call["provider"] for call in fake.calls] == ["openclaw", "codex_cli"]
+        assert all(0 < call["timeout_seconds"] <= 7 for call in fake.calls)
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_inner_degraded_response_is_typed_not_an_answer(tmp_path, monkeypatch) -> None:
+    class DegradedProviderClient(FakeProviderClient):
+        def invoke_assistant_provider(self, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(kwargs)
+            return {
+                "status": "ok",
+                "data": {
+                    "provider": "openclaw",
+                    "status": "degraded",
+                    "output": {
+                        "reason": "CLAUDE_AUTH_UNAVAILABLE",
+                        "message": "Claude service-user session expired.",
+                    },
+                },
+            }
+
+    original_store = bff_main.read_store
+    fake = DegradedProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "openclaw")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "What is the scoped portfolio?", "focus": "portfolio"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-inner-degraded"},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["data"]["answer"].startswith("Management summary for question:")
+        assert body["data"]["answer"] != "Claude service-user session expired."
+        status = body["data"]["provider_status"]
+        assert status["status"] == "degraded"
+        assert status["reason"] == "CLAUDE_AUTH_UNAVAILABLE"
+        assert status["used"] is False
+        assert status["fallback"] == "deterministic_synthesis"
+        assert status["attempted_providers"] == [
+            {
+                "provider": "openclaw",
+                "status": "degraded",
+                "used": False,
+                "reason": "CLAUDE_AUTH_UNAVAILABLE",
+                "run_id": status["run_id"],
+            }
+        ]
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
