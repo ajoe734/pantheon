@@ -53,7 +53,8 @@ The run is accepted only when `deployed-run.json` says `status: passed`, each
 case contains the expected owner identity/readback, and the restart readbacks
 show exactly one candidate, memo, and Governance handoff for its run token.
 Commit the bounded run report and update `evidence.json` with the exact
-deployed revision before requesting independent review.
+deployed revision. This live run is a post-merge owner-closeout
+precondition for `done`, not a precondition for independent code review.
 
 ## Current execution blocker (2026-08-21)
 
