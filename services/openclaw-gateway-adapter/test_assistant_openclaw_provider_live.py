@@ -305,8 +305,37 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_readiness_configured(self) -> None:
         provider = self._make_provider()
         info = provider.readiness()
+        self.assertFalse(info["ready"])
+        self.assertEqual(info["status"], "not_checked")
+        self.assertEqual(info["reason"], "answer_probe_not_run")
+
+    def test_readiness_auth_probe_requires_bounded_agent_answer(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = list(cmd)
+            captured["timeout"] = kwargs["timeout"]
+
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json(
+                    "PANTHEON_PROVIDER_READY"
+                )
+                stderr = ""
+
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        info = provider.readiness(auth_probe=True)
+
         self.assertTrue(info["ready"])
         self.assertEqual(info["status"], "ready")
+        self.assertEqual(info["answer_probe"]["status"], "completed")
+        self.assertEqual(info["answer_probe"]["deadline_seconds"], 20.0)
+        self.assertEqual(captured["timeout"], 20.0)
+        command = captured["cmd"]
+        self.assertEqual(command[1], "agent")
+        self.assertIn("PANTHEON_PROVIDER_READY", command[command.index("--message") + 1])
 
     @staticmethod
     def _agent_json(text: str) -> str:
