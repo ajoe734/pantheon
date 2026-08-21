@@ -1,0 +1,81 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-relational-worker-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821",
+    "title": "Connect the bounded reducer to the relational projection store",
+    "owner": "Codex2",
+    "reviewer": "Antigravity2",
+    "status": "implementation_complete_pending_independent_review",
+    "base_branch": "dev",
+    "task_branch": "task/LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821",
+    "evidence_cut_commit": "5c2e91f8c9976d165236917c2b96d88c637afc97",
+    "head_binding": "The reviewer must bind this committed manifest to the exact final PR head; this pre-review artifact deliberately does not claim a future merge SHA."
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/incremental_materializer.py",
+      "services/trade_journey/projection_store.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821/"
+    ],
+    "not_changing": [
+      "BFF reader selection or route behavior",
+      "telemetry_events source mutation",
+      "production cutover",
+      "legacy JSON data deletion"
+    ],
+    "composes_with": [
+      "LIFECYCLE-PROJ-STORE-001",
+      "LIFECYCLE-PROJ-REDUCER-001",
+      "LIFECYCLE-PROJ-BFF-001",
+      "LIFECYCLE-PROJ-MIGRATE-001",
+      "LIFECYCLE-PROJ-CAPACITY-001",
+      "LIFECYCLE-PROJ-CUTOVER-001"
+    ]
+  },
+  "runtime_contract": {
+    "activation": "Only LIFECYCLE_PROJECTOR_WRITER_BACKEND=shadow constructs RelationalLifecycleProjector; disabled, json, and legacy_json retain the legacy worker. Any other enabled value fails closed.",
+    "credential_boundary": "LIFECYCLE_PROJECTOR_PROJECTION_DSN is required for shadow writes and ProjectionStore bootstrap remains false, so the worker performs no runtime DDL.",
+    "source_and_checkpoint": "The shadow worker reads bounded global telemetry sequence batches. Every row receives one durable applied, ignored, or quarantined receipt, allowing ProjectionStore to advance only its database-derived contiguous checkpoint.",
+    "bounded_state": "A poll hydrates only each journey touched by the batch from journey_stages.contract_fields, resets bounded reducer counters after hydration, and discards that batch-local materializer on the next poll. It does not read, serialize, or advance controller_state.json, aggregate JSON, or generation bundles.",
+    "atomicity": "Receipts, quarantine rows, identity links, stages, journey summary, loop summary, controller revision, source high watermark, and contiguous checkpoint are passed together to one ProjectionStore.execute_batch_transaction call.",
+    "rollback": "Leave the BFF reader on its accepted backend and stop the shadow writer. The additive relational schema and last legacy JSON generation remain read-only rollback evidence; no legacy truth is advanced by this worker."
+  },
+  "verification": [
+    {
+      "command": "TEST_DATABASE_URL=<isolated-local-e2e-postgres> python -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts",
+      "result": "pass; 1 passed",
+      "coverage": "real PostgreSQL transaction, restart hydration, exact duplicate no-rewrite, ignored receipt, contiguous checkpoint, and no controller_state.json write"
+    },
+    {
+      "command": "TEST_DATABASE_URL=<isolated-local-e2e-postgres> TEST_DATABASE_ADMIN_URL=<isolated-local-e2e-postgres> python -m pytest -q services/trade_journey",
+      "result": "pass; process exit 0",
+      "coverage": "focused lifecycle, reducer, projection-store, canonical paper integration, and adjacent Trade Journey suites"
+    },
+    {
+      "command": "python -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+      "result": "pass; 38 passed, 1 TEST_DATABASE_URL-gated integration skipped",
+      "coverage": "unit composition, transaction-failure non-advance, static no legacy snapshot serialization assertion, and existing lifecycle compatibility"
+    },
+    {
+      "command": "python -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/incremental_materializer.py services/trade_journey/projection_store.py && git diff --check",
+      "result": "pass"
+    }
+  ],
+  "review": {
+    "status": "pending_independent_review",
+    "required_checks": [
+      "verify shadow is the only accepted relational writer activation",
+      "reproduce the real-Postgres restart/duplicate/ignored receipt regression",
+      "inspect that RelationalLifecycleProjector has no legacy controller-state or full-corpus serialization path",
+      "verify one mutation contains only batch receipts and affected journey rows",
+      "bind this manifest to the exact PR head in the governed approve command"
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_file": "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RELATIONAL-WORKER-20260821/SHA256SUMS",
+    "self_hash_omitted": true
+  }
+}

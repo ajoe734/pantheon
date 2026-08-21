@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import inspect
 import json
 import os
 from pathlib import Path
@@ -301,6 +302,18 @@ def test_relational_projector_does_not_advance_memory_after_transaction_failure(
         projector.project_records(lifecycle_rows()[:1], mode="live", source_high_watermark=1)
     assert projector.checkpoint == 0
     assert projector._materializer.aggregates == {}
+
+
+def test_relational_projector_has_no_legacy_snapshot_serialization_path(monkeypatch):
+    source = inspect.getsource(RelationalLifecycleProjector)
+    assert "serialize_aggregates" not in source
+    assert "render_full_payloads" not in source
+    assert "AtomicProjectionBundle" not in source
+    assert "state_path" not in source
+
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "active")
+    with pytest.raises(RuntimeError, match="cutover is not authorized"):
+        lifecycle_projector_module._configured_relational_projector()
 
 
 @pytest.fixture
