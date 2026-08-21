@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import yaml
@@ -149,8 +150,13 @@ def test_lifecycle_projector_capacity_benchmark_is_profile_gated_and_bounded():
     assert benchmark["environment"]["LIFECYCLE_PROJECTOR_PROJECTION_DSN"].startswith(
         "${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://"
     )
-    assert benchmark["environment"]["LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"] == (
-        "${LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA:-trade_journey_projection}"
+    assert benchmark["environment"]["LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA"] == (
+        "${LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA:-}"
+    )
+    assert "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA" not in benchmark["environment"]
+    assert "trade_journey_projection" not in json.dumps(benchmark, sort_keys=True)
+    assert benchmark["environment"]["LIFECYCLE_CAPACITY_GIT_DIRTY"] == (
+        "${LIFECYCLE_CAPACITY_GIT_DIRTY:-unknown}"
     )
     assert benchmark["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert benchmark["depends_on"]["telemetry"]["condition"] == "service_healthy"

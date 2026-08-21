@@ -1,146 +1,111 @@
-# Evidence Summary: LIFECYCLE-PROJ-CAPACITY-001
+# Evidence: LIFECYCLE-PROJ-CAPACITY-001
 
-- Task ID: LIFECYCLE-PROJ-CAPACITY-001
-- Title: Prove bounded lifecycle projection capacity and failure behavior
-- Owner: Codex2
-- Reviewer: Antigravity2
-- Status: in_progress (relational harness and bulk transaction path are under focused verification; canonical scale evidence remains pending a quiet host window)
+This directory holds the reproducible PostgreSQL capacity proof for the
+relational lifecycle projector. It is not a reader-cutover record and does
+not authorize production load testing.
 
-## What this delivers now
+## What is measured
 
-`services/trade_journey/lifecycle_projector_capacity.py` is a deterministic
-capacity/fault harness for `RelationalLifecycleProjector`
-(`services/trade_journey/lifecycle_projector.py`, delivered by
-`LIFECYCLE-PROJ-REDUCER-001`):
+`services/trade_journey/lifecycle_projector_capacity.py` drives only
+`RelationalLifecycleProjector` backed by `ProjectionStore`. It has no legacy
+snapshot-writer or local controller-state path. Each run:
 
-- a synthetic corpus generator (`generate_corpus_batches`) that produces an
-  exact `(total_events, total_loop_runs)` corpus in monotonic `ingested_seq`
-  order, batched the same way `PostgresLifecycleSource.fetch_after` delivers
-  committed rows;
-- an RSS/latency/backlog sampler (`run_capacity_benchmark`) that drives the
-  real `RelationalLifecycleProjector.project_records` PostgreSQL transaction
-  path batch-by-batch and records the samples the section 14 gates
-  (`docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/
-  archive/LIFECYCLE_PROJECTOR_INCREMENTAL_REDESIGN_PLAN_2026-08-01.md`) are
-  computed from: steady/peak RSS, 500k→1M RSS slope, batch-latency p95, and
-  backlog-age p95;
-- a fault matrix (`run_fault_matrix`) covering SIGKILL mid-publish, DB
-  disconnect before apply, injected state-transaction rollback, a
-  second-writer conflict, duplicate delivery, and out-of-order delivery —
-  reusing the same fork/monkeypatch techniques already proven at fixture
-  scale in `test_lifecycle_projector.py`, applied at harness scale instead;
-- a `python -m services.trade_journey.lifecycle_projector_capacity` CLI that
-  requires an explicit relational DML target and runs the exact same code
-  path at any scale, including the full 1,000,000-event / 150,000-loop-run
-  corpus; it exits non-zero with the specific violated gate(s) if any
-  threshold is not met, rather than falling back to JSON snapshots;
-- set-based receipt preflight, receipt claiming, and aggregate hydration. A
-  500-row poll uses bounded batch queries instead of one receipt connection
-  and one aggregate query per source row/journey. The controller advisory
-  lock, exact-duplicate/conflict distinction, transaction rollback, and
-  fail-stop behavior remain unchanged.
-- a profile-gated, run-once `lifecycle-projector-capacity-benchmark` compose
-  service (`docker-compose.yml`, `profiles: ["lifecycle-capacity-benchmark"]`)
-  so the full-scale run can be launched under a documented 4 GiB
-  `mem_limit` without ever starting alongside the default stack or acting as
-  a second projector writer.
+- generates the deterministic `lifecycle-capacity-v1` corpus: 1,000,000
+  canonical events and 150,000 completed loop runs, with a 500-row batch;
+- measures per-batch latency, peak/steady RSS, backlog age, and the 500k to
+  1M RSS slope;
+- catches up a further 100,000 events on the same durable controller and
+  fails above the 30-minute limit;
+- executes the actual BFF PostgreSQL read repository for journey list, detail,
+  timeline, loop list, and loop detail at page size 200, then records p95s;
+- captures PostgreSQL `EXPLAIN (FORMAT JSON)` for the bounded BFF list,
+  detail, timeline, and loop queries; and
+- runs restart, SIGKILL-after-commit-before-acknowledgement, DB disconnect,
+  real PostgreSQL deadlock, rollback, second-writer conflict, duplicate,
+  out-of-order, conflicting-duplicate, and quarantine cases.
 
-`services/trade_journey/test_lifecycle_projector_capacity.py` (15 tests) and
-the new compose assertion in `test_lifecycle_projector_compose.py` exercise
-all of the above at a small, fast scale (2,000 events / 300 loop runs and a
-handful of fault-matrix journeys). They prove the harness is correct; they do
-not themselves prove the section 14 scale gates, which require the full
-corpus.
+All of those paths use a fresh `lifecycle_capacity_*` PostgreSQL schema.
+The harness rejects the shared `trade_journey_projection` schema, rejects an
+already-existing capacity schema, and proves `DROP SCHEMA ... CASCADE` in a
+`finally` block for both the benchmark and every fault scenario.
 
-## Why the full 1,000,000-event benchmark has not been run yet
+## Preconditions
 
-The canonical run requires zero E2E containers *and networks* on the host.
-At the latest preflight, `pfg-l12-research-e2e-20260820_default` and
-`pfg-l12-runtime-e2e-20260820_default` were still present. Running a
-million-event, RSS-ceiling-sensitive benchmark until those unrelated
-resources have been torn down would produce contaminated, non-reproducible
-capacity numbers and could starve another task.
-
-This is not a task dependency block: `LIFECYCLE-PROJ-REDUCER-001` and
-`LIFECYCLE-PROJ-BFF-001` are both `done` and this task's own code is ready to
-run. It is a host-capacity/environment condition, and the acceptance gates in
-section 14 must not be marked passed without the actual measured run.
-
-## Running the full-scale benchmark once the host is quiet
+Run only on a quiet dev host with no E2E task containers or task networks.
+The normal product stack may remain up; the harness uses an isolated schema
+and never starts the default projector service. Verify the source identity
+before a run:
 
 ```bash
-# from the repository root, after confirming no other resource-heavy task
-# stack (product E2E runs, other capacity/perf benchmarks) is active
+git status --porcelain=v1 --untracked-files=all
+git rev-parse HEAD
+docker ps --format '{{.Names}}\t{{.Status}}'
+docker network ls --format '{{.Name}}'
+```
+
+The CLI reads Git directly and refuses a dirty tree. Its emitted evidence
+binds the exact commit, clean-tree status hash, corpus configuration checksum,
+and the output checksum sidecar. In a container image without `.git`, provide
+an exact 40-character `GIT_SHA` and `LIFECYCLE_CAPACITY_GIT_DIRTY=clean`.
+
+## Canonical command
+
+From a clean checkout of the exact commit being measured:
+
+```bash
+PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
+LIFECYCLE_PROJECTOR_PROJECTION_DSN='postgresql://pantheon_app:pantheon_app@127.0.0.1:15432/pantheon' \
+"$PANTHEON_PY" -m services.trade_journey.lifecycle_projector_capacity \
+  --events 1000000 --loop-runs 150000 --batch-size 500 \
+  --catch-up-events 100000 --read-repeats 10 \
+  --repository-root "$PWD" \
+  --output /absolute/path/to/docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/evidence.json
+```
+
+The compose job is opt-in and bounded at 4 GiB:
+
+```bash
+GIT_SHA="$(git rev-parse HEAD)" \
+LIFECYCLE_CAPACITY_GIT_DIRTY=clean \
 docker compose -p pantheon -f docker-compose.yml \
   --profile lifecycle-capacity-benchmark run --rm \
   lifecycle-projector-capacity-benchmark
-
-# or directly against a provisioned interpreter, without docker:
-PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
-"$PANTHEON_PY" -m services.trade_journey.lifecycle_projector_capacity \
-  --events 1000000 --loop-runs 150000 --batch-size 500 \
-  --projection-dsn "$LIFECYCLE_PROJECTOR_PROJECTION_DSN" \
-  --projection-schema "$LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA" \
-  --output docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/full-scale-report.json
 ```
 
-The CLI's own gate check (`CapacityReport.gate_failures()`) is the pass/fail
-source of truth; a non-empty `gate_failures` list in the emitted JSON is a
-failed run, not a threshold to relax.
+It generates its own capacity-only schema unless
+`LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA` supplies a fresh
+`lifecycle_capacity_*` name. The job cannot point at the default projection
+schema.
 
-The remaining section 14 items — BFF read-latency/query-plan proof and
-cross-tenant isolation probes against the `LIFECYCLE-PROJ-BFF-001` reader —
-must use the same committed relational corpus and appear beside the final raw
-metrics, checksums, image/config identity, and teardown record.
+## Evidence contract
 
-## Validation Commands and Results
+The generated `evidence.json` is the raw, redacted evidence manifest. It must
+contain:
 
-1. Focused capacity harness tests:
-   ```bash
-   PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
-   "$PANTHEON_PY" -m pytest -q services/trade_journey/test_lifecycle_projector_capacity.py
-   ```
-   Result: PASS as part of the exact committed focused run below.
+- `git` — exact commit, clean status, and tree-status SHA-256;
+- `corpus` — deterministic corpus configuration and SHA-256;
+- `capacity.samples` — RSS, backlog, checkpoint, and latency samples for
+  every batch, plus derived p95 and RSS gates;
+- `catch_up`, `bff_reads`, and `bff_explain` — measured p95s and indexed plans
+  for page size 200;
+- `fault_matrix` — RPO=0 and no-duplicate-stage outcomes for each named
+  scenario; and
+- `teardown.schema_dropped: true`.
 
-2. Compose contract test:
-   ```bash
-   "$PANTHEON_PY" -m pytest -q services/trade_journey/test_lifecycle_projector_compose.py
-   ```
-   Result: the capacity benchmark contract passes. The known
-   `test_bff_only_deploy_rebuilds_its_lifecycle_projector_only` deployment
-   script assertion still fails identically and is outside this task's
-   declared artifacts.
+`evidence.json.sha256` binds the byte-identical raw evidence. Any non-empty
+`gate_failures` list is a failed capacity proof and must not be relaxed or
+reported as pass.
 
-3. Full `services/trade_journey` suite:
-   ```bash
-   "$PANTHEON_PY" -m pytest -q services/trade_journey
-   ```
-   Result: the exact committed focused relational run was:
-   ```bash
-   TEST_DATABASE_URL=<isolated dev-Postgres endpoint> "$PANTHEON_PY" -m pytest -q \
-     services/trade_journey/test_lifecycle_projector_capacity.py \
-     services/trade_journey/test_lifecycle_projector.py \
-     services/trade_journey/test_projection_store.py
-   ```
-   `74 passed, 1 skipped` — this includes real PostgreSQL duplicate/conflict,
-   transaction rollback, and second-writer coverage. It does not claim a
-   host-capacity p95 measurement.
+## Focused verification
 
-4. Manual small-scale end-to-end smoke of the CLI:
-   ```bash
-   "$PANTHEON_PY" -m services.trade_journey.lifecycle_projector_capacity \
-     --events 2000 --loop-runs 300 --batch-size 100 --fault-journey-count 2 \
-     --projection-dsn "$LIFECYCLE_PROJECTOR_PROJECTION_DSN" \
-     --projection-schema "$LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"
-   ```
-   Result: not run. The batch=500 p95 smoke and the full run remain subject
-   to the host admission gate above; no capacity JSON report or checksum has
-   been emitted from this worker while unrelated E2E networks remain.
+```bash
+TEST_DATABASE_URL='postgresql://pantheon_app:pantheon_app@127.0.0.1:15432/pantheon' \
+  "$PANTHEON_PY" -m pytest -q \
+  services/trade_journey/test_lifecycle_projector_capacity.py \
+  services/trade_journey/test_lifecycle_projector_compose.py
+```
 
-## What is not yet true
-
-This task cannot move to `done` yet: the section 14 acceptance gates require
-the actual measured 1,000,000-event / 150,000-loop-run run and the BFF
-read-latency/query-plan/isolation proof against a real deployment, neither of
-which has been executed. Marking those gates passed without the measurement
-would be fabricated evidence, not evidence.
+The focused test suite creates an independent PostgreSQL schema for every
+scenario and asserts teardown. A pre-existing deployment-script assertion in
+`test_lifecycle_projector_compose.py` is unrelated to this task and must be
+reported separately if it fails.

@@ -1,7 +1,7 @@
-"""Bounded capacity/fault harness for the incremental lifecycle projector.
+"""Bounded PostgreSQL capacity/fault harness for the lifecycle projector.
 
-This module drives :class:`LifecycleProjector` with a deterministic, scalable
-synthetic corpus and measures the resource, latency and recovery gates
+This module drives :class:`RelationalLifecycleProjector` with a deterministic,
+scalable synthetic corpus and measures the resource, latency and recovery gates
 defined in ``docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01``
 section 14 (``LIFECYCLE-PROJ-CAPACITY-001``).
 
@@ -18,12 +18,17 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field
+import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import resource
 import signal
 import statistics
+import subprocess
+import sys
+import threading
 import time
 from typing import Any, Callable, Iterator, Sequence
 import uuid
@@ -33,12 +38,13 @@ from services.trade_journey.correlation_envelope import (
     propagate_envelope,
 )
 from services.trade_journey.lifecycle_projector import (
-    AtomicProjectionBundle,
     ConflictingLifecycleEvent,
-    LifecycleProjector,
     RelationalLifecycleProjector,
 )
-from services.trade_journey.projection_store import ProjectionStore
+from services.trade_journey.projection_store import (
+    IdentityLinkRow,
+    ProjectionStore,
+)
 
 # Same eight canonical lifecycle stages exercised by
 # ``test_lifecycle_projector.lifecycle_rows``. Every synthetic journey uses a
@@ -67,6 +73,9 @@ RSS_SLOPE_500K_TO_1M_LIMIT_BYTES = 256 * (1024 ** 2)
 BATCH_LATENCY_P95_LIMIT_SECONDS = 5.0
 BACKLOG_AGE_P95_LIMIT_SECONDS = 30.0
 CATCH_UP_100K_LIMIT_SECONDS = 30 * 60.0
+BFF_QUERY_P95_LIMIT_SECONDS = 5.0
+CAPACITY_SCHEMA_PREFIX = "lifecycle_capacity_"
+CAPACITY_CORPUS_SEED = "lifecycle-capacity-v1"
 
 
 def _deterministic_uuid(namespace: str, index: int) -> str:
@@ -102,7 +111,8 @@ def journey_rows(
     signal_id = f"signal-capacity-{journey_index:08d}"
     trace_id = _deterministic_uuid("trace", journey_index)
     journey_id = f"tj-capacity-{journey_index:08d}"
-    binding_id = _deterministic_uuid("binding", journey_index % 64)
+    binding_id = _deterministic_uuid("binding", journey_index)
+    identity_suffix = f"{journey_index:08d}"
 
     rows: list[dict[str, Any]] = []
     envelope = None
@@ -131,13 +141,13 @@ def journey_rows(
         metadata = {
             "run_id": run_id,
             "signal_id": signal_id,
-            "persona_id": "persona-capacity",
+            "persona_id": f"persona-capacity-{identity_suffix}",
             "sequence_no": offset,
             "causal_parent_id": envelope["causation_event_id"],
-            "decision_id": f"decision-capacity-{journey_index:08d}",
-            "client_order_id": f"client-order-capacity-{journey_index:08d}",
-            "order_id": f"order-capacity-{journey_index:08d}",
-            "reconciliation_id": f"reconciliation-capacity-{journey_index:08d}",
+            "decision_id": f"decision-capacity-{identity_suffix}",
+            "client_order_id": f"client-order-capacity-{identity_suffix}",
+            "order_id": f"order-capacity-{identity_suffix}",
+            "reconciliation_id": f"reconciliation-capacity-{identity_suffix}",
         }
         payload = {
             "event_id": event_id,
@@ -148,16 +158,16 @@ def journey_rows(
             "deployment_stage": environment,
             "binding_id": binding_id,
             "runtime_id": binding_id,
-            "capital_pool_id": "pool-capacity",
-            "artifact_id": "artifact-capacity",
-            "artifact_version": "1.0.0",
-            "plan_id": "plan-capacity",
-            "persona_capital_binding_id": "pcb-capacity",
+            "capital_pool_id": f"pool-capacity-{identity_suffix}",
+            "artifact_id": f"artifact-capacity-{identity_suffix}",
+            "artifact_version": f"1.0.0-capacity-{identity_suffix}",
+            "plan_id": f"plan-capacity-{identity_suffix}",
+            "persona_capital_binding_id": f"pcb-capacity-{identity_suffix}",
             "run_id": run_id,
             "signal_id": signal_id,
             "trace_id": trace_id,
-            "authority_refs": {"persona_id": "persona-capacity"},
-            "target": {"strategy_id": "strategy-capacity"},
+            "authority_refs": {"persona_id": f"persona-capacity-{identity_suffix}"},
+            "target": {"strategy_id": f"strategy-capacity-{identity_suffix}"},
             "metrics": {"action": event_type},
             "metadata": metadata,
             "correlation_envelope": envelope,
@@ -199,19 +209,21 @@ def generate_corpus_batches(
     batch_size: int = DEFAULT_BATCH_SIZE,
     tenant_id: str = "tenant-capacity",
     environment: str = "paper",
+    starting_seq: int = 1,
+    journey_offset: int = 0,
 ) -> Iterator[list[dict[str, Any]]]:
     """Yield successive ``batch_size`` row batches spanning the full corpus.
 
     Rows are yielded in monotonic ``ingested_seq`` order across journey
     boundaries, exactly as ``PostgresLifecycleSource.fetch_after`` would
-    deliver them, so callers can feed each yielded batch straight into
-    ``LifecycleProjector.project_records``.
+    deliver them, so callers can feed each yielded batch straight into the
+    relational projector transaction.
     """
 
     budgets = _journey_event_budgets(total_events, total_loop_runs)
     pending: list[dict[str, Any]] = []
-    next_seq = 1
-    for journey_index, budget in enumerate(budgets):
+    next_seq = int(starting_seq)
+    for journey_index, budget in enumerate(budgets, start=int(journey_offset)):
         event_types = _journey_event_types(budget)
         pending.extend(
             journey_rows(
@@ -321,6 +333,17 @@ class CapacityReport:
             "backlog_age_p95_seconds": self.backlog_age_p95_seconds,
             "gate_failures": self.gate_failures(),
             "sample_count": len(self.samples),
+            "samples": [
+                {
+                    "batch_index": sample.batch_index,
+                    "events_applied": sample.events_applied,
+                    "checkpoint": sample.checkpoint,
+                    "latency_seconds": sample.latency_seconds,
+                    "rss_bytes": sample.rss_bytes,
+                    "backlog_age_seconds": sample.backlog_age_seconds,
+                }
+                for sample in self.samples
+            ],
         }
 
 
@@ -345,7 +368,7 @@ def _rss_at_or_before(samples: Sequence[BatchSample], cumulative_events: int) ->
 
 
 def run_capacity_benchmark(
-    projector: LifecycleProjector | RelationalLifecycleProjector,
+    projector: RelationalLifecycleProjector,
     *,
     total_events: int = DEFAULT_EVENT_COUNT,
     total_loop_runs: int = DEFAULT_LOOP_RUN_COUNT,
@@ -353,6 +376,8 @@ def run_capacity_benchmark(
     clock: Callable[[], float] = time.monotonic,
     tenant_id: str = "tenant-capacity",
     environment: str = "paper",
+    starting_seq: int = 1,
+    journey_offset: int = 0,
 ) -> CapacityReport:
     """Drive ``projector`` through the full synthetic corpus and record the
     per-batch RSS/latency/backlog samples section 14 gates are computed from."""
@@ -368,6 +393,8 @@ def run_capacity_benchmark(
             batch_size=batch_size,
             tenant_id=tenant_id,
             environment=environment,
+            starting_seq=starting_seq,
+            journey_offset=journey_offset,
         )
     ):
         high_watermark = max(high_watermark, max(int(row["ingested_seq"]) for row in batch))
@@ -411,128 +438,194 @@ class FaultScenarioResult:
     detail: str
 
 
-def scenario_sigkill_mid_publish(tmp_path: Path, rows: list[dict[str, Any]]) -> FaultScenarioResult:
+def _row_count(dsn: str, schema: str, table: str) -> int:
+    import psycopg  # type: ignore[import]
+
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) FROM {schema}.{table}")
+        return int(cur.fetchone()[0])
+
+
+def _teardown_capacity_schema(dsn: str, schema: str) -> bool:
+    """Drop only a harness-owned schema and prove the drop succeeded."""
+
+    if not schema.startswith(CAPACITY_SCHEMA_PREFIX) or not schema.replace("_", "").isalnum():
+        raise ValueError(f"refusing to tear down non-capacity schema: {schema!r}")
+    import psycopg  # type: ignore[import]
+    from psycopg import sql  # type: ignore[import]
+
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+        )
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name=%s)",
+            (schema,),
+        )
+        return not bool(cur.fetchone()[0])
+
+
+def _fresh_capacity_schema(dsn: str, label: str) -> str:
+    token = "".join(ch if ch.isalnum() else "_" for ch in label.lower()).strip("_")
+    return f"{CAPACITY_SCHEMA_PREFIX}{token}_{uuid.uuid4().hex[:12]}"
+
+
+def scenario_sigkill_mid_publish(
+    dsn: str, schema: str, rows: list[dict[str, Any]]
+) -> FaultScenarioResult:
+    """Kill the writer after its commit but before acknowledgement, then replay.
+
+    This is the relevant relational failure boundary: a writer can die after
+    PostgreSQL durably commits, so recovery must obtain only exact receipts and
+    must never create a second stage or advance a divergent cursor.
+    """
+
     if not hasattr(os, "fork"):
         return FaultScenarioResult("sigkill_mid_publish", True, "skipped: no fork()")
     watermark = max(r["ingested_seq"] for r in rows)
     pid = os.fork()
     if pid == 0:  # pragma: no cover - child is killed before returning
         try:
-            publisher = AtomicProjectionBundle(
-                tmp_path,
-                before_switch=lambda _path: os.kill(os.getpid(), signal.SIGKILL),
-            )
-            projector = LifecycleProjector(
-                state_path=tmp_path / "controller_state.json",
-                bundle_root=tmp_path,
+            projector = RelationalLifecycleProjector(
+                ProjectionStore(dsn, schema=schema),
                 deployment_sha="capacity-fault",
-                publisher=publisher,
             )
             projector.project_records(rows, mode="live", source_high_watermark=watermark)
+            os.kill(os.getpid(), signal.SIGKILL)
         except BaseException:
             os._exit(2)
         os._exit(3)
     _child, status = os.waitpid(pid, 0)
     killed = os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL
 
-    recovered = LifecycleProjector(
-        state_path=tmp_path / "controller_state.json",
-        bundle_root=tmp_path,
+    recovered = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema),
         deployment_sha="capacity-fault-recovered",
     )
-    checkpoint_before = recovered.checkpoint
     result = recovered.project_records(rows, mode="live", source_high_watermark=watermark)
     converged = recovered.checkpoint == watermark
-    no_duplicate_stage = result.duplicates == 0 or checkpoint_before > 0
-    passed = killed and converged and no_duplicate_stage
+    receipt_count = _row_count(dsn, schema, "event_receipts")
+    stage_count = _row_count(dsn, schema, "journey_stages")
+    passed = killed and converged and result.duplicates == len(rows) and receipt_count == len(rows)
     return FaultScenarioResult(
         "sigkill_mid_publish",
         passed,
-        f"killed={killed} converged={converged} checkpoint={recovered.checkpoint}",
+        "killed=%s converged=%s checkpoint=%s duplicates=%s receipts=%s stages=%s rpo=0"
+        % (killed, converged, recovered.checkpoint, result.duplicates, receipt_count, stage_count),
     )
 
 
 def scenario_db_disconnect_then_retry(
-    tmp_path: Path, rows: list[dict[str, Any]]
+    dsn: str, schema: str, rows: list[dict[str, Any]]
 ) -> FaultScenarioResult:
-    """A source disconnect between fetch and apply must not corrupt state;
-    the next successful fetch/apply cycle must still converge with RPO=0."""
+    """An actual ProjectionStore connection failure leaves no partial rows."""
 
-    projector = LifecycleProjector(
-        state_path=tmp_path / "controller_state.json",
-        bundle_root=tmp_path,
-        deployment_sha="capacity-fault",
-    )
+    store = ProjectionStore(dsn, schema=schema)
+    projector = RelationalLifecycleProjector(store, deployment_sha="capacity-fault")
     watermark = max(r["ingested_seq"] for r in rows)
+
+    original_connect = store._connect
+
+    def disconnected_connect(*_args: Any, **_kwargs: Any) -> Any:
+        raise ConnectionError("injected PostgreSQL disconnect before receipt preflight")
+
+    store._connect = disconnected_connect
+    failed = False
     try:
-        raise ConnectionError("injected disconnect before apply")
+        projector.project_records(rows, mode="live", source_high_watermark=watermark)
     except ConnectionError:
-        pass  # the source disconnected; no batch was ever applied
-    result = projector.project_records(rows, mode="live", source_high_watermark=watermark)
-    passed = projector.checkpoint == watermark and result.quarantined == 0
+        failed = True
+    finally:
+        store._connect = original_connect
+
+    before_retry = _row_count(dsn, schema, "event_receipts")
+    recovered = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema), deployment_sha="capacity-fault-recovered"
+    )
+    result = recovered.project_records(rows, mode="live", source_high_watermark=watermark)
+    passed = (
+        failed
+        and before_retry == 0
+        and recovered.checkpoint == watermark
+        and result.accepted == len(rows)
+    )
     return FaultScenarioResult(
-        "db_disconnect_then_retry", passed, f"checkpoint={projector.checkpoint}"
+        "db_disconnect_then_retry",
+        passed,
+        "disconnect=%s receipts_before_retry=%s checkpoint=%s accepted=%s rpo=0"
+        % (failed, before_retry, recovered.checkpoint, result.accepted),
     )
 
 
 def scenario_transaction_rollback(
-    tmp_path: Path, rows: list[dict[str, Any]]
+    dsn: str, schema: str, rows: list[dict[str, Any]]
 ) -> FaultScenarioResult:
-    """An injected state-commit failure must leave no torn state; a retried
-    apply of the same batch must converge cleanly (mirrors
-    ``test_state_transaction_failure_leaves_no_torn_state_and_restart_converges``)."""
+    """Force a database constraint failure after receipt staging, then retry."""
 
-    import services.trade_journey.lifecycle_projector as module
+    class RollbackStore(ProjectionStore):
+        fail_once = True
 
-    projector = LifecycleProjector(
-        state_path=tmp_path / "controller_state.json",
-        bundle_root=tmp_path,
-        deployment_sha="capacity-fault",
+        def execute_batch_transaction(self, controller_id, tenant_scope, environment_scope, mutation):
+            if self.fail_once and mutation.receipts:
+                self.fail_once = False
+                receipt = mutation.receipts[0]
+                mutation.identity_links.append(
+                    IdentityLinkRow(
+                        receipt.tenant_id,
+                        receipt.environment,
+                        "BAD_TYPE",
+                        "capacity-rollback",
+                        receipt.journey_id,
+                        receipt.ingested_seq,
+                        receipt.ingested_seq,
+                        receipt.created_at,
+                        receipt.created_at,
+                    )
+                )
+            return super().execute_batch_transaction(
+                controller_id, tenant_scope, environment_scope, mutation
+            )
+
+    projector = RelationalLifecycleProjector(
+        RollbackStore(dsn, schema=schema), deployment_sha="capacity-fault"
     )
-    original_commit = module._commit_prepared_json
-
-    def failing_commit(path, prepared):
-        if Path(path).name == "controller_state.json":
-            raise OSError("injected state transaction failure")
-        return original_commit(path, prepared)
-
-    module._commit_prepared_json = failing_commit
     watermark = max(r["ingested_seq"] for r in rows)
     threw = False
     try:
         projector.project_records(rows, mode="live", source_high_watermark=watermark)
-    except OSError:
+    except Exception:
         threw = True
-    finally:
-        module._commit_prepared_json = original_commit
 
-    no_torn_state = not (tmp_path / "controller_state.json").exists() and projector.checkpoint == 0
-    recovered = LifecycleProjector(
-        state_path=tmp_path / "controller_state.json",
-        bundle_root=tmp_path,
+    receipts_before_retry = _row_count(dsn, schema, "event_receipts")
+    controller_before_retry = _row_count(dsn, schema, "controller")
+    recovered = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema),
         deployment_sha="capacity-fault-recovered",
     )
-    recovered.project_records(rows, mode="live", source_high_watermark=watermark)
+    result = recovered.project_records(rows, mode="live", source_high_watermark=watermark)
     converged = recovered.checkpoint == watermark
-    passed = threw and no_torn_state and converged
+    passed = (
+        threw
+        and receipts_before_retry == 0
+        and controller_before_retry == 0
+        and converged
+        and result.accepted == len(rows)
+    )
     return FaultScenarioResult(
         "transaction_rollback",
         passed,
-        f"threw={threw} no_torn_state={no_torn_state} converged={converged}",
+        "threw=%s receipts_before_retry=%s controller_before_retry=%s converged=%s rpo=0"
+        % (threw, receipts_before_retry, controller_before_retry, converged),
     )
 
 
 def scenario_second_writer_conflict(
-    tmp_path: Path, rows: list[dict[str, Any]]
+    dsn: str, schema: str, rows: list[dict[str, Any]]
 ) -> FaultScenarioResult:
-    """Two projector processes racing the same state path must not both
-    advance the checkpoint over conflicting content; the second writer must
-    fail closed rather than silently diverge."""
+    """A second relational writer cannot claim a conflicting event receipt."""
 
-    first = LifecycleProjector(
-        state_path=tmp_path / "controller_state.json",
-        bundle_root=tmp_path,
-        deployment_sha="writer-a",
+    first = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema), deployment_sha="writer-a"
     )
     watermark = max(r["ingested_seq"] for r in rows)
     first.project_records(rows, mode="live", source_high_watermark=watermark)
@@ -542,9 +635,8 @@ def scenario_second_writer_conflict(
     conflicting_rows[0]["payload"] = dict(conflicting_rows[0]["payload"])
     conflicting_rows[0]["payload"]["metrics"] = {"action": "second-writer-conflict"}
 
-    second = LifecycleProjector(
-        state_path=tmp_path / "controller_state.json",
-        bundle_root=tmp_path,
+    second = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema),
         deployment_sha="writer-b",
     )
     rejected = False
@@ -552,16 +644,21 @@ def scenario_second_writer_conflict(
         second.project_records(conflicting_rows, mode="live", source_high_watermark=watermark)
     except ConflictingLifecycleEvent:
         rejected = True
-    passed = rejected
-    return FaultScenarioResult("second_writer_conflict", passed, f"rejected={rejected}")
+    receipts = _row_count(dsn, schema, "event_receipts")
+    passed = rejected and receipts == len(rows) and second.checkpoint == watermark
+    return FaultScenarioResult(
+        "second_writer_conflict",
+        passed,
+        "rejected=%s receipts=%s checkpoint=%s rpo=0"
+        % (rejected, receipts, second.checkpoint),
+    )
 
 
 def scenario_duplicate_delivery(
-    tmp_path: Path, rows: list[dict[str, Any]]
+    dsn: str, schema: str, rows: list[dict[str, Any]]
 ) -> FaultScenarioResult:
-    projector = LifecycleProjector(
-        state_path=tmp_path / "controller_state.json",
-        bundle_root=tmp_path,
+    projector = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema),
         deployment_sha="capacity-fault",
     )
     watermark = max(r["ingested_seq"] for r in rows)
@@ -581,12 +678,11 @@ def scenario_duplicate_delivery(
 
 
 def scenario_out_of_order_delivery(
-    tmp_path: Path, rows: list[dict[str, Any]]
+    dsn: str, schema: str, rows: list[dict[str, Any]]
 ) -> FaultScenarioResult:
     shuffled = list(reversed(rows))
-    projector = LifecycleProjector(
-        state_path=tmp_path / "controller_state.json",
-        bundle_root=tmp_path,
+    projector = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema),
         deployment_sha="capacity-fault",
     )
     watermark = max(r["ingested_seq"] for r in rows)
@@ -597,24 +693,149 @@ def scenario_out_of_order_delivery(
     )
 
 
-FAULT_SCENARIOS: tuple[Callable[[Path, list[dict[str, Any]]], FaultScenarioResult], ...] = (
+def scenario_restart(dsn: str, schema: str, rows: list[dict[str, Any]]) -> FaultScenarioResult:
+    """A fresh relational writer resumes its durable cursor without JSON state."""
+
+    watermark = max(int(row["ingested_seq"]) for row in rows)
+    split = max(1, len(rows) // 2)
+    first = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema), deployment_sha="capacity-restart-a"
+    )
+    first.project_records(rows[:split], mode="live", source_high_watermark=split)
+    restarted = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema), deployment_sha="capacity-restart-b"
+    )
+    result = restarted.project_records(rows[split:], mode="live", source_high_watermark=watermark)
+    passed = restarted.checkpoint == watermark and result.accepted == len(rows) - split
+    return FaultScenarioResult(
+        "restart",
+        passed,
+        "checkpoint=%s accepted_after_restart=%s receipts=%s rpo=0"
+        % (restarted.checkpoint, result.accepted, _row_count(dsn, schema, "event_receipts")),
+    )
+
+
+def scenario_conflicting_duplicate(
+    dsn: str, schema: str, rows: list[dict[str, Any]]
+) -> FaultScenarioResult:
+    """Reusing an event id with changed canonical payload fails closed."""
+
+    watermark = max(int(row["ingested_seq"]) for row in rows)
+    projector = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema), deployment_sha="capacity-conflict"
+    )
+    projector.project_records(rows, mode="live", source_high_watermark=watermark)
+    conflicting = json.loads(json.dumps(rows))
+    conflicting[0]["payload"]["metrics"] = {"action": "conflicting-capacity-event"}
+    rejected = False
+    try:
+        RelationalLifecycleProjector(
+            ProjectionStore(dsn, schema=schema), deployment_sha="capacity-conflict-retry"
+        ).project_records(conflicting, mode="live", source_high_watermark=watermark)
+    except ConflictingLifecycleEvent:
+        rejected = True
+    passed = rejected and _row_count(dsn, schema, "event_receipts") == len(rows)
+    return FaultScenarioResult(
+        "conflicting_duplicate",
+        passed,
+        "rejected=%s receipts=%s rpo=0"
+        % (rejected, _row_count(dsn, schema, "event_receipts")),
+    )
+
+
+def scenario_quarantine(dsn: str, schema: str, rows: list[dict[str, Any]]) -> FaultScenarioResult:
+    """A malformed source event is durably quarantined, never silently dropped."""
+
+    malformed = json.loads(json.dumps(rows[:1]))
+    malformed[0]["payload"]["correlation_envelope"] = {}
+    projector = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema), deployment_sha="capacity-quarantine"
+    )
+    result = projector.project_records(malformed, mode="live", source_high_watermark=1)
+    quarantines = _row_count(dsn, schema, "quarantine")
+    passed = result.quarantined == 1 and quarantines == 1 and projector.checkpoint == 1
+    return FaultScenarioResult(
+        "quarantine",
+        passed,
+        "quarantined=%s durable_quarantine_rows=%s checkpoint=%s"
+        % (result.quarantined, quarantines, projector.checkpoint),
+    )
+
+
+def scenario_deadlock_then_retry(
+    dsn: str, schema: str, rows: list[dict[str, Any]]
+) -> FaultScenarioResult:
+    """Exercise a real PostgreSQL deadlock, then prove the writer retries cleanly."""
+
+    import psycopg  # type: ignore[import]
+
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"CREATE TABLE {schema}.capacity_deadlock_locks (id integer PRIMARY KEY)")
+        cur.execute(f"INSERT INTO {schema}.capacity_deadlock_locks (id) VALUES (1), (2)")
+
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = []
+
+    def deadlocking_participant(first: int, second: int) -> None:
+        try:
+            with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT id FROM {schema}.capacity_deadlock_locks WHERE id=%s FOR UPDATE",
+                    (first,),
+                )
+                barrier.wait(timeout=10)
+                cur.execute(
+                    f"SELECT id FROM {schema}.capacity_deadlock_locks WHERE id=%s FOR UPDATE",
+                    (second,),
+                )
+            outcomes.append("committed")
+        except Exception as exc:  # Postgres selects one participant as victim.
+            outcomes.append(type(exc).__name__)
+
+    left = threading.Thread(target=deadlocking_participant, args=(1, 2))
+    right = threading.Thread(target=deadlocking_participant, args=(2, 1))
+    left.start()
+    right.start()
+    left.join(timeout=20)
+    right.join(timeout=20)
+
+    deadlock_seen = "DeadlockDetected" in outcomes
+    watermark = max(int(row["ingested_seq"]) for row in rows)
+    recovered = RelationalLifecycleProjector(
+        ProjectionStore(dsn, schema=schema), deployment_sha="capacity-deadlock-retry"
+    )
+    result = recovered.project_records(rows, mode="live", source_high_watermark=watermark)
+    passed = deadlock_seen and result.accepted == len(rows) and recovered.checkpoint == watermark
+    return FaultScenarioResult(
+        "deadlock_then_retry",
+        passed,
+        "outcomes=%s checkpoint=%s accepted=%s rpo=0"
+        % (sorted(outcomes), recovered.checkpoint, result.accepted),
+    )
+
+
+FAULT_SCENARIOS: tuple[Callable[[str, str, list[dict[str, Any]]], FaultScenarioResult], ...] = (
+    scenario_restart,
     scenario_sigkill_mid_publish,
     scenario_db_disconnect_then_retry,
+    scenario_deadlock_then_retry,
     scenario_transaction_rollback,
     scenario_second_writer_conflict,
     scenario_duplicate_delivery,
     scenario_out_of_order_delivery,
+    scenario_conflicting_duplicate,
+    scenario_quarantine,
 )
 
 
 def run_fault_matrix(
-    tmp_path_factory: Callable[[str], Path], journey_count: int = 4
+    dsn: str, *, journey_count: int = 4
 ) -> list[FaultScenarioResult]:
-    """Run every fault scenario, each in its own isolated working directory."""
+    """Run every fault in a fresh PostgreSQL schema and guarantee teardown."""
 
     results: list[FaultScenarioResult] = []
     for scenario in FAULT_SCENARIOS:
-        scenario_dir = tmp_path_factory(scenario.__name__)
+        schema = _fresh_capacity_schema(dsn, f"fault_{scenario.__name__}")
         rows: list[dict[str, Any]] = []
         seq = 1
         for journey_index in range(journey_count):
@@ -622,28 +843,258 @@ def run_fault_matrix(
             journey = journey_rows(journey_index, event_types=event_types, starting_seq=seq)
             rows.extend(journey)
             seq += len(journey)
-        results.append(scenario(scenario_dir, rows))
+        ProjectionStore(dsn, schema=schema, bootstrap=True)
+        try:
+            result = scenario(dsn, schema, rows)
+        finally:
+            torn_down = _teardown_capacity_schema(dsn, schema)
+        result.detail = f"{result.detail} schema={schema} teardown={torn_down}"
+        result.passed = result.passed and torn_down
+        results.append(result)
     return results
 
 
-def _write_report(
-    path: Path,
-    report: CapacityReport,
-    faults: list[FaultScenarioResult],
-    *,
-    writer_backend: str,
-    projection_schema: str = "",
-) -> None:
-    payload = {
-        "writer_backend": writer_backend,
-        "projection_schema": projection_schema,
-        "capacity": report.to_dict(),
-        "fault_matrix": [
-            {"name": r.name, "passed": r.passed, "detail": r.detail} for r in faults
-        ],
+def _load_bff_projection_reader() -> type[Any]:
+    """Load the real BFF repository without enabling the reader cutover flag."""
+
+    module_name = "_lifecycle_capacity_bff_projection_store"
+    module = sys.modules.get(module_name)
+    if module is None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "control-plane"
+            / "bff"
+            / "trade_journey_projection_store.py"
+        )
+        spec = importlib.util.spec_from_file_location(module_name, source)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("cannot load the Trade Journey BFF projection repository")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+    return module.TradeJourneyProjectionStore
+
+
+@dataclass
+class BffReadReport:
+    samples: dict[str, list[float]] = field(default_factory=dict)
+    page_size: int = 200
+
+    def p95_seconds(self, operation: str) -> float:
+        return _percentile(self.samples.get(operation, []), 0.95)
+
+    def gate_failures(self) -> list[str]:
+        return [
+            f"BFF {operation} p95 {self.p95_seconds(operation):.3f}s exceeds "
+            f"{BFF_QUERY_P95_LIMIT_SECONDS}s"
+            for operation in sorted(self.samples)
+            if self.p95_seconds(operation) > BFF_QUERY_P95_LIMIT_SECONDS
+        ]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "reader": "TradeJourneyProjectionStore",
+            "page_size": self.page_size,
+            "p95_seconds": {
+                operation: self.p95_seconds(operation)
+                for operation in sorted(self.samples)
+            },
+            "samples_seconds": self.samples,
+            "gate_failures": self.gate_failures(),
+        }
+
+
+def _benchmark_ids(dsn: str, schema: str) -> tuple[str, str]:
+    import psycopg  # type: ignore[import]
+
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            f"SELECT journey_id, loop_run_id FROM {schema}.journeys "
+            "WHERE tenant_id=%s AND environment=%s ORDER BY journey_id LIMIT 1",
+            ("tenant-capacity", "paper"),
+        )
+        row = cur.fetchone()
+    if row is None or not row[0] or not row[1]:
+        raise RuntimeError("capacity corpus did not materialize a journey and loop run for BFF reads")
+    return str(row[0]), str(row[1])
+
+
+def run_bff_read_benchmark(
+    dsn: str, schema: str, *, repeats: int = 10, page_size: int = 200
+) -> BffReadReport:
+    """Measure list/detail/timeline/loop through the exact BFF read repository."""
+
+    if repeats <= 0:
+        raise ValueError("BFF read repeats must be positive")
+    reader_class = _load_bff_projection_reader()
+    reader = reader_class(
+        dsn,
+        schema=schema,
+        token_secret="lifecycle-capacity-benchmark-page-token-secret",
+    )
+    journey_id, loop_run_id = _benchmark_ids(dsn, schema)
+    operations: dict[str, Callable[[], Any]] = {
+        "list": lambda: reader.page_journeys(
+            tenant_id="tenant-capacity", environment="paper", page_size=page_size
+        ),
+        "detail": lambda: reader.get_journey(
+            tenant_id="tenant-capacity", environment="paper", journey_id=journey_id
+        ),
+        "timeline": lambda: reader.page_timeline(
+            tenant_id="tenant-capacity",
+            environment="paper",
+            journey_id=journey_id,
+            page_size=page_size,
+        ),
+        "loop": lambda: reader.page_loop_runs(
+            tenant_id="tenant-capacity", environment="paper", page_size=page_size
+        ),
+        "loop_detail": lambda: reader.get_loop_run(
+            tenant_id="tenant-capacity", environment="paper", loop_run_id=loop_run_id
+        ),
     }
+    report = BffReadReport(samples={name: [] for name in operations}, page_size=page_size)
+    for name, operation in operations.items():
+        for _ in range(repeats):
+            started = time.monotonic()
+            value = operation()
+            report.samples[name].append(time.monotonic() - started)
+            if value is None:
+                raise RuntimeError(f"BFF {name} read returned no capacity result")
+            if name == "list" and len(value.items) > page_size:
+                raise RuntimeError("BFF journey list exceeded the requested page size")
+            if name == "timeline" and len(value.items) > page_size:
+                raise RuntimeError("BFF timeline exceeded the requested page size")
+            if name == "loop" and len(value[0]) > page_size:
+                raise RuntimeError("BFF loop list exceeded the requested page size")
+    return report
+
+
+def _plan_nodes(plan: Any) -> list[dict[str, Any]]:
+    if isinstance(plan, str):
+        plan = json.loads(plan)
+    root = plan[0]["Plan"] if isinstance(plan, list) else plan["Plan"]
+    nodes: list[dict[str, Any]] = []
+
+    def walk(node: Mapping[str, Any]) -> None:
+        nodes.append(
+            {
+                "node_type": str(node.get("Node Type") or ""),
+                "relation": str(node.get("Relation Name") or ""),
+                "index": str(node.get("Index Name") or ""),
+            }
+        )
+        for child in node.get("Plans") or []:
+            if isinstance(child, Mapping):
+                walk(child)
+
+    walk(root)
+    return nodes
+
+
+def explain_bff_read_paths(dsn: str, schema: str) -> dict[str, dict[str, Any]]:
+    """Capture PostgreSQL plans for the BFF's bounded page queries, not a fake SQL path."""
+
+    import psycopg  # type: ignore[import]
+
+    journey_id, _loop_run_id = _benchmark_ids(dsn, schema)
+    queries = {
+        "list": (
+            f"SELECT journey_id FROM {schema}.journeys WHERE tenant_id=%s AND environment=%s "
+            "ORDER BY updated_at DESC, journey_id DESC LIMIT 201",
+            ("tenant-capacity", "paper"),
+        ),
+        "detail": (
+            f"SELECT journey_id FROM {schema}.journeys "
+            "WHERE tenant_id=%s AND environment=%s AND journey_id=%s",
+            ("tenant-capacity", "paper", journey_id),
+        ),
+        "timeline": (
+            f"SELECT source_event_id FROM {schema}.journey_stages "
+            "WHERE tenant_id=%s AND environment=%s AND journey_id=%s "
+            "ORDER BY stage_ordinal, event_sequence, occurred_at, source_ingested_seq, source_event_id LIMIT 201",
+            ("tenant-capacity", "paper", journey_id),
+        ),
+        "loop": (
+            f"SELECT loop_run_id FROM {schema}.loop_runs WHERE tenant_id=%s AND environment=%s "
+            "ORDER BY updated_at DESC, loop_run_id DESC LIMIT 201",
+            ("tenant-capacity", "paper"),
+        ),
+    }
+    results: dict[str, dict[str, Any]] = {}
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        for table in ("journeys", "journey_stages", "loop_runs"):
+            cur.execute(f"ANALYZE {schema}.{table}")
+        for name, (query, params) in queries.items():
+            cur.execute(f"EXPLAIN (FORMAT JSON) {query}", params)
+            nodes = _plan_nodes(cur.fetchone()[0])
+            indexes = sorted({node["index"] for node in nodes if node["index"]})
+            seq_scans = [node["relation"] for node in nodes if node["node_type"] == "Seq Scan"]
+            results[name] = {
+                "indexed": bool(indexes),
+                "indexes": indexes,
+                "unbounded_seq_scans": seq_scans,
+                "nodes": nodes,
+                "page_limit": 200,
+            }
+    return results
+
+
+def _plan_failures(plans: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    failures: list[str] = []
+    for name, plan in sorted(plans.items()):
+        if not plan.get("indexed"):
+            failures.append(f"BFF {name} EXPLAIN did not use an index")
+        if plan.get("unbounded_seq_scans"):
+            failures.append(f"BFF {name} EXPLAIN used seq scan: {plan['unbounded_seq_scans']}")
+        if int(plan.get("page_limit") or 0) > 200:
+            failures.append(f"BFF {name} page limit exceeds 200")
+    return failures
+
+
+def _git_identity(repository_root: Path) -> dict[str, Any]:
+    """Bind a run to one exact, clean source commit (or a supplied image identity)."""
+
+    try:
+        commit = subprocess.check_output(
+            ["git", "-C", str(repository_root), "rev-parse", "HEAD"], text=True
+        ).strip()
+        status = subprocess.check_output(
+            ["git", "-C", str(repository_root), "status", "--porcelain=v1", "--untracked-files=all"],
+            text=True,
+        )
+        dirty_paths = [line for line in status.splitlines() if line]
+        return {
+            "commit": commit,
+            "dirty": bool(dirty_paths),
+            "dirty_paths": dirty_paths,
+            "tree_status_sha256": hashlib.sha256(status.encode("utf-8")).hexdigest(),
+            "source": "git",
+        }
+    except (OSError, subprocess.CalledProcessError):
+        commit = str(os.getenv("GIT_SHA") or "").strip()
+        clean_state = str(os.getenv("LIFECYCLE_CAPACITY_GIT_DIRTY") or "").strip().lower()
+        if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit.lower()):
+            raise RuntimeError("capacity image must supply an exact 40-character GIT_SHA")
+        if clean_state != "clean":
+            raise RuntimeError("capacity image must declare LIFECYCLE_CAPACITY_GIT_DIRTY=clean")
+        return {
+            "commit": commit,
+            "dirty": False,
+            "dirty_paths": [],
+            "tree_status_sha256": hashlib.sha256(b"").hexdigest(),
+            "source": "image-environment",
+        }
+
+
+def _write_report(path: Path, payload: Mapping[str, Any]) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+    path.with_suffix(path.suffix + ".sha256").write_text(
+        f"{checksum}  {path.name}\n", encoding="utf-8"
+    )
+    return checksum
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -652,7 +1103,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--loop-runs", type=int, default=DEFAULT_LOOP_RUN_COUNT)
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--fault-journey-count", type=int, default=4)
-    parser.add_argument("--workdir", type=Path, default=None)
+    parser.add_argument("--catch-up-events", type=int, default=100_000)
+    parser.add_argument("--read-repeats", type=int, default=10)
+    parser.add_argument("--repository-root", type=Path, default=Path.cwd())
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument(
         "--projection-dsn",
@@ -661,61 +1114,117 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--projection-schema",
-        default=os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA", ""),
-        help="existing projection schema to measure (required)",
-    )
-    parser.add_argument(
-        "--bootstrap-projection-schema",
-        action="store_true",
-        help="explicitly create the named schema before the run; test-only",
+        default=os.getenv("LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA", ""),
+        help="fresh capacity-only schema; generated when omitted and always torn down",
     )
     args = parser.parse_args(argv)
 
     if not args.projection_dsn:
         parser.error("--projection-dsn or LIFECYCLE_PROJECTOR_PROJECTION_DSN is required")
-    if not args.projection_schema:
-        parser.error(
-            "--projection-schema or LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA is required"
+    if args.batch_size != DEFAULT_BATCH_SIZE:
+        parser.error(f"capacity proof requires batch_size={DEFAULT_BATCH_SIZE}")
+    if args.events < 1 or args.loop_runs < 1 or args.catch_up_events < 0:
+        parser.error("events and loop-runs must be positive; catch-up-events cannot be negative")
+
+    identity = _git_identity(args.repository_root)
+    if identity["dirty"]:
+        parser.error("capacity proof refuses a dirty tree: " + ", ".join(identity["dirty_paths"]))
+
+    schema = str(args.projection_schema or _fresh_capacity_schema(args.projection_dsn, "run"))
+    if not schema.startswith(CAPACITY_SCHEMA_PREFIX) or not schema.replace("_", "").isalnum():
+        parser.error("capacity proof requires a fresh lifecycle_capacity_* schema")
+
+    import psycopg  # type: ignore[import]
+
+    with psycopg.connect(args.projection_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name=%s)",
+            (schema,),
         )
+        if cur.fetchone()[0]:
+            parser.error(f"capacity schema already exists and is not fresh: {schema}")
 
-    import tempfile
+    teardown = False
+    try:
+        store = ProjectionStore(args.projection_dsn, schema=schema, bootstrap=True)
+        projector = RelationalLifecycleProjector(store, deployment_sha=identity["commit"])
+        report = run_capacity_benchmark(
+            projector,
+            total_events=args.events,
+            total_loop_runs=args.loop_runs,
+            batch_size=args.batch_size,
+        )
+        catchup_report: CapacityReport | None = None
+        catchup_elapsed = 0.0
+        if args.catch_up_events:
+            catchup_loops = max(1, round(args.loop_runs * args.catch_up_events / args.events))
+            started = time.monotonic()
+            catchup_report = run_capacity_benchmark(
+                projector,
+                total_events=args.catch_up_events,
+                total_loop_runs=catchup_loops,
+                batch_size=args.batch_size,
+                starting_seq=args.events + 1,
+                journey_offset=args.loop_runs,
+            )
+            catchup_elapsed = time.monotonic() - started
+        faults = run_fault_matrix(args.projection_dsn, journey_count=args.fault_journey_count)
+        bff_reads = run_bff_read_benchmark(
+            args.projection_dsn, schema, repeats=args.read_repeats, page_size=200
+        )
+        explain_plans = explain_bff_read_paths(args.projection_dsn, schema)
+    finally:
+        teardown = _teardown_capacity_schema(args.projection_dsn, schema)
 
-    workdir = args.workdir or Path(tempfile.mkdtemp(prefix="lifecycle-capacity-"))
-    workdir.mkdir(parents=True, exist_ok=True)
-    store = ProjectionStore(
-        args.projection_dsn,
-        schema=args.projection_schema,
-        bootstrap=args.bootstrap_projection_schema,
-    )
-    projector = RelationalLifecycleProjector(
-        store,
-        deployment_sha="capacity-benchmark",
-    )
-    report = run_capacity_benchmark(
-        projector,
-        total_events=args.events,
-        total_loop_runs=args.loop_runs,
-        batch_size=args.batch_size,
-    )
-
-    def _fault_workdir(name: str) -> Path:
-        path = workdir / "faults" / name
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    faults = run_fault_matrix(_fault_workdir, journey_count=args.fault_journey_count)
+    corpus_config = {
+        "seed": CAPACITY_CORPUS_SEED,
+        "events": args.events,
+        "loop_runs": args.loop_runs,
+        "batch_size": args.batch_size,
+        "catch_up_events": args.catch_up_events,
+    }
+    payload = {
+        "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+        "writer_backend": "RelationalLifecycleProjector+ProjectionStore",
+        "git": identity,
+        "corpus": {
+            **corpus_config,
+            "config_sha256": hashlib.sha256(
+                json.dumps(corpus_config, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+        },
+        "projection_schema": schema,
+        "capacity": report.to_dict(),
+        "catch_up": {
+            "events": args.catch_up_events,
+            "elapsed_seconds": catchup_elapsed,
+            "limit_seconds": CATCH_UP_100K_LIMIT_SECONDS,
+            "report": catchup_report.to_dict() if catchup_report else None,
+        },
+        "bff_reads": bff_reads.to_dict(),
+        "bff_explain": explain_plans,
+        "fault_matrix": [
+            {"name": result.name, "passed": result.passed, "detail": result.detail}
+            for result in faults
+        ],
+        "teardown": {"schema_dropped": teardown},
+    }
+    failures = report.gate_failures() + bff_reads.gate_failures() + _plan_failures(explain_plans)
+    if args.catch_up_events and catchup_elapsed > CATCH_UP_100K_LIMIT_SECONDS:
+        failures.append(
+            f"catch-up {catchup_elapsed:.3f}s exceeds {CATCH_UP_100K_LIMIT_SECONDS}s"
+        )
+    failures.extend(result.name for result in faults if not result.passed)
+    if not teardown:
+        failures.append("capacity schema teardown failed")
+    payload["gate_failures"] = failures
 
     if args.output:
-        _write_report(
-            args.output,
-            report,
-            faults,
-            writer_backend="postgres",
-            projection_schema=args.projection_schema,
-        )
+        payload["evidence_sha256"] = _write_report(args.output, payload)
 
-    failures = report.gate_failures() + [f.name for f in faults if not f.passed]
-    for line in json.dumps(report.to_dict(), indent=2, sort_keys=True).splitlines():
+    summary = report.to_dict()
+    summary.pop("samples", None)
+    for line in json.dumps({"capacity": summary, "gate_failures": failures}, indent=2, sort_keys=True).splitlines():
         print(line)
     for result in faults:
         print(f"fault[{result.name}] passed={result.passed} {result.detail}")

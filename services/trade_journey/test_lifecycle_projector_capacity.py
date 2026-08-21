@@ -10,31 +10,41 @@ dev profile when the host is quiet, not from the unit test suite.
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
+from uuid import uuid4
 
 import pytest
 
-from services.trade_journey.lifecycle_projector import LifecycleProjector
+from services.trade_journey.lifecycle_projector import RelationalLifecycleProjector
 from services.trade_journey.lifecycle_projector_capacity import (
+    CAPACITY_SCHEMA_PREFIX,
     CapacityReport,
     FAULT_SCENARIOS,
+    _teardown_capacity_schema,
     _journey_event_budgets,
     _journey_event_types,
+    explain_bff_read_paths,
     generate_corpus_batches,
     journey_rows,
     main,
+    run_bff_read_benchmark,
     run_capacity_benchmark,
     run_fault_matrix,
     rss_bytes,
 )
+from services.trade_journey.projection_store import ProjectionStore
 
 
-def _projector(tmp_path: Path) -> LifecycleProjector:
-    return LifecycleProjector(
-        state_path=tmp_path / "controller_state.json",
-        bundle_root=tmp_path,
-        deployment_sha="capacity-test",
-    )
+@pytest.fixture
+def capacity_dsn() -> str:
+    dsn = os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    return dsn
+
+
+def _schema() -> str:
+    return f"{CAPACITY_SCHEMA_PREFIX}test_{uuid4().hex[:12]}"
 
 
 def test_journey_event_budgets_hits_exact_totals():
@@ -96,31 +106,37 @@ def test_rss_bytes_is_positive():
     assert rss_bytes() > 0
 
 
-def test_cli_refuses_to_measure_the_legacy_json_projector():
+def test_cli_requires_a_postgres_dsn():
     with pytest.raises(SystemExit, match="2"):
         main(["--events", "2", "--loop-runs", "1"])
 
 
-def test_run_capacity_benchmark_projects_full_small_scale_corpus(tmp_path):
-    projector = _projector(tmp_path)
-    report = run_capacity_benchmark(
-        projector,
-        total_events=2_000,
-        total_loop_runs=300,
-        batch_size=100,
-    )
+def test_run_capacity_benchmark_projects_full_small_scale_corpus(capacity_dsn):
+    schema = _schema()
+    try:
+        store = ProjectionStore(capacity_dsn, schema=schema, bootstrap=True)
+        projector = RelationalLifecycleProjector(store, deployment_sha="capacity-test")
+        report = run_capacity_benchmark(
+            projector,
+            total_events=2_000,
+            total_loop_runs=300,
+            batch_size=500,
+        )
 
-    assert isinstance(report, CapacityReport)
-    assert len(report.samples) == 20
-    assert projector.checkpoint == 2_000
-    assert report.peak_rss_bytes >= report.steady_rss_bytes > 0
-    assert report.batch_latency_p95_seconds >= 0
-    # Small-scale runs are nowhere near the section 14 ceilings.
-    assert report.gate_failures() == []
+        assert isinstance(report, CapacityReport)
+        assert len(report.samples) == 4
+        assert projector.checkpoint == 2_000
+        assert report.peak_rss_bytes >= report.steady_rss_bytes > 0
+        assert report.batch_latency_p95_seconds >= 0
+        # Small-scale runs are nowhere near the section 14 ceilings.
+        assert report.gate_failures() == []
 
-    summary = report.to_dict()
-    assert summary["total_events"] == 2_000
-    assert summary["total_loop_runs"] == 300
+        summary = report.to_dict()
+        assert summary["total_events"] == 2_000
+        assert summary["total_loop_runs"] == 300
+        assert len(summary["samples"]) == 4
+    finally:
+        assert _teardown_capacity_schema(capacity_dsn, schema)
 
 
 def test_capacity_report_flags_gate_violations_without_a_full_scale_run():
@@ -155,7 +171,7 @@ def test_capacity_report_flags_gate_violations_without_a_full_scale_run():
 
 
 @pytest.mark.parametrize("scenario", FAULT_SCENARIOS, ids=lambda s: s.__name__)
-def test_fault_scenario_passes_in_isolation(tmp_path, scenario):
+def test_fault_scenario_passes_in_fresh_postgres_schema(capacity_dsn, scenario):
     rows = []
     seq = 1
     for journey_index in range(3):
@@ -164,20 +180,17 @@ def test_fault_scenario_passes_in_isolation(tmp_path, scenario):
         rows.extend(journey)
         seq += len(journey)
 
-    result = scenario(tmp_path, rows)
-    assert result.passed, f"{result.name} failed: {result.detail}"
+    schema = _schema()
+    ProjectionStore(capacity_dsn, schema=schema, bootstrap=True)
+    try:
+        result = scenario(capacity_dsn, schema, rows)
+        assert result.passed, f"{result.name} failed: {result.detail}"
+    finally:
+        assert _teardown_capacity_schema(capacity_dsn, schema)
 
 
-def test_run_fault_matrix_runs_every_scenario_in_isolated_dirs(tmp_path):
-    dirs: dict[str, Path] = {}
-
-    def factory(name: str) -> Path:
-        path = tmp_path / name
-        path.mkdir(parents=True, exist_ok=True)
-        dirs[name] = path
-        return path
-
-    results = run_fault_matrix(factory, journey_count=2)
+def test_run_fault_matrix_runs_every_scenario_in_isolated_postgres_schemas(capacity_dsn):
+    results = run_fault_matrix(capacity_dsn, journey_count=2)
 
     assert len(results) == len(FAULT_SCENARIOS)
     assert {r.name for r in results} == {
@@ -186,6 +199,26 @@ def test_run_fault_matrix_runs_every_scenario_in_isolated_dirs(tmp_path):
     assert all(r.passed for r in results), [
         (r.name, r.detail) for r in results if not r.passed
     ]
-    # Every scenario got its own working directory; a shared directory would
-    # let one scenario's leftover state leak into the next.
-    assert len(dirs) == len(FAULT_SCENARIOS)
+    # Every scenario reports that its harness-owned PostgreSQL schema was
+    # removed; a shared schema would leak receipts into the next fault.
+    assert all("teardown=True" in r.detail for r in results)
+
+
+def test_bff_capacity_reads_use_real_repository_and_page_size(capacity_dsn):
+    schema = _schema()
+    try:
+        projector = RelationalLifecycleProjector(
+            ProjectionStore(capacity_dsn, schema=schema, bootstrap=True),
+            deployment_sha="capacity-bff-read-test",
+        )
+        run_capacity_benchmark(
+            projector, total_events=2_000, total_loop_runs=300, batch_size=500
+        )
+        reads = run_bff_read_benchmark(capacity_dsn, schema, repeats=2, page_size=200)
+        assert set(reads.samples) == {"list", "detail", "timeline", "loop", "loop_detail"}
+        assert not reads.gate_failures()
+        plans = explain_bff_read_paths(capacity_dsn, schema)
+        assert set(plans) == {"list", "detail", "timeline", "loop"}
+        assert all(int(plan["page_limit"]) <= 200 for plan in plans.values())
+    finally:
+        assert _teardown_capacity_schema(capacity_dsn, schema)

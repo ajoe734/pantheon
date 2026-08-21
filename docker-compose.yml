@@ -1505,8 +1505,12 @@ services:
       # silently falls back to the legacy JSON projector when this DML target
       # is unavailable.
       LIFECYCLE_PROJECTOR_PROJECTION_DSN: ${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA: ${LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA:-trade_journey_projection}
+      # The harness refuses any shared projection schema. It generates a
+      # lifecycle_capacity_* schema when this is blank, and tears that schema
+      # down after the run. Supplying an existing schema is a hard error.
+      LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA: ${LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA:-}
       GIT_SHA: ${GIT_SHA:-unknown}
+      LIFECYCLE_CAPACITY_GIT_DIRTY: ${LIFECYCLE_CAPACITY_GIT_DIRTY:-unknown}
     volumes:
       - bff-data:/data/bff
     depends_on:
