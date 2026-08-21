@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -13,8 +14,24 @@ import promote_supervisor_runtime as promotion
 
 
 @pytest.fixture(autouse=True)
-def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(promotion, "COMMAND_RUNTIME_PARENT", tmp_path / "command-runtimes")
+def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    runtime_parent = tmp_path / "command-runtimes"
+    monkeypatch.setattr(promotion, "COMMAND_RUNTIME_PARENT", runtime_parent)
+    yield
+    # Promotion deliberately makes command runtimes read-only. Restore owner
+    # write/traverse permission so pytest can remove its temporary directory.
+    if runtime_parent.exists():
+        for current_root, dirnames, filenames in os.walk(
+            runtime_parent, topdown=False, followlinks=False
+        ):
+            current = Path(current_root)
+            for name in (*filenames, *dirnames):
+                path = current / name
+                if not path.is_symlink():
+                    mode = stat.S_IMODE(path.stat(follow_symlinks=False).st_mode)
+                    os.chmod(path, mode | stat.S_IWUSR, follow_symlinks=False)
+            mode = stat.S_IMODE(current.stat(follow_symlinks=False).st_mode)
+            os.chmod(current, mode | stat.S_IWUSR | stat.S_IXUSR, follow_symlinks=False)
 
 
 def _git(root: Path, *args: str) -> str:
@@ -73,6 +90,27 @@ def test_render_v2_config_requires_one_clean_authoritative_source(tmp_path: Path
         str(live_config),
         "--verbose",
     ]
+
+
+def test_seal_command_runtime_removes_write_bits_and_preserves_execute_bits(
+    tmp_path: Path,
+) -> None:
+    candidate, _status_root = _candidate(tmp_path)
+    executable = candidate / "scripts" / "promote-supervisor-runtime.sh"
+
+    result = promotion.seal_command_runtime(candidate)
+
+    assert result["outcome"] == "sealed"
+    assert result["root"] == str(candidate.resolve())
+    assert result["changed_paths"] > 0
+    assert stat.S_IMODE(executable.stat().st_mode) & 0o111
+    for current_root, dirnames, filenames in os.walk(candidate, followlinks=False):
+        current = Path(current_root)
+        for name in (*filenames, *dirnames):
+            path = current / name
+            if not path.is_symlink():
+                assert stat.S_IMODE(path.stat(follow_symlinks=False).st_mode) & 0o222 == 0
+        assert stat.S_IMODE(current.stat(follow_symlinks=False).st_mode) & 0o222 == 0
 
 
 def test_render_rejects_a_clean_staging_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -200,6 +238,7 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
     )
 
     assert result["outcome"] == "launched"
+    assert result["command_runtime_seal"]["outcome"] == "sealed"
     assert result["stopped_pid"] == 41
     assert result["launched_pid"] == 42
     assert events == ["stop", "launch"]
@@ -297,7 +336,7 @@ def test_discover_only_is_read_only_and_reports_v2_identity(tmp_path: Path, caps
 
 
 def test_sync_coordination_root_code_updates_code_and_preserves_data(tmp_path: Path) -> None:
-    candidate = tmp_path / "candidate"
+    candidate = tmp_path / "command-runtimes" / "candidate"
     status_root = tmp_path / "status"
     (candidate / "scripts").mkdir(parents=True)
     (candidate / ".orchestrator" / "rewrite").mkdir(parents=True)
@@ -318,11 +357,14 @@ def test_sync_coordination_root_code_updates_code_and_preserves_data(tmp_path: P
     (status_root / "ai-status.json").write_text(live_status, encoding="utf-8")
     (status_root / ".orchestrator" / "state.json").write_text('{"live": true}\n', encoding="utf-8")
 
+    promotion.seal_command_runtime(candidate)
     result = promotion.sync_coordination_root_code(candidate, status_root)
 
     assert result["outcome"] == "synced"
     assert result["paths"] == ["scripts", ".orchestrator/*.py", ".orchestrator/rewrite"]
     assert (status_root / "scripts" / "ai_status.py").read_text(encoding="utf-8") == "# new version\n"
+    assert stat.S_IMODE((status_root / "scripts" / "ai_status.py").stat().st_mode) & stat.S_IWUSR
+    assert stat.S_IMODE((status_root / "scripts").stat().st_mode) & stat.S_IWUSR
     assert (status_root / ".orchestrator" / "common.py").read_text(encoding="utf-8") == "# new common\n"
     assert (
         status_root / ".orchestrator" / "rewrite" / "task_machine.py"
