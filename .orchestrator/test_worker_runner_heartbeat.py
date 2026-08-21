@@ -131,8 +131,10 @@ class TestCoordinationRootValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="worker-runner-symlinks-") as temp_dir:
             root = Path(temp_dir)
             central = root / "central"
+            command_root = root / "command-runtime"
             worktree = root / "task-worktree"
             _init_repo(central)
+            _init_repo(command_root)
             _init_repo(worktree)
             _write_status(central)
 
@@ -200,8 +202,10 @@ class TestCoordinationRootValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="worker-runner-cwd-") as temp_dir:
             root = Path(temp_dir)
             central = root / "central"
+            command_root = root / "command-runtime"
             worktree = root / "task-worktree"
             _init_repo(central)
+            _init_repo(command_root)
             _init_repo(worktree)
             _write_status(central)
             heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
@@ -217,7 +221,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                     "ORCH_WORKSPACE_PATH": str(worktree),
                 }
             )
-            env.update(_command_runtime_env(central))
+            env.update(_command_runtime_env(command_root))
             proc = subprocess.run(
                 [
                     sys.executable,
@@ -247,31 +251,118 @@ class TestCoordinationRootValidation(unittest.TestCase):
             self.assertIn(str(worktree), proc.stdout)
             runner_status = json.loads(status.read_text(encoding="utf-8"))
             self.assertEqual(runner_status["status"], "completed")
-            self.assertEqual(runner_status["status_command_runtime"]["command_root"], str(central.resolve()))
+            self.assertEqual(runner_status["status_command_runtime"]["command_root"], str(command_root.resolve()))
             heartbeat_payload = json.loads(heartbeat.read_text(encoding="utf-8"))
-            self.assertEqual(heartbeat_payload["status_command_runtime"]["command_root"], str(central.resolve()))
+            self.assertEqual(heartbeat_payload["status_command_runtime"]["command_root"], str(command_root.resolve()))
+
+    def test_provider_cannot_chmod_or_write_command_runtime(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-readonly-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _write_status(central)
+
+            guarded = command_root / "scripts" / "guarded.py"
+            guarded.parent.mkdir(parents=True)
+            guarded.write_text("guarded = True\n", encoding="utf-8")
+            subprocess.run(["git", "add", "scripts/guarded.py"], cwd=command_root, check=True)
+            subprocess.run(
+                ["git", "commit", "-q", "-m", "add guarded runtime file"],
+                cwd=command_root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "update-ref", "refs/remotes/origin/dev", "HEAD"],
+                cwd=command_root,
+                check=True,
+            )
+            guarded.chmod(0o444)
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            env = os.environ.copy()
+            for key in list(env):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
+            env.update(
+                {
+                    "PANTHEON_STATUS_ROOT": str(central),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                    "ORCH_WORKSPACE_PATH": str(worktree),
+                }
+            )
+            env.update(_command_runtime_env(command_root))
+            program = (
+                "import pathlib, sys; "
+                "guarded=pathlib.Path(sys.argv[1]); "
+                "worktree=pathlib.Path(sys.argv[2]); "
+                "status_root=pathlib.Path(sys.argv[3]); "
+                "denied=0; "
+                "\ntry: guarded.chmod(0o644)\nexcept OSError: denied += 1\n"
+                "try: guarded.write_text('mutated\\n')\nexcept OSError: denied += 1\n"
+                "(worktree / 'provider-write-ok').write_text('ok\\n'); "
+                "(status_root / 'provider-status-write-ok').write_text('ok\\n'); "
+                "sys.exit(0 if denied == 2 and guarded.read_text() == 'guarded = True\\n' else 41)"
+            )
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "codex-20260821T000000Z-readonly",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    program,
+                    str(guarded),
+                    str(worktree),
+                    str(central),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            self.assertEqual(guarded.read_text(encoding="utf-8"), "guarded = True\n")
+            self.assertEqual(guarded.stat().st_mode & 0o777, 0o444)
+            self.assertEqual((worktree / "provider-write-ok").read_text(), "ok\n")
+            self.assertEqual((central / "provider-status-write-ok").read_text(), "ok\n")
 
     def test_relative_provider_command_is_bound_to_command_runtime(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-command-root-") as temp_dir:
             root = Path(temp_dir)
             central = root / "central"
+            command_root = root / "command-runtime"
             worktree = root / "execute-plans-worktree"
             _init_repo(central)
+            _init_repo(command_root)
             _init_repo(worktree)
 
-            provider = central / ".orchestrator" / "bin" / "test-provider"
+            provider = command_root / ".orchestrator" / "bin" / "test-provider"
             provider.parent.mkdir(parents=True, exist_ok=True)
             provider.write_text("#!/bin/sh\necho provider-cwd=$PWD\n", encoding="utf-8")
             provider.chmod(0o755)
-            subprocess.run(["git", "add", ".orchestrator/bin/test-provider"], cwd=central, check=True)
+            subprocess.run(["git", "add", ".orchestrator/bin/test-provider"], cwd=command_root, check=True)
             subprocess.run(
                 ["git", "commit", "-q", "-m", "add provider fixture"],
-                cwd=central,
+                cwd=command_root,
                 check=True,
             )
             subprocess.run(
                 ["git", "update-ref", "refs/remotes/origin/dev", "HEAD"],
-                cwd=central,
+                cwd=command_root,
                 check=True,
             )
             _write_status(central)
@@ -289,7 +380,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                     "ORCH_WORKSPACE_PATH": str(worktree),
                 }
             )
-            env.update(_command_runtime_env(central))
+            env.update(_command_runtime_env(command_root))
 
             proc = subprocess.run(
                 [
@@ -333,8 +424,10 @@ class TestCoordinationRootValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="worker-runner-roles-") as temp_dir:
             root = Path(temp_dir)
             central = root / "central"
+            command_root = root / "command-runtime"
             worktree = root / "task-worktree"
             _init_repo(central)
+            _init_repo(command_root)
             _init_repo(worktree)
 
             # Write ai-status.json with a task having Codex as owner and Claude as reviewer
@@ -371,7 +464,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                     "ORCH_WORKSPACE_PATH": str(worktree),
                 }
             )
-            env.update(_command_runtime_env(central))
+            env.update(_command_runtime_env(command_root))
             proc = subprocess.run(
                 [
                     sys.executable,
@@ -411,8 +504,10 @@ class TestCoordinationRootValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="worker-runner-failure-") as temp_dir:
             root = Path(temp_dir)
             central = root / "central"
+            command_root = root / "command-runtime"
             worktree = root / "task-worktree"
             _init_repo(central)
+            _init_repo(command_root)
             _init_repo(worktree)
             _write_status(central)
             heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
@@ -428,7 +523,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                     "ORCH_WORKSPACE_PATH": str(worktree),
                 }
             )
-            env.update(_command_runtime_env(central))
+            env.update(_command_runtime_env(command_root))
             # Run a failing command (exit code 1)
             proc = subprocess.run(
                 [
@@ -463,8 +558,10 @@ class TestCoordinationRootValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="worker-runner-cleanup-") as temp_dir:
             root = Path(temp_dir)
             central = root / "central"
+            command_root = root / "command-runtime"
             worktree = root / "task-worktree"
             _init_repo(central)
+            command_root.mkdir()
             _init_repo(worktree)
             _write_status(central)
 
@@ -487,7 +584,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             orig_cwd = os.getcwd()
             try:
                 with mock.patch.object(wr, "_git_toplevel", return_value=central):
-                    with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(central)}):
+                    with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(command_root)}):
                         with mock.patch("subprocess.Popen", return_value=mock_child):
                             with mock.patch("sys.argv", test_args):
                                 with mock.patch.dict(os.environ, {
@@ -507,8 +604,10 @@ class TestCoordinationRootValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="worker-runner-sig-") as temp_dir:
             root = Path(temp_dir)
             central = root / "central"
+            command_root = root / "command-runtime"
             worktree = root / "task-worktree"
             _init_repo(central)
+            command_root.mkdir()
             _init_repo(worktree)
             _write_status(central)
 
@@ -531,7 +630,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             orig_cwd = os.getcwd()
             try:
                 with mock.patch.object(wr, "_git_toplevel", return_value=central):
-                    with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(central)}):
+                    with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(command_root)}):
                         with mock.patch("subprocess.Popen", return_value=mock_child):
                             with mock.patch("sys.argv", test_args):
                                 with mock.patch.dict(os.environ, {
@@ -564,8 +663,10 @@ class TestCoordinationRootValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="worker-runner-grandchild-") as temp_dir:
             root = Path(temp_dir)
             central = root / "central"
+            command_root = root / "command-runtime"
             worktree = root / "task-worktree"
             _init_repo(central)
+            command_root.mkdir()
             _init_repo(worktree)
             _write_status(central)
 
@@ -588,7 +689,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             orig_cwd = os.getcwd()
             try:
                 with mock.patch.object(wr, "_git_toplevel", return_value=central):
-                    with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(central)}):
+                    with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(command_root)}):
                         with mock.patch("subprocess.Popen", return_value=mock_child):
                             with mock.patch("sys.argv", test_args):
                                 with mock.patch.dict(os.environ, {

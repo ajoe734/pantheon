@@ -170,6 +170,118 @@ class V2StartupCacheTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(worker.get("status"), "retry_backoff")
 
+    def test_missing_process_retry_honors_canonical_explicit_hold(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="blocked")
+        task["waiting_for"] = "Human/Ops"
+        status = {
+            "tasks": [task],
+            "blockers": [
+                {
+                    "task_id": "TASK-1",
+                    "status": "open",
+                    "waiting_for": "Human/Ops",
+                }
+            ],
+        }
+        state = {"workers": {}, "queue": {"events": {}}}
+        worker = {
+            "provider": "codex",
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "wake",
+            },
+        }
+
+        with mock.patch.object(
+            supervisor,
+            "request_for_worker",
+            side_effect=AssertionError("explicit hold must stop before retry reconstruction"),
+        ):
+            result = supervisor.schedule_missing_process_retry(
+                config,
+                state,
+                worker,
+                "worker process missing",
+                status=status,
+                task=task,
+            )
+
+        self.assertFalse(result)
+        self.assertNotIn("status", worker)
+
+    def test_boot_reconciliation_completes_worker_on_explicit_task_hold(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="blocked")
+        task["waiting_for"] = "Human/Ops"
+        status = {
+            "tasks": [task],
+            "blockers": [
+                {
+                    "task_id": "TASK-1",
+                    "status": "open",
+                    "waiting_for": "Human/Ops",
+                }
+            ],
+        }
+        worker = {
+            "run_id": "run-finalize",
+            "status": "running",
+            "task_id": "TASK-1",
+            "provider": "codex",
+            "agent_id": "codex",
+            "pid": 999999,
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        state = {"workers": {"run-finalize": worker}, "queue": {"events": {}}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize,
+            mock.patch.object(supervisor, "write_activity_log") as activity,
+            mock.patch.object(
+                supervisor,
+                "schedule_missing_process_retry",
+                side_effect=AssertionError("explicit canonical hold must not retry"),
+            ),
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "completed")
+        finalize.assert_called_once_with(config, state, worker, "completed")
+        self.assertEqual(
+            activity.call_args.args[1]["type"],
+            "worker_completed_on_explicit_task_hold",
+        )
+
+    def test_command_runtime_health_failure_is_one_global_dispatch_hold(self) -> None:
+        config = config_fixture()
+        with mock.patch.object(
+            supervisor,
+            "status_command_runtime_env",
+            side_effect=RuntimeError(
+                "PANTHEON_COMMAND_ROOT contains dirty executable/import file: scripts/ai_status.py"
+            ),
+        ):
+            health = supervisor.inspect_command_runtime_health(config)
+
+        state = {"supervisor": {}}
+        self.assertTrue(supervisor.record_command_runtime_health(state, health))
+        reason = supervisor.command_runtime_dispatch_block_reason(state)
+        self.assertFalse(health["healthy"])
+        self.assertIn("scripts/ai_status.py", reason)
+        with mock.patch.object(
+            supervisor,
+            "load_status",
+            side_effect=AssertionError("blocked queue must not read or launch task work"),
+        ):
+            self.assertFalse(supervisor.process_queue(config, state))
+
     def test_terminal_facts_satisfy_dependencies_without_archive_lookup(self) -> None:
         config = config_fixture()
         child = task_fixture(task_id="CHILD", depends_on=["MERGED-LEGACY"])
@@ -210,6 +322,24 @@ class V2StartupCacheTests(unittest.TestCase):
         )
 
         self.assertEqual(first, second)
+
+    def test_dispatch_payload_projects_canonical_dependency_truth(self) -> None:
+        task = task_fixture(depends_on=["DEP"])
+        dependency = task_fixture(task_id="DEP", status="done")
+        dependency["terminal_outcome"] = "completed"
+
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_READY,
+            {"TASK-1": task, "DEP": dependency},
+        )
+
+        self.assertEqual(event["task"]["depends_on"], ["DEP"])
+        self.assertEqual(
+            event["task"]["dependency_truth"],
+            [{"task_id": "DEP", "status": "done", "satisfied": True}],
+        )
 
     def test_reserved_phase_can_publish_launch_intent_after_state_reload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -559,7 +689,6 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
             config.update(
                 {
                     "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
-                    "github_bus": {"repo": "ajoe734/pantheon"},
                     "worker_worktrees": {
                         "enabled": True,
                         "root": str(root / "worker-worktrees"),
@@ -569,6 +698,7 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
                     },
                     "coordination": {
                         "repositories": {
+                            "pantheon": {"repo": "ajoe734/pantheon"},
                             "execute_plans": {"local_path": str(execute_root)}
                         }
                     },
@@ -690,6 +820,31 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                 )
                 for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
                     self.assertNotIn("max_parallel", config["agents"][slot_id])
+
+    def test_repo_claude_accounts_are_isolated_at_requested_capacities(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text())
+        expected = {
+            "claude": ("claude1", 3),
+            "claude2": ("claude2", 1),
+        }
+        account_caps = config["ready_dispatcher"]["max_concurrent_per_account"]
+
+        for agent_id, (account_id, capacity) in expected.items():
+            with self.subTest(agent_id=agent_id):
+                self.assertEqual(config["providers"][agent_id]["account"], account_id)
+                self.assertEqual(config["agents"][agent_id]["max_parallel"], capacity)
+                self.assertEqual(account_caps[account_id], capacity)
+                lane = supervisor.delivery_lane_for_agent(config, agent_id)
+                self.assertEqual(lane.max_parallel, capacity)
+                self.assertEqual(
+                    {endpoint.account_id for endpoint in lane.endpoints},
+                    {account_id},
+                )
+
+        self.assertNotEqual(
+            config["providers"]["claude"]["account"],
+            config["providers"]["claude2"]["account"],
+        )
 
     def test_retired_capacity_fields_fail_closed(self) -> None:
         for retired in (
@@ -3022,8 +3177,7 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
 
     def test_run_once_orders_launch_before_slow_maintenance(self) -> None:
         source = inspect.getsource(supervisor.run_once)
-        self.assertLess(source.index('"dispatch_plan_transaction"'), source.index('"sync_github_bus"'))
-        self.assertLess(source.index('"process_queue_reserved"'), source.index('"sync_github_bus"'))
+        self.assertNotIn('"sync_github_bus"', source)
         self.assertNotIn('"reconcile_blocked_tasks"', source)
         self.assertLess(source.index('"process_queue_reserved"'), source.index("probe_demanded_delivery_health"))
         self.assertNotIn("dispatch_chair_review", source)

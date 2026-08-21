@@ -12,11 +12,22 @@ import pytest
 
 import promote_supervisor_runtime as promotion
 
+_REAL_VERIFY_WORKER_SANDBOX = promotion.verify_worker_sandbox
+
 
 @pytest.fixture(autouse=True)
 def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     runtime_parent = tmp_path / "command-runtimes"
     monkeypatch.setattr(promotion, "COMMAND_RUNTIME_PARENT", runtime_parent)
+    monkeypatch.setattr(
+        promotion,
+        "verify_worker_sandbox",
+        lambda root: {
+            "outcome": "available",
+            "binary": "/usr/bin/bwrap",
+            "command_root": str(Path(root).resolve()),
+        },
+    )
     yield
     # Promotion deliberately makes command runtimes read-only. Restore owner
     # write/traverse permission so pytest can remove its temporary directory.
@@ -111,6 +122,15 @@ def test_seal_command_runtime_removes_write_bits_and_preserves_execute_bits(
             if not path.is_symlink():
                 assert stat.S_IMODE(path.stat(follow_symlinks=False).st_mode) & 0o222 == 0
         assert stat.S_IMODE(current.stat(follow_symlinks=False).st_mode) & 0o222 == 0
+
+
+def test_worker_sandbox_preflight_fails_closed_without_bwrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(promotion.shutil, "which", lambda _name: None)
+
+    with pytest.raises(ValueError, match="bubblewrap"):
+        _REAL_VERIFY_WORKER_SANDBOX(tmp_path)
 
 
 def test_render_rejects_a_clean_staging_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -239,6 +259,7 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
 
     assert result["outcome"] == "launched"
     assert result["command_runtime_seal"]["outcome"] == "sealed"
+    assert result["worker_sandbox_preflight"]["outcome"] == "available"
     assert result["stopped_pid"] == 41
     assert result["launched_pid"] == 42
     assert events == ["stop", "launch"]

@@ -101,6 +101,7 @@ def default_state() -> dict[str, Any]:
             "last_loop_finished_at": None,
             "last_loop_duration_ms": None,
             "last_loop_error": None,
+            "command_runtime_health": {},
             "task_state_projection": {},
             "last_cycle_metrics": {},
             "cycle_elapsed_seconds": None,
@@ -253,6 +254,10 @@ def normalize_v2_runtime_cache(
     state["supervisor"].setdefault("last_loop_finished_at", None)
     state["supervisor"].setdefault("last_loop_duration_ms", None)
     state["supervisor"].setdefault("last_loop_error", None)
+    command_runtime_health = state["supervisor"].get("command_runtime_health")
+    state["supervisor"]["command_runtime_health"] = (
+        command_runtime_health if isinstance(command_runtime_health, dict) else {}
+    )
     last_cycle_metrics = state["supervisor"].get("last_cycle_metrics")
     if isinstance(last_cycle_metrics, dict):
         # Queue dwell was retired as a process-health signal.  Drop a stale

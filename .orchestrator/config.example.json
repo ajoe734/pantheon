@@ -7,7 +7,6 @@
     "state_file": ".orchestrator/state.json",
     "approval_queue": ".orchestrator/approval-queue.json",
     "sidecar_catalog": ".orchestrator/sidecar_catalog.json",
-    "github_bus_state": ".orchestrator/github-bus-state.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
@@ -100,6 +99,17 @@
       "review_ready_dispatch"
     ]
   },
+  "coordination": {
+    "repositories": {
+      "pantheon": {
+        "repo": "your-github-owner/pantheon"
+      },
+      "execute_plans": {
+        "repo": "your-github-owner/execute-plans",
+        "local_path": "../code/execute-plans"
+      }
+    }
+  },
   "worker_worktree_cleanup": {
     "enabled": true,
     "cleanup_inactive_leases": true,
@@ -175,55 +185,6 @@
   },
   "approvals": {
     "stale_pending_seconds": 1800
-  },
-  "github_bus": {
-    "enabled": true,
-    "command_timeout_seconds": 8,
-    "poll_interval_seconds": 30,
-    "repo": null,
-    "delivery_base_branches": {
-      "pantheon": "dev",
-      "execute_plans": "dev"
-    },
-    "offline_backoff_seconds": 300,
-    "auto_request_reviewers": true,
-    "close_resolved_issues": true,
-    "labels": {
-      "review": [
-        "pantheon-bus",
-        "pantheon-review"
-      ],
-      "ops": [
-        "pantheon-bus",
-        "pantheon-ops",
-        "approval-needed"
-      ],
-      "resolved": [
-        "resolved"
-      ]
-    },
-    "commands": [
-      "/approve",
-      "/deny",
-      "/retry",
-      "/recheck",
-      "/status"
-    ],
-    "reviewers": {
-      "Claude": [
-        "your-github-handle"
-      ],
-      "Codex": [
-        "your-github-handle"
-      ],
-      "Copilot": [
-        "your-github-handle"
-      ]
-    },
-    "templates": {
-      "ops_issue": ".orchestrator/templates/github_ops_issue.md",
-      "review_pr": ".orchestrator/templates/github_review_pr.md"
-    }
   },
   "schema": {
     "tasks_path": "tasks",
