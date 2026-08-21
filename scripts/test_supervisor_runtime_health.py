@@ -79,6 +79,18 @@ def healthy_fixture(repo: Path) -> dict[str, Any]:
                 "projected_state_sha256": "projection-sha",
                 "expected_state_sha256": "projection-sha",
             },
+            "command_runtime_health": {
+                "healthy": True,
+                "checked_at": "2026-08-11T18:29:50Z",
+                "reason": "healthy",
+                "error": None,
+                "runtime": {
+                    "command_root": str(runtime_root),
+                    "source_sha": COMMIT,
+                    "remote": "ajoe734/pantheon",
+                    "base_ref": "origin/dev",
+                },
+            },
         },
         "workers": {
             "run-1": {
@@ -301,6 +313,22 @@ def test_wrong_runtime_root_fails_identity_even_when_process_is_live(tmp_path: P
 
     assert report["dimensions"]["identity"]["healthy"] is False
     assert "identity_command_root_exact" in failed_checks(report)
+
+
+def test_failed_command_runtime_integrity_pauses_health(tmp_path: Path) -> None:
+    fixture = healthy_fixture(tmp_path)
+    fixture["state"]["supervisor"]["command_runtime_health"] = {
+        "healthy": False,
+        "checked_at": "2026-08-11T18:29:50Z",
+        "reason": "command_runtime_integrity_failed",
+        "error": "dirty executable/import file: scripts/ai_status.py",
+    }
+    write_json(fixture["state_path"], fixture["state"])
+
+    report = evaluate(tmp_path, fixture)
+
+    assert report["dimensions"]["identity"]["healthy"] is False
+    assert "identity_command_runtime_integrity_healthy" in failed_checks(report)
 
 
 def test_readiness_requires_worker_coordination_marker(tmp_path: Path) -> None:

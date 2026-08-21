@@ -797,6 +797,33 @@ def validate_status_command_runtime(
     else:
         target_ref = str(base_ref or "").strip()
 
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "-uall"],
+        cwd=resolved,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status.returncode != 0:
+        detail = (status.stderr or status.stdout or "git status failed").strip()
+        raise RuntimeError(
+            f"Failed to check git status on {STATUS_COMMAND_ROOT_ENV}: {detail}"
+        )
+    for line in status.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(maxsplit=1)
+        if len(parts) < 2:
+            continue
+        status_code, filepath = parts
+        filepath = filepath.strip("\"'")
+        if filepath.endswith((".py", ".sh", ".pyc", ".so", ".pl", ".rb")):
+            raise RuntimeError(
+                f"{STATUS_COMMAND_ROOT_ENV} contains dirty executable/import "
+                f"file: {filepath} (status: {status_code})"
+            )
+
     return {
         "root": str(resolved),
         "source_sha": source_sha,

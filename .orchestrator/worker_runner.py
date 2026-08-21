@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -13,10 +14,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
-STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
-STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
-STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+THIS_DIR = Path(__file__).resolve().parent
+if str(THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(THIS_DIR))
+
+from common import (  # noqa: E402 - worker_runner must bootstrap its sibling module
+    STATUS_COMMAND_BASE_REF_ENV,
+    STATUS_COMMAND_REMOTE_ENV,
+    STATUS_COMMAND_ROOT_ENV,
+    STATUS_COMMAND_SHA_ENV,
+    first_symlink_component as _first_symlink_component,
+    git_toplevel as _git_toplevel,
+    validate_status_command_runtime as _validate_status_command_runtime,
+)
 
 
 def utc_now() -> str:
@@ -40,68 +50,8 @@ def normalize_command(raw: list[str]) -> list[str]:
     return raw
 
 
-def _git_toplevel(path: Path) -> Path | None:
-    proc = subprocess.run(
-        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    top = proc.stdout.strip()
-    return Path(top).resolve() if top else None
-
-
-def _git_stdout(path: Path, args: list[str]) -> str:
-    proc = subprocess.run(
-        ["git", "-C", str(path), *args],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "git command failed").strip()
-        raise RuntimeError(detail)
-    return proc.stdout.strip()
-
-
-def _normalize_github_slug(value: str | None) -> str:
-    candidate = str(value or "").strip()
-    if candidate.endswith(".git"):
-        candidate = candidate[:-4]
-    for prefix in (
-        "git@github.com:",
-        "ssh://git@github.com/",
-        "https://github.com/",
-        "http://github.com/",
-    ):
-        if candidate.startswith(prefix):
-            candidate = candidate[len(prefix) :]
-            break
-    return candidate.strip("/")
-
-
 def _command_env(name: str, default: str = "") -> str:
     return str(os.environ.get(name) or default).strip()
-
-
-def _first_symlink_component(path: Path) -> Path | None:
-    if ".." in path.parts:
-        raise RuntimeError(f"Path contains parent directory references (..): {path}")
-    current = Path(path.anchor)
-    parts = path.parts[1:] if path.is_absolute() else path.parts
-    for part in parts:
-        current = current / part
-        try:
-            if current.is_symlink():
-                return current
-            if not current.exists() and not current.is_symlink():
-                return None
-        except OSError:
-            return current
-    return None
-
 
 
 def _status_root_from_runtime_path(path: Path, *, label: str) -> Path:
@@ -285,74 +235,68 @@ def validate_status_command_runtime() -> dict[str, str]:
         raise RuntimeError(
             f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
         )
-    root = expanded.resolve()
-    if not root.exists() or not root.is_dir():
-        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {root}")
-    if _git_toplevel(root) != root:
-        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {root}")
-
-    source_sha = _git_stdout(root, ["rev-parse", "HEAD"])
     expected_sha = _command_env(STATUS_COMMAND_SHA_ENV)
     if not expected_sha:
         raise RuntimeError("PANTHEON_COMMAND_RUNTIME_SHA is required when worker_runner launches an auto worker")
-    if source_sha != expected_sha:
-        raise RuntimeError(
-            f"PANTHEON_COMMAND_RUNTIME_SHA mismatch: command root is {source_sha}, expected {expected_sha}"
-        )
-
-    expected_remote = _normalize_github_slug(
-        _command_env(STATUS_COMMAND_REMOTE_ENV, "ajoe734/pantheon")
-    )
-    remote_url = _git_stdout(root, ["remote", "get-url", "origin"])
-    actual_remote = _normalize_github_slug(remote_url)
-    if expected_remote and actual_remote != expected_remote:
-        raise RuntimeError(
-            f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_remote or remote_url} != {expected_remote}"
-        )
-
+    expected_remote = _command_env(STATUS_COMMAND_REMOTE_ENV, "ajoe734/pantheon")
     base_ref = _command_env(STATUS_COMMAND_BASE_REF_ENV, "origin/dev") or "origin/dev"
-    _git_stdout(root, ["rev-parse", "--verify", base_ref])
-    proc = subprocess.run(
-        ["git", "-C", str(root), "merge-base", "--is-ancestor", source_sha, base_ref],
-        capture_output=True,
-        text=True,
-        check=False,
+    runtime = _validate_status_command_runtime(
+        expanded,
+        expected_sha=expected_sha,
+        expected_remote=expected_remote,
+        base_ref=base_ref,
     )
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        suffix = f": {detail}" if detail else ""
-        raise RuntimeError(
-            f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {base_ref}{suffix}"
-        )
-    res_status = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain", "-uall"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if res_status.returncode != 0:
-        raise RuntimeError(f"Failed to check git status on command root: {res_status.stderr}")
-
-    for line in res_status.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split(maxsplit=1)
-        if len(parts) < 2:
-            continue
-        status_code, filepath = parts[0], parts[1]
-        filepath = filepath.strip('"\'')
-        if filepath.endswith((".py", ".sh", ".pyc", ".so", ".pl", ".rb")):
-            raise RuntimeError(
-                f"PANTHEON_COMMAND_ROOT contains dirty executable/import file: {filepath} (status: {status_code})"
-            )
-
     return {
-        "command_root": str(root),
-        "source_sha": source_sha,
-        "remote": expected_remote or actual_remote,
-        "base_ref": base_ref,
+        "command_root": runtime["root"],
+        "source_sha": runtime["source_sha"],
+        "remote": runtime["remote"],
+        "base_ref": runtime["base_ref"],
     }
+
+
+def bind_command_runtime_readonly(
+    command: list[str],
+    command_root: Path,
+    *,
+    sandbox_binary: str | None = None,
+) -> list[str]:
+    """Wrap one provider command in a mount namespace with a read-only runtime.
+
+    The outer worker runner intentionally remains outside the namespace so it
+    can keep publishing heartbeats.  The provider retains the existing host
+    view (including its delivery worktree, status root, credentials, and
+    caches), while the exact validated command runtime is over-mounted
+    read-only.  A private PID namespace and procfs prevent `/proc/*/root` from
+    reaching a process whose mount namespace still exposes that tree writable.
+    """
+
+    binary = sandbox_binary or shutil.which("bwrap")
+    if not binary:
+        raise RuntimeError(
+            "bubblewrap (bwrap) is required to enforce the read-only "
+            "PANTHEON_COMMAND_ROOT worker boundary"
+        )
+    root = command_root.expanduser().resolve()
+    if not root.is_dir():
+        raise RuntimeError(f"validated command runtime is not a directory: {root}")
+    return [
+        str(Path(binary).expanduser().resolve()),
+        "--die-with-parent",
+        "--unshare-pid",
+        "--bind",
+        "/",
+        "/",
+        "--dev-bind",
+        "/dev",
+        "/dev",
+        "--ro-bind",
+        str(root),
+        str(root),
+        "--proc",
+        "/proc",
+        "--",
+        *command,
+    ]
 
 
 def bind_relative_command_to_runtime(command: list[str], command_root: Path) -> list[str]:
@@ -499,10 +443,17 @@ def main(argv: list[str] | None = None) -> int:
     heartbeat_path = raw_heartbeat_path.resolve()
     status_path = raw_status_path.resolve()
     command_runtime = validate_status_command_runtime()
+    command_root = Path(command_runtime["command_root"])
+    if coordination_root is not None and command_root == coordination_root:
+        raise RuntimeError(
+            "PANTHEON_COMMAND_ROOT must be separate from PANTHEON_STATUS_ROOT "
+            "so the provider runtime can be mounted read-only"
+        )
     command = bind_relative_command_to_runtime(
         command,
-        Path(command_runtime["command_root"]),
+        command_root,
     )
+    sandboxed_command = bind_command_runtime_readonly(command, command_root)
     if workspace_path:
         try:
             os.chdir(workspace_path)
@@ -590,7 +541,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         publish("starting")
         child = subprocess.Popen(
-            command,
+            sandboxed_command,
             text=True,
             cwd=str(workspace_path) if workspace_path else None,
             start_new_session=True,
