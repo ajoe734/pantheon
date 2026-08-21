@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import time
@@ -61,6 +62,9 @@ EXPECTED_PRODUCERS = {
     },
 }
 PAPER_LIFECYCLE_UUID_NAMESPACE = uuid.UUID("1760784c-c9e0-47eb-b0aa-d37f58d892df")
+DEFAULT_PROJECTION_SCHEMA = "trade_journey_projection"
+DEFAULT_CONTROLLER_ID = "canonical-lifecycle-projector"
+_SCHEMA_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
 class ProbeError(RuntimeError):
@@ -191,6 +195,191 @@ class AsyncpgTelemetrySource:
 
     async def snapshot(self) -> tuple[int, list[dict[str, Any]]]:
         return await self.snapshot_after(0)
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return {}
+        return dict(parsed) if isinstance(parsed, Mapping) else {}
+    return {}
+
+
+class AsyncpgRelationalProjectionSource:
+    """Read one candidate and its controller from one repeatable-read snapshot."""
+
+    backend = "postgres"
+
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        schema: str = DEFAULT_PROJECTION_SCHEMA,
+        controller_id: str = DEFAULT_CONTROLLER_ID,
+    ) -> None:
+        if not _SCHEMA_RE.fullmatch(schema):
+            raise ProbeError(
+                "projection_configuration_invalid",
+                "relational projection schema is invalid",
+            )
+        self._dsn = dsn
+        self._schema = schema
+        self._controller_id = controller_id
+
+    async def current_projection(
+        self, candidate: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any], str]:
+        identity = candidate["identity"]
+        tenant_id = str(identity["tenant_id"])
+        environment = str(identity["environment"])
+        journey_id = str(identity["journey_id"])
+        loop_run_id = str(identity["loop_run_id"])
+        try:
+            import asyncpg  # type: ignore[import]
+
+            conn = await asyncpg.connect(self._dsn)
+            try:
+                async with conn.transaction(isolation="repeatable_read", readonly=True):
+                    controller_row = await conn.fetchrow(
+                        f"SELECT controller_id, checkpoint_seq, source_high_watermark, "
+                        f"backlog_count, projection_revision, deployment_sha, mode, status, "
+                        f"accepted_live, last_poll_at, last_error_message, "
+                        f"unresolved_quarantine_count FROM {self._schema}.controller "
+                        "WHERE controller_id=$1 AND tenant_scope IN ($2, '*') "
+                        "AND environment_scope IN ($3, '*') "
+                        "ORDER BY (tenant_scope=$2 AND environment_scope=$3) DESC, "
+                        "updated_at DESC LIMIT 1",
+                        self._controller_id,
+                        tenant_id,
+                        environment,
+                    )
+                    journey_row = await conn.fetchrow(
+                        f"SELECT current_identity_summary, projection_revision "
+                        f"FROM {self._schema}.journeys "
+                        "WHERE tenant_id=$1 AND environment=$2 AND journey_id=$3",
+                        tenant_id,
+                        environment,
+                        journey_id,
+                    )
+                    stage_rows = await conn.fetch(
+                        f"SELECT source_event_id, stage_name, stage_status, "
+                        f"source_ingested_seq, contract_fields "
+                        f"FROM {self._schema}.journey_stages "
+                        "WHERE tenant_id=$1 AND environment=$2 AND journey_id=$3 "
+                        "ORDER BY stage_ordinal, event_sequence, source_ingested_seq, "
+                        "source_event_id",
+                        tenant_id,
+                        environment,
+                        journey_id,
+                    )
+                    loop_row = await conn.fetchrow(
+                        f"SELECT tenant_id, environment, loop_run_id, journey_id, status, "
+                        f"lifecycle_summary, freshness_lineage, contract_payload, "
+                        f"projection_revision FROM {self._schema}.loop_runs "
+                        "WHERE tenant_id=$1 AND environment=$2 AND loop_run_id=$3",
+                        tenant_id,
+                        environment,
+                        loop_run_id,
+                    )
+            finally:
+                await conn.close()
+        except ProbeError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - never export DSN/query detail
+            raise ProbeError(
+                "projection_query_error",
+                "relational projection snapshot query failed",
+            ) from exc
+
+        controller_data = dict(controller_row) if controller_row is not None else {}
+        controller = {
+            "controller_id": controller_data.get("controller_id"),
+            "checkpoint": int(controller_data.get("checkpoint_seq") or 0),
+            "source_high_watermark": int(
+                controller_data.get("source_high_watermark") or 0
+            ),
+            "backlog": int(controller_data.get("backlog_count") or 0),
+            "generation": int(controller_data.get("projection_revision") or 0),
+            "deployment_sha": controller_data.get("deployment_sha"),
+            "mode": controller_data.get("mode"),
+            "status": (
+                "ready"
+                if str(controller_data.get("status") or "").lower()
+                in {"ok", "ready"}
+                else controller_data.get("status")
+            ),
+            "accepted_live": bool(controller_data.get("accepted_live")),
+            "truth_level": (
+                "canonical_live"
+                if controller_data.get("mode") == "live"
+                and controller_data.get("accepted_live") is True
+                else "not_accepted_live"
+            ),
+            "last_poll_at": str(controller_data.get("last_poll_at") or ""),
+            "last_error": controller_data.get("last_error_message") or None,
+            "quarantine_count": int(
+                controller_data.get("unresolved_quarantine_count") or 0
+            ),
+        }
+
+        projected_events: list[dict[str, Any]] = []
+        for row in stage_rows:
+            stage = _json_object(row.get("contract_fields"))
+            stage.update(
+                {
+                    "canonical_event_id": str(row.get("source_event_id") or ""),
+                    "stage": str(row.get("stage_name") or ""),
+                    "stage_status": str(row.get("stage_status") or ""),
+                    "source_offset": int(row.get("source_ingested_seq") or 0),
+                }
+            )
+            projected_events.append(stage)
+
+        loop: dict[str, Any] | None = None
+        if loop_row is not None:
+            loop_data = dict(loop_row)
+            loop = {
+                **_json_object(loop_data.get("contract_payload")),
+                **_json_object(loop_data.get("lifecycle_summary")),
+            }
+            freshness = _json_object(loop_data.get("freshness_lineage"))
+            loop.update(
+                {
+                    "tenant_id": loop_data.get("tenant_id"),
+                    "environment": loop_data.get("environment"),
+                    "loop_run_id": loop_data.get("loop_run_id"),
+                    "journey_id": loop_data.get("journey_id"),
+                    "status": loop_data.get("status"),
+                    "accepted_live": bool(freshness.get("accepted_live")),
+                    "projection_mode": freshness.get("mode"),
+                    "projection_revision": int(
+                        loop_data.get("projection_revision") or 0
+                    ),
+                }
+            )
+
+        generation = int(controller.get("generation") or 0)
+        journeys = {
+            "events": projected_events,
+            "generation": generation,
+            "controller": controller,
+            "journey_present": journey_row is not None,
+            "journey_projection_revision": int(
+                dict(journey_row).get("projection_revision") or 0
+            )
+            if journey_row is not None
+            else None,
+        }
+        loops = {
+            "records": {loop_run_id: loop} if loop is not None else {},
+            "generation": generation,
+            "controller": controller,
+        }
+        return journeys, loops, f"postgres-revision-{generation}"
 
 
 async def _source_high_watermark(source: Any) -> int:
@@ -404,6 +593,7 @@ def _correlate(
     journeys: Mapping[str, Any],
     loops: Mapping[str, Any],
     generation_name: str,
+    projection_backend: str,
     expected_sha: str,
 ) -> dict[str, Any]:
     controller = loops.get("controller")
@@ -467,6 +657,7 @@ def _correlate(
         "identity": {field: identity[field] for field in STABLE_IDENTITY_FIELDS},
         "events": list(candidate["selected_events"]),
         "projection": {
+            "backend": projection_backend,
             "generation": loops.get("generation"),
             "generation_name": generation_name,
             "checkpoint": checkpoint,
@@ -485,7 +676,8 @@ def _correlate(
 async def run_probe(
     *,
     source: Any,
-    projection_root: Path,
+    projection_root: Path | None,
+    projection_source: Any | None = None,
     expected_sha: str,
     timeout_seconds: float,
     poll_seconds: float,
@@ -527,33 +719,53 @@ async def run_probe(
             observed_baseline_high_watermark = high
         candidates = _complete_candidates(rows)
         if candidates:
-            try:
-                journeys, loops, generation_name = _current_projection(projection_root)
-            except ProbeError as exc:
-                last_error = exc
-            else:
-                for candidate in candidates:
-                    try:
-                        proof = _correlate(
-                            candidate=candidate,
-                            baseline_high_watermark=observed_baseline_high_watermark,
-                            high_watermark=high,
-                            journeys=journeys,
-                            loops=loops,
-                            generation_name=generation_name,
-                            expected_sha=expected_sha,
+            for candidate in candidates:
+                try:
+                    if projection_source is not None:
+                        journeys, loops, generation_name = await asyncio.wait_for(
+                            projection_source.current_projection(candidate),
+                            timeout=max(0.001, deadline - monotonic()),
                         )
-                        return {
-                            "schema_version": SCHEMA_VERSION,
-                            "task_id": TASK_ID,
-                            "outcome": "passed",
-                            "observed_at": _utc_now(),
-                            "expected_deployment_sha": expected_sha,
-                            "proof": proof,
-                            "redaction": {"dsn_included": False, "payloads_included": False},
-                        }
-                    except ProbeError as exc:
-                        last_error = exc
+                        projection_backend = str(
+                            getattr(projection_source, "backend", "postgres")
+                        )
+                    else:
+                        if projection_root is None:
+                            raise ProbeError(
+                                "configuration_missing",
+                                "projection root or relational projection DSN is required",
+                            )
+                        journeys, loops, generation_name = _current_projection(
+                            projection_root
+                        )
+                        projection_backend = "json_generation"
+                    proof = _correlate(
+                        candidate=candidate,
+                        baseline_high_watermark=observed_baseline_high_watermark,
+                        high_watermark=high,
+                        journeys=journeys,
+                        loops=loops,
+                        generation_name=generation_name,
+                        projection_backend=projection_backend,
+                        expected_sha=expected_sha,
+                    )
+                    return {
+                        "schema_version": SCHEMA_VERSION,
+                        "task_id": TASK_ID,
+                        "outcome": "passed",
+                        "observed_at": _utc_now(),
+                        "expected_deployment_sha": expected_sha,
+                        "proof": proof,
+                        "redaction": {"dsn_included": False, "payloads_included": False},
+                    }
+                except asyncio.TimeoutError:
+                    last_error = ProbeError(
+                        "projection_query_timeout",
+                        "relational projection snapshot exceeded the probe deadline",
+                        timed_out=True,
+                    )
+                except ProbeError as exc:
+                    last_error = exc
         if monotonic() >= deadline:
             raise ProbeError(
                 last_error.code, last_error.safe_message, timed_out=True
@@ -602,7 +814,8 @@ def write_failure_artifact(
 async def execute(
     *,
     source: Any,
-    projection_root: Path,
+    projection_root: Path | None,
+    projection_source: Any | None = None,
     expected_sha: str,
     output: Path,
     timeout_seconds: float,
@@ -615,6 +828,7 @@ async def execute(
         artifact = await run_probe(
             source=source,
             projection_root=projection_root,
+            projection_source=projection_source,
             expected_sha=expected_sha,
             timeout_seconds=timeout_seconds,
             poll_seconds=poll_seconds,
@@ -657,6 +871,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     root = os.getenv("LIFECYCLE_PROJECTION_ROOT", "").strip()
+    projection_dsn = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", "").strip()
     if args.print_high_watermark:
         if not dsn:
             print(
@@ -699,18 +914,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.output is None:
         parser.error("--output is required unless --print-high-watermark is used")
-    if not dsn or not root:
+    if not dsn or (not root and not projection_dsn):
         write_failure_artifact(
             args.output,
             expected_sha=args.expected_sha,
             code="configuration_missing",
-            message="telemetry DSN and projection root are required",
+            message=(
+                "telemetry DSN and either projection root or relational projection DSN "
+                "are required"
+            ),
         )
         return 1
     code, artifact = asyncio.run(
         execute(
             source=AsyncpgTelemetrySource(dsn),
-            projection_root=Path(root),
+            projection_root=Path(root) if root else None,
+            projection_source=(
+                AsyncpgRelationalProjectionSource(
+                    projection_dsn,
+                    schema=os.getenv(
+                        "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA",
+                        DEFAULT_PROJECTION_SCHEMA,
+                    ),
+                )
+                if projection_dsn
+                else None
+            ),
             expected_sha=args.expected_sha,
             output=args.output,
             timeout_seconds=args.timeout,

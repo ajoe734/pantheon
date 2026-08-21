@@ -63,6 +63,19 @@ class IncrementalSource:
         raise AssertionError("incremental source should not use full snapshot")
 
 
+class ProjectionSnapshot:
+    backend = "postgres"
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.candidates: list[dict] = []
+
+    async def current_projection(self, candidate):
+        self.candidates.append(dict(candidate))
+        journeys, loops, _generation = probe._current_projection(self.root)
+        return journeys, loops, f"postgres-revision-{loops['generation']}"
+
+
 def test_asyncpg_telemetry_source_filters_watermark_and_snapshot(monkeypatch):
     calls: list[tuple] = []
 
@@ -271,6 +284,127 @@ def test_probe_correlates_committed_events_to_live_journey_and_loop(tmp_path):
     assert json.loads(raw) == artifact
     assert "postgresql://" not in raw
     assert artifact["redaction"] == {"dsn_included": False, "payloads_included": False}
+
+
+def test_probe_correlates_from_relational_projection_snapshot(tmp_path):
+    root, rows = _publish(tmp_path)
+    projection = ProjectionSnapshot(root)
+
+    code, artifact = asyncio.run(
+        probe.execute(
+            source=BaselineSource(len(rows), rows),
+            projection_root=None,
+            projection_source=projection,
+            expected_sha="deployed-sha",
+            output=tmp_path / "relational-evidence.json",
+            timeout_seconds=0.1,
+            poll_seconds=0.001,
+            baseline_high_watermark=0,
+        )
+    )
+
+    assert code == 0
+    assert artifact["proof"]["projection"]["backend"] == "postgres"
+    assert artifact["proof"]["projection"]["generation_name"] == (
+        "postgres-revision-1"
+    )
+    assert len(projection.candidates) == 1
+
+
+def test_relational_projection_source_reads_one_repeatable_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    root, rows = _publish(tmp_path)
+    candidate = probe._complete_candidates(rows)[0]
+    journeys, loops, _generation = probe._current_projection(root)
+    loop = loops["records"][candidate["identity"]["loop_run_id"]]
+    transactions: list[dict] = []
+    queries: list[str] = []
+
+    class Transaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class Connection:
+        def transaction(self, **kwargs):
+            transactions.append(kwargs)
+            return Transaction()
+
+        async def fetchrow(self, query, *params):
+            queries.append(query)
+            if ".controller " in query:
+                return {
+                    "controller_id": "canonical-lifecycle-projector",
+                    "checkpoint_seq": 8,
+                    "source_high_watermark": 8,
+                    "backlog_count": 0,
+                    "projection_revision": 1,
+                    "deployment_sha": "deployed-sha",
+                    "mode": "live",
+                    "status": "ready",
+                    "accepted_live": True,
+                    "last_poll_at": "2026-08-21T00:00:00Z",
+                    "last_error_message": "",
+                    "unresolved_quarantine_count": 0,
+                }
+            if ".journeys " in query:
+                return {
+                    "current_identity_summary": {},
+                    "projection_revision": 1,
+                }
+            if ".loop_runs " in query:
+                return {
+                    "tenant_id": candidate["identity"]["tenant_id"],
+                    "environment": candidate["identity"]["environment"],
+                    "loop_run_id": candidate["identity"]["loop_run_id"],
+                    "journey_id": candidate["identity"]["journey_id"],
+                    "status": loop["status"],
+                    "lifecycle_summary": loop,
+                    "freshness_lineage": {
+                        "mode": "live",
+                        "accepted_live": True,
+                    },
+                    "contract_payload": loop,
+                    "projection_revision": 1,
+                }
+            raise AssertionError(query)
+
+        async def fetch(self, query, *params):
+            queries.append(query)
+            return [
+                {
+                    "source_event_id": event["canonical_event_id"],
+                    "stage_name": event["stage"],
+                    "stage_status": event["stage_status"],
+                    "source_ingested_seq": event["source_offset"],
+                    "contract_fields": event,
+                }
+                for event in journeys["events"]
+            ]
+
+        async def close(self):
+            return None
+
+    async def connect(dsn):
+        assert dsn == "postgresql://redacted"
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    source = probe.AsyncpgRelationalProjectionSource("postgresql://redacted")
+
+    relational_journeys, relational_loops, generation = asyncio.run(
+        source.current_projection(candidate)
+    )
+
+    assert transactions == [{"isolation": "repeatable_read", "readonly": True}]
+    assert len(queries) == 4
+    assert relational_journeys["journey_present"] is True
+    assert relational_loops["controller"]["accepted_live"] is True
+    assert generation == "postgres-revision-1"
 
 
 def test_probe_retries_projection_integrity_until_bundle_is_valid(tmp_path):
