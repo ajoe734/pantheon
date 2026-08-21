@@ -1935,6 +1935,444 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()
 
+    def test_idle_health_refresh_targets_due_configured_endpoints_without_tasks(self) -> None:
+        """Startup planning must refresh stale lanes even with an empty board.
+
+        The codex1 and claude2 accounts are distinct: a successful exact
+        endpoint probe must replace the prior endpoint/auth and account/quota
+        holds atomically, rather than waiting for an unrelated dispatch.
+        """
+
+        self.config["agents"] = {
+            "codex1": {
+                "display_name": "Codex1",
+                "provider": "codex1",
+                "adapter": "codex",
+                "max_parallel": 1,
+            },
+            "claude2": {
+                "display_name": "Claude2",
+                "provider": "claude2",
+                "adapter": "claude_cli",
+                "max_parallel": 1,
+            },
+        }
+        self.config["providers"] = {
+            "codex1": {"delivery_mode": "codex", "account": "codex1"},
+            "claude2": {"delivery_mode": "claude_cli", "account": "claude2"},
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"] = {
+            "codex1": 1,
+            "claude2": 1,
+        }
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex1": {
+                        "state": "unavailable",
+                        "reason_kind": "auth",
+                        "retry_at": "2000-01-01T00:00:00Z",
+                    },
+                    "claude2": {
+                        "state": "healthy",
+                        "valid_until": "2000-01-01T00:00:00Z",
+                    },
+                },
+                "accounts": {
+                    "codex1": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2000-01-01T00:00:00Z",
+                    },
+                    "claude2": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2000-01-01T00:00:00Z",
+                    },
+                },
+            },
+        }
+
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            state,
+            {"tasks": []},
+            [],
+            live_total=0,
+        )
+
+        self.assertEqual(plan["events"], [])
+        self.assertEqual(
+            plan["health_refresh_targets"],
+            [
+                {"scope": "endpoint", "id": "codex1"},
+                {"scope": "endpoint", "id": "claude2"},
+            ],
+        )
+        observations = [
+            {
+                "endpoint_id": "codex1",
+                "account_id": "codex1",
+                "probe": {
+                    "ready": True,
+                    "status": "ready",
+                    "source": "live",
+                    "checked_at": "2026-08-21T12:00:00Z",
+                },
+            },
+            {
+                "endpoint_id": "claude2",
+                "account_id": "claude2",
+                "probe": {
+                    "ready": True,
+                    "status": "ready",
+                    "source": "live",
+                    "checked_at": "2026-08-21T12:00:00Z",
+                },
+            },
+        ]
+        self.assertTrue(
+            supervisor.apply_delivery_health_observations(
+                self.config, state, observations
+            )
+        )
+        for identity in ("codex1", "claude2"):
+            self.assertEqual(
+                state["delivery_health"]["endpoints"][identity]["state"],
+                "healthy",
+            )
+            self.assertEqual(
+                state["delivery_health"]["accounts"][identity]["state"],
+                "healthy",
+            )
+
+    def test_idle_health_refresh_excludes_orphan_provider_and_respects_probe_bound(self) -> None:
+        self.config["delivery_health"] = {"refresh_max_per_cycle": 1}
+        # A configured provider may share an account without being a delivery
+        # endpoint.  It must not create a second, unrelated probe demand.
+        self.config["providers"]["orphan"] = {
+            "delivery_mode": "codex",
+            "account": "codex_account",
+        }
+        state = {"workers": {}, "queue": {"events": {}}, "delivery_health": {}}
+
+        targets = supervisor.idle_delivery_health_refresh_targets(self.config, state)
+
+        self.assertEqual(
+            targets,
+            [
+                {"scope": "endpoint", "id": "codex"},
+                {"scope": "endpoint", "id": "codex2"},
+            ],
+        )
+        with mock.patch.object(
+            supervisor,
+            "probe_provider_auth",
+            return_value={"ready": True, "status": "ready", "source": "live"},
+        ) as probe:
+            observations = supervisor.probe_demanded_delivery_health(
+                self.config, targets, quiet=True
+            )
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0]["endpoint_id"], "codex")
+        probe.assert_called_once_with(self.config, "codex", force=True)
+
+    def test_topology_reconciliation_migrates_shared_claude_health_once(self) -> None:
+        """The former shared Claude row cannot survive a split topology.
+
+        Configured claude1/claude2 records and unrelated runtime state must be
+        preserved exactly.  A second pass is a no-op so an unchanged topology
+        does not manufacture an every-cycle health write.
+        """
+
+        self.config["agents"] = {
+            "claude1": {
+                "display_name": "Claude1",
+                "provider": "claude1",
+                "adapter": "claude_cli",
+                "max_parallel": 1,
+            },
+            "claude2": {
+                "display_name": "Claude2",
+                "provider": "claude2",
+                "adapter": "claude_cli",
+                "max_parallel": 1,
+            },
+        }
+        self.config["providers"] = {
+            "claude1": {"delivery_mode": "claude_cli", "account": "claude1"},
+            "claude2": {"delivery_mode": "claude_cli", "account": "claude2"},
+        }
+        self.config["ready_dispatcher"]["max_concurrent_per_account"] = {
+            "claude1": 1,
+            "claude2": 1,
+        }
+        claude1_health = {
+            "state": "healthy",
+            "valid_until": "2999-01-01T00:00:00Z",
+            "detail": "preserve claude1 evidence",
+        }
+        claude2_health = {
+            "state": "retry_after",
+            "retry_at": "2999-01-01T00:00:00Z",
+            "detail": "preserve claude2 evidence",
+        }
+        state = {
+            "workers": {"unrelated": {"status": "completed"}},
+            "queue": {"events": {}},
+            "watchdog": {"safe_mode_reason": "preserve unrelated state"},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "claude1": dict(claude1_health),
+                    "claude2": dict(claude2_health),
+                    "claude_shared": {
+                        "state": "unavailable",
+                        "detail": "retired endpoint",
+                    },
+                },
+                "accounts": {
+                    "claude1": dict(claude1_health),
+                    "claude2": dict(claude2_health),
+                    "claude_account_shared_max_1": {
+                        "state": "retry_after",
+                        "detail": "retired shared account",
+                    },
+                },
+                "projection_note": "preserve unrelated health metadata",
+            },
+        }
+
+        self.assertTrue(
+            supervisor.reconcile_delivery_health_topology(self.config, state)
+        )
+        self.assertEqual(
+            state["delivery_health"]["endpoints"],
+            {"claude1": claude1_health, "claude2": claude2_health},
+        )
+        self.assertEqual(
+            state["delivery_health"]["accounts"],
+            {"claude1": claude1_health, "claude2": claude2_health},
+        )
+        self.assertEqual(
+            state["delivery_health"]["projection_note"],
+            "preserve unrelated health metadata",
+        )
+        self.assertEqual(state["workers"], {"unrelated": {"status": "completed"}})
+        self.assertEqual(
+            state["watchdog"],
+            {"safe_mode_reason": "preserve unrelated state"},
+        )
+        reconciled = json.loads(json.dumps(state))
+        self.assertFalse(
+            supervisor.reconcile_delivery_health_topology(self.config, state)
+        )
+        self.assertEqual(state, reconciled)
+
+    def test_post_dispatch_maintenance_prunes_provider_only_health_projection(self) -> None:
+        """A provider without a delivery endpoint owns no durable health row."""
+
+        self.config["providers"]["orphan"] = {
+            "delivery_mode": "codex",
+            "account": "orphan_account",
+        }
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": healthy_delivery_health(self.config),
+        }
+        state["delivery_health"]["endpoints"]["orphan"] = {
+            "state": "unavailable",
+        }
+        state["delivery_health"]["accounts"]["orphan_account"] = {
+            "state": "retry_after",
+        }
+
+        maintenance_helpers = (
+            "reconcile_runtime_on_boot",
+            "reconcile_unavailable_assignments",
+            "reconcile_failure_loops",
+            "reconcile_queue_records",
+            "reconcile_queue_intents",
+            "reconcile_ownerless_in_progress_tasks",
+            "maybe_auto_commit_archive",
+        )
+        patches = [
+            mock.patch.object(supervisor, helper, return_value=False)
+            for helper in maintenance_helpers
+        ]
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6],
+        ):
+            self.assertTrue(
+                supervisor.apply_post_dispatch_maintenance(
+                    self.config,
+                    state,
+                    delivery_health_observations=[],
+                    task_state_projection_snapshot=None,
+                    assistant_dev_bridge_snapshot=None,
+                    quiet=True,
+                )
+            )
+
+        self.assertNotIn("orphan", state["delivery_health"]["endpoints"])
+        self.assertNotIn("orphan_account", state["delivery_health"]["accounts"])
+        self.assertEqual(
+            set(state["delivery_health"]["endpoints"]),
+            {"codex", "codex2"},
+        )
+        self.assertEqual(
+            set(state["delivery_health"]["accounts"]),
+            {"codex_account", "codex2_account"},
+        )
+
+    def test_authorized_refresh_bypasses_future_retry_at_on_startup(self) -> None:
+        """A stale account whose retry_at has not elapsed still blocks the
+        due-only scan; the authorized scan targets it anyway on a fresh
+        (startup) supervisor state, while skipping the already-healthy
+        codex2 lane so it never spends an unneeded probe."""
+
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+
+        self.assertEqual(
+            supervisor.idle_delivery_health_refresh_targets(self.config, state), []
+        )
+        self.assertEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state),
+            [{"scope": "endpoint", "id": "codex"}],
+        )
+
+    def test_authorized_refresh_consumed_once_per_topology(self) -> None:
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+
+        self.assertNotEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state), []
+        )
+        self.assertTrue(
+            supervisor.record_delivery_health_refresh_authority_consumed(self.config, state)
+        )
+        # Same topology, next cycle: the bypass must not fire again.
+        self.assertEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state), []
+        )
+        self.assertFalse(
+            supervisor.record_delivery_health_refresh_authority_consumed(self.config, state)
+        )
+
+        # A real topology change (new delivery endpoint) authorizes the
+        # bypass again exactly once.
+        self.config["agents"]["codex3"] = dict(self.config["agents"]["codex2"])
+        self.config["providers"]["codex3"] = dict(self.config["providers"]["codex2"])
+        self.assertNotEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state), []
+        )
+
+    def test_human_ops_request_bypasses_future_retry_at_without_topology_change(self) -> None:
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+        supervisor.record_delivery_health_refresh_authority_consumed(self.config, state)
+        self.assertEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state), []
+        )
+
+        self.assertTrue(supervisor.request_delivery_health_refresh(state))
+        self.assertEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state),
+            [{"scope": "endpoint", "id": "codex"}],
+        )
+        supervisor.record_delivery_health_refresh_authority_consumed(self.config, state)
+        self.assertEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state), []
+        )
+
+    def test_failed_idle_probe_keeps_endpoint_unavailable(self) -> None:
+        state = {"workers": {}, "queue": {"events": {}}, "delivery_health": {}}
+        observations = [
+            {
+                "endpoint_id": "codex",
+                "account_id": "codex_account",
+                "probe": {
+                    "ready": False,
+                    "status": "auth_material_missing",
+                    "source": "live",
+                    "checked_at": "2026-08-21T12:00:00Z",
+                },
+            }
+        ]
+
+        self.assertTrue(
+            supervisor.apply_delivery_health_observations(
+                self.config, state, observations
+            )
+        )
+        self.assertEqual(
+            state["delivery_health"]["endpoints"]["codex"]["state"],
+            "unavailable",
+        )
+        self.assertNotIn("codex_account", state["delivery_health"]["accounts"])
+
     def test_runtime_health_normalizes_once(self) -> None:
         state = {"delivery_health": {"endpoints": [], "accounts": []}}
         self.assertTrue(supervisor.normalize_runtime_delivery_health(state))

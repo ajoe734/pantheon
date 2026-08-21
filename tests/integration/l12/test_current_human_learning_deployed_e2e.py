@@ -1,4 +1,4 @@
-"""Deployed Compose E2E for Pantheon human-learning loops 5 through 7.
+"""Current-dev E2E for Pantheon human-learning loops 5 through 7.
 
 This suite is deliberately opt-in. It never starts an in-process ASGI app,
 never imports a product store, and never uses a fake OpenClaw provider or a
@@ -14,9 +14,10 @@ The three cases form one identity chain:
 Loop 5's durable handoff is drained by the real
 ``policy-learning-shadow-eval-scheduler`` Compose worker; this suite polls
 its HTTP-visible effect instead of calling the drainer module in-process.
-Loop 7 calls the real Consultation workflow executor against the deployed
-Consultation API, the deployed OpenClaw gateway adapter, and the deployed
-Governance handoff sink -- no fake provider, no direct store readback.
+The same admitted candidate must be processed and handed to the deployed
+Research authority by that worker.  Loop 7 is completed by the executor
+supervised inside the deployed ``consultation-svc`` container; the test never
+imports or runs an executor, provider, or product store itself.
 
 On failure the harness writes one bounded report containing the last
 successful boundary and the first failed boundary. It does not repair the
@@ -30,8 +31,6 @@ import inspect
 import json
 import os
 import subprocess
-import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -44,49 +43,17 @@ from typing import Any, Callable, Mapping, Sequence
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SERVICES_DIR = REPO_ROOT / "services"
-PL_DIR = SERVICES_DIR / "policy-learning"
-ADAPTER_DIR = SERVICES_DIR / "openclaw-gateway-adapter"
-
-for _p in (str(REPO_ROOT), str(SERVICES_DIR), str(PL_DIR), str(ADAPTER_DIR)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-# Policy Learning -> Research handoff client (HTTP boundary only).
-from candidate_experiment_handoff import (  # noqa: E402
-    CandidateHandoffError,
-    handoff_candidate_to_experiment_authority,
-)
-from research_candidate_client import (  # noqa: E402
-    ResearchCandidateClientError,
-    post_imitation_candidate_intake_http,
-)
-
-# Consultation workflow executor (real production HTTP-client code).
-from services.consultation.provider import (  # noqa: E402
-    HttpContributionProvider,
-)
-from services.consultation.workflow_executor import (  # noqa: E402
-    ExecutorConfig,
-    execute_claim,
-    run_tick as run_consultation_tick,
-)
-from services.consultation.workflow_state import WorkflowStateStore  # noqa: E402
-
-# The contribution path is a plain string constant owned by the adapter
-# route module; importing it is not an in-process app construction.
-from consultation_provider import CONSULTATION_CONTRIBUTION_PATH  # noqa: E402
 
 
-TASK_ID = "L12-GAP-F07-E2E-HUMAN-20260818"
+TASK_ID = "PFG-L12-HUMAN-E2E-20260820"
 DEFAULT_REPORT_PATH = (
     REPO_ROOT
     / "docs"
     / "deployment"
     / "evidence"
-    / "twelve-loop-current"
-    / "human-learning"
-    / "run-report.json"
+    / "product-functional-closure"
+    / TASK_ID
+    / "deployed-run.json"
 )
 CASE_NAMES = (
     "agora_interaction_evidence",
@@ -94,12 +61,19 @@ CASE_NAMES = (
     "consultation_governance_handoff",
 )
 OWNER_SERVICES = {
-    "agora_interaction_evidence": "operator-bff",
+    "agora_interaction_evidence": (
+        "operator-bff",
+        "policy-learning-svc",
+        "policy-learning-shadow-eval-scheduler",
+    ),
     "imitation_research_handoff": "research-orchestrator-svc",
-    "consultation_governance_handoff": "consultation-svc",
+    "consultation_governance_handoff": (
+        "consultation-svc",
+        "openclaw-gateway-adapter",
+        "governance",
+    ),
 }
 AGORA_SERVICE_ACTOR = "policy-learning-agora-handoff-drainer"
-CONSULTATION_SERVICE_ACTOR = "consultation-workflow-executor"
 
 
 def _utc_now() -> str:
@@ -147,15 +121,9 @@ class DeployedHumanLearningHarness:
         self.consultation_url = os.getenv(
             "PANTHEON_L12_CONSULTATION_URL", "http://127.0.0.1:18096"
         ).rstrip("/")
-        self.governance_url = os.getenv(
-            "PANTHEON_L12_GOVERNANCE_URL", "http://127.0.0.1:18082"
-        ).rstrip("/")
-        self.openclaw_adapter_url = os.getenv(
-            "PANTHEON_L12_OPENCLAW_ADAPTER_URL", "http://127.0.0.1:18104"
-        ).rstrip("/")
-        self.bff_bearer = os.getenv(
+        self.bff_bearer = self._secret_from_env_or_file(
             "PANTHEON_L12_BFF_BEARER",
-            f"l12-current-e2e:operator,admin:{self.tenant_id}",
+            default=f"l12-current-e2e:operator,admin:{self.tenant_id}",
         )
         self.agora_handoff_token = os.getenv(
             "PANTHEON_L12_AGORA_HANDOFF_TOKEN",
@@ -169,21 +137,7 @@ class DeployedHumanLearningHarness:
             "PANTHEON_L12_CONSULTATION_TOKEN",
             "pantheon-local-consultation-service",
         )
-        self.consultation_provider_token = os.getenv(
-            "PANTHEON_L12_CONSULTATION_PROVIDER_TOKEN",
-            "pantheon-local-consultation-provider",
-        )
-        self.consultation_handoff_token = os.getenv(
-            "PANTHEON_L12_CONSULTATION_HANDOFF_TOKEN",
-            "pantheon-local-consultation-handoff-token",
-        )
-        self.provider_timeout_seconds = float(
-            os.getenv("PANTHEON_L12_OPENCLAW_TIMEOUT_SECONDS", "190")
-        )
         self.report_path = Path(os.getenv("PANTHEON_L12_REPORT_PATH", str(DEFAULT_REPORT_PATH)))
-        # Worker-lease state is inherent to ExecutorConfig.state_path in real
-        # deployments; it is process-local by design, not a product store.
-        self.state_dir = Path(tempfile.mkdtemp(prefix=f"l12-hl-e2e-{self.run_token}-"))
         self.git_sha = self._command(["git", "rev-parse", "HEAD"]).strip()
         self.case_results: list[dict[str, Any]] = []
         self.first_failure: dict[str, Any] | None = None
@@ -207,6 +161,30 @@ class DeployedHumanLearningHarness:
             detail = completed.stderr.strip() or completed.stdout.strip() or "command failed"
             raise RuntimeError(f"{argv[0]} exited {completed.returncode}: {_bounded_text(detail)}")
         return completed.stdout
+
+    @staticmethod
+    def _secret_from_env_or_file(name: str, *, default: str) -> str:
+        """Read an opt-in credential without ever placing it in run evidence.
+
+        Strict current-dev BFF deployments require a JWT obtained from the
+        server-bound dev-login exchange. A file input lets the operator pass
+        that short-lived credential without exposing it in an environment
+        dump, command history, pytest report, or committed artifact.
+        """
+
+        inline_value = os.getenv(name, "").strip()
+        file_name = os.getenv(f"{name}_FILE", "").strip()
+        if inline_value and file_name:
+            raise RuntimeError(f"set only one of {name} or {name}_FILE")
+        if file_name:
+            try:
+                value = Path(file_name).read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise RuntimeError(f"could not read {name}_FILE") from exc
+            if not value:
+                raise RuntimeError(f"{name}_FILE is empty")
+            return value
+        return inline_value or default
 
     def _compose_argv(self, *args: str) -> list[str]:
         argv = ["docker", "compose", "-p", self.compose_project]
@@ -238,18 +216,19 @@ class DeployedHumanLearningHarness:
             "image_id": str(record.get("Image") or ""),
             "state": status,
             "health": health,
+            "started_at": str(state.get("StartedAt") or ""),
             "restart_count": int(record.get("RestartCount") or 0),
         }
 
-    def _service_identity(self, service: str) -> dict[str, Any]:
+    def _service_identity(self, service: str, *, allow_starting: bool = False) -> dict[str, Any]:
         deadline = time.monotonic() + min(self.timeout_seconds, 120)
         last_identity: dict[str, Any] = {}
+        allowed_health = {"healthy", "not_declared"}
+        if allow_starting:
+            allowed_health.add("starting")
         while time.monotonic() < deadline:
             last_identity = self._service_identity_snapshot(service)
-            if last_identity["state"] == "running" and last_identity["health"] in {
-                "healthy",
-                "not_declared",
-            }:
+            if last_identity["state"] == "running" and last_identity["health"] in allowed_health:
                 return last_identity
             if (
                 last_identity["state"] in {"restarting", "exited", "dead"}
@@ -262,6 +241,29 @@ class DeployedHumanLearningHarness:
             f"Compose owner {service} did not reach a stable healthy identity: "
             f"{_canonical_json(last_identity)}"
         )
+
+    def _service_identities(self, services: str | Sequence[str]) -> dict[str, dict[str, Any]]:
+        names = (services,) if isinstance(services, str) else tuple(services)
+        return {service: self._service_identity(service) for service in names}
+
+    def _restart_service(self, service: str) -> dict[str, Any]:
+        """Restart a deployed Compose worker and retain its durable identity proof.
+
+        The restart is intentionally a Compose operation against the already
+        running dev project.  No local worker, store, or application is
+        constructed by this test.  The later HTTP readbacks prove replay did
+        not create a second durable result.
+        """
+
+        before = self._service_identity(service)
+        self._command(self._compose_argv("restart", service))
+        after = self._service_identity(service, allow_starting=True)
+        self._require(
+            after["started_at"] != before["started_at"]
+            or int(after["restart_count"]) > int(before["restart_count"]),
+            f"Compose restart for {service} did not change its process identity",
+        )
+        return {"service": service, "before": before, "after": after}
 
     def _http_json(
         self,
@@ -457,18 +459,41 @@ class DeployedHumanLearningHarness:
 
     def _case_agora_interaction_evidence(self, case: dict[str, Any]) -> None:
         evidence_id = f"ev-l12-hl-{self.run_token}"
-        owner = self._at(
-            "agora.owner_compose_identity",
-            lambda: self._service_identity(OWNER_SERVICES["agora_interaction_evidence"]),
+        owners = self._at(
+            "agora_and_policy.owner_compose_identities",
+            lambda: self._service_identities(OWNER_SERVICES["agora_interaction_evidence"]),
         )
-        case["owner"] = owner
+        case["owner"] = owners
 
         ev_payload = {
             "evidence_id": evidence_id,
-            "interaction_kind": "ask",
+            "interaction_kind": "training_example",
             "persona_id": "persona-advisor",
             "session_id": f"session-l12-hl-{self.run_token}",
-            "content": {"question": "Evaluate macro regime and risk threshold for imitation learning."},
+            "content": {
+                "actor_id": "persona-advisor",
+                "actor_role": "operator",
+                "decision": "approve",
+                "target": {
+                    "registry_id": "reg-l12-human-learning",
+                    "strategy_id": "agora-human-imitation",
+                    "artifact_version": "0.0.0",
+                    "artifact_type": "strategy_spec",
+                    "promotion_state": "candidate",
+                },
+                "steps": [
+                    {
+                        "observation": [0.18, -0.06, 0.42],
+                        "action": "buy_small",
+                        "reward": 0.21,
+                    },
+                    {
+                        "observation": [0.13, 0.04, 0.37],
+                        "action": "hold",
+                        "reward": 0.08,
+                    },
+                ],
+            },
             "source_refs": [f"session:session-l12-hl-{self.run_token}"],
             "learning_eligible": True,
             "captured_at": _utc_now(),
@@ -485,8 +510,10 @@ class DeployedHumanLearningHarness:
             ),
         )
         self._require(created.get("status") == "created", "evidence submission was not created")
-        dataset_version_id = str(created["data"]["dataset_version_id"])
+        dataset = created["data"]
+        dataset_version_id = str(dataset["dataset_version_id"])
         self._require(dataset_version_id.startswith("dsv-"), "dataset_version_id has an unexpected shape")
+        self._require(dataset.get("dataset_kind") == "learn", "evidence did not create a learning dataset")
         case["trigger"] = {
             "type": "AgoraInteractionEvidence",
             "id": evidence_id,
@@ -527,22 +554,37 @@ class DeployedHumanLearningHarness:
         self._require(handoff_id.startswith("gh-"), "handoff_id has an unexpected shape")
         case["authority_readback"] = {"dataset_version_id": dataset_version_id, "handoff_id": handoff_id}
 
-        # Do not call the drainer module directly: the real
-        # policy-learning-shadow-eval-scheduler Compose worker drains this
-        # handoff on its own interval. Poll its HTTP-visible effect only.
+        # The durable policy worker is normally interval-driven. Restarting
+        # the deployed worker starts its normal recovery/tick without calling
+        # a drainer or policy endpoint from this test process.
+        restart = self._at(
+            "policy_learning.scheduler_restart_for_durable_handoff",
+            lambda: self._restart_service("policy-learning-shadow-eval-scheduler"),
+        )
         candidates = self._at(
-            "policy_learning.candidate_admitted",
+            "policy_learning.candidate_processed_by_deployed_worker",
             lambda: self._poll(
-                f"policy-learning candidate for handoff {handoff_id}",
+                f"processed policy-learning candidate for handoff {handoff_id}",
                 lambda: self._http_json(
                     self.policy_learning_url,
                     "/api/policy-learning/candidates",
                     headers=self._policy_learning_headers(),
                 ),
-                lambda value: any(item.get("handoff_id") == handoff_id for item in value),
+                lambda value: any(
+                    item.get("handoff_id") == handoff_id
+                    and item.get("status") == "processed"
+                    and item.get("handoff_status") == "completed"
+                    for item in value
+                ),
             ),
         )
-        admitted = next(item for item in candidates if item.get("handoff_id") == handoff_id)
+        admitted = next(
+            item
+            for item in candidates
+            if item.get("handoff_id") == handoff_id
+            and item.get("status") == "processed"
+            and item.get("handoff_status") == "completed"
+        )
         candidate_id = str(admitted["candidate_id"])
         self._require(
             admitted.get("dataset_ref", {}).get("dataset_version_id") == dataset_version_id,
@@ -552,7 +594,16 @@ class DeployedHumanLearningHarness:
             admitted.get("dataset_source") == "agora_dataset_version_handoff",
             "admitted candidate did not record the Agora handoff dataset source",
         )
-        case["terminal_output"] = {"type": "ShadowImitationCandidate", "id": candidate_id}
+        self._require(
+            not admitted.get("seed_fallback_used", False) and admitted.get("authoritative") is True,
+            "policy candidate was not trained from an authoritative Agora dataset",
+        )
+        case["terminal_output"] = {
+            "type": "ShadowImitationCandidate",
+            "id": candidate_id,
+            "status": admitted.get("status"),
+            "restart": restart,
+        }
 
         pending_after = self._at(
             "agora.handoff_no_longer_pending",
@@ -568,30 +619,33 @@ class DeployedHumanLearningHarness:
         )
 
         replay = self._at(
-            "policy_learning.replay_admission_idempotent",
-            lambda: self._http_json(
-                self.policy_learning_url,
-                "/api/policy-learning/agora-handoff",
-                method="POST",
-                headers=self._policy_learning_headers(),
-                payload={
-                    "handoff_id": handoff_id,
-                    "eval_type": "shadow",
-                    "actor_id": "l12-current-e2e-replayer",
-                    "tenant_id": self.tenant_id,
-                    "dataset_ref": {"dataset_version_id": dataset_version_id, "tenant_id": self.tenant_id},
-                },
-                expected=(200, 201, 409),
+            "policy_learning.restart_replay_is_idempotent",
+            lambda: self._restart_service("policy-learning-shadow-eval-scheduler"),
+        )
+        replayed_candidates = self._at(
+            "policy_learning.restart_replay_readback",
+            lambda: self._poll(
+                f"idempotent policy replay for {handoff_id}",
+                lambda: self._http_json(
+                    self.policy_learning_url,
+                    "/api/policy-learning/candidates",
+                    headers=self._policy_learning_headers(),
+                ),
+                lambda value: len(
+                    [item for item in value if item.get("handoff_id") == handoff_id]
+                ) == 1,
             ),
         )
+        replayed = [item for item in replayed_candidates if item.get("handoff_id") == handoff_id]
         self._require(
-            replay.get("candidate_id", candidate_id) == candidate_id,
-            "replayed admission produced a different candidate_id",
+            len(replayed) == 1 and replayed[0].get("candidate_id") == candidate_id,
+            "replayed scheduler produced a different candidate_id",
         )
         case["next_consumer"] = {
             "consumer": "policy-learning-agora-handoff-drainer",
             "receipt_type": "ShadowImitationCandidate",
             "receipt_id": candidate_id,
+            "replay": replay,
         }
 
         self.chain["evidence_id"] = evidence_id
@@ -608,102 +662,71 @@ class DeployedHumanLearningHarness:
         )
         case["owner"] = owner
 
-        candidate_id = f"sic-l12-hl-{self.run_token}"
-        candidate = {
-            "candidate_id": candidate_id,
-            "id": candidate_id,
-            "tenant_id": self.tenant_id,
-            "status": "processed",
-            "handoff_id": self.chain.get("agora_handoff_id"),
-            "dataset_version_id": self.chain.get("dataset_version_id", f"dsv-l12-hl-{self.run_token}"),
-            "dataset_lineage": {
-                "version_id": self.chain.get("dataset_version_id", f"dsv-l12-hl-{self.run_token}"),
-                "tenant_id": self.tenant_id,
-                "source": "agora_dataset_authority",
-                "evidence_refs": [self.chain.get("evidence_id", "")],
-                "authoritative": True,
-            },
-            "artifact_checksum": "sha256:" + uuid.uuid4().hex + uuid.uuid4().hex,
-            "dataset_mode": "agora",
-            "metrics": {"action_match_rate": 0.94, "return_gap": 0.008},
-            "evaluation_summary": {"action_match_rate": 0.94, "evaluator_id": "l12-current-e2e"},
-            "strategy_id": "strat-l12-hl-e2e",
-            "strategy_spec_version": "1.0.0",
-            "strategy_spec_id": "spec-strat-l12-hl-e2e",
-            "code_version": self.git_sha,
-            "trace_id": f"trace-l12-hl-{candidate_id}",
-        }
+        candidate_id = str(self.chain.get("candidate_id") or "")
+        self._require(candidate_id, "Loop 5 did not produce an imitation candidate")
         case["trigger"] = {"type": "ShadowImitationCandidate", "id": candidate_id}
 
-        receipt = self._at(
-            "research.candidate_intake_http",
-            lambda: handoff_candidate_to_experiment_authority(candidate, research_url=self.research_url),
+        candidate = self._at(
+            "policy_learning.processed_candidate_readback",
+            lambda: self._poll(
+                f"processed candidate {candidate_id} with Research receipt",
+                lambda: self._http_json(
+                    self.policy_learning_url,
+                    f"/api/policy-learning/candidates/{urllib.parse.quote(candidate_id, safe='')}",
+                    headers=self._policy_learning_headers(),
+                ),
+                lambda value: value.get("status") == "processed"
+                and value.get("handoff_status") == "completed"
+                and bool(value.get("experiment_task_id"))
+                and bool(value.get("experiment_run_id")),
+            ),
         )
         self._require(
-            receipt.experiment_task_id == candidate["experiment_task_id"],
-            "candidate handoff did not attach the exact task id",
+            candidate.get("handoff_id") == self.chain.get("agora_handoff_id"),
+            "Research handoff candidate drifted from the Agora durable handoff",
         )
+        experiment_task_id = str(candidate["experiment_task_id"])
+        experiment_run_id = str(candidate["experiment_run_id"])
         case["terminal_output"] = {
             "type": "ExperimentRun",
-            "task_id": receipt.experiment_task_id,
-            "run_id": receipt.experiment_run_id,
+            "task_id": experiment_task_id,
+            "run_id": experiment_run_id,
         }
 
         run_readback = self._at(
             "research.run_readback",
             lambda: self._http_json(
                 self.research_url,
-                f"/api/research-orchestrator/runs/{urllib.parse.quote(receipt.experiment_run_id, safe='')}",
+                f"/api/research-orchestrator/runs/{urllib.parse.quote(experiment_run_id, safe='')}",
                 headers={"X-Pantheon-Tenant-Id": self.tenant_id},
             ),
         )
         self._require(
-            run_readback.get("task_id") == receipt.experiment_task_id
-            and run_readback.get("run_id") == receipt.experiment_run_id,
+            run_readback.get("task_id") == experiment_task_id
+            and run_readback.get("run_id") == experiment_run_id,
             "Research owner readback drifted from the handoff receipt identity",
         )
         case["authority_readback"] = {
             "task_id": run_readback.get("task_id"),
             "run_id": run_readback.get("run_id"),
         }
-
-        replay = self._at(
-            "research.replay_intake_idempotent",
-            lambda: post_imitation_candidate_intake_http(candidate, research_url=self.research_url),
-        )
-        self._require(
-            replay.task_id == receipt.experiment_task_id and replay.run_id == receipt.experiment_run_id,
-            "replayed candidate intake produced a different task/run id",
-        )
         case["next_consumer"] = {
             "consumer": "research-orchestrator-svc",
             "receipt_type": "ExperimentRun",
-            "receipt_id": receipt.experiment_run_id,
+            "receipt_id": experiment_run_id,
         }
 
-        empty_candidate = {"candidate_id": "", "tenant_id": self.tenant_id, "status": "processed"}
-        try:
-            handoff_candidate_to_experiment_authority(empty_candidate, research_url=self.research_url)
-        except (CandidateHandoffError, ResearchCandidateClientError):
-            pass
-        else:
-            raise BoundaryFailure(
-                "research.empty_candidate_fails_closed",
-                "an empty candidate id was accepted by the Research intake boundary",
-            )
-
-        self.chain["candidate_id"] = candidate_id
-        self.chain["experiment_task_id"] = receipt.experiment_task_id
-        self.chain["experiment_run_id"] = receipt.experiment_run_id
+        self.chain["experiment_task_id"] = experiment_task_id
+        self.chain["experiment_run_id"] = experiment_run_id
 
     # -- Loop 7: Consultation -> deployed OpenClaw provider -> Governance ---
 
     def _case_consultation_governance_handoff(self, case: dict[str, Any]) -> None:
-        owner = self._at(
-            "consultation.owner_compose_identity",
-            lambda: self._service_identity(OWNER_SERVICES["consultation_governance_handoff"]),
+        owners = self._at(
+            "consultation_openclaw_governance.owner_compose_identities",
+            lambda: self._service_identities(OWNER_SERVICES["consultation_governance_handoff"]),
         )
-        case["owner"] = owner
+        case["owner"] = owners
 
         request_id = f"cr-l12-hl-{self.run_token}"
         req_payload = {
@@ -750,40 +773,16 @@ class DeployedHumanLearningHarness:
             ),
         )
 
-        executor_config = ExecutorConfig(
-            api_url=self.consultation_url,
-            tenant_id=self.tenant_id,
-            api_token=self.consultation_token,
-            provider_url=self.openclaw_adapter_url + CONSULTATION_CONTRIBUTION_PATH,
-            provider_token=self.consultation_provider_token,
-            provider_service_actor=CONSULTATION_SERVICE_ACTOR,
-            handoff_sink_url=self.governance_url + "/api/governance/consultation-handoffs",
-            handoff_token=self.consultation_handoff_token,
-            worker_id=f"l12-current-e2e-{self.run_token}",
-            state_path=str(self.state_dir / "executor_state.sqlite3"),
-            lease_seconds=60,
-            retry_after_seconds=0,
-            max_blocked_attempts=2,
-            batch_size=1,
-            timeout_seconds=self.provider_timeout_seconds,
-        )
-        executor_state = WorkflowStateStore(executor_config.state_path)
-
-        tick_result = self._at(
-            "consultation.executor_tick_completed",
-            lambda: run_consultation_tick(config=executor_config, state=executor_state),
-        )
-        self._require(tick_result.get("completed") == 1, "executor tick did not complete the deployed request")
-        self._require(tick_result.get("blocked", 0) == 0, "executor tick blocked against deployed owners")
-        self._require(tick_result.get("dead_lettered", 0) == 0, "executor tick dead-lettered against deployed owners")
-        case["terminal_output"] = {"type": "ConsultationExecutorTick", "id": request_id}
-
         memos = self._at(
-            "consultation.memo_readback",
-            lambda: self._http_json(
-                self.consultation_url,
-                f"/api/consult/memos?request_id={urllib.parse.quote(request_id, safe='')}",
-                headers=self._consultation_headers(),
+            "consultation.supervised_executor_published_memo",
+            lambda: self._poll(
+                f"published consultation memo for {request_id}",
+                lambda: self._http_json(
+                    self.consultation_url,
+                    f"/api/consult/memos?request_id={urllib.parse.quote(request_id, safe='')}",
+                    headers=self._consultation_headers(),
+                ),
+                lambda value: len(value) == 1 and value[0].get("status") == "published",
             ),
         )
         self._require(len(memos) == 1, "expected exactly one published ConsultMemo")
@@ -793,10 +792,14 @@ class DeployedHumanLearningHarness:
 
         handoffs = self._at(
             "consultation.governance_handoff_acknowledged",
-            lambda: self._http_json(
-                self.consultation_url,
-                f"/api/consult/handoffs?request_id={urllib.parse.quote(request_id, safe='')}",
-                headers=self._consultation_headers(),
+            lambda: self._poll(
+                f"acknowledged Governance handoff for {request_id}",
+                lambda: self._http_json(
+                    self.consultation_url,
+                    f"/api/consult/handoffs?request_id={urllib.parse.quote(request_id, safe='')}",
+                    headers=self._consultation_headers(),
+                ),
+                lambda value: len(value) == 1 and value[0].get("status") == "acknowledged",
             ),
         )
         self._require(len(handoffs) == 1, "expected exactly one Governance handoff record")
@@ -809,47 +812,55 @@ class DeployedHumanLearningHarness:
             gov_handoff.get("status") == "acknowledged",
             "Governance owner did not acknowledge the durable consultation handoff",
         )
+        case["terminal_output"] = {
+            "type": "ConsultMemo",
+            "id": memo.get("memo_id"),
+            "governance_handoff_id": gov_handoff.get("handoff_id"),
+        }
         case["next_consumer"] = {
             "consumer": "governance",
             "receipt_type": "ConsultGateHandoff",
             "receipt_id": gov_handoff.get("handoff_id"),
         }
 
-        # Recovery proof: a fresh local lease store recovers the already
-        # acknowledged handoff without a duplicate deployed OpenClaw turn.
-        recovery_config = ExecutorConfig(
-            **{**executor_config.__dict__, "state_path": str(self.state_dir / "recovery_state.sqlite3")}
+        # ``consultation-svc`` supervises the real executor inside its own
+        # container.  Restart that owner, then prove durable API readback did
+        # not gain a second memo or Governance handoff.
+        replay = self._at(
+            "consultation.supervised_executor_restart_replay",
+            lambda: self._restart_service("consultation-svc"),
         )
-        recovery_state = WorkflowStateStore(recovery_config.state_path)
-        recovery_state.ensure_request(tenant_id=self.tenant_id, request_id=request_id)
-        claim = self._at(
-            "consultation.recovery_claim",
-            lambda: recovery_state.claim_next(
-                tenant_id=self.tenant_id,
-                lease_owner="l12-current-e2e-recovery",
-                lease_seconds=60,
+        replayed_memos = self._at(
+            "consultation.restart_memo_readback",
+            lambda: self._poll(
+                f"one durable memo after consultation restart for {request_id}",
+                lambda: self._http_json(
+                    self.consultation_url,
+                    f"/api/consult/memos?request_id={urllib.parse.quote(request_id, safe='')}",
+                    headers=self._consultation_headers(),
+                ),
+                lambda value: len(value) == 1 and value[0].get("memo_id") == memo.get("memo_id"),
             ),
         )
-        self._require(claim is not None, "recovery worker could not claim the acknowledged request")
-        provider_client = HttpContributionProvider(
-            endpoint=recovery_config.provider_url,
-            bearer_token=recovery_config.provider_token,
-            service_actor=recovery_config.provider_service_actor,
-            timeout_seconds=recovery_config.timeout_seconds,
-        )
-        recovered = self._at(
-            "consultation.recovery_no_duplicate_turn",
-            lambda: execute_claim(
-                config=recovery_config,
-                state=recovery_state,
-                provider=provider_client,
-                claim=claim,
+        replayed_handoffs = self._at(
+            "consultation.restart_governance_readback",
+            lambda: self._poll(
+                f"one acknowledged Governance handoff after consultation restart for {request_id}",
+                lambda: self._http_json(
+                    self.consultation_url,
+                    f"/api/consult/handoffs?request_id={urllib.parse.quote(request_id, safe='')}",
+                    headers=self._consultation_headers(),
+                ),
+                lambda value: len(value) == 1
+                and value[0].get("handoff_id") == gov_handoff.get("handoff_id")
+                and value[0].get("status") == "acknowledged",
             ),
         )
         self._require(
-            recovered.get("outcome") == "completed" and "recovered" in str(recovered.get("detail", "")),
-            "recovery worker re-invoked the deployed OpenClaw provider instead of reusing the acknowledged handoff",
+            len(replayed_memos) == len(replayed_handoffs) == 1,
+            "consultation restart replay duplicated a durable memo or Governance handoff",
         )
+        case["next_consumer"]["replay"] = replay
 
         self.chain["consult_request_id"] = request_id
         self.chain["memo_id"] = memo.get("memo_id")
@@ -933,15 +944,36 @@ def test_deployed_suite_has_no_fixture_or_product_store_shortcut() -> None:
         "agora.dataset_extraction.extractor",
         "services.consultation.store",
         "services.consultation.main",
+        "services.consultation.provider",
+        "services.consultation.workflow_executor",
+        "services.consultation.workflow_state",
         "services.governance.main",
         "services.governance.record_store",
         "services.research.main",
+        "candidate_experiment_handoff",
+        "research_candidate_client",
+        "consultation_provider",
     }
     assert not banned_modules.intersection(imported_modules)
     assert "TestClient" not in imported_names
-    assert "FakeOpenClawRiskProvider" not in imported_names
+    assert not {
+        "FakeOpenClawRiskProvider",
+        "ExecutorConfig",
+        "HttpContributionProvider",
+        "WorkflowStateStore",
+        "execute_claim",
+        "run_consultation_tick",
+    }.intersection(imported_names)
     assert not {"tmp_path", "tmpdir", "monkeypatch"}.intersection(fixture_arguments)
-    assert not {"Mock", "MagicMock", "patch", "TestClient", "create_openclaw_adapter_app"}.intersection(
+    assert not {
+        "Mock",
+        "MagicMock",
+        "patch",
+        "TestClient",
+        "create_openclaw_adapter_app",
+        "execute_claim",
+        "run_consultation_tick",
+    }.intersection(
         called_names
     )
     assert [name for name in function_names if name.startswith("test_deployed_")] == [
@@ -953,3 +985,4 @@ def test_deployed_suite_has_no_fixture_or_product_store_shortcut() -> None:
     ]
     assert "subprocess.run" in inspect.getsource(DeployedHumanLearningHarness._command)
     assert "docker" in inspect.getsource(DeployedHumanLearningHarness._compose_argv)
+    assert "restart" in inspect.getsource(DeployedHumanLearningHarness._restart_service)

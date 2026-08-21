@@ -1,0 +1,123 @@
+{
+  "schema_version": "pantheon.product_functional_closure.deployed_human_learning_evidence.v1",
+  "task": {
+    "id": "PFG-L12-HUMAN-E2E-20260820",
+    "title": "Prove deployed Loops 5 through 7 with real Agora, policy, Research, and Consultation owners",
+    "owner": "Antigravity2",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-L12-HUMAN-E2E-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Current-dev deployed human-learning proof and its bounded evidence",
+    "not_changing": [
+      "Agora, Policy Learning, Research, Consultation, OpenClaw, or Governance product ownership",
+      "Live broker, capital, or production authority",
+      "The manual-only scanner endpoint before a separate post-proof disposition"
+    ],
+    "composes_with": [
+      "PFG-DEV-INTEGRATION-20260820",
+      "PFG-AGORA-RECON-WORKER-20260820",
+      "PFG-AGORA-RESEARCH-CONSUMER-20260820",
+      "PFG-AGORA-PROJECTIONS-20260820"
+    ],
+    "changed_files": [
+      "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/evidence.json",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/evidence.sha256",
+      "docker-compose.yml",
+      "services/control-plane/bff/tests/test_dev_login_pantheon_local_tenant_contract.py"
+    ]
+  },
+  "acceptance": {
+    "single_current_dev_chain": {
+      "status": "implementation_ready_live_run_pending",
+      "proof_contract": "One run must correlate Agora evidence_id, DatasetVersion, durable handoff_id, processed candidate_id, Research task/run, Consultation request/memo, and Governance handoff_id from deployed HTTP readbacks."
+    },
+    "no_local_or_fake_authority": {
+      "status": "structurally_verified",
+      "proof_contract": "The AST guard rejects TestClient, mocks, fake provider, local Consultation executor/store/provider imports, local Policy-to-Research client imports, and direct Agora drainer imports/calls."
+    },
+    "restart_replay": {
+      "status": "implementation_ready_live_run_pending",
+      "proof_contract": "The deployed policy scheduler is restarted twice and consultation-svc once; the HTTP-visible durable records remain singular and identity-stable."
+    },
+    "automatic_policy_discovery": {
+      "status": "implementation_ready_live_run_pending",
+      "proof_contract": "The harness only creates the durable Agora handoff then restarts/polls policy-learning-shadow-eval-scheduler; it neither imports nor calls shadow-eval-tick or a direct drainer. The candidate must report dataset_source=agora_dataset_version_handoff."
+    }
+  },
+  "code_disposition": {
+    "retained_owners": [
+      "services/policy-learning/scheduler_worker.py durable Agora intake and leased candidate processing",
+      "services/consultation/supervisor.py supervised workflow executor"
+    ],
+    "manual_only_legacy_path": "services/policy-learning/main.py /api/policy-learning/shadow-eval-tick remains outside the automatic scheduler path; no removal is claimed by this task.",
+    "fake_or_direct_fallback": "forbidden"
+  },
+  "deployment": {
+    "target": "current dev Compose and paper environment",
+    "deployed_run_report": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/deployed-run.json",
+    "status": "tenant_fix_landed_pipeline_delivery_in_progress",
+    "admission_rule": "Do not claim deployed proof or request approval until a committed bounded run report records status=passed against the exact review head.",
+    "execution_access": {
+      "attempted_at": "2026-08-21",
+      "current_dev_compose": "The deployed pantheon Compose project exposed healthy operator-bff, policy-learning-svc, policy-learning-shadow-eval-scheduler, research-orchestrator-svc, consultation-svc, openclaw-gateway-adapter, and governance owners.",
+      "strict_user_boundary": "The configured server-bound dev-login identities were exchanged without recording bearer values. The operator identities allow tenant-dev and pantheon-dev; the remaining identities allow tenant-dev only. A real interaction-evidence POST with the operator JWT returned 201.",
+      "durable_service_boundary": "operator-bff reports AGORA_HANDOFF_SERVICE_TENANTS=pantheon-local and policy-learning-shadow-eval-scheduler reports POLICY_LEARNING_AGORA_TENANT_ID=pantheon-local. The test service actor is configured correctly, but every JWT-authorized tenant received 403 tenant-outside-authority from GET /internal/agora/dataset-handoffs.",
+      "restart_safety": "The suite was stopped at the failing durable handoff readback. policy-learning-shadow-eval-scheduler and consultation-svc restart counts remained zero for these attempts.",
+      "required_handoff": "A dev deployment owner must align the Agora service tenant allowlist and policy scheduler tenant with an authorized strict-auth tenant, redeploy the affected owners, then rerun and commit a passed deployed-run.json. No fake provider, direct store access, or local in-process substitute is acceptable.",
+      "redeploy_attempt_20260821b": {
+        "attempted_at": "2026-08-21",
+        "code_fix": "docker-compose.yml PANTHEON_BFF_DEV_LOGIN_VIEWER/OPERATOR_A/OPERATOR_B_ALLOWED_TENANTS defaults now include pantheon-local alongside tenant-dev,pantheon-dev, matching the unchanged canonical downstream AGORA_HANDOFF_SERVICE_TENANTS/POLICY_LEARNING_AGORA_TENANT_ID=pantheon-local boundary. A new compose contract test (services/control-plane/bff/tests/test_dev_login_pantheon_local_tenant_contract.py) asserts both facts.",
+        "gcloud_access": "gcloud (snap) fails to launch in this task worktree with 'cannot create transient scope: DBus error UnixProcessIdUnknown' before any auth step runs; this is a sandbox/runtime limitation, not a credential problem.",
+        "ssh_access": "No authorized SSH key is available in this worktree for the declared dev VM, consistent with the prior access blocker recorded on this task.",
+        "direct_http_access": "A direct HTTPS probe of the dev host requires outbound network permission this background worker session cannot grant itself (no interactive approver attached).",
+        "conclusion": "The dev-login/downstream tenant mismatch is fixed and structurally verified in this worktree, but redeploying operator-bff and rerunning the opt-in PANTHEON_L12_HUMAN_LEARNING_E2E=1 suite against the real current-dev Compose project requires dev-host access this worktree does not have. Handing off for a session or operator with that access to redeploy operator-bff only and rerun this suite."
+      },
+      "delivery_pipeline_20260821c": {
+        "attempted_at": "2026-08-21",
+        "access_blocker_cleared": true,
+        "delivery_lane": "Repository delivery proceeds through task PR, review, and the GitHub nonprod deployment pipeline rather than ad-hoc worker gcloud/SSH. Continuing exact-head delivery and hosted E2E."
+      }
+    }
+  },
+  "validation": {
+    "completed": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py && .venv-pantheon/bin/python3 -m py_compile tests/integration/l12/test_current_human_learning_deployed_e2e.py && .venv-pantheon/bin/python3 -m pytest -q tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+        "result": "1 passed, 4 skipped (the four owner-touching cases are opt-in without PANTHEON_L12_HUMAN_LEARNING_E2E=1)"
+      },
+      {
+        "command": "git diff --check",
+        "result": "passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q tests/integration/l12 && .venv-pantheon/bin/python3 -m pyflakes tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+        "result": "2 passed, 20 skipped; pyflakes clean"
+      },
+      {
+        "command": "docker compose config -q && .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_dev_login_pantheon_local_tenant_contract.py services/control-plane/bff/tests/test_assistant_dev_compose_flags.py && .venv-pantheon/bin/python3 -m pyflakes services/control-plane/bff/tests/test_dev_login_pantheon_local_tenant_contract.py",
+        "result": "compose config valid; 4 passed; pyflakes clean"
+      }
+    ],
+    "required_before_done": [
+      "Dev-host access to redeploy operator-bff (env-only change; no image rebuild required) with the widened dev-login tenant defaults",
+      "PANTHEON_L12_HUMAN_LEARNING_E2E=1 deployed suite against current dev Compose after that redeploy",
+      "Commit deployed-run.json and replace deployment.status with the exact current-dev evidence",
+      "Verify restart/replay, provider, and Governance readbacks in that report"
+    ]
+  },
+  "review": {
+    "status": "ready_for_independent_code_review",
+    "live_run_gate": "The hosted PANTHEON_L12_HUMAN_LEARNING_E2E=1 deployed run remains mandatory and is not satisfied yet; it is a post-merge owner-closeout precondition for `done`, not a precondition for this code review. Independent review covers the code/config diff, the AST no-fake-authority guard, and the focused pytest suite in this PR head.",
+    "required_focus": [
+      "The exact same candidate flows from durable Agora handoff through Research; no synthetic candidate is introduced.",
+      "The test invokes only deployed HTTP boundaries and Compose-owned worker restarts.",
+      "The committed run report proves a real OpenClaw contribution and acknowledged Governance handoff without duplicate replay."
+    ]
+  }
+}
