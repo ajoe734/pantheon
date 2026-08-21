@@ -17,7 +17,7 @@
         "telemetry"
       ],
       "ended_at": "2026-08-21T05:37:45Z",
-      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "git_sha": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "loop": 9,
       "next_consumer_readback": {
         "paper_runtime_id": "runtime-tw-session-momentum-paper-d20f1b46ab",
@@ -28,10 +28,10 @@
         "container_name": "l12currentruntimee2e-paper-fleet-reconciler-1",
         "image_id": "sha256:f7c385991781871f0bc55f1cf3f39240191ce4c809debb4de64aa8e193f45346",
         "image_name": "l12currentruntimee2e-paper-fleet-reconciler",
-        "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "revision_evidence": "oci_label",
         "service": "paper-fleet-reconciler",
-        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "state": "running"
       },
       "started_at": "2026-08-21T05:37:44Z",
@@ -164,7 +164,7 @@
         "runtime-manager"
       ],
       "ended_at": "2026-08-21T05:36:37Z",
-      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "git_sha": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "loop": 8,
       "next_consumer_readback": {
         "fleet_desired_binding_id": "rb-eb60486fa9114a259f6665fad48698af",
@@ -176,10 +176,10 @@
         "container_name": "l12currentruntimee2e-deployment-outbox-consumer-1",
         "image_id": "sha256:27518b68d36db96d7dd2eb925aa5d92d20dff94bbd4165071cca3fd95d5c870a",
         "image_name": "l12currentruntimee2e-deployment-outbox-consumer",
-        "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "revision_evidence": "oci_label",
         "service": "deployment-outbox-consumer",
-        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "state": "running"
       },
       "started_at": "2026-08-21T05:36:32Z",
@@ -323,7 +323,7 @@
         "source-ingest"
       ],
       "ended_at": "2026-08-21T05:36:41Z",
-      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "git_sha": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "loop": 9,
       "next_consumer_readback": {
         "last_heartbeat_event_id": "e6e440f8-0572-4cb7-923d-ecbd99a76163",
@@ -335,7 +335,7 @@
         "container_name": "l12currentruntimee2e-paper-signal-producer-1",
         "image_id": "sha256:c3961230000b78b561cd5af9cf41ddd0f611ec3d8bd470900075ecbd580e17b8",
         "image_name": "l12currentruntimee2e-paper-signal-producer",
-        "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "revision_evidence": "oci_label",
         "runtime_worker": {
           "binding_id": "rb-eb60486fa9114a259f6665fad48698af",
@@ -354,7 +354,7 @@
           "status": "running"
         },
         "service": "paper-signal-producer",
-        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "state": "running"
       },
       "started_at": "2026-08-21T05:36:37Z",
@@ -450,7 +450,7 @@
         "incidents"
       ],
       "ended_at": "2026-08-21T05:36:42Z",
-      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "git_sha": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "loop": 10,
       "next_consumer_readback": {
         "artifact_id": "artifact-l12-positive-d20f1b46ab",
@@ -487,7 +487,7 @@
         "oci_revision": "",
         "revision_evidence": "compose_source_head",
         "service": "reconciliation-drift-svc",
-        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "state": "running"
       },
       "started_at": "2026-08-21T05:36:42Z",
@@ -591,7 +591,7 @@
         "evolution"
       ],
       "ended_at": "2026-08-21T05:36:42Z",
-      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "git_sha": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "loop": 11,
       "next_consumer_readback": {
         "proposal_only": true,
@@ -606,7 +606,7 @@
         "oci_revision": "",
         "revision_evidence": "compose_source_head",
         "service": "evolution",
-        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "state": "running"
       },
       "started_at": "2026-08-21T05:36:42Z",
@@ -647,7 +647,7 @@
         "runtime-manager"
       ],
       "ended_at": "2026-08-21T05:36:42Z",
-      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "git_sha": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "loop": 12,
       "next_consumer_readback": {
         "checked_at": "2026-08-21T05:36:28Z",
@@ -676,10 +676,10 @@
         "container_name": "l12currentruntimee2e-operator-bff-1",
         "image_id": "sha256:320f9ad6e8016291ed511f3a6aeebacd72f804009e7f5d2ac961fc8fa95e06e7",
         "image_name": "l12currentruntimee2e-operator-bff",
-        "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "revision_evidence": "oci_label",
         "service": "operator-bff",
-        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "state": "running"
       },
       "started_at": "2026-08-21T05:36:42Z",
@@ -712,7 +712,7 @@
         "paper-fleet-reconciler"
       ],
       "ended_at": "2026-08-21T05:36:31Z",
-      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "git_sha": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "loop": 8,
       "next_consumer_readback": {
         "fleet_desired_sanitized": true,
@@ -733,10 +733,10 @@
         "container_name": "l12currentruntimee2e-runtime-manager-1",
         "image_id": "sha256:ab63cc135e2c71f5c5cc8689a8df22fd95a1955211796beb82dae62feb5eff61",
         "image_name": "l12currentruntimee2e-runtime-manager",
-        "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "revision_evidence": "oci_label",
         "service": "runtime-manager",
-        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "state": "running"
       },
       "started_at": "2026-08-21T05:36:30Z",
@@ -758,7 +758,7 @@
         "signal-store"
       ],
       "ended_at": "2026-08-21T05:36:42Z",
-      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "git_sha": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "loop": 9,
       "next_consumer_readback": {
         "queue_depth": 0,
@@ -769,10 +769,10 @@
         "container_name": "l12currentruntimee2e-paper-signal-producer-1",
         "image_id": "sha256:c3961230000b78b561cd5af9cf41ddd0f611ec3d8bd470900075ecbd580e17b8",
         "image_name": "l12currentruntimee2e-paper-signal-producer",
-        "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "revision_evidence": "oci_label",
         "service": "paper-signal-producer",
-        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "state": "running"
       },
       "started_at": "2026-08-21T05:36:37Z",
@@ -813,7 +813,7 @@
         "runtime-manager"
       ],
       "ended_at": "2026-08-21T05:37:31Z",
-      "git_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "git_sha": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "loop": 12,
       "next_consumer_readback": {
         "checked_at": "2026-08-21T05:37:30Z",
@@ -842,10 +842,10 @@
         "container_name": "l12currentruntimee2e-operator-bff-1",
         "image_id": "sha256:320f9ad6e8016291ed511f3a6aeebacd72f804009e7f5d2ac961fc8fa95e06e7",
         "image_name": "l12currentruntimee2e-operator-bff",
-        "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "revision_evidence": "oci_label",
         "service": "operator-bff",
-        "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+        "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
         "state": "running"
       },
       "started_at": "2026-08-21T05:36:42Z",
@@ -857,17 +857,17 @@
   "ended_at": "2026-08-21T05:37:46Z",
   "environment": "isolated_compose_paper",
   "error": null,
-  "expected_sha": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+  "expected_sha": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
   "identities": {
     "broker": {
       "container_id": "0afdb8a6525912daf4049fb30eccc57de79849dda5b26cce54f50f84852bb292",
       "container_name": "l12currentruntimee2e-broker-1",
       "image_id": "sha256:13d3aa2c257929593138b380d6ae7c7e10f3b0093e9bbf5631ec9995daafe756",
       "image_name": "l12currentruntimee2e-broker",
-      "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "revision_evidence": "oci_label",
       "service": "broker",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "deployment": {
@@ -875,10 +875,10 @@
       "container_name": "l12currentruntimee2e-deployment-1",
       "image_id": "sha256:0a1f707592e14d7d6c7f56b09b58517aa0994d69a8727c3bbf2ae5bda48b3518",
       "image_name": "l12currentruntimee2e-deployment",
-      "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "revision_evidence": "oci_label",
       "service": "deployment",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "deployment-outbox-consumer": {
@@ -886,10 +886,10 @@
       "container_name": "l12currentruntimee2e-deployment-outbox-consumer-1",
       "image_id": "sha256:27518b68d36db96d7dd2eb925aa5d92d20dff94bbd4165071cca3fd95d5c870a",
       "image_name": "l12currentruntimee2e-deployment-outbox-consumer",
-      "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "revision_evidence": "oci_label",
       "service": "deployment-outbox-consumer",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "evolution": {
@@ -900,7 +900,7 @@
       "oci_revision": "",
       "revision_evidence": "compose_source_head",
       "service": "evolution",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "incidents": {
@@ -911,7 +911,7 @@
       "oci_revision": "",
       "revision_evidence": "compose_source_head",
       "service": "incidents",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "operator-bff": {
@@ -919,10 +919,10 @@
       "container_name": "l12currentruntimee2e-operator-bff-1",
       "image_id": "sha256:320f9ad6e8016291ed511f3a6aeebacd72f804009e7f5d2ac961fc8fa95e06e7",
       "image_name": "l12currentruntimee2e-operator-bff",
-      "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "revision_evidence": "oci_label",
       "service": "operator-bff",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "paper-fleet-reconciler": {
@@ -930,10 +930,10 @@
       "container_name": "l12currentruntimee2e-paper-fleet-reconciler-1",
       "image_id": "sha256:f7c385991781871f0bc55f1cf3f39240191ce4c809debb4de64aa8e193f45346",
       "image_name": "l12currentruntimee2e-paper-fleet-reconciler",
-      "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "revision_evidence": "oci_label",
       "service": "paper-fleet-reconciler",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "paper-signal-producer": {
@@ -941,10 +941,10 @@
       "container_name": "l12currentruntimee2e-paper-signal-producer-1",
       "image_id": "sha256:c3961230000b78b561cd5af9cf41ddd0f611ec3d8bd470900075ecbd580e17b8",
       "image_name": "l12currentruntimee2e-paper-signal-producer",
-      "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "revision_evidence": "oci_label",
       "service": "paper-signal-producer",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "reconciliation-drift-svc": {
@@ -955,7 +955,7 @@
       "oci_revision": "",
       "revision_evidence": "compose_source_head",
       "service": "reconciliation-drift-svc",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "runtime-manager": {
@@ -963,10 +963,10 @@
       "container_name": "l12currentruntimee2e-runtime-manager-1",
       "image_id": "sha256:ab63cc135e2c71f5c5cc8689a8df22fd95a1955211796beb82dae62feb5eff61",
       "image_name": "l12currentruntimee2e-runtime-manager",
-      "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "revision_evidence": "oci_label",
       "service": "runtime-manager",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "source-ingest": {
@@ -977,7 +977,7 @@
       "oci_revision": "",
       "revision_evidence": "compose_source_head",
       "service": "source-ingest",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     },
     "telemetry": {
@@ -985,10 +985,10 @@
       "container_name": "l12currentruntimee2e-telemetry-1",
       "image_id": "sha256:5c38a063ee0c2234013cf471e5ae761aa30c2e7f509dd26036045f9ea8211211",
       "image_name": "l12currentruntimee2e-telemetry",
-      "oci_revision": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "oci_revision": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "revision_evidence": "oci_label",
       "service": "telemetry",
-      "source_head": "36a7ad184661a28cc610f00d292b24680c1fce9b",
+      "source_head": "29fadb80a4301df090ce1a6ee2f3f21eb9bd4fe5",
       "state": "running"
     }
   },
