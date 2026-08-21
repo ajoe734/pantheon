@@ -9577,9 +9577,22 @@ def _build_home_card(
     }
 
 
-def _build_operator_home_payload(snapshot_at: str) -> Dict[str, Any]:
-    alerts_payload = _build_operator_alerts_payload(snapshot_at)
-    health_payload = _build_operator_health_status_payload(snapshot_at)
+def _build_operator_home_payload(
+    snapshot_at: str,
+    *,
+    alerts_payload: Optional[Dict[str, Any]] = None,
+    health_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the home cards from an optional already-read cockpit snapshot.
+
+    The cockpit embeds the operator-home, alerts, and health sections in one
+    response.  Reusing its two already-built contributors prevents that
+    aggregate from rebuilding the same alert and runtime-health fan-out just
+    to derive the home cards.  Standalone operator-home reads retain their
+    existing direct composition path.
+    """
+    alerts_payload = alerts_payload or _build_operator_alerts_payload(snapshot_at)
+    health_payload = health_payload or _build_operator_health_status_payload(snapshot_at)
     groups_by_id = {
         str(group.get("group_id") or ""): group
         for group in health_payload["groups"]
@@ -12177,9 +12190,13 @@ def _build_management_cockpit_payload(
     *,
     human_inbox: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    operator_home = _build_operator_home_payload(snapshot_at)
-    runtime_health = _build_operator_health_status_payload(snapshot_at)
     alerts_payload = _build_operator_alerts_payload(snapshot_at)
+    runtime_health = _build_operator_health_status_payload(snapshot_at)
+    operator_home = _build_operator_home_payload(
+        snapshot_at,
+        alerts_payload=alerts_payload,
+        health_payload=runtime_health,
+    )
     if human_inbox is None:
         human_inbox = _human_inbox_payload(snapshot_at, page_size=None)
     trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
@@ -12247,6 +12264,20 @@ def _management_cockpit_read_timeout_seconds() -> float:
         return 2.5
 
 
+def _management_data_sources_read_timeout_seconds() -> float:
+    """Bound the one Source Ingest registry read used by Management.
+
+    Source Ingest is the canonical registry authority.  A slow or unhealthy
+    registry must therefore yield a typed unavailable envelope rather than
+    make the Management event loop wait for the downstream HTTP timeout.
+    """
+    raw = os.getenv("PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS", "0.75").strip()
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return 0.75
+
+
 _MANAGEMENT_COCKPIT_READ_SLOT_COUNT = 2
 _MANAGEMENT_COCKPIT_READ_SLOTS = threading.BoundedSemaphore(
     _MANAGEMENT_COCKPIT_READ_SLOT_COUNT
@@ -12254,6 +12285,14 @@ _MANAGEMENT_COCKPIT_READ_SLOTS = threading.BoundedSemaphore(
 _MANAGEMENT_COCKPIT_READ_EXECUTOR = ThreadPoolExecutor(
     max_workers=_MANAGEMENT_COCKPIT_READ_SLOT_COUNT,
     thread_name_prefix="bff-management-cockpit",
+)
+_MANAGEMENT_DATA_SOURCES_READ_SLOT_COUNT = 2
+_MANAGEMENT_DATA_SOURCES_READ_SLOTS = threading.BoundedSemaphore(
+    _MANAGEMENT_DATA_SOURCES_READ_SLOT_COUNT
+)
+_MANAGEMENT_DATA_SOURCES_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_MANAGEMENT_DATA_SOURCES_READ_SLOT_COUNT,
+    thread_name_prefix="bff-management-data-sources",
 )
 
 
@@ -14839,6 +14878,45 @@ async def _run_management_read(
         worker_future.cancel()
     task.add_done_callback(_discard_late_management_read_result)
     raise _ManagementReadTimeout()
+
+
+async def _read_management_source_connector_registry(
+    store: ReadSurfaceStore,
+) -> Dict[str, Any]:
+    """Read the canonical Source registry within the Management read budget.
+
+    This is deliberately a bounded projection, not a second registry or a
+    cache authority.  Timeout and capacity outcomes retain an explicit
+    unavailable source state, so stale or missing Source Ingest truth can
+    never be reported as a healthy connector list.
+    """
+    try:
+        return await _run_management_read(
+            store.get_source_connector_registry,
+            timeout_seconds=_management_data_sources_read_timeout_seconds(),
+            capacity=_MANAGEMENT_DATA_SOURCES_READ_SLOTS,
+            executor=_MANAGEMENT_DATA_SOURCES_READ_EXECUTOR,
+        )
+    except _ManagementReadSaturated:
+        return {
+            "source": "unavailable",
+            "connectors": [],
+            "provider_examples": [],
+            "policy_registry": None,
+            "financial_data_source_catalog": None,
+            "active_universe_policy": None,
+            "reason": "read_capacity_saturated",
+        }
+    except _ManagementReadTimeout:
+        return {
+            "source": "unavailable",
+            "connectors": [],
+            "provider_examples": [],
+            "policy_registry": None,
+            "financial_data_source_catalog": None,
+            "active_universe_policy": None,
+            "reason": "read_timeout",
+        }
 
 
 @app.get("/health")
@@ -32648,12 +32726,37 @@ def _pm12_performance_attribution_sources() -> Dict[str, Any]:
         if _management_record_id(strategy, "strategy_id", "id")
     }
 
+    # A single telemetry-list projection is the canonical bounded source for
+    # this aggregate.  Do not issue one record read per runtime when that
+    # projection supplied rows.  The record lookup fallback is retained for
+    # older stores that expose no telemetry-list rows at all (including
+    # isolated legacy fixtures that only expose the historical record lookup).
     telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
+    try:
+        telemetry_summaries = list(read_store.list_telemetry_summaries() or [])
+    except Exception:
+        telemetry_summaries = []
+    has_bulk_telemetry_projection = bool(telemetry_summaries)
+    for telemetry in telemetry_summaries:
+        if not isinstance(telemetry, dict):
+            continue
+        runtime_id = _management_record_id(
+            telemetry,
+            "runtime_id",
+            "runtimeId",
+            "execution_runtime_id",
+            "id",
+        )
+        if runtime_id:
+            telemetry_by_runtime_id[runtime_id] = telemetry
+
     for runtime in runtime_bindings:
         runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
         if not runtime_id:
             continue
-        telemetry = read_store.get_telemetry_summary(runtime_id)
+        telemetry = telemetry_by_runtime_id.get(runtime_id)
+        if telemetry is None and not has_bulk_telemetry_projection:
+            telemetry = read_store.get_telemetry_summary(runtime_id)
         if telemetry is not None:
             telemetry_by_runtime_id[runtime_id] = telemetry
 
@@ -49359,8 +49462,12 @@ def _pm12_persona_telemetry_records(
     return records
 
 
-def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
-    telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+def _pm12_persona_telemetry_metrics(
+    row: Dict[str, Any],
+    *,
+    telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+) -> Dict[str, Any]:
+    telemetry_cache = telemetry_cache if telemetry_cache is not None else {}
     runtime_ids = _pm12_persona_runtime_ids(row, telemetry_cache=telemetry_cache)
     records = [
         record
@@ -49688,9 +49795,18 @@ def _pm12_quarterly_ranking_items(
     rows: List[Dict[str, Any]],
     *,
     quarter_window: Dict[str, Any],
+    telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
 ) -> List[Dict[str, Any]]:
+    def ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
+        if telemetry_cache is None:
+            return _pm12_persona_league_ranking_item(row)
+        return _pm12_persona_league_ranking_item(
+            row,
+            telemetry_cache=telemetry_cache,
+        )
+
     ranked = sorted(
-        (_pm12_persona_league_ranking_item(row) for row in rows),
+        (ranking_item(row) for row in rows),
         key=lambda item: (
             _management_number(item.get("overall_score")) or 0.0,
             str(item.get("persona_id") or ""),
@@ -52529,8 +52645,13 @@ def _pm12_persona_league_ranking_item(
     row: Dict[str, Any],
     *,
     metrics: Optional[Dict[str, Any]] = None,
+    telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
-    metrics = metrics if isinstance(metrics, dict) else _pm12_persona_telemetry_metrics(row)
+    metrics = (
+        metrics
+        if isinstance(metrics, dict)
+        else _pm12_persona_telemetry_metrics(row, telemetry_cache=telemetry_cache)
+    )
     scores = _pm12_persona_league_scores(row, metrics)
     tier = _pm12_tier_for_score(scores["overall_score"])
     components = dict(scores)
@@ -54249,24 +54370,36 @@ def _ops_read_model_entry_for_persona(
     snapshot_at = utc_now()
     period_key = str(period or "").strip() or "latest"
 
-    fleet_payload = _persona_fleet_slim_list_payload(
-        snapshot_at=snapshot_at,
-        state=None,
-        health=None,
-        deployment_stage=None,
-        market_scope=None,
-        q=None,
-        page_token=None,
-        page_size=500,
+    # This endpoint describes one persona.  Building the full 500-row fleet
+    # just to recover its fallback identity/performance fields repeated all
+    # downstream fleet fan-out.  The canonical persona and league projections
+    # provide the same bounded fallback inputs without promoting them to
+    # formal attribution evidence.
+    league_entry = read_store.get_persona_league_entry(persona_id) or {}
+    persona_metadata = (
+        persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
     )
-    fleet_row = next(
-        (
-            item
-            for item in fleet_payload.get("data", {}).get("items", [])
-            if str(item.get("persona_id") or "") == persona_id
+    fallback_performance = (
+        league_entry.get("performance_summary")
+        if isinstance(league_entry.get("performance_summary"), dict)
+        else persona_metadata.get("performance")
+        if isinstance(persona_metadata.get("performance"), dict)
+        else {}
+    )
+    fleet_row = {
+        "state": (
+            league_entry.get("state")
+            or persona.get("lifecycle_state")
+            or persona.get("status")
         ),
-        None,
-    ) or {}
+        "performance_summary": fallback_performance,
+        "runtime_id": league_entry.get("runtime_id"),
+        "paper_ledger_id": league_entry.get("paper_ledger_id"),
+        "capital_pool_id": league_entry.get("capital_pool_id"),
+        "league_rank": league_entry.get("rank") or league_entry.get("league_rank"),
+        "league_score": league_entry.get("score") or league_entry.get("league_score"),
+        "perf_delta": league_entry.get("perf_delta"),
+    }
 
     attribution_sources = _pm12_performance_attribution_sources()
     persona_facts = [
@@ -54339,9 +54472,6 @@ def _ops_read_model_entry_for_persona(
         source_row_count=len(pool_ids_seen),
     ))
 
-    fallback_performance: Dict[str, Any] = (
-        fleet_row.get("performance_summary") if isinstance(fleet_row.get("performance_summary"), dict) else {}
-    ) or {}
     if fleet_row:
         sources.append(SourceStatus(
             source_name="persona_fleet_summary",
@@ -54397,7 +54527,6 @@ def _ops_read_model_entry_for_persona(
         drawdown = ops_read_model_sanitize_metric(fallback_performance.get("max_drawdown"))
         sharpe = ops_read_model_sanitize_metric(fallback_performance.get("sharpe"))
 
-    league_entry = read_store.get_persona_league_entry(persona_id) or {}
     rank_value = league_entry.get("rank") or league_entry.get("league_rank") or fleet_row.get("league_rank")
     score_value = ops_read_model_sanitize_metric(
         league_entry.get("score") or league_entry.get("league_score") or fleet_row.get("league_score")
@@ -66704,11 +66833,28 @@ def _persona_fleet_slim_list_payload(
     # quarterly endpoint uses this same read path; doing it first prevents a
     # later degraded persona-service read from silently restoring league rank.
     quarter_window = _pm12_quarter_window(None, snapshot_at)
+    telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    try:
+        for telemetry in read_store.list_telemetry_summaries() or []:
+            if not isinstance(telemetry, dict):
+                continue
+            runtime_id = _management_record_id(
+                telemetry,
+                "runtime_id",
+                "runtimeId",
+                "execution_runtime_id",
+                "id",
+            )
+            if runtime_id:
+                telemetry_cache[runtime_id] = telemetry
+    except Exception:
+        telemetry_cache = {}
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
         for item in _pm12_quarterly_ranking_items(
             _pm12_persona_league_rows(state=None, archetype=None, q=""),
             quarter_window=quarter_window,
+            telemetry_cache=telemetry_cache,
         )
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
@@ -66719,7 +66865,7 @@ def _persona_fleet_slim_list_payload(
     pools = read_store.list_capital_pools(include_market_persona_defaults=True)
     incidents = read_store.list_incidents()
     evolution_decisions = list(read_store.list_evolution_decisions() or [])
-    context_defaults = _persona_fleet_context_defaults_by_market()
+    context_defaults = _persona_fleet_context_defaults_by_market(personas)
 
     league_by_persona = {
         str(item.get("persona_id") or item.get("id") or ""): item
@@ -66857,12 +67003,13 @@ def _persona_fleet_slim_list_payload(
             capital_pool_ids=capital_pool_ids,
             runtime_ids=runtime_ids,
         )
-        telemetry_summaries = [
-            summary
-            for runtime_id in sorted(runtime_ids)
-            for summary in [read_store.get_telemetry_summary(runtime_id)]
-            if summary
-        ]
+        telemetry_summaries = []
+        for runtime_id in sorted(runtime_ids):
+            if runtime_id not in telemetry_cache:
+                telemetry_cache[runtime_id] = read_store.get_telemetry_summary(runtime_id)
+            summary = telemetry_cache.get(runtime_id)
+            if summary:
+                telemetry_summaries.append(summary)
         row = _project_persona_fleet_list_row(
             persona=persona,
             league_entry=league_entry,
@@ -69003,6 +69150,7 @@ app.include_router(
         require_read_role=_require_read_role,
         snapshot_meta=_snapshot_meta,
         utc_now=utc_now,
+        read_source_connector_registry=_read_management_source_connector_registry,
     )
 )
 
