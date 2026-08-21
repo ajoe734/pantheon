@@ -491,6 +491,7 @@ class RuntimeChain:
         pool_id = f"pool-l12-{label}-{self.suffix}"
         persona_id = f"persona-l12-{label}-{self.suffix}"
         binding_id = f"pcb-l12-{label}-{self.suffix}"
+        actor_id = f"{TASK_ID.lower()}-capital-admin"
         headers = {
             "X-Tenant-Id": TENANT_ID,
             "X-Pantheon-Service": "control-plane-bff",
@@ -501,7 +502,7 @@ class RuntimeChain:
             "POST",
             "/api/capital-pools",
             body={
-                "actor_id": f"{TASK_ID.lower()}-capital-admin",
+                "actor_id": actor_id,
                 "actor_role": "capital.admin",
                 "idempotency_key": f"{TASK_ID}:{pool_id}",
                 "request_hash": f"request-{pool_id}",
@@ -523,7 +524,7 @@ class RuntimeChain:
             "POST",
             "/api/bindings",
             body={
-                "actor_id": f"{TASK_ID.lower()}-persona-admin",
+                "actor_id": actor_id,
                 "actor_role": "persona.admin",
                 "idempotency_key": f"{TASK_ID}:{binding_id}",
                 "request_hash": f"request-{binding_id}",
@@ -546,7 +547,7 @@ class RuntimeChain:
             "POST",
             f"/api/bindings/{binding_id}/activate",
             body={
-                "actor_id": f"{TASK_ID.lower()}-persona-admin",
+                "actor_id": actor_id,
                 "actor_role": "persona.admin",
                 "approval_decision_id": f"capital-paper-{binding_id}",
             },
