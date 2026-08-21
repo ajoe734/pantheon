@@ -1495,6 +1495,59 @@ def evaluate_task_delivery_admission(
     )
 
 
+def idle_delivery_health_refresh_targets(
+    config: dict[str, Any],
+    state: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    """Return due probes for configured endpoints without task demand.
+
+    Admission demand is intentionally still preferred by the caller: it is the
+    closest proof needed to unblock a real queue intent.  It cannot, however,
+    be the only source of fresh delivery evidence.  A quiet fleet otherwise
+    leaves an expired auth or quota observation closed until an unrelated task
+    happens to target that lane.
+
+    This remains a pure projection over the runtime snapshot.  The slow probe
+    runs after delivery, and the resulting observation is committed only by
+    the existing reserved runtime-maintenance transaction.  Enumerating
+    ``delivery_lane_for_agent`` also means an orphaned physical-agent record
+    which is not a configured delivery endpoint never receives a probe.
+    """
+
+    health = runtime_delivery_health(state)
+    endpoint_health = _admission_health_records(health, "endpoints")
+    account_health = _admission_health_records(health, "accounts")
+    now = datetime.now(timezone.utc)
+    targets: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for logical_agent_id in dispatch_loop_agent_ids(config):
+        lane = delivery_lane_for_agent(config, logical_agent_id)
+        for endpoint in lane.endpoints:
+            endpoint_id = normalize_agent_id(endpoint.endpoint_id)
+            if (
+                not endpoint_id
+                or endpoint_id in seen
+                or not endpoint.enabled
+                or not endpoint.can_auto_deliver
+                or not endpoint.provider_id
+                or not endpoint.account_id
+            ):
+                continue
+            _reason, target = rewrite_dispatch_admission.health_gate_for_endpoint(
+                endpoint_id=endpoint_id,
+                account_id=endpoint.account_id,
+                endpoint_health=endpoint_health,
+                account_health=account_health,
+                now=now,
+            )
+            if target is None or target.scope is not rewrite_dispatch_admission.HealthScope.ENDPOINT:
+                continue
+            seen.add(endpoint_id)
+            targets.append({"scope": target.scope.value, "id": endpoint_id})
+    return targets
+
+
 def probe_demanded_delivery_health(
     config: dict[str, Any],
     demands: Iterable[Mapping[str, Any]],
@@ -12496,6 +12549,12 @@ def build_dispatch_plan(
     for target in unavailable_assignment_fallback_refresh_targets(
         config, scratch, status_snapshot
     ):
+        if target not in refresh_targets:
+            refresh_targets.append(target)
+    # A startup or otherwise idle supervisor still needs to repair due
+    # evidence.  Keep these targets after task/fallback demand so bounded
+    # probing spends the current cycle on an immediately blocked task first.
+    for target in idle_delivery_health_refresh_targets(config, scratch):
         if target not in refresh_targets:
             refresh_targets.append(target)
     dispatcher_state = scratch.get("ready_dispatcher")
