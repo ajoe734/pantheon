@@ -14,6 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Runtime validation must not create the bytecode it is about to inspect.
+# The supervisor also exports PYTHONDONTWRITEBYTECODE, but this executable is a
+# security boundary and must preserve the contract when invoked directly.
+sys.dont_write_bytecode = True
+
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
