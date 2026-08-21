@@ -453,7 +453,11 @@ class RuntimeChain:
         pool_id = f"pool-l12-{label}-{self.suffix}"
         persona_id = f"persona-l12-{label}-{self.suffix}"
         binding_id = f"pcb-l12-{label}-{self.suffix}"
-        headers = {"X-Tenant-Id": TENANT_ID, **self.settings.capital_headers}
+        headers = {
+            "X-Tenant-Id": TENANT_ID,
+            "X-Pantheon-Service": "control-plane-bff",
+            **self.settings.capital_headers,
+        }
         self.http.request(
             "capital",
             "POST",
