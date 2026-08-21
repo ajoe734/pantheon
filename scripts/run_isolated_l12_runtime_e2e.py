@@ -61,6 +61,7 @@ REQUIRED_COMPOSE_SERVICES = [
     "evolution",
     "operator-bff",
 ]
+DB_MIGRATION_SERVICE = "source-ingest-controller-migrate"
 
 DEFAULT_PORTS: dict[str, int] = {
     "POSTGRES_PORT": 15432,
@@ -299,6 +300,7 @@ def _augment_report(
     report_path: Path,
     *,
     main_retirement: Mapping[str, Any] | None,
+    database_migration: Mapping[str, Any] | None,
     preclean: Mapping[str, Any] | None,
     teardown: Mapping[str, Any] | None,
 ) -> None:
@@ -307,6 +309,7 @@ def _augment_report(
         raise RuntimeError("deployed suite report must be a JSON object")
     report["harness"] = {
         "main_negative_binding_retirement": dict(main_retirement or {}),
+        "database_migration": dict(database_migration or {}),
         "preclean": dict(preclean or {}),
         "teardown": dict(teardown or {}),
     }
@@ -486,6 +489,7 @@ def main() -> int:
     result_code = 0
     pytest_invoked = False
     main_retirement: dict[str, Any] | None = None
+    database_migration: dict[str, Any] | None = None
     preclean: dict[str, Any] | None = None
     teardown: dict[str, Any] | None = None
     try:
@@ -512,12 +516,43 @@ def main() -> int:
             )
             if not preclean["zero_project_containers"]:
                 raise RuntimeError(f"isolated project preclean failed: {preclean!r}")
+            migration_command = _compose_command(
+                args.compose_project,
+                compose_files,
+                "run",
+                "--rm",
+                "--build",
+                DB_MIGRATION_SERVICE,
+            )
+            print(
+                "[*] Applying canonical database migrations before service "
+                f"readiness: {' '.join(migration_command)}"
+            )
+            migration_process = subprocess.run(
+                migration_command,
+                env=compose_env,
+                check=False,
+            )
+            database_migration = {
+                "command": migration_command,
+                "returncode": migration_process.returncode,
+                "service": DB_MIGRATION_SERVICE,
+                "completed_successfully": migration_process.returncode == 0,
+            }
+            if migration_process.returncode != 0:
+                raise RuntimeError(
+                    "canonical database migration failed: "
+                    f"{database_migration!r}"
+                )
             command = _compose_command(
                 args.compose_project,
                 compose_files,
                 "up",
                 "-d",
                 "--build",
+                "--wait",
+                "--wait-timeout",
+                str(max(1, int(args.ready_timeout))),
                 *REQUIRED_COMPOSE_SERVICES,
             )
             print(
@@ -592,6 +627,7 @@ def main() -> int:
                 _augment_report(
                     args.evidence_output,
                     main_retirement=main_retirement,
+                    database_migration=database_migration,
                     preclean=preclean,
                     teardown=teardown,
                 )
