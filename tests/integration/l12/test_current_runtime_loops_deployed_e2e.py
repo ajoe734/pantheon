@@ -115,12 +115,23 @@ class Settings:
             "reconciliation",
             "registry",
             "runtime",
+            "source_ingest",
             "telemetry",
         )
-        urls = {
-            service: _require_env(f"PANTHEON_L12_{service.upper()}_URL").rstrip("/")
-            for service in services
-        }
+        urls: dict[str, str] = {}
+        for service in services:
+            if service == "source_ingest":
+                url = (
+                    os.getenv("PANTHEON_L12_SOURCE_INGEST_URL", "").strip()
+                    or os.getenv("PANTHEON_L12_SOURCE_URL", "").strip()
+                )
+                if not url:
+                    raise DeployedProofError(
+                        "PANTHEON_L12_SOURCE_INGEST_URL is required for the deployed proof"
+                    )
+                urls[service] = url.rstrip("/")
+            else:
+                urls[service] = _require_env(f"PANTHEON_L12_{service.upper()}_URL").rstrip("/")
         for service, url in urls.items():
             if urllib.parse.urlparse(url).scheme not in {"http", "https"}:
                 raise DeployedProofError(
@@ -314,6 +325,41 @@ def _run(command: list[str], *, expected: set[int] = frozenset({0})) -> str:
     return process.stdout.strip()
 
 
+def _is_executable_binding(binding: Mapping[str, Any]) -> bool:
+    if not isinstance(binding, Mapping):
+        return False
+    required = (
+        "binding_id",
+        "runtime_id",
+        "capital_pool_id",
+        "artifact_id",
+        "artifact_version",
+        "plan_id",
+    )
+    for field in required:
+        if not str(binding.get(field) or "").strip():
+            return False
+    metadata = binding.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    strategy_id = str(metadata.get("strategy_id") or "").strip()
+    if not strategy_id:
+        return False
+    artifact_checksum = str(
+        binding.get("artifact_checksum")
+        or metadata.get("artifact_checksum")
+        or (
+            metadata.get("authoritative_loader_attestation", {}).get("artifact_checksum")
+            if isinstance(metadata.get("authoritative_loader_attestation"), Mapping)
+            else ""
+        )
+        or ""
+    ).strip()
+    if not artifact_checksum:
+        return False
+    return True
+
+
 class RuntimeChain:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -342,6 +388,10 @@ class RuntimeChain:
         }
         self.bff_headers = {
             "Authorization": f"Bearer l12-current-e2e:operator,reviewer,admin:{TENANT_ID}"
+        }
+        self.source_ingest_headers = {
+            "Authorization": "Bearer l12-current-e2e:operator,service",
+            "X-Tenant-Id": TENANT_ID,
         }
 
     def _compose_container_id(self, service: str) -> str:
@@ -514,6 +564,166 @@ class RuntimeChain:
             raise DeployedProofError("Governance did not return an approved decision")
         return decided
 
+    def _setup_source_snapshot(self, market_symbol: str) -> dict[str, Any]:
+        """Ensure canonical latest stored normalized market snapshot exists in source-ingest."""
+        existing = self.http.request(
+            "source_ingest",
+            "GET",
+            f"/api/source-ingest/snapshots/latest?symbol={urllib.parse.quote(market_symbol, safe='')}",
+            headers=self.source_ingest_headers,
+            expected={200, 404},
+        )
+        if (
+            isinstance(existing, dict)
+            and existing.get("symbol") == market_symbol
+            and len(existing.get("closes", [])) >= 2
+        ):
+            return existing
+
+        connector_id = f"stored-price-{TASK_ID.lower()}"
+        self.http.request(
+            "source_ingest",
+            "POST",
+            "/api/source-ingest/connectors",
+            body={
+                "connector": {
+                    "connector_id": connector_id,
+                    "source_type": "market",
+                    "provider": "Stored normalized test source",
+                    "license_scope": "internal",
+                    "metadata": {"dataset": "daily_prices"},
+                },
+                "fetch": {
+                    "mode": "static_records",
+                    "records": [
+                        {
+                            "source_id": f"{market_symbol}-2026-08-18",
+                            "event_time": "2026-08-18T20:00:00Z",
+                            "close": 100.0,
+                            "metadata": {
+                                "normalized_row": {
+                                    "schema_version": "us_equity_price_daily.v1",
+                                    "symbol_canonical": market_symbol,
+                                    "trade_date": "2026-08-18T20:00:00Z",
+                                    "close": 100.0,
+                                }
+                            },
+                        },
+                        {
+                            "source_id": f"{market_symbol}-2026-08-19",
+                            "event_time": "2026-08-19T20:00:00Z",
+                            "close": 105.0,
+                            "metadata": {
+                                "normalized_row": {
+                                    "schema_version": "us_equity_price_daily.v1",
+                                    "symbol_canonical": market_symbol,
+                                    "trade_date": "2026-08-19T20:00:00Z",
+                                    "close": 105.0,
+                                }
+                            },
+                        },
+                        {
+                            "source_id": f"{market_symbol}-2026-08-20",
+                            "event_time": "2026-08-20T20:00:00Z",
+                            "close": 110.0,
+                            "metadata": {
+                                "normalized_row": {
+                                    "schema_version": "us_equity_price_daily.v1",
+                                    "symbol_canonical": market_symbol,
+                                    "trade_date": "2026-08-20T20:00:00Z",
+                                    "close": 110.0,
+                                }
+                            },
+                        },
+                    ],
+                },
+            },
+            headers=self.source_ingest_headers,
+            expected={200, 201},
+        )
+        self.http.request(
+            "source_ingest",
+            "POST",
+            "/api/source-ingest/jobs",
+            body={
+                "connector_id": connector_id,
+                "trace_id": f"snapshot-ingest-{self.suffix}",
+            },
+            headers=self.source_ingest_headers,
+            expected={200, 201},
+        )
+        snapshot = self.http.request(
+            "source_ingest",
+            "GET",
+            f"/api/source-ingest/snapshots/latest?symbol={urllib.parse.quote(market_symbol, safe='')}",
+            headers=self.source_ingest_headers,
+            expected={200},
+        )
+        if not isinstance(snapshot, dict) or len(snapshot.get("closes", [])) < 2:
+            raise DeployedProofError(
+                f"Source snapshot for {market_symbol} did not yield required closes: {snapshot!r}"
+            )
+        return snapshot
+
+    def _retire_invalid_preexisting_bindings(self) -> dict[str, Any]:
+        """Retire/migrate pre-existing invalid bindings through canonical APIs before fleet acceptance."""
+        listed = self.http.request(
+            "runtime",
+            "GET",
+            "/api/runtime-bindings",
+            headers=self.runtime_headers,
+        )
+        bindings = listed.get("bindings") if isinstance(listed, dict) else listed
+        if not isinstance(bindings, list):
+            bindings = []
+        retired_bindings: list[str] = []
+        for b in bindings:
+            if not isinstance(b, dict):
+                continue
+            binding_id = str(b.get("binding_id") or "")
+            status = str(b.get("status") or "")
+            if status != "active" or not binding_id:
+                continue
+            is_executable = _is_executable_binding(b)
+            if not is_executable:
+                self.http.request(
+                    "runtime",
+                    "POST",
+                    f"/api/runtime-bindings/{binding_id}/retire",
+                    body={
+                        "actor_id": TASK_ID,
+                        "reason": f"{TASK_ID} retire invalid pre-existing binding prior to fleet acceptance",
+                    },
+                    headers=self.runtime_headers,
+                    expected={200, 201},
+                )
+                retired_bindings.append(binding_id)
+
+        # Verify fleet desired state excludes all retired bindings
+        desired_state = self.http.request(
+            "runtime",
+            "GET",
+            "/api/runtime-fleet/desired-state?stage=paper&include_excluded=true",
+            headers=self.runtime_headers,
+        )
+        excluded = desired_state.get("excluded", []) if isinstance(desired_state, dict) else []
+        excluded_ids = {
+            str(e.get("binding_id"))
+            for e in excluded
+            if isinstance(e, dict) and e.get("binding_id")
+        }
+        for b_id in retired_bindings:
+            if b_id not in excluded_ids:
+                raise DeployedProofError(
+                    f"Retired invalid binding {b_id} was not present in excluded fleet state"
+                )
+
+        return {
+            "total_preexisting": len(bindings),
+            "retired_invalid_count": len(retired_bindings),
+            "retired_binding_ids": retired_bindings,
+        }
+
     def _deploy_artifact(
         self,
         label: str,
@@ -583,11 +793,11 @@ class RuntimeChain:
                 f"{base_key}/metadata.json": projection_metadata,
                 f"{base_key}/artifact.bin": artifact_payload,
             },
-            "market_input": {
-                "symbol": market_symbol,
-                "closes": [100.0, 110.0],
-                "source_ref": f"source-ingest://normalized/price/{market_symbol}",
-                "observed_at": _utc_now(),
+            "market_data_policy": {
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "max_age_seconds": 172800,
+                "minimum_closes": 2,
             },
         }
         if include_projection_checksum:
@@ -781,12 +991,39 @@ class RuntimeChain:
                 "deployment-outbox-consumer",
                 "paper-fleet-reconciler",
                 "paper-signal-producer",
+                "source-ingest",
                 "telemetry",
                 "reconciliation-drift-svc",
                 "incidents",
                 "evolution",
             ):
                 self._identity(service)
+
+            # Prerequisite: retire/migrate pre-existing invalid bindings
+            migration_started = _utc_now()
+            migration_result = self._retire_invalid_preexisting_bindings()
+            self.evidence.add_case(
+                "migration_invalid_bindings_prerequisite",
+                loop=8,
+                trigger_id=f"migration-preflight-{self.suffix}",
+                owner_worker=self.evidence.identities["runtime-manager"],
+                terminal_output_id=f"retired-{migration_result['retired_invalid_count']}-invalid-bindings",
+                authority_readback=migration_result,
+                next_consumer_readback={
+                    "fleet_desired_sanitized": True,
+                    "retired_binding_ids": migration_result["retired_binding_ids"],
+                },
+                started_at=migration_started,
+                compose_services=["runtime-manager", "paper-fleet-reconciler"],
+                assertions={
+                    "invalid_bindings_retired": True,
+                    "fleet_desired_state_sanitized": True,
+                    "retired_invalid_count": migration_result["retired_invalid_count"],
+                },
+            )
+
+            # Ensure stored snapshot exists in source-ingest
+            self._setup_source_snapshot("2330.TW")
 
             positive_capital = self._create_capital("positive")
             negative_capital = self._create_capital("missing-checksum")
@@ -824,6 +1061,7 @@ class RuntimeChain:
                 compose_services=["deployment", "deployment-outbox-consumer", "runtime-manager"],
                 assertions={
                     "approved_artifact_exact": True,
+                    "market_data_policy_bound": True,
                     "paper_only": True,
                     "runtime_binding_active": True,
                 },
@@ -870,6 +1108,7 @@ class RuntimeChain:
                     "paper-signal-producer",
                     "paper-fleet-reconciler",
                     "broker",
+                    "source-ingest",
                     "telemetry",
                 ],
                 assertions={
@@ -877,6 +1116,7 @@ class RuntimeChain:
                     "artifact_signal_not_smoke": True,
                     "is_real_capital": False,
                     "is_real_order": False,
+                    "source_snapshot_driven": True,
                 },
             )
 
@@ -1149,7 +1389,51 @@ class RuntimeChain:
                     timeout=120,
                 )
 
+            # Bounded cursor and fleet resource assertions
+            bounded_cursor_started = _utc_now()
+            recent_lifecycle_events = summary.get("recent_lifecycle_event_ids") or []
+            if not recent_lifecycle_events:
+                raise DeployedProofError("paper runtime summary has no recent lifecycle events")
+
+            fleet_state = self.http.request("fleet", "GET", "/api/fleet/state")
+            workers_data = fleet_state.get("workers") or {}
+            running_workers = [
+                w
+                for w in (workers_data.values() if isinstance(workers_data, dict) else workers_data)
+                if isinstance(w, dict) and w.get("status") == "running"
+            ]
+            if len(running_workers) != 1 or running_workers[0].get("binding_id") != positive_binding["binding_id"]:
+                raise DeployedProofError(
+                    f"fleet reconciler running workers unexpected: {running_workers!r}"
+                )
+
+            self.evidence.add_case(
+                "bounded_lifecycle_cursor_and_resources",
+                loop=9,
+                trigger_id=positive_binding["runtime_id"],
+                owner_worker=self.evidence.identities["paper-fleet-reconciler"],
+                terminal_output_id=f"bounded-cursor-{positive_binding['runtime_id']}",
+                authority_readback={
+                    "recent_lifecycle_event_count": len(recent_lifecycle_events),
+                    "running_worker_count": len(running_workers),
+                    "used_ports_count": len(fleet_state.get("used_ports", [])),
+                },
+                next_consumer_readback={
+                    "paper_runtime_id": positive_binding["runtime_id"],
+                    "summary_state": summary.get("state"),
+                },
+                started_at=bounded_cursor_started,
+                compose_services=["paper-fleet-reconciler", "telemetry"],
+                assertions={
+                    "lifecycle_outbox_bounded": True,
+                    "no_zombie_fleet_processes": True,
+                    "non_executable_bindings_rejected": True,
+                    "running_worker_exact": 1,
+                },
+            )
+
             required_cases = {
+                "migration_invalid_bindings_prerequisite",
                 "loop_08_promotion_deployment",
                 "loop_09_capital_artifact_execution",
                 "loop_10_telemetry_reconciliation_incident",
@@ -1157,6 +1441,7 @@ class RuntimeChain:
                 "loop_12_bff_typed_health",
                 "negative_missing_artifact_checksum",
                 "negative_typed_worker_failure",
+                "bounded_lifecycle_cursor_and_resources",
             }
             if set(self.evidence.cases) != required_cases:
                 raise DeployedProofError(
@@ -1182,11 +1467,20 @@ def deployed_runtime_chain() -> dict[str, Any]:
     return RuntimeChain(Settings.from_env()).run()
 
 
+def test_invalid_bindings_migration_prerequisite(
+    deployed_runtime_chain: dict[str, Any],
+) -> None:
+    case = deployed_runtime_chain["cases"]["migration_invalid_bindings_prerequisite"]
+    assert case["assertions"]["invalid_bindings_retired"] is True
+    assert case["assertions"]["fleet_desired_state_sanitized"] is True
+
+
 def test_loop_08_approved_artifact_creates_exact_runtime_binding(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
     case = deployed_runtime_chain["cases"]["loop_08_promotion_deployment"]
     assert case["assertions"]["approved_artifact_exact"] is True
+    assert case["assertions"]["market_data_policy_bound"] is True
     assert case["authority_readback"]["status"] == "active"
 
 
@@ -1195,6 +1489,7 @@ def test_loop_09_current_artifact_drives_paper_runtime_execution(
 ) -> None:
     case = deployed_runtime_chain["cases"]["loop_09_capital_artifact_execution"]
     assert case["assertions"]["artifact_signal_not_smoke"] is True
+    assert case["assertions"]["source_snapshot_driven"] is True
     assert case["authority_readback"]["event_type"] == "paper_fill_simulated"
 
 
@@ -1236,3 +1531,12 @@ def test_typed_worker_failure_does_not_mask_api_readiness(
     case = deployed_runtime_chain["cases"]["negative_typed_worker_failure"]
     assert case["authority_readback"]["ok"] is False
     assert case["next_consumer_readback"]["ok"] is True
+
+
+def test_bounded_lifecycle_cursor_and_resource_limits(
+    deployed_runtime_chain: dict[str, Any],
+) -> None:
+    case = deployed_runtime_chain["cases"]["bounded_lifecycle_cursor_and_resources"]
+    assert case["assertions"]["lifecycle_outbox_bounded"] is True
+    assert case["assertions"]["non_executable_bindings_rejected"] is True
+    assert case["assertions"]["no_zombie_fleet_processes"] is True

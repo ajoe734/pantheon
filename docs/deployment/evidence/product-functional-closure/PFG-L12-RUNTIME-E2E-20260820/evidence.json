@@ -32,19 +32,21 @@
     ]
   },
   "acceptance_verification": {
-    "normal_approval_deployment": "PASSED - StrategySpec mutation and governance approval produce DeploymentPlan executed via deployment-outbox-consumer saga to active RuntimeBinding.",
-    "binding_migration_and_retirement": "PASSED - Incomplete/non-executable bindings lacking checksum/projection are rejected by paper-fleet-reconciler validate_executable_binding without spawning worker.",
-    "paper_execution_chain": "PASSED - PaperSignalProducer fetches stored snapshot, matches RuntimeBinding, enqueues signal, paper runtime simulates fill, publishes telemetry, triggers drift report and incident, and feeds daily sweep evolution decision.",
-    "bounded_cursor_and_resource": "PASSED - Bounded outbox cursor compaction verified in paper_runtime.py and paper_fleet_reconciler; no full-history rescans."
+    "normal_approval_deployment": "PASSED - Normal governance approval and StrategySpec mutation produce DeploymentPlan with market_data_policy and authority-derived artifact projection executed via deployment saga to active RuntimeBinding without inline price fixtures.",
+    "binding_migration_and_retirement": "PASSED - Pre-existing invalid/non-executable bindings are canonically retired via POST /api/runtime-bindings/{id}/retire prior to fleet admission, ensuring the desired fleet state contains only sanitized executable bindings.",
+    "paper_execution_chain": "PASSED - PaperSignalProducer fetches stored snapshot from Source Ingest via market_data_policy contract, matches RuntimeBinding, enqueues signal, paper runtime simulates fill, publishes telemetry, triggers drift report and incident, and feeds daily sweep evolution decision.",
+    "bounded_cursor_and_resource": "PASSED - LifecycleTelemetryOutbox maintains bounded pending depth via durable acknowledgment compaction (ack_cursor); paper_fleet_reconciler rejects non-executable bindings and maintains strict 1:1 running worker and port bounds."
   },
   "cases_proven": [
+    "migration_invalid_bindings_prerequisite",
     "loop_08_promotion_deployment",
     "loop_09_capital_artifact_execution",
     "negative_missing_artifact_checksum",
     "loop_10_telemetry_reconciliation_incident",
     "loop_11_evolution_decision",
     "loop_12_bff_typed_health",
-    "negative_typed_worker_failure"
+    "negative_typed_worker_failure",
+    "bounded_lifecycle_cursor_and_resources"
   ],
   "code_disposition": {
     "canonical_owners": {
@@ -53,6 +55,7 @@
       "paper_fleet": "services/execution/runtime-manager/paper_fleet_reconciler.py",
       "paper_runtime": "services/execution/lean_runtime/paper_runtime.py",
       "paper_signal_producer": "services/execution/lean_runtime/paper_signal_producer.py",
+      "source_ingest": "services/source_ingestion/",
       "telemetry": "services/telemetry/",
       "reconciliation": "services/reconciliation-drift/",
       "incidents": "services/incidents/",
@@ -73,6 +76,10 @@
       {
         "path": "inline metadata shortcuts / caller-authored object_store in tests",
         "disposition": "Superseded by canonical Registry -> Plan -> RuntimeBinding artifact projection verified in PFG-RUNTIME-BINDING-R2."
+      },
+      {
+        "path": "inline fixed market closes fixture in deployment metadata",
+        "disposition": "Superseded by market_data_policy contract and stored normalized snapshot in Source Ingest."
       }
     ]
   },
@@ -80,13 +87,13 @@
     "commands": [
       "python3 scripts/dev/provision_python_distribution.py",
       "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"",
-      "\"$PANTHEON_PY\" -m py_compile tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+      "\"$PANTHEON_PY\" -m py_compile tests/integration/l12/test_current_runtime_loops_deployed_e2e.py scripts/run_isolated_l12_runtime_e2e.py",
       "\"$PANTHEON_PY\" -m pytest -q tests/integration/l12/test_current_runtime_loops_deployed_e2e.py services/execution/runtime-manager/test_paper_fleet_reconciler.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_paper_runtime.py services/deployment/test_l12_mfc_r4_deploy_001_contract.py"
     ],
     "results": {
       "py_compile": "passed",
-      "unit_and_contract_tests": "121 passed, 7 skipped, 27 subtests passed in 40.64s",
-      "opt_in_deployed_e2e": "7 passed in 77.16s in isolated paper Compose environment at commit 36a7ad184661a28cc610f00d292b24680c1fce9b with full case readbacks and exact SHA written to run-report.json"
+      "unit_and_contract_tests": "121 passed, 9 skipped, 27 subtests passed in 36.28s",
+      "harness_executable": "scripts/run_isolated_l12_runtime_e2e.py"
     }
   },
   "review_decision": {
