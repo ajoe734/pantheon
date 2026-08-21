@@ -165,7 +165,8 @@ class _RecordingRelationalStore:
         self.receipts: dict[str, object] = {}
         self.stage_events: dict[tuple[str, str, str], list[dict]] = {}
         self.mutations: list[object] = []
-        self.load_calls: list[tuple[str, str, str]] = []
+        self.receipt_batch_calls: list[tuple[str, ...]] = []
+        self.hydration_batch_calls: list[tuple[tuple[str, str, str], ...]] = []
 
     def get_controller_state(self, *_args):
         return self.controller
@@ -173,10 +174,26 @@ class _RecordingRelationalStore:
     def get_receipt(self, event_id: str):
         return self.receipts.get(event_id)
 
+    def get_receipts(self, event_ids):
+        event_ids = tuple(event_ids)
+        self.receipt_batch_calls.append(event_ids)
+        return {
+            event_id: self.receipts[event_id]
+            for event_id in event_ids
+            if event_id in self.receipts
+        }
+
     def load_journey_stage_events(self, tenant_id: str, environment: str, journey_id: str):
         key = (tenant_id, environment, journey_id)
-        self.load_calls.append(key)
         return [dict(event) for event in self.stage_events.get(key, [])]
+
+    def load_journey_stage_events_bulk(self, keys):
+        keys = tuple(keys)
+        self.hydration_batch_calls.append(keys)
+        return {
+            key: [dict(event) for event in self.stage_events.get(key, [])]
+            for key in keys
+        }
 
     def execute_batch_transaction(self, controller_id, tenant_scope, environment_scope, mutation):
         self.mutations.append(mutation)
@@ -241,9 +258,14 @@ def test_relational_projector_writes_one_bounded_transaction_without_json_state(
     second = restarted.project_records(rows[2:3], mode="live", source_high_watermark=3)
     assert second.checkpoint == 3
     assert second.accepted == 1
-    assert store.load_calls == [
-        (IDENTITY["tenant_id"], IDENTITY["environment"], "tj-paper-001"),
-        (IDENTITY["tenant_id"], IDENTITY["environment"], "tj-paper-001"),
+    aggregate_key = (IDENTITY["tenant_id"], IDENTITY["environment"], "tj-paper-001")
+    assert store.receipt_batch_calls == [
+        tuple(row["event_id"] for row in rows[:2]),
+        (rows[2]["event_id"],),
+    ]
+    assert store.hydration_batch_calls == [
+        (aggregate_key,),
+        (aggregate_key,),
     ]
     assert restarted._materializer.stats == {
         "entries_derived": 1,
@@ -254,9 +276,32 @@ def test_relational_projector_writes_one_bounded_transaction_without_json_state(
     duplicate = restarted.project_records(rows[:1], mode="live", source_high_watermark=3)
     assert duplicate.accepted == 0
     assert duplicate.duplicates == 1
+    assert store.receipt_batch_calls[-1] == (rows[0]["event_id"],)
     assert not store.mutations[-1].receipts
     assert not store.mutations[-1].journeys
     assert not store.mutations[-1].stages
+
+
+def test_relational_projector_prefetches_and_hydrates_many_aggregates_once():
+    """A batch may touch many journeys without multiplying DB round trips."""
+
+    from services.trade_journey.lifecycle_projector_capacity import (
+        _journey_event_types,
+        journey_rows,
+    )
+
+    first = journey_rows(1, event_types=_journey_event_types(2), starting_seq=1)
+    second = journey_rows(2, event_types=_journey_event_types(2), starting_seq=3)
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, deployment_sha="relational-test")
+
+    result = projector.project_records(first + second, mode="live", source_high_watermark=4)
+
+    assert result.accepted == 4
+    assert len(store.receipt_batch_calls) == 1
+    assert len(store.receipt_batch_calls[0]) == 4
+    assert len(store.hydration_batch_calls) == 1
+    assert len(store.hydration_batch_calls[0]) == 2
 
 
 def test_relational_projector_commits_ignored_and_quarantined_receipts_atomically():

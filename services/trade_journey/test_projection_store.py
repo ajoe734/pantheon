@@ -163,6 +163,15 @@ def test_projection_store_atomic_batch_transaction(postgres_dsn: str) -> None:
     assert receipt is not None
     assert receipt.disposition == "applied"
     assert receipt.journey_id == "j-1"
+    receipts = store.get_receipts(["missing", "evt-1", "evt-1"])
+    assert set(receipts) == {"evt-1"}
+    assert receipts["evt-1"].fingerprint == "fp-1"
+
+    aggregate_events = store.load_journey_stage_events_bulk(
+        [("tenant-a", "paper", "j-1"), ("tenant-a", "paper", "missing")]
+    )
+    assert len(aggregate_events[("tenant-a", "paper", "j-1")]) == 1
+    assert aggregate_events[("tenant-a", "paper", "missing")] == []
 
     resolved_journey = store.resolve_identity("tenant-a", "paper", "signal_id", "t-100")
     assert resolved_journey == "j-1"
@@ -943,8 +952,8 @@ def test_projection_store_overlapping_controllers_commit_shared_event_once(
             )
             query_text = query if isinstance(query, str) else query.as_string(self)
             if (
-                "SELECT fingerprint FROM" in query_text
-                and ".event_receipts WHERE event_id=%s" in query_text
+                "SELECT event_id, fingerprint FROM" in query_text
+                and ".event_receipts WHERE event_id = ANY(%s)" in query_text
             ):
                 thread_id = threading.get_ident()
                 with barrier_threads_lock:
