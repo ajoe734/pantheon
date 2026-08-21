@@ -2080,6 +2080,118 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
         self.assertEqual(observations[0]["endpoint_id"], "codex")
         probe.assert_called_once_with(self.config, "codex", force=True)
 
+    def test_authorized_refresh_bypasses_future_retry_at_on_startup(self) -> None:
+        """A stale account whose retry_at has not elapsed still blocks the
+        due-only scan; the authorized scan targets it anyway on a fresh
+        (startup) supervisor state, while skipping the already-healthy
+        codex2 lane so it never spends an unneeded probe."""
+
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+
+        self.assertEqual(
+            supervisor.idle_delivery_health_refresh_targets(self.config, state), []
+        )
+        self.assertEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state),
+            [{"scope": "endpoint", "id": "codex"}],
+        )
+
+    def test_authorized_refresh_consumed_once_per_topology(self) -> None:
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+
+        self.assertNotEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state), []
+        )
+        self.assertTrue(
+            supervisor.record_delivery_health_refresh_authority_consumed(self.config, state)
+        )
+        # Same topology, next cycle: the bypass must not fire again.
+        self.assertEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state), []
+        )
+        self.assertFalse(
+            supervisor.record_delivery_health_refresh_authority_consumed(self.config, state)
+        )
+
+        # A real topology change (new delivery endpoint) authorizes the
+        # bypass again exactly once.
+        self.config["agents"]["codex3"] = dict(self.config["agents"]["codex2"])
+        self.config["providers"]["codex3"] = dict(self.config["providers"]["codex2"])
+        self.assertNotEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state), []
+        )
+
+    def test_human_ops_request_bypasses_future_retry_at_without_topology_change(self) -> None:
+        state = {
+            "workers": {},
+            "queue": {"events": {}},
+            "delivery_health": {
+                "version": 1,
+                "endpoints": {
+                    "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    "codex2": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+                "accounts": {
+                    "codex_account": {
+                        "state": "retry_after",
+                        "reason_kind": "quota_terminal",
+                        "retry_at": "2999-01-01T00:00:00Z",
+                    },
+                    "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                },
+            },
+        }
+        supervisor.record_delivery_health_refresh_authority_consumed(self.config, state)
+        self.assertEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state), []
+        )
+
+        self.assertTrue(supervisor.request_delivery_health_refresh(state))
+        self.assertEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state),
+            [{"scope": "endpoint", "id": "codex"}],
+        )
+        supervisor.record_delivery_health_refresh_authority_consumed(self.config, state)
+        self.assertEqual(
+            supervisor.authorized_delivery_health_refresh_targets(self.config, state), []
+        )
+
     def test_failed_idle_probe_keeps_endpoint_unavailable(self) -> None:
         state = {"workers": {}, "queue": {"events": {}}, "delivery_health": {}}
         observations = [
