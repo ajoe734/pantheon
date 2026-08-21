@@ -652,8 +652,8 @@ class RuntimeChain:
                     "records": [
                         {
                             "source_id": f"{market_symbol}-2026-08-18",
-                            "event_time": "2026-08-18T20:00:00Z",
-                            "close": 100.0,
+                            "title": f"{market_symbol} close 2026-08-18",
+                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-18",
                             "metadata": {
                                 "normalized_row": {
                                     "schema_version": "us_equity_price_daily.v1",
@@ -665,8 +665,8 @@ class RuntimeChain:
                         },
                         {
                             "source_id": f"{market_symbol}-2026-08-19",
-                            "event_time": "2026-08-19T20:00:00Z",
-                            "close": 105.0,
+                            "title": f"{market_symbol} close 2026-08-19",
+                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-19",
                             "metadata": {
                                 "normalized_row": {
                                     "schema_version": "us_equity_price_daily.v1",
@@ -678,8 +678,8 @@ class RuntimeChain:
                         },
                         {
                             "source_id": f"{market_symbol}-2026-08-20",
-                            "event_time": "2026-08-20T20:00:00Z",
-                            "close": 110.0,
+                            "title": f"{market_symbol} close 2026-08-20",
+                            "content_ref": f"market://daily_prices/{market_symbol}/2026-08-20",
                             "metadata": {
                                 "normalized_row": {
                                     "schema_version": "us_equity_price_daily.v1",
