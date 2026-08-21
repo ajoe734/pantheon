@@ -77,6 +77,56 @@ It generates its own capacity-only schema unless
 `lifecycle_capacity_*` name. The job cannot point at the default projection
 schema.
 
+## Managed full-capacity dispatch
+
+The acceptance run must not be a child of an auto-worker session. Submit the
+exact 1M-event / 150k-loop / +100k catch-up gate through the task-owned user
+systemd launcher instead:
+
+```bash
+PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
+LIFECYCLE_PROJECTOR_PROJECTION_DSN='postgresql://pantheon_app:pantheon_app@127.0.0.1:15432/pantheon' \
+  "$PANTHEON_PY" -m services.trade_journey.lifecycle_projector_capacity \
+  launch-managed --repository-root "$PWD"
+```
+
+It refuses relaxed cardinality, batch, fault, catch-up, or read-repeat values.
+Before submitting it also fails closed when the user systemd manager or Docker
+admission probe is unavailable, or when an E2E/task container or network is
+present. The normal product stack is allowed. The launcher creates a fresh,
+detached worktree at the exact current commit, proves that worktree is clean,
+and records a run-specific `lifecycle_capacity_*` schema before starting the
+service. Therefore an untracked generated task brief or an auto-worker token
+expiry cannot change the measured source tree.
+
+The command prints the run id, user-systemd unit, and task-artifact paths. By
+default these are under
+`docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/managed-runs/<run-id>/`:
+
+- `run.json` — durable status, exact commit, clean-tree hash, schema, unit,
+  requested gate, and redacted path metadata;
+- `run.log` — service stdout/stderr;
+- `evidence.json` and `evidence.json.sha256` — the raw redacted proof; and
+- `collection.json` — post-run checksum and gate collection.
+
+The DSN is only written to `service.env` with mode `0600`; it is not embedded
+in the manifest, log command, or evidence. On every service stop, including a
+terminated benchmark process, systemd runs `managed-cleanup`: it attempts the
+recorded schema teardown again, removes the detached source worktree, and only
+releases the host admission lock after both operations succeed. A failed
+cleanup leaves that lock in place and is a fail-stopped investigation, not a
+license to launch another proof.
+
+Later workers should only inspect and collect the submitted proof (substitute
+the printed state directory); they must not launch a duplicate run:
+
+```bash
+"$PANTHEON_PY" -m services.trade_journey.lifecycle_projector_capacity \
+  managed-status --state-dir /absolute/path/to/managed-runs/<run-id>
+"$PANTHEON_PY" -m services.trade_journey.lifecycle_projector_capacity \
+  managed-collect --state-dir /absolute/path/to/managed-runs/<run-id>
+```
+
 ## Evidence contract
 
 The generated `evidence.json` is the raw, redacted evidence manifest. It must

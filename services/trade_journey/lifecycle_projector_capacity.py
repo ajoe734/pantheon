@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import hashlib
 import importlib.util
 import json
@@ -28,6 +29,7 @@ import signal
 import statistics
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Any, Callable, Iterator, Mapping, Sequence
@@ -76,6 +78,24 @@ CATCH_UP_100K_LIMIT_SECONDS = 30 * 60.0
 BFF_QUERY_P95_LIMIT_SECONDS = 5.0
 CAPACITY_SCHEMA_PREFIX = "lifecycle_capacity_"
 CAPACITY_CORPUS_SEED = "lifecycle-capacity-v1"
+TASK_ID = "LIFECYCLE-PROJ-CAPACITY-001"
+
+# A full proof is deliberately dispatched through ``launch-managed`` instead
+# of leaving its child process attached to an auto-worker session.  Keep these
+# values in one place: a managed dispatch may not silently turn into a smaller
+# smoke run and subsequently be mistaken for the capacity acceptance run.
+MANAGED_RUN_EVENTS = DEFAULT_EVENT_COUNT
+MANAGED_RUN_LOOP_RUNS = DEFAULT_LOOP_RUN_COUNT
+MANAGED_RUN_CATCH_UP_EVENTS = 100_000
+MANAGED_RUN_READ_REPEATS = 10
+MANAGED_RUN_FAULT_JOURNEY_COUNT = 4
+MANAGED_RUNS_RELATIVE_ROOT = Path(
+    "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/managed-runs"
+)
+MANAGED_WORKTREE_ROOT = Path(tempfile.gettempdir()) / "pantheon-lifecycle-capacity-worktrees"
+MANAGED_ADMISSION_LOCK = Path(tempfile.gettempdir()) / "pantheon-lifecycle-capacity.lock"
+MANAGED_UNIT_PREFIX = "lifecycle-capacity-"
+_QUIET_HOST_FORBIDDEN_PATTERN = ("e2e", "task-")
 
 
 def _deterministic_uuid(namespace: str, index: int) -> str:
@@ -1097,6 +1117,599 @@ def _write_report(path: Path, payload: Mapping[str, Any]) -> str:
     return checksum
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _write_json_atomically(path: Path, payload: Mapping[str, Any]) -> None:
+    """Write task evidence without leaving a partially-written status file."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"managed capacity state must be a JSON object: {path}")
+    return payload
+
+
+def _update_managed_manifest(path: Path, **updates: Any) -> dict[str, Any]:
+    manifest = _read_json_object(path)
+    manifest.update(updates)
+    _write_json_atomically(path, manifest)
+    return manifest
+
+
+def _safe_environment_value(value: str, *, name: str) -> str:
+    if "\x00" in value or "\n" in value or "\r" in value:
+        raise ValueError(f"{name} must not contain a line break or NUL")
+    return value
+
+
+def _write_private_environment(path: Path, values: Mapping[str, str]) -> None:
+    """Persist the DSN only in a mode-0600 file consumed by systemd.
+
+    The durable JSON manifest and all console output intentionally omit this
+    file's contents; benchmark evidence is redacted, while the transient
+    service still needs a real DML credential to perform the proof.
+    """
+
+    content = "".join(
+        f"{key}={_safe_environment_value(value, name=key)}\n"
+        for key, value in sorted(values.items())
+    )
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+    except BaseException:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _is_under(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _managed_state_paths(state_dir: Path) -> dict[str, str]:
+    return {
+        "status": str(state_dir / "run.json"),
+        "log": str(state_dir / "run.log"),
+        "result": str(state_dir / "evidence.json"),
+        "result_checksum": str(state_dir / "evidence.json.sha256"),
+        # The path is useful to an operator investigating a stopped unit, but
+        # never expose the contents in the status manifest or collected proof.
+        "private_environment": str(state_dir / "service.env"),
+    }
+
+
+def _run_checked(
+    command: Sequence[str],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    **kwargs: Any,
+) -> subprocess.CompletedProcess[str]:
+    return runner(list(command), check=True, text=True, capture_output=True, **kwargs)
+
+
+def _admission_output(
+    command: Sequence[str],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str:
+    completed = _run_checked(command, runner=runner)
+    return completed.stdout.strip()
+
+
+def _assert_quiet_managed_host(
+    *, runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run
+) -> dict[str, list[str]]:
+    """Fail closed unless the user systemd manager and host admission are clear.
+
+    The normal product stack is permitted.  Dedicated E2E/task containers and
+    networks are not: their co-residency makes RSS and latency evidence
+    non-reproducible.  Command failures are admission failures rather than an
+    excuse to launch an unobservable long-running job.
+    """
+
+    _admission_output(["systemctl", "--user", "show-environment"], runner=runner)
+    containers = [
+        line
+        for line in _admission_output(
+            ["docker", "ps", "--format", "{{.Names}}"], runner=runner
+        ).splitlines()
+        if line
+    ]
+    networks = [
+        line
+        for line in _admission_output(
+            ["docker", "network", "ls", "--format", "{{.Name}}"], runner=runner
+        ).splitlines()
+        if line
+    ]
+    conflicts = [
+        name
+        for name in [*containers, *networks]
+        if any(token in name.lower() for token in _QUIET_HOST_FORBIDDEN_PATTERN)
+    ]
+    if conflicts:
+        raise RuntimeError(
+            "managed capacity admission rejected E2E/task Docker resources: "
+            + ", ".join(conflicts)
+        )
+    return {"containers": containers, "networks": networks}
+
+
+def _acquire_managed_admission_lock(lock_path: Path, run_id: str) -> None:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        holder = lock_path.read_text(encoding="utf-8").strip() or "unknown"
+        raise RuntimeError(
+            f"managed capacity admission lock already held by {holder}: {lock_path}"
+        ) from exc
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(f"{run_id}\n")
+
+
+def _release_managed_admission_lock(lock_path: Path, run_id: str) -> None:
+    try:
+        holder = lock_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return
+    if holder == run_id:
+        lock_path.unlink()
+
+
+def _new_managed_run_id(commit: str) -> str:
+    return f"{commit[:12]}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+
+
+def _create_clean_capacity_worktree(
+    repository_root: Path,
+    clean_root: Path,
+    commit: str,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, Any]:
+    clean_root.parent.mkdir(parents=True, exist_ok=True)
+    _run_checked(
+        [
+            "git",
+            "-C",
+            str(repository_root),
+            "worktree",
+            "add",
+            "--detach",
+            str(clean_root),
+            commit,
+        ],
+        runner=runner,
+    )
+    identity = _git_identity(clean_root)
+    if identity["commit"] != commit or identity["dirty"]:
+        raise RuntimeError("managed capacity source worktree is not clean at the requested commit")
+    return identity
+
+
+def _remove_clean_capacity_worktree(
+    repository_root: Path,
+    clean_root: Path,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    # ``clean_root`` is created under the launcher-controlled worktree root;
+    # never remove an arbitrary operator path while processing a run manifest.
+    if not _is_under(clean_root, MANAGED_WORKTREE_ROOT):
+        raise RuntimeError(f"refusing to remove unmanaged capacity worktree: {clean_root}")
+    _run_checked(
+        ["git", "-C", str(repository_root), "worktree", "remove", "--force", str(clean_root)],
+        runner=runner,
+    )
+
+
+def _managed_full_gate_error(args: argparse.Namespace) -> str | None:
+    required = {
+        "events": MANAGED_RUN_EVENTS,
+        "loop_runs": MANAGED_RUN_LOOP_RUNS,
+        "batch_size": DEFAULT_BATCH_SIZE,
+        "catch_up_events": MANAGED_RUN_CATCH_UP_EVENTS,
+        "read_repeats": MANAGED_RUN_READ_REPEATS,
+        "fault_journey_count": MANAGED_RUN_FAULT_JOURNEY_COUNT,
+    }
+    mismatches = [
+        f"{name}={getattr(args, name)} (requires {value})"
+        for name, value in required.items()
+        if getattr(args, name) != value
+    ]
+    if mismatches:
+        return "managed capacity launch requires the complete acceptance gate: " + ", ".join(mismatches)
+    return None
+
+
+def launch_managed_capacity_run(
+    args: argparse.Namespace,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, Any]:
+    """Submit the exact full proof to a transient user-systemd service.
+
+    This returns after systemd accepts the job.  The benchmark itself runs in
+    a fresh detached worktree of the exact current commit, so an auto-worker
+    session ending cannot invalidate an otherwise healthy capacity run.
+    """
+
+    gate_error = _managed_full_gate_error(args)
+    if gate_error:
+        raise ValueError(gate_error)
+    dsn = str(args.projection_dsn or "")
+    if not dsn:
+        raise ValueError("--projection-dsn or LIFECYCLE_PROJECTOR_PROJECTION_DSN is required")
+    _safe_environment_value(dsn, name="LIFECYCLE_PROJECTOR_PROJECTION_DSN")
+
+    repository_root = args.repository_root.resolve()
+    source_identity = _git_identity(repository_root)
+    commit = str(source_identity["commit"])
+    if len(commit) != 40:
+        raise RuntimeError("managed capacity launch requires an exact 40-character git commit")
+
+    state_root = (args.state_root or repository_root / MANAGED_RUNS_RELATIVE_ROOT).resolve()
+    if not _is_under(state_root, repository_root):
+        raise ValueError("--state-root must remain under --repository-root as a task artifact")
+    run_id = _new_managed_run_id(commit)
+    state_dir = state_root / run_id
+    if state_dir.exists():  # practically impossible, but never reuse evidence state.
+        raise RuntimeError(f"managed capacity state directory already exists: {state_dir}")
+    worktree_root = args.worktree_root.resolve()
+    if worktree_root != MANAGED_WORKTREE_ROOT.resolve():
+        raise ValueError(f"--worktree-root must be {MANAGED_WORKTREE_ROOT}")
+    clean_root = worktree_root / run_id
+    lock_path = args.admission_lock.resolve()
+    unit = str(args.unit_name or f"{MANAGED_UNIT_PREFIX}{run_id}")
+    if not unit.startswith(MANAGED_UNIT_PREFIX) or len(unit) > 63:
+        raise ValueError("managed capacity unit must use the lifecycle-capacity- prefix and fit systemd")
+
+    _acquire_managed_admission_lock(lock_path, run_id)
+    clean_worktree_created = False
+    try:
+        admission = _assert_quiet_managed_host(runner=runner)
+        clean_identity = _create_clean_capacity_worktree(
+            repository_root, clean_root, commit, runner=runner
+        )
+        clean_worktree_created = True
+
+        state_dir.mkdir(parents=True, mode=0o700)
+        paths = _managed_state_paths(state_dir)
+        _write_private_environment(
+            Path(paths["private_environment"]),
+            {"LIFECYCLE_PROJECTOR_PROJECTION_DSN": dsn},
+        )
+        schema = _fresh_capacity_schema(dsn, f"managed_{run_id}")
+        manifest: dict[str, Any] = {
+            "task_id": TASK_ID,
+            "run_id": run_id,
+            "state": "submitting",
+            "created_at": _utc_now(),
+            "unit": unit,
+            "repository_root": str(repository_root),
+            "clean_repository_root": str(clean_root),
+            "git": clean_identity,
+            "schema": schema,
+            "paths": paths,
+            "admission": {"lock_path": str(lock_path), **admission},
+            "requested": {
+                "events": args.events,
+                "loop_runs": args.loop_runs,
+                "batch_size": args.batch_size,
+                "catch_up_events": args.catch_up_events,
+                "read_repeats": args.read_repeats,
+                "fault_journey_count": args.fault_journey_count,
+            },
+        }
+        manifest_path = Path(paths["status"])
+        _write_json_atomically(manifest_path, manifest)
+
+        cleanup_command = " ".join(
+            [
+                str(sys.executable),
+                "-m",
+                "services.trade_journey.lifecycle_projector_capacity",
+                "managed-cleanup",
+                "--state-dir",
+                str(state_dir),
+            ]
+        )
+        systemd_command = [
+            "systemd-run",
+            "--user",
+            "--unit",
+            unit,
+            "--collect",
+            "--no-block",
+            f"--working-directory={clean_root}",
+            f"--property=EnvironmentFile={paths['private_environment']}",
+            f"--property=StandardOutput=append:{paths['log']}",
+            f"--property=StandardError=append:{paths['log']}",
+            f"--property=ExecStopPost={cleanup_command}",
+            str(sys.executable),
+            "-m",
+            "services.trade_journey.lifecycle_projector_capacity",
+            "managed-run",
+            "--state-dir",
+            str(state_dir),
+        ]
+        submitted = _run_checked(systemd_command, runner=runner)
+        manifest = _update_managed_manifest(
+            manifest_path,
+            state="running",
+            submitted_at=_utc_now(),
+            systemd_submit_stdout=submitted.stdout.strip(),
+        )
+        return manifest
+    except BaseException as exc:
+        if state_dir.exists():
+            manifest_path = state_dir / "run.json"
+            if manifest_path.exists():
+                _update_managed_manifest(
+                    manifest_path,
+                    state="launcher_failed",
+                    launcher_failed_at=_utc_now(),
+                    launcher_failure=f"{type(exc).__name__}: {exc}",
+                )
+        if clean_worktree_created:
+            try:
+                _remove_clean_capacity_worktree(repository_root, clean_root, runner=runner)
+            except Exception:
+                # Preserve the original admission/launch exception.  The
+                # transient source contains no benchmark schema before the
+                # managed service has been submitted.
+                pass
+        _release_managed_admission_lock(lock_path, run_id)
+        raise
+
+
+def run_managed_capacity_worker(state_dir: Path) -> int:
+    """Run the benchmark in the clean detached worktree recorded at launch."""
+
+    manifest_path = state_dir / "run.json"
+    manifest = _read_json_object(manifest_path)
+    requested = manifest.get("requested") or {}
+    paths = manifest.get("paths") or {}
+    _update_managed_manifest(manifest_path, state="benchmark_running", started_at=_utc_now())
+    result = 1
+    try:
+        result = main(
+            [
+                "--events",
+                str(requested["events"]),
+                "--loop-runs",
+                str(requested["loop_runs"]),
+                "--batch-size",
+                str(requested["batch_size"]),
+                "--fault-journey-count",
+                str(requested["fault_journey_count"]),
+                "--catch-up-events",
+                str(requested["catch_up_events"]),
+                "--read-repeats",
+                str(requested["read_repeats"]),
+                "--repository-root",
+                str(manifest["clean_repository_root"]),
+                "--projection-schema",
+                str(manifest["schema"]),
+                "--output",
+                str(paths["result"]),
+            ]
+        )
+        return result
+    finally:
+        _update_managed_manifest(
+            manifest_path,
+            state="benchmark_finished",
+            finished_at=_utc_now(),
+            benchmark_exit_code=result,
+        )
+
+
+def cleanup_managed_capacity_run(
+    state_dir: Path,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> bool:
+    """Idempotently remove the recorded schema and detached source worktree.
+
+    This function is installed as the unit's ``ExecStopPost`` action, so it
+    runs even when the benchmark process itself is terminated.  It refuses to
+    release the admission lock on a failed schema teardown, which fail-stops
+    subsequent proof runs rather than letting a leaked capacity schema pass
+    unnoticed.
+    """
+
+    manifest_path = state_dir / "run.json"
+    manifest = _read_json_object(manifest_path)
+    lock_path = Path(str((manifest.get("admission") or {})["lock_path"]))
+    dsn = str(os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN") or "")
+    schema_dropped = False
+    worktree_removed = False
+    error: str | None = None
+    try:
+        if not dsn:
+            raise RuntimeError("managed cleanup requires LIFECYCLE_PROJECTOR_PROJECTION_DSN")
+        schema_dropped = _teardown_capacity_schema(dsn, str(manifest["schema"]))
+        _remove_clean_capacity_worktree(
+            Path(str(manifest["repository_root"])),
+            Path(str(manifest["clean_repository_root"])),
+            runner=runner,
+        )
+        worktree_removed = True
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    _update_managed_manifest(
+        manifest_path,
+        state="cleaned" if schema_dropped and worktree_removed else "cleanup_failed",
+        cleanup_at=_utc_now(),
+        cleanup={
+            "schema_dropped": schema_dropped,
+            "worktree_removed": worktree_removed,
+            "error": error,
+        },
+    )
+    if schema_dropped and worktree_removed:
+        _release_managed_admission_lock(lock_path, str(manifest["run_id"]))
+        return True
+    return False
+
+
+def managed_capacity_status(state_dir: Path) -> dict[str, Any]:
+    """Read the durable run manifest and its current user-systemd state."""
+
+    manifest = _read_json_object(state_dir / "run.json")
+    unit = str(manifest["unit"])
+    completed = subprocess.run(
+        [
+            "systemctl",
+            "--user",
+            "show",
+            unit,
+            "--property=ActiveState",
+            "--property=SubState",
+            "--property=Result",
+            "--property=ExecMainStatus",
+            "--no-pager",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    manifest["systemd"] = {
+        "returncode": completed.returncode,
+        "status": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+    }
+    return manifest
+
+
+def collect_managed_capacity_result(state_dir: Path) -> dict[str, Any]:
+    """Verify the completed raw evidence before a later worker reviews it."""
+
+    manifest = managed_capacity_status(state_dir)
+    paths = manifest.get("paths") or {}
+    result_path = Path(str(paths["result"]))
+    checksum_path = Path(str(paths["result_checksum"]))
+    if not result_path.exists() or not checksum_path.exists():
+        raise RuntimeError("managed capacity result or checksum is not present yet")
+    expected = checksum_path.read_text(encoding="utf-8").split()[0]
+    actual = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    if expected != actual:
+        raise RuntimeError("managed capacity result checksum does not match")
+    evidence = _read_json_object(result_path)
+    if evidence.get("task_id") != TASK_ID:
+        raise RuntimeError("managed capacity result has the wrong task id")
+    if evidence.get("git", {}).get("commit") != manifest.get("git", {}).get("commit"):
+        raise RuntimeError("managed capacity result is not bound to the launched clean commit")
+    if evidence.get("projection_schema") != manifest.get("schema"):
+        raise RuntimeError("managed capacity result did not use the launched capacity schema")
+    if not (evidence.get("teardown") or {}).get("schema_dropped"):
+        raise RuntimeError("managed capacity result does not prove schema teardown")
+    collection = {
+        "task_id": TASK_ID,
+        "run_id": manifest["run_id"],
+        "collected_at": _utc_now(),
+        "evidence_sha256": actual,
+        "gate_failures": evidence.get("gate_failures", []),
+        "benchmark_exit_code": manifest.get("benchmark_exit_code"),
+        "cleanup": manifest.get("cleanup"),
+    }
+    _write_json_atomically(state_dir / "collection.json", collection)
+    return collection
+
+
+def _managed_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Managed lifecycle capacity proof commands")
+    commands = parser.add_subparsers(dest="managed_command", required=True)
+
+    launch = commands.add_parser("launch-managed", help="submit the exact full proof to user systemd")
+    launch.add_argument("--repository-root", type=Path, default=Path.cwd())
+    launch.add_argument("--state-root", type=Path, default=None)
+    launch.add_argument("--worktree-root", type=Path, default=MANAGED_WORKTREE_ROOT)
+    launch.add_argument("--admission-lock", type=Path, default=MANAGED_ADMISSION_LOCK)
+    launch.add_argument("--unit-name", default=None)
+    launch.add_argument("--events", type=int, default=MANAGED_RUN_EVENTS)
+    launch.add_argument("--loop-runs", type=int, default=MANAGED_RUN_LOOP_RUNS)
+    launch.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    launch.add_argument("--fault-journey-count", type=int, default=MANAGED_RUN_FAULT_JOURNEY_COUNT)
+    launch.add_argument("--catch-up-events", type=int, default=MANAGED_RUN_CATCH_UP_EVENTS)
+    launch.add_argument("--read-repeats", type=int, default=MANAGED_RUN_READ_REPEATS)
+    launch.add_argument(
+        "--projection-dsn",
+        default=os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", ""),
+        help="PostgreSQL DML DSN; written only to a private service environment file",
+    )
+
+    for name, help_text in (
+        ("managed-run", "run the submitted benchmark inside the clean worktree"),
+        ("managed-cleanup", "tear down the submitted schema and source worktree"),
+        ("managed-status", "report persisted run and systemd state"),
+        ("managed-collect", "verify and summarize a completed result"),
+    ):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("--state-dir", type=Path, required=True)
+    return parser
+
+
+def cli(argv: Sequence[str] | None = None) -> int:
+    """Route normal capacity runs and managed-run lifecycle commands."""
+
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    managed_commands = {
+        "launch-managed",
+        "managed-run",
+        "managed-cleanup",
+        "managed-status",
+        "managed-collect",
+    }
+    if not arguments or arguments[0] not in managed_commands:
+        return main(arguments)
+    args = _managed_parser().parse_args(arguments)
+    if args.managed_command == "launch-managed":
+        manifest = launch_managed_capacity_run(args)
+        paths = manifest["paths"]
+        print(
+            json.dumps(
+                {
+                    "run_id": manifest["run_id"],
+                    "unit": manifest["unit"],
+                    "status_path": paths["status"],
+                    "log_path": paths["log"],
+                    "result_path": paths["result"],
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.managed_command == "managed-run":
+        return run_managed_capacity_worker(args.state_dir)
+    if args.managed_command == "managed-cleanup":
+        return 0 if cleanup_managed_capacity_run(args.state_dir) else 1
+    if args.managed_command == "managed-status":
+        print(json.dumps(managed_capacity_status(args.state_dir), indent=2, sort_keys=True))
+        return 0
+    collection = collect_managed_capacity_result(args.state_dir)
+    print(json.dumps(collection, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--events", type=int, default=DEFAULT_EVENT_COUNT)
@@ -1241,4 +1854,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(cli())

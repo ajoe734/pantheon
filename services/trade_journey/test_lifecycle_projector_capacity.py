@@ -11,22 +11,35 @@ dev profile when the host is quiet, not from the unit test suite.
 from __future__ import annotations
 
 import os
+import subprocess
+from argparse import Namespace
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
+import services.trade_journey.lifecycle_projector_capacity as capacity_module
 from services.trade_journey.lifecycle_projector import RelationalLifecycleProjector
 from services.trade_journey.lifecycle_projector_capacity import (
     CAPACITY_SCHEMA_PREFIX,
     CapacityReport,
     FAULT_SCENARIOS,
+    MANAGED_ADMISSION_LOCK,
+    MANAGED_WORKTREE_ROOT,
     _teardown_capacity_schema,
+    _write_json_atomically,
     _journey_event_budgets,
     _journey_event_types,
+    _managed_state_paths,
+    _assert_quiet_managed_host,
+    cleanup_managed_capacity_run,
+    collect_managed_capacity_result,
     explain_bff_read_paths,
     generate_corpus_batches,
     journey_rows,
+    launch_managed_capacity_run,
     main,
+    run_managed_capacity_worker,
     run_bff_read_benchmark,
     run_capacity_benchmark,
     run_fault_matrix,
@@ -109,6 +122,200 @@ def test_rss_bytes_is_positive():
 def test_cli_requires_a_postgres_dsn():
     with pytest.raises(SystemExit, match="2"):
         main(["--events", "2", "--loop-runs", "1"])
+
+
+def _managed_identity(commit: str = "a" * 40) -> dict[str, object]:
+    return {
+        "commit": commit,
+        "dirty": False,
+        "dirty_paths": [],
+        "tree_status_sha256": "b" * 64,
+        "source": "git",
+    }
+
+
+def _managed_args(tmp_path: Path) -> Namespace:
+    return Namespace(
+        repository_root=tmp_path,
+        state_root=tmp_path / "docs" / "managed-runs",
+        worktree_root=MANAGED_WORKTREE_ROOT,
+        admission_lock=tmp_path / "managed-capacity.lock",
+        unit_name=None,
+        events=1_000_000,
+        loop_runs=150_000,
+        batch_size=500,
+        fault_journey_count=4,
+        catch_up_events=100_000,
+        read_repeats=10,
+        projection_dsn="postgresql://capacity:test@localhost:15432/pantheon",
+    )
+
+
+def test_managed_launch_requires_the_exact_full_acceptance_gate(tmp_path):
+    args = _managed_args(tmp_path)
+    args.events = 2_000
+
+    with pytest.raises(ValueError, match="complete acceptance gate"):
+        launch_managed_capacity_run(args)
+
+
+def test_managed_launch_binds_clean_commit_and_private_dsn(tmp_path, monkeypatch):
+    args = _managed_args(tmp_path)
+    identity = _managed_identity()
+    recorded: list[list[str]] = []
+
+    monkeypatch.setattr(capacity_module, "_git_identity", lambda _root: identity)
+    monkeypatch.setattr(
+        capacity_module,
+        "_assert_quiet_managed_host",
+        lambda **_kwargs: {"containers": ["pantheon-postgres"], "networks": ["pantheon_default"]},
+    )
+    monkeypatch.setattr(
+        capacity_module,
+        "_create_clean_capacity_worktree",
+        lambda *_args, **_kwargs: identity,
+    )
+
+    def fake_runner(command, **_kwargs):
+        recorded.append(list(command))
+        return subprocess.CompletedProcess(command, 0, "Running as unit test.service\n", "")
+
+    manifest = launch_managed_capacity_run(args, runner=fake_runner)
+
+    assert manifest["state"] == "running"
+    assert manifest["git"] == identity
+    assert manifest["requested"] == {
+        "events": 1_000_000,
+        "loop_runs": 150_000,
+        "batch_size": 500,
+        "catch_up_events": 100_000,
+        "read_repeats": 10,
+        "fault_journey_count": 4,
+    }
+    assert recorded and recorded[0][:5] == ["systemd-run", "--user", "--unit", manifest["unit"], "--collect"]
+    assert "--no-block" in recorded[0]
+    assert any(part.startswith("--property=ExecStopPost=") for part in recorded[0])
+    private_environment = Path(manifest["paths"]["private_environment"])
+    assert private_environment.stat().st_mode & 0o777 == 0o600
+    assert args.projection_dsn in private_environment.read_text(encoding="utf-8")
+    assert args.projection_dsn not in Path(manifest["paths"]["status"]).read_text(encoding="utf-8")
+    assert Path(args.admission_lock).exists()
+
+
+def test_managed_admission_rejects_e2e_or_task_resources():
+    def fake_runner(command, **_kwargs):
+        if command[:2] == ["systemctl", "--user"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[:3] == ["docker", "ps", "--format"]:
+            return subprocess.CompletedProcess(command, 0, "task-e2e-sidecar\n", "")
+        return subprocess.CompletedProcess(command, 0, "pantheon_default\n", "")
+
+    with pytest.raises(RuntimeError, match="admission rejected"):
+        _assert_quiet_managed_host(runner=fake_runner)
+
+
+def test_managed_worker_records_result_before_systemd_cleanup(tmp_path, monkeypatch):
+    paths = _managed_state_paths(tmp_path)
+    manifest = {
+        "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+        "run_id": "managed-test",
+        "state": "running",
+        "clean_repository_root": "/clean/source",
+        "schema": "lifecycle_capacity_managed_test",
+        "paths": paths,
+        "requested": {
+            "events": 1_000_000,
+            "loop_runs": 150_000,
+            "batch_size": 500,
+            "fault_journey_count": 4,
+            "catch_up_events": 100_000,
+            "read_repeats": 10,
+        },
+    }
+    _write_json_atomically(tmp_path / "run.json", manifest)
+    received: list[str] = []
+
+    def fake_main(arguments):
+        received.extend(arguments)
+        return 0
+
+    monkeypatch.setattr(capacity_module, "main", fake_main)
+
+    assert run_managed_capacity_worker(tmp_path) == 0
+    assert "--projection-schema" in received
+    assert received[received.index("--projection-schema") + 1] == manifest["schema"]
+    completed = capacity_module._read_json_object(tmp_path / "run.json")
+    assert completed["state"] == "benchmark_finished"
+    assert completed["benchmark_exit_code"] == 0
+
+
+def test_managed_cleanup_tears_down_recorded_schema_and_releases_lock(tmp_path, monkeypatch):
+    lock_path = tmp_path / "capacity.lock"
+    lock_path.write_text("managed-test\n", encoding="utf-8")
+    manifest = {
+        "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+        "run_id": "managed-test",
+        "state": "benchmark_finished",
+        "repository_root": "/repository",
+        "clean_repository_root": str(MANAGED_WORKTREE_ROOT / "managed-test"),
+        "schema": "lifecycle_capacity_managed_test",
+        "admission": {"lock_path": str(lock_path)},
+    }
+    _write_json_atomically(tmp_path / "run.json", manifest)
+    removed: list[tuple[Path, Path]] = []
+
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", "postgresql://capacity:test@localhost/db")
+    monkeypatch.setattr(capacity_module, "_teardown_capacity_schema", lambda dsn, schema: dsn.endswith("/db") and schema == manifest["schema"])
+    monkeypatch.setattr(
+        capacity_module,
+        "_remove_clean_capacity_worktree",
+        lambda root, clean, **_kwargs: removed.append((root, clean)),
+    )
+
+    assert cleanup_managed_capacity_run(tmp_path)
+    assert removed == [(Path("/repository"), MANAGED_WORKTREE_ROOT / "managed-test")]
+    assert not lock_path.exists()
+    cleaned = capacity_module._read_json_object(tmp_path / "run.json")
+    assert cleaned["state"] == "cleaned"
+    assert cleaned["cleanup"] == {
+        "schema_dropped": True,
+        "worktree_removed": True,
+        "error": None,
+    }
+
+
+def test_collect_managed_result_verifies_checksum_commit_schema_and_teardown(tmp_path, monkeypatch):
+    identity = _managed_identity("c" * 40)
+    paths = _managed_state_paths(tmp_path)
+    evidence = {
+        "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+        "git": identity,
+        "projection_schema": "lifecycle_capacity_managed_collect",
+        "teardown": {"schema_dropped": True},
+        "gate_failures": [],
+    }
+    result_path = Path(paths["result"])
+    _write_json_atomically(result_path, evidence)
+    checksum = capacity_module.hashlib.sha256(result_path.read_bytes()).hexdigest()
+    Path(paths["result_checksum"]).write_text(
+        f"{checksum}  evidence.json\n", encoding="utf-8"
+    )
+    manifest = {
+        "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+        "run_id": "managed-collect",
+        "git": identity,
+        "schema": "lifecycle_capacity_managed_collect",
+        "paths": paths,
+        "benchmark_exit_code": 0,
+        "cleanup": {"schema_dropped": True, "worktree_removed": True},
+    }
+    monkeypatch.setattr(capacity_module, "managed_capacity_status", lambda _state: manifest)
+
+    collection = collect_managed_capacity_result(tmp_path)
+
+    assert collection["evidence_sha256"] == checksum
+    assert collection["gate_failures"] == []
+    assert (tmp_path / "collection.json").exists()
 
 
 def test_run_capacity_benchmark_projects_full_small_scale_corpus(capacity_dsn):
