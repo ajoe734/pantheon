@@ -1407,6 +1407,38 @@ class RuntimeChain:
                     f"fleet reconciler running workers unexpected: {running_workers!r}"
                 )
 
+            worker = running_workers[0]
+            worker_port = int(worker.get("port") or 0)
+            worker_pid = int(worker.get("pid")) if worker.get("pid") else None
+            worker_status = str(worker.get("status") or "")
+            if worker_port < 8020:
+                raise DeployedProofError(
+                    f"fleet reconciler allocated invalid worker port: {worker_port}"
+                )
+
+            # Query the spawned worker on its port inside the paper-fleet-reconciler container
+            worker_state_raw = _run([
+                "docker",
+                "exec",
+                self._compose_container_id("paper-fleet-reconciler"),
+                "python",
+                "-c",
+                f"import json, urllib.request; print(json.dumps(json.loads(urllib.request.urlopen('http://127.0.0.1:{worker_port}/api/runtime/state', timeout=5).read().decode('utf-8'))))",
+            ])
+            worker_state = json.loads(worker_state_raw)
+            lifecycle_outbox = worker_state.get("lifecycle_outbox", {})
+            outbox_pending_count = int(lifecycle_outbox.get("pending_count", 0))
+            outbox_chain_count = int(lifecycle_outbox.get("chain_count", 0))
+
+            if outbox_pending_count > 5:
+                raise DeployedProofError(
+                    f"lifecycle outbox pending count not bounded: {outbox_pending_count}"
+                )
+            if outbox_chain_count < 1:
+                raise DeployedProofError(
+                    f"lifecycle outbox chain count unexpected: {outbox_chain_count}"
+                )
+
             self.evidence.add_case(
                 "bounded_lifecycle_cursor_and_resources",
                 loop=9,
@@ -1414,21 +1446,35 @@ class RuntimeChain:
                 owner_worker=self.evidence.identities["paper-fleet-reconciler"],
                 terminal_output_id=f"bounded-cursor-{positive_binding['runtime_id']}",
                 authority_readback={
+                    "lifecycle_outbox": lifecycle_outbox,
                     "recent_lifecycle_event_count": len(recent_lifecycle_events),
                     "running_worker_count": len(running_workers),
-                    "used_ports_count": len(fleet_state.get("used_ports", [])),
+                    "used_ports": fleet_state.get("used_ports", []),
+                    "worker_binding_id": worker.get("binding_id"),
+                    "worker_pid": worker_pid,
+                    "worker_port": worker_port,
+                    "worker_runtime_id": worker.get("runtime_id"),
+                    "worker_status": worker_status,
                 },
                 next_consumer_readback={
+                    "outbox_chain_count": outbox_chain_count,
+                    "outbox_pending_count": outbox_pending_count,
                     "paper_runtime_id": positive_binding["runtime_id"],
                     "summary_state": summary.get("state"),
+                    "worker_port": worker_port,
+                    "worker_status": worker_status,
                 },
                 started_at=bounded_cursor_started,
                 compose_services=["paper-fleet-reconciler", "telemetry"],
                 assertions={
-                    "lifecycle_outbox_bounded": True,
+                    "lifecycle_outbox_bounded": bool(outbox_pending_count <= 5),
                     "no_zombie_fleet_processes": True,
                     "non_executable_bindings_rejected": True,
-                    "running_worker_exact": 1,
+                    "outbox_chain_count": outbox_chain_count,
+                    "outbox_pending_count": outbox_pending_count,
+                    "running_worker_exact": len(running_workers),
+                    "worker_pid_bound": worker_pid,
+                    "worker_port_bound": worker_port,
                 },
             )
 
@@ -1538,5 +1584,11 @@ def test_bounded_lifecycle_cursor_and_resource_limits(
 ) -> None:
     case = deployed_runtime_chain["cases"]["bounded_lifecycle_cursor_and_resources"]
     assert case["assertions"]["lifecycle_outbox_bounded"] is True
+    assert case["assertions"]["outbox_pending_count"] <= 5
+    assert case["assertions"]["outbox_chain_count"] >= 1
+    assert case["assertions"]["running_worker_exact"] == 1
+    assert case["assertions"]["worker_port_bound"] >= 8020
     assert case["assertions"]["non_executable_bindings_rejected"] is True
     assert case["assertions"]["no_zombie_fleet_processes"] is True
+    assert case["authority_readback"]["worker_status"] == "running"
+    assert case["authority_readback"]["lifecycle_outbox"]["status"] == "ok"
