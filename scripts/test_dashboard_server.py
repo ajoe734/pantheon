@@ -4,6 +4,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -19,6 +20,24 @@ sys.path.insert(0, str(ROOT / ".orchestrator"))
 
 import common  # noqa: E402
 import dashboard_server  # noqa: E402
+
+
+def test_module_imports_standalone_with_no_preseeded_sys_path() -> None:
+    """OPS-DASHBOARD-IMPORT-ORDER-FIX-20260821: a top-of-file
+    `from common import load_config` placed before the sys.path.insert for
+    .orchestrator/ raised ModuleNotFoundError every time the real launcher
+    (`python3 scripts/dashboard_server.py`) started it as a fresh process --
+    this test file's own path pre-seeding above masked exactly that bug,
+    so this spawns a clean subprocess the way production actually does."""
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import dashboard_server"],
+        cwd=str(ROOT / "scripts"),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_refresh_environment_uses_operator_identity_and_drops_worker_lease(monkeypatch) -> None:

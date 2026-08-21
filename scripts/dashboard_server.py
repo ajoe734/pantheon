@@ -12,15 +12,13 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from common import load_config
-
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
-from common import read_activity_log_tail_bytes
+from common import load_config, read_activity_log_tail_bytes
 
 
 DASHBOARD_REFRESH_ACTOR_ENV = "PANTHEON_DASHBOARD_REFRESH_ACTOR"
