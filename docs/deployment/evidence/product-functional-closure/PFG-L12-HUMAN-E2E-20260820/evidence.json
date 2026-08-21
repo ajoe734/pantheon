@@ -1,0 +1,90 @@
+{
+  "schema_version": "pantheon.product_functional_closure.deployed_human_learning_evidence.v1",
+  "task": {
+    "id": "PFG-L12-HUMAN-E2E-20260820",
+    "title": "Prove deployed Loops 5 through 7 with real Agora, policy, Research, and Consultation owners",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-L12-HUMAN-E2E-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Current-dev deployed human-learning proof and its bounded evidence",
+    "not_changing": [
+      "Agora, Policy Learning, Research, Consultation, OpenClaw, or Governance product ownership",
+      "Live broker, capital, or production authority",
+      "The manual-only scanner endpoint before a separate post-proof disposition"
+    ],
+    "composes_with": [
+      "PFG-DEV-INTEGRATION-20260820",
+      "PFG-AGORA-RECON-WORKER-20260820",
+      "PFG-AGORA-RESEARCH-CONSUMER-20260820",
+      "PFG-AGORA-PROJECTIONS-20260820"
+    ],
+    "changed_files": [
+      "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/evidence.json",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/evidence.sha256"
+    ]
+  },
+  "acceptance": {
+    "single_current_dev_chain": {
+      "status": "implementation_ready_live_run_pending",
+      "proof_contract": "One run must correlate Agora evidence_id, DatasetVersion, durable handoff_id, processed candidate_id, Research task/run, Consultation request/memo, and Governance handoff_id from deployed HTTP readbacks."
+    },
+    "no_local_or_fake_authority": {
+      "status": "structurally_verified",
+      "proof_contract": "The AST guard rejects TestClient, mocks, fake provider, local Consultation executor/store/provider imports, local Policy-to-Research client imports, and direct Agora drainer imports/calls."
+    },
+    "restart_replay": {
+      "status": "implementation_ready_live_run_pending",
+      "proof_contract": "The deployed policy scheduler is restarted twice and consultation-svc once; the HTTP-visible durable records remain singular and identity-stable."
+    },
+    "automatic_policy_discovery": {
+      "status": "implementation_ready_live_run_pending",
+      "proof_contract": "The harness only creates the durable Agora handoff then restarts/polls policy-learning-shadow-eval-scheduler; it neither imports nor calls shadow-eval-tick or a direct drainer. The candidate must report dataset_source=agora_dataset_version_handoff."
+    }
+  },
+  "code_disposition": {
+    "retained_owners": [
+      "services/policy-learning/scheduler_worker.py durable Agora intake and leased candidate processing",
+      "services/consultation/supervisor.py supervised workflow executor"
+    ],
+    "manual_only_legacy_path": "services/policy-learning/main.py /api/policy-learning/shadow-eval-tick remains outside the automatic scheduler path; no removal is claimed by this task.",
+    "fake_or_direct_fallback": "forbidden"
+  },
+  "deployment": {
+    "target": "current dev Compose and paper environment",
+    "deployed_run_report": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/deployed-run.json",
+    "status": "not_run_in_this_worktree",
+    "admission_rule": "Do not claim deployed proof or request approval until a committed bounded run report records status=passed against the exact review head."
+  },
+  "validation": {
+    "completed": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py && .venv-pantheon/bin/python3 -m py_compile tests/integration/l12/test_current_human_learning_deployed_e2e.py && .venv-pantheon/bin/python3 -m pytest -q tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+        "result": "1 passed, 4 skipped (the four owner-touching cases are opt-in without PANTHEON_L12_HUMAN_LEARNING_E2E=1)"
+      },
+      {
+        "command": "git diff --check",
+        "result": "passed"
+      }
+    ],
+    "required_before_review": [
+      "PANTHEON_L12_HUMAN_LEARNING_E2E=1 deployed suite against current dev Compose",
+      "Commit deployed-run.json and replace deployment.status with the exact current-dev evidence",
+      "Verify restart/replay, provider, and Governance readbacks in that report"
+    ]
+  },
+  "review": {
+    "status": "not_ready_for_review",
+    "required_focus": [
+      "The exact same candidate flows from durable Agora handoff through Research; no synthetic candidate is introduced.",
+      "The test invokes only deployed HTTP boundaries and Compose-owned worker restarts.",
+      "The committed run report proves a real OpenClaw contribution and acknowledged Governance handoff without duplicate replay."
+    ]
+  }
+}
