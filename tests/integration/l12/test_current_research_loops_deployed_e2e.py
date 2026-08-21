@@ -481,7 +481,7 @@ class DeployedResearchHarness:
                 method="POST",
                 payload={
                     "connector_id": connector_id,
-                    "mode": "bounded_pull",
+                    "trigger_type": "manual",
                     "trace_id": trace_id,
                 },
                 headers=headers,
@@ -532,9 +532,10 @@ class DeployedResearchHarness:
         latest = connector_row.get("latest_source_record") if isinstance(connector_row, Mapping) else None
         schedule_info = connector_row.get("schedule") if isinstance(connector_row, Mapping) else None
         self._require(
-            isinstance(schedule_info, Mapping) and not schedule_info.get("enabled", False),
-            "connector schedule must be disabled after manual bounded pull",
+            schedule_info is None or not schedule_info.get("enabled", False),
+            "connector schedule must be null or disabled after manual bounded pull",
         )
+        schedule_enabled = schedule_info.get("enabled", False) if isinstance(schedule_info, Mapping) else False
         self._require(
             isinstance(latest, Mapping) and latest.get("source_id") == source_id,
             "source controller actual-state readback lacks the exact SourceRecord identity",
@@ -544,7 +545,7 @@ class DeployedResearchHarness:
             "schema_version": controller_readback.get("schema_version"),
             "source_id": latest.get("source_id"),
             "connector_id": connector_id,
-            "schedule_enabled": schedule_info.get("enabled", False),
+            "schedule_enabled": schedule_enabled,
         }
         registry_id = f"reg-strategy-spec-{source_id}-{digest.removeprefix('sha256:')[:12]}"
         distill_owner = self._at(
