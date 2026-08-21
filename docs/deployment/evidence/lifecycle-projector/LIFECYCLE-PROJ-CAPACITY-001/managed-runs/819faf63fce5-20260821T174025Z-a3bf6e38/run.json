@@ -1,0 +1,113 @@
+{
+  "admission": {
+    "containers": [
+      "pantheon-postgres-1",
+      "pantheon-paper-signal-producer-1",
+      "pantheon-source-ingest-1",
+      "pantheon-reconciliation-drift-incident-listener-1",
+      "pantheon-reconciliation-drift-consumer-1",
+      "pantheon-reconciliation-drift-scheduler-1",
+      "pantheon-web-channel-1",
+      "pantheon-router-1",
+      "pantheon-policy-learning-shadow-eval-scheduler-1",
+      "pantheon-persona-1",
+      "pantheon-operator-bff-1",
+      "pantheon-evolution-threshold-sweep-producer-1",
+      "pantheon-postmortems-1",
+      "pantheon-reconciliation-drift-svc-1",
+      "pantheon-incidents-1",
+      "pantheon-evolution-dispatch-worker-1",
+      "pantheon-evolution-daily-sweep-scheduler-1",
+      "pantheon-evolution-1",
+      "pantheon-paper-fleet-reconciler-1",
+      "pantheon-telemetry-1",
+      "pantheon-deployment-outbox-consumer-1",
+      "pantheon-training-session-preview-worker-1",
+      "pantheon-search-index-scheduler-1",
+      "pantheon-runtime-manager-1",
+      "pantheon-consultation-svc-1",
+      "pantheon-training-session-svc-1",
+      "pantheon-search-svc-1",
+      "pantheon-strategy-distillation-worker-1",
+      "pantheon-deployment-1",
+      "pantheon-alpha-replication-worker-1",
+      "pantheon-research-worker-gateway-svc-1",
+      "pantheon-openclaw-gateway-1",
+      "pantheon-broker-1",
+      "pantheon-feedback-1",
+      "pantheon-capital-1",
+      "pantheon-lineage-read-1",
+      "pantheon-memory-1",
+      "pantheon-research-orchestrator-svc-1",
+      "pantheon-policy-learning-svc-1",
+      "pantheon-promotion-1",
+      "pantheon-registry-1",
+      "pantheon-optimizer-svc-1",
+      "pantheon-evaluation-1",
+      "pantheon-mlflow-dormant-smoke-1",
+      "pantheon-signal-store-1",
+      "pantheon-nats-1",
+      "pantheon-minio-1"
+    ],
+    "lock_path": "/tmp/pantheon-lifecycle-capacity.lock",
+    "networks": [
+      "bridge",
+      "dev-root_default",
+      "host",
+      "none",
+      "pantheon_default"
+    ],
+    "resources": {
+      "available_memory_bytes": 40104005632,
+      "cpu_count": 12,
+      "load_1m": 3.951171875,
+      "load_per_cpu": 0.3292643229166667
+    }
+  },
+  "benchmark_exit_code": 0,
+  "clean_repository_root": "/tmp/pantheon-lifecycle-capacity-worktrees/819faf63fce5-20260821T174025Z-a3bf6e38",
+  "cleanup": {
+    "error": null,
+    "private_environment_removed": true,
+    "schema_dropped": true,
+    "worktree_removed": true
+  },
+  "cleanup_at": "2026-08-21T19:13:50.166537Z",
+  "created_at": "2026-08-21T17:40:34.336570Z",
+  "finished_at": "2026-08-21T19:13:49.198019Z",
+  "git": {
+    "commit": "819faf63fce5c17f5db0ae5fec104f60bb13534f",
+    "dirty": false,
+    "dirty_paths": [],
+    "source": "git",
+    "tree_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "paths": {
+    "log": "/tmp/pantheon-capacity-launcher-819faf63/docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/managed-runs/819faf63fce5-20260821T174025Z-a3bf6e38/run.log",
+    "private_environment": "/tmp/pantheon-lifecycle-capacity-secrets/819faf63fce5-20260821T174025Z-a3bf6e38.env",
+    "result": "/tmp/pantheon-capacity-launcher-819faf63/docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/managed-runs/819faf63fce5-20260821T174025Z-a3bf6e38/evidence.json",
+    "result_checksum": "/tmp/pantheon-capacity-launcher-819faf63/docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/managed-runs/819faf63fce5-20260821T174025Z-a3bf6e38/evidence.json.sha256",
+    "status": "/tmp/pantheon-capacity-launcher-819faf63/docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/managed-runs/819faf63fce5-20260821T174025Z-a3bf6e38/run.json"
+  },
+  "repository_root": "/tmp/pantheon-capacity-launcher-819faf63",
+  "requested": {
+    "batch_size": 500,
+    "catch_up_events": 100000,
+    "events": 1000000,
+    "fault_journey_count": 4,
+    "loop_runs": 150000,
+    "read_repeats": 10
+  },
+  "run_id": "819faf63fce5-20260821T174025Z-a3bf6e38",
+  "runtime": {
+    "module_file": "/tmp/pantheon-lifecycle-capacity-worktrees/819faf63fce5-20260821T174025Z-a3bf6e38/services/trade_journey/lifecycle_projector_capacity.py",
+    "python": "/tmp/pantheon-lifecycle-capacity-worktrees/819faf63fce5-20260821T174025Z-a3bf6e38/.venv-pantheon/bin/python3"
+  },
+  "schema": "lifecycle_capacity_managed_819faf63fce5_20260821t174025z_a3bf6e38_9a122a66851d",
+  "started_at": "2026-08-21T17:40:34.476254Z",
+  "state": "cleaned",
+  "submitted_at": "2026-08-21T17:40:34.345617Z",
+  "systemd_submit_stdout": "",
+  "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+  "unit": "lifecycle-capacity-819faf63fce5-20260821T174025Z-a3bf6e38"
+}

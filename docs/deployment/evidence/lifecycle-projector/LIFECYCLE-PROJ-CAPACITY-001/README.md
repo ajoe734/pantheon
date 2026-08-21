@@ -136,6 +136,31 @@ result or benchmark exit code is nonzero, `gate_failures` is nonempty, cleanup
 or systemd status failed, or the evidence checksum, full git identity, schema,
 or teardown state differs from the submitted run.
 
+## Collected managed run
+
+The completed full-capacity proof is committed under
+`managed-runs/819faf63fce5-20260821T174025Z-a3bf6e38/`.  It ran from the
+clean commit `819faf63fce5c17f5db0ae5fec104f60bb13534f` with the deterministic
+`lifecycle-capacity-v1` corpus (1,000,000 events, 150,000 loop runs, 500-row
+batches, and a 100,000-event catch-up).
+
+- The primary batch p95 was 3.282376 seconds; backlog p95 was 0 seconds; and
+  steady/peak RSS were both 50,958,336 bytes.
+- The 100,000-event catch-up completed in 452.369965 seconds (limit: 1,800
+  seconds), with a 2.692051-second batch p95.
+- The slowest BFF read was the bounded journey-list query at 0.168668 seconds
+  p95; the capacity-gated `EXPLAIN` set passed without an unbounded scan.
+- All ten fault scenarios passed with no gate failures.  The managed cleanup
+  removed its private environment and detached worktree and dropped the schema.
+
+`collection.json` records exit code zero, an empty `gate_failures` list, the
+successful cleanup state, and evidence SHA-256
+`6c50e75e0533016e850e2c9284bd86b370138247c98599860740589cf5070f5d`.
+The byte-identical `evidence.json` is checked by its sidecar checksum.  The
+copied run manifest, log, collection record, and raw evidence were checked for
+DSNs, authorization headers, bearer tokens, private keys, and common secret
+assignments; none were present.
+
 ## Evidence contract
 
 The generated `evidence.json` is the raw, redacted evidence manifest. It must
