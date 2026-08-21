@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""LIFECYCLE-PROJ-MIGRATE-001 CLI: resumable relational-projection backfill.
+
+Reads committed ``telemetry_events`` rows in monotonic ``ingested_seq`` order
+and folds them into the relational Trade Journey projection
+(``services.trade_journey.projection_store``) through a migration-scoped
+controller row that never touches the live controller identity and never
+runs in ``live`` mode. See ``services/trade_journey/projection_migration.py``
+for the full contract this tool implements.
+
+Usage::
+
+    python3 scripts/lifecycle_projector_migrate.py \\
+      --dsn "$LIFECYCLE_PROJECTION_DSN" \\
+      --controller-id tj-projector \\
+      --tenant-scope "" --environment-scope paper \\
+      --snapshot-path /var/run/lifecycle-migrate/tj-projector.snapshot.json
+
+Re-invoking with the same ``--snapshot-path`` resumes from the last durably
+committed batch instead of replaying from ``ingested_seq`` 0.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+from pathlib import Path
+from typing import Sequence
+
+from services.trade_journey.lifecycle_projector import PostgresLifecycleSource
+from services.trade_journey.projection_migration import BackfillCoordinator
+from services.trade_journey.projection_store import ProjectionStore
+
+
+def _sync_fetch(source: PostgresLifecycleSource):
+    def fetch(after_seq: int, limit: int) -> list[dict]:
+        return asyncio.run(source.fetch_after(after_seq, limit=limit))
+
+    return fetch
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--dsn", default=os.getenv("LIFECYCLE_PROJECTION_DSN", ""))
+    parser.add_argument(
+        "--schema", default=os.getenv("LIFECYCLE_PROJECTION_SCHEMA", "trade_journey_projection")
+    )
+    parser.add_argument("--controller-id", required=True, help="the live controller id this job backfills for")
+    parser.add_argument("--tenant-scope", default="")
+    parser.add_argument("--environment-scope", default="")
+    parser.add_argument("--batch-size", type=int, default=500)
+    parser.add_argument("--max-batches", type=int, default=None)
+    parser.add_argument("--snapshot-path", type=Path, required=True)
+    parser.add_argument("--deployment-sha", default=os.getenv("GIT_SHA", "unknown"))
+    parser.add_argument("--evidence-out", type=Path, default=None)
+    args = parser.parse_args(argv)
+
+    if not args.dsn:
+        parser.error("--dsn or LIFECYCLE_PROJECTION_DSN is required")
+
+    store = ProjectionStore(args.dsn, schema=args.schema)
+    source = PostgresLifecycleSource(args.dsn)
+    coordinator = BackfillCoordinator(
+        store,
+        controller_id=args.controller_id,
+        tenant_scope=args.tenant_scope,
+        environment_scope=args.environment_scope,
+        fetch_batch=_sync_fetch(source),
+        snapshot_path=args.snapshot_path,
+        deployment_sha=args.deployment_sha,
+        batch_size=args.batch_size,
+    )
+    totals = coordinator.run(max_batches=args.max_batches)
+    rendered = json.dumps(totals, sort_keys=True)
+    print(rendered)
+    if args.evidence_out is not None:
+        args.evidence_out.write_text(json.dumps(totals, sort_keys=True, indent=2), encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
