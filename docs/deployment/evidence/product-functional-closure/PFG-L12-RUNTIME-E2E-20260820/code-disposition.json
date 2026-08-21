@@ -30,6 +30,7 @@
   "disposition_assertions": [
     "No inline artifact fixtures in product E2E suite.",
     "Dynamic paper fleet reconciler is the sole default runtime owner.",
-    "No live capital or real broker connections enabled."
+    "No live capital or real broker connections enabled.",
+    "Operator BFF proof uses strict short-lived JWT authentication with stub mode disabled."
   ]
 }

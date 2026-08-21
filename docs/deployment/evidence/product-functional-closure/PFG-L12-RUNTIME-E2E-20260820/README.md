@@ -40,7 +40,12 @@ Approved Registry Artifact (Loop 8)
    - Stopping `paper-fleet-reconciler` causes operator BFF `/bff/v5/downstream-health` to report `ok: false` for the worker target while `runtime-manager` API remains `ok: true`.
    - Restarting the container restores typed worker health without masking API readiness.
 
-4. **Bounded Outbox Cursor & Resource Limits (`bounded_lifecycle_cursor_and_resources`)**:
+4. **Strict BFF Authentication (`strict_bff_authentication`)**:
+   - Operator BFF remains in `strict` mode with `stub=false`.
+   - The deployed test mints an expiring HS256 JWT with subject, roles, exact tenant scope, `iat`, and `exp` claims from a fresh task-local process secret.
+   - Neither the bearer token nor signing secret is persisted in evidence.
+
+5. **Bounded Outbox Cursor & Resource Limits (`bounded_lifecycle_cursor_and_resources`)**:
    - Verified that `paper_runtime.py` lifecycle telemetry outbox uses durable cursor compaction (`ack_cursor`) avoiding full-history rescans.
    - Verified that non-executable bindings are rejected by `paper_fleet_reconciler.py:validate_executable_binding` without spawning fleet children.
    - Verified strict 1:1 running worker and port bounds matching active valid bindings.
@@ -110,9 +115,8 @@ python3 scripts/run_isolated_l12_runtime_e2e.py \
 
 ## Deployed Execution & Evidence Output
 
-The complete 9-case deployed suite was executed in an isolated Compose environment running all 18 production services. The atomic result artifact:
+The complete 11-case deployed suite was executed with zero skips in an isolated Compose environment running the production owners. The atomic result artifact:
 - `docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/run-report.json`
 - `docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/run-report.sha256`
 
-contains all 9 case readbacks, exact service container identities, authority proofs, and exact commit SHA. Reviewer metadata is assigned to `Codex2`.
-
+contains all 11 case readbacks, exact service container identities, strict-auth proof, authority proofs, migration success, paper-only controls, exact tested commit SHA, and zero-resource teardown evidence. The task owner is `Codex`; independent review is assigned to `Antigravity`.
