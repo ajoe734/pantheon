@@ -38,6 +38,17 @@
     "legacy_verifier_separation": "The retained prebuilt-ID suite has a separate opt-in flag and report role; it is not a closure gate."
   },
   "code_disposition_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-TRUTH-CROSSLOOP-20260820/code-disposition.json",
+  "external_execution_hold": {
+    "status": "blocked_pending_human_ops_current_dev_window",
+    "observed_at": "2026-08-21",
+    "reason": "The parent gate composes a Runtime worker-stop proof and a Human policy-scheduler/consultation restart proof. The shared local pantheon Compose project cannot be used without a governed exclusive window, and the Human prerequisite's current-dev pantheon-local tenant change still requires operator-bff redeployment before a fresh strict-auth Human run can succeed.",
+    "required_handoff": [
+      "Human/Ops: redeploy current-dev operator-bff with the committed pantheon-local dev-login tenant defaults and confirm the strict-auth Human owner path is healthy.",
+      "Human/Ops: provide a governed current-dev test window, short-lived credentials, and restart authorization for the fresh Human owner run; do not run the worker-stop/restart cases against the shared project without that authority.",
+      "Task owner: run PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E=1 on the exact resulting deployment, commit the bounded passed parent report and SHA-256, then request independent review of that exact head."
+    ],
+    "not_a_task_dependency": "PFG-L12-HUMAN-E2E-20260820 is canonically satisfied; this is a current-dev environment and authorization hold, not a wait on that task."
+  },
   "validation": {
     "completed": [
       {

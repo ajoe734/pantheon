@@ -58,3 +58,18 @@ export PANTHEON_L12_STIMULUS_EVIDENCE_OUTPUT=/tmp/pfg-l12-truth-crossloop-run.js
 After a passed run, copy the atomic temporary report into this directory,
 update `evidence.json` with its SHA and exact deployed commit, and obtain an
 independent review before requesting task closeout.
+
+## Current external execution hold
+
+The gate must not be pointed at this worker's shared `pantheon` Compose
+project: the Runtime portion deliberately stops `paper-fleet-reconciler`, and
+the Human portion restarts the policy scheduler and `consultation-svc`. The
+task therefore needs a Human/Ops-owned current-dev window with the required
+strict-auth credentials and restart authorization.
+
+As of 2026-08-21, the prerequisite Human proof records that its
+`pantheon-local` tenant fix still needs an `operator-bff` redeploy on the
+current dev host before its fresh run is possible. The Runtime isolated
+Compose harness is safe for Loops 8–12 but cannot substitute for that deployed
+Human/OpenClaw proof. No shared-worker interruption or substitute authority is
+attempted from this task worktree.
