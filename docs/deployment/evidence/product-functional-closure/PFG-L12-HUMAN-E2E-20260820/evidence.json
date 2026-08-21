@@ -60,7 +60,14 @@
     "target": "current dev Compose and paper environment",
     "deployed_run_report": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/deployed-run.json",
     "status": "not_run_in_this_worktree",
-    "admission_rule": "Do not claim deployed proof or request approval until a committed bounded run report records status=passed against the exact review head."
+    "admission_rule": "Do not claim deployed proof or request approval until a committed bounded run report records status=passed against the exact review head.",
+    "execution_access": {
+      "attempted_at": "2026-08-21",
+      "local_compose": "docker compose ps returned no running services in this task worktree.",
+      "dev_vm_gcloud": "A read-only instance-list attempt against pantheon-lupin-dev-20260719 was blocked because the configured identity requires non-interactive reauthentication.",
+      "dev_vm_ssh": "A batch-mode SSH read attempt to the declared dev VM was refused with publickey authentication failure.",
+      "required_handoff": "A supervisor or operator with current dev-host credentials must run the opt-in suite and commit the bounded deployed-run.json before review."
+    }
   },
   "validation": {
     "completed": [
@@ -71,6 +78,10 @@
       {
         "command": "git diff --check",
         "result": "passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q tests/integration/l12 && .venv-pantheon/bin/python3 -m pyflakes tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+        "result": "2 passed, 20 skipped; pyflakes clean"
       }
     ],
     "required_before_review": [

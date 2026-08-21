@@ -47,6 +47,17 @@ show exactly one candidate, memo, and Governance handoff for its run token.
 Commit the bounded run report and update `evidence.json` with the exact
 deployed revision before requesting independent review.
 
+## Current execution blocker (2026-08-21)
+
+This task worktree has no running local Compose project.  A read-only attempt
+to reach the declared dev VM could not authenticate: the configured `gcloud`
+identity requires interactive reauthentication, and the direct non-interactive
+SSH attempt was refused for lack of an authorized public key.  No deployed run
+report has therefore been created.  A supervisor or operator with the current
+dev-host credentials must run the command above and return the bounded report
+to this task branch; do not replace that proof with a fixture or a local
+in-process run.
+
 ## Code disposition
 
 The existing `policy-learning-shadow-eval-scheduler` and Consultation
