@@ -150,6 +150,8 @@ Existing nonterminal tasks must be repaired/reused rather than superseded:
 
 | Existing task | Planned use |
 |---|---|
+| `LIFECYCLE-PROJ-CUTOVER-001` | absorb the relational backfill/shadow and BFF reader-cutover scope after the telemetry baseline gate |
+| `LIFECYCLE-PROJ-RETIRE-001` | retire the legacy JSON writer/read fallback and data only after accepted cutover/soak and explicit cleanup approval |
 | `PFG-L12-TRUTH-CROSSLOOP-20260820` | amend PR #5122 and complete loop-contract/runtime truth |
 | `PFG-MGMT-JOURNEY-E2E-20260820` | replace fixture-only PR #601 tests with live E2E |
 | `PFG-AGORA-JOURNEY-E2E-20260820` | add and run the missing operator-live browser journey |
@@ -157,8 +159,12 @@ Existing nonterminal tasks must be repaired/reused rather than superseded:
 | `PFG-FE-CONSOLIDATE-20260820` | run after replacement journeys pass |
 | `PFG-HOSTED-ACCEPT-20260820` | final exact-pair acceptance |
 
-Only newly discovered scopes need new work packages. Suggested IDs below are SA
-planning IDs, not materialized canonical tasks.
+Only three newly discovered scopes need new canonical tasks:
+`PFG-DATA-TELEMETRY-PRUNE-20260822`,
+`PFG-DATA-TELEMETRY-BASELINE-20260822`, and
+`PFG-PAPER-STALE-SESSION-20260822`. The `SA-LIFECYCLE-01/02` labels below are
+design sections that compose into the two existing Lifecycle tasks; they must
+not be materialized as new tasks.
 
 ## 4. Implementable work packages
 
@@ -217,7 +223,10 @@ Disable the Management AI prune entirely. Do not restore the broad scope.
 - no derived JSON row is labelled canonical telemetry;
 - the migration start checkpoint is unambiguous.
 
-### SA-LIFECYCLE-01 — Backfill and shadow the existing relational projector
+### Existing `LIFECYCLE-PROJ-CUTOVER-001` — Backfill and shadow
+
+`SA-LIFECYCLE-01` is the design label for this portion of the existing task. It
+does not create a new Lifecycle task.
 
 **Depends on**: SA-DATA-01, SA-DATA-02
 
@@ -246,20 +255,34 @@ Disable the Management AI prune entirely. Do not restore the broad scope.
 - restart continues from durable checkpoint;
 - backfill never advertises live truth.
 
-### SA-LIFECYCLE-02 — Cut BFF reads to relational and retire JSON runtime
+### Existing Lifecycle tasks — Cut reads and retire JSON
 
-**Depends on**: SA-LIFECYCLE-01
+`SA-LIFECYCLE-02` is split across the existing canonical identities:
+
+- `LIFECYCLE-PROJ-CUTOVER-001` owns dual-read parity, the relational reader
+  canary/cutover, rollback/forward proof, and the accepted observation window.
+- `LIFECYCLE-PROJ-RETIRE-001` owns stopping/removing the JSON writer and read
+  fallback, preserving the approved rollback artifact, and the separately
+  approved legacy-file cleanup after the required soak.
+
+**Depends on**: the backfill/shadow portion of
+`LIFECYCLE-PROJ-CUTOVER-001`; retirement additionally depends on accepted
+cutover and its required soak/approval gates.
 
 **Implementation**
 
-1. Run dual-read parity for the accepted comparison window.
-2. Switch BFF `trade_journey_reader_backend` to relational.
+1. In `LIFECYCLE-PROJ-CUTOVER-001`, run dual-read parity for the accepted
+   comparison window.
+2. Switch BFF `trade_journey_reader_backend` to relational through the existing
+   canary and gate-before-switch flow.
 3. Prove Management, trade journey, loop run, and hosted lifecycle probes from
-   relational tables.
-4. Stop the legacy JSON scheduler.
+   relational tables; complete rollback/forward rehearsal and the task's
+   observation gate.
+4. In `LIFECYCLE-PROJ-RETIRE-001`, stop/remove the legacy JSON writer and read
+   fallback only after the accepted soak.
 5. Keep one immutable read-only legacy snapshot through the rollback window.
-6. After acceptance, remove JSON writer from normal Compose/profile wiring and
-   archive/delete old generations through an explicit cleanup operation.
+6. Archive/delete old generations only through the retirement task's exact-path
+   inventory, checksums, and explicit cleanup approval.
 
 **Acceptance**
 
@@ -406,8 +429,8 @@ the corrected journeys pass.
 flowchart TD
   D1[SA-DATA-01 constrain deploy prune]
   D2[SA-DATA-02 baseline disposition]
-  L1[SA-LIFECYCLE-01 relational backfill/shadow]
-  L2[SA-LIFECYCLE-02 reader cutover/JSON retire]
+  L1[LIFECYCLE-PROJ-CUTOVER existing]
+  L2[LIFECYCLE-PROJ-RETIRE existing]
   P1[SA-PAPER-01 bounded paper session]
   T[PFG-L12-TRUTH-CROSSLOOP rework]
   M[PFG-MGMT-JOURNEY live rewrite]
@@ -456,7 +479,7 @@ owner to avoid competing edits and live-environment collisions.
 | Scope | Sole change owner for a wave | Must not create |
 |---|---|---|
 | deploy telemetry prune | SA-DATA-01 | second cleanup script or second DB |
-| Lifecycle projection | SA-LIFECYCLE-01/02 sequentially | second projector/store |
+| Lifecycle projection | existing `LIFECYCLE-PROJ-CUTOVER-001`, then `LIFECYCLE-PROJ-RETIRE-001` | second projector/store or duplicate Lifecycle task |
 | paper session | SA-PAPER-01 | provider puller inside producer |
 | loop truth | existing cross-loop task | second loop-health store/projector |
 | Management E2E | existing Management task | product BFF dev-task endpoints or route mocks |
@@ -482,15 +505,18 @@ owner to avoid competing edits and live-environment collisions.
 
 ### Lifecycle
 
-1. merge deploy prune fix;
-2. record baseline disposition;
-3. relational backfill;
+1. merge deploy prune fix through `PFG-DATA-TELEMETRY-PRUNE-20260822`;
+2. record baseline disposition through
+   `PFG-DATA-TELEMETRY-BASELINE-20260822`;
+3. resume `LIFECYCLE-PROJ-CUTOVER-001` for relational backfill;
 4. enable relational shadow writer;
 5. prove parity and restart;
-6. switch BFF reader;
-7. stop JSON writer;
-8. observe bounded soak;
-9. archive/delete legacy generations after acceptance.
+6. switch BFF reader through the existing cutover canary;
+7. label and preserve the legacy rollback bundle, then complete
+   rollback/forward proof and the accepted observation gate;
+8. run `LIFECYCLE-PROJ-RETIRE-001` to stop/remove the JSON writer and fallback;
+9. archive/delete legacy generations only after the retirement task's explicit
+   approval gate.
 
 Rollback before step 6 keeps the JSON reader and stops relational shadow. After
 step 6, rollback may temporarily select the preserved read-only JSON snapshot,

@@ -92,7 +92,7 @@ Capture these pre/post values in the deployment artifact:
   "canonical_row_count_after": 0,
   "canonical_min_created_at_before": null,
   "canonical_min_created_at_after": null,
-  "derived_schema": "management_ai_projection",
+  "derived_schema": "management_ai",
   "derived_tables_pruned": [],
   "result": "preserved"
 }
@@ -624,18 +624,19 @@ probes.
 
 ## 13. Worker-ready task boundaries
 
-Do not supersede the six existing nonterminal product tasks. Amend their packet
-scope with this SD and create only the three new task families (Data, Lifecycle,
-and Paper), containing the five sequential work packages that do not already
-have canonical owners.
+Do not supersede the two existing Lifecycle tasks or the six existing
+nonterminal PFG product tasks. Amend their packet scope with this SD. Create
+only three new canonical tasks: Data prune, Data baseline, and Paper. The
+`SD-LIFE-01/02` design units below are owned by the existing Lifecycle tasks;
+they are not new task identities.
 
 | Task/work package | Files exclusively owned during implementation | Depends on | Completion evidence |
 |---|---|---|---|
-| SA-DATA-01 | deploy script and its focused tests | none | deploy sentinel tests + dev deploy |
-| SA-DATA-02 | baseline evidence tool/schema/docs | none | signed/hash-addressed baseline artifact |
-| SA-LIFECYCLE-01 | projector, store, migrations, migration/parity scripts/tests | DATA-01/02 | backfill + two parity windows |
-| SA-LIFECYCLE-02 | BFF reader/config/readback tests | LIFE-01 | candidate relational read + rollback |
-| SA-PAPER-01 | admission helper, RuntimeBinding metadata transition, reconciler/producer tests | none | pause/resume/restart proof, zero recurring pull |
+| `PFG-DATA-TELEMETRY-PRUNE-20260822` (`SD-DATA-01`) | deploy script and its focused tests | this design gate | deploy sentinel tests + dev deploy |
+| `PFG-DATA-TELEMETRY-BASELINE-20260822` (`SD-DATA-02`) | baseline evidence tool/schema/docs | design gate and Data prune | signed/hash-addressed baseline artifact |
+| existing `LIFECYCLE-PROJ-CUTOVER-001` (`SD-LIFE-01` plus reader-cutover part of `SD-LIFE-02`) | projector, store, migrations, migration/parity scripts, BFF reader/config/readback tests | Data prune/baseline pre-switch gates plus its retained canonical dependencies | backfill, two parity windows, canary, rollback/forward, accepted observation |
+| existing `LIFECYCLE-PROJ-RETIRE-001` (retirement part of `SD-LIFE-02`) | JSON writer/read fallback retirement, exact-path legacy inventory, runbook/evidence | accepted Lifecycle cutover and required soak/approval | Postgres-only restart/readback plus approved cleanup receipt |
+| `PFG-PAPER-STALE-SESSION-20260822` (`SD-PAPER-01`) | admission helper, RuntimeBinding metadata transition, reconciler/producer tests | this design gate | pause/resume/restart proof, zero recurring pull |
 | `PFG-L12-TRUTH-CROSSLOOP-20260820` | loop registry/inventory/adapters/tests | none | hosted 12/12 exact-SHA truth |
 | `PFG-MGMT-JOURNEY-E2E-20260820` | Management hosted E2E/helpers only | backend behavior available | real trace + reload + receipt |
 | `PFG-AGORA-JOURNEY-E2E-20260820` | Agora hosted E2E and required UI fixes | backend behavior available | correlated full journey artifact |
@@ -643,9 +644,12 @@ have canonical owners.
 | `PFG-FE-CONSOLIDATE-20260820` | inventoried frontend candidates | replacement proofs | disposition ledger + tests |
 | `PFG-HOSTED-ACCEPT-20260820` | release manifest/evidence only | all above | exact-pair hosted acceptance |
 
-Maximum safe first wave is DATA-01, DATA-02, PAPER-01, loop truth, Management
-E2E, and Agora E2E in separate worktrees. LIFE-01 starts after DATA tasks;
-LIFE-02 follows LIFE-01. Consolidation follows replacement proof. Hosted
+The maximum safe code-editing first wave remains the four lanes in the SA:
+Data prune, Paper, loop truth, and Management E2E in separate worktrees. Agora
+E2E may run in parallel once an operator-live candidate slot is available.
+Data baseline follows the deployed prune fix. The existing Lifecycle cutover
+resumes after the Data tasks; the existing Lifecycle retirement task follows
+accepted cutover and soak. Consolidation follows replacement proof. Hosted
 acceptance is last. Two workers must never edit the same repository paths or
 implement the same task under new IDs.
 
