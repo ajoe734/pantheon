@@ -22,49 +22,56 @@
       "PFG-DEV-INTEGRATION-20260820"
     ],
     "changed_files": [
+      "docker-compose.yml",
+      "services/consultation/workflow_executor.py",
+      "services/openclaw-gateway-adapter/Dockerfile",
+      "services/openclaw-gateway-adapter/consultation_provider.py",
+      "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
       "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json",
       "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/evidence.json",
       "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/evidence.sha256"
     ]
   },
   "acceptance": {
     "dev_deploy_exact_sha": {
-      "status": "blocked_on_external_gcp_billing",
-      "target_backend_sha": "bb83df12e3cec11de0f441850f08a179ddd7394a",
-      "target_frontend_sha": "8b5a7bbe868f9e3a56a4ed7baf818b642d57ba74",
-      "workflow_run_id": "32485613630",
-      "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/32485613630",
-      "error": "gcloud compute ssh failed with: This API method requires billing to be enabled. Please enable billing on project #pantheon-lupin-dev-20260719."
+      "status": "passed",
+      "backend_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+      "frontend_sha": "693d8612218e5ec6620c80ab7a16d3429e842f6c",
+      "workflow_run_id": "32554078801",
+      "gate_run_id": "32555528892",
+      "pair_id": "98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529"
     },
     "hosted_version_readback": {
-      "status": "pending_deploy_success"
+      "status": "passed",
+      "bff_version_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
+      "fe_deployment_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json"
     },
     "hosted_human_learning_e2e": {
-      "status": "pending_deploy_success"
+      "status": "passed",
+      "report_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json",
+      "test_suite": "tests/integration/l12/test_current_human_learning_deployed_e2e.py"
     },
     "restart_replay_identity_stable": {
-      "status": "pending_deploy_success"
+      "status": "passed",
+      "agora_policy_learning_replay": "idempotent_no_duplicate_candidates",
+      "consultation_governance_replay": "idempotent_no_duplicate_memos_or_handoffs"
     },
     "source_scheduler_and_egress_guard": {
-      "status": "pending_deploy_success"
+      "status": "passed",
+      "external_egress": "deny",
+      "controller_mode": "reconcile_only",
+      "max_ticks": 0
     }
   },
   "deployment": {
-    "target": "current dev Compose and paper environment",
-    "status": "blocked_on_external_gcp_billing",
-    "execution_access": {
-      "attempted_at": "2026-08-21T13:12:08Z",
-      "run_id": "32485613630",
-      "backend_sha": "bb83df12e3cec11de0f441850f08a179ddd7394a",
-      "frontend_sha": "8b5a7bbe868f9e3a56a4ed7baf818b642d57ba74",
-      "dev_auth_profile": "strict",
-      "step_failed": "Deploy dev VM stack under lease",
-      "failure_reason": "GCP Compute Engine API rejected instance SSH metadata update: billing disabled on project pantheon-lupin-dev-20260719."
+    "target": "current dev Compose and hosted environment",
+    "status": "active_and_verified",
+    "hosted_pair": {
+      "backend_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+      "frontend_sha": "693d8612218e5ec6620c80ab7a16d3429e842f6c",
+      "promotion_run_id": "32554078801",
+      "gate_run_id": "32555528892"
     }
-  },
-  "blocker": {
-    "waiting_for": "Human/Ops",
-    "reason_kind": "external",
-    "summary": "Pantheon Nonprod Deploy run 32485613630 failed at gcloud compute ssh: GCP project pantheon-lupin-dev-20260719 requires billing to be enabled before deployment can SSH to the dev VM."
   }
 }

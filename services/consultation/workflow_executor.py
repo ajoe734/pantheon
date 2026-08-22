@@ -512,6 +512,19 @@ def execute_claim(
     _phase_hook(phase_hook, "evidence_recorded")
 
     claim = _renew(state, claim, config)
+    normalized_findings = [
+        {
+            "severity": str(f.get("severity") or "info").lower()
+            if str(f.get("severity") or "info").lower() in {"info", "low", "medium", "high", "critical"}
+            else "info",
+            "category": str(f.get("category") or f.get("topic") or "risk_review"),
+            "claim": str(f.get("claim") or f.get("finding") or f.get("summary") or "Verified claim"),
+            "recommendation": str(f.get("recommendation") or "Review risk bounds"),
+            "evidence_refs": [str(ref) for ref in (f.get("evidence_refs") or [])],
+        }
+        for f in contribution.findings
+        if isinstance(f, Mapping)
+    ]
     memo = _api_post(
         config,
         "/api/consult/memos",
@@ -521,7 +534,7 @@ def execute_claim(
             "author_type": contribution.author_type,
             "author_ref": contribution.participant_ref,
             "summary": contribution.summary,
-            "findings": list(contribution.findings),
+            "findings": normalized_findings,
             "recommendation": contribution.recommendation,
             "confidence": contribution.confidence,
             "trace_id": str(request.get("trace_id")),
