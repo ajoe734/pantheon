@@ -4,7 +4,7 @@ Status: authoritative target specification
 
 Owner: Pantheon control plane
 
-Last updated: 2026-08-11
+Last updated: 2026-08-22
 
 ## 1. Purpose
 
@@ -34,6 +34,19 @@ The target system has seven responsibilities:
 
 There is no supervisor-owned chair authority. Explicit governance or review
 work is either a Human/Ops action or an ordinary canonical task.
+
+### Repository base snapshots
+
+Worker Manager obtains writable source checkouts only from the single
+`coordination.repositories.<repository-id>.local_path` registry. Runtime
+promotion projects host-specific absolute paths into that registry; the
+coordination/status root is task-state authority and is never an implicit Git
+source root. At most once per dispatch cycle and repository, Worker Manager
+fetches `origin/<default_branch>` and resolves an exact base SHA. Every worker
+lease created in that cycle records that SHA, and a reused task worktree can
+only fast-forward to it. Dirty task worktrees block dispatch; divergent task
+worktrees are retained with their relationship to the pinned base recorded.
+Neither is reset or auto-merged by the supervisor.
 
 Repository development governance and task-runtime authority are separate
 boundaries. Repository rules decide who may change, review, merge, and deploy

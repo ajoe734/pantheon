@@ -12,6 +12,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -115,6 +116,96 @@ def canonical_watchdog_runtime_paths(
     return rendered
 
 
+def parse_repository_source_roots(values: list[str] | None) -> dict[str, Path]:
+    """Parse repeatable ``repository-id=/absolute/git/root`` CLI values."""
+
+    roots: dict[str, Path] = {}
+    for raw_value in values or []:
+        repository_id, separator, raw_path = str(raw_value).partition("=")
+        repository_id = repository_id.strip()
+        raw_path = raw_path.strip()
+        if (
+            not separator
+            or not re.fullmatch(r"[a-z][a-z0-9_]*", repository_id)
+            or not raw_path
+        ):
+            raise ValueError(
+                "repository source root must use repository_id=/absolute/git/root"
+            )
+        candidate = Path(os.path.expanduser(raw_path))
+        if not candidate.is_absolute():
+            raise ValueError(
+                f"repository source root for {repository_id} must be absolute: {raw_path}"
+            )
+        roots[repository_id] = candidate
+    return roots
+
+
+def _validated_repository_source_root(repository_id: str, raw_root: Path) -> Path:
+    source_root = raw_root.expanduser().absolute()
+    symlink = first_symlink_component(source_root)
+    if symlink is not None:
+        raise ValueError(
+            f"repository source root for {repository_id} contains a symlink component: {symlink}"
+        )
+    source_root = source_root.resolve()
+    if not source_root.is_dir():
+        raise ValueError(
+            f"repository source root for {repository_id} is not a directory: {source_root}"
+        )
+    proc = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=source_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0 or Path(proc.stdout.strip()).resolve() != source_root:
+        raise ValueError(
+            f"repository source root for {repository_id} is not a Git checkout: {source_root}"
+        )
+    return source_root
+
+
+def apply_repository_source_roots(
+    rendered: dict[str, Any],
+    repository_source_roots: Mapping[str, Path | str] | None,
+) -> dict[str, str]:
+    """Render deployment-owned repository roots into the one live registry.
+
+    Repository paths are host topology, not source policy.  The candidate
+    config retains portable logical registry entries; promotion materializes
+    the absolute checkout which Worker Manager must use.  This prevents the
+    coordination/status root from becoming an implicit Git source authority.
+    """
+
+    applied: dict[str, str] = {}
+    if not repository_source_roots:
+        return applied
+    coordination = rendered.setdefault("coordination", {})
+    if not isinstance(coordination, dict):
+        raise ValueError("coordination config must be a JSON object")
+    repository_config = coordination.setdefault("repositories", {})
+    if not isinstance(repository_config, dict):
+        raise ValueError("coordination.repositories must be a JSON object")
+    for repository_id, raw_root in repository_source_roots.items():
+        normalized_id = str(repository_id or "").strip()
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", normalized_id):
+            raise ValueError(f"invalid repository source id: {repository_id!r}")
+        source_root = _validated_repository_source_root(
+            normalized_id,
+            Path(raw_root),
+        )
+        entry = repository_config.setdefault(normalized_id, {})
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"coordination.repositories.{normalized_id} must be a JSON object"
+            )
+        entry["local_path"] = str(source_root)
+        applied[normalized_id] = str(source_root)
+    return applied
+
+
 def validate_provider_accounts(config: Mapping[str, Any]) -> None:
     """Accept only explicit V2 provider account identities."""
 
@@ -192,6 +283,7 @@ def build_live_config(
     status_root: Path,
     live_config_path: Path,
     python_executable: Path,
+    repository_source_roots: Mapping[str, Path | str] | None = None,
 ) -> dict[str, Any]:
     # The live file is a deployment projection, never a policy overlay.  In
     # particular, carrying keys that are merely absent from the candidate
@@ -206,6 +298,7 @@ def build_live_config(
     del existing_live_config
     rendered = copy.deepcopy(repo_config)
     validate_provider_accounts(rendered)
+    apply_repository_source_roots(rendered, repository_source_roots)
     apply_task_state_store(
         repo_config,
         rendered,
@@ -416,6 +509,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--status-root")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument(
+        "--repository-source-root",
+        action="append",
+        default=[],
+        metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
+        help="Render one deployment-owned repository source root into coordination.repositories.",
+    )
+    parser.add_argument(
         "--validate-command-root-only",
         action="store_true",
         help="Validate immutable command runtime identity without writing state.",
@@ -476,6 +576,9 @@ def main(argv: list[str] | None = None) -> int:
             status_root=status_root,
             live_config_path=live_config_path,
             python_executable=python_executable,
+            repository_source_roots=parse_repository_source_roots(
+                args.repository_source_root
+            ),
         )
         if existing is not None and rendered != existing:
             raise ValueError(
@@ -504,6 +607,13 @@ def main(argv: list[str] | None = None) -> int:
         "config_created": config_created,
         "command_runtime": command_identity,
         "supervisor_command": rendered["watchdog"]["supervisor_command"],
+        "repository_source_roots": {
+            repository_id: str(entry.get("local_path"))
+            for repository_id, entry in (
+                (rendered.get("coordination") or {}).get("repositories") or {}
+            ).items()
+            if isinstance(entry, dict) and entry.get("local_path")
+        },
     }
     if args.json:
         print(json.dumps(summary, indent=2, sort_keys=True))
