@@ -45,7 +45,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-TASK_ID = "PFG-L12-HUMAN-E2E-20260820"
+TASK_ID = "PFG-L12-HUMAN-E2E-LIVE-R2-20260821"
 DEFAULT_REPORT_PATH = (
     REPO_ROOT
     / "docs"
@@ -111,6 +111,10 @@ class DeployedHumanLearningHarness:
         self.timeout_seconds = float(os.getenv("PANTHEON_L12_POLL_TIMEOUT_SECONDS", "210"))
         self.poll_seconds = float(os.getenv("PANTHEON_L12_POLL_INTERVAL_SECONDS", "2"))
         self.tenant_id = os.getenv("PANTHEON_L12_HUMAN_LEARNING_TENANT_ID", "pantheon-local").strip()
+        self.consultation_tenant_id = os.getenv(
+            "PANTHEON_L12_CONSULTATION_TENANT_ID",
+            os.getenv("PANTHEON_TENANT_ID", "tenant-dev"),
+        ).strip()
         self.bff_url = os.getenv("PANTHEON_L12_BFF_URL", "http://127.0.0.1:18001").rstrip("/")
         self.policy_learning_url = os.getenv(
             "PANTHEON_L12_POLICY_LEARNING_URL", "http://127.0.0.1:18100"
@@ -121,10 +125,7 @@ class DeployedHumanLearningHarness:
         self.consultation_url = os.getenv(
             "PANTHEON_L12_CONSULTATION_URL", "http://127.0.0.1:18096"
         ).rstrip("/")
-        self.bff_bearer = self._secret_from_env_or_file(
-            "PANTHEON_L12_BFF_BEARER",
-            default=f"l12-current-e2e:operator,admin:{self.tenant_id}",
-        )
+        self.bff_bearer = self._resolve_bff_bearer()
         self.agora_handoff_token = os.getenv(
             "PANTHEON_L12_AGORA_HANDOFF_TOKEN",
             "pantheon-local-agora-handoff-service-token",
@@ -138,7 +139,10 @@ class DeployedHumanLearningHarness:
             "pantheon-local-consultation-service",
         )
         self.report_path = Path(os.getenv("PANTHEON_L12_REPORT_PATH", str(DEFAULT_REPORT_PATH)))
-        self.git_sha = self._command(["git", "rev-parse", "HEAD"]).strip()
+        self.git_sha = (
+            os.getenv("PANTHEON_L12_GIT_SHA")
+            or self._command(["git", "rev-parse", "HEAD"]).strip()
+        )
         self.case_results: list[dict[str, Any]] = []
         self.first_failure: dict[str, Any] | None = None
         self.failure_reported = False
@@ -146,16 +150,46 @@ class DeployedHumanLearningHarness:
         self._current_case: dict[str, Any] | None = None
         self._write_report("running")
 
+    def _resolve_bff_bearer(self) -> str:
+        explicit = self._secret_from_env_or_file("PANTHEON_L12_BFF_BEARER", default="")
+        if explicit:
+            return explicit
+        client_id = (
+            os.getenv("DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID", "")
+            or os.getenv("PANTHEON_L12_DEV_LOGIN_CLIENT_ID", "")
+            or os.getenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID", "")
+            or "pantheon-dev-operator-a-v1"
+        )
+        client_secret = (
+            self._secret_from_env_or_file("DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET", default="")
+            or self._secret_from_env_or_file("PANTHEON_L12_DEV_LOGIN_CLIENT_SECRET", default="")
+            or self._secret_from_env_or_file("PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET", default="")
+        )
+        if client_id and client_secret:
+            try:
+                body = self._http_json(
+                    self.bff_url,
+                    "/bff/auth/dev-login",
+                    method="POST",
+                    payload={"client_id": client_id, "client_secret": client_secret},
+                    expected=(200,),
+                )
+                if isinstance(body, dict) and body.get("access_token"):
+                    return str(body["access_token"])
+            except Exception:
+                pass
+        return f"l12-current-e2e:operator,admin:{self.tenant_id}"
+
     # -- infra helpers -----------------------------------------------------
 
-    def _command(self, argv: Sequence[str]) -> str:
+    def _command(self, argv: Sequence[str], *, timeout: float = 60.0) -> str:
         completed = subprocess.run(
             list(argv),
             cwd=REPO_ROOT,
             check=False,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout,
         )
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip() or "command failed"
@@ -293,8 +327,9 @@ class DeployedHumanLearningHarness:
         except urllib.error.HTTPError as exc:
             status = exc.code
             raw = exc.read(4_096).decode("utf-8", errors="replace")
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"{method} {path} connection failed: {exc.reason}") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            reason = getattr(exc, "reason", str(exc))
+            raise RuntimeError(f"{method} {path} connection failed: {reason}") from exc
         if status not in expected:
             raise RuntimeError(
                 f"{method} {path} returned HTTP {status}; expected {list(expected)}; "
@@ -430,6 +465,8 @@ class DeployedHumanLearningHarness:
     def _bff_headers(self, *, idempotency_key: str | None = None) -> dict[str, str]:
         headers = {
             "Authorization": f"Bearer {self.bff_bearer}",
+            "X-Tenant-Id": self.tenant_id,
+            "X-Pantheon-Tenant": self.tenant_id,
             "X-Pantheon-Tenant-Id": self.tenant_id,
         }
         if idempotency_key:
@@ -439,6 +476,8 @@ class DeployedHumanLearningHarness:
     def _agora_service_headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.agora_handoff_token}",
+            "X-Tenant-Id": self.tenant_id,
+            "X-Pantheon-Tenant": self.tenant_id,
             "X-Pantheon-Tenant-Id": self.tenant_id,
             "X-Pantheon-Service-Actor": AGORA_SERVICE_ACTOR,
         }
@@ -446,13 +485,17 @@ class DeployedHumanLearningHarness:
     def _policy_learning_headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.policy_learning_token}",
+            "X-Tenant-Id": self.tenant_id,
+            "X-Pantheon-Tenant": self.tenant_id,
             "X-Pantheon-Tenant-Id": self.tenant_id,
         }
 
     def _consultation_headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.consultation_token}",
-            "X-Pantheon-Tenant-Id": self.tenant_id,
+            "X-Tenant-Id": self.consultation_tenant_id,
+            "X-Pantheon-Tenant": self.consultation_tenant_id,
+            "X-Pantheon-Tenant-Id": self.consultation_tenant_id,
         }
 
     # -- Loop 5: Agora interaction evidence -> durable handoff -> intake ----
@@ -698,7 +741,11 @@ class DeployedHumanLearningHarness:
             lambda: self._http_json(
                 self.research_url,
                 f"/api/research-orchestrator/runs/{urllib.parse.quote(experiment_run_id, safe='')}",
-                headers={"X-Pantheon-Tenant-Id": self.tenant_id},
+                headers={
+                    "X-Tenant-Id": self.tenant_id,
+                    "X-Pantheon-Tenant": self.tenant_id,
+                    "X-Pantheon-Tenant-Id": self.tenant_id,
+                },
             ),
         )
         self._require(
@@ -731,7 +778,7 @@ class DeployedHumanLearningHarness:
         request_id = f"cr-l12-hl-{self.run_token}"
         req_payload = {
             "request_id": request_id,
-            "tenant_id": self.tenant_id,
+            "tenant_id": self.consultation_tenant_id,
             "request_type": "strategy_review",
             "requested_by": {"actor_type": "operator", "actor_id": "l12-current-e2e-operator"},
             "target_type": "experiment_run",
@@ -912,6 +959,51 @@ def test_deployed_human_learning_chain_identity_correlation(
         assert chain.get(key), f"identity chain is missing {key}"
 
 
+def test_deployed_source_posture_and_egress_readback(
+    deployed_human_learning_e2e: DeployedHumanLearningHarness,
+) -> None:
+    """Verify live deployed source scheduler, controller mode, and external egress deny posture."""
+
+    source_url = os.getenv("PANTHEON_L12_SOURCE_INGEST_URL", "http://127.0.0.1:18097").rstrip("/")
+    body = deployed_human_learning_e2e._http_json(source_url, "/readyz", expected=(200,))
+    assert body.get("service") == "pantheon-source-ingest"
+    assert body.get("ready") is True
+    dependencies = body.get("dependencies") or {}
+    source_freshness = dependencies.get("source_freshness") or {}
+    assert source_freshness.get("provider_egress_attempted") is False
+    source_search_posture = dependencies.get("source_search_posture") or {}
+    assert source_search_posture.get("mode") == "dev"
+
+    source_identity = deployed_human_learning_e2e._service_identity("source-ingest")
+    assert source_identity["state"] == "running"
+    assert source_identity["health"] == "healthy"
+
+    scheduler_identity = deployed_human_learning_e2e._service_identity("source-ingest-scheduler")
+    assert scheduler_identity["state"] == "running"
+    assert scheduler_identity["health"] == "healthy"
+
+    source_inspect = json.loads(
+        deployed_human_learning_e2e._command(["docker", "inspect", source_identity["container_id"]])
+    )[0]
+    source_env = {
+        item.split("=", 1)[0]: item.split("=", 1)[1]
+        for item in (source_inspect.get("Config") or {}).get("Env", [])
+        if "=" in item
+    }
+    assert source_env.get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+
+    scheduler_inspect = json.loads(
+        deployed_human_learning_e2e._command(["docker", "inspect", scheduler_identity["container_id"]])
+    )[0]
+    scheduler_env = {
+        item.split("=", 1)[0]: item.split("=", 1)[1]
+        for item in (scheduler_inspect.get("Config") or {}).get("Env", [])
+        if "=" in item
+    }
+    assert scheduler_env.get("SOURCE_INGEST_CONTROLLER_MODE") == "reconcile_only"
+    assert scheduler_env.get("SOURCE_INGEST_CONTROLLER_MAX_TICKS") == "0"
+
+
 def test_deployed_suite_has_no_fixture_or_product_store_shortcut() -> None:
     """AST guard: keep this suite on deployed HTTP boundaries only."""
 
@@ -981,6 +1073,7 @@ def test_deployed_suite_has_no_fixture_or_product_store_shortcut() -> None:
         "test_deployed_imitation_research_handoff_identity_chain",
         "test_deployed_consultation_governance_handoff_identity_chain",
         "test_deployed_human_learning_chain_identity_correlation",
+        "test_deployed_source_posture_and_egress_readback",
         "test_deployed_suite_has_no_fixture_or_product_store_shortcut",
     ]
     assert "subprocess.run" in inspect.getsource(DeployedHumanLearningHarness._command)
