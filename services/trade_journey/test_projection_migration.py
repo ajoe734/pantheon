@@ -7,6 +7,7 @@ import json
 import os
 import random
 from collections import Counter
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,10 @@ from services.trade_journey.incremental_materializer import IncrementalLifecycle
 from services.trade_journey.lifecycle_projector import ConflictingLifecycleEvent
 from services.trade_journey.projection_migration import (
     BackfillCoordinator,
+    LegacyBundleBackfillCoordinator,
+    StreamingMultisetDigest,
+    _JsonStream,
+    _seek_top_level_member,
     build_batch_mutation,
     compare_category,
     legacy_identity_rows,
@@ -29,7 +34,9 @@ from services.trade_journey.projection_migration import (
     projection_loop_rows,
     projection_quarantine_rows,
     projection_stage_rows,
+    read_legacy_bundle_member,
     reduce_source_rows,
+    sha256_file,
     stable_hash,
     summarize_parity,
 )
@@ -210,8 +217,18 @@ def test_out_of_order_delivery_converges_to_the_same_journey_row():
 
 
 class _FakeControllerRow:
-    def __init__(self, checkpoint_seq: int) -> None:
+    def __init__(
+        self,
+        checkpoint_seq: int,
+        *,
+        mode: str = "backfill",
+        status: str = "ready",
+        accepted_live: bool = False,
+    ) -> None:
         self.checkpoint_seq = checkpoint_seq
+        self.mode = mode
+        self.status = status
+        self.accepted_live = accepted_live
 
 
 class FakeProjectionStore:
@@ -226,6 +243,7 @@ class FakeProjectionStore:
     def __init__(self) -> None:
         self.checkpoint = 0
         self.transactions: list[Any] = []
+        self.adoptions: list[dict[str, Any]] = []
 
     def get_controller_state(self, controller_id, tenant_scope, environment_scope):
         if self.checkpoint == 0:
@@ -239,6 +257,15 @@ class FakeProjectionStore:
         self.transactions.append(mutation)
         self.checkpoint = mutation.source_high_watermark
         return _FakeControllerRow(self.checkpoint)
+
+    def adopt_legacy_baseline(self, **kwargs):
+        self.adoptions.append(dict(kwargs))
+        return _FakeControllerRow(
+            kwargs["checkpoint_seq"],
+            mode="recovery",
+            status="repair_only",
+            accepted_live=False,
+        )
 
 
 def _paged_fetch(rows: list[dict[str, Any]]):
@@ -346,6 +373,245 @@ def test_backfill_coordinator_resubmitting_an_applied_batch_is_a_no_op(tmp_path:
 
 
 # ---------------------------------------------------------------------------
+# Operator-accepted legacy JSON baseline recovery
+# ---------------------------------------------------------------------------
+
+
+def _legacy_controller_state() -> dict[str, Any]:
+    reduced = reduce_source_rows(lifecycle_rows(), mode="backfill")
+    materializer = IncrementalLifecycleMaterializer()
+    staged, _affected, _accepted, _duplicates = materializer.stage_batch(
+        reduced.entries
+    )
+    materializer.commit(staged)
+    return {
+        "aggregates": materializer.serialize_aggregates(),
+        "controller": {
+            "controller_id": "canonical-lifecycle-projector",
+            "checkpoint": reduced.high_watermark,
+            "backlog": 0,
+            "quarantine_count": 0,
+            "accepted_live": True,
+            "last_error": None,
+            "deployment_sha": "a" * 40,
+        },
+        "schema_version": "pantheon.lifecycle-projector-state.v1",
+    }
+
+
+def test_json_stream_skips_large_members_with_tiny_chunks():
+    payload = json.dumps(
+        {"large": {"nested": ["quoted } value", {"x": "y" * 100}]}, "wanted": {"ok": True}},
+        sort_keys=True,
+    )
+    reader = _JsonStream(StringIO(payload), chunk_size=7)
+
+    assert _seek_top_level_member(reader, "wanted") is True
+    assert reader.read_value() == {"ok": True}
+
+
+def test_legacy_bundle_backfill_streams_exact_baseline_and_seeds_recovery(tmp_path: Path):
+    source = tmp_path / "controller_state.json"
+    source.write_text(
+        json.dumps(_legacy_controller_state(), sort_keys=True), encoding="utf-8"
+    )
+    store = FakeProjectionStore()
+    snapshot = tmp_path / "legacy.snapshot.json"
+    coordinator = LegacyBundleBackfillCoordinator(
+        store,
+        controller_id="canonical-lifecycle-projector",
+        tenant_scope="*",
+        environment_scope="*",
+        controller_state_path=source,
+        expected_sha256=sha256_file(source),
+        snapshot_path=snapshot,
+        accepted_checkpoint=8,
+        accepted_controller_deployment_sha="a" * 40,
+        deployment_sha="b" * 40,
+        batch_size=1,
+    )
+
+    result = coordinator.run()
+
+    assert result["aggregates"] == 1
+    assert result["receipts"] == 8
+    assert result["journeys"] == 1
+    assert result["loop_runs"] == 1
+    assert result["stages"] == 8
+    assert result["checkpoint"] == 8
+    assert result["import_complete"] is True
+    assert result["live_controller_seeded"] is True
+    assert result["live_controller_mode"] == "recovery"
+    assert result["live_controller_status"] == "repair_only"
+    assert result["accepted_live"] is False
+    assert len(store.transactions) == 1
+    assert store.transactions[0].mode == "backfill"
+    assert store.transactions[0].accepted_live is False
+    assert len(store.adoptions) == 1
+    assert store.adoptions[0]["expected_receipts"] == 8
+    persisted = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert persisted["import_complete"] is True
+    assert persisted["live_controller_seeded"] is True
+    assert read_legacy_bundle_member(source, "controller")["checkpoint"] == 8
+
+    rerun = coordinator.run()
+    assert rerun["batches"] == 1
+    assert len(store.transactions) == 1
+    assert len(store.adoptions) == 2
+
+
+def test_legacy_bundle_backfill_rejects_unreviewed_checksum(tmp_path: Path):
+    source = tmp_path / "controller_state.json"
+    source.write_text(
+        json.dumps(_legacy_controller_state(), sort_keys=True), encoding="utf-8"
+    )
+    store = FakeProjectionStore()
+    coordinator = LegacyBundleBackfillCoordinator(
+        store,
+        controller_id="canonical-lifecycle-projector",
+        tenant_scope="*",
+        environment_scope="*",
+        controller_state_path=source,
+        expected_sha256="0" * 64,
+        snapshot_path=tmp_path / "legacy.snapshot.json",
+        accepted_checkpoint=8,
+    )
+
+    with pytest.raises(ValueError, match="checksum"):
+        coordinator.run()
+    assert store.transactions == []
+    assert store.adoptions == []
+
+
+@pytest.mark.parametrize(
+    ("controller_patch", "accepted_checkpoint", "accepted_deployment_sha", "error"),
+    [
+        ({"controller_id": "other-controller"}, 8, "a" * 40, "identity"),
+        ({}, 999, "a" * 40, "checkpoint"),
+        ({"checkpoint": "8"}, 8, "a" * 40, "positive integer"),
+        ({}, 8, "f" * 40, "deployment SHA"),
+        ({"deployment_sha": ""}, 8, "a" * 40, "non-empty string"),
+        ({"backlog": 1}, 8, "a" * 40, "backlog"),
+        ({"backlog": False}, 8, "a" * 40, "backlog"),
+        ({"quarantine_count": 1}, 8, "a" * 40, "quarantine"),
+        ({"accepted_live": False}, 8, "a" * 40, "accepted_live"),
+        ({"last_error": "prior projector failure"}, 8, "a" * 40, "last_error"),
+    ],
+)
+def test_legacy_bundle_backfill_rejects_controller_binding_before_writes(
+    tmp_path: Path,
+    controller_patch: dict[str, Any],
+    accepted_checkpoint: int,
+    accepted_deployment_sha: str,
+    error: str,
+):
+    payload = _legacy_controller_state()
+    payload["controller"].update(controller_patch)
+    source = tmp_path / "controller_state.json"
+    source.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    store = FakeProjectionStore()
+    coordinator = LegacyBundleBackfillCoordinator(
+        store,
+        controller_id="canonical-lifecycle-projector",
+        tenant_scope="*",
+        environment_scope="*",
+        controller_state_path=source,
+        expected_sha256=sha256_file(source),
+        snapshot_path=tmp_path / "legacy.snapshot.json",
+        accepted_checkpoint=accepted_checkpoint,
+        accepted_controller_deployment_sha=accepted_deployment_sha,
+    )
+
+    with pytest.raises(ValueError, match=error):
+        coordinator.run()
+    assert store.transactions == []
+    assert store.adoptions == []
+    assert not coordinator.snapshot_path.exists()
+
+
+def test_legacy_bundle_backfill_rejects_missing_controller_safe_field(tmp_path: Path):
+    payload = _legacy_controller_state()
+    del payload["controller"]["backlog"]
+    source = tmp_path / "controller_state.json"
+    source.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    store = FakeProjectionStore()
+    coordinator = LegacyBundleBackfillCoordinator(
+        store,
+        controller_id="canonical-lifecycle-projector",
+        tenant_scope="*",
+        environment_scope="*",
+        controller_state_path=source,
+        expected_sha256=sha256_file(source),
+        snapshot_path=tmp_path / "legacy.snapshot.json",
+        accepted_checkpoint=8,
+        accepted_controller_deployment_sha="a" * 40,
+    )
+
+    with pytest.raises(ValueError, match="missing required fields: backlog"):
+        coordinator.run()
+    assert store.transactions == []
+    assert store.adoptions == []
+
+
+def test_legacy_bundle_cli_requires_reviewed_controller_deployment_sha(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    from scripts.lifecycle_projector_migrate import main
+
+    with pytest.raises(SystemExit, match="2"):
+        main(
+            [
+                "--dsn",
+                "postgresql://must-not-be-reached",
+                "--controller-id",
+                "canonical-lifecycle-projector",
+                "--snapshot-path",
+                str(tmp_path / "legacy.snapshot.json"),
+                "--legacy-controller-state",
+                str(tmp_path / "controller_state.json"),
+                "--expected-legacy-sha256",
+                "0" * 64,
+                "--legacy-checkpoint",
+                "8",
+            ]
+        )
+
+    assert "--legacy-controller-deployment-sha is required" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("controller_id", "legacy_checkpoint", "error"),
+    [
+        ("other-controller", 8, "identity"),
+        ("canonical-lifecycle-projector", 999, "checkpoint"),
+    ],
+)
+def test_streaming_parity_rejects_unbound_controller_before_database_reads(
+    tmp_path: Path,
+    controller_id: str,
+    legacy_checkpoint: int,
+    error: str,
+):
+    from scripts.lifecycle_projector_parity import _stream_legacy_baseline_parity
+
+    source = tmp_path / "controller_state.json"
+    source.write_text(
+        json.dumps(_legacy_controller_state(), sort_keys=True), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=error):
+        _stream_legacy_baseline_parity(
+            dsn="postgresql://must-not-be-reached",
+            schema="trade_journey_projection",
+            controller_state=source,
+            expected_sha256=sha256_file(source),
+            controller_id=controller_id,
+            legacy_checkpoint=legacy_checkpoint,
+            classifications={},
+        )
+
+
+# ---------------------------------------------------------------------------
 # Deterministic old/new parity
 # ---------------------------------------------------------------------------
 
@@ -360,6 +626,23 @@ def test_stable_hash_changes_with_content():
     rows = [{"k": "a", "v": 1}]
     other = [{"k": "a", "v": 2}]
     assert stable_hash(rows, key_fields=["k"]) != stable_hash(other, key_fields=["k"])
+
+
+def test_streaming_multiset_digest_is_order_independent_and_duplicate_sensitive():
+    first = StreamingMultisetDigest()
+    second = StreamingMultisetDigest()
+    duplicate = StreamingMultisetDigest()
+    for row in ({"k": "a", "v": 1}, {"k": "b", "v": 2}):
+        first.update(row)
+    for row in ({"k": "b", "v": 2}, {"k": "a", "v": 1}):
+        second.update(row)
+    for row in ({"k": "a", "v": 1}, {"k": "b", "v": 2}, {"k": "b", "v": 2}):
+        duplicate.update(row)
+
+    assert first.count == second.count == 2
+    assert first.hexdigest() == second.hexdigest()
+    assert duplicate.count == 3
+    assert duplicate.hexdigest() != first.hexdigest()
 
 
 def test_compare_category_matches_when_content_is_equivalent():
@@ -518,6 +801,96 @@ def test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store(
     finally:
         import psycopg  # type: ignore[import]
 
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_legacy_baseline_adoption_against_real_store(
+    postgres_dsn: str, tmp_path: Path
+):
+    from uuid import uuid4
+
+    import psycopg  # type: ignore[import]
+
+    from services.trade_journey.projection_store import ProjectionStore
+
+    schema_name = f"test_legacy_baseline_{uuid4().hex[:8]}"
+    store = ProjectionStore(postgres_dsn, schema=schema_name, bootstrap=True)
+    source = tmp_path / "controller_state.json"
+    source.write_text(
+        json.dumps(_legacy_controller_state(), sort_keys=True), encoding="utf-8"
+    )
+    coordinator = LegacyBundleBackfillCoordinator(
+        store,
+        controller_id="canonical-lifecycle-projector",
+        tenant_scope="*",
+        environment_scope="*",
+        controller_state_path=source,
+        expected_sha256=sha256_file(source),
+        snapshot_path=tmp_path / "legacy.snapshot.json",
+        accepted_checkpoint=8,
+        accepted_controller_deployment_sha="a" * 40,
+        deployment_sha="b" * 40,
+        batch_size=1,
+    )
+    try:
+        result = coordinator.run()
+        assert result["import_complete"] is True
+        assert result["live_controller_seeded"] is True
+        assert result["accepted_live"] is False
+
+        migration = store.get_controller_state(
+            "canonical-lifecycle-projector-migrate", "*", "*"
+        )
+        live = store.get_controller_state(
+            "canonical-lifecycle-projector", "*", "*"
+        )
+        assert migration is not None
+        assert migration.checkpoint_seq == 8
+        assert migration.source_high_watermark == 8
+        assert migration.backlog_count == 0
+        assert migration.mode == "backfill"
+        assert migration.status == "ready"
+        assert migration.accepted_live is False
+        assert live is not None
+        assert live.checkpoint_seq == 8
+        assert live.source_high_watermark == 8
+        assert live.backlog_count == 0
+        assert live.mode == "recovery"
+        assert live.status == "repair_only"
+        assert live.accepted_live is False
+
+        from scripts.lifecycle_projector_parity import (
+            _stream_legacy_baseline_parity,
+        )
+
+        parity = _stream_legacy_baseline_parity(
+            dsn=postgres_dsn,
+            schema=schema_name,
+            controller_state=source,
+            expected_sha256=sha256_file(source),
+            controller_id="canonical-lifecycle-projector",
+            legacy_checkpoint=8,
+            classifications={},
+        )
+        assert parity["mismatch_count"] == 0
+        assert parity["unexplained_mismatch_count"] == 0
+        assert all(
+            category["legacy_count"] == category["new_count"]
+            for category in parity["categories"].values()
+        )
+
+        # A completed exact-checksum retry does not replay any baseline rows.
+        rerun = coordinator.run()
+        assert rerun["batches"] == result["batches"]
+        with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM {schema_name}.event_receipts")
+            assert cur.fetchone()[0] == 8
+            cur.execute(f"SELECT COUNT(*) FROM {schema_name}.journeys")
+            assert cur.fetchone()[0] == 1
+            cur.execute(f"SELECT COUNT(*) FROM {schema_name}.loop_runs")
+            assert cur.fetchone()[0] == 1
+    finally:
         with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
 
