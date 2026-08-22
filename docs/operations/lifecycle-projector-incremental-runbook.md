@@ -106,7 +106,7 @@ GIT_SHA="${MERGED_SHA}" \
 docker compose -p pantheon -f docker-compose.yml run --rm -T --no-deps \
   -e LIFECYCLE_PROJECTION_DSN -e GIT_SHA \
   loop-run-projector-scheduler \
-  python scripts/lifecycle_projector_migrate.py \
+  python -m scripts.lifecycle_projector_migrate \
     --controller-id canonical-lifecycle-projector \
     --tenant-scope '*' --environment-scope '*' \
     --snapshot-path /data/bff/lifecycle-projection/cutover-migrate.snapshot.json \
@@ -128,7 +128,7 @@ new relational live events can diverge from that frozen recovery snapshot.
 LIFECYCLE_PROJECTION_DSN='postgresql://pantheon_app:<redacted>@postgres:5432/pantheon' \
 docker compose -p pantheon -f docker-compose.yml exec -T \
   -e LIFECYCLE_PROJECTION_DSN loop-run-projector-scheduler \
-  python scripts/lifecycle_projector_parity.py \
+  python -m scripts.lifecycle_projector_parity \
     --legacy-journey-events /data/bff/lifecycle-projection/current/trade_journey_events.json \
     --legacy-loop-runs /data/bff/lifecycle-projection/current/loop_runs.json \
     --legacy-controller-state /data/bff/lifecycle-projection/controller_state.json \
