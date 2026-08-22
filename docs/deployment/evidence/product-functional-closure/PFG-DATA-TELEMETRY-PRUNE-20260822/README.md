@@ -30,8 +30,8 @@ python3 -m pytest -v \
   scripts/test_dev_vm_ssh.py
 
 # 3. Two consecutive deployment dry-runs
-./scripts/deploy_nonprod_vm.sh --environment dev --sha HEAD --project-id pantheon-lupin-dev-20260719 --dry-run
-./scripts/deploy_nonprod_vm.sh --environment dev --sha HEAD --project-id pantheon-lupin-dev-20260719 --dry-run
+./scripts/deploy_nonprod_vm.sh --environment dev --sha 0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8 --project-id pantheon-lupin-dev-20260719 --dry-run
+./scripts/deploy_nonprod_vm.sh --environment dev --sha 0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8 --project-id pantheon-lupin-dev-20260719 --dry-run
 ```
 
 All 29 tests passed (18 prune tests including 7 CLI dry-run schema tests and 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests + 4 dev VM SSH transport tests). Both dry runs succeeded with identical plans. Live PostgreSQL execution emitted `TELEMETRY_PRUNE_SENTINEL` verifying `public.telemetry_events` preservation with zero drift.

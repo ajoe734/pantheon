@@ -35,12 +35,12 @@
   },
   "canonical_sentinel": {
     "canonical_table": "public.telemetry_events",
-    "canonical_row_count_before": 2901,
-    "canonical_row_count_after": 2901,
+    "canonical_row_count_before": 4981,
+    "canonical_row_count_after": 4981,
     "canonical_min_created_at_before": "2026-08-22T11:48:48+00:00",
     "canonical_min_created_at_after": "2026-08-22T11:48:48+00:00",
-    "canonical_checksum_before": "6a33493b241fa77c708112e344ca31e7",
-    "canonical_checksum_after": "6a33493b241fa77c708112e344ca31e7",
+    "canonical_checksum_before": "b9c0bd120c373fabe2418f620b105628",
+    "canonical_checksum_after": "b9c0bd120c373fabe2418f620b105628",
     "derived_schema": "management_ai",
     "derived_tables_pruned": [],
     "result": "preserved"
@@ -48,13 +48,13 @@
   "dry_runs": [
     {
       "run_index": 1,
-      "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha HEAD --project-id pantheon-lupin-dev-20260719 --dry-run",
+      "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8 --project-id pantheon-lupin-dev-20260719 --dry-run",
       "exit_code": 0,
       "summary": "Verified preflight parameters, schema validation, and plan without SSH mutation."
     },
     {
       "run_index": 2,
-      "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha HEAD --project-id pantheon-lupin-dev-20260719 --dry-run",
+      "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8 --project-id pantheon-lupin-dev-20260719 --dry-run",
       "exit_code": 0,
       "summary": "Consecutive dry-run produced identical plan output."
     }
@@ -63,13 +63,21 @@
     "status": "active_and_verified",
     "bff_readback_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
     "fe_readback_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
-    "backend_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+    "backend_sha": "0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8",
     "frontend_sha": "693d8612218e5ec6620c80ab7a16d3429e842f6c",
-    "workflow_run_id": "32554078801",
+    "deployment_mode": "direct_dev_root_vm_deploy",
     "gate_run_id": "32555528892",
     "canonical_telemetry_table": "public.telemetry_events",
     "canonical_telemetry_status": "preserved_and_intact",
-    "telemetry_prune_sentinel_emission": "NOTICE: TELEMETRY_PRUNE_SENTINEL: {\"result\": \"preserved\", \"derived_schema\": \"management_ai\", \"canonical_table\": \"public.telemetry_events\", \"derived_tables_pruned\": [], \"canonical_checksum_after\": \"6a33493b241fa77c708112e344ca31e7\", \"canonical_checksum_before\": \"6a33493b241fa77c708112e344ca31e7\", \"canonical_row_count_after\": 2901, \"canonical_row_count_before\": 2901, \"canonical_min_created_at_after\": \"2026-08-22T11:48:48+00:00\", \"canonical_min_created_at_before\": \"2026-08-22T11:48:48+00:00\"}"
+    "telemetry_prune_sentinel_emission": "NOTICE:  TELEMETRY_PRUNE_SENTINEL: {\"result\": \"preserved\", \"derived_schema\": \"management_ai\", \"canonical_table\": \"public.telemetry_events\", \"derived_tables_pruned\": [], \"canonical_checksum_after\": \"b9c0bd120c373fabe2418f620b105628\", \"canonical_checksum_before\": \"b9c0bd120c373fabe2418f620b105628\", \"canonical_row_count_after\": 4981, \"canonical_row_count_before\": 4981, \"canonical_min_created_at_after\": \"2026-08-22T11:48:48+00:00\", \"canonical_min_created_at_before\": \"2026-08-22T11:48:48+00:00\"}",
+    "live_endpoint_verification": {
+      "bff_version_source_commit_sha": "0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8",
+      "bff_version_status": "ok",
+      "bff_readyz_live": true,
+      "paper_fleet_reconciler_live": true,
+      "paper_fleet_reconciler_ready": true,
+      "paper_fleet_reconciler_active_sessions": 1
+    }
   },
   "validation": {
     "commands": [
