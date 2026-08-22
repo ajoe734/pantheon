@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 from typing import Any, Mapping, Sequence
 
@@ -24,26 +25,21 @@ CANONICAL_SOURCE_TABLE = "public.telemetry_events"
 ALLOWED_DISPOSITIONS = frozenset({"complete", "partial", "irrecoverable", "unknown"})
 HEX_SHA40_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 HEX_SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+RECOVERY_ATTESTATION_SCHEMA_VERSION = "pantheon.telemetry_recovery_source_attestation.v1"
 
 AUTHORITATIVE_PROOF_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # GCS / Cloud Storage authoritative bucket URI (gs://bucket/path or gcs://bucket/path)
+    # GCS / Cloud Storage object. Existence, generation, and the object-bound
+    # SHA-256 metadata are checked independently by gcloud.
     re.compile(r"^g(?:s|cs)://[a-z0-9][-_.a-z0-9]{1,61}[a-z0-9]/.+$"),
-    # GCP Persistent Disk Snapshot resource path
+    # GCP Persistent Disk Snapshot. Only the fully-qualified resource identity
+    # is accepted; a short snapshot name is not independently resolvable.
     re.compile(r"^projects/[a-z0-9-]+/global/snapshots/[a-z0-9][-a-z0-9]{0,62}$"),
-    # GCP Snapshot prefix URI
-    re.compile(r"^gcp(?:[-_]disk)?[-:_]snapshot:[a-z0-9][-a-z0-9]{0,62}$"),
-    # PostgreSQL pg_dump URI or file scheme
-    re.compile(r"^pg_dump:(?:/{1,3})?.+$"),
-    re.compile(r"^postgresql-dump:(?:/{1,3})?.+$"),
-    # WAL archive proof URI
-    re.compile(r"^wal[-_]archive:(?:/{1,3})?.+$"),
+    # PostgreSQL dump and source-ledger files. Only absolute local paths are
+    # accepted so validation can prove existence and hash the bytes.
+    re.compile(r"^(?:pg_dump|postgresql-dump):(?:file://)?/(?!/).+$"),
+    re.compile(r"^source-ledger:(?:file://)?/(?!/).+$"),
     # System authoritative backup directory path
     re.compile(r"^(?:file://)?/var/backups/(?:postgres|postgresql|database|telemetry)/.+\.(?:sql|sql\.gz|dump|tar|tar\.gz|custom|pgdump|bin|archive)$"),
-    # Canonical source ledger proof / URN / SHA256 content digest
-    re.compile(r"^source-ledger-proof:(?:sha256:)?[0-9a-fA-F]{64}$"),
-    re.compile(r"^canonical-ledger://[a-z0-9][-_.a-z0-9]*/.+$"),
-    re.compile(r"^urn:pantheon:telemetry-backup:[a-z0-9][-_.:a-z0-9]+$"),
-    re.compile(r"^sha256:[0-9a-fA-F]{64}$"),
 )
 
 DERIVED_LIFECYCLE_SUBSTRINGS: tuple[str, ...] = (
@@ -70,11 +66,157 @@ def is_derived_lifecycle_or_projection(source: str) -> bool:
 
 
 def is_valid_authoritative_recovery_source(source: str) -> bool:
-    """Check if a recovery_source string conforms to a verifiable authoritative backup / source-ledger proof contract."""
+    """Return whether a source identity can be independently resolved.
+
+    This is only a syntax/capability check.  A matching URI is not evidence that
+    the source exists; ``inspect_authoritative_recovery_source`` performs that
+    independent check and is mandatory for a ``complete`` disposition.
+    """
     s = source.strip()
     if is_derived_lifecycle_or_projection(s):
         return False
     return any(pattern.match(s) is not None for pattern in AUTHORITATIVE_PROOF_PATTERNS)
+
+
+def _recovery_source_kind(source: str) -> str:
+    if re.match(r"^g(?:s|cs)://", source):
+        return "gcs_object"
+    if source.startswith("projects/"):
+        return "gcp_snapshot"
+    if source.startswith(("pg_dump:", "postgresql-dump:", "/var/backups/", "file:///var/backups/")):
+        return "postgresql_dump"
+    if source.startswith("source-ledger:"):
+        return "source_ledger"
+    raise ValueError(f"Unsupported or unbound authoritative recovery source identity: {source!r}")
+
+
+def _local_recovery_source_path(source: str) -> Path:
+    for prefix in ("pg_dump:file://", "postgresql-dump:file://", "source-ledger:file://"):
+        if source.startswith(prefix):
+            return Path(source[len(prefix):])
+    for prefix in ("pg_dump:", "postgresql-dump:", "source-ledger:"):
+        if source.startswith(prefix):
+            return Path(source[len(prefix):])
+    if source.startswith("file://"):
+        return Path(source[len("file://"):])
+    return Path(source)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _run_json_command(command: Sequence[str]) -> Mapping[str, Any]:
+    try:
+        completed = subprocess.run(command, check=True, capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        stderr = getattr(exc, "stderr", "") or ""
+        detail = stderr.strip() or str(exc)
+        raise ValueError(f"Authoritative recovery source lookup failed: {detail}") from exc
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Authoritative recovery source lookup returned invalid JSON") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("Authoritative recovery source lookup did not return an object")
+    return payload
+
+
+def inspect_authoritative_recovery_source(source: str) -> dict[str, str]:
+    """Resolve a source and derive independently observed immutable identity.
+
+    Local dump/source-ledger bytes are hashed directly. GCS objects must expose
+    a 64-hex ``pantheon_sha256`` (or ``sha256``) custom metadata value and are
+    bound to generation + metageneration. GCP snapshots are bound to a READY,
+    fully-qualified resource and a SHA-256 over immutable describe fields.
+    """
+    source = source.strip()
+    if not is_valid_authoritative_recovery_source(source):
+        raise ValueError(f"Unsupported or unbound authoritative recovery source identity: {source!r}")
+
+    source_kind = _recovery_source_kind(source)
+    if source_kind in {"postgresql_dump", "source_ledger"}:
+        path = _local_recovery_source_path(source)
+        if not path.is_absolute():
+            raise ValueError(f"Recovery source must resolve to an absolute path: {source!r}")
+        if path.is_symlink():
+            raise ValueError(f"Recovery source must not be a mutable symlink: {source!r}")
+        if not path.is_file():
+            raise ValueError(f"Authoritative recovery source does not exist as a regular file: {source!r}")
+        size = path.stat().st_size
+        return {
+            "source_kind": source_kind,
+            "source_identity": source,
+            "source_version": f"bytes:{size}",
+            "immutable_digest_sha256": _sha256_file(path),
+        }
+
+    if source_kind == "gcs_object":
+        canonical_source = "gs://" + source.split("://", 1)[1]
+        match = re.match(r"^gs://([^/]+)/(.+)$", canonical_source)
+        assert match is not None
+        expected_bucket, expected_name = match.groups()
+        payload = _run_json_command(("gcloud", "storage", "objects", "describe", canonical_source, "--format=json"))
+        actual_bucket = str(payload.get("bucket", "")).rsplit("/", 1)[-1]
+        actual_name = str(payload.get("name", ""))
+        generation = str(payload.get("generation", "")).strip()
+        metageneration = str(payload.get("metageneration", "")).strip()
+        metadata = payload.get("metadata")
+        if actual_bucket != expected_bucket or actual_name != expected_name:
+            raise ValueError("GCS lookup identity does not match recovery_source")
+        if not generation or not metageneration:
+            raise ValueError("GCS object is missing immutable generation binding")
+        if not isinstance(metadata, Mapping):
+            raise ValueError("GCS object is missing SHA-256 metadata")
+        digest = str(metadata.get("pantheon_sha256") or metadata.get("sha256") or "").strip()
+        if not HEX_SHA256_PATTERN.fullmatch(digest):
+            raise ValueError("GCS object is missing valid pantheon_sha256/sha256 metadata")
+        return {
+            "source_kind": source_kind,
+            "source_identity": source,
+            "source_version": f"generation:{generation};metageneration:{metageneration}",
+            "immutable_digest_sha256": digest.lower(),
+        }
+
+    match = re.fullmatch(r"projects/([^/]+)/global/snapshots/([^/]+)", source)
+    assert match is not None
+    project, snapshot_name = match.groups()
+    payload = _run_json_command(
+        ("gcloud", "compute", "snapshots", "describe", snapshot_name, "--project", project, "--format=json")
+    )
+    resource_id = str(payload.get("id", "")).strip()
+    self_link = str(payload.get("selfLink", "")).strip()
+    if str(payload.get("name", "")) != snapshot_name or not self_link.endswith(f"/{source}"):
+        raise ValueError("GCP snapshot lookup identity does not match recovery_source")
+    if str(payload.get("status", "")) != "READY" or not resource_id:
+        raise ValueError("GCP snapshot is not READY or lacks immutable resource id")
+    immutable_fields = {
+        key: payload.get(key)
+        for key in (
+            "id",
+            "name",
+            "selfLink",
+            "sourceDisk",
+            "sourceDiskId",
+            "diskSizeGb",
+            "storageBytes",
+            "creationTimestamp",
+            "storageLocations",
+        )
+    }
+    digest = hashlib.sha256(
+        json.dumps(immutable_fields, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "source_kind": source_kind,
+        "source_identity": source,
+        "source_version": f"id:{resource_id}",
+        "immutable_digest_sha256": digest,
+    }
 
 
 CANONICAL_BASELINE_QUERY = """SELECT
@@ -112,6 +254,132 @@ def _parse_rfc3339(value: str) -> datetime.datetime:
     return parsed.astimezone(datetime.timezone.utc)
 
 
+def validate_recovery_source_attestation(
+    attestation: Mapping[str, Any],
+    baseline: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate and independently resolve the proof required for ``complete``.
+
+    The attestation is deliberately strict and self-contained. It binds the
+    source identity and independently observed immutable digest/version to the
+    exact baseline event range, plus a zero-missing event-id comparison proof.
+    """
+    if not isinstance(attestation, Mapping):
+        raise ValueError("recovery_source_attestation must be an object for complete disposition")
+
+    required_keys = {
+        "schema_version",
+        "source_kind",
+        "source_identity",
+        "source_version",
+        "immutable_digest_sha256",
+        "verified_at",
+        "event_range",
+        "completeness",
+    }
+    actual_keys = set(attestation)
+    if actual_keys != required_keys:
+        missing = sorted(required_keys - actual_keys)
+        extra = sorted(actual_keys - required_keys)
+        raise ValueError(
+            f"recovery_source_attestation keys do not match contract; missing={missing}, extra={extra}"
+        )
+
+    if attestation["schema_version"] != RECOVERY_ATTESTATION_SCHEMA_VERSION:
+        raise ValueError(
+            f"recovery_source_attestation schema_version must be {RECOVERY_ATTESTATION_SCHEMA_VERSION!r}"
+        )
+
+    recovery_source = str(baseline["recovery_source"]).strip()
+    source_identity = attestation["source_identity"]
+    if not isinstance(source_identity, str) or source_identity != recovery_source:
+        raise ValueError("recovery_source_attestation source_identity must exactly match recovery_source")
+    expected_kind = _recovery_source_kind(recovery_source)
+    if attestation["source_kind"] != expected_kind:
+        raise ValueError(
+            f"recovery_source_attestation source_kind must be {expected_kind!r} for {recovery_source!r}"
+        )
+    source_version = attestation["source_version"]
+    if not isinstance(source_version, str) or not source_version.strip():
+        raise ValueError("recovery_source_attestation source_version must be a non-empty string")
+    expected_digest = attestation["immutable_digest_sha256"]
+    if not isinstance(expected_digest, str) or not HEX_SHA256_PATTERN.fullmatch(expected_digest):
+        raise ValueError("recovery_source_attestation immutable_digest_sha256 must be 64 hexadecimal characters")
+    verified_at = attestation["verified_at"]
+    if not isinstance(verified_at, str) or not verified_at.strip():
+        raise ValueError("recovery_source_attestation verified_at must be a non-empty RFC3339 string")
+    _parse_rfc3339(verified_at)
+
+    event_range = attestation["event_range"]
+    expected_event_range_keys = {
+        "row_count",
+        "min_created_at",
+        "max_created_at",
+        "source_high_watermark",
+    }
+    if not isinstance(event_range, Mapping) or set(event_range) != expected_event_range_keys:
+        raise ValueError("recovery_source_attestation event_range must contain the exact baseline range fields")
+    for field in sorted(expected_event_range_keys):
+        if event_range[field] != baseline[field]:
+            raise ValueError(
+                f"recovery_source_attestation event_range.{field} does not match baseline {field}"
+            )
+
+    completeness = attestation["completeness"]
+    expected_completeness_keys = {
+        "status",
+        "known_history_start",
+        "expected_event_count",
+        "observed_event_count",
+        "missing_event_count",
+        "event_id_comparison_sha256",
+        "query_sha256",
+    }
+    if not isinstance(completeness, Mapping) or set(completeness) != expected_completeness_keys:
+        raise ValueError(
+            "recovery_source_attestation completeness must contain status, history boundary, counts, and comparison hashes"
+        )
+    if completeness["status"] != "complete":
+        raise ValueError("recovery_source_attestation completeness.status must be 'complete'")
+    if baseline["known_history_start"] is None or completeness["known_history_start"] != baseline["known_history_start"]:
+        raise ValueError(
+            "recovery_source_attestation completeness.known_history_start must match the non-null baseline boundary"
+        )
+    row_count = baseline["row_count"]
+    if (
+        isinstance(completeness["expected_event_count"], bool)
+        or completeness["expected_event_count"] != row_count
+        or isinstance(completeness["observed_event_count"], bool)
+        or completeness["observed_event_count"] != row_count
+        or isinstance(completeness["missing_event_count"], bool)
+        or completeness["missing_event_count"] != 0
+    ):
+        raise ValueError(
+            "recovery_source_attestation completeness must bind expected/observed counts to row_count with zero missing events"
+        )
+    comparison_digest = completeness["event_id_comparison_sha256"]
+    if not isinstance(comparison_digest, str) or not HEX_SHA256_PATTERN.fullmatch(comparison_digest):
+        raise ValueError(
+            "recovery_source_attestation completeness.event_id_comparison_sha256 must be 64 hexadecimal characters"
+        )
+    if completeness["query_sha256"] != baseline["query_sha256"]:
+        raise ValueError("recovery_source_attestation completeness.query_sha256 must match baseline query_sha256")
+
+    observed = inspect_authoritative_recovery_source(recovery_source)
+    for field in ("source_kind", "source_identity", "source_version", "immutable_digest_sha256"):
+        expected = attestation[field]
+        actual = observed[field]
+        if field == "immutable_digest_sha256":
+            expected = str(expected).lower()
+            actual = str(actual).lower()
+        if actual != expected:
+            raise ValueError(
+                f"Independent recovery source verification mismatch for {field}: expected {expected!r}, observed {actual!r}"
+            )
+
+    return dict(attestation)
+
+
 def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
     """Validate a baseline artifact dictionary against the canonical schema and rules.
 
@@ -124,7 +392,8 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
     - Non-canonical source_table (must be 'public.telemetry_events')
     - Invalid history_disposition (must be complete|partial|irrecoverable|unknown)
     - Claim of 'complete' without a verified recovery_source proof reference conforming
-      to the authoritative backup / source-ledger contract
+      to the authoritative backup / source-ledger contract and a source-bound,
+      independently verified recovery_source_attestation
     - Derived Lifecycle JSON references in recovery_source or source_table
     - Invalid timestamps (must be valid RFC3339 strings or null where allowed)
     - Inconsistent row counts or high watermarks
@@ -144,6 +413,7 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
         "known_history_start",
         "history_disposition",
         "recovery_source",
+        "recovery_source_attestation",
         "query_sha256",
         "operator_note",
     }
@@ -251,6 +521,7 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
 
     # 11. recovery_source
     recovery_source = data["recovery_source"]
+    recovery_source_attestation = data["recovery_source_attestation"]
     if history_disposition == "complete":
         if recovery_source is None:
             raise ValueError(
@@ -275,10 +546,15 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
             )
         if not is_valid_authoritative_recovery_source(stripped_source):
             raise ValueError(
-                f"recovery_source ({recovery_source!r}) does not conform to a verifiable authoritative backup/source-ledger proof contract. "
-                "Complete history disposition requires a verifiable authoritative backup proof URI (e.g. gs://..., "
-                "projects/.../global/snapshots/..., gcp-snapshot:..., pg_dump:..., /var/backups/postgresql/..., "
-                "canonical-ledger://..., source-ledger-proof:sha256:..., or sha256:<64-hex>)."
+                f"recovery_source ({recovery_source!r}) is unsupported or unbound. Complete history disposition "
+                "requires an independently resolvable gs:// object, fully-qualified projects/.../global/snapshots/... "
+                "resource, absolute pg_dump/backup file, or absolute source-ledger proof file; bare digests and "
+                "short logical names are not proof."
+            )
+        if not isinstance(recovery_source_attestation, Mapping):
+            raise ValueError(
+                "history_disposition is 'complete' but recovery_source_attestation is missing. "
+                "Complete requires source identity, immutable digest/version, event range, and completeness proof."
             )
     else:
         if recovery_source is not None:
@@ -292,6 +568,8 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
                     f"recovery_source cannot reference derived Lifecycle JSON or secondary projection ({recovery_source!r}). "
                     "Derived JSON cannot be treated as canonical source truth."
                 )
+        if recovery_source_attestation is not None:
+            raise ValueError("recovery_source_attestation must be null unless history_disposition is 'complete'")
 
     # 12. query_sha256
     query_sha256 = data["query_sha256"]
@@ -308,6 +586,9 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
     operator_note = data["operator_note"]
     if isinstance(operator_note, bool) or not isinstance(operator_note, str):
         raise ValueError(f"operator_note must be a string, got {operator_note!r}")
+
+    if history_disposition == "complete":
+        validate_recovery_source_attestation(recovery_source_attestation, data)
 
     return dict(data)
 
@@ -343,6 +624,7 @@ def capture_telemetry_baseline(
     deployment_sha: str,
     history_disposition: str = "partial",
     recovery_source: str | None = None,
+    recovery_source_attestation: Mapping[str, Any] | None = None,
     known_history_start: str | None = "2026-08-22T11:48:48+00:00",
     operator_note: str = "",
     captured_at: str | None = None,
@@ -365,6 +647,7 @@ def capture_telemetry_baseline(
         "known_history_start": known_history_start,
         "history_disposition": history_disposition,
         "recovery_source": recovery_source,
+        "recovery_source_attestation": recovery_source_attestation,
         "query_sha256": compute_query_sha256(CANONICAL_BASELINE_QUERY),
         "operator_note": operator_note,
     }
@@ -489,7 +772,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--recovery-source",
         default=None,
-        help="Recovery source proof reference (required when history-disposition is complete)",
+        help="Independently resolvable recovery source identity (required when history-disposition is complete)",
+    )
+    parser.add_argument(
+        "--recovery-attestation-file",
+        type=Path,
+        default=None,
+        help=(
+            "JSON attestation binding source identity/version/digest and event completeness; "
+            "required when history-disposition is complete"
+        ),
     )
     parser.add_argument(
         "--known-history-start",
@@ -548,6 +840,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
+    recovery_source_attestation: Mapping[str, Any] | None = None
+    if args.recovery_attestation_file is not None:
+        try:
+            loaded_attestation = json.loads(args.recovery_attestation_file.read_text(encoding="utf-8"))
+            if not isinstance(loaded_attestation, Mapping):
+                raise ValueError("attestation JSON must be an object")
+            recovery_source_attestation = loaded_attestation
+        except Exception as exc:
+            print(f"ERROR: Failed to load recovery source attestation: {exc}", file=sys.stderr)
+            return 2
+
     try:
         baseline = capture_telemetry_baseline(
             args.dsn,
@@ -555,6 +858,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             deployment_sha=deployment_sha,
             history_disposition=args.history_disposition,
             recovery_source=args.recovery_source,
+            recovery_source_attestation=recovery_source_attestation,
             known_history_start=args.known_history_start,
             operator_note=args.operator_note,
         )

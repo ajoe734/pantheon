@@ -9,17 +9,20 @@ import subprocess
 import sys
 import pytest
 
+import scripts.capture_canonical_telemetry_baseline as baseline_module
 from scripts.capture_canonical_telemetry_baseline import (
     ALLOWED_DISPOSITIONS,
-    AUTHORITATIVE_PROOF_PATTERNS,
     CANONICAL_BASELINE_QUERY,
     CANONICAL_SOURCE_TABLE,
+    RECOVERY_ATTESTATION_SCHEMA_VERSION,
     capture_telemetry_baseline,
     compute_query_sha256,
     generate_backup_candidate_inventory,
+    inspect_authoritative_recovery_source,
     is_derived_lifecycle_or_projection,
     is_valid_authoritative_recovery_source,
     validate_baseline_artifact,
+    validate_recovery_source_attestation,
 )
 
 VALID_SHA40 = "5517afdda923774c1d5f2c80688c76827dae5f91"
@@ -40,11 +43,52 @@ def _make_valid_artifact(**overrides) -> dict:
         "known_history_start": "2026-08-22T11:48:48+00:00",
         "history_disposition": "partial",
         "recovery_source": None,
+        "recovery_source_attestation": None,
         "query_sha256": VALID_QUERY_SHA256,
         "operator_note": "Observed repopulation boundary after SD-DATA-01 fix.",
     }
     base.update(overrides)
     return base
+
+
+def _make_attestation(data: dict, observed: dict[str, str], **overrides) -> dict:
+    attestation = {
+        "schema_version": RECOVERY_ATTESTATION_SCHEMA_VERSION,
+        "source_kind": observed["source_kind"],
+        "source_identity": observed["source_identity"],
+        "source_version": observed["source_version"],
+        "immutable_digest_sha256": observed["immutable_digest_sha256"],
+        "verified_at": SAMPLE_CAPTURED_AT,
+        "event_range": {
+            "row_count": data["row_count"],
+            "min_created_at": data["min_created_at"],
+            "max_created_at": data["max_created_at"],
+            "source_high_watermark": data["source_high_watermark"],
+        },
+        "completeness": {
+            "status": "complete",
+            "known_history_start": data["known_history_start"],
+            "expected_event_count": data["row_count"],
+            "observed_event_count": data["row_count"],
+            "missing_event_count": 0,
+            "event_id_comparison_sha256": "a" * 64,
+            "query_sha256": data["query_sha256"],
+        },
+    }
+    attestation.update(overrides)
+    return attestation
+
+
+def _make_complete_local_artifact(tmp_path: Path) -> dict:
+    proof_file = tmp_path / "authoritative-source-ledger.jsonl"
+    proof_file.write_bytes(b"event-1\nevent-2\n")
+    source = f"source-ledger:file://{proof_file}"
+    data = _make_valid_artifact(history_disposition="complete", recovery_source=source)
+    data["recovery_source_attestation"] = _make_attestation(
+        data,
+        inspect_authoritative_recovery_source(source),
+    )
+    return data
 
 
 # =============================================================================
@@ -83,6 +127,7 @@ def test_empty_table_valid() -> None:
     "known_history_start",
     "history_disposition",
     "recovery_source",
+    "recovery_source_attestation",
     "query_sha256",
     "operator_note",
 ])
@@ -141,14 +186,18 @@ def test_unsupported_history_disposition_rejected(bad_disp: str) -> None:
         validate_baseline_artifact(data)
 
 
-@pytest.mark.parametrize("good_disp", ["complete", "partial", "irrecoverable", "unknown"])
-def test_allowed_history_dispositions(good_disp: str) -> None:
-    kwargs = {"history_disposition": good_disp}
-    if good_disp == "complete":
-        kwargs["recovery_source"] = "gs://authoritative-pantheon-backups/dev/2026-08-22/telemetry_events.sql.gz"
-    data = _make_valid_artifact(**kwargs)
+@pytest.mark.parametrize("good_disp", ["partial", "irrecoverable", "unknown"])
+def test_allowed_noncomplete_history_dispositions(good_disp: str) -> None:
+    data = _make_valid_artifact(history_disposition=good_disp)
     result = validate_baseline_artifact(data)
     assert result["history_disposition"] == good_disp
+
+
+def test_complete_history_disposition_with_verified_local_source(tmp_path: Path) -> None:
+    data = _make_complete_local_artifact(tmp_path)
+    result = validate_baseline_artifact(data)
+    assert result["history_disposition"] == "complete"
+    assert result["recovery_source_attestation"]["source_kind"] == "source_ledger"
 
 
 def test_complete_disposition_requires_recovery_source() -> None:
@@ -159,6 +208,15 @@ def test_complete_disposition_requires_recovery_source() -> None:
     data_empty = _make_valid_artifact(history_disposition="complete", recovery_source="   ")
     with pytest.raises(ValueError, match="recovery_source proof reference is empty"):
         validate_baseline_artifact(data_empty)
+
+
+def test_complete_disposition_requires_recovery_source_attestation() -> None:
+    data = _make_valid_artifact(
+        history_disposition="complete",
+        recovery_source="gs://authoritative-pantheon-backups/dev/telemetry.sql.gz",
+    )
+    with pytest.raises(ValueError, match="recovery_source_attestation is missing"):
+        validate_baseline_artifact(data)
 
 
 @pytest.mark.parametrize("arbitrary_source", [
@@ -173,30 +231,37 @@ def test_complete_disposition_requires_recovery_source() -> None:
 ])
 def test_complete_disposition_rejects_arbitrary_string_recovery_source(arbitrary_source: str) -> None:
     data = _make_valid_artifact(history_disposition="complete", recovery_source=arbitrary_source)
-    with pytest.raises(ValueError, match="does not conform to a verifiable authoritative backup/source-ledger proof contract"):
+    with pytest.raises(ValueError, match="unsupported or unbound"):
         validate_baseline_artifact(data)
 
 
-@pytest.mark.parametrize("valid_proof_source", [
+@pytest.mark.parametrize("resolvable_source", [
     "gs://authoritative-pantheon-backups/dev/2026-08-22/telemetry_events.sql.gz",
     "gcs://pantheon-backups/postgres/20260822_dump.sql",
     "projects/pantheon-lupin-dev-20260719/global/snapshots/pantheon-postgres-snapshot-20260822",
-    "gcp-snapshot:pantheon-postgres-snapshot-20260822",
-    "gcp_disk_snapshot:disk-snapshot-20260822",
-    "pg_dump://dev-db-cluster/2026-08-22/public.telemetry_events.dump",
     "pg_dump:/var/backups/postgresql/telemetry_events_20260822.dump",
     "/var/backups/postgresql/telemetry_events_20260822.sql.gz",
     "file:///var/backups/postgresql/telemetry_events_20260822.dump",
+    "source-ledger:/var/backups/telemetry/event-ledger-proof.jsonl",
+])
+def test_supported_authoritative_recovery_source_syntax(resolvable_source: str) -> None:
+    assert is_valid_authoritative_recovery_source(resolvable_source) is True
+
+
+@pytest.mark.parametrize("unbound_source", [
+    "gcp-snapshot:pantheon-postgres-snapshot-20260822",
+    "gcp_disk_snapshot:disk-snapshot-20260822",
+    "pg_dump://dev-db-cluster/2026-08-22/public.telemetry_events.dump",
     "source-ledger-proof:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "canonical-ledger://pantheon-dev-ledger/checkpoint-7122484",
     "urn:pantheon:telemetry-backup:gcp-snapshot-20260822-0500",
     "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 ])
-def test_complete_disposition_accepts_valid_authoritative_recovery_sources(valid_proof_source: str) -> None:
-    data = _make_valid_artifact(history_disposition="complete", recovery_source=valid_proof_source)
-    result = validate_baseline_artifact(data)
-    assert result["recovery_source"] == valid_proof_source
-    assert is_valid_authoritative_recovery_source(valid_proof_source) is True
+def test_complete_disposition_rejects_unbound_or_bare_digest_source(unbound_source: str) -> None:
+    data = _make_valid_artifact(history_disposition="complete", recovery_source=unbound_source)
+    with pytest.raises(ValueError, match="unsupported or unbound"):
+        validate_baseline_artifact(data)
+    assert is_valid_authoritative_recovery_source(unbound_source) is False
 
 
 @pytest.mark.parametrize("forbidden_source", [
@@ -322,6 +387,153 @@ def test_partial_disposition_rejects_non_string_recovery_source(bad_recovery_sou
     data = _make_valid_artifact(history_disposition="partial", recovery_source=bad_recovery_source)
     with pytest.raises(ValueError, match="recovery_source must be a string or null"):
         validate_baseline_artifact(data)
+
+
+def test_noncomplete_disposition_rejects_attestation(tmp_path: Path) -> None:
+    complete = _make_complete_local_artifact(tmp_path)
+    data = _make_valid_artifact(recovery_source_attestation=complete["recovery_source_attestation"])
+    with pytest.raises(ValueError, match="must be null unless history_disposition is 'complete'"):
+        validate_baseline_artifact(data)
+
+
+def _unverified_attestation(data: dict, source_kind: str, source_identity: str) -> dict:
+    return _make_attestation(
+        data,
+        {
+            "source_kind": source_kind,
+            "source_identity": source_identity,
+            "source_version": "unverified-version",
+            "immutable_digest_sha256": "b" * 64,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "source_kind"),
+    [
+        ("gs://fictional-authoritative-bucket/never-existed/telemetry.sql.gz", "gcs_object"),
+        (
+            "projects/pantheon-lupin-dev-20260719/global/snapshots/never-existed-telemetry",
+            "gcp_snapshot",
+        ),
+    ],
+)
+def test_complete_disposition_rejects_nonexistent_cloud_source(
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    source_kind: str,
+) -> None:
+    def missing_source(_command) -> dict:
+        raise ValueError("authoritative object was not found")
+
+    monkeypatch.setattr(baseline_module, "_run_json_command", missing_source)
+    data = _make_valid_artifact(history_disposition="complete", recovery_source=source)
+    data["recovery_source_attestation"] = _unverified_attestation(data, source_kind, source)
+    with pytest.raises(ValueError, match="authoritative object was not found"):
+        validate_baseline_artifact(data)
+
+
+def test_complete_disposition_rejects_nonexistent_dump(tmp_path: Path) -> None:
+    source = f"pg_dump:{tmp_path / 'never-existed.dump'}"
+    data = _make_valid_artifact(history_disposition="complete", recovery_source=source)
+    data["recovery_source_attestation"] = _unverified_attestation(data, "postgresql_dump", source)
+    with pytest.raises(ValueError, match="does not exist as a regular file"):
+        validate_baseline_artifact(data)
+
+
+def test_complete_disposition_rejects_attestation_identity_mismatch(tmp_path: Path) -> None:
+    data = _make_complete_local_artifact(tmp_path)
+    data["recovery_source_attestation"]["source_identity"] = "source-ledger:/var/backups/telemetry/other.jsonl"
+    with pytest.raises(ValueError, match="source_identity must exactly match"):
+        validate_baseline_artifact(data)
+
+
+def test_complete_disposition_rejects_attestation_digest_mismatch(tmp_path: Path) -> None:
+    data = _make_complete_local_artifact(tmp_path)
+    data["recovery_source_attestation"]["immutable_digest_sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="verification mismatch for immutable_digest_sha256"):
+        validate_baseline_artifact(data)
+
+
+def test_complete_disposition_rejects_unbound_event_range(tmp_path: Path) -> None:
+    data = _make_complete_local_artifact(tmp_path)
+    data["recovery_source_attestation"]["event_range"]["source_high_watermark"] += 1
+    with pytest.raises(ValueError, match="event_range.source_high_watermark does not match"):
+        validate_baseline_artifact(data)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("status", "partial"),
+        ("expected_event_count", 4999),
+        ("observed_event_count", 4999),
+        ("missing_event_count", 1),
+        ("event_id_comparison_sha256", "not-a-digest"),
+        ("query_sha256", "0" * 64),
+    ],
+)
+def test_complete_disposition_rejects_unproven_completeness(
+    tmp_path: Path,
+    field: str,
+    value,
+) -> None:
+    data = _make_complete_local_artifact(tmp_path)
+    data["recovery_source_attestation"]["completeness"][field] = value
+    with pytest.raises(ValueError, match="recovery_source_attestation"):
+        validate_baseline_artifact(data)
+
+
+def test_complete_disposition_accepts_independently_described_gcs_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = "gs://authoritative-pantheon-backups/dev/telemetry.sql.gz"
+    digest = "c" * 64
+    monkeypatch.setattr(
+        baseline_module,
+        "_run_json_command",
+        lambda _command: {
+            "bucket": "authoritative-pantheon-backups",
+            "name": "dev/telemetry.sql.gz",
+            "generation": "1787412000000000",
+            "metageneration": "1",
+            "metadata": {"pantheon_sha256": digest},
+        },
+    )
+    data = _make_valid_artifact(history_disposition="complete", recovery_source=source)
+    data["recovery_source_attestation"] = _make_attestation(
+        data,
+        inspect_authoritative_recovery_source(source),
+    )
+    assert validate_baseline_artifact(data)["history_disposition"] == "complete"
+
+
+def test_complete_disposition_accepts_ready_fully_qualified_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = "projects/pantheon-lupin-dev-20260719/global/snapshots/pantheon-postgres-20260822"
+    monkeypatch.setattr(
+        baseline_module,
+        "_run_json_command",
+        lambda _command: {
+            "id": "987654321",
+            "name": "pantheon-postgres-20260822",
+            "selfLink": f"https://compute.googleapis.com/compute/v1/{source}",
+            "status": "READY",
+            "sourceDisk": "projects/pantheon-lupin-dev-20260719/zones/us-west1-a/disks/pantheon-lupin-dev",
+            "sourceDiskId": "123456789",
+            "diskSizeGb": "100",
+            "storageBytes": "2048",
+            "creationTimestamp": "2026-08-22T14:00:00.000-07:00",
+            "storageLocations": ["us-west1"],
+        },
+    )
+    data = _make_valid_artifact(history_disposition="complete", recovery_source=source)
+    data["recovery_source_attestation"] = _make_attestation(
+        data,
+        inspect_authoritative_recovery_source(source),
+    )
+    assert validate_recovery_source_attestation(data["recovery_source_attestation"], data)["source_kind"] == "gcp_snapshot"
 
 
 @pytest.mark.parametrize("field_name", [
@@ -492,7 +704,7 @@ def test_cli_validate_file(tmp_path: Path) -> None:
         text=True,
     )
     assert proc_invalid_complete.returncode == 1
-    assert "does not conform to a verifiable authoritative backup/source-ledger proof contract" in proc_invalid_complete.stderr
+    assert "unsupported or unbound" in proc_invalid_complete.stderr
 
     # 4. Invalid artifact (derived Lifecycle JSON path)
     invalid_derived_file = tmp_path / "invalid_derived.json"
@@ -537,16 +749,17 @@ def test_is_derived_lifecycle_or_projection(derived_path: str, expected: bool) -
     ("gs://authoritative-pantheon-backups/dev/2026-08-22/telemetry_events.sql.gz", True),
     ("gcs://pantheon-backups/postgres/20260822_dump.sql", True),
     ("projects/pantheon-lupin-dev-20260719/global/snapshots/pantheon-postgres-snapshot-20260822", True),
-    ("gcp-snapshot:pantheon-postgres-snapshot-20260822", True),
-    ("gcp_disk_snapshot:disk-snapshot-20260822", True),
-    ("pg_dump://dev-db-cluster/2026-08-22/public.telemetry_events.dump", True),
+    ("gcp-snapshot:pantheon-postgres-snapshot-20260822", False),
+    ("gcp_disk_snapshot:disk-snapshot-20260822", False),
+    ("pg_dump://dev-db-cluster/2026-08-22/public.telemetry_events.dump", False),
     ("pg_dump:/var/backups/postgresql/telemetry_events_20260822.dump", True),
     ("/var/backups/postgresql/telemetry_events_20260822.sql.gz", True),
     ("file:///var/backups/postgresql/telemetry_events_20260822.dump", True),
-    ("source-ledger-proof:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", True),
-    ("canonical-ledger://pantheon-dev-ledger/checkpoint-7122484", True),
-    ("urn:pantheon:telemetry-backup:gcp-snapshot-20260822-0500", True),
-    ("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", True),
+    ("source-ledger:/var/backups/telemetry/event-ledger-proof.jsonl", True),
+    ("source-ledger-proof:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", False),
+    ("canonical-ledger://pantheon-dev-ledger/checkpoint-7122484", False),
+    ("urn:pantheon:telemetry-backup:gcp-snapshot-20260822-0500", False),
+    ("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", False),
     ("not-an-authoritative-proof", False),
     ("arbitrary-string", False),
     ("backup.sql", False),
