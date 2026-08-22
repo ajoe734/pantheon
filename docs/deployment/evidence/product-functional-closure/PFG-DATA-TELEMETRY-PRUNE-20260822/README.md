@@ -23,14 +23,15 @@ to bound the size of the derived Management AI store.
 # 1. Shell syntax check
 bash -n scripts/deploy_nonprod_vm.sh
 
-# 2. Comprehensive static contract, PostgreSQL behavioral, and CLI dry-run tests
+# 2. Comprehensive static contract, PostgreSQL behavioral, CLI dry-run, and transport tests
 python3 -m pytest -v \
   scripts/test_deploy_nonprod_telemetry_prune.py \
-  scripts/test_management_ai_postgres_bootstrap_contract.py
+  scripts/test_management_ai_postgres_bootstrap_contract.py \
+  scripts/test_dev_vm_ssh.py
 
 # 3. Two consecutive deployment dry-runs
 ./scripts/deploy_nonprod_vm.sh --environment dev --sha HEAD --project-id pantheon-lupin-dev-20260719 --dry-run
 ./scripts/deploy_nonprod_vm.sh --environment dev --sha HEAD --project-id pantheon-lupin-dev-20260719 --dry-run
 ```
 
-All 25 tests passed (18 prune tests including 7 CLI dry-run schema tests and 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests). Both dry runs succeeded with identical plans.
+All 29 tests passed (18 prune tests including 7 CLI dry-run schema tests and 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests + 4 dev VM SSH transport tests). Both dry runs succeeded with identical plans. Live PostgreSQL execution emitted `TELEMETRY_PRUNE_SENTINEL` verifying `public.telemetry_events` preservation with zero drift.
