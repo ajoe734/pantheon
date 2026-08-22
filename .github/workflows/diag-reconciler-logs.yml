@@ -1,0 +1,37 @@
+name: Diag Paper Fleet Reconciler Logs
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  fetch-logs:
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 10
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
+          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-cloud-build@pantheon-lupin-dev-20260719.iam.gserviceaccount.com' }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Fetch paper-fleet-reconciler logs (read-only)
+        env:
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+        run: |
+          set -euo pipefail
+          gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            --ssh-flag=-T \
+            --command "sudo docker logs pantheon-paper-fleet-reconciler-1 --tail 200 2>&1; echo '---INSPECT---'; sudo docker inspect pantheon-paper-fleet-reconciler-1 --format '{{json .State}}'"
