@@ -171,6 +171,57 @@ def validate_path_safety(root_path: Path, allow_custom_root: bool = False) -> Pa
     return resolved
 
 
+def validate_destination_path_safety(
+    dest_path: Path, root_path: Path, allow_custom_root: bool = False
+) -> Path:
+    raw_str = str(dest_path).strip()
+    if not raw_str:
+        raise RetirementValidationError("Quarantine destination path must not be empty.")
+
+    if UNRESOLVED_VAR_RE.search(raw_str):
+        raise RetirementValidationError(
+            f"Quarantine destination path contains unresolved environment variables: {raw_str!r}"
+        )
+
+    if any(ch in raw_str for ch in GLOB_CHARS):
+        raise RetirementValidationError(
+            f"Quarantine destination path contains prohibited glob characters: {raw_str!r}"
+        )
+
+    for pat in CANONICAL_SOURCE_PATTERNS:
+        if pat in raw_str.lower():
+            raise RetirementValidationError(
+                f"Quarantine destination path matches canonical source pattern {pat!r}: {raw_str!r}"
+            )
+
+    resolved = dest_path.resolve()
+    resolved_str = str(resolved)
+    normalized_str = resolved_str.rstrip("/") or "/"
+
+    if resolved_str == "/" or normalized_str in FORBIDDEN_ROOTS:
+        raise RetirementValidationError(
+            f"Quarantine destination path {resolved_str!r} is a broad or system directory; quarantine destination is prohibited."
+        )
+
+    resolved_root = root_path.resolve()
+    if resolved == resolved_root:
+        raise RetirementValidationError(
+            f"Quarantine destination path {resolved_str!r} cannot be identical to the lifecycle root path."
+        )
+
+    if not allow_custom_root:
+        default_resolved = Path(DEFAULT_LIFECYCLE_ROOT).resolve()
+        if resolved != default_resolved and not resolved_str.startswith(
+            str(default_resolved) + "/"
+        ):
+            raise RetirementValidationError(
+                f"Quarantine destination path {resolved_str!r} is outside the allowed default root {DEFAULT_LIFECYCLE_ROOT!r}. "
+                "Use --allow-custom-root for testing with explicit temporary directories."
+            )
+
+    return resolved
+
+
 def scan_legacy_inventory(
     root: Path, quarantine_dir: Optional[Path] = None
 ) -> List[Dict[str, Any]]:
@@ -421,10 +472,19 @@ def run_retirement(
 ) -> Dict[str, Any]:
     safe_root = validate_path_safety(root_path, allow_custom_root=allow_custom_root)
 
-    if quarantine_dir is None:
-        quarantine_dir = safe_root / DEFAULT_QUARANTINE_SUBDIR
+    safe_quarantine: Optional[Path] = None
+    if action in {"archive", "quarantine"}:
+        if quarantine_dir is None:
+            quarantine_dir = safe_root / DEFAULT_QUARANTINE_SUBDIR
+        safe_quarantine = validate_destination_path_safety(
+            quarantine_dir, safe_root, allow_custom_root=allow_custom_root
+        )
+    elif quarantine_dir is not None:
+        safe_quarantine = validate_destination_path_safety(
+            quarantine_dir, safe_root, allow_custom_root=allow_custom_root
+        )
 
-    items = scan_legacy_inventory(safe_root, quarantine_dir=quarantine_dir)
+    items = scan_legacy_inventory(safe_root, quarantine_dir=safe_quarantine)
     total_files = len(items)
     total_bytes = sum(item["size_bytes"] for item in items)
     inventory_digest = compute_inventory_digest(items)
@@ -436,7 +496,7 @@ def run_retirement(
         "mode": "executed" if execute else "dry_run",
         "action": action,
         "root_path": str(safe_root),
-        "quarantine_path": str(quarantine_dir) if action != "delete" else None,
+        "quarantine_path": str(safe_quarantine) if action != "delete" and safe_quarantine is not None else None,
         "inventory_sha256": inventory_digest,
         "total_files": total_files,
         "total_bytes": total_bytes,
@@ -495,6 +555,30 @@ def run_retirement(
                 f"but execution requested recovery_possible={manifest.get('recovery_possible')!r}."
             )
 
+        manifest_quarantine = approved_manifest.get("quarantine_path")
+        expected_quarantine = (
+            str(safe_quarantine)
+            if safe_quarantine is not None and action != "delete"
+            else None
+        )
+        if action in {"archive", "quarantine"}:
+            if manifest_quarantine is None:
+                raise RetirementValidationError(
+                    "Quarantine path missing from approved dry-run manifest for archive/quarantine action."
+                )
+            if manifest_quarantine != expected_quarantine:
+                raise RetirementValidationError(
+                    f"Quarantine path mismatch: approved dry-run manifest specifies quarantine_path {manifest_quarantine!r}, "
+                    f"but execution requested quarantine_path {expected_quarantine!r}. "
+                    "Quarantine destination is bound to the approved dry-run manifest."
+                )
+        elif action == "delete":
+            if manifest_quarantine is not None:
+                raise RetirementValidationError(
+                    f"Quarantine path mismatch: approved dry-run manifest specifies quarantine_path {manifest_quarantine!r}, "
+                    "but delete action must have null quarantine_path."
+                )
+
         approved_items = approved_manifest.get("items", [])
         expected_digest = approved_manifest.get("inventory_sha256") or compute_inventory_digest(
             approved_items
@@ -524,7 +608,7 @@ def run_retirement(
             safe_root,
             items,
             action=action,
-            quarantine_dir=quarantine_dir,
+            quarantine_dir=safe_quarantine,
             approver=approver,
             approval_token=approval_token,
             dry_run_manifest_path=str(dry_run_manifest_path),

@@ -46,8 +46,8 @@
   "artifact_checksums_sha256": {
     "docker-compose.yml": "027f663caf18cc20e16e41ce856787525fa1b6d71b19639fc4fde24cfa8b8318",
     "docs/operations/lifecycle-projector-incremental-runbook.md": "b7913cb001c028770aef665560a5a6db3e3a7405cf1e240089b8d98e716bfedd",
-    "scripts/lifecycle_projector_legacy_retire.py": "5c46a644006b5a2e80c78ebc8d7d457d66f7cad3cde2017f35959fc862f9435a",
-    "scripts/test_lifecycle_projector_legacy_retire.py": "6906c1d9b5b3bce4dbd66740fdea20cfc3dfbce358feffbb187fa6714cde878b",
+    "scripts/lifecycle_projector_legacy_retire.py": "fd9580312f086542ccf78161d589722d962db942ac0ae825b3aa7572a6524178",
+    "scripts/test_lifecycle_projector_legacy_retire.py": "5c3a01833d9f1fb151f9a651fb4785e06cfb44a4a4e947082af47d4b1cc5d787",
     "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json": "db3a15a59c13a610a67217a78d3f91bfef423dd11d696801c17a0888222fd03e",
     "services/control-plane/bff/main.py": "8ad7b633e2421113a89c961329ace548f4386a2f93443831efdad9fcf0eed3a4",
     "services/control-plane/bff/read_store.py": "3f1b3bca1252bd3271d2ad463c5a79068662bdd1ad33ba7ceefe682dc5f975a1",
@@ -178,8 +178,8 @@
     },
     "retirement_safety_gate": {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_lifecycle_projector_legacy_retire.py",
-      "result": "14 passed in 1.20s",
-      "coverage": "Fail-closed allowlisting for root and generation files; broad/system path and canonical source rejections; dry-run inventory digest binding and live drift verification; TOCTOU/mutation protection preserving unlisted files and verified non-empty directories; structured Human/Ops approval token enforcement."
+      "result": "22 passed in 3.28s",
+      "coverage": "Fail-closed allowlisting for root and generation files; broad/system path and canonical source rejections; safe quarantine destination validation; exact approved dry-run manifest and quarantine_path binding; live drift verification; TOCTOU/mutation protection preserving unlisted files and verified non-empty directories; structured Human/Ops approval token enforcement."
     },
     "contract_preservation_gates": {
       "tj_e2e_005_read_api": {
@@ -224,8 +224,9 @@
       "Rejects globs, wildcards, and unresolved environment variables",
       "Strictly prohibits targeting canonical telemetry_events or postgresql directories",
       "Enforces fail-closed allowlisting: un-allowlisted root files, unknown directories, and rogue generation files are rejected",
-      "Defaults to dry-run mode generating a deterministic inventory SHA-256 digest",
-      "Execution requires --dry-run-manifest binding that must match live inventory digest item-for-item",
+      "Validates safe destination paths for quarantine directories, prohibiting system paths, globs, canonical sources, and identical-root targets",
+      "Defaults to dry-run mode generating a deterministic inventory SHA-256 digest and bound quarantine_path",
+      "Execution requires --dry-run-manifest binding that must match live inventory digest item-for-item and bind exact quarantine_path",
       "Execution requires verified approver from ALLOWED_APPROVERS and structured Human/Ops-approved token",
       "Supports quarantine mode preserving full directory structures for complete recoverability"
     ]
@@ -254,7 +255,7 @@
     "services_trade_journey": "34 passed in 4.90s",
     "services_control_plane_bff_readiness": "4 passed in 8.05s",
     "services_trade_journey_compose": "7 passed in 2.20s",
-    "scripts_test_lifecycle_projector_legacy_retire": "15 passed in 1.35s",
+    "scripts_test_lifecycle_projector_legacy_retire": "22 passed in 3.28s",
     "services_control_plane_bff_tj_e2e_005": "36 passed in 14.02s",
     "services_control_plane_bff_tj_e2e_007": "3 passed in 2.20s",
     "services_control_plane_bff_tj_e2e_008": "5 passed in 2.10s",

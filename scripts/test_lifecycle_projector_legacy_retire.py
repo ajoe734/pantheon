@@ -6,10 +6,13 @@ from pathlib import Path
 import pytest
 
 from scripts.lifecycle_projector_legacy_retire import (
+    DEFAULT_LIFECYCLE_ROOT,
+    DEFAULT_QUARANTINE_SUBDIR,
     RetirementValidationError,
     compute_inventory_digest,
     execute_retirement,
     run_retirement,
+    validate_destination_path_safety,
     validate_path_safety,
 )
 
@@ -380,3 +383,131 @@ def test_run_retirement_execute_rejects_action_mismatch(tmp_path: Path):
             dry_run_manifest_path=del_manifest_path,
             allow_custom_root=True,
         )
+
+
+def test_quarantine_safety_validation_rejects_broad_and_system_paths():
+    root = Path(DEFAULT_LIFECYCLE_ROOT)
+    with pytest.raises(RetirementValidationError, match="broad or system directory"):
+        validate_destination_path_safety(Path("/"), root, allow_custom_root=True)
+    with pytest.raises(RetirementValidationError, match="broad or system directory"):
+        validate_destination_path_safety(Path("/data"), root, allow_custom_root=True)
+    with pytest.raises(RetirementValidationError, match="broad or system directory"):
+        validate_destination_path_safety(Path("/data/bff"), root, allow_custom_root=True)
+    with pytest.raises(RetirementValidationError, match="broad or system directory"):
+        validate_destination_path_safety(Path("/var"), root, allow_custom_root=True)
+    with pytest.raises(RetirementValidationError, match="broad or system directory"):
+        validate_destination_path_safety(Path("/tmp"), root, allow_custom_root=True)
+    with pytest.raises(RetirementValidationError, match="broad or system directory"):
+        validate_destination_path_safety(Path("/workspace"), root, allow_custom_root=True)
+
+
+def test_quarantine_safety_validation_rejects_globs_and_unresolved_vars():
+    root = Path(DEFAULT_LIFECYCLE_ROOT)
+    with pytest.raises(RetirementValidationError, match="unresolved environment variables"):
+        validate_destination_path_safety(
+            Path("/data/bff/lifecycle-projection/$QUARANTINE_DIR"), root, allow_custom_root=True
+        )
+    with pytest.raises(RetirementValidationError, match="prohibited glob"):
+        validate_destination_path_safety(
+            Path("/data/bff/lifecycle-projection/quarantine-*"), root, allow_custom_root=True
+        )
+
+
+def test_quarantine_safety_validation_rejects_canonical_sources():
+    root = Path(DEFAULT_LIFECYCLE_ROOT)
+    with pytest.raises(RetirementValidationError, match="canonical source pattern"):
+        validate_destination_path_safety(Path("/tmp/test/telemetry_events"), root, allow_custom_root=True)
+    with pytest.raises(RetirementValidationError, match="canonical source pattern"):
+        validate_destination_path_safety(Path("/tmp/test/pgdata"), root, allow_custom_root=True)
+
+
+def test_quarantine_safety_validation_rejects_identical_to_root():
+    root = Path("/data/bff/lifecycle-projection")
+    with pytest.raises(RetirementValidationError, match="cannot be identical to the lifecycle root"):
+        validate_destination_path_safety(root, root, allow_custom_root=True)
+
+
+def test_quarantine_safety_validation_rejects_outside_default_root_without_flag():
+    root = Path(DEFAULT_LIFECYCLE_ROOT)
+    with pytest.raises(RetirementValidationError, match="outside the allowed default root"):
+        validate_destination_path_safety(Path("/tmp/arbitrary_dest"), root, allow_custom_root=False)
+
+
+def test_run_retirement_execute_rejects_quarantine_path_mismatch(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    _seed_legacy_projection_fixture(root)
+
+    quarantine_a = tmp_path / "quarantine_a"
+    quarantine_b = tmp_path / "quarantine_b"
+
+    # 1. Approved dry-run with quarantine_a
+    dry_run_manifest = run_retirement(
+        root_path=root,
+        action="archive",
+        execute=False,
+        quarantine_dir=quarantine_a,
+        allow_custom_root=True,
+    )
+    manifest_path = tmp_path / "dry-run-manifest-a.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
+
+    # Attempt execute with quarantine_b should fail closed
+    with pytest.raises(RetirementValidationError, match="Quarantine path mismatch"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_token="Human/Ops-approved:LIFECYCLE-PROJ-RETIRE-001",
+            approver="Human/Ops",
+            dry_run_manifest_path=manifest_path,
+            quarantine_dir=quarantine_b,
+            allow_custom_root=True,
+        )
+
+    # 2. Approved dry-run with default quarantine, attempt execute with different quarantine
+    default_dry_run = run_retirement(
+        root_path=root,
+        action="archive",
+        execute=False,
+        allow_custom_root=True,
+    )
+    default_manifest_path = tmp_path / "dry-run-manifest-default.json"
+    default_manifest_path.write_text(json.dumps(default_dry_run), encoding="utf-8")
+
+    with pytest.raises(RetirementValidationError, match="Quarantine path mismatch"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_token="Human/Ops-approved:LIFECYCLE-PROJ-RETIRE-001",
+            approver="Human/Ops",
+            dry_run_manifest_path=default_manifest_path,
+            quarantine_dir=quarantine_a,
+            allow_custom_root=True,
+        )
+
+
+def test_run_retirement_execute_rejects_unsafe_quarantine_destination(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    _seed_legacy_projection_fixture(root)
+
+    # Rejects broad path in dry-run and execute
+    with pytest.raises(RetirementValidationError, match="broad or system directory"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=False,
+            quarantine_dir=Path("/var"),
+            allow_custom_root=True,
+        )
+
+    # Rejects unresolved environment variable
+    with pytest.raises(RetirementValidationError, match="unresolved environment variables"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=False,
+            quarantine_dir=Path("/tmp/quarantine-$UNRESOLVED"),
+            allow_custom_root=True,
+        )
+
