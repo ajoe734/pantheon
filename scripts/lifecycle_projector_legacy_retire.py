@@ -42,11 +42,16 @@ TASK_ID = "LIFECYCLE-PROJ-RETIRE-001"
 DEFAULT_LIFECYCLE_ROOT = "/data/bff/lifecycle-projection"
 DEFAULT_QUARANTINE_SUBDIR = "quarantine"
 CANONICAL_REPO_ROOT = Path(__file__).resolve().parent.parent
+AUTHORITATIVE_SUPERVISOR_CONFIG_PATH = Path(
+    "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
+)
+AUTHORITATIVE_SIGNING_KEY_PATHS = (
+    Path("/home/lupin/pantheon-ci-deploy/runtime/human-ops-signing.key"),
+    Path("/home/lupin/pantheon-ci-deploy/runtime/authority-signing.env"),
+)
 
 SIGNING_KEY_ENV_VARS = (
     "PANTHEON_HUMAN_OPS_SIGNING_KEY",
-    "PANTHEON_OPERATOR_APPROVAL_SECRET",
-    "PANTHEON_RETIREMENT_SIGNING_KEY",
 )
 
 FORBIDDEN_ROOTS = frozenset(
@@ -141,7 +146,7 @@ def compute_inventory_digest(items: List[Dict[str, Any]]) -> str:
 def resolve_signing_key(
     signing_key_override: Optional[str | bytes] = None,
 ) -> Optional[bytes]:
-    """Resolve the authoritative Human/Ops signing key from parameters or environment."""
+    """Resolve the authoritative Human/Ops signing key with bound provenance."""
     if signing_key_override is not None:
         if isinstance(signing_key_override, str):
             key_bytes = signing_key_override.strip().encode("utf-8")
@@ -149,6 +154,23 @@ def resolve_signing_key(
             key_bytes = bytes(signing_key_override)
         if key_bytes:
             return key_bytes
+
+    for key_path in AUTHORITATIVE_SIGNING_KEY_PATHS:
+        resolved_key_path = key_path.resolve()
+        if resolved_key_path.exists() and resolved_key_path.is_file() and not resolved_key_path.is_symlink():
+            try:
+                content = resolved_key_path.read_text(encoding="utf-8").strip()
+                if resolved_key_path.name.endswith(".env"):
+                    for line in content.splitlines():
+                        line = line.strip()
+                        if line.startswith("PANTHEON_HUMAN_OPS_SIGNING_KEY="):
+                            k = line.split("=", 1)[1].strip().strip("'\"")
+                            if k:
+                                return k.encode("utf-8")
+                elif content:
+                    return content.encode("utf-8")
+            except OSError:
+                pass
 
     for env_name in SIGNING_KEY_ENV_VARS:
         val = os.environ.get(env_name)
@@ -242,13 +264,36 @@ def resolve_governed_status_root(
             return Path(env_root).resolve()
 
     # Determine authoritative supervisor config and expected canonical identity
+    authoritative_config_path = AUTHORITATIVE_SUPERVISOR_CONFIG_PATH.resolve()
     live_config_env = os.environ.get("PANTHEON_LIVE_SUPERVISOR_CONFIG")
+
+    # In production mode (allow_custom_root=False), caller cannot override the fixed authoritative supervisor config
+    if not allow_custom_root and live_config_env and live_config_env.strip():
+        resolved_env_config = Path(live_config_env.strip()).resolve()
+        if authoritative_config_path.exists() and resolved_env_config != authoritative_config_path:
+            raise RetirementValidationError(
+                f"Caller-controlled PANTHEON_LIVE_SUPERVISOR_CONFIG override ({str(resolved_env_config)!r}) "
+                f"outside fixed authoritative config ({str(authoritative_config_path)!r}) is prohibited."
+            )
+        if not authoritative_config_path.exists():
+            try:
+                is_in_repo = resolved_env_config.is_relative_to(CANONICAL_REPO_ROOT.resolve())
+            except AttributeError:
+                is_in_repo = (
+                    resolved_env_config == CANONICAL_REPO_ROOT.resolve()
+                    or CANONICAL_REPO_ROOT.resolve() in resolved_env_config.parents
+                )
+            if not is_in_repo:
+                raise RetirementValidationError(
+                    f"Caller-controlled PANTHEON_LIVE_SUPERVISOR_CONFIG override ({str(resolved_env_config)!r}) "
+                    f"outside canonical repository root ({str(CANONICAL_REPO_ROOT.resolve())!r}) is prohibited."
+                )
+
     live_config_candidates: List[Path] = []
-    if live_config_env and live_config_env.strip():
+    if authoritative_config_path.exists() and authoritative_config_path.is_file():
+        live_config_candidates.append(authoritative_config_path)
+    elif live_config_env and live_config_env.strip():
         live_config_candidates.append(Path(live_config_env.strip()).resolve())
-    live_config_candidates.append(
-        Path("/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json").resolve()
-    )
 
     authoritative_identity: Optional[Dict[str, Any]] = None
     authoritative_status_root: Optional[Path] = None

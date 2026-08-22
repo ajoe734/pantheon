@@ -8,6 +8,8 @@ import pytest
 
 from scripts.lifecycle_projector_legacy_retire import (
     APPROVAL_SCHEMA_VERSION,
+    AUTHORITATIVE_SIGNING_KEY_PATHS,
+    AUTHORITATIVE_SUPERVISOR_CONFIG_PATH,
     CANONICAL_REPO_ROOT,
     DEFAULT_LIFECYCLE_ROOT,
     DEFAULT_QUARANTINE_SUBDIR,
@@ -926,6 +928,7 @@ def test_cli_main_dry_run_and_execute_governed_mode(tmp_path: Path, monkeypatch)
     }
     live_config_file = runtime_dir / "live-supervisor-config.json"
     live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
     monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
 
     manifest_output = status_root / "dry-run.json"
@@ -992,6 +995,7 @@ def test_cli_rejects_forged_canonical_task_state_identity_json(tmp_path: Path, m
     }
     live_config_file = runtime_dir / "live-supervisor-config.json"
     live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
     monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
 
     manifest_output = status_root / "dry-run.json"
@@ -1056,6 +1060,7 @@ def test_cli_rejects_caller_controlled_status_root_env(tmp_path: Path, monkeypat
     }
     live_config_file = runtime_dir / "live-supervisor-config.json"
     live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
     monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
 
     manifest_output = status_root / "dry-run.json"
@@ -1065,6 +1070,56 @@ def test_cli_rejects_caller_controlled_status_root_env(tmp_path: Path, monkeypat
 
     attacker_root = tmp_path / "attacker_status_root"
     monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(attacker_root))
+
+    approval_record = _create_approval_record(dry_run)
+    approval_path = status_root / "approval.json"
+    approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
+
+    rc = cli_main(
+        [
+            "--root",
+            str(root),
+            "--execute",
+            "--dry-run-manifest",
+            str(manifest_output),
+            "--approval-record",
+            str(approval_path),
+        ]
+    )
+    assert rc == 1
+
+
+def test_cli_rejects_caller_controlled_supervisor_config_override(tmp_path: Path, monkeypatch):
+    """Negative regression test: CLI rejects execution with caller-overridden PANTHEON_LIVE_SUPERVISOR_CONFIG."""
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    _seed_legacy_projection_fixture(root)
+
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+
+    runtime_dir = status_root.parent / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    live_config = {
+        "paths": {"status_file": str(status_root / "ai-status.json")},
+        "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
+    }
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
+
+    manifest_output = status_root / "dry-run.json"
+    rc = cli_main(["--root", str(root), "--output", str(manifest_output)])
+    assert rc == 0
+    dry_run = json.loads(manifest_output.read_text(encoding="utf-8"))
+
+    attacker_config = tmp_path / "attacker-live-config.json"
+    attacker_config.write_text(json.dumps({"paths": {"status_file": "/tmp/attacker/ai-status.json"}}), encoding="utf-8")
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(attacker_config))
 
     approval_record = _create_approval_record(dry_run)
     approval_path = status_root / "approval.json"
@@ -1106,6 +1161,7 @@ def test_cli_rejects_forged_hmac_key_in_approval_record(tmp_path: Path, monkeypa
     }
     live_config_file = runtime_dir / "live-supervisor-config.json"
     live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
     monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
 
 
@@ -1119,6 +1175,140 @@ def test_cli_rejects_forged_hmac_key_in_approval_record(tmp_path: Path, monkeypa
     )
     approval_path = status_root / "attacker-approval.json"
     approval_path.write_text(json.dumps(attacker_signed_record), encoding="utf-8")
+
+    rc = cli_main(
+        [
+            "--root",
+            str(root),
+            "--execute",
+            "--dry-run-manifest",
+            str(manifest_output),
+            "--approval-record",
+            str(approval_path),
+        ]
+    )
+    assert rc == 1
+
+
+def test_cli_rejects_combined_override_chain_attack(tmp_path: Path, monkeypatch):
+    """Negative regression test: CLI rejects combined override chain (fake config + fake status root + fake HMAC key + self-authored approval record)."""
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    _seed_legacy_projection_fixture(root)
+
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+
+    runtime_dir = status_root.parent / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    live_config = {
+        "paths": {"status_file": str(status_root / "ai-status.json")},
+        "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
+    }
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
+    monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", TEST_SIGNING_KEY)
+
+    manifest_output = status_root / "dry-run.json"
+    rc = cli_main(["--root", str(root), "--output", str(manifest_output)])
+    assert rc == 0
+    dry_run = json.loads(manifest_output.read_text(encoding="utf-8"))
+
+    # Attacker sets up completely separate fake hierarchy
+    attacker_dir = tmp_path / "attacker_env"
+    attacker_dir.mkdir(parents=True, exist_ok=True)
+    attacker_status_root = attacker_dir / "coordination-root"
+    attacker_status_root.mkdir(parents=True, exist_ok=True)
+    (attacker_status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+
+    attacker_runtime = attacker_dir / "runtime"
+    attacker_runtime.mkdir(parents=True, exist_ok=True)
+    attacker_event_log = attacker_runtime / "task-state-events-v2.jsonl"
+    attacker_event_log.write_text("", encoding="utf-8")
+    attacker_config = attacker_runtime / "live-supervisor-mainroot-config.json"
+    attacker_config.write_text(
+        json.dumps({
+            "paths": {"status_file": str(attacker_status_root / "ai-status.json")},
+            "task_state_store": {"mode": "authoritative", "event_log": str(attacker_event_log)},
+        }),
+        encoding="utf-8",
+    )
+
+    attacker_key = "attacker-forged-hmac-key-99999"
+    attacker_record = _create_approval_record(
+        dry_run,
+        root_path=str(root),
+        signing_key=attacker_key,
+    )
+    attacker_approval_path = attacker_status_root / "self-authored-approval.json"
+    attacker_approval_path.write_text(json.dumps(attacker_record), encoding="utf-8")
+
+    # Attacker injects combined environment override chain
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(attacker_config))
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(attacker_status_root))
+    monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", attacker_key)
+    monkeypatch.setenv("PANTHEON_OPERATOR_APPROVAL_SECRET", attacker_key)
+    monkeypatch.setenv("PANTHEON_RETIREMENT_SIGNING_KEY", attacker_key)
+
+    rc = cli_main(
+        [
+            "--root",
+            str(root),
+            "--execute",
+            "--dry-run-manifest",
+            str(manifest_output),
+            "--approval-record",
+            str(attacker_approval_path),
+        ]
+    )
+    assert rc == 1
+    # Ensure destructive deletion/quarantine did NOT happen
+    assert (root / "controller_state.json").exists()
+    assert (root / "health_state.json").exists()
+
+
+def test_cli_rejects_legacy_signing_key_aliases(tmp_path: Path, monkeypatch):
+    """Negative regression test: legacy signing key aliases cannot satisfy the execution gate."""
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    _seed_legacy_projection_fixture(root)
+
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+
+    runtime_dir = status_root.parent / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    live_config = {
+        "paths": {"status_file": str(status_root / "ai-status.json")},
+        "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
+    }
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
+
+    manifest_output = status_root / "dry-run.json"
+    rc = cli_main(["--root", str(root), "--output", str(manifest_output)])
+    assert rc == 0
+    dry_run = json.loads(manifest_output.read_text(encoding="utf-8"))
+
+    legacy_key = "legacy-alias-signing-key-8888"
+    approval_record = _create_approval_record(dry_run, signing_key=legacy_key)
+    approval_path = status_root / "approval.json"
+    approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
+
+    # Set legacy aliases without canonical PANTHEON_HUMAN_OPS_SIGNING_KEY
+    monkeypatch.delenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", raising=False)
+    monkeypatch.setenv("PANTHEON_OPERATOR_APPROVAL_SECRET", legacy_key)
+    monkeypatch.setenv("PANTHEON_RETIREMENT_SIGNING_KEY", legacy_key)
 
     rc = cli_main(
         [
@@ -1299,6 +1489,7 @@ def test_canonical_task_state_identity_binding_valid_with_live_config(tmp_path: 
     }
     live_config_file = runtime_dir / "live-supervisor-config.json"
     live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
     monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
 
     payload = {
@@ -1342,6 +1533,7 @@ def test_canonical_task_state_identity_binding_rejects_forged_binding(tmp_path: 
     }
     live_config_file = runtime_dir / "live-supervisor-config.json"
     live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
     monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
 
     # Attacker crafts identity pointing to a fake root with valid sha256
@@ -1420,6 +1612,7 @@ def test_canonical_task_state_identity_binding_rejects_conflicting_status_root_e
     }
     live_config_file = runtime_dir / "live-supervisor-config.json"
     live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
     monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
 
     payload = {
@@ -1442,4 +1635,3 @@ def test_canonical_task_state_identity_binding_rejects_conflicting_status_root_e
         match="conflicts with authoritative identity root",
     ):
         resolve_governed_status_root()
-
