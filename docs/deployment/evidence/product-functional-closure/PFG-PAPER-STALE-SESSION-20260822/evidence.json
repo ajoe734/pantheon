@@ -1,0 +1,84 @@
+{
+  "schema_version": "pantheon.product_functional_closure.paper_stale_session_evidence.v1",
+  "task": {
+    "id": "PFG-PAPER-STALE-SESSION-20260822",
+    "title": "Pause and resume bounded paper sessions on manual Source freshness",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-PAPER-STALE-SESSION-20260822",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-PAPER-STALE-SESSION-20260822/evidence.json",
+    "evidence_status": "owner_validation_passed_pending_independent_reviewer"
+  },
+  "scope": {
+    "owned_layer": [
+      "Extracted pure, side-effect-free market snapshot admission rule in services/execution/market_snapshot_admission.py shared by producer and reconciler.",
+      "Atomic metadata_patch support on RuntimeBindingStore.transition_status and RuntimeManagerService.transition for structured session_admission metadata.",
+      "Paper fleet reconciler stale detection transitioning active -> pending_pause -> paused with session_admission metadata and terminating worker process.",
+      "Paper fleet reconciler manual resume transitioning paused -> active and starting worker only on newer, distinct admitted snapshot.",
+      "Prohibition of auto-resuming operator manual pauses.",
+      "Comprehensive positive and negative test suites in test_paper_fleet_reconciler.py, test_runtime_binding.py, and test_paper_signal_producer.py."
+    ],
+    "not_changing": [
+      "No new RuntimeBindingStatus (reused existing active, pending_pause, paused state machine without paused_stale_input).",
+      "No separate paper-session table or secondary state store.",
+      "No recurring background provider pulls (Source remains reconcile-only; reconciler and producer only query local snapshot endpoint).",
+      "No bypass of operator manual pause controls."
+    ]
+  },
+  "canonical_lifecycle_contract": {
+    "state_machine": {
+      "stale_input_pause": "active -> pending_pause -> paused",
+      "fresh_input_resume": "paused -> active",
+      "idempotency": "Repeated reconcile cycles on paused/stale bindings emit zero duplicate transitions and spawn zero workers."
+    },
+    "structured_metadata": {
+      "field": "metadata.session_admission",
+      "properties": {
+        "reason_code": "market_input_stale | market_input_invalid | market_input_missing",
+        "source_snapshot_id": "string",
+        "source_event_time": "RFC3339 timestamp",
+        "observed_at": "RFC3339 timestamp",
+        "max_age_seconds": "integer",
+        "pause_command_ref": "string",
+        "resume_snapshot_id": "string | null",
+        "resumed_at": "RFC3339 timestamp | null"
+      }
+    },
+    "admission_rule": {
+      "module": "services/execution/market_snapshot_admission.py",
+      "function": "admit_market_snapshot(snapshot, expected_symbol, max_age_seconds, minimum_closes, now_iso, binding_id)",
+      "returns": "SnapshotAdmissionDecision(admitted=bool, snapshot_id, event_time, age_seconds, reason_code, detail)"
+    },
+    "resume_criteria": {
+      "admission_valid": "Snapshot must pass admit_market_snapshot()",
+      "distinct_snapshot_id": "new_snapshot_id != paused_snapshot_id",
+      "strictly_newer_event_time": "new_event_time > paused_event_time",
+      "stale_pause_only": "session_admission.reason_code == 'market_input_stale' (never auto-resume operator pauses)"
+    }
+  },
+  "validation": {
+    "commands": [
+      "pytest -v services/execution/runtime-manager/test_runtime_binding.py services/execution/runtime-manager/test_paper_fleet_reconciler.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_current_artifact_signal.py"
+    ],
+    "results": [
+      "137 passed in 22.28s (56 reconciler tests, 57 runtime binding tests, 18 signal producer tests, 6 current artifact signal tests).",
+      "Positive test verified: fresh snapshot retains and starts exactly one active worker.",
+      "Positive test verified: stale snapshot transitions active -> pending_pause -> paused and stops worker.",
+      "Positive test verified: repeated stale reconciles are idempotent with zero duplicate transitions.",
+      "Positive test verified: new admitted snapshot with newer timestamp resumes paused binding once and starts worker.",
+      "Positive test verified: producer and reconciler return identical admission decisions.",
+      "Negative test verified: same stale snapshot cannot resume.",
+      "Negative test verified: older or same timestamp snapshot cannot resume.",
+      "Negative test verified: invalid, future (>300s), missing closes, or wrong symbol snapshot cannot resume.",
+      "Negative test verified: restart while paused stays paused and starts no worker.",
+      "Negative test verified: operator pause is never auto-resumed.",
+      "Negative test verified: zero recurring provider pull proof (reconciler and producer only query local snapshot endpoint)."
+    ]
+  },
+  "review_decision": {
+    "decision": "owner_validation_passed_pending_independent_reviewer",
+    "reviewer_action_required": "Claude must independently inspect this committed manifest and exact task-branch head, rerun the test suites, verify state machine idempotency and pause/resume rules, and bind canonical approval with this review_file before merge."
+  }
+}
