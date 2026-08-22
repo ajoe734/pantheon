@@ -3,41 +3,56 @@
 This task recovers the post-merge dev deployment and hosted Human E2E proof for
 Loops 5 through 7 following the false terminal closeout of PFG-L12-HUMAN-E2E-20260820.
 
-## Objective
+## Objective & Deployment Truth
 
-1. Verify governed promotion run `32554078801` and accepted hosted deployment:
-   - Backend SHA: `97945de7c5193baa9832f6c02674714d889577b9`
-   - Frontend SHA: `693d8612218e5ec6620c80ab7a16d3429e842f6c`
-   - Gate Run ID: `32555528892`
-   - Pair ID: `98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529`
-2. Run `PANTHEON_L12_HUMAN_LEARNING_E2E=1` against the live Compose deployment using governed dev credentials without printing or persisting secrets.
-3. Capture durable IDs plus restart/replay evidence across all 3 Human Learning loops:
-   - Loop 5: Agora Interaction Evidence -> Policy Learning Candidate
-   - Loop 6: Shadow Imitation Candidate -> Research Orchestrator Experiment Run
-   - Loop 7: Consultation Request -> Supervised Workflow Executor -> OpenClaw Advisory Memo -> Governance Gate Handoff
-4. Verify restart and replay idempotency without duplicate candidate or memo emission.
-5. Verify Source Ingestion external egress deny posture (`PANTHEON_EXTERNAL_EGRESS=deny`, `reconcile_only` mode).
+1. **Exact SHA Ancestry & Governed Promotion**:
+   - Backend canonical target `bb83df12e3cec11de0f441850f08a179ddd7394a` (from `PFG-L12-HUMAN-E2E-20260820` / PR #5117) was merged to `origin/dev` and is a direct ancestor of dev `97945de7c5193baa9832f6c02674714d889577b9`.
+   - Frontend canonical target `8b5a7bbe868f9e3a56a4ed7baf818b642d57ba74` (from `PFG-MGMT-AI-FE-ACTIONS-20260820` / PR #600) was merged to `origin/dev` and is a direct ancestor of dev `693d8612218e5ec6620c80ab7a16d3429e842f6c`.
+   - Promotion workflow run: `32554078801` (`nonprod-deploy.yml`), gate run: `32555528892` (`pantheon-integration-gate.yml`), Pair ID: `98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529`.
+
+2. **Hosted Version & Deployment Readbacks**:
+   - `GET https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version`:
+     ```json
+     {"service":"operator-bff","version":"0.2.0","source_commit_sha":"97945de7c5193baa9832f6c02674714d889577b9","commit":"97945de7c5193baa9832f6c02674714d889577b9","source_commit_known":true,"environment":"dev","config_posture":{"auth_stub":false,"auth_mode":"strict","dev_login_enabled":true,"mfa_required":true,"assistant_kernel_enabled":true,"trade_journey_reader_backend":"json","trade_journey_projection_schema":"trade_journey_projection"}}
+     ```
+   - `GET https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json`:
+     ```json
+     {"pairId":"98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529","commit":"693d8612218e5ec6620c80ab7a16d3429e842f6c","bffCommit":"97945de7c5193baa9832f6c02674714d889577b9","deploymentState":"accepted"}
+     ```
+
+3. **Source Posture & Egress Guard Live Readback**:
+   - `GET http://127.0.0.1:18097/readyz`: `ready: true`, `service: "pantheon-source-ingest"`, `provider_egress_attempted: false`, `source_search_posture.mode: "dev"`.
+   - `pantheon-source-ingest` container: `PANTHEON_EXTERNAL_EGRESS=deny`.
+   - `pantheon-source-ingest-scheduler` container: `SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`, `SOURCE_INGEST_CONTROLLER_MAX_TICKS=0`.
+
+4. **Human Learning Deployed E2E Proof (Loops 5 through 7)**:
+   - Run `PANTHEON_L12_HUMAN_LEARNING_E2E=1` against live Compose services with automatic strict dev-login authentication.
+   - Loop 5: Agora Interaction Evidence -> Policy Learning Shadow Imitation Candidate.
+   - Loop 6: Policy Learning Candidate -> Research Orchestrator Experiment Run.
+   - Loop 7: Consultation Request -> Supervised Workflow Executor -> OpenClaw Advisory Memo -> Governance Gate Handoff.
+   - Restart and replay idempotency verified across all loops without duplicate candidate or memo emission.
 
 ## Deployed Execution & Proof Summary (2026-08-22)
 
 The complete Human Learning E2E test suite (`test_current_human_learning_deployed_e2e.py`) passed against the live deployment.
 
-### Test Results
+### Test Results (6 passed in 113.75s)
 - `test_deployed_agora_interaction_evidence_identity_chain`: **PASSED**
 - `test_deployed_imitation_research_handoff_identity_chain`: **PASSED**
 - `test_deployed_consultation_governance_handoff_identity_chain`: **PASSED**
 - `test_deployed_human_learning_chain_identity_correlation`: **PASSED**
+- `test_deployed_source_posture_and_egress_readback`: **PASSED**
 - `test_deployed_suite_has_no_fixture_or_product_store_shortcut`: **PASSED**
 
 ### Durable Identity Correlation Chain
-- `evidence_id`: `ev-l12-hl-a8d6acb454`
-- `dataset_version_id`: `dsv-d5d6ffcf29a20a3c337ed3fc`
-- `agora_handoff_id`: `gh-1279f044fa2449c0b887f4aa`
-- `candidate_id`: `sic-a07e936960c1d644a0228207e125f0c8`
-- `experiment_task_id`: `rtask-exp-sic-a07e936960c1d644a0228207e125f0c8`
-- `experiment_run_id`: `rrun-exp-sic-a07e936960c1d644a0228207e125f0c8`
-- `consult_request_id`: `cr-l12-hl-a8d6acb454`
-- `memo_id`: `mem-90f2eaaeff518e95b1df`
-- `governance_handoff_id`: `gh-2525ccd953244df865ba`
+- `evidence_id`: `ev-l12-hl-6a9012c58c`
+- `dataset_version_id`: `dsv-a8875fcefb8f5e43896bfa95`
+- `agora_handoff_id`: `gh-6fe2db81e65c7324d7c0a387`
+- `candidate_id`: `sic-565293b9e33e6d07f0bbea14f6d5edae`
+- `experiment_task_id`: `rtask-exp-sic-565293b9e33e6d07f0bbea14f6d5edae`
+- `experiment_run_id`: `rrun-exp-sic-565293b9e33e6d07f0bbea14f6d5edae`
+- `consult_request_id`: `cr-l12-hl-6a9012c58c`
+- `memo_id`: `mem-8f5a1f82f87a3a7ff6c9`
+- `governance_handoff_id`: `gh-61294d8c9c819cc8eccd`
 
 The full run report is preserved in [deployed-run.json](file:///tmp/pantheon-worker-worktrees/coordination-root/pfg-l12-human-e2e-live-r2-20260821/docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json).
