@@ -262,6 +262,237 @@ class ProjectionStore:
                 return None
             return ControllerStateRow(*row)
 
+    def adopt_legacy_baseline(
+        self,
+        *,
+        controller_id: str,
+        migration_controller_id: str,
+        tenant_scope: str,
+        environment_scope: str,
+        checkpoint_seq: int,
+        deployment_sha: str,
+        expected_receipts: int,
+        expected_journeys: int,
+        expected_loop_runs: int,
+    ) -> ControllerStateRow:
+        """Seed a non-live controller from an accepted legacy projection.
+
+        This recovery-only operation is deliberately narrower than a normal
+        checkpoint update. It fails closed unless the migration controller
+        and exact baseline row counts are already durable, no live controller
+        exists, no unresolved quarantine remains, and every retained stage
+        offset is at or below the accepted legacy checkpoint. A byte-for-byte
+        retry of an already adopted baseline is idempotent.
+
+        Adoption never grants read authority: the new controller remains in
+        ``recovery``/``repair_only`` with ``accepted_live=false`` until the
+        shadow worker polls the retained PostgreSQL source to zero backlog.
+        """
+
+        if not controller_id or not migration_controller_id:
+            raise ProjectionStoreException("Legacy baseline controller IDs are required")
+        if controller_id == migration_controller_id:
+            raise ProjectionStoreException(
+                "Legacy baseline migration and live controller IDs must be distinct"
+            )
+        if checkpoint_seq <= 0:
+            raise ProjectionStoreException("Legacy baseline checkpoint must be positive")
+        expected = {
+            "event_receipts": expected_receipts,
+            "journeys": expected_journeys,
+            "loop_runs": expected_loop_runs,
+        }
+        if any(value < 0 for value in expected.values()):
+            raise ProjectionStoreException("Legacy baseline expected counts must be non-negative")
+
+        def scoped_count(cur: Any, table: str) -> int:
+            cur.execute(
+                f"""
+                SELECT COUNT(*) FROM {self.schema}.{table}
+                WHERE (%s IN ('', '*') OR tenant_id=%s)
+                  AND (%s IN ('', '*') OR environment=%s)
+                """,
+                (tenant_scope, tenant_scope, environment_scope, environment_scope),
+            )
+            return int(cur.fetchone()[0])
+
+        controller_columns = """
+            controller_id, tenant_scope, environment_scope, checkpoint_seq,
+            source_high_watermark, backlog_count, projection_revision,
+            deployment_sha, mode, status, accepted_live, last_poll_at,
+            last_success_at, last_live_success_at, last_recovery_at,
+            last_backfill_at, last_replay_at, last_failure_at,
+            last_error_message, unresolved_quarantine_count, updated_at
+        """
+        controller_args = (controller_id, tenant_scope, environment_scope)
+        migration_args = (
+            migration_controller_id,
+            tenant_scope,
+            environment_scope,
+        )
+
+        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+            # Stable lock order prevents an accidental concurrent shadow start
+            # from racing the baseline adoption.
+            lock_ids = sorted(
+                {
+                    controller_advisory_lock_id(
+                        controller_id, tenant_scope, environment_scope
+                    ),
+                    controller_advisory_lock_id(
+                        migration_controller_id, tenant_scope, environment_scope
+                    ),
+                }
+            )
+            for lock_id in lock_ids:
+                cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (lock_id,))
+                if not cur.fetchone()[0]:
+                    raise ProjectionStoreException(
+                        "Could not acquire both legacy baseline controller locks"
+                    )
+
+            cur.execute(
+                f"""
+                SELECT {controller_columns}
+                FROM {self.schema}.controller
+                WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
+                FOR UPDATE
+                """,
+                controller_args,
+            )
+            existing_live = cur.fetchone()
+            if existing_live is not None:
+                existing = ControllerStateRow(*existing_live)
+                if (
+                    existing.checkpoint_seq == checkpoint_seq
+                    and existing.source_high_watermark == checkpoint_seq
+                    and existing.backlog_count == 0
+                    and existing.deployment_sha == deployment_sha
+                    and existing.mode == "recovery"
+                    and existing.status == "repair_only"
+                    and not existing.accepted_live
+                    and existing.unresolved_quarantine_count == 0
+                ):
+                    return existing
+                raise ProjectionStoreException(
+                    "Live controller already exists and does not match the accepted legacy baseline"
+                )
+
+            cur.execute(
+                f"""
+                SELECT {controller_columns}
+                FROM {self.schema}.controller
+                WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
+                FOR UPDATE
+                """,
+                migration_args,
+            )
+            migration_row = cur.fetchone()
+            if migration_row is None:
+                raise ProjectionStoreException(
+                    "Legacy baseline migration controller is not durable"
+                )
+            migration = ControllerStateRow(*migration_row)
+            if migration.accepted_live or migration.mode != "backfill":
+                raise ProjectionStoreException(
+                    "Legacy baseline migration controller has an unsafe mode or live admission"
+                )
+
+            observed = {
+                table: scoped_count(cur, table)
+                for table in ("event_receipts", "journeys", "loop_runs")
+            }
+            if observed != expected:
+                raise ProjectionStoreException(
+                    f"Legacy baseline count mismatch: expected {expected}, observed {observed}"
+                )
+
+            cur.execute(
+                f"""
+                SELECT COALESCE(MAX(source_ingested_seq), 0)
+                FROM {self.schema}.journey_stages
+                WHERE (%s IN ('', '*') OR tenant_id=%s)
+                  AND (%s IN ('', '*') OR environment=%s)
+                """,
+                (tenant_scope, tenant_scope, environment_scope, environment_scope),
+            )
+            maximum_stage_offset = int(cur.fetchone()[0])
+            if maximum_stage_offset > checkpoint_seq:
+                raise ProjectionStoreException(
+                    "Legacy baseline stage offset exceeds the accepted checkpoint"
+                )
+
+            cur.execute(
+                f"""
+                SELECT COUNT(*) FROM {self.schema}.quarantine
+                WHERE resolution_status='unresolved'
+                  AND (%s IN ('', '*') OR tenant_id=%s)
+                  AND (%s IN ('', '*') OR environment=%s)
+                """,
+                (tenant_scope, tenant_scope, environment_scope, environment_scope),
+            )
+            if int(cur.fetchone()[0]) != 0:
+                raise ProjectionStoreException(
+                    "Legacy baseline has unresolved quarantine; refusing live cursor seed"
+                )
+
+            now = datetime.now(timezone.utc)
+            cur.execute(
+                f"""
+                UPDATE {self.schema}.controller
+                SET checkpoint_seq=%s,
+                    source_high_watermark=%s,
+                    backlog_count=0,
+                    deployment_sha=%s,
+                    mode='backfill',
+                    status='ready',
+                    accepted_live=FALSE,
+                    last_backfill_at=%s,
+                    last_error_message='',
+                    unresolved_quarantine_count=0,
+                    updated_at=%s
+                WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
+                """,
+                (
+                    checkpoint_seq,
+                    checkpoint_seq,
+                    deployment_sha,
+                    now,
+                    now,
+                    *migration_args,
+                ),
+            )
+            cur.execute(
+                f"""
+                INSERT INTO {self.schema}.controller (
+                    controller_id, tenant_scope, environment_scope,
+                    checkpoint_seq, source_high_watermark, backlog_count,
+                    projection_revision, deployment_sha, mode, status,
+                    accepted_live, last_poll_at, last_success_at,
+                    last_recovery_at, last_error_message,
+                    unresolved_quarantine_count, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, 0, %s, %s,
+                    'recovery', 'repair_only', FALSE, %s, %s, %s, '', 0, %s
+                )
+                RETURNING {controller_columns}
+                """,
+                (
+                    controller_id,
+                    tenant_scope,
+                    environment_scope,
+                    checkpoint_seq,
+                    checkpoint_seq,
+                    migration.projection_revision,
+                    deployment_sha,
+                    now,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            return ControllerStateRow(*cur.fetchone())
+
     def resolve_identity(
         self, tenant_id: str, environment: str, identifier_type: str, identifier_value: str
     ) -> Optional[str]:
