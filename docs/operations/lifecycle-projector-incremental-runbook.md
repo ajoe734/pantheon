@@ -1,11 +1,16 @@
-# Lifecycle projector target-dev cutover runbook
+# Lifecycle projector target-dev cutover & retirement runbook
 
-Task: `LIFECYCLE-PROJ-CUTOVER-001`
+Task: `LIFECYCLE-PROJ-RETIRE-001` (predecessor: `LIFECYCLE-PROJ-CUTOVER-001`)
 
 Target: `pantheon-lupin-dev` in `pantheon-lupin-dev-20260719`
 
-Reader rollback boundary: `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND`
+Reader backend: `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres` (sole canonical reader)
 Last updated: 2026-08-22
+
+> [!NOTE]
+> **Operational Status & Historical Phasing**:
+> - **Post-Retirement State (`LIFECYCLE-PROJ-RETIRE-001`)**: Legacy JSON readers and writers are completely retired and decommissioned. The runtime environment operates exclusively on `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres` and `LIFECYCLE_PROJECTOR_WRITER_BACKEND=shadow`. Setting `reader=json` is rejected and fails closed.
+> - **Historical Cutover Reference (Sections 1–7)**: Sections 1–7 document the one-time baseline import and shadow cutover executed during `LIFECYCLE-PROJ-CUTOVER-001` when the reader was transitioned from `json` to `postgres`.
 
 This is a paper-only target-dev procedure. It does not authorize production,
 live capital, broker actions, legacy data retirement, or a destructive schema
@@ -81,11 +86,13 @@ batch and one database transaction; receipts/stages/journey/loop/controller do
 not receive duplicate-owned mutations; checkpoint equals source high watermark;
 backlog and unexplained mismatch are zero.
 
-## 2. Merge and exact default-safe deployment
+## 2. Merge and exact default-safe deployment (Historical Cutover Phase)
+
+*Note: During historical cutover (`LIFECYCLE-PROJ-CUTOVER-001`), the pre-cutover deployment verified initial `json` baseline before shadow migration. In the current post-retirement state (`LIFECYCLE-PROJ-RETIRE-001`), all deployments run exclusively with `postgres` reader and `shadow` writer.*
 
 Independent review must approve the exact PR head. Merge the PR to `dev`, then
 deploy that merge SHA through the existing nonprod workflow under the shared
-lease. Deployment operates with the canonical PostgreSQL reader and relational writer.
+lease.
 
 Before activation, capture these identities:
 
@@ -99,15 +106,16 @@ sha256sum docker-compose.yml
 curl -fsS http://127.0.0.1:18001/bff/version
 ```
 
-Required: hosted BFF source SHA equals the merged SHA; both container image IDs
-are recorded; the migration and compose checksums are recorded; the reader is
-still `json`; no canary claim has been made.
+Required (during historical cutover): hosted BFF source SHA equals the merged SHA; both container image IDs
+are recorded; the migration and compose checksums are recorded; reader backend posture matches the active cutover stage.
 
-## 3. Additive migration and reviewed fresh legacy baseline
+## 3. Additive migration and reviewed fresh legacy baseline (Historical Cutover Phase)
+
+*Note: Historical baseline migration was executed once to populate PostgreSQL from the intact JSON bundle before retiring JSON readers.*
 
 Apply only the additive migration. Do not run a down migration or truncate the
-canonical source or projection schema. Before importing, prove the BFF reader
-is `json`, the relational writer is `disabled`, all relational projection tables
+canonical source or projection schema. During initial cutover, before importing,
+prove the relational writer is `disabled`, all relational projection tables
 and controllers are empty, and size/mtime remain unchanged across the checksum
 pass.
 
@@ -194,7 +202,9 @@ Required:
 - migration/runtime credentials are identified separately and no source
   `UPDATE`/`DELETE` authority is granted to the runtime worker.
 
-## 5. Shadow activation with reader unchanged
+## 5. Shadow activation with reader unchanged (Historical Cutover Phase)
+
+*Note: During historical cutover, shadow writer was activated while the reader remained on JSON until parity verification passed.*
 
 Supply the projection DSN from the governed secret source. Recreate only the
 single lifecycle worker; do not start a legacy JSON writer.
@@ -222,10 +232,9 @@ last_error_message=''
 ```
 
 Also verify the worker image ID is the recorded exact image and the JSON files
-and `bff-data` volume still exist. At this point BFF posture must still report
-`trade_journey_reader_backend=json`.
+and `bff-data` volume still exist. (During initial cutover, BFF posture temporarily reported `trade_journey_reader_backend=json` before Section 6 switch; post-retirement, BFF requires `trade_journey_reader_backend=postgres`.)
 
-## 6. Authorized paper canary and all-dev read switch
+## 6. Authorized paper canary and all-dev read switch (Historical Cutover Phase)
 
 Inject a random secret of at least 16 bytes from the governed secret source.
 Do not print it. Recreate only BFF with the single reader backend set to

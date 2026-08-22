@@ -332,3 +332,51 @@ def test_run_retirement_execute_rejects_unlisted_file_mutation(tmp_path: Path):
             dry_run_manifest_path=manifest_path,
             allow_custom_root=True,
         )
+
+
+def test_run_retirement_execute_rejects_action_mismatch(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    _seed_legacy_projection_fixture(root)
+
+    # 1. Approved dry-run is archive/quarantine (recovery_possible=True)
+    archive_dry_run = run_retirement(
+        root_path=root,
+        action="archive",
+        execute=False,
+        allow_custom_root=True,
+    )
+    manifest_path = tmp_path / "archive-dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(archive_dry_run), encoding="utf-8")
+
+    # Attempting to execute with action=delete must fail closed
+    with pytest.raises(RetirementValidationError, match="Action mismatch"):
+        run_retirement(
+            root_path=root,
+            action="delete",
+            execute=True,
+            approval_token="Human/Ops-approved:LIFECYCLE-PROJ-RETIRE-001",
+            approver="Human/Ops",
+            dry_run_manifest_path=manifest_path,
+            allow_custom_root=True,
+        )
+
+    # 2. Approved dry-run is delete (recovery_possible=False), execution is archive
+    delete_dry_run = run_retirement(
+        root_path=root,
+        action="delete",
+        execute=False,
+        allow_custom_root=True,
+    )
+    del_manifest_path = tmp_path / "delete-dry-run-manifest.json"
+    del_manifest_path.write_text(json.dumps(delete_dry_run), encoding="utf-8")
+
+    with pytest.raises(RetirementValidationError, match="Action mismatch"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_token="Human/Ops-approved:LIFECYCLE-PROJ-RETIRE-001",
+            approver="Human/Ops",
+            dry_run_manifest_path=del_manifest_path,
+            allow_custom_root=True,
+        )

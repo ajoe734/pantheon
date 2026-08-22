@@ -481,6 +481,20 @@ def run_retirement(
                 f"Root mismatch: dry-run manifest root {manifest_root!r} != target root {str(safe_root)!r}"
             )
 
+        manifest_action = approved_manifest.get("action")
+        if manifest_action != action:
+            raise RetirementValidationError(
+                f"Action mismatch: approved dry-run manifest specifies action {manifest_action!r}, "
+                f"but execution requested action {action!r}. Action and recovery posture are bound to the approved manifest."
+            )
+
+        manifest_recovery = approved_manifest.get("recovery_possible")
+        if manifest_recovery != manifest.get("recovery_possible"):
+            raise RetirementValidationError(
+                f"Recovery posture mismatch: approved dry-run manifest specifies recovery_possible={manifest_recovery!r}, "
+                f"but execution requested recovery_possible={manifest.get('recovery_possible')!r}."
+            )
+
         approved_items = approved_manifest.get("items", [])
         expected_digest = approved_manifest.get("inventory_sha256") or compute_inventory_digest(
             approved_items
