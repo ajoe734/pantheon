@@ -128,6 +128,32 @@ def test_build_live_config_ignores_live_overlay_and_renders_v2_paths(tmp_path: P
     assert rendered["paths"]["status_file"] == str(status / "ai-status.json")
 
 
+def test_build_live_config_pins_high_reasoning_antigravity_models(tmp_path: Path) -> None:
+    command, status = _roots(tmp_path)
+    repo_config = json.loads(
+        (command / ".orchestrator" / "config.json").read_text(encoding="utf-8")
+    )
+
+    rendered = provision.build_live_config(
+        repo_config,
+        existing_live_config=None,
+        command_root=command,
+        status_root=status,
+        live_config_path=tmp_path / "runtime" / "live.json",
+        python_executable=Path(sys.executable),
+    )
+
+    for provider_id in ("antigravity", "antigravity2"):
+        provider = rendered["providers"][provider_id]
+        assert provider["antigravity"]["model"] == "gemini-3.7-flash-high"
+        assert provider["model_rotation"] == {
+            "enabled": True,
+            "primary": "gemini-3.7-flash-high",
+            "fallback": "claude-sonnet-4-6",
+            "cooldown_seconds": 900,
+        }
+
+
 def test_build_live_config_projects_explicit_repository_source_roots(tmp_path: Path) -> None:
     command, status = _roots(tmp_path)
     execute_root = tmp_path / "execute-plans"

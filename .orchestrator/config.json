@@ -467,13 +467,13 @@
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
-        "model": "gemini-3.6-flash-low",
+        "model": "gemini-3.7-flash-high",
         "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "gemini-3.6-flash-low",
-        "fallback": "Claude Sonnet 4.6 (Thinking)",
+        "primary": "gemini-3.7-flash-high",
+        "fallback": "claude-sonnet-4-6",
         "cooldown_seconds": 900
       },
       "approval": {
@@ -495,12 +495,13 @@
         "config_home": "/home/lupin/.gemini-agy2",
         "home": "/home/lupin/.gemini-agy2",
         "include_directories": true,
+        "model": "gemini-3.7-flash-high",
         "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "",
-        "fallback": "Claude Sonnet 4.6 (Thinking)",
+        "primary": "gemini-3.7-flash-high",
+        "fallback": "claude-sonnet-4-6",
         "cooldown_seconds": 900
       },
       "approval": {
