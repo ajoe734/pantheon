@@ -8,17 +8,16 @@
     "review_file": "docs/deployment/evidence/product-functional-closure/PFG-DATA-TELEMETRY-PRUNE-20260822/evidence.json"
   },
   "scope": {
-    "owned_layer": "scripts/deploy_nonprod_vm.sh prune_dev_management_ai_telemetry_for_disk() and configure_management_ai_dev_env() truncate scope and validation; scripts/dev_vm_ssh.sh direct SSH transport options",
+    "owned_layer": "scripts/deploy_nonprod_vm.sh prune_dev_management_ai_telemetry_for_disk() and configure_management_ai_dev_env() truncate scope and validation",
     "not_changing": [
       "The dev-root/postgres-backend/PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE gating that decides whether the prune runs at all",
       "The diagnostic before/after size listing across all schemas",
-      "Any production or non-dev deployment path"
+      "Any production or non-dev deployment path",
+      "Services runtime code, reconcilers, Dockerfiles, docker-compose, and dev_vm_ssh which belong to their respective feature/infra tasks per SD-DATA-01"
     ],
     "composes_with": [
       "scripts/test_management_ai_postgres_bootstrap_contract.py",
-      "scripts/test_deploy_nonprod_telemetry_prune.py",
-      "scripts/test_dev_vm_ssh.py",
-      "docker-compose.yml MANAGEMENT_AI_STORE_SCHEMA default"
+      "scripts/test_deploy_nonprod_telemetry_prune.py"
     ]
   },
   "defect": {
@@ -59,37 +58,42 @@
       "summary": "Consecutive dry-run produced identical plan output."
     }
   ],
-  "deployed_dev_environment": {
-    "status": "active_and_verified",
-    "bff_readback_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
-    "fe_readback_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
-    "backend_sha": "0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8",
-    "frontend_sha": "693d8612218e5ec6620c80ab7a16d3429e842f6c",
-    "deployment_mode": "direct_dev_root_vm_deploy",
-    "gate_run_id": "32555528892",
+  "dev_root_deployment_receipt": {
+    "status": "deployed_and_verified",
+    "environment": "dev",
+    "vm_host": "35.201.204.12",
+    "deployed_backend_sha": "0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8",
+    "deployment_method": "direct_dev_root_vm_deploy",
+    "deployment_command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8 --project-id pantheon-lupin-dev-20260719",
     "canonical_telemetry_table": "public.telemetry_events",
     "canonical_telemetry_status": "preserved_and_intact",
     "telemetry_prune_sentinel_emission": "NOTICE:  TELEMETRY_PRUNE_SENTINEL: {\"result\": \"preserved\", \"derived_schema\": \"management_ai\", \"canonical_table\": \"public.telemetry_events\", \"derived_tables_pruned\": [], \"canonical_checksum_after\": \"b9c0bd120c373fabe2418f620b105628\", \"canonical_checksum_before\": \"b9c0bd120c373fabe2418f620b105628\", \"canonical_row_count_after\": 4981, \"canonical_row_count_before\": 4981, \"canonical_min_created_at_after\": \"2026-08-22T11:48:48+00:00\", \"canonical_min_created_at_before\": \"2026-08-22T11:48:48+00:00\"}",
-    "live_endpoint_verification": {
+    "live_probes": {
+      "bff_version_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
+      "bff_version_commit": "0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8",
       "bff_version_source_commit_sha": "0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8",
       "bff_version_status": "ok",
+      "bff_readyz_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/readyz",
       "bff_readyz_live": true,
-      "paper_fleet_reconciler_live": true,
-      "paper_fleet_reconciler_ready": true,
-      "paper_fleet_reconciler_active_sessions": 1
-    }
+      "bff_readyz_ready": true,
+      "lifecycle_projector_deployment_sha": "0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8",
+      "lifecycle_projector_status": "ok"
+    },
+    "frontend_boundary_note": "Frontend bundle on dev host (https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json) is from execute-plans gate 32555528892 (commit 693d8612218e5ec6620c80ab7a16d3429e842f6c). The dev VM backend services were upgraded to 0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8 via deploy_nonprod_vm.sh with the prune guard binding TELEMETRY_PRUNE_SENTINEL."
   },
   "validation": {
     "commands": [
       "bash -n scripts/deploy_nonprod_vm.sh",
-      "python3 -m pytest -v scripts/test_deploy_nonprod_telemetry_prune.py scripts/test_management_ai_postgres_bootstrap_contract.py scripts/test_dev_vm_ssh.py",
-      "./scripts/deploy_nonprod_vm.sh --environment dev --sha HEAD --project-id pantheon-lupin-dev-20260719 --dry-run"
+      ".venv-pantheon/bin/python3 -m pytest -v scripts/test_deploy_nonprod_telemetry_prune.py scripts/test_management_ai_postgres_bootstrap_contract.py",
+      "./scripts/deploy_nonprod_vm.sh --environment dev --sha 0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8 --project-id pantheon-lupin-dev-20260719 --dry-run",
+      "sha256sum -c docs/deployment/evidence/product-functional-closure/PFG-DATA-TELEMETRY-PRUNE-20260822/evidence.sha256"
     ],
     "results": {
       "bash_syntax_check": "passed",
-      "focused_pytest_suite": "29 passed (18 prune tests including 7 CLI dry-run schema tests and 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests + 4 dev VM SSH transport tests)",
-      "dry_runs": "2 consecutive dry-runs passed with identical plans for HEAD",
-      "sentinel_verification": "Live PostgreSQL TELEMETRY_PRUNE_SENTINEL verified with result: preserved and zero drift across row count, min timestamp, and checksum"
+      "focused_pytest_suite": "25 passed (18 prune tests including 7 CLI dry-run schema tests and 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests)",
+      "dry_runs": "2 consecutive dry-runs passed with identical plans for 0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8",
+      "sentinel_verification": "Live PostgreSQL TELEMETRY_PRUNE_SENTINEL verified with result: preserved and zero drift across row count, min timestamp, and checksum",
+      "sha256_root_check": "passed"
     }
   },
   "review": {
@@ -100,7 +104,8 @@
       "Confirm CLI dry-run and deployment preflight parameter expansion rejects empty schema overrides",
       "Confirm canonical public.telemetry_events pre/post state is strictly asserted and fails on drift",
       "Confirm behavioral tests cover positive prune, missing table no-op, public schema rejection, invalid identifier rejection, drift detection, and CLI dry-run validation",
-      "Confirm TELEMETRY_PRUNE_SENTINEL emits immutable pre/post counts, min timestamps, and checksums verifying canonical table preservation"
+      "Confirm TELEMETRY_PRUNE_SENTINEL emits immutable pre/post counts, min timestamps, and checksums verifying canonical table preservation",
+      "Confirm PR scope strictly adheres to SD-DATA-01 (deploy script + tests) with runtime reconcilers and dockerfiles excluded"
     ]
   }
 }

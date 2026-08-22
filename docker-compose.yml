@@ -2060,7 +2060,6 @@ services:
     command: ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
     environment:
       PORT: "8011"
-      PYTHONPATH: /workspace
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
