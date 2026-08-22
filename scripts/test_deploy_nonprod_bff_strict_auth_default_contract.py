@@ -416,7 +416,7 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
     auth_floor = workflow[
         workflow.index("- name: Enforce dev auth deployment floor") :
         workflow.index(
-            "- name: Authenticate to Google Cloud via Workload Identity Federation"
+            "- name: Prepare pinned direct SSH transport"
         )
     ]
     deploy_step = workflow[

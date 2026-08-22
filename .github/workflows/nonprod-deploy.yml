@@ -107,6 +107,8 @@ jobs:
       ALLOW_DIRTY: ${{ inputs.allow_dirty }}
       DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
       PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.201.204.12' }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
     steps:
       # This checkout is the immutable trust root for every lease operation.
       # It is intentionally separate from the requested deployment payload.
@@ -466,14 +468,14 @@ jobs:
               ;;
           esac
 
-      - name: Authenticate to Google Cloud via Workload Identity Federation
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
-        with:
-          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
-          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-cloud-build@pantheon-lupin-dev-20260719.iam.gserviceaccount.com' }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+      - name: Prepare pinned direct SSH transport
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          .agora-gate-controller/scripts/dev_vm_ssh.sh prepare "${credentials_dir}" >/dev/null
 
       - name: Prepare fixed trusted command path
         id: runtime
@@ -481,9 +483,11 @@ jobs:
         run: |
           trusted_bin="${RUNNER_TEMP}/pantheon-trusted-bin-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           install -d -m 0700 "${trusted_bin}"
-          gcloud_path="$(command -v gcloud)"
-          [[ -x "${gcloud_path}" && ! -L "${gcloud_path}" ]]
-          ln -s "${gcloud_path}" "${trusted_bin}/gcloud"
+          for command_name in ssh scp ssh-keygen; do
+            command_path="$(command -v "${command_name}")"
+            [[ -x "${command_path}" && ! -L "${command_path}" ]]
+            ln -s "${command_path}" "${trusted_bin}/${command_name}"
+          done
           safe_path="${trusted_bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
           echo "safe_path=${safe_path}" >> "${GITHUB_OUTPUT}"
 
@@ -843,11 +847,8 @@ jobs:
             exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
             bash -c '
               set -euo pipefail
-              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
-                --zone "${DEV_ZONE}" \
-                --project "${GCP_DEPLOY_PROJECT_ID}" \
-                --ssh-flag=-T \
-                --command "set -euo pipefail; docker exec pantheon-operator-bff-1 python /workspace/scripts/bootstrap_dev_paper_baseline.py --timeout-seconds 420 --poll-seconds 5"
+              "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
+                "set -euo pipefail; docker exec pantheon-operator-bff-1 python /workspace/scripts/bootstrap_dev_paper_baseline.py --timeout-seconds 420 --poll-seconds 5"
             '
 
       - name: Dev evolution dispatch hosted probe
@@ -875,16 +876,10 @@ jobs:
           printf -v run_attempt_q '%q' "${GITHUB_RUN_ATTEMPT}"
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           printf -v run_url_q '%q' "${run_url}"
-          gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
-            --zone "${DEV_ZONE}" \
-            --project "${GCP_DEPLOY_PROJECT_ID}" \
-            --ssh-flag=-T \
-            --command "set -euo pipefail; cd ${worktree_q}; python3 -m services.evolution.hosted_compose_probe --expected-sha ${deploy_sha_q} --requested-ref ${requested_ref_q} --deploy-run-id ${run_id_q} --deploy-run-attempt ${run_attempt_q} --deploy-run-url ${run_url_q} --prefix ${prefix_q} --output ${remote_evidence_q}"
-          gcloud compute scp \
-            --zone "${DEV_ZONE}" \
-            --project "${GCP_DEPLOY_PROJECT_ID}" \
-            "${REMOTE_USER}@${DEV_VM}:${remote_evidence}" \
-            "${local_evidence}"
+          .agora-gate-controller/scripts/dev_vm_ssh.sh exec \
+            "set -euo pipefail; cd ${worktree_q}; python3 -m services.evolution.hosted_compose_probe --expected-sha ${deploy_sha_q} --requested-ref ${requested_ref_q} --deploy-run-id ${run_id_q} --deploy-run-attempt ${run_attempt_q} --deploy-run-url ${run_url_q} --prefix ${prefix_q} --output ${remote_evidence_q}"
+          .agora-gate-controller/scripts/dev_vm_ssh.sh copy-from \
+            "${remote_evidence}" "${local_evidence}"
           echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
           echo "Hosted evolution dispatch evidence: ${evidence_name}" >> "$GITHUB_STEP_SUMMARY"
 
@@ -929,18 +924,12 @@ jobs:
           echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
           echo "readback_artifact_path=${readback_evidence}" >> "$GITHUB_OUTPUT"
           set +e
-          gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
-            --zone "${DEV_ZONE}" \
-            --project "${GCP_DEPLOY_PROJECT_ID}" \
-            --ssh-flag=-T \
-            --command "set -uo pipefail; cd ${worktree_q} || exit 1; scripts/run_loop_prod_tel_002_hosted_probe.sh --expected-sha ${deploy_sha_q} --container-output ${container_evidence_q} --remote-output ${remote_evidence_q} --timeout-seconds 420 --poll-seconds 5"
+          .agora-gate-controller/scripts/dev_vm_ssh.sh exec \
+            "set -uo pipefail; cd ${worktree_q} || exit 1; scripts/run_loop_prod_tel_002_hosted_probe.sh --expected-sha ${deploy_sha_q} --container-output ${container_evidence_q} --remote-output ${remote_evidence_q} --timeout-seconds 420 --poll-seconds 5"
           probe_status=$?
           scp_status=0
-          gcloud compute scp \
-            --zone "${DEV_ZONE}" \
-            --project "${GCP_DEPLOY_PROJECT_ID}" \
-            "${REMOTE_USER}@${DEV_VM}:${remote_evidence}" \
-            "${local_evidence}" || scp_status=$?
+          .agora-gate-controller/scripts/dev_vm_ssh.sh copy-from \
+            "${remote_evidence}" "${local_evidence}" || scp_status=$?
           set -e
           if [[ "${scp_status}" -ne 0 || ! -s "${local_evidence}" ]]; then
             python3 -c 'import sys; from pathlib import Path; from services.trade_journey.hosted_lifecycle_probe import write_failure_artifact; write_failure_artifact(Path(sys.argv[1]), expected_sha=sys.argv[2], code="hosted_probe_transport_error", message="hosted lifecycle evidence transport failed")' "${local_evidence}" "${DEPLOY_SHA}"
@@ -1042,11 +1031,8 @@ jobs:
                   | grep -qi "access-control-allow-origin: ${origin}"
               done
               effective_line="$(
-                gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
-                  --zone "${DEV_ZONE}" \
-                  --project "${GCP_DEPLOY_PROJECT_ID}" \
-                  --ssh-flag=-T \
-                  --command "docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED=${PPL_ALLOC_009_DEV_PROOF_ENABLED}'\''"
+                "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
+                  "docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED=${PPL_ALLOC_009_DEV_PROOF_ENABLED}'\''"
               )"
               evidence_path="${RUNNER_TEMP}/ppl-alloc-009-deployment-posture-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
               python3 "${GITHUB_WORKSPACE}/.target/scripts/ppl_alloc_009_deployment_evidence.py" \
@@ -1123,7 +1109,7 @@ jobs:
           # it never appears on the remote command line or in the deployed checkout.
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
-            bash -c '{ printf "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=%q\n" "${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"; printf "%s\n" "curl() {" "  command curl -H \"X-Pantheon-Service-Token: \${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}\" \"\$@\"" "}"; cat "$1"; } | gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T --command "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s"' \
+            bash -c '{ printf "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=%q\n" "${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"; printf "%s\n" "curl() {" "  command curl -H \"X-Pantheon-Service-Token: \${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}\" \"\$@\"" "}"; cat "$1"; } | "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s"' \
             bash "${GITHUB_WORKSPACE}/.target/scripts/openclaw-assistant-openclaw-live-smoke.sh"
 
       - name: Dev Agora restart persistence smoke under lease
@@ -1185,9 +1171,8 @@ jobs:
               printf -v workshop_id_q "%q" "${workshop_id}"
               printf -v tenant_id_q "%q" "${tenant_id}"
               printf -v user_id_q "%q" "${user_id}"
-              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" \
-                --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
-                --command "set -euo pipefail; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_WORKSHOP_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_GOVERNANCE_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_DATASET_STORE_BACKEND=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora workshop store initialized backend=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora governance store initialized backend=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora dataset store initialized backend=postgres'\'' >/dev/null; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py seed --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}; docker compose -p pantheon -f docker-compose.yml restart operator-bff"
+              "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
+                "set -euo pipefail; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_WORKSHOP_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_GOVERNANCE_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_DATASET_STORE_BACKEND=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora workshop store initialized backend=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora governance store initialized backend=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora dataset store initialized backend=postgres'\'' >/dev/null; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py seed --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}; docker compose -p pantheon -f docker-compose.yml restart operator-bff"
               python3 "${GITHUB_WORKSPACE}/.target/scripts/wait_for_bff_lifecycle_readiness.py" \
                 --url "${DEV_BFF_URL}/readyz" \
                 --expected-deployment-sha "${PANTHEON_DEPLOY_SHA}" \
@@ -1197,9 +1182,8 @@ jobs:
                 --poll-interval-seconds 2 \
                 --request-timeout-seconds 2 \
                 --exact-evidence-max-age-seconds 30
-              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" \
-                --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
-                --command "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}"
+              "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
+                "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}"
               echo "Workshop ${workshop_id} and proposal proposal-${workshop_id} survived operator-bff restart with exactly-once replay and pending outbox recovery." >> "$GITHUB_STEP_SUMMARY"
             '
 

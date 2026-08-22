@@ -2,11 +2,13 @@
 # Deploy Pantheon non-prod VM compose stacks from a verified git commit.
 #
 # This script is designed for GitHub Actions, but it can also be run by an
-# operator from a workstation with gcloud access. The VM's human-facing checkout
+# operator from a workstation with the configured remote transport. The VM's human-facing checkout
 # is used only as the git object source and snapshot target; deployment runs from
 # a managed clean worktree under ~/pantheon-ci-deploy.
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PANTHEON_DEPLOY_CONTROLLER_CONTRACT_VERSION="dev-root-isolation-v1"
 
@@ -16,6 +18,7 @@ REMOTE_USER="${REMOTE_USER:-lupin}"
 DEV_VM="${DEV_VM:-pantheon-lupin-dev}"
 DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
 DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/pantheon}"
+DEV_DEPLOY_SSH_HOST="${DEV_DEPLOY_SSH_HOST:-35.201.204.12}"
 DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
@@ -220,6 +223,8 @@ Environment overrides:
   PANTHEON_DEPLOY_WORKTREE_ROOT
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
+  DEV_DEPLOY_SSH_HOST DEV_DEPLOY_SSH_USER DEV_DEPLOY_SSH_PORT
+  DEV_DEPLOY_SSH_KEY_FILE DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE
   DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT
   DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
@@ -520,7 +525,13 @@ if [[ "$DEPLOY_ENV" == "dev" ]]; then
   esac
 fi
 
-require_cmd gcloud
+if [[ "$DEPLOY_ENV" == "dev" ]]; then
+  require_cmd ssh
+  [[ -x "$SCRIPT_DIR/dev_vm_ssh.sh" ]] \
+    || error "dev direct-SSH transport is missing or not executable: $SCRIPT_DIR/dev_vm_ssh.sh"
+else
+  require_cmd gcloud
+fi
 
 ensure_management_ai_bucket() {
   if [[ "$DEPLOY_ENV" != "dev" ]]; then
@@ -534,7 +545,8 @@ ensure_management_ai_bucket() {
   fi
 
   info "preflight Management AI attachment bucket: gs://${bucket}"
-  if gcloud storage buckets describe "gs://${bucket}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  if command -v gcloud >/dev/null 2>&1 \
+    && gcloud storage buckets describe "gs://${bucket}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
     info "bucket visible to deploy runner: gs://${bucket}"
   else
     info "bucket not visible to deploy runner; dev VM will attempt idempotent provisioning"
@@ -636,12 +648,21 @@ ssh_bash() {
   command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "$STAGING_BFF_CORS_ORIGINS")"
   command_prefix+=" bash -s"
 
-  info "ssh ${vm} (${zone}) component=${remote_component} sha=${DEPLOY_SHA}"
-  gcloud compute ssh "${REMOTE_USER}@${vm}" \
-    --project="${PROJECT_ID}" \
-    --zone="${zone}" \
-    --quiet \
-    --command="${command_prefix}" <<'REMOTE'
+  local -a remote_command
+  if [[ "$DEPLOY_ENV" == "dev" ]]; then
+    info "direct ssh ${REMOTE_USER}@${DEV_DEPLOY_SSH_HOST} component=${remote_component} sha=${DEPLOY_SHA}"
+    remote_command=("$SCRIPT_DIR/dev_vm_ssh.sh" exec "$command_prefix")
+  else
+    info "gcloud ssh ${vm} (${zone}) component=${remote_component} sha=${DEPLOY_SHA}"
+    remote_command=(
+      gcloud compute ssh "${REMOTE_USER}@${vm}"
+      --project="${PROJECT_ID}"
+      --zone="${zone}"
+      --quiet
+      --command="${command_prefix}"
+    )
+  fi
+  "${remote_command[@]}" <<'REMOTE'
 set -euo pipefail
 
 info() {
