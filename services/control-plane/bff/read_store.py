@@ -16581,12 +16581,15 @@ class ReadSurfaceStore:
         return self._service.list_loop_runs()
 
     def trade_journey_projection_reader(self):
-        """Return the explicitly selected scoped Postgres reader, if any.
+        """Return the canonical scoped Postgres projection reader.
 
-        The disabled default remains the existing JSON reader.  A selected but
-        invalid Postgres configuration returns a fail-closed sentinel so route
-        handlers cannot quietly reinterpret JSON fallback as Postgres truth.
+        The legacy JSON reader is retired. An invalid or unavailable Postgres
+        configuration returns a fail-closed sentinel so route handlers cannot
+        quietly reinterpret JSON fallback as Postgres truth.
         """
+        override = getattr(self, "_trade_journey_projection_reader_override", None)
+        if override is not None:
+            return override
         return configured_projection_reader()
 
     def loop_run_projection_metadata(self) -> Dict[str, Any]:

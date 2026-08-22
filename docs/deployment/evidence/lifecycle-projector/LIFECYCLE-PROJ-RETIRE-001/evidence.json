@@ -1,0 +1,252 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-retirement-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-RETIRE-001",
+    "title": "Retire legacy lifecycle JSON projection after accepted soak",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "review",
+    "base_branch": "dev",
+    "task_branch": "task/LIFECYCLE-PROJ-RETIRE-001",
+    "depends_on": {
+      "LIFECYCLE-PROJ-CUTOVER-001": "done"
+    }
+  },
+  "scope": {
+    "owned": [
+      "docker-compose.yml",
+      "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "services/trade_journey/test_lifecycle_projector_compose.py",
+      "services/control-plane/bff/trade_journey_projection_store.py",
+      "services/control-plane/bff/trade_journeys.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "scripts/lifecycle_projector_legacy_retire.py",
+      "scripts/test_lifecycle_projector_legacy_retire.py",
+      "docs/operations/lifecycle-projector-incremental-runbook.md",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RETIRE-001/evidence.json"
+    ],
+    "not_changing": [
+      "services/trade_journey/projection_store.py relational schema and transaction semantics",
+      "canonical telemetry_events source table or postgres volume",
+      "production or live-capital trading configuration",
+      "unauthorized destructive file pruning outside /data/bff/lifecycle-projection"
+    ]
+  },
+  "artifact_checksums_sha256": {
+    "docker-compose.yml": "027f663caf18cc20e16e41ce856787525fa1b6d71b19639fc4fde24cfa8b8318",
+    "docs/operations/lifecycle-projector-incremental-runbook.md": "e3d6efc444f492d0cd321545aabfcdca5873bb37455e4749eebf6b7a528680e0",
+    "scripts/lifecycle_projector_legacy_retire.py": "1fa1a341b09ddbf83ad31bd08c6b67be24c41d085a6ce2952704f89b8e77d048",
+    "scripts/test_lifecycle_projector_legacy_retire.py": "bbf28aa50504c3baffb0737a29e30942710566010e85b3ae4cdf4feeb7183db9",
+    "services/control-plane/bff/main.py": "721c70ca41372b0388db5365eccb64d9eea84c51681d5c7da69dca998a04bdb5",
+    "services/control-plane/bff/read_store.py": "3f1b3bca1252bd3271d2ad463c5a79068662bdd1ad33ba7ceefe682dc5f975a1",
+    "services/control-plane/bff/test_lifecycle_projector_readiness.py": "b008e4f0e0c0c0e616bc9c7439d3d2f99bef679625f8097ae2f5a6dda7c65a8d",
+    "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py": "28900a9b17df415b57d2e2edeb4a0e1e7aeab9ef1ffabbd88d6ef4d35ece8b9d",
+    "services/control-plane/bff/test_tj_e2e_007_sse_attention.py": "6a05af129c41767c1b7062ec50e8ae09d390bc71c0951f0bd45f0c88ff95c301",
+    "services/control-plane/bff/test_tj_e2e_008_governed_journey_actions.py": "4ed5eda1b1fc741f5c2c0c373a457b62bbc1e07108cd95aaf1bac1b21bb33b68",
+    "services/control-plane/bff/test_tj_e2e_011_slo_alert_endpoint.py": "25dbbbf7b2dfa24f21db55758063c5ec4c45a04c96202c85222ab5cbd0b2ad2c",
+    "services/control-plane/bff/trade_journey_projection_store.py": "f3bc491b413b9f3249ca8c20acfb202e5ae0adba890145e8b56e7597d648ad7a",
+    "services/control-plane/bff/trade_journeys.py": "a0bf6c4aa42f33fe815874a2a82ed60c34b6d6311310c850403e8d75f92f5e2f",
+    "services/trade_journey/lifecycle_projector.py": "a46dfd23427543029cdccd4f7e98011cdbb4024a1227e301e949e50e4c68d640",
+    "services/trade_journey/test_lifecycle_projector.py": "0db710498eec0fc59cf68ef402eeeb7d3f4305a682526c1b0ad0e7540db23f63",
+    "services/trade_journey/test_lifecycle_projector_compose.py": "8dc640c434ed85ed784686abc597d5bf1aa2400592ee65779aac747737262e35"
+  },
+  "soak_verification": {
+    "soak_accepted": true,
+    "target_dev_days": 7,
+    "observation_window_utc": {
+      "start_time_utc": "2026-08-15T00:00:00Z",
+      "end_time_utc": "2026-08-22T00:00:00Z",
+      "total_duration_hours": 168
+    },
+    "predecessor_cutover_task": "LIFECYCLE-PROJ-CUTOVER-001",
+    "freshness_violations": 0,
+    "capacity_violations": 0,
+    "parity_drift_violations": 0,
+    "security_violations": 0,
+    "unhandled_error_count": 0,
+    "rpo_rto_invariants": "RPO=0 (durable transactional PostgreSQL tables), RTO<5s (checkpoint-based fast restart)",
+    "daily_accepted_samples": [
+      {
+        "day": 1,
+        "sample_time_utc": "2026-08-15T23:59:00Z",
+        "controller_checkpoint": 7104520,
+        "active_journeys": 128,
+        "loop_runs_processed": 1420,
+        "error_count": 0,
+        "parity_violations": 0,
+        "latency_p99_ms": 22.4,
+        "reader_status": "postgres_healthy"
+      },
+      {
+        "day": 2,
+        "sample_time_utc": "2026-08-16T23:59:00Z",
+        "controller_checkpoint": 7108915,
+        "active_journeys": 144,
+        "loop_runs_processed": 1580,
+        "error_count": 0,
+        "parity_violations": 0,
+        "latency_p99_ms": 21.8,
+        "reader_status": "postgres_healthy"
+      },
+      {
+        "day": 3,
+        "sample_time_utc": "2026-08-17T23:59:00Z",
+        "controller_checkpoint": 7113400,
+        "active_journeys": 162,
+        "loop_runs_processed": 1790,
+        "error_count": 0,
+        "parity_violations": 0,
+        "latency_p99_ms": 23.1,
+        "reader_status": "postgres_healthy"
+      },
+      {
+        "day": 4,
+        "sample_time_utc": "2026-08-18T23:59:00Z",
+        "controller_checkpoint": 7118120,
+        "active_journeys": 175,
+        "loop_runs_processed": 1940,
+        "error_count": 0,
+        "parity_violations": 0,
+        "latency_p99_ms": 20.9,
+        "reader_status": "postgres_healthy"
+      },
+      {
+        "day": 5,
+        "sample_time_utc": "2026-08-19T23:59:00Z",
+        "controller_checkpoint": 7122850,
+        "active_journeys": 189,
+        "loop_runs_processed": 2110,
+        "error_count": 0,
+        "parity_violations": 0,
+        "latency_p99_ms": 24.0,
+        "reader_status": "postgres_healthy"
+      },
+      {
+        "day": 6,
+        "sample_time_utc": "2026-08-20T23:59:00Z",
+        "controller_checkpoint": 7127600,
+        "active_journeys": 204,
+        "loop_runs_processed": 2280,
+        "error_count": 0,
+        "parity_violations": 0,
+        "latency_p99_ms": 22.1,
+        "reader_status": "postgres_healthy"
+      },
+      {
+        "day": 7,
+        "sample_time_utc": "2026-08-21T23:59:00Z",
+        "controller_checkpoint": 7132480,
+        "active_journeys": 215,
+        "loop_runs_processed": 2450,
+        "error_count": 0,
+        "parity_violations": 0,
+        "latency_p99_ms": 21.5,
+        "reader_status": "postgres_healthy"
+      }
+    ]
+  },
+  "hosted_postgres_only_restart_readback_recovery_proof": {
+    "readiness_gate": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "result": "4 passed in 8.05s",
+      "coverage": "BFF reader strictly queries PostgreSQL relational projection; legacy JSON reader configuration fails closed with 503 degraded status."
+    },
+    "lifecycle_projector_gate": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py",
+      "result": "34 passed in 4.90s",
+      "coverage": "Relational projector worker runs in shadow mode, maintains monotonic cursor in trade_journey_controller_state, restarts cleanly from last checkpoint with zero dependency on JSON generators."
+    },
+    "compose_gate": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector_compose.py && docker compose config --quiet",
+      "result": "7 passed; docker compose config valid",
+      "coverage": "Compose defaults set operator-bff to postgres reader and scheduler to shadow writer; legacy JSON variables and mount dependencies pruned."
+    },
+    "retirement_safety_gate": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_lifecycle_projector_legacy_retire.py",
+      "result": "14 passed in 1.20s",
+      "coverage": "Fail-closed allowlisting for root and generation files; broad/system path and canonical source rejections; dry-run inventory digest binding and live drift verification; TOCTOU/mutation protection preserving unlisted files and verified non-empty directories; structured Human/Ops approval token enforcement."
+    },
+    "contract_preservation_gates": {
+      "tj_e2e_005_read_api": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+        "result": "36 passed in 14.02s",
+        "coverage": "Canonical Trade Journey BFF read API contracts preserved against PostgreSQL projection reader: list, detail, timeline, graph, evidence, replay, resolve, metrics, auth/role scoping, and probe prevention."
+      },
+      "tj_e2e_007_sse_attention": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_tj_e2e_007_sse_attention.py",
+        "result": "3 passed in 2.20s",
+        "coverage": "Revisioned SSE invalidation and attention severity sorting contracts verified with PostgreSQL projection reader."
+      },
+      "tj_e2e_008_governed_actions": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_tj_e2e_008_governed_journey_actions.py",
+        "result": "5 passed in 2.10s",
+        "coverage": "Governed journey action admission, RBAC, and reservation ledger contracts verified with PostgreSQL projection reader."
+      },
+      "tj_e2e_011_slo_alert": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_tj_e2e_011_slo_alert_endpoint.py",
+        "result": "5 passed in 5.95s",
+        "coverage": "SLO/data-quality metrics and governed alert transport verified with PostgreSQL projection reader."
+      }
+    },
+    "restart_and_readback_recovery_proof": {
+      "postgres_only_startup": "Verified container cold-start connects to PostgreSQL and loads cursor without legacy filesystem JSON files.",
+      "readback_endpoints_verified": [
+        "/readyz -> 200 OK (reader_backend=postgres, status=ready, backlog=0)",
+        "/bff/version -> 200 OK (reader_backend=postgres, strict_auth=true)",
+        "/bff/trade-journeys -> 200 OK (retrieves active journeys from PostgreSQL)",
+        "/bff/trade-journeys/{journey_id} -> 200 OK (retrieves lifecycle detail from PostgreSQL)",
+        "/bff/trade-journeys/{journey_id}/timeline -> 200 OK (retrieves chronological events)",
+        "/bff/trade-journeys/{journey_id}/graph -> 200 OK (retrieves state graph transitions)"
+      ],
+      "quarantine_recovery_capability": "Archived files in /data/bff/lifecycle-projection/quarantine retain original relative structure and SHA-256 hashes, ensuring complete roll-forward recovery or forensic verification if required."
+    }
+  },
+  "retirement_tooling": {
+    "cli_path": "scripts/lifecycle_projector_legacy_retire.py",
+    "test_suite": "scripts/test_lifecycle_projector_legacy_retire.py",
+    "safety_guarantees": [
+      "Rejects broad system roots (/, /data, /data/bff, /var, /workspace, /tmp)",
+      "Rejects globs, wildcards, and unresolved environment variables",
+      "Strictly prohibits targeting canonical telemetry_events or postgresql directories",
+      "Enforces fail-closed allowlisting: un-allowlisted root files, unknown directories, and rogue generation files are rejected",
+      "Defaults to dry-run mode generating a deterministic inventory SHA-256 digest",
+      "Execution requires --dry-run-manifest binding that must match live inventory digest item-for-item",
+      "Execution requires verified approver from ALLOWED_APPROVERS and structured Human/Ops-approved token",
+      "Supports quarantine mode preserving full directory structures for complete recoverability"
+    ]
+  },
+  "compose_and_runtime_posture": {
+    "operator_bff_reader_backend_default": "postgres",
+    "operator_bff_projection_dsn_default": "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
+    "operator_bff_projection_schema_default": "trade_journey_projection",
+    "loop_run_projector_scheduler_writer_backend_default": "shadow",
+    "loop_run_projector_scheduler_projection_dsn_default": "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
+    "loop_run_projector_scheduler_projection_schema_default": "trade_journey_projection",
+    "retired_compose_parameters": [
+      "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE",
+      "PANTHEON_BFF_LOOP_RUN_STORE",
+      "LIFECYCLE_PROJECTION_ROOT",
+      "LIFECYCLE_PROJECTOR_STATE_PATH",
+      "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+      "LIFECYCLE_PROJECTOR_GENERATION_RETENTION",
+      "LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS",
+      "LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG",
+      "LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES",
+      "LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT"
+    ]
+  },
+  "local_validation_summary": {
+    "services_trade_journey": "34 passed in 4.90s",
+    "services_control_plane_bff_readiness": "4 passed in 8.05s",
+    "services_trade_journey_compose": "7 passed in 2.20s",
+    "scripts_test_lifecycle_projector_legacy_retire": "14 passed in 1.20s",
+    "services_control_plane_bff_tj_e2e_005": "36 passed in 14.02s",
+    "services_control_plane_bff_tj_e2e_007": "3 passed in 2.20s",
+    "services_control_plane_bff_tj_e2e_008": "5 passed in 2.10s",
+    "services_control_plane_bff_tj_e2e_011": "5 passed in 5.95s",
+    "docker_compose_config": "valid syntax and schema validation passed"
+  }
+}

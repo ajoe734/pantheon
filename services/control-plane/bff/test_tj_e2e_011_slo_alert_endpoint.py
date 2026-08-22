@@ -24,6 +24,9 @@ from services.trade_journey.alert_transport import DataQualityAlertTransport  # 
 from services.trade_journey.api_latency_recorder import ApiLatencyRecorder  # noqa: E402
 from services.trade_journey.materializer import JourneyMaterializer  # noqa: E402
 
+from test_tj_e2e_005_trade_journeys_read_api import InMemoryPostgresProjectionReader  # noqa: E402
+
+
 OPERATOR_HEADERS = {"Authorization": "Bearer op:operator"}
 
 
@@ -53,12 +56,14 @@ def _client(events, *, transport=None, latency_recorder=None, utc_now="2026-07-1
     materializer.rebuild(events)
     store = tj.TradeJourneyEventStore()
     store.materializer = lambda: materializer
+    reader = InMemoryPostgresProjectionReader(events)
 
     app = FastAPI()
     app.include_router(tj.create_trade_journeys_router(
         extract_identity=_identity,
         require_read_role=_require_read_role,
         get_event_store=lambda: store,
+        get_projection_reader=lambda: reader,
         utc_now=lambda: utc_now,
         get_slo_alert_transport=lambda: transport,
         latency_recorder=latency_recorder or ApiLatencyRecorder(),
@@ -151,7 +156,16 @@ def test_slo_endpoint_enforces_tenant_and_environment_scope(tmp_path):
 
 
 def test_slo_endpoint_registered_before_journey_id_param_route():
-    from starlette.routing import Route
+    def _collect_route_paths(routes) -> list[str]:
+        paths = []
+        for r in routes:
+            if hasattr(r, "path"):
+                paths.append(r.path)
+            if hasattr(r, "routes"):
+                paths.extend(_collect_route_paths(r.routes))
+            if hasattr(r, "original_router") and hasattr(r.original_router, "routes"):
+                paths.extend(_collect_route_paths(r.original_router.routes))
+        return paths
 
     app = FastAPI()
     app.include_router(tj.create_trade_journeys_router(
@@ -159,8 +173,8 @@ def test_slo_endpoint_registered_before_journey_id_param_route():
         require_read_role=_require_read_role,
     ))
     paths_in_order = [
-        route.path for route in app.routes
-        if isinstance(route, Route) and route.path.startswith("/bff/management/trade-journeys")
+        path for path in _collect_route_paths(app.routes)
+        if path.startswith("/bff/management/trade-journeys")
     ]
     slo_idx = paths_in_order.index("/bff/management/trade-journeys/slo")
     detail_idx = paths_in_order.index("/bff/management/trade-journeys/{journey_id}")

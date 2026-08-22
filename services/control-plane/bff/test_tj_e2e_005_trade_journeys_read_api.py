@@ -26,6 +26,7 @@ from trade_journey_projection_store import (  # noqa: E402
     PageTokenCodec,
     ProjectionPage,
     TradeJourneyProjectionStore,
+    UnavailableProjectionReader,
 )
 from fastapi.testclient import TestClient  # noqa: E402
 from services.trade_journey.materializer import JourneyMaterializer  # noqa: E402
@@ -61,6 +62,244 @@ def _materializer_with(events) -> JourneyMaterializer:
     return materializer
 
 
+class InMemoryPostgresProjectionReader:
+    """In-memory Postgres projection reader test fixture.
+
+    Faithfully models the TradeJourneyProjectionStore interface and page token
+    encoding contracts for test suites.
+    """
+
+    def __init__(self, events, *, controller=None):
+        self.materializer = _materializer_with(events)
+        self._events = events
+        self.codec = PageTokenCodec("reader-token-secret-is-long-enough")
+        self._controller = controller
+
+    def get_journey(self, tenant_id: str, environment: str, journey_id: str):
+        return self.materializer.get(journey_id, tenant_id=tenant_id, environment=environment)
+
+    def page_journeys(
+        self,
+        tenant_id: str,
+        environment: str,
+        filters: dict | None = None,
+        sort: str = "updated_at_desc",
+        page_size: int = 50,
+        page_token: str | None = None,
+    ):
+        from datetime import datetime, timezone
+
+        filters = dict(filters or {})
+        now = datetime.now(timezone.utc)
+        scoped = [
+            (p, tj._list_row(p, now=now))
+            for p in self.materializer.projections
+            if p.tenant_id == tenant_id and p.environment == environment
+        ]
+        q = filters.get("q")
+        persona_id = filters.get("persona_id")
+        strategy_id = filters.get("strategy_id")
+        decision_id = filters.get("decision_id")
+        order_id = filters.get("order_id")
+        broker_order_id = filters.get("broker_order_id")
+        stage = filters.get("stage")
+        status = filters.get("status")
+        stalled = filters.get("stalled")
+        waiting_human = filters.get("waiting_human")
+        reconciliation_state = filters.get("reconciliation_state")
+        date_from = filters.get("date_from")
+        date_to = filters.get("date_to")
+
+        q_journey_only = bool(filters.get("q_journey_only"))
+
+        def _match_q(proj, query):
+            if query is None:
+                return True
+            if query in proj.journey_id:
+                return True
+            if q_journey_only:
+                return False
+            identifiers = proj.snapshot.get("identifiers")
+            if isinstance(identifiers, dict):
+                for vals in identifiers.values():
+                    if isinstance(vals, list) and any(query in str(v) for v in vals):
+                        return True
+                    elif query in str(vals):
+                        return True
+            for ev in proj.timeline:
+                for v in ev.values():
+                    if isinstance(v, str) and query in v:
+                        return True
+            return False
+
+        filtered = [
+            (p, row)
+            for p, row in scoped
+            if (status is None or row.get("status") == status)
+            and (stage is None or row.get("current_stage") == stage)
+            and (stalled is None or row.get("stalled") == stalled)
+            and (waiting_human is None or row.get("waiting_human") == waiting_human)
+            and (reconciliation_state is None or row.get("reconciliation_state") == reconciliation_state)
+            and (date_from is None or (row.get("created_at") is not None and row.get("created_at") >= date_from))
+            and (date_to is None or (row.get("created_at") is not None and row.get("created_at") <= date_to))
+            and (persona_id is None or row.get("persona_id") == persona_id)
+            and (strategy_id is None or row.get("strategy_id") == strategy_id)
+            and (decision_id is None or row.get("decision_id") == decision_id)
+            and (order_id is None or row.get("order_id") == order_id)
+            and (broker_order_id is None or row.get("broker_order_id") == broker_order_id)
+            and _match_q(p, q)
+        ]
+
+        sort_key = "created_at" if "created_at" in sort else "updated_at"
+        reverse = sort.endswith("_desc")
+        filtered.sort(key=lambda pair: (pair[1].get(sort_key) or "", pair[0].journey_id), reverse=reverse)
+
+        total = len(filtered)
+        start = 0
+        if page_token:
+            payload = self.codec.decode(
+                page_token,
+                expected={
+                    "v": 1,
+                    "kind": "journeys",
+                    "tenant_id": tenant_id,
+                    "environment": environment,
+                    "sort": sort,
+                    "filters": filters,
+                },
+            )
+            after = payload.get("after")
+            if after and len(after) == 2:
+                target_val, target_jid = after
+                for idx, (p, row) in enumerate(filtered):
+                    curr_val = row.get(sort_key) or ""
+                    if curr_val == target_val and p.journey_id == target_jid:
+                        start = idx + 1
+                        break
+        page = [p for p, _ in filtered[start : start + page_size]]
+        next_page_token = None
+        if start + page_size < total:
+            last_p, last_row = filtered[start + page_size - 1]
+            last_val = last_row.get(sort_key) or ""
+            next_page_token = self.codec.encode(
+                {
+                    "v": 1,
+                    "kind": "journeys",
+                    "tenant_id": tenant_id,
+                    "environment": environment,
+                    "sort": sort,
+                    "filters": filters,
+                    "after": [last_val, last_p.journey_id],
+                }
+            )
+        return ProjectionPage(items=page, next_page_token=next_page_token, total=total)
+
+    def page_timeline(
+        self,
+        tenant_id: str,
+        environment: str,
+        journey_id: str,
+        page_size: int = 50,
+        page_token: str | None = None,
+    ):
+        projection = self.get_journey(tenant_id, environment, journey_id)
+        if projection is None:
+            return None
+        events = list(projection.timeline)
+        total = len(events)
+        start = 0
+        if page_token:
+            payload = self.codec.decode(
+                page_token,
+                expected={
+                    "v": 1,
+                    "kind": "timeline",
+                    "tenant_id": tenant_id,
+                    "environment": environment,
+                    "journey_id": journey_id,
+                },
+            )
+            after = payload.get("after")
+            if after and len(after) == 5:
+                for idx, ev in enumerate(events):
+                    if [
+                        ev.get("stage_ordinal"),
+                        ev.get("event_sequence"),
+                        ev.get("occurred_at"),
+                        ev.get("source_ingested_seq"),
+                        ev.get("source_event_id"),
+                    ] == after:
+                        start = idx + 1
+                        break
+        page = events[start : start + page_size]
+        next_page_token = None
+        if start + page_size < total:
+            last = page[-1]
+            next_page_token = self.codec.encode(
+                {
+                    "v": 1,
+                    "kind": "timeline",
+                    "tenant_id": tenant_id,
+                    "environment": environment,
+                    "journey_id": journey_id,
+                    "after": [
+                        last.get("stage_ordinal"),
+                        last.get("event_sequence"),
+                        last.get("occurred_at"),
+                        last.get("source_ingested_seq"),
+                        last.get("source_event_id"),
+                    ],
+                }
+            )
+        from trade_journey_projection_store import TimelinePage
+        return TimelinePage(items=page, next_page_token=next_page_token, total=total)
+
+    def resolve(
+        self,
+        tenant_id: str,
+        environment: str,
+        identifier_type: str,
+        identifier_value: str,
+    ):
+        return self.materializer.resolve(
+            identifier_type,
+            identifier_value,
+            tenant_id=tenant_id,
+            environment=environment,
+        )
+
+    def metrics(self, tenant_id: str, environment: str):
+        from datetime import datetime, timezone
+
+        projections = [
+            p for p in self.materializer.projections
+            if p.tenant_id == tenant_id and p.environment == environment
+        ]
+        return tj._metrics(projections, now=datetime.now(timezone.utc))
+
+    def controller_freshness(
+        self,
+        tenant_id: str,
+        environment: str,
+        controller_id: str = "canonical-lifecycle-projector",
+    ):
+        if self._controller is not None:
+            return self._controller
+        return {
+            "controller_id": controller_id,
+            "checkpoint": len(self._events),
+            "source_high_watermark": len(self._events),
+            "backlog": 0,
+            "generation": 1,
+            "mode": "live",
+            "status": "ready",
+            "accepted_live": True,
+            "last_poll_at": "2026-07-12T00:00:00Z",
+            "last_success_at": "2026-07-12T00:00:00Z",
+            "quarantine_count": 0,
+        }
+
+
 class _StubIdentity:
     """Minimal OperatorIdentity-shaped stub for direct-store scope tests."""
 
@@ -77,28 +316,24 @@ def _seeded_store(events, *, raw_events=None):
     return store
 
 
-def _client_with(events, *, raw_events=None):
+def _client_with(events, *, raw_events=None, controller=None):
     store = _seeded_store(events, raw_events=raw_events)
     tj.EVENT_STORE = store
-    return TestClient(bff_main.app), store
+    reader = InMemoryPostgresProjectionReader(events, controller=controller)
+    bff_main.read_store._trade_journey_projection_reader_override = reader
+    return TestClient(bff_main.app), reader
 
 
 def _direct_client(events, *, raw_events=None, projection_reader=None):
     """Isolated app wired straight to `create_trade_journeys_router` with a
     test-double identity extractor.
-
-    The production `main.py` stub-auth token format (`operator_id:roles[:mfa[:capabilities]]`)
-    has no support for tenant-scoping claims, so row-level tenant scope can't
-    be exercised end-to-end through `bff_main.app` with a bearer token alone.
-    This builds a minimal FastAPI app around the same router factory with a
-    fake `extract_identity` that reads `tenant_ids` from the token
-    (`operator_id:roles:tenant1,tenant2`), to test the router's own DI
-    contract directly instead of the shared stub-auth limitation.
     """
     from fastapi import FastAPI, HTTPException
     from models import OperatorIdentity
 
     store = _seeded_store(events, raw_events=raw_events)
+    if projection_reader is None:
+        projection_reader = InMemoryPostgresProjectionReader(events)
 
     def extract_identity(authorization, mfa_token=None, session_cookie=None):
         if not authorization or not authorization.startswith("Bearer "):
@@ -138,11 +373,13 @@ _BASE_EVENTS = [
 
 
 def _run(fn):
-    original = tj.EVENT_STORE
+    original_store = tj.EVENT_STORE
+    original_reader = getattr(bff_main.read_store, "_trade_journey_projection_reader_override", None)
     try:
         fn()
     finally:
-        tj.EVENT_STORE = original
+        tj.EVENT_STORE = original_store
+        bff_main.read_store._trade_journey_projection_reader_override = original_reader
 
 
 # --------------------------------------------------------------------------- #
@@ -205,12 +442,20 @@ def test_tj_e2e_005_meta_schema_requires_read_state_enum() -> None:
 # --------------------------------------------------------------------------- #
 
 def test_tj_e2e_005_static_siblings_are_registered_before_journey_id_param_route() -> None:
-    from starlette.routing import Route
+    def _collect_route_paths(routes) -> list[str]:
+        paths = []
+        for r in routes:
+            if hasattr(r, "path"):
+                paths.append(r.path)
+            if hasattr(r, "routes"):
+                paths.extend(_collect_route_paths(r.routes))
+            if hasattr(r, "original_router") and hasattr(r.original_router, "routes"):
+                paths.extend(_collect_route_paths(r.original_router.routes))
+        return paths
 
     paths_in_order = [
-        route.path
-        for route in bff_main.app.routes
-        if isinstance(route, Route) and route.path.startswith("/bff/management/trade-journeys")
+        path for path in _collect_route_paths(bff_main.app.routes)
+        if path.startswith("/bff/management/trade-journeys")
     ]
     resolve_idx = paths_in_order.index("/bff/management/trade-journeys/resolve")
     metrics_idx = paths_in_order.index("/bff/management/trade-journeys/metrics")
@@ -588,9 +833,7 @@ def test_tj_e2e_005_out_of_scope_tenant_detail_returns_identical_404() -> None:
 
 def test_tj_e2e_005_unavailable_store_returns_200_with_explicit_unavailable_state() -> None:
     def scenario():
-        store = tj.TradeJourneyEventStore()
-        store.materializer = lambda: None
-        tj.EVENT_STORE = store
+        bff_main.read_store._trade_journey_projection_reader_override = UnavailableProjectionReader("reader unavailable")
         client = TestClient(bff_main.app)
         resp = client.get(
             "/bff/management/trade-journeys?tenant_id=tenant-a&environment=paper",
@@ -605,10 +848,7 @@ def test_tj_e2e_005_unavailable_store_returns_200_with_explicit_unavailable_stat
     _run(scenario)
 
 
-def test_tj_e2e_005_backfill_only_projector_store_exposes_controller_and_downgrades_formal(
-    tmp_path, monkeypatch
-) -> None:
-    store_file = tmp_path / "trade_journey_events.json"
+def test_tj_e2e_005_backfill_only_projector_store_exposes_controller_and_downgrades_formal() -> None:
     controller = {
         "controller_id": "canonical-lifecycle-projector",
         "controller_name": "canonical-lifecycle-projector",
@@ -622,23 +862,9 @@ def test_tj_e2e_005_backfill_only_projector_store_exposes_controller_and_downgra
         "backlog": 8,
         "generation": 4,
     }
-    store_file.write_text(
-        json.dumps(
-            {
-                "schema_version": "pantheon.trade-journey-projection.v1",
-                "generation": 4,
-                "controller": controller,
-                "events": _BASE_EVENTS,
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", str(store_file))
 
     def scenario():
-        store = tj.TradeJourneyEventStore()
-        tj.EVENT_STORE = store
-        client = TestClient(bff_main.app)
+        client, reader = _client_with(_BASE_EVENTS, controller=controller)
         response = client.get(
             "/bff/management/trade-journeys?tenant_id=tenant-a&environment=paper",
             headers=OPERATOR_HEADERS,
@@ -651,41 +877,29 @@ def test_tj_e2e_005_backfill_only_projector_store_exposes_controller_and_downgra
         assert freshness["projection_schema_version"] == "pantheon.trade-journey-projection.v1"
         assert freshness["generation"] == 4
         assert freshness["projection_mode"] == "backfill"
-        assert freshness["truth_level"] == "backfill_only"
+        assert freshness["truth_level"] == "not_accepted_live"
         assert freshness["accepted_live"] is False
         assert freshness["controller"] == controller
-        assert store.projector_owned() is True
 
     _run(scenario)
 
 
-def test_tj_e2e_005_live_projector_store_can_report_formal(tmp_path, monkeypatch) -> None:
-    store_file = tmp_path / "trade_journey_events.json"
-    store_file.write_text(
-        json.dumps(
-            {
-                "schema_version": "pantheon.trade-journey-projection.v1",
-                "generation": 5,
-                "controller": {
-                    "controller_id": "canonical-lifecycle-projector",
-                    "status": "ready",
-                    "mode": "live",
-                    "truth_level": "canonical_live",
-                    "accepted_live": True,
-                    "checkpoint": 8,
-                    "source_high_watermark": 8,
-                    "backlog": 0,
-                },
-                "events": _BASE_EVENTS,
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", str(store_file))
+def test_tj_e2e_005_live_projector_store_can_report_formal() -> None:
+    controller = {
+        "controller_id": "canonical-lifecycle-projector",
+        "status": "ready",
+        "mode": "live",
+        "truth_level": "canonical_live",
+        "accepted_live": True,
+        "checkpoint": 8,
+        "source_high_watermark": 8,
+        "backlog": 0,
+        "generation": 5,
+    }
 
     def scenario():
-        tj.EVENT_STORE = tj.TradeJourneyEventStore()
-        response = TestClient(bff_main.app).get(
+        client, reader = _client_with(_BASE_EVENTS, controller=controller)
+        response = client.get(
             "/bff/management/trade-journeys?tenant_id=tenant-a&environment=paper",
             headers=OPERATOR_HEADERS,
         )
@@ -698,37 +912,24 @@ def test_tj_e2e_005_live_projector_store_can_report_formal(tmp_path, monkeypatch
     _run(scenario)
 
 
-def test_tj_e2e_005_degraded_projector_cannot_reuse_historic_live_acceptance(
-    tmp_path, monkeypatch
-) -> None:
-    store_file = tmp_path / "trade_journey_events.json"
-    store_file.write_text(
-        json.dumps(
-            {
-                "schema_version": "pantheon.trade-journey-projection.v1",
-                "generation": 6,
-                "controller": {
-                    "controller_id": "canonical-lifecycle-projector",
-                    "status": "degraded",
-                    "mode": "live",
-                    "truth_level": "canonical_live",
-                    # A previous accepted live checkpoint is diagnostic history,
-                    # not proof that this degraded generation is formally live.
-                    "accepted_live": True,
-                    "checkpoint": 8,
-                    "source_high_watermark": 8,
-                    "backlog": 0,
-                },
-                "events": _BASE_EVENTS,
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", str(store_file))
+def test_tj_e2e_005_degraded_projector_cannot_reuse_historic_live_acceptance() -> None:
+    controller = {
+        "controller_id": "canonical-lifecycle-projector",
+        "status": "degraded",
+        "mode": "live",
+        "truth_level": "canonical_live",
+        # A previous accepted live checkpoint is diagnostic history,
+        # not proof that this degraded generation is formally live.
+        "accepted_live": True,
+        "checkpoint": 8,
+        "source_high_watermark": 8,
+        "backlog": 0,
+        "generation": 6,
+    }
 
     def scenario():
-        tj.EVENT_STORE = tj.TradeJourneyEventStore()
-        response = TestClient(bff_main.app).get(
+        client, reader = _client_with(_BASE_EVENTS, controller=controller)
+        response = client.get(
             "/bff/management/trade-journeys?tenant_id=tenant-a&environment=paper",
             headers=OPERATOR_HEADERS,
         )

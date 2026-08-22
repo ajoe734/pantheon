@@ -697,174 +697,136 @@ os.makedirs(BFF_DATA_DIR, exist_ok=True)
 
 def _lifecycle_projector_dependency() -> Dict[str, Any]:
     reader_backend = os.getenv(
-        "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "json"
+        "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres"
     ).strip().lower()
-    if reader_backend == "postgres":
-        reader = read_store.trade_journey_projection_reader()
-        tenant_id = os.getenv("PANTHEON_BFF_HEALTH_TENANT_ID", "default").strip()
-        environment = os.getenv(
-            "PANTHEON_BFF_TRADE_JOURNEY_HEALTH_ENVIRONMENT", "paper"
-        ).strip()
-        reasons: List[str] = []
-        controller: Dict[str, Any] = {}
-        try:
-            if reader is None:
-                raise ProjectionReadUnavailable(
-                    "Postgres reader selected but no projection reader was configured"
-                )
-            controller = dict(
-                reader.controller_freshness(
-                    tenant_id=tenant_id,
-                    environment=environment,
-                )
-                or {}
-            )
-        except (ProjectionReadUnavailable, ValueError) as exc:
-            reasons.append(f"projection_reader_unavailable:{exc}")
-        except Exception as exc:  # noqa: BLE001 - readiness is fail-closed truth
-            reasons.append(f"projection_reader_error:{type(exc).__name__}")
-
-        expected_sha = (
-            os.getenv("BFF_COMMIT") or os.getenv("GIT_SHA") or ""
-        ).strip()
-        controller_sha = str(controller.get("deployment_sha") or "").strip()
-        checkpoint = int(controller.get("checkpoint") or 0)
-        source_high = int(controller.get("source_high_watermark") or 0)
-        backlog = int(controller.get("backlog") or 0)
-        quarantine_count = int(controller.get("quarantine_count") or 0)
-        if not controller:
-            reasons.append("controller_missing")
-        if controller.get("status") != "ready":
-            reasons.append(f"controller_not_ready:{controller.get('status') or 'missing'}")
-        if controller.get("mode") != "live" or controller.get("accepted_live") is not True:
-            reasons.append(
-                "live_truth_not_accepted:"
-                f"{controller.get('mode') or 'missing'}:"
-                f"{str(bool(controller.get('accepted_live'))).lower()}"
-            )
-        if checkpoint != source_high:
-            reasons.append(f"checkpoint_mismatch:{checkpoint}!={source_high}")
-        if backlog != 0:
-            reasons.append(f"backlog_nonzero:{backlog}")
-        if quarantine_count != 0:
-            reasons.append(f"quarantine_nonzero:{quarantine_count}")
-        if controller.get("last_error"):
-            reasons.append(f"last_error:{controller['last_error']}")
-        if expected_sha and expected_sha != "unknown" and controller_sha != expected_sha:
-            reasons.append(
-                f"deployment_sha_mismatch:{controller_sha or 'missing'}!={expected_sha}"
-            )
-
-        last_poll_at = str(controller.get("last_poll_at") or "").strip()
-        freshness_age_seconds: Optional[float] = None
-        if not last_poll_at:
-            reasons.append("last_poll_missing")
-        else:
-            try:
-                last_poll = datetime.fromisoformat(last_poll_at.replace("Z", "+00:00"))
-                if last_poll.tzinfo is None:
-                    last_poll = last_poll.replace(tzinfo=timezone.utc)
-                freshness_age_seconds = max(
-                    0.0,
-                    (datetime.now(timezone.utc) - last_poll.astimezone(timezone.utc)).total_seconds(),
-                )
-                max_age = max(
-                    1.0,
-                    float(os.getenv("LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS", "120")),
-                )
-                if freshness_age_seconds > max_age:
-                    reasons.append(
-                        f"last_poll_stale:{freshness_age_seconds:.3f}>{max_age:.3f}"
-                    )
-            except (TypeError, ValueError):
-                reasons.append("last_poll_invalid")
-
-        ready = not reasons
-        root = Path(
-            os.getenv(
-                "LIFECYCLE_PROJECTION_ROOT",
-                str(Path(BFF_DATA_DIR) / "lifecycle-projection"),
-            )
-        )
+    if reader_backend != "postgres":
         return {
-            "ready": ready,
-            "status": "ready" if ready else "degraded",
-            "worker_status": "ready" if ready else "error",
+            "ready": False,
+            "status": "degraded",
+            "worker_status": "error",
             "writer_backend": "shadow",
-            "reader_backend": "postgres",
-            "tenant_scope": tenant_id,
-            "environment_scope": environment,
-            "deployment_sha": controller_sha or None,
-            "expected_deployment_sha": expected_sha or None,
-            "checkpoint": checkpoint,
-            "source_high_watermark": source_high,
-            "backlog": backlog,
-            "quarantine_count": quarantine_count,
-            "generation": controller.get("generation"),
-            "mode": controller.get("mode"),
-            "accepted_live": bool(controller.get("accepted_live")),
-            "last_poll_at": last_poll_at or None,
-            "freshness_age_seconds": freshness_age_seconds,
-            "reasons": reasons,
-            "error_reason": reasons[0] if reasons else None,
-            "legacy_recovery_stores": {
-                "trade_journey_events": str(
-                    root / "current" / "trade_journey_events.json"
-                ),
-                "loop_runs": str(root / "current" / "loop_runs.json"),
-                "preserved": True,
-                "accepted_reader": False,
-            },
-            "controller": controller,
+            "reader_backend": reader_backend,
+            "reasons": [f"legacy_reader_retired:{reader_backend}"],
+            "error_reason": f"legacy_reader_retired:{reader_backend}",
         }
 
-    state_path = Path(
+    reader = read_store.trade_journey_projection_reader()
+    tenant_id = os.getenv("PANTHEON_BFF_HEALTH_TENANT_ID", "default").strip()
+    environment = os.getenv(
+        "PANTHEON_BFF_TRADE_JOURNEY_HEALTH_ENVIRONMENT", "paper"
+    ).strip()
+    reasons: List[str] = []
+    controller: Dict[str, Any] = {}
+    try:
+        if reader is None:
+            raise ProjectionReadUnavailable(
+                "Postgres reader selected but no projection reader was configured"
+            )
+        controller = dict(
+            reader.controller_freshness(
+                tenant_id=tenant_id,
+                environment=environment,
+            )
+            or {}
+        )
+    except (ProjectionReadUnavailable, ValueError) as exc:
+        reasons.append(f"projection_reader_unavailable:{exc}")
+    except Exception as exc:  # noqa: BLE001 - readiness is fail-closed truth
+        reasons.append(f"projection_reader_error:{type(exc).__name__}")
+
+    expected_sha = (
+        os.getenv("BFF_COMMIT") or os.getenv("GIT_SHA") or ""
+    ).strip()
+    controller_sha = str(controller.get("deployment_sha") or "").strip()
+    checkpoint = int(controller.get("checkpoint") or 0)
+    source_high = int(controller.get("source_high_watermark") or 0)
+    backlog = int(controller.get("backlog") or 0)
+    quarantine_count = int(controller.get("quarantine_count") or 0)
+    if not controller:
+        reasons.append("controller_missing")
+    if controller.get("status") != "ready":
+        reasons.append(f"controller_not_ready:{controller.get('status') or 'missing'}")
+    if controller.get("mode") != "live" or controller.get("accepted_live") is not True:
+        reasons.append(
+            "live_truth_not_accepted:"
+            f"{controller.get('mode') or 'missing'}:"
+            f"{str(bool(controller.get('accepted_live'))).lower()}"
+        )
+    if checkpoint != source_high:
+        reasons.append(f"checkpoint_mismatch:{checkpoint}!={source_high}")
+    if backlog != 0:
+        reasons.append(f"backlog_nonzero:{backlog}")
+    if quarantine_count != 0:
+        reasons.append(f"quarantine_nonzero:{quarantine_count}")
+    if controller.get("last_error"):
+        reasons.append(f"last_error:{controller['last_error']}")
+    if expected_sha and expected_sha != "unknown" and controller_sha != expected_sha:
+        reasons.append(
+            f"deployment_sha_mismatch:{controller_sha or 'missing'}!={expected_sha}"
+        )
+
+    last_poll_at = str(controller.get("last_poll_at") or "").strip()
+    freshness_age_seconds: Optional[float] = None
+    if not last_poll_at:
+        reasons.append("last_poll_missing")
+    else:
+        try:
+            last_poll = datetime.fromisoformat(last_poll_at.replace("Z", "+00:00"))
+            if last_poll.tzinfo is None:
+                last_poll = last_poll.replace(tzinfo=timezone.utc)
+            freshness_age_seconds = max(
+                0.0,
+                (datetime.now(timezone.utc) - last_poll.astimezone(timezone.utc)).total_seconds(),
+            )
+            max_age = max(
+                1.0,
+                float(os.getenv("LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS", "120")),
+            )
+            if freshness_age_seconds > max_age:
+                reasons.append(
+                    f"last_poll_stale:{freshness_age_seconds:.3f}>{max_age:.3f}"
+                )
+        except (TypeError, ValueError):
+            reasons.append("last_poll_invalid")
+
+    ready = not reasons
+    root = Path(
         os.getenv(
-            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
-            str(Path(BFF_DATA_DIR) / "lifecycle-projection" / "health_state.json"),
+            "LIFECYCLE_PROJECTION_ROOT",
+            str(Path(BFF_DATA_DIR) / "lifecycle-projection"),
         )
     )
-    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(state_path.parent)))
-    dependency = projector_readiness(state_path=state_path, bundle_root=root)
-
-    expected_stores = {
-        "trade_journey_events": root / "current" / "trade_journey_events.json",
-        "loop_runs": root / "current" / "loop_runs.json",
+    return {
+        "ready": ready,
+        "status": "ready" if ready else "degraded",
+        "worker_status": "ready" if ready else "error",
+        "writer_backend": "shadow",
+        "reader_backend": "postgres",
+        "tenant_scope": tenant_id,
+        "environment_scope": environment,
+        "deployment_sha": controller_sha or None,
+        "expected_deployment_sha": expected_sha or None,
+        "checkpoint": checkpoint,
+        "source_high_watermark": source_high,
+        "backlog": backlog,
+        "quarantine_count": quarantine_count,
+        "generation": controller.get("generation"),
+        "mode": controller.get("mode"),
+        "accepted_live": bool(controller.get("accepted_live")),
+        "last_poll_at": last_poll_at or None,
+        "freshness_age_seconds": freshness_age_seconds,
+        "reasons": reasons,
+        "error_reason": reasons[0] if reasons else None,
+        "legacy_recovery_stores": {
+            "trade_journey_events": str(
+                root / "current" / "trade_journey_events.json"
+            ),
+            "loop_runs": str(root / "current" / "loop_runs.json"),
+            "preserved": True,
+            "accepted_reader": False,
+        },
+        "controller": controller,
     }
-    configured_stores = {
-        "trade_journey_events": Path(
-            os.getenv(
-                "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE",
-                str(expected_stores["trade_journey_events"]),
-            )
-        ),
-        "loop_runs": Path(
-            os.getenv(
-                "PANTHEON_BFF_LOOP_RUN_STORE",
-                str(expected_stores["loop_runs"]),
-            )
-        ),
-    }
-    store_status: Dict[str, Dict[str, Any]] = {}
-    mismatches: List[str] = []
-    for name, expected_path in expected_stores.items():
-        configured_path = configured_stores[name]
-        aligned = configured_path.absolute() == expected_path.absolute()
-        store_status[name] = {
-            "configured_path": str(configured_path),
-            "expected_path": str(expected_path),
-            "aligned": aligned,
-        }
-        if not aligned:
-            mismatches.append(name)
-    dependency["read_surface_stores"] = store_status
-    if mismatches:
-        reason = f"read_surface_store_mismatch:{','.join(mismatches)}"
-        dependency["ready"] = False
-        dependency["status"] = "degraded"
-        dependency["reasons"] = [*dependency.get("reasons", []), reason]
-        dependency["error_reason"] = dependency.get("error_reason") or reason
-    return dependency
 
 
 def _bff_readiness_dependencies() -> Dict[str, Dict[str, Any]]:
@@ -64471,7 +64433,7 @@ async def sem_bff_version():
         "mfa_required": _bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
         "assistant_kernel_enabled": _bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
         "trade_journey_reader_backend": os.getenv(
-            "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "json"
+            "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres"
         ).strip().lower(),
         "trade_journey_projection_schema": os.getenv(
             "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA",
