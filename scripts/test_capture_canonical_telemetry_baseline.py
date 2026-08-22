@@ -11,11 +11,14 @@ import pytest
 
 from scripts.capture_canonical_telemetry_baseline import (
     ALLOWED_DISPOSITIONS,
+    AUTHORITATIVE_PROOF_PATTERNS,
     CANONICAL_BASELINE_QUERY,
     CANONICAL_SOURCE_TABLE,
     capture_telemetry_baseline,
     compute_query_sha256,
     generate_backup_candidate_inventory,
+    is_derived_lifecycle_or_projection,
+    is_valid_authoritative_recovery_source,
     validate_baseline_artifact,
 )
 
@@ -115,6 +118,9 @@ def test_truncated_or_invalid_deployment_sha_rejected(bad_sha: str) -> None:
     "trade_journey_projection.event_receipts",
     "lifecycle_projection.json",
     "/data/bff/lifecycle-projection/trade_journey_events.json",
+    "/data/bff/lifecycle/trade_journey_events.json",
+    "/data/bff/trade_journey_events.json",
+    "trade_journey_events.json",
 ])
 def test_non_canonical_source_table_rejected(bad_table: str) -> None:
     data = _make_valid_artifact(source_table=bad_table)
@@ -139,7 +145,7 @@ def test_unsupported_history_disposition_rejected(bad_disp: str) -> None:
 def test_allowed_history_dispositions(good_disp: str) -> None:
     kwargs = {"history_disposition": good_disp}
     if good_disp == "complete":
-        kwargs["recovery_source"] = "gs://authoritative-pantheon-backups/dev/2026-08-22/telemetry_events.sql"
+        kwargs["recovery_source"] = "gs://authoritative-pantheon-backups/dev/2026-08-22/telemetry_events.sql.gz"
     data = _make_valid_artifact(**kwargs)
     result = validate_baseline_artifact(data)
     assert result["history_disposition"] == good_disp
@@ -155,15 +161,82 @@ def test_complete_disposition_requires_recovery_source() -> None:
         validate_baseline_artifact(data_empty)
 
 
+@pytest.mark.parametrize("arbitrary_source", [
+    "not-an-authoritative-proof",
+    "arbitrary-proof-string",
+    "some-random-backup",
+    "backup.sql",
+    "telemetry_backup.dump",
+    "https://storage.googleapis.com/not-verified/file.sql",
+    "/tmp/test_backup.sql",
+    "s3://my-bucket/backup.sql",
+])
+def test_complete_disposition_rejects_arbitrary_string_recovery_source(arbitrary_source: str) -> None:
+    data = _make_valid_artifact(history_disposition="complete", recovery_source=arbitrary_source)
+    with pytest.raises(ValueError, match="does not conform to a verifiable authoritative backup/source-ledger proof contract"):
+        validate_baseline_artifact(data)
+
+
+@pytest.mark.parametrize("valid_proof_source", [
+    "gs://authoritative-pantheon-backups/dev/2026-08-22/telemetry_events.sql.gz",
+    "gcs://pantheon-backups/postgres/20260822_dump.sql",
+    "projects/pantheon-lupin-dev-20260719/global/snapshots/pantheon-postgres-snapshot-20260822",
+    "gcp-snapshot:pantheon-postgres-snapshot-20260822",
+    "gcp_disk_snapshot:disk-snapshot-20260822",
+    "pg_dump://dev-db-cluster/2026-08-22/public.telemetry_events.dump",
+    "pg_dump:/var/backups/postgresql/telemetry_events_20260822.dump",
+    "/var/backups/postgresql/telemetry_events_20260822.sql.gz",
+    "file:///var/backups/postgresql/telemetry_events_20260822.dump",
+    "source-ledger-proof:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "canonical-ledger://pantheon-dev-ledger/checkpoint-7122484",
+    "urn:pantheon:telemetry-backup:gcp-snapshot-20260822-0500",
+    "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+])
+def test_complete_disposition_accepts_valid_authoritative_recovery_sources(valid_proof_source: str) -> None:
+    data = _make_valid_artifact(history_disposition="complete", recovery_source=valid_proof_source)
+    result = validate_baseline_artifact(data)
+    assert result["recovery_source"] == valid_proof_source
+    assert is_valid_authoritative_recovery_source(valid_proof_source) is True
+
+
 @pytest.mark.parametrize("forbidden_source", [
     "lifecycle_projection.json",
     "/data/bff/lifecycle-projection/trade_journey_events.json",
+    "/data/bff/lifecycle/trade_journey_events.json",
+    "/data/bff/trade_journey_events.json",
+    "trade_journey_events.json",
+    "lifecycle/trade_journey_events.json",
+    "loop_runs.json",
+    "/data/bff/loop_runs.json",
     "trade_journey_projection.event_receipts",
+    "event_receipts.json",
+    "/data/bff/insight_cards.json",
+    "/data/bff/jobs.json",
 ])
-def test_complete_disposition_rejects_lifecycle_projection_as_recovery_source(forbidden_source: str) -> None:
+def test_complete_disposition_rejects_derived_lifecycle_json_as_recovery_source(forbidden_source: str) -> None:
     data = _make_valid_artifact(history_disposition="complete", recovery_source=forbidden_source)
-    with pytest.raises(ValueError, match="cannot reference derived Lifecycle projection"):
+    with pytest.raises(ValueError, match="cannot reference derived Lifecycle JSON or secondary projection"):
         validate_baseline_artifact(data)
+    assert is_derived_lifecycle_or_projection(forbidden_source) is True
+
+
+@pytest.mark.parametrize("forbidden_source", [
+    "lifecycle_projection.json",
+    "/data/bff/lifecycle-projection/trade_journey_events.json",
+    "/data/bff/lifecycle/trade_journey_events.json",
+    "/data/bff/trade_journey_events.json",
+    "trade_journey_events.json",
+    "lifecycle/trade_journey_events.json",
+    "loop_runs.json",
+    "/data/bff/loop_runs.json",
+    "trade_journey_projection.event_receipts",
+    "event_receipts.json",
+])
+def test_partial_disposition_rejects_derived_lifecycle_json_as_recovery_source(forbidden_source: str) -> None:
+    data = _make_valid_artifact(history_disposition="partial", recovery_source=forbidden_source)
+    with pytest.raises(ValueError, match="cannot reference derived Lifecycle JSON or secondary projection"):
+        validate_baseline_artifact(data)
+    assert is_derived_lifecycle_or_projection(forbidden_source) is True
 
 
 def test_query_sha256_must_match_canonical_query() -> None:
@@ -248,17 +321,6 @@ def test_complete_disposition_rejects_non_string_recovery_source(bad_recovery_so
 def test_partial_disposition_rejects_non_string_recovery_source(bad_recovery_source) -> None:
     data = _make_valid_artifact(history_disposition="partial", recovery_source=bad_recovery_source)
     with pytest.raises(ValueError, match="recovery_source must be a string or null"):
-        validate_baseline_artifact(data)
-
-
-@pytest.mark.parametrize("forbidden_source", [
-    "lifecycle_projection.json",
-    "/data/bff/lifecycle-projection/trade_journey_events.json",
-    "trade_journey_projection.event_receipts",
-])
-def test_partial_disposition_rejects_lifecycle_projection_as_recovery_source(forbidden_source: str) -> None:
-    data = _make_valid_artifact(history_disposition="partial", recovery_source=forbidden_source)
-    with pytest.raises(ValueError, match="cannot reference derived Lifecycle projection"):
         validate_baseline_artifact(data)
 
 
@@ -417,3 +479,80 @@ def test_cli_validate_file(tmp_path: Path) -> None:
     )
     assert proc_invalid.returncode == 1
     assert "Baseline validation failed" in proc_invalid.stderr
+
+    # 3. Invalid artifact (complete with arbitrary recovery_source)
+    invalid_complete_file = tmp_path / "invalid_complete.json"
+    invalid_complete_file.write_text(
+        json.dumps(_make_valid_artifact(history_disposition="complete", recovery_source="not-an-authoritative-proof"), indent=2),
+        encoding="utf-8",
+    )
+    proc_invalid_complete = subprocess.run(
+        [sys.executable, str(script), "--validate-file", str(invalid_complete_file)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc_invalid_complete.returncode == 1
+    assert "does not conform to a verifiable authoritative backup/source-ledger proof contract" in proc_invalid_complete.stderr
+
+    # 4. Invalid artifact (derived Lifecycle JSON path)
+    invalid_derived_file = tmp_path / "invalid_derived.json"
+    invalid_derived_file.write_text(
+        json.dumps(_make_valid_artifact(history_disposition="complete", recovery_source="/data/bff/lifecycle/trade_journey_events.json"), indent=2),
+        encoding="utf-8",
+    )
+    proc_invalid_derived = subprocess.run(
+        [sys.executable, str(script), "--validate-file", str(invalid_derived_file)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc_invalid_derived.returncode == 1
+    assert "cannot reference derived Lifecycle JSON" in proc_invalid_derived.stderr
+
+
+# =============================================================================
+# Helper Unit Tests
+# =============================================================================
+
+@pytest.mark.parametrize("derived_path,expected", [
+    ("/data/bff/lifecycle/trade_journey_events.json", True),
+    ("/data/bff/lifecycle-projection/trade_journey_events.json", True),
+    ("/data/bff/trade_journey_events.json", True),
+    ("trade_journey_events.json", True),
+    ("lifecycle/trade_journey_events.json", True),
+    ("lifecycle_projection.json", True),
+    ("loop_runs.json", True),
+    ("/data/bff/loop_runs.json", True),
+    ("trade_journey_projection.event_receipts", True),
+    ("event_receipts.json", True),
+    ("gs://authoritative-pantheon-backups/dev/telemetry.sql.gz", False),
+    ("projects/pantheon-dev/global/snapshots/snapshot-1", False),
+    ("pg_dump://cluster/telemetry.dump", False),
+    ("canonical-ledger://dev/checkpoint-1", False),
+])
+def test_is_derived_lifecycle_or_projection(derived_path: str, expected: bool) -> None:
+    assert is_derived_lifecycle_or_projection(derived_path) is expected
+
+
+@pytest.mark.parametrize("proof_uri,expected", [
+    ("gs://authoritative-pantheon-backups/dev/2026-08-22/telemetry_events.sql.gz", True),
+    ("gcs://pantheon-backups/postgres/20260822_dump.sql", True),
+    ("projects/pantheon-lupin-dev-20260719/global/snapshots/pantheon-postgres-snapshot-20260822", True),
+    ("gcp-snapshot:pantheon-postgres-snapshot-20260822", True),
+    ("gcp_disk_snapshot:disk-snapshot-20260822", True),
+    ("pg_dump://dev-db-cluster/2026-08-22/public.telemetry_events.dump", True),
+    ("pg_dump:/var/backups/postgresql/telemetry_events_20260822.dump", True),
+    ("/var/backups/postgresql/telemetry_events_20260822.sql.gz", True),
+    ("file:///var/backups/postgresql/telemetry_events_20260822.dump", True),
+    ("source-ledger-proof:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", True),
+    ("canonical-ledger://pantheon-dev-ledger/checkpoint-7122484", True),
+    ("urn:pantheon:telemetry-backup:gcp-snapshot-20260822-0500", True),
+    ("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", True),
+    ("not-an-authoritative-proof", False),
+    ("arbitrary-string", False),
+    ("backup.sql", False),
+    ("/data/bff/lifecycle/trade_journey_events.json", False),
+    ("/tmp/backup.dump", False),
+    ("s3://aws-bucket/backup.sql", False),
+])
+def test_is_valid_authoritative_recovery_source(proof_uri: str, expected: bool) -> None:
+    assert is_valid_authoritative_recovery_source(proof_uri) is expected

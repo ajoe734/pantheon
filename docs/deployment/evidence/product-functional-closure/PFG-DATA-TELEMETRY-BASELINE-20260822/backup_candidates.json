@@ -32,7 +32,7 @@
       "category": "derived_read_model",
       "disposition": "Derived JSON files contain secondary projection data from historical runs, but per Architecture Decision AD-03 and SD-DATA-02, derived read-models cannot be imported or synthesized into public.telemetry_events as canonical source truth.",
       "event_ids_recovered": 0,
-      "location": "/data/bff/lifecycle-projection/trade_journey_events.json, loop_runs.json",
+      "location": "/data/bff/lifecycle-projection/trade_journey_events.json, loop_runs.json, /data/bff/lifecycle/trade_journey_events.json",
       "qualifies_as_canonical_source": false,
       "status": "derived_only_rejected_as_source"
     },

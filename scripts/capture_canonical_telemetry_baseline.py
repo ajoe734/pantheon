@@ -25,6 +25,58 @@ ALLOWED_DISPOSITIONS = frozenset({"complete", "partial", "irrecoverable", "unkno
 HEX_SHA40_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 HEX_SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
+AUTHORITATIVE_PROOF_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # GCS / Cloud Storage authoritative bucket URI (gs://bucket/path or gcs://bucket/path)
+    re.compile(r"^g(?:s|cs)://[a-z0-9][-_.a-z0-9]{1,61}[a-z0-9]/.+$"),
+    # GCP Persistent Disk Snapshot resource path
+    re.compile(r"^projects/[a-z0-9-]+/global/snapshots/[a-z0-9][-a-z0-9]{0,62}$"),
+    # GCP Snapshot prefix URI
+    re.compile(r"^gcp(?:[-_]disk)?[-:_]snapshot:[a-z0-9][-a-z0-9]{0,62}$"),
+    # PostgreSQL pg_dump URI or file scheme
+    re.compile(r"^pg_dump:(?:/{1,3})?.+$"),
+    re.compile(r"^postgresql-dump:(?:/{1,3})?.+$"),
+    # WAL archive proof URI
+    re.compile(r"^wal[-_]archive:(?:/{1,3})?.+$"),
+    # System authoritative backup directory path
+    re.compile(r"^(?:file://)?/var/backups/(?:postgres|postgresql|database|telemetry)/.+\.(?:sql|sql\.gz|dump|tar|tar\.gz|custom|pgdump|bin|archive)$"),
+    # Canonical source ledger proof / URN / SHA256 content digest
+    re.compile(r"^source-ledger-proof:(?:sha256:)?[0-9a-fA-F]{64}$"),
+    re.compile(r"^canonical-ledger://[a-z0-9][-_.a-z0-9]*/.+$"),
+    re.compile(r"^urn:pantheon:telemetry-backup:[a-z0-9][-_.:a-z0-9]+$"),
+    re.compile(r"^sha256:[0-9a-fA-F]{64}$"),
+)
+
+DERIVED_LIFECYCLE_SUBSTRINGS: tuple[str, ...] = (
+    "lifecycle",
+    "projection",
+    "trade_journey",
+    "loop_runs",
+    "loop_run",
+    "event_receipts",
+    "read_model",
+    "readmodel",
+    "/data/bff/",
+    "bff/",
+)
+
+
+def is_derived_lifecycle_or_projection(source: str) -> bool:
+    """Check if a string references a derived Lifecycle JSON, read model, or secondary projection."""
+    s = source.strip().lower()
+    for pattern in DERIVED_LIFECYCLE_SUBSTRINGS:
+        if pattern in s:
+            return True
+    return False
+
+
+def is_valid_authoritative_recovery_source(source: str) -> bool:
+    """Check if a recovery_source string conforms to a verifiable authoritative backup / source-ledger proof contract."""
+    s = source.strip()
+    if is_derived_lifecycle_or_projection(s):
+        return False
+    return any(pattern.match(s) is not None for pattern in AUTHORITATIVE_PROOF_PATTERNS)
+
+
 CANONICAL_BASELINE_QUERY = """SELECT
   count(*)::bigint AS row_count,
   min(created_at) AS min_created_at,
@@ -69,9 +121,11 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
     - Invalid field types
     - Truncated or malformed deployment_sha (must be full 40 hex chars)
     - Invalid query_sha256 (must be 64 hex chars matching the query)
-    - Non-canonical source_table (must be \x27public.telemetry_events\x27)
+    - Non-canonical source_table (must be 'public.telemetry_events')
     - Invalid history_disposition (must be complete|partial|irrecoverable|unknown)
-    - Claim of \x27complete\x27 without a verified recovery_source proof reference
+    - Claim of 'complete' without a verified recovery_source proof reference conforming
+      to the authoritative backup / source-ledger contract
+    - Derived Lifecycle JSON references in recovery_source or source_table
     - Invalid timestamps (must be valid RFC3339 strings or null where allowed)
     - Inconsistent row counts or high watermarks
     """
@@ -127,6 +181,11 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError(
             f"source_table must be strictly {CANONICAL_SOURCE_TABLE!r}, got {source_table!r}. "
             f"Derived tables or secondary JSON projections cannot be treated as canonical source truth."
+        )
+    if is_derived_lifecycle_or_projection(source_table):
+        raise ValueError(
+            f"source_table cannot reference derived Lifecycle JSON or projection ({source_table!r}). "
+            f"source_table must be strictly {CANONICAL_SOURCE_TABLE!r}."
         )
 
     # 5. row_count (non-negative integer)
@@ -196,22 +255,30 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
         if recovery_source is None:
             raise ValueError(
                 "history_disposition is 'complete' but recovery_source proof reference is missing (null). "
-                "Complete history disposition requires an authoritative backup proof reference string."
+                "Complete history disposition requires a verifiable authoritative backup/source-ledger proof reference string."
             )
         if isinstance(recovery_source, bool) or not isinstance(recovery_source, str):
             raise ValueError(
                 f"recovery_source must be a non-empty string proof reference for complete disposition, "
                 f"got {type(recovery_source).__name__}: {recovery_source!r}"
             )
-        if not recovery_source.strip():
+        stripped_source = recovery_source.strip()
+        if not stripped_source:
             raise ValueError(
                 "history_disposition is 'complete' but recovery_source proof reference is empty whitespace. "
-                "Complete history disposition requires an authoritative backup proof reference string."
+                "Complete history disposition requires a verifiable authoritative backup/source-ledger proof reference string."
             )
-        if "lifecycle_projection" in recovery_source.lower() or "projection" in recovery_source.lower():
+        if is_derived_lifecycle_or_projection(stripped_source):
             raise ValueError(
-                f"recovery_source cannot reference derived Lifecycle projection ({recovery_source!r}). "
+                f"recovery_source cannot reference derived Lifecycle JSON or secondary projection ({recovery_source!r}). "
                 "Derived JSON cannot be treated as canonical source truth."
+            )
+        if not is_valid_authoritative_recovery_source(stripped_source):
+            raise ValueError(
+                f"recovery_source ({recovery_source!r}) does not conform to a verifiable authoritative backup/source-ledger proof contract. "
+                "Complete history disposition requires a verifiable authoritative backup proof URI (e.g. gs://..., "
+                "projects/.../global/snapshots/..., gcp-snapshot:..., pg_dump:..., /var/backups/postgresql/..., "
+                "canonical-ledger://..., source-ledger-proof:sha256:..., or sha256:<64-hex>)."
             )
     else:
         if recovery_source is not None:
@@ -219,9 +286,10 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
                 raise ValueError(
                     f"recovery_source must be a string or null, got {type(recovery_source).__name__}: {recovery_source!r}"
                 )
-            if "lifecycle_projection" in recovery_source.lower() or "projection" in recovery_source.lower():
+            stripped_source = recovery_source.strip()
+            if is_derived_lifecycle_or_projection(stripped_source):
                 raise ValueError(
-                    f"recovery_source cannot reference derived Lifecycle projection ({recovery_source!r}). "
+                    f"recovery_source cannot reference derived Lifecycle JSON or secondary projection ({recovery_source!r}). "
                     "Derived JSON cannot be treated as canonical source truth."
                 )
 
