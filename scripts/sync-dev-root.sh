@@ -14,6 +14,7 @@ COORDINATION_ROOT="${3:-${PANTHEON_COORDINATION_ROOT:-/home/lupin/pantheon-ci-de
 AUTHORITY_ENV_FILE="${4:-${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/supervisor-authority-public.env}}"
 REF="${SYNC_REF:-origin/dev}"
 COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
+EXECUTE_PLANS_SOURCE_ROOT="${PANTHEON_EXECUTE_PLANS_SOURCE_ROOT:-/home/lupin/code/execute-plans}"
 
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[sync-dev-root $(stamp)] $*"; }
@@ -22,6 +23,8 @@ cd "$DEV_ROOT" || { log "FATAL: cannot cd $DEV_ROOT"; exit 1; }
 DEV_ROOT="$(pwd -P)"
 cd "$COORDINATION_ROOT" || { log "FATAL: cannot cd coordination root $COORDINATION_ROOT"; exit 1; }
 COORDINATION_ROOT="$(pwd -P)"
+cd "$EXECUTE_PLANS_SOURCE_ROOT" || { log "FATAL: cannot cd execute-plans source root $EXECUTE_PLANS_SOURCE_ROOT"; exit 1; }
+EXECUTE_PLANS_SOURCE_ROOT="$(pwd -P)"
 
 if [[ "$DEV_ROOT" == "$COORDINATION_ROOT" ]]; then
   log "FATAL: dev-root is staging and must not also be the coordination root"
@@ -41,6 +44,10 @@ fi
 
 if ! git -C "$DEV_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   log "FATAL: dev-root is not a Git checkout: $DEV_ROOT"
+  exit 1
+fi
+if ! git -C "$EXECUTE_PLANS_SOURCE_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  log "FATAL: execute-plans source root is not a Git checkout: $EXECUTE_PLANS_SOURCE_ROOT"
   exit 1
 fi
 if ! git -C "$DEV_ROOT" fetch --quiet origin "$fetch_ref"; then
@@ -96,7 +103,10 @@ if [[ -f "$LIVE_CONFIG" && -f "$DEV_ROOT/scripts/check_config_drift.py" ]]; then
   if ! python3 "$DEV_ROOT/scripts/check_config_drift.py" \
     --repo-config "$DEV_ROOT/.orchestrator/config.json" \
     --live-config "$LIVE_CONFIG" \
-    --dev-root "$DEV_ROOT" --ref "$REF" --json >"$drift_report"; then
+    --dev-root "$DEV_ROOT" --ref "$REF" \
+    --repository-source-root "pantheon=$DEV_ROOT" \
+    --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT" \
+    --json >"$drift_report"; then
     config_drift=1
     log "CONFIG_DRIFT_REQUIRES_PROMOTION: $(tr '\n' ' ' <"$drift_report")"
   fi
@@ -186,7 +196,9 @@ fi
 log "replacing supervisor from explicit config identity=${active_root:-none} candidate=$candidate_root coordination=$COORDINATION_ROOT"
 if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   --promote --repo "$candidate_root" --status-root "$COORDINATION_ROOT" \
-  --live-config "$LIVE_CONFIG"; then
+  --live-config "$LIVE_CONFIG" \
+  --repository-source-root "pantheon=$DEV_ROOT" \
+  --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT"; then
   log "FATAL: supervisor replacement failed"
   exit 1
 fi

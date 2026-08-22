@@ -13,6 +13,7 @@ class MultiRepoRegistryTests(unittest.TestCase):
         repo = multi_repo_registry.resolve_repository({}, "pantheon")
 
         self.assertEqual(repo["repo"], "ajoe734/pantheon")
+        self.assertEqual(repo["default_branch"], "dev")
 
     def test_coordination_registry_overrides_pantheon_github_slug(self) -> None:
         config = {
@@ -56,6 +57,22 @@ class MultiRepoRegistryTests(unittest.TestCase):
             repo["resolved_local_path"],
             (status_root / "../delivery/execute-plans").resolve(),
         )
+
+    def test_deployment_registry_path_overrides_status_root_for_source_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "coordination-root"
+            source_root = root / "dev-root"
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {"pantheon": {"local_path": str(source_root)}}
+                },
+            }
+
+            repo = multi_repo_registry.resolve_repository(config, "pantheon")
+
+        self.assertEqual(repo["resolved_local_path"], source_root.resolve())
 
     def test_execute_plans_artifact_prefix_routes_to_sibling_repo(self) -> None:
         artifact = "execute-plans/e2e/dummy.spec.ts"
