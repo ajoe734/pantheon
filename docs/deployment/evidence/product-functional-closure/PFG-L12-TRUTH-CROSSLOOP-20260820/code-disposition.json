@@ -1,0 +1,51 @@
+{
+  "schema_version": "pantheon.product_functional_closure.code_disposition.v1",
+  "task_id": "PFG-L12-TRUTH-CROSSLOOP-20260820",
+  "owned_layer": [
+    "Stimulus-driven parent gate that composes deployed owner suites for canonical Loops 1 through 12",
+    "BFF Management loop-health projection that separates static contract from current runtime maturity",
+    "Runtime negative proof that captures BFF attribution of paper-fleet functional failure to Capital loop"
+  ],
+  "retained": [
+    {
+      "path": "services/loop-control",
+      "disposition": "keep",
+      "reason": "Canonical controller observation store/projector; this task adds no state store."
+    },
+    {
+      "path": "services/control-plane/bff/downstream_health_monitor.py",
+      "disposition": "keep",
+      "reason": "Existing BFF monitor remains the functional-health observer."
+    },
+    {
+      "path": "tests/integration/l12/test_current_cross_loop_deployed_e2e.py",
+      "disposition": "keep_as_verifier",
+      "reason": "Prebuilt IDs remain useful for exact owner readback but cannot prove a new stimulus trigger chain."
+    }
+  ],
+  "consolidated": [
+    {
+      "surface": "BFF loop catalog projection",
+      "removed_claims": [
+        "static current_maturity",
+        "static target_maturity",
+        "static evidence profile",
+        "static execution task references",
+        "static maturity projection"
+      ],
+      "replacement": "loop-health runtime_maturity derived only from the current qualified controller record"
+    }
+  ],
+  "not_changing": [
+    "Live broker or live capital authority",
+    "Automatic repair tasks",
+    "Loop-control storage ownership",
+    "Domain owner business APIs"
+  ],
+  "composes_with": [
+    "PFG-L12-RESEARCH-E2E-20260820",
+    "PFG-L12-HUMAN-E2E-20260820",
+    "PFG-L12-RUNTIME-E2E-20260820",
+    "L12-GAP-F06-BFF-FUNCTIONAL-HEALTH-20260818"
+  ]
+}
