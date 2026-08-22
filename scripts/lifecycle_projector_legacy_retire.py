@@ -14,8 +14,10 @@ Security invariants:
 - Only allow-list known legacy files, gen-NNNNNN directories, and staging directories;
   fail-closed immediately on any un-allowlisted file or directory.
 - Default to dry-run mode producing an inventory manifest and inventory digest.
-- Execution requires an exact --dry-run-manifest binding, verified approver identity,
-  and structured Human/Ops approval token.
+- Execution requires an exact --dry-run-manifest binding and a non-forgeable
+  governed Human/Ops --approval-record binding exact inventory SHA-256 digest,
+  root, action, recovery posture, and quarantine path. Caller-supplied string
+  tokens cannot bypass governed approval.
 - Live scan before execution must match the dry-run inventory digest item-for-item.
 - Maintain a complete SHA-256 manifest and deletion/quarantine receipt.
 """
@@ -34,6 +36,7 @@ import sys
 from typing import Any, Dict, List, Optional, Sequence
 
 SCHEMA_VERSION = "pantheon.lifecycle-projector-legacy-retirement.v1"
+APPROVAL_SCHEMA_VERSION = "pantheon.lifecycle-projector-retirement-approval.v1"
 TASK_ID = "LIFECYCLE-PROJ-RETIRE-001"
 DEFAULT_LIFECYCLE_ROOT = "/data/bff/lifecycle-projection"
 DEFAULT_QUARANTINE_SUBDIR = "quarantine"
@@ -98,7 +101,6 @@ KNOWN_LEGACY_SYMLINKS = frozenset({"current", "staging"})
 GEN_DIR_PATTERN = re.compile(r"^gen-\d{6}$")
 STAGING_DIR_PATTERN = re.compile(r"^staging-[a-zA-Z0-9_-]+$")
 STAGING_FILE_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+\.json$")
-APPROVAL_TOKEN_PATTERN = re.compile(r"^Human/Ops-approved(:[a-zA-Z0-9_.-]+)?$")
 ALLOWED_APPROVERS = frozenset({"Human/Ops", "operator_a", "operator_b"})
 
 
@@ -331,13 +333,119 @@ def scan_legacy_inventory(
     return items
 
 
+def load_and_validate_approval_record(
+    record_path: Optional[Path],
+    *,
+    expected_task_id: str = TASK_ID,
+    expected_inventory_sha256: str,
+    expected_root_path: str,
+    expected_action: str,
+    expected_recovery_possible: bool,
+    expected_quarantine_path: Optional[str],
+) -> Dict[str, Any]:
+    """Load and validate a non-forgeable governed Human/Ops approval record."""
+    if record_path is None:
+        raise RetirementValidationError(
+            "Execution requires --approval-record pointing to an authorized Human/Ops approval record JSON file; "
+            "caller-supplied tokens or approvers cannot bypass governed approval."
+        )
+
+    if not record_path.exists():
+        raise RetirementValidationError(
+            f"Approval record file does not exist at {record_path}."
+        )
+
+    try:
+        content = record_path.read_text(encoding="utf-8")
+        record = json.loads(content)
+    except Exception as err:
+        raise RetirementValidationError(
+            f"Failed to read or parse approval record JSON at {record_path}: {err}"
+        ) from err
+
+    if not isinstance(record, dict):
+        raise RetirementValidationError("Governed approval record must be a JSON object.")
+
+    schema_ver = record.get("schema_version")
+    if schema_ver not in {APPROVAL_SCHEMA_VERSION, 1, "1"}:
+        raise RetirementValidationError(
+            f"Approval record schema mismatch: expected {APPROVAL_SCHEMA_VERSION!r}, got {schema_ver!r}"
+        )
+
+    task_id = record.get("task_id")
+    if task_id != expected_task_id:
+        raise RetirementValidationError(
+            f"Approval record task mismatch: expected {expected_task_id!r}, got {task_id!r}"
+        )
+
+    actor = record.get("actor") or record.get("approver")
+    if actor != "Human/Ops" and actor not in ALLOWED_APPROVERS:
+        raise RetirementValidationError(
+            f"Approval record must be issued by an authorized operator ('Human/Ops'); got actor {actor!r}"
+        )
+
+    if record.get("approved") is not True:
+        raise RetirementValidationError(
+            "Governed approval record 'approved' field must be boolean True; retirement execution is not approved."
+        )
+
+    record_digest = (
+        record.get("inventory_sha256")
+        or record.get("dry_run_digest")
+        or record.get("manifest_sha256")
+    )
+    if not record_digest or record_digest != expected_inventory_sha256:
+        raise RetirementValidationError(
+            f"Approval record inventory digest mismatch: record specifies {record_digest!r}, "
+            f"expected exact dry-run digest {expected_inventory_sha256!r}. "
+            "Re-run dry-run scan and obtain a fresh Human/Ops approval record."
+        )
+
+    record_root = record.get("root_path")
+    if record_root != expected_root_path:
+        raise RetirementValidationError(
+            f"Approval record root mismatch: record specifies root_path {record_root!r}, "
+            f"expected exact root_path {expected_root_path!r}."
+        )
+
+    record_action = record.get("action")
+    if record_action != expected_action:
+        raise RetirementValidationError(
+            f"Approval record action mismatch: record specifies action {record_action!r}, "
+            f"expected exact action {expected_action!r}."
+        )
+
+    record_recovery = record.get("recovery_possible")
+    if record_recovery != expected_recovery_possible:
+        raise RetirementValidationError(
+            f"Approval record recovery posture mismatch: record specifies recovery_possible={record_recovery!r}, "
+            f"expected recovery_possible={expected_recovery_possible!r}."
+        )
+
+    record_quarantine = record.get("quarantine_path")
+    if expected_action in {"archive", "quarantine"}:
+        if record_quarantine != expected_quarantine_path:
+            raise RetirementValidationError(
+                f"Approval record quarantine path mismatch: record specifies quarantine_path {record_quarantine!r}, "
+                f"expected exact quarantine_path {expected_quarantine_path!r}."
+            )
+    elif expected_action == "delete":
+        if record_quarantine is not None:
+            raise RetirementValidationError(
+                f"Approval record quarantine path mismatch: delete action must specify quarantine_path=null, "
+                f"got {record_quarantine!r}."
+            )
+
+    return record
+
+
 def execute_retirement(
     root: Path,
     items: List[Dict[str, Any]],
     action: str,
     quarantine_dir: Optional[Path] = None,
-    approver: str = "Human/Ops",
-    approval_token: str = "",
+    approval_record: Optional[Dict[str, Any]] = None,
+    approval_record_path: Optional[Path] = None,
     dry_run_manifest_path: Optional[str] = None,
     bound_inventory_sha256: str = "",
 ) -> Dict[str, Any]:
@@ -345,6 +453,11 @@ def execute_retirement(
     processed_count = 0
     processed_bytes = 0
     item_receipts: List[Dict[str, Any]] = []
+
+    approver_actor = (approval_record.get("actor") or approval_record.get("approver") if approval_record else "Human/Ops") or "Human/Ops"
+    approval_record_str = str(approval_record_path) if approval_record_path else None
+    approval_record_sha = _compute_sha256(approval_record_path) if approval_record_path and approval_record_path.exists() else None
+    approval_time = approval_record.get("approved_at_utc") if approval_record else None
 
     if action in {"archive", "quarantine"}:
         if quarantine_dir is None:
@@ -401,8 +514,10 @@ def execute_retirement(
             "executed_at_utc": executed_at,
             "files_processed": processed_count,
             "bytes_processed": processed_bytes,
-            "approver": approver,
-            "approval_token": approval_token,
+            "approver": approver_actor,
+            "approval_record_path": approval_record_str,
+            "approval_record_sha256": approval_record_sha,
+            "approval_record_approved_at_utc": approval_time,
             "dry_run_manifest_path": dry_run_manifest_path,
             "bound_inventory_sha256": bound_inventory_sha256,
             "quarantine_location": str(quarantine_dir),
@@ -448,8 +563,10 @@ def execute_retirement(
             "executed_at_utc": executed_at,
             "files_processed": processed_count,
             "bytes_processed": processed_bytes,
-            "approver": approver,
-            "approval_token": approval_token,
+            "approver": approver_actor,
+            "approval_record_path": approval_record_str,
+            "approval_record_sha256": approval_record_sha,
+            "approval_record_approved_at_utc": approval_time,
             "dry_run_manifest_path": dry_run_manifest_path,
             "bound_inventory_sha256": bound_inventory_sha256,
             "quarantine_location": None,
@@ -464,11 +581,12 @@ def run_retirement(
     root_path: Path,
     action: str = "archive",
     execute: bool = False,
-    approval_token: str = "",
-    approver: str = "Human/Ops",
+    approval_record_path: Optional[Path] = None,
     dry_run_manifest_path: Optional[Path] = None,
     quarantine_dir: Optional[Path] = None,
     allow_custom_root: bool = False,
+    approval_token: str = "",
+    approver: str = "",
 ) -> Dict[str, Any]:
     safe_root = validate_path_safety(root_path, allow_custom_root=allow_custom_root)
 
@@ -502,6 +620,17 @@ def run_retirement(
         "total_bytes": total_bytes,
         "recovery_possible": action != "delete",
         "items": items,
+        "required_approval_record": {
+            "schema_version": APPROVAL_SCHEMA_VERSION,
+            "task_id": TASK_ID,
+            "actor": "Human/Ops",
+            "approved": True,
+            "action": action,
+            "recovery_possible": action != "delete",
+            "root_path": str(safe_root),
+            "quarantine_path": str(safe_quarantine) if action != "delete" and safe_quarantine is not None else None,
+            "inventory_sha256": inventory_digest,
+        },
         "execution_receipt": None,
     }
 
@@ -591,26 +720,24 @@ def run_retirement(
                 f"live digest {inventory_digest} ({len(items)} items). Execution aborted."
             )
 
-        # 2. Validate approver identity
-        if approver not in ALLOWED_APPROVERS:
-            raise RetirementValidationError(
-                f"Approver {approver!r} is not in the authorized operator allowlist: {sorted(ALLOWED_APPROVERS)}"
-            )
-
-        # 3. Validate structured approval token
-        if not approval_token or not APPROVAL_TOKEN_PATTERN.match(approval_token):
-            raise RetirementValidationError(
-                "Execution requires a valid structured approval token matching 'Human/Ops-approved' "
-                f"or 'Human/Ops-approved:<reason>'; received: {approval_token!r}"
-            )
+        # 2. Validate non-forgeable governed Human/Ops approval record
+        approval_record = load_and_validate_approval_record(
+            approval_record_path,
+            expected_task_id=TASK_ID,
+            expected_inventory_sha256=inventory_digest,
+            expected_root_path=str(safe_root),
+            expected_action=action,
+            expected_recovery_possible=manifest["recovery_possible"],
+            expected_quarantine_path=manifest["quarantine_path"],
+        )
 
         receipt = execute_retirement(
             safe_root,
             items,
             action=action,
             quarantine_dir=safe_quarantine,
-            approver=approver,
-            approval_token=approval_token,
+            approval_record=approval_record,
+            approval_record_path=approval_record_path,
             dry_run_manifest_path=str(dry_run_manifest_path),
             bound_inventory_sha256=inventory_digest,
         )
@@ -645,7 +772,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--execute",
         action="store_true",
         default=False,
-        help="Execute retirement/pruning with operator approval token and dry-run manifest binding",
+        help="Execute retirement/pruning with governed Human/Ops approval record and dry-run manifest binding",
     )
     parser.add_argument(
         "--dry-run-manifest",
@@ -654,14 +781,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Required path to approved dry-run manifest for --execute mode",
     )
     parser.add_argument(
+        "--approval-record",
+        type=Path,
+        default=None,
+        help="Required path to approved Human/Ops approval record JSON file for --execute mode",
+    )
+    parser.add_argument(
+        "--human-ops-evidence",
+        type=Path,
+        default=None,
+        help="Alias for --approval-record",
+    )
+    parser.add_argument(
         "--approval-token",
         default="",
-        help="Required token for --execute mode (e.g. 'Human/Ops-approved' or 'Human/Ops-approved:LIFECYCLE-PROJ-RETIRE-001')",
+        help="Legacy token flag (cannot bypass --approval-record)",
     )
     parser.add_argument(
         "--approver",
-        default="Human/Ops",
-        help="Operator identity approving the retirement (default: Human/Ops)",
+        default="",
+        help="Legacy approver flag (cannot bypass --approval-record)",
     )
     parser.add_argument(
         "--quarantine-dir",
@@ -684,17 +823,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     execute_mode = bool(args.execute)
+    approval_record_file = args.approval_record or args.human_ops_evidence
 
     try:
         manifest = run_retirement(
             root_path=args.root,
             action=args.action,
             execute=execute_mode,
-            approval_token=args.approval_token,
-            approver=args.approver,
+            approval_record_path=approval_record_file,
             dry_run_manifest_path=args.dry_run_manifest,
             quarantine_dir=args.quarantine_dir,
             allow_custom_root=args.allow_custom_root,
+            approval_token=args.approval_token,
+            approver=args.approver,
         )
     except RetirementValidationError as exc:
         print(f"Error: {exc}", file=sys.stderr)
