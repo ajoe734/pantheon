@@ -124,6 +124,13 @@
       ],
       "result": "7 passed in 2.47s; compose config valid; diff check clean"
     },
+    "telemetry_prune_composition_gate": {
+      "merge_sha": "5517afdda923774c1d5f2c80688c76827dae5f91",
+      "pull_request": "https://github.com/ajoe734/pantheon/pull/5139",
+      "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_deploy_nonprod_telemetry_prune.py",
+      "result": "18 passed in 3.54s",
+      "meaning": "the exact merged dev deployment helper scopes telemetry pruning to the configured private telemetry schema and fails closed for public"
+    },
     "diagnostic_non_gate": {
       "command": "combined services/trade_journey plus three BFF modules in one pytest process",
       "result": "298 passed, 1 failed in 121.20s",
@@ -278,7 +285,10 @@
     "bff_restart_count": 0,
     "projector_restart_count": 0,
     "eligible_for_cutover": false,
-    "reason": "A later candidate-branch repair deployment replaced the previously accepted exact dev deployment and does not meet the merged-SHA or strict-auth cutover gates. No reader switch was attempted."
+    "telemetry_prune_fix_merged_to_dev": true,
+    "telemetry_prune_fix_merge_sha": "5517afdda923774c1d5f2c80688c76827dae5f91",
+    "exact_redeployment_required": true,
+    "reason": "The public-telemetry prune fix is merged to dev, but the currently hosted candidate branch is still not a merged-SHA strict-auth deployment. No reader switch was attempted."
   },
   "observation_24h": {
     "status": "not_started",
