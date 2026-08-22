@@ -61,15 +61,23 @@ independent review before requesting task closeout.
 
 ## Current external execution hold
 
-The gate must not be pointed at this worker's shared `pantheon` Compose
-project: the Runtime portion deliberately stops `paper-fleet-reconciler`, and
-the Human portion restarts the policy scheduler and `consultation-svc`. The
-task therefore needs a Human/Ops-owned current-dev window with the required
-strict-auth credentials and restart authorization.
+The gate must not be pointed at a shared `pantheon` Compose project without a
+governed current-dev window: the Runtime portion deliberately stops
+`paper-fleet-reconciler`, and the Human portion restarts the policy scheduler
+and `consultation-svc`.
 
-As of 2026-08-21, the prerequisite Human proof records that its
-`pantheon-local` tenant fix still needs an `operator-bff` redeploy on the
-current dev host before its fresh run is possible. The Runtime isolated
-Compose harness is safe for Loops 8–12 but cannot substitute for that deployed
-Human/OpenClaw proof. No shared-worker interruption or substitute authority is
-attempted from this task worktree.
+The prerequisite `operator-bff` redeploy is now present. On 2026-08-22, a
+short-lived strict-auth dev-login readback against current dev SHA
+`97945de7c5193baa9832f6c02674714d889577b9` returned 13 inventory rows. Its
+12 canonical rows still exposed static `current_maturity`, `target_maturity`,
+`maturity`, `evidence`, and `execution_tasks` fields, and did not expose
+`runtime_maturity`. This is the expected pre-task baseline, not a closure
+pass: the stimulus gate and current-record projection live on task head
+`fd0602813ce347f5665b6f43ac98373532bab446`.
+
+Human/Ops must provide an authorized exact-head candidate deployment (or a
+governed review/merge path that produces one) before this task can run its
+fresh stimulus closure. The task's review policy is `review_before_merge` and
+the evidence manifest correctly rejects approval until that exact deployed run
+is committed. No shared-worker interruption, substitute authority, or
+prebuilt-ID result is used to bridge this gap.
