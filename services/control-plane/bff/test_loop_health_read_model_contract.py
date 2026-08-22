@@ -821,32 +821,23 @@ def test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped(
         assert packet["archived_task_completion_accepted"] is False, loop_id
 
         # Current records, not catalog maturity/task claims, decide truth.
-        assert packet["accepted_live_liveness"] is (item["controller"]["status"] == "implemented"), loop_id
-        assert packet["can_claim_reconciled"] is (item["controller"]["status"] == "implemented"), loop_id
+        assert packet["accepted_live_liveness"] is True, loop_id
+        assert packet["can_claim_reconciled"] is True, loop_id
         assert packet["can_claim_proven_live"] is False, loop_id
-        assert packet["operator_truth"]["degraded"] is (item["controller"]["status"] != "implemented"), loop_id
+        assert packet["operator_truth"]["degraded"] is False, loop_id
         assert item["live_status"]["is_live"] is False, loop_id
-        assert item["live_status"]["is_reconciled"] is (item["controller"]["status"] == "implemented"), loop_id
+        assert item["live_status"]["is_reconciled"] is True, loop_id
 
-        contract_status = item["controller"]["status"]
-        if contract_status == "implemented":
-            # The record matches the stable controller contract and is current
-            # runtime truth; no catalog maturity/task field participates.
-            assert packet["runtime_controller_record_qualified"] is True, loop_id
-            assert health["current_record_accepted"] is True, loop_id
-            assert health["status"] == "healthy", loop_id
-            assert health["source"] == "controller_store", loop_id
-            assert _truth_source(packet, "reconciled_live_proof")["operator_note"] == (
-                "Accepted as live liveness proof."
-            ), loop_id
-            assert item["runtime_maturity"]["state"] == "reconciled", loop_id
-        else:
-            assert contract_status == "not_implemented", loop_id
-            assert health["current_record_accepted"] is False, loop_id
-            assert health["status"] == "not_implemented", loop_id
-            assert health["rejection_reason"] == (
-                "catalog controller contract is not implemented"
-            ), loop_id
+        # The record matches the stable controller contract and is current
+        # runtime truth; no catalog maturity/task field participates.
+        assert packet["runtime_controller_record_qualified"] is True, loop_id
+        assert health["current_record_accepted"] is True, loop_id
+        assert health["status"] == "healthy", loop_id
+        assert health["source"] == "controller_store", loop_id
+        assert _truth_source(packet, "reconciled_live_proof")["operator_note"] == (
+            "Accepted as live liveness proof."
+        ), loop_id
+        assert item["runtime_maturity"]["state"] == "reconciled", loop_id
 
     # The foreign-tenant record contributed nothing to this tenant's view.
     for item in payload["items"]:
@@ -914,10 +905,9 @@ def test_stale_and_contradicted_records_stay_unaccepted_for_every_loop(
             loop_id
         )
         assert item["controller_health"]["current_record_accepted"] is False, loop_id
-        if item["controller"]["status"] == "implemented":
-            assert item["controller_health"]["rejection_reason"] == (
-                "task archive completion is reference-only, not runtime evidence"
-            ), loop_id
+        assert item["controller_health"]["rejection_reason"] == (
+            "task archive completion is reference-only, not runtime evidence"
+        ), loop_id
 
     # Contradicted provenance: a record that declares two different evidence
     # bases is refused outright.  This case is served from the file store, so
@@ -959,10 +949,9 @@ def test_stale_and_contradicted_records_stay_unaccepted_for_every_loop(
         assert packet["runtime_controller_record_qualified"] is False, loop_id
         assert packet["accepted_live_liveness"] is False, loop_id
         assert item["controller_health"]["current_record_accepted"] is False, loop_id
-        if item["controller"]["status"] == "implemented":
-            assert item["controller_health"]["rejection_reason"] == (
-                "record declares conflicting evidence provenance"
-            ), loop_id
+        assert item["controller_health"]["rejection_reason"] == (
+            "record declares conflicting evidence provenance"
+        ), loop_id
 
 
 def test_loop_health_detail_unknown_id_is_404(monkeypatch) -> None:

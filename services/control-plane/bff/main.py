@@ -63308,7 +63308,13 @@ def _loop_health_response_meta(
 ) -> Dict[str, Any]:
     meta = dict(payload.get("meta") or {})
     snapshot_at = meta.get("snapshot_at") or utc_now()
-    item_count = len(payload.get("items") or ([payload.get("data")] if isinstance(payload.get("data"), dict) else []))
+    raw_items = payload.get("items") or ([payload.get("data")] if isinstance(payload.get("data"), dict) else [])
+    item_count = len(raw_items)
+    canonical_items = [
+        r for r in raw_items
+        if isinstance(r, dict) and r.get("classification") != "composite_overlay"
+    ]
+    target_count = len(canonical_items) if canonical_items else item_count
     registry_surface = {
         "status": "ok",
         "source": "bff_local_registry",
@@ -63321,7 +63327,7 @@ def _loop_health_response_meta(
         snapshot_at=snapshot_at,
         source=health_source if health_records_available else "missing",
     )
-    if item_count and accepted_controller_health_record_count >= item_count:
+    if target_count and accepted_controller_health_record_count >= target_count:
         loop_health_surface = {
             "status": "ok",
             "source": "bff_composed",

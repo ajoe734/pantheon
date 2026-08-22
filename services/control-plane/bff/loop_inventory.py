@@ -251,8 +251,12 @@ def _runtime_controller_record_qualified(
     record: Dict[str, Any],
     health_source: str,
     expected_controller_name: Any,
+    *,
+    classification: str = "canonical",
 ) -> bool:
     if not record or health_source not in _ACCEPTED_RUNTIME_HEALTH_SOURCES:
+        return False
+    if classification == "composite_overlay":
         return False
     evidence_bases = _health_record_evidence_bases(record)
     if (
@@ -299,10 +303,16 @@ def _runtime_controller_record_qualified(
     if record.get("ready") is False or raw_health.get("ready") is False or record.get("functional_ready") is False:
         return False
 
+    name_matches = (
+        (controller_name == expected_name)
+        if expected_name
+        else bool(controller_name)
+    )
+
     return bool(
         reported_status in _ACCEPTED_CONTROLLER_HEALTH_STATUSES
-        and expected_name
-        and controller_name == expected_name
+        and controller_name
+        and name_matches
         and _controller_heartbeat_is_current(heartbeat)
         and _health_record_refs(record)
     )
@@ -313,6 +323,8 @@ def _truth_source_from_profile(
     health_record: Dict[str, Any],
     health_source: str,
     expected_controller_name: Any,
+    *,
+    classification: str = "canonical",
 ) -> Dict[str, Any]:
     health_truth_level = _health_record_truth_level(health_record)
     health_refs = _health_record_refs(health_record)
@@ -341,6 +353,7 @@ def _truth_source_from_profile(
         health_record,
         health_source,
         expected_controller_name,
+        classification=classification,
     )
     evidence_basis = _health_record_evidence_basis(health_record)
     accepted_as_live = (
@@ -393,6 +406,8 @@ def _truth_sources(
     health_record: Dict[str, Any],
     health_source: str,
     expected_controller_name: Any,
+    *,
+    classification: str = "canonical",
 ) -> List[Dict[str, Any]]:
     return [
         _truth_source_from_profile(
@@ -400,6 +415,7 @@ def _truth_sources(
             health_record,
             health_source,
             expected_controller_name,
+            classification=classification,
         )
         for level in _TRUTH_LEVEL_ORDER
     ]
@@ -685,6 +701,8 @@ def _project_controller_health(
     controller: Dict[str, Any],
     health_record: Dict[str, Any],
     health_source: str,
+    *,
+    classification: str = "canonical",
 ) -> Dict[str, Any]:
     raw_health = _dict_or_empty(
         health_record.get("controller_health")
@@ -699,17 +717,14 @@ def _project_controller_health(
         health_record,
         health_source,
         controller.get("controller_name"),
+        classification=classification,
     )
-    contract_accepts_runtime_record = contract_status in {"implemented", "proven_live"}
     heartbeat = raw_health.get("last_heartbeat_at") or health_record.get("last_heartbeat_at")
-    current_record_accepted = bool(
-        runtime_record_qualified
-        and contract_accepts_runtime_record
-    )
+    current_record_accepted = bool(runtime_record_qualified)
     status = (
         reported_status
         if current_record_accepted
-        else ("not_implemented" if contract_status == "not_implemented" else "unobserved")
+        else ("not_implemented" if contract_status == "not_implemented" and not health_record else "unobserved")
     )
     source = health_source if current_record_accepted else "registry_metadata"
     evidence_bases = _health_record_evidence_bases(health_record)
@@ -744,10 +759,10 @@ def _project_controller_health(
     )
     if current_record_accepted:
         rejection_reason = None
+    elif classification == "composite_overlay":
+        rejection_reason = "composite overlay loops do not accept direct controller runtime records"
     elif functional_degraded:
         rejection_reason = "worker functional health is degraded despite process readiness"
-    elif not contract_accepts_runtime_record:
-        rejection_reason = "catalog controller contract is not implemented"
     elif len(evidence_bases) > 1:
         rejection_reason = "record declares conflicting evidence provenance"
     elif evidence_refs and not runtime_evidence_refs:
@@ -758,6 +773,8 @@ def _project_controller_health(
         and reported_controller_name != expected_controller_name
     ):
         rejection_reason = "runtime controller identity does not match catalog contract"
+    elif not reported_controller_name and health_record:
+        rejection_reason = "record lacks accepted current controller-runtime provenance"
     else:
         rejection_reason = "record lacks accepted current controller-runtime provenance"
     return {
@@ -878,12 +895,15 @@ def _project_evidence_packet(
     controller: Dict[str, Any],
     health_record: Dict[str, Any],
     health_source: str,
+    *,
+    classification: str = "canonical",
 ) -> Dict[str, Any]:
     packet = _dict_or_empty(health_record.get("evidence_packet"))
     truth_sources = _truth_sources(
         health_record,
         health_source,
         controller.get("controller_name"),
+        classification=classification,
     )
     highest = _highest_present_truth_source(truth_sources)
     operator_truth = _operator_truth_source(truth_sources, highest)
@@ -911,6 +931,7 @@ def _project_evidence_packet(
             health_record,
             health_source,
             controller.get("controller_name"),
+            classification=classification,
         ),
         "archived_task_completion_accepted": False,
         "highest_truth_level": highest.get("truth_level"),
@@ -975,6 +996,7 @@ def _project_loop_health(
 ) -> Dict[str, Any]:
     projected = _project_loop(loop)
     loop_id = str(projected.get("loop_id") or "")
+    classification = str(loop.get("classification") or "canonical")
     controller = _dict_or_empty(loop.get("controller_contract"))
     desired_state = _dict_or_empty(loop.get("desired_state"))
     actual_state = _dict_or_empty(loop.get("actual_state"))
@@ -983,11 +1005,13 @@ def _project_loop_health(
         controller,
         health_record,
         health_source,
+        classification=classification,
     )
     controller_health = _project_controller_health(
         controller,
         health_record,
         health_source,
+        classification=classification,
     )
     projected.update(
         {
