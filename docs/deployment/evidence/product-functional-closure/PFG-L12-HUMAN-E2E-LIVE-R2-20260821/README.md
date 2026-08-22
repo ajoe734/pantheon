@@ -45,14 +45,14 @@ The complete Human Learning E2E test suite (`test_current_human_learning_deploye
 - `test_deployed_suite_has_no_fixture_or_product_store_shortcut`: **PASSED**
 
 ### Durable Identity Correlation Chain
-- `evidence_id`: `ev-l12-hl-6a9012c58c`
-- `dataset_version_id`: `dsv-a8875fcefb8f5e43896bfa95`
-- `agora_handoff_id`: `gh-6fe2db81e65c7324d7c0a387`
-- `candidate_id`: `sic-565293b9e33e6d07f0bbea14f6d5edae`
-- `experiment_task_id`: `rtask-exp-sic-565293b9e33e6d07f0bbea14f6d5edae`
-- `experiment_run_id`: `rrun-exp-sic-565293b9e33e6d07f0bbea14f6d5edae`
-- `consult_request_id`: `cr-l12-hl-6a9012c58c`
-- `memo_id`: `mem-8f5a1f82f87a3a7ff6c9`
-- `governance_handoff_id`: `gh-61294d8c9c819cc8eccd`
+- `evidence_id`: `ev-l12-hl-97a0fbf66b`
+- `dataset_version_id`: `dsv-cada16a07489f45f286ea729`
+- `agora_handoff_id`: `gh-6338ebd859ec648fb4b5f283`
+- `candidate_id`: `sic-9f1b0ea1ed574e4ffaa8bb7beaa06c6a`
+- `experiment_task_id`: `rtask-exp-sic-9f1b0ea1ed574e4ffaa8bb7beaa06c6a`
+- `experiment_run_id`: `rrun-exp-sic-9f1b0ea1ed574e4ffaa8bb7beaa06c6a`
+- `consult_request_id`: `cr-l12-hl-97a0fbf66b`
+- `memo_id`: `mem-cb82242d7ac179d5f332`
+- `governance_handoff_id`: `gh-59ad972180dcc4f013fe`
 
 The full run report is preserved in [deployed-run.json](file:///tmp/pantheon-worker-worktrees/coordination-root/pfg-l12-human-e2e-live-r2-20260821/docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json).
