@@ -16,11 +16,18 @@ Following the deployment telemetry prune scope repair (**PFG-DATA-TELEMETRY-PRUN
    - Post-boundary telemetry repopulated starting from `2026-08-22T11:48:48+00:00` (ingested sequence `7122484`) is active, continuous, and preserved intact.
    - Overall history disposition is recorded as **`partial`**.
 
-3. **No Synthetic Source Events (AD-03 / SD-DATA-02 Compliance)**:
+3. **Fail-Closed Complete-History Attestation**:
+   - A `complete` disposition now requires `recovery_source_attestation`; a URI-shaped string alone is rejected.
+   - The attestation binds the exact source identity and independently observed immutable version/digest to the baseline row count, timestamp range, high watermark, canonical query hash, and a zero-missing event-ID comparison.
+   - A hash-bound JSONL event manifest is read independently; the validator rejects duplicate IDs and recomputes its unique count, min/max timestamp, high watermark, and sorted event-ID comparison SHA-256 against the baseline.
+   - GCS objects are resolved with `gcloud` and bound to generation, metageneration, and object SHA-256 metadata; fully-qualified READY GCP snapshots are bound to immutable resource metadata; local PostgreSQL dumps and source-ledger proofs must exist as regular non-symlink files and are hashed directly.
+   - Bare digests, short snapshot names, logical dump URIs, nonexistent sources, mismatched attestation identities/digests, and incomplete event comparisons fail closed.
+
+4. **No Synthetic Source Events (AD-03 / SD-DATA-02 Compliance)**:
    - Prohibits importing or synthesizing secondary `lifecycle_projection.json` data into `public.telemetry_events`.
    - Legacy JSON remains derived read-model evidence only and is never disguised as canonical source truth.
 
-4. **Unblocks `LIFECYCLE-PROJ-CUTOVER-001`**:
+5. **Unblocks `LIFECYCLE-PROJ-CUTOVER-001`**:
    - The migration start checkpoint is unambiguously defined at the post-boundary baseline (`ingested_seq: 7122484`, `min_created_at: 2026-08-22T11:48:48+00:00`).
    - Relational Trade Journey backfill and reader cutover can safely proceed against real canonical source telemetry.
 

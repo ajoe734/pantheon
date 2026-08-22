@@ -9,6 +9,7 @@
   "operator_note": "Observed repopulation boundary after SD-DATA-01 fix; canonical history preserved post-boundary with zero drift.",
   "query_sha256": "cbb98d00313c8d8d2b26b9f2a4440cbecbd1c28fd87fda520746ce1724e33239",
   "recovery_source": null,
+  "recovery_source_attestation": null,
   "row_count": 7153,
   "source_high_watermark": 7129636,
   "source_table": "public.telemetry_events"

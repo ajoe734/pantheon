@@ -26,6 +26,7 @@ ALLOWED_DISPOSITIONS = frozenset({"complete", "partial", "irrecoverable", "unkno
 HEX_SHA40_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 HEX_SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 RECOVERY_ATTESTATION_SCHEMA_VERSION = "pantheon.telemetry_recovery_source_attestation.v1"
+RECOVERY_EVENT_MANIFEST_FORMAT = "pantheon.telemetry_recovery_event_manifest.jsonl.v1"
 
 AUTHORITATIVE_PROOF_PATTERNS: tuple[re.Pattern[str], ...] = (
     # GCS / Cloud Storage object. Existence, generation, and the object-bound
@@ -254,6 +255,86 @@ def _parse_rfc3339(value: str) -> datetime.datetime:
     return parsed.astimezone(datetime.timezone.utc)
 
 
+def _validate_recovery_event_manifest(
+    manifest: Mapping[str, Any],
+    baseline: Mapping[str, Any],
+    expected_comparison_sha256: str,
+) -> None:
+    if not isinstance(manifest, Mapping) or set(manifest) != {"format", "path", "sha256"}:
+        raise ValueError(
+            "recovery_source_attestation event_manifest must contain exactly format, path, and sha256"
+        )
+    if manifest["format"] != RECOVERY_EVENT_MANIFEST_FORMAT:
+        raise ValueError(
+            f"recovery_source_attestation event_manifest.format must be {RECOVERY_EVENT_MANIFEST_FORMAT!r}"
+        )
+    manifest_path_value = manifest["path"]
+    if not isinstance(manifest_path_value, str) or not manifest_path_value.strip():
+        raise ValueError("recovery_source_attestation event_manifest.path must be a non-empty absolute path")
+    manifest_path = _local_recovery_source_path(manifest_path_value.strip())
+    if not manifest_path.is_absolute() or manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError(
+            "recovery_source_attestation event_manifest.path must resolve to an existing non-symlink regular file"
+        )
+    manifest_sha256 = manifest["sha256"]
+    if not isinstance(manifest_sha256, str) or not HEX_SHA256_PATTERN.fullmatch(manifest_sha256):
+        raise ValueError("recovery_source_attestation event_manifest.sha256 must be 64 hexadecimal characters")
+    observed_manifest_sha256 = _sha256_file(manifest_path)
+    if observed_manifest_sha256.lower() != manifest_sha256.lower():
+        raise ValueError("recovery_source_attestation event_manifest.sha256 does not match manifest bytes")
+
+    event_ids: set[str] = set()
+    min_created_at: datetime.datetime | None = None
+    max_created_at: datetime.datetime | None = None
+    source_high_watermark: int | None = None
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                raise ValueError(f"Recovery event manifest contains an empty line at {line_number}")
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Recovery event manifest line {line_number} is not valid JSON") from exc
+            if not isinstance(record, Mapping) or set(record) != {"event_id", "created_at", "ingested_seq"}:
+                raise ValueError(
+                    f"Recovery event manifest line {line_number} must contain event_id, created_at, and ingested_seq"
+                )
+            event_id = record["event_id"]
+            if not isinstance(event_id, str) or not event_id.strip():
+                raise ValueError(f"Recovery event manifest line {line_number} has an invalid event_id")
+            if event_id in event_ids:
+                raise ValueError(f"Recovery event manifest contains duplicate event_id {event_id!r}")
+            event_ids.add(event_id)
+            created_at = record["created_at"]
+            if not isinstance(created_at, str):
+                raise ValueError(f"Recovery event manifest line {line_number} has an invalid created_at")
+            parsed_created_at = _parse_rfc3339(created_at)
+            min_created_at = parsed_created_at if min_created_at is None else min(min_created_at, parsed_created_at)
+            max_created_at = parsed_created_at if max_created_at is None else max(max_created_at, parsed_created_at)
+            ingested_seq = record["ingested_seq"]
+            if isinstance(ingested_seq, bool) or not isinstance(ingested_seq, int) or ingested_seq < 0:
+                raise ValueError(f"Recovery event manifest line {line_number} has an invalid ingested_seq")
+            source_high_watermark = (
+                ingested_seq if source_high_watermark is None else max(source_high_watermark, ingested_seq)
+            )
+
+    if len(event_ids) != baseline["row_count"]:
+        raise ValueError("Recovery event manifest unique event count does not match baseline row_count")
+    baseline_min = _parse_rfc3339(baseline["min_created_at"]) if baseline["min_created_at"] else None
+    baseline_max = _parse_rfc3339(baseline["max_created_at"]) if baseline["max_created_at"] else None
+    if min_created_at != baseline_min or max_created_at != baseline_max:
+        raise ValueError("Recovery event manifest timestamp range does not match baseline")
+    if source_high_watermark != baseline["source_high_watermark"]:
+        raise ValueError("Recovery event manifest high watermark does not match baseline")
+    comparison_sha256 = hashlib.sha256(
+        "".join(f"{event_id}\n" for event_id in sorted(event_ids)).encode("utf-8")
+    ).hexdigest()
+    if comparison_sha256.lower() != expected_comparison_sha256.lower():
+        raise ValueError(
+            "recovery_source_attestation completeness.event_id_comparison_sha256 does not match event manifest"
+        )
+
+
 def validate_recovery_source_attestation(
     attestation: Mapping[str, Any],
     baseline: Mapping[str, Any],
@@ -276,6 +357,7 @@ def validate_recovery_source_attestation(
         "verified_at",
         "event_range",
         "completeness",
+        "event_manifest",
     }
     actual_keys = set(attestation)
     if actual_keys != required_keys:
@@ -376,6 +458,12 @@ def validate_recovery_source_attestation(
             raise ValueError(
                 f"Independent recovery source verification mismatch for {field}: expected {expected!r}, observed {actual!r}"
             )
+
+    _validate_recovery_event_manifest(
+        attestation["event_manifest"],
+        baseline,
+        comparison_digest,
+    )
 
     return dict(attestation)
 

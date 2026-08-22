@@ -15,6 +15,7 @@ from scripts.capture_canonical_telemetry_baseline import (
     CANONICAL_BASELINE_QUERY,
     CANONICAL_SOURCE_TABLE,
     RECOVERY_ATTESTATION_SCHEMA_VERSION,
+    RECOVERY_EVENT_MANIFEST_FORMAT,
     capture_telemetry_baseline,
     compute_query_sha256,
     generate_backup_candidate_inventory,
@@ -51,7 +52,14 @@ def _make_valid_artifact(**overrides) -> dict:
     return base
 
 
-def _make_attestation(data: dict, observed: dict[str, str], **overrides) -> dict:
+def _make_attestation(
+    data: dict,
+    observed: dict[str, str],
+    *,
+    event_manifest: dict | None = None,
+    event_id_comparison_sha256: str = "a" * 64,
+    **overrides,
+) -> dict:
     attestation = {
         "schema_version": RECOVERY_ATTESTATION_SCHEMA_VERSION,
         "source_kind": observed["source_kind"],
@@ -59,6 +67,11 @@ def _make_attestation(data: dict, observed: dict[str, str], **overrides) -> dict
         "source_version": observed["source_version"],
         "immutable_digest_sha256": observed["immutable_digest_sha256"],
         "verified_at": SAMPLE_CAPTURED_AT,
+        "event_manifest": event_manifest or {
+            "format": RECOVERY_EVENT_MANIFEST_FORMAT,
+            "path": "/does/not/exist/recovery-event-manifest.jsonl",
+            "sha256": "0" * 64,
+        },
         "event_range": {
             "row_count": data["row_count"],
             "min_created_at": data["min_created_at"],
@@ -71,7 +84,7 @@ def _make_attestation(data: dict, observed: dict[str, str], **overrides) -> dict
             "expected_event_count": data["row_count"],
             "observed_event_count": data["row_count"],
             "missing_event_count": 0,
-            "event_id_comparison_sha256": "a" * 64,
+            "event_id_comparison_sha256": event_id_comparison_sha256,
             "query_sha256": data["query_sha256"],
         },
     }
@@ -79,14 +92,55 @@ def _make_attestation(data: dict, observed: dict[str, str], **overrides) -> dict
     return attestation
 
 
+def _make_complete_baseline(source: str) -> dict:
+    return _make_valid_artifact(
+        history_disposition="complete",
+        recovery_source=source,
+        row_count=2,
+        min_created_at="2026-08-22T11:48:48+00:00",
+        max_created_at="2026-08-22T11:49:00+00:00",
+        source_high_watermark=7125001,
+        known_history_start="2026-08-22T11:48:48+00:00",
+    )
+
+
+def _write_event_manifest(tmp_path: Path, name: str = "recovery-event-manifest.jsonl") -> tuple[Path, dict, str]:
+    records = [
+        {
+            "event_id": "event-1",
+            "created_at": "2026-08-22T11:48:48+00:00",
+            "ingested_seq": 7125000,
+        },
+        {
+            "event_id": "event-2",
+            "created_at": "2026-08-22T11:49:00+00:00",
+            "ingested_seq": 7125001,
+        },
+    ]
+    path = tmp_path / name
+    payload = "".join(json.dumps(record, sort_keys=True) + "\n" for record in records)
+    path.write_text(payload, encoding="utf-8")
+    manifest = {
+        "format": RECOVERY_EVENT_MANIFEST_FORMAT,
+        "path": str(path),
+        "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+    }
+    comparison = hashlib.sha256(b"event-1\nevent-2\n").hexdigest()
+    return path, manifest, comparison
+
+
 def _make_complete_local_artifact(tmp_path: Path) -> dict:
-    proof_file = tmp_path / "authoritative-source-ledger.jsonl"
-    proof_file.write_bytes(b"event-1\nevent-2\n")
+    proof_file, event_manifest, comparison = _write_event_manifest(
+        tmp_path,
+        "authoritative-source-ledger.jsonl",
+    )
     source = f"source-ledger:file://{proof_file}"
-    data = _make_valid_artifact(history_disposition="complete", recovery_source=source)
+    data = _make_complete_baseline(source)
     data["recovery_source_attestation"] = _make_attestation(
         data,
         inspect_authoritative_recovery_source(source),
+        event_manifest=event_manifest,
+        event_id_comparison_sha256=comparison,
     )
     return data
 
@@ -462,6 +516,38 @@ def test_complete_disposition_rejects_unbound_event_range(tmp_path: Path) -> Non
         validate_baseline_artifact(data)
 
 
+def test_complete_disposition_rejects_event_manifest_digest_mismatch(tmp_path: Path) -> None:
+    data = _make_complete_local_artifact(tmp_path)
+    data["recovery_source_attestation"]["event_manifest"]["sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="event_manifest.sha256 does not match manifest bytes"):
+        validate_baseline_artifact(data)
+
+
+def test_complete_disposition_rejects_event_manifest_range_mismatch(tmp_path: Path) -> None:
+    data = _make_complete_local_artifact(tmp_path)
+    bad_manifest_path = tmp_path / "bad-range.jsonl"
+    bad_records = [
+        {"event_id": "event-1", "created_at": "2026-08-22T11:48:48+00:00", "ingested_seq": 7125000},
+        {"event_id": "event-2", "created_at": "2026-08-22T12:00:00+00:00", "ingested_seq": 7125001},
+    ]
+    payload = "".join(json.dumps(record, sort_keys=True) + "\n" for record in bad_records)
+    bad_manifest_path.write_text(payload, encoding="utf-8")
+    data["recovery_source_attestation"]["event_manifest"] = {
+        "format": RECOVERY_EVENT_MANIFEST_FORMAT,
+        "path": str(bad_manifest_path),
+        "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+    }
+    with pytest.raises(ValueError, match="timestamp range does not match baseline"):
+        validate_baseline_artifact(data)
+
+
+def test_complete_disposition_rejects_arbitrary_event_id_comparison_digest(tmp_path: Path) -> None:
+    data = _make_complete_local_artifact(tmp_path)
+    data["recovery_source_attestation"]["completeness"]["event_id_comparison_sha256"] = "b" * 64
+    with pytest.raises(ValueError, match="does not match event manifest"):
+        validate_baseline_artifact(data)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -486,6 +572,7 @@ def test_complete_disposition_rejects_unproven_completeness(
 
 def test_complete_disposition_accepts_independently_described_gcs_object(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     source = "gs://authoritative-pantheon-backups/dev/telemetry.sql.gz"
     digest = "c" * 64
@@ -500,16 +587,20 @@ def test_complete_disposition_accepts_independently_described_gcs_object(
             "metadata": {"pantheon_sha256": digest},
         },
     )
-    data = _make_valid_artifact(history_disposition="complete", recovery_source=source)
+    _, event_manifest, comparison = _write_event_manifest(tmp_path)
+    data = _make_complete_baseline(source)
     data["recovery_source_attestation"] = _make_attestation(
         data,
         inspect_authoritative_recovery_source(source),
+        event_manifest=event_manifest,
+        event_id_comparison_sha256=comparison,
     )
     assert validate_baseline_artifact(data)["history_disposition"] == "complete"
 
 
 def test_complete_disposition_accepts_ready_fully_qualified_snapshot(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     source = "projects/pantheon-lupin-dev-20260719/global/snapshots/pantheon-postgres-20260822"
     monkeypatch.setattr(
@@ -528,10 +619,13 @@ def test_complete_disposition_accepts_ready_fully_qualified_snapshot(
             "storageLocations": ["us-west1"],
         },
     )
-    data = _make_valid_artifact(history_disposition="complete", recovery_source=source)
+    _, event_manifest, comparison = _write_event_manifest(tmp_path)
+    data = _make_complete_baseline(source)
     data["recovery_source_attestation"] = _make_attestation(
         data,
         inspect_authoritative_recovery_source(source),
+        event_manifest=event_manifest,
+        event_id_comparison_sha256=comparison,
     )
     assert validate_recovery_source_attestation(data["recovery_source_attestation"], data)["source_kind"] == "gcp_snapshot"
 

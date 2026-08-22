@@ -1,10 +1,10 @@
 {
   "acceptance_criteria_verification": {
-    "allow_only_complete_partial_irrecoverable_unknown_require_proof": "Passed - validate_baseline_artifact enforces ALLOWED_DISPOSITIONS, strictly requires non-null, non-derived, non-boolean string recovery_source proof reference conforming to a verifiable authoritative backup/source-ledger contract (e.g. gs://, projects/.../global/snapshots/..., gcp-snapshot:..., pg_dump:..., /var/backups/postgresql/..., canonical-ledger://..., source-ledger-proof:sha256:..., sha256:<64-hex>) for complete disposition, and rejects arbitrary or unverified strings.",
+    "allow_only_complete_partial_irrecoverable_unknown_require_proof": "Passed - validate_baseline_artifact enforces ALLOWED_DISPOSITIONS. complete now requires both an independently resolvable recovery_source and a strict recovery_source_attestation binding exact source identity, immutable version/digest, baseline event range, canonical query hash, and zero-missing event-ID comparison. The validator independently reads a hash-bound JSONL event manifest, rejects duplicate IDs, and recomputes unique count, min/max timestamp, high watermark, and sorted event-ID comparison SHA-256. GCS objects are resolved through gcloud; fully-qualified READY snapshots are described through gcloud; local PostgreSQL dumps/source-ledger proofs must exist as non-symlink regular files and are hashed directly. Bare digests, short logical names, nonexistent sources, unbound identities, and digest/range/completeness mismatches fail closed.",
     "inventory_every_backup_candidate_without_synthesizing_events": "Passed - backup candidate inventory audits all five candidate categories and affirms zero event synthesis.",
     "publish_honest_reviewed_baseline_unblocking_lifecycle_cutover": "Passed - honest baseline published identifying post-boundary migration checkpoint (2026-08-22T11:48:48+00:00 / min ingested_seq 7122484) unblocking LIFECYCLE-PROJ-CUTOVER-001.",
     "record_row_count_min_max_high_watermark_full_sha_query_hash": "Passed - baseline artifact captures row count (7153), min/max created_at with strict boundary consistency (min <= max, max required when row_count > 0), source_high_watermark (7129636), full 40-char SHA (5517afdda923774c1d5f2c80688c76827dae5f91), and query SHA256 (cbb98d00313c8d8d2b26b9f2a4440cbecbd1c28fd87fda520746ce1724e33239).",
-    "reject_truncated_sha_missing_query_hash_unsupported_disposition_derived_json": "Passed - 154 unit and contract tests verify rejection of short SHAs, missing hashes, unsupported statuses, arbitrary recovery_source strings, fail-closed derived Lifecycle JSON detection across all paths, and null/inconsistent max timestamps."
+    "reject_truncated_sha_missing_query_hash_unsupported_disposition_derived_json": "Passed - 176 focused unit and contract tests verify rejection of short SHAs, missing hashes, unsupported statuses, derived Lifecycle JSON across all paths, and null/inconsistent timestamps, plus nonexistent/unbound GCS, snapshot, dump, bare-digest recovery references, and fabricated event-manifest range/comparison proofs."
   },
   "candidate_inventory_summary": {
     "docker_postgres_volume": "partial_active_source - holds canonical events post-boundary from 2026-08-22T11:48:48+00:00 forward",
@@ -24,6 +24,7 @@
     "query_sha256": "cbb98d00313c8d8d2b26b9f2a4440cbecbd1c28fd87fda520746ce1724e33239",
     "query_text": "SELECT\n  count(*)::bigint AS row_count,\n  min(created_at) AS min_created_at,\n  max(created_at) AS max_created_at,\n  max(ingested_seq)::bigint AS source_high_watermark\nFROM public.telemetry_events;",
     "recovery_source": null,
+    "recovery_source_attestation": null,
     "row_count": 7153,
     "source_high_watermark": 7129636,
     "source_table": "public.telemetry_events"
@@ -45,8 +46,8 @@
       "No derived JSON promotion to canonical source truth."
     ],
     "owned_layer": [
-      "Canonical telemetry baseline disposition capture tool in scripts/capture_canonical_telemetry_baseline.py with verifiable authoritative backup/source-ledger proof contract and fail-closed derived Lifecycle JSON detection.",
-      "Comprehensive test suite in scripts/test_capture_canonical_telemetry_baseline.py (154 tests) enforcing schema validation, query hash verification, authoritative proof validation, fail-closed derived Lifecycle JSON detection, candidate inventory, and failure modes.",
+      "Canonical telemetry baseline disposition capture tool in scripts/capture_canonical_telemetry_baseline.py with independently resolved authoritative backup/source-ledger attestation, exact digest/range/completeness binding, and fail-closed derived Lifecycle JSON detection.",
+      "Comprehensive test suite in scripts/test_capture_canonical_telemetry_baseline.py (176 focused tests) enforcing schema validation, query hash verification, source existence and immutable identity/digest validation, independently recomputed event-manifest range/completeness, derived JSON rejection, candidate inventory, and failure modes.",
       "Baseline and backup candidate inventory evidence artifacts in docs/deployment/evidence/product-functional-closure/PFG-DATA-TELEMETRY-BASELINE-20260822/."
     ]
   },
@@ -54,7 +55,7 @@
     "base_branch": "dev",
     "evidence_status": "owner_validation_passed_pending_independent_reviewer",
     "id": "PFG-DATA-TELEMETRY-BASELINE-20260822",
-    "owner": "Antigravity",
+    "owner": "Codex",
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/product-functional-closure/PFG-DATA-TELEMETRY-BASELINE-20260822/evidence.json",
     "reviewer": "Codex2",
@@ -72,7 +73,7 @@
       "sha256sum -c docs/deployment/evidence/product-functional-closure/PFG-DATA-TELEMETRY-BASELINE-20260822/evidence.sha256"
     ],
     "results": [
-      "154 passed in pytest test suite with 100% pass rate.",
+      "176 passed in focused pytest suite with 100% pass rate; 194 passed when composed with telemetry-prune regressions.",
       "Baseline artifact successfully verified with validate_baseline_artifact.",
       "Root-relative SHA256 checksums verified."
     ]
