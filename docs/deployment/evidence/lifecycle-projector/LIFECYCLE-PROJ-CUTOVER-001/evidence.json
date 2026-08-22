@@ -5,7 +5,7 @@
     "title": "Canary and cut over target-dev lifecycle reads",
     "owner": "Codex",
     "reviewer": "Codex2",
-    "status": "in_progress",
+    "status": "blocked",
     "base_branch": "dev",
     "task_branch": "task/LIFECYCLE-PROJ-CUTOVER-001",
     "depends_on": {
@@ -47,7 +47,7 @@
     "services/control-plane/bff/main.py": "30b4a1ebd83dedda996c318617ee53cb782029fd91a6c24ed61d05b44659d90f",
     "services/control-plane/bff/test_lifecycle_projector_readiness.py": "533e3fcc5928a8ed5f1189c19c5ab5f1dbbe7e083b4b8f4bf2e69ecd15ecff15",
     "services/trade_journey/test_lifecycle_projector_compose.py": "2b7ddc49fbc7e79a89a38f2560403a489c895db55b2ae83a4aaea67ec5c006fb",
-    "docs/operations/lifecycle-projector-incremental-runbook.md": "1469816caddeefbb350ddc3d4201799a1781b98ca0d167d989e0b3357c8dd4b7",
+    "docs/operations/lifecycle-projector-incremental-runbook.md": "f93844a4c3cdaf8b16e78a1b81bb953a030f61ba5089348c390993672173655d",
     "services/trade_journey/migrations/001_create_trade_journey_projection_schema.sql": "732939a70680f8561f1d4cbbf4b075c6f2ae0a23403b0e4adf90b47103525374"
   },
   "pre_switch_verification": {
@@ -138,16 +138,39 @@
     }
   },
   "deployment_and_rollout": {
-    "pr": null,
-    "independent_review": "not_run",
-    "merge_sha": null,
-    "bff_image_id": null,
-    "projector_image_id": null,
-    "migration_apply": "not_run",
-    "rendered_config_identity": null,
-    "live_controller_before_reads": null,
+    "pr": "https://github.com/ajoe734/pantheon/pull/5124",
+    "independent_review": "Codex2 approved the exact predeployment head 1dcebbfaf6c7ec3cc0ed3be4a23a232657d9e751; operational acceptance was explicitly not approved",
+    "merge_sha": "f0bf28344f3467238cd9d9cdfd0f2c8f6dc65db5",
+    "deployment_run": "https://github.com/ajoe734/pantheon/actions/runs/32554078801",
+    "deployed_dev_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+    "deployed_at_utc": "2026-08-22T05:53:19Z",
+    "bff_image_id": "sha256:dd09aab20c3d4dd7b68509bdec1cbd312cdecb87c39b191e2a5fbec22717222c",
+    "projector_image_id": "sha256:ac0a5d15845e3edce837b747241809603a7c7c0cbf014e207dd726ae5b62616b",
+    "migration_apply": {
+      "status": "schema_only",
+      "applied_at_utc": "2026-08-22T06:26:28Z",
+      "tables_present": 7,
+      "backfill": "not_started",
+      "reason": "the initial module-unsafe runbook command failed before BackfillCoordinator started; the invocation was corrected in anchor commit 020fe393ab35781846d9210594fe865c862ba32d"
+    },
+    "rendered_config_identity": {
+      "bff_reader_backend": "json",
+      "relational_writer_backend": "disabled",
+      "projection_schema": "trade_journey_projection",
+      "strict_auth": true,
+      "live_broker_enabled": false
+    },
+    "live_controller_before_reads": {
+      "backend": "legacy_json",
+      "checkpoint": 7100730,
+      "source_high_watermark": 0,
+      "backlog": 0,
+      "accepted_live": true,
+      "deployment_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+      "relational_controller_present": false
+    },
     "shadow_backlog_zero": "not_run",
-    "pre_switch_target_parity": "not_run",
+    "pre_switch_target_parity": "blocked_before_run: canonical lifecycle source window is empty while the preserved legacy projection is non-empty",
     "authorized_target_dev_paper_canary": "not_run",
     "all_target_dev_paper_reads": "not_run",
     "authenticated_real_paper_lifecycle": "not_run",
@@ -155,8 +178,41 @@
     "rollback_to_json": "not_run",
     "stale_json_label": "not_run",
     "forward_recovery": "not_run",
-    "legacy_volume_preserved": "not_verified_on_target",
+    "legacy_volume_preserved": {
+      "verified_at_utc": "2026-08-22T06:30:50Z",
+      "trade_journey_events_bytes": 2102154569,
+      "loop_runs_bytes": 317514745,
+      "controller_state_bytes": 3170778131
+    },
     "canary_readiness": "not_claimed"
+  },
+  "runtime_attempt_2026_08_22": {
+    "outcome": "blocked_external",
+    "last_verified_at_utc": "2026-08-22T06:30:50Z",
+    "safe_precondition": {
+      "reader_remained": "json",
+      "writer_remained": "disabled",
+      "bff_restart_count": 0,
+      "projector_restart_count": 0,
+      "read_switch_occurred": false,
+      "shadow_activation_occurred": false
+    },
+    "canonical_source": {
+      "table": "public.telemetry_events",
+      "retained_lifecycle_rows": 0,
+      "minimum_lifecycle_ingested_seq": 0,
+      "maximum_lifecycle_ingested_seq": 0,
+      "projection_receipts": 0
+    },
+    "destructive_upstream_event": {
+      "deployment_run": "https://github.com/ajoe734/pantheon/actions/runs/32554078801",
+      "observed_at_utc": "2026-08-22T05:21:28Z",
+      "workflow_evidence": "job 96985411002 lines 9047-9064 report the default root-deploy telemetry prune, NOTICE truncating public.telemetry_events, and table size reducing from 4880 kB to 96 kB",
+      "repository_source": "scripts/deploy_nonprod_vm.sh:1755 prune_dev_management_ai_telemetry_for_disk",
+      "backup_search": "no workflow backup artifact, GCP snapshot, machine image, local PostgreSQL dump, or telemetry backup was found by read-only inspection"
+    },
+    "why_cutover_stopped": "Backfill authority is canonical telemetry_events, not the derived legacy JSON bundle. Backfilling from the 5.2 GiB preserved derived bundle would forge source authority; clearing that bundle to manufacture parity would violate legacy preservation and non-destructive scope. With zero canonical lifecycle rows and a non-empty legacy projection, pre-switch parity and rollback-without-data-loss cannot be truthfully accepted.",
+    "required_external_recovery": "Restore a canonical pre-truncation telemetry_events source under governed incident/recovery authority, or obtain an explicit architecture/operator decision that defines a reviewed new cutover baseline and disposition for the preserved legacy history. Then rerun backfill, parity, canary, rollback/forward, and the full 24-hour observation."
   },
   "observation_24h": {
     "status": "not_started",
@@ -171,6 +227,6 @@
     "implementation_review_ready": true,
     "operational_acceptance_review_ready": false,
     "ready_for_done": false,
-    "reason": "implementation is locally validated; exact merged deployment, target parity, canary, rollback/forward, and actual 24-hour observation have not executed"
+    "reason": "exact deployment is present and the additive schema was applied, but canonical lifecycle telemetry was truncated by the root deploy before backfill. Target parity, canary, rollback/forward, and actual 24-hour observation cannot execute truthfully until external recovery or a reviewed baseline decision."
   }
 }

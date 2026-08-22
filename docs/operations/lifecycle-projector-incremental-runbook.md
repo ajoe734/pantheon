@@ -29,6 +29,13 @@ captured. Do not infer a later gate from an earlier pass.
   JSON implementation is not restarted alongside it.
 - Preserve the `bff-data` volume and its final JSON generation. JSON is a
   recovery reader only after cutover and must report stale truth honestly.
+- `telemetry_events` is the only backfill authority. Before an exact root
+  deploy, prove that the selected deploy path will not prune or truncate that
+  table before the backfill commits. Capture the lifecycle-row count and
+  retained high watermark both before and after deployment. If a non-empty
+  legacy bundle remains but the canonical lifecycle source window is empty,
+  stop: do not backfill from derived JSON and do not clear legacy state to
+  manufacture parity.
 - Never record a DSN, credential, access token, raw payload, or page-token
   secret in evidence. Record only allowlisted controller/config fields and
   checksums.
