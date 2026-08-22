@@ -72,8 +72,8 @@ short-lived strict-auth dev-login readback against current dev SHA
 12 canonical rows still exposed static `current_maturity`, `target_maturity`,
 `maturity`, `evidence`, and `execution_tasks` fields, and did not expose
 `runtime_maturity`. This is the expected pre-task baseline, not a closure
-pass: the stimulus gate and current-record projection live on task head
-`fd0602813ce347f5665b6f43ac98373532bab446`.
+pass: the stimulus gate and current-record projection are delivered by the
+current head of task PR #5122.
 
 Human/Ops must provide an authorized exact-head candidate deployment (or a
 governed review/merge path that produces one) before this task can run its

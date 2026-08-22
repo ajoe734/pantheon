@@ -41,7 +41,7 @@
   "external_execution_hold": {
     "status": "blocked_pending_human_ops_current_dev_window",
     "observed_at": "2026-08-22",
-    "reason": "The parent gate composes a Runtime worker-stop proof and a Human policy-scheduler/consultation restart proof, so it still needs a governed exclusive current-dev window. The prerequisite operator-bff redeploy is present at SHA 97945de7c5193baa9832f6c02674714d889577b9, but strict-auth readback proves that deployment predates this task: it returns 13 inventory rows whose canonical records retain static current_maturity/target_maturity/maturity/evidence/execution_tasks claims and lack runtime_maturity. The truthful closure must run against an exact deployment of task head fd0602813ce347f5665b6f43ac98373532bab446, not against this pre-task baseline.",
+    "reason": "The parent gate composes a Runtime worker-stop proof and a Human policy-scheduler/consultation restart proof, so it still needs a governed exclusive current-dev window. The prerequisite operator-bff redeploy is present at SHA 97945de7c5193baa9832f6c02674714d889577b9, but strict-auth readback proves that deployment predates this task: it returns 13 inventory rows whose canonical records retain static current_maturity/target_maturity/maturity/evidence/execution_tasks claims and lack runtime_maturity. The truthful closure must run against an exact deployment of the current head of task PR #5122, not against this pre-task baseline.",
     "current_dev_preflight": {
       "deployed_sha": "97945de7c5193baa9832f6c02674714d889577b9",
       "endpoint": "/bff/v5/loop-health",
@@ -56,10 +56,10 @@
         "execution_tasks"
       ],
       "status": "expected_pre_task_baseline_not_closure_evidence",
-      "task_head": "fd0602813ce347f5665b6f43ac98373532bab446"
+      "task_source_head_at_preflight": "fd0602813ce347f5665b6f43ac98373532bab446"
     },
     "required_handoff": [
-      "Human/Ops: authorize a governed exact-head candidate deployment for fd0602813ce347f5665b6f43ac98373532bab446, or provide the governed review/merge path that can produce the same exact deployed identity.",
+      "Human/Ops: authorize a governed exact-head candidate deployment for the current head of task PR #5122, or provide the governed review/merge path that can produce the same exact deployed identity.",
       "Human/Ops: provide a governed current-dev test window, short-lived credentials, and restart authorization for the fresh Human and Runtime owner runs; do not run the worker-stop/restart cases against the shared project without that authority.",
       "Task owner: run PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E=1 on the exact resulting deployment, commit the bounded passed parent report and SHA-256, then request independent review of that exact head."
     ],
