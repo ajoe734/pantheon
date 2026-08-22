@@ -20,7 +20,7 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
         "display_name": "Pantheon",
         "repo": "ajoe734/pantheon",
         "local_path": ".",
-        "default_branch": "master",
+        "default_branch": "dev",
         "coordination_dir": ".coordination",
         "requests_dir": ".coordination/requests",
         "responses_dir": ".coordination/responses",

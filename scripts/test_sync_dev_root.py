@@ -106,6 +106,9 @@ def _run_sync(
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
+    # The fake Pantheon repository is enough to validate the wiring; the
+    # production script's default remains the canonical execute-plans checkout.
+    env["PANTHEON_EXECUTE_PLANS_SOURCE_ROOT"] = str(dev_root)
     args = ["bash", str(script), str(dev_root), str(live_config), str(coordination_root)]
     if authority_env_file is not None:
         args.append(str(authority_env_file))
@@ -148,6 +151,10 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
         str(coordination),
         "--live-config",
         str(live_config),
+        "--repository-source-root",
+        f"pantheon={dev_root}",
+        "--repository-source-root",
+        f"execute_plans={dev_root}",
     ]
     source = SYNC_SCRIPT.read_text(encoding="utf-8")
     assert "PID_FILE=" not in source
