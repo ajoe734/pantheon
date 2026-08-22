@@ -21,6 +21,7 @@ from scripts.lifecycle_projector_legacy_retire import (
     load_and_validate_approval_record,
     main as cli_main,
     resolve_governed_status_root,
+    resolve_signing_key,
     run_retirement,
     validate_destination_path_safety,
     validate_path_safety,
@@ -1800,3 +1801,170 @@ def test_canonical_task_state_identity_binding_rejects_conflicting_status_root_e
         match="conflicts with authoritative identity root",
     ):
         resolve_governed_status_root()
+
+
+def test_cli_rejects_forged_identity_chain_when_supervisor_config_absent(
+    tmp_path: Path, monkeypatch
+):
+    """Negative regression test: CLI rejects forged self-consistent identity rooted at canonical repo
+    with attacker runtime key when authoritative supervisor config/key files are absent.
+    """
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    _seed_legacy_projection_fixture(root)
+
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+
+    # Point fixed config & key paths to non-existent files
+    nonexistent_config = tmp_path / "nonexistent-runtime" / "live-supervisor-config.json"
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", nonexistent_config)
+    monkeypatch.setattr(
+        "scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SIGNING_KEY_PATHS",
+        (
+            tmp_path / "nonexistent-runtime" / "human-ops-signing.key",
+            tmp_path / "nonexistent-runtime" / "authority-signing.env",
+        ),
+    )
+    monkeypatch.delenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", raising=False)
+    monkeypatch.delenv("PANTHEON_STATUS_ROOT", raising=False)
+    monkeypatch.delenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", raising=False)
+
+    manifest_output = status_root / "dry-run.json"
+    rc = cli_main(["--root", str(root), "--output", str(manifest_output)])
+    assert rc == 0
+    dry_run = json.loads(manifest_output.read_text(encoding="utf-8"))
+
+    # Attacker sets up runtime with attacker key
+    attacker_runtime = tmp_path / "attacker_runtime"
+    attacker_runtime.mkdir(parents=True, exist_ok=True)
+    attacker_event_log = attacker_runtime / "task-state-events-v2.jsonl"
+    attacker_event_log.write_text("", encoding="utf-8")
+    attacker_key = "attacker-forged-secret-key-333"
+    (attacker_runtime / "human-ops-signing.key").write_text(attacker_key, encoding="utf-8")
+
+    # Attacker crafts self-consistent identity pointing to status_root (canonical repo root) and attacker event_log
+    identity_payload = {
+        "schema_version": 1,
+        "status_root": str(status_root),
+        "status_file": str(status_root / "ai-status.json"),
+        "archive_root": str(status_root / "ai-task-archive"),
+        "event_log": str(attacker_event_log),
+    }
+    encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+    identity_json = json.dumps({**identity_payload, "identity_sha256": identity_sha256})
+    monkeypatch.setenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", identity_json)
+
+    # Attacker creates signed approval record in status_root
+    attacker_record = _create_approval_record(
+        dry_run,
+        action="archive",
+        root_path=str(root),
+        signing_key=attacker_key,
+    )
+    approval_path = status_root / "attacker-approval.json"
+    approval_path.write_text(json.dumps(attacker_record), encoding="utf-8")
+
+    rc = cli_main(
+        [
+            "--root",
+            str(root),
+            "--action",
+            "archive",
+            "--execute",
+            "--dry-run-manifest",
+            str(manifest_output),
+            "--approval-record",
+            str(approval_path),
+        ]
+    )
+    assert rc == 1
+
+    # Verify no files were moved or deleted
+    assert (root / "controller_state.json").exists()
+    assert (root / "health_state.json").exists()
+    assert (root / "trade_journey_events.json").exists()
+    assert (root / "loop_runs.json").exists()
+    assert not (root / "quarantine").exists()
+
+
+def test_resolve_signing_key_fails_closed_without_authoritative_config_or_keys(
+    tmp_path: Path, monkeypatch
+):
+    """Negative regression test: resolve_signing_key returns None when fixed config/keys are absent,
+    even if caller-provided PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON or env key is present.
+    """
+    nonexistent_config = tmp_path / "nonexistent-runtime" / "live-supervisor-config.json"
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", nonexistent_config)
+    monkeypatch.setattr(
+        "scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SIGNING_KEY_PATHS",
+        (
+            tmp_path / "nonexistent-runtime" / "human-ops-signing.key",
+            tmp_path / "nonexistent-runtime" / "authority-signing.env",
+        ),
+    )
+    monkeypatch.delenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", raising=False)
+
+    attacker_runtime = tmp_path / "attacker_runtime"
+    attacker_runtime.mkdir(parents=True, exist_ok=True)
+    attacker_event_log = attacker_runtime / "task-state-events-v2.jsonl"
+    attacker_event_log.write_text("", encoding="utf-8")
+    (attacker_runtime / "human-ops-signing.key").write_text("attacker-key", encoding="utf-8")
+
+    identity_payload = {
+        "schema_version": 1,
+        "status_root": str(tmp_path),
+        "status_file": str(tmp_path / "ai-status.json"),
+        "archive_root": str(tmp_path / "ai-task-archive"),
+        "event_log": str(attacker_event_log),
+    }
+    encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+    identity_json = json.dumps({**identity_payload, "identity_sha256": identity_sha256})
+    monkeypatch.setenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", identity_json)
+    monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", "attacker-env-key")
+
+    resolved = resolve_signing_key(allow_custom_root=False)
+    assert resolved is None
+
+
+def test_resolve_governed_status_root_rejects_identity_when_supervisor_config_absent(
+    tmp_path: Path, monkeypatch
+):
+    """Negative regression test: resolve_governed_status_root fails closed when PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON
+    is provided but fixed authoritative supervisor config is absent.
+    """
+    monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
+    monkeypatch.delenv("PANTHEON_STATUS_ROOT", raising=False)
+    monkeypatch.delenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", raising=False)
+
+    nonexistent_config = tmp_path / "nonexistent-runtime" / "live-supervisor-config.json"
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", nonexistent_config)
+
+    status_root = tmp_path / "repo_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+
+    identity_payload = {
+        "schema_version": 1,
+        "status_root": str(status_root),
+        "status_file": str(status_root / "ai-status.json"),
+        "archive_root": str(status_root / "ai-task-archive"),
+        "event_log": str(tmp_path / "event-log.jsonl"),
+    }
+    encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+    identity_json = json.dumps({**identity_payload, "identity_sha256": identity_sha256})
+    monkeypatch.setenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", identity_json)
+
+    with pytest.raises(
+        RetirementValidationError,
+        match="authoritative supervisor configuration is absent",
+    ):
+        resolve_governed_status_root(allow_custom_root=False)
+

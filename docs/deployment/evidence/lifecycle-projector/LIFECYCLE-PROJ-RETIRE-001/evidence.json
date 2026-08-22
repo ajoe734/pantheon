@@ -46,9 +46,9 @@
   },
   "artifact_checksums_sha256": {
     "docker-compose.yml": "027f663caf18cc20e16e41ce856787525fa1b6d71b19639fc4fde24cfa8b8318",
-    "docs/operations/lifecycle-projector-incremental-runbook.md": "e2f541b17751596952fa9bfcb6fb11632793e7597c4da6422f7f56768f0f27b7",
-    "scripts/lifecycle_projector_legacy_retire.py": "12b4932d8c565a6e32ccb348fa83e15e2584e3d324e34fdeca1bca16e25c084b",
-    "scripts/test_lifecycle_projector_legacy_retire.py": "bc10a6b06ce08c3f012c41b4638d92a93872125a87b63bd350b0936255527219",
+    "docs/operations/lifecycle-projector-incremental-runbook.md": "1de9c7d322b54608c2834671eb8b60a619ac2c66c96c98227f325249cce2899f",
+    "scripts/lifecycle_projector_legacy_retire.py": "f4180bd402aca7da5d1f983371b86d96a79e6ec05470eb35dd38c14cf5d3765b",
+    "scripts/test_lifecycle_projector_legacy_retire.py": "0df574f9dc43490be7b68ea06f3d01df1962cb14f3ebaad15331b8994df9ef86",
     "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json": "db3a15a59c13a610a67217a78d3f91bfef423dd11d696801c17a0888222fd03e",
     "services/control-plane/bff/main.py": "8ad7b633e2421113a89c961329ace548f4386a2f93443831efdad9fcf0eed3a4",
     "services/control-plane/bff/read_store.py": "3f1b3bca1252bd3271d2ad463c5a79068662bdd1ad33ba7ceefe682dc5f975a1",
@@ -180,8 +180,8 @@
     },
     "retirement_safety_gate": {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_lifecycle_projector_legacy_retire.py",
-      "result": "53 passed in 4.32s",
-      "coverage": "Fail-closed allowlisting for root and generation files; broad/system path and canonical source rejections; safe quarantine destination validation; exact approved dry-run manifest and quarantine_path binding; live drift verification; TOCTOU/mutation protection preserving unlisted files and verified non-empty directories; structured Human/Ops approval record bound to governed status root with cryptographic signature validation, rejection of self-authored records, and CLI custom root governance."
+      "result": "56 passed in 4.53s",
+      "coverage": "Fail-closed allowlisting for root and generation files; broad/system path and canonical source rejections; safe quarantine destination validation; exact approved dry-run manifest and quarantine_path binding; live drift verification; TOCTOU/mutation protection preserving unlisted files and verified non-empty directories; structured Human/Ops approval record bound to governed status root with cryptographic HMAC-SHA256 signature validation, rejection of self-authored records, fail-closed trusted supervisor config and identity resolution, and CLI custom root governance."
     },
     "contract_preservation_gates": {
       "tj_e2e_005_read_api": {
@@ -232,7 +232,7 @@
       "Execution requires non-forgeable governed Human/Ops --approval-record located within the immutable governed status root (bound to canonical repository root or supervisor task state identity) and signed with an authoritative HMAC-SHA256 signature matching exact task id, root, action, recovery posture, quarantine path, and inventory SHA-256 digest",
       "Rejects caller-controlled status root environment overrides outside repository root and explicitly rejects forgeable unkeyed SHA-256 deterministic hashes",
       "Rejects self-authored or unauthoritative approval records located outside the governed status root",
-      "Strictly governs custom roots and keys: custom root overrides, test-mode bypasses, and caller-selected CLI verification keys are removed from the production CLI; signature verification keys are resolved strictly from protected supervisor/Human-Ops key files (human-ops-signing.key or authority-signing.env) with caller environment fallback prohibited, enforcing exact /data/bff/lifecycle-projection target root in production",
+      "Strictly governs custom roots and keys: custom root overrides, test-mode bypasses, and caller-selected CLI verification keys are removed from the production CLI; signature verification keys are resolved strictly from verified authoritative supervisor protected key files (human-ops-signing.key or authority-signing.env) with caller environment fallback (including unverified task state identities or attacker keys when authoritative supervisor config is absent) failing closed, enforcing exact /data/bff/lifecycle-projection target root in production",
       "Prohibits caller-supplied token or approver bypass without an authorized Human/Ops approval record",
       "Supports quarantine mode preserving full directory structures for complete recoverability"
     ]
@@ -261,7 +261,7 @@
     "services_trade_journey": "14 passed, 1 skipped in 1.35s",
     "services_control_plane_bff_readiness": "4 passed in 5.36s",
     "services_trade_journey_compose": "7 passed in 1.50s",
-    "scripts_test_lifecycle_projector_legacy_retire": "53 passed in 4.32s",
+    "scripts_test_lifecycle_projector_legacy_retire": "56 passed in 4.53s",
     "services_trade_journey_hosted_probe": "20 passed in 2.98s",
     "services_control_plane_bff_tj_e2e_005": "35 passed in 13.46s",
     "services_control_plane_bff_tj_e2e_007": "3 passed in 5.69s",

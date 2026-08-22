@@ -149,8 +149,8 @@ def resolve_signing_key(
 
     The signing key is loaded strictly from verified authoritative supervisor
     or Human-Ops protected key files. Caller-controlled environment variables
-    (such as PANTHEON_HUMAN_OPS_SIGNING_KEY) cannot satisfy the execution gate
-    and are never used as a fallback.
+    (such as PANTHEON_HUMAN_OPS_SIGNING_KEY or PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON)
+    cannot satisfy the execution gate and are never used as a fallback.
     """
     if allow_custom_root and signing_key_override is not None:
         if isinstance(signing_key_override, str):
@@ -171,19 +171,6 @@ def resolve_signing_key(
     elif allow_custom_root and live_config_env and live_config_env.strip():
         config_candidates.append(Path(live_config_env.strip()).resolve())
 
-    canonical_identity_raw = os.environ.get("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON")
-    if canonical_identity_raw and canonical_identity_raw.strip():
-        try:
-            identity_data = json.loads(canonical_identity_raw)
-            if isinstance(identity_data, dict):
-                event_log_raw = identity_data.get("event_log")
-                if event_log_raw:
-                    runtime_dir = Path(event_log_raw).resolve().parent
-                    candidate_key_paths.append(runtime_dir / "human-ops-signing.key")
-                    candidate_key_paths.append(runtime_dir / "authority-signing.env")
-        except Exception:
-            pass
-
     for config_candidate in config_candidates:
         if config_candidate.exists() and config_candidate.is_file():
             try:
@@ -198,7 +185,7 @@ def resolve_signing_key(
             except Exception:
                 pass
 
-    if status_root is not None:
+    if allow_custom_root and status_root is not None:
         resolved_status_root = status_root.resolve()
         candidate_key_paths.append(resolved_status_root.parent / "runtime" / "human-ops-signing.key")
         candidate_key_paths.append(resolved_status_root.parent / "runtime" / "authority-signing.env")
@@ -442,6 +429,11 @@ def resolve_governed_status_root(
                     "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON does not match the authoritative supervisor task state identity."
                 )
         else:
+            if not allow_custom_root:
+                raise RetirementValidationError(
+                    "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON cannot be verified: "
+                    "authoritative supervisor configuration is absent. Unverified task state identity is prohibited."
+                )
             if resolved_bound_root != CANONICAL_REPO_ROOT.resolve():
                 raise RetirementValidationError(
                     f"PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON status root {str(resolved_bound_root)!r} does not match canonical repository root {str(CANONICAL_REPO_ROOT.resolve())!r}"
