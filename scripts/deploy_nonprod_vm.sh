@@ -1807,13 +1807,19 @@ DECLARE
   item record;
   target_schema text := current_setting('pantheon.mgmt_ai_schema');
 BEGIN
+  IF target_schema = 'public' THEN
+    RAISE NOTICE 'refusing to prune telemetry_events: '
+      'MANAGEMENT_AI_STORE_SCHEMA resolves to canonical public schema';
+    RETURN;
+  END IF;
+
   FOR item IN
     SELECT n.nspname AS schema_name, c.relname AS table_name
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.relname = 'telemetry_events'
       AND c.relkind IN ('r', 'p')
-      AND n.nspname IN (target_schema, 'public')
+      AND n.nspname = target_schema
   LOOP
     RAISE NOTICE 'truncating %.%', item.schema_name, item.table_name;
     EXECUTE format('TRUNCATE TABLE %I.%I', item.schema_name, item.table_name);
