@@ -3,7 +3,7 @@
   "task": {
     "id": "LIFECYCLE-PROJ-CUTOVER-001",
     "title": "Canary and cut over target-dev lifecycle reads",
-    "owner": "Codex",
+    "owner": "Antigravity2",
     "reviewer": "Codex2",
     "status": "in_progress",
     "base_branch": "dev",
@@ -113,7 +113,7 @@
     },
     "full_trade_journey_gate": {
       "command": "TEST_DATABASE_URL=<redacted-test-postgres-dsn> TEST_DATABASE_ADMIN_URL=<redacted-test-postgres-admin-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey -rs",
-      "result": "223 passed in 83.00s",
+      "result": "237 passed in 100.21s",
       "skipped": 0
     },
     "hosted_probe_and_readback_gate": {
