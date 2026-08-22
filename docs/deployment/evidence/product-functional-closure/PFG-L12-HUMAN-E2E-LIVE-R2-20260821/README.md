@@ -36,7 +36,7 @@ Loops 5 through 7 following the false terminal closeout of PFG-L12-HUMAN-E2E-202
 
 The complete Human Learning E2E test suite (`test_current_human_learning_deployed_e2e.py`) passed against the live deployment.
 
-### Test Results (6 passed in 113.75s)
+### Test Results (6 passed in 107.87s)
 - `test_deployed_agora_interaction_evidence_identity_chain`: **PASSED**
 - `test_deployed_imitation_research_handoff_identity_chain`: **PASSED**
 - `test_deployed_consultation_governance_handoff_identity_chain`: **PASSED**
@@ -45,14 +45,14 @@ The complete Human Learning E2E test suite (`test_current_human_learning_deploye
 - `test_deployed_suite_has_no_fixture_or_product_store_shortcut`: **PASSED**
 
 ### Durable Identity Correlation Chain
-- `evidence_id`: `ev-l12-hl-97a0fbf66b`
-- `dataset_version_id`: `dsv-cada16a07489f45f286ea729`
-- `agora_handoff_id`: `gh-6338ebd859ec648fb4b5f283`
-- `candidate_id`: `sic-9f1b0ea1ed574e4ffaa8bb7beaa06c6a`
-- `experiment_task_id`: `rtask-exp-sic-9f1b0ea1ed574e4ffaa8bb7beaa06c6a`
-- `experiment_run_id`: `rrun-exp-sic-9f1b0ea1ed574e4ffaa8bb7beaa06c6a`
-- `consult_request_id`: `cr-l12-hl-97a0fbf66b`
-- `memo_id`: `mem-cb82242d7ac179d5f332`
-- `governance_handoff_id`: `gh-59ad972180dcc4f013fe`
+- `evidence_id`: `ev-l12-hl-78bf830dbb`
+- `dataset_version_id`: `dsv-417ad512cf6a18d06c2b35d7`
+- `agora_handoff_id`: `gh-0507b45396039d0fe639ce21`
+- `candidate_id`: `sic-64ca31ef2c8d819689f240cfe5ce2b3d`
+- `experiment_task_id`: `rtask-exp-sic-64ca31ef2c8d819689f240cfe5ce2b3d`
+- `experiment_run_id`: `rrun-exp-sic-64ca31ef2c8d819689f240cfe5ce2b3d`
+- `consult_request_id`: `cr-l12-hl-78bf830dbb`
+- `memo_id`: `mem-1ba71290c9d20a381749`
+- `governance_handoff_id`: `gh-ad98489c6066d4beeeba`
 
 The full run report is preserved in [deployed-run.json](file:///tmp/pantheon-worker-worktrees/coordination-root/pfg-l12-human-e2e-live-r2-20260821/docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json).
