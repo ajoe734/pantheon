@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-08-22T14:32:15.282865+00:00",
+  "deployment_sha": "5517afdda923774c1d5f2c80688c76827dae5f91",
+  "environment": "dev",
+  "history_disposition": "partial",
+  "known_history_start": "2026-08-22T11:48:48+00:00",
+  "max_created_at": "2026-08-22T14:32:15+00:00",
+  "min_created_at": "2026-08-22T11:48:48+00:00",
+  "operator_note": "Observed repopulation boundary after SD-DATA-01 fix; canonical history preserved post-boundary with zero drift.",
+  "query_sha256": "cbb98d00313c8d8d2b26b9f2a4440cbecbd1c28fd87fda520746ce1724e33239",
+  "recovery_source": null,
+  "row_count": 7153,
+  "source_high_watermark": 7129636,
+  "source_table": "public.telemetry_events"
+}

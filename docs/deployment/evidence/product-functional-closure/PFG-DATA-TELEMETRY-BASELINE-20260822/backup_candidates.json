@@ -1,0 +1,56 @@
+{
+  "candidates": [
+    {
+      "candidate_id": "gcp_disk_snapshots",
+      "category": "cloud_infrastructure",
+      "disposition": "No GCP disk snapshot, machine image, or persistent disk snapshot exists prior to 2026-08-22 05:21:28+00.",
+      "event_ids_recovered": 0,
+      "location": "GCP project pantheon-lupin-dev-20260719 disk snapshots",
+      "qualifies_as_canonical_source": true,
+      "status": "unavailable"
+    },
+    {
+      "candidate_id": "postgresql_pg_dump_backups",
+      "category": "database_dumps",
+      "disposition": "No PostgreSQL pg_dump, WAL archive, or SQL dump of public.telemetry_events was retained for the truncated historical period.",
+      "event_ids_recovered": 0,
+      "location": "/var/backups, /home/lupin, /data, /tmp",
+      "qualifies_as_canonical_source": true,
+      "status": "unavailable"
+    },
+    {
+      "candidate_id": "docker_postgres_volume",
+      "category": "container_persistent_storage",
+      "disposition": "Active container volume holds canonical public.telemetry_events repopulated post-boundary from 2026-08-22T11:48:48+00:00 forward (7153 rows preserved intact). Pre-boundary historical records prior to truncation are irrecoverable in source.",
+      "event_ids_recovered": 7153,
+      "location": "dev-root_postgres-data / pantheon_postgres-data",
+      "qualifies_as_canonical_source": true,
+      "status": "partial_active_source"
+    },
+    {
+      "candidate_id": "lifecycle_projection_json",
+      "category": "derived_read_model",
+      "disposition": "Derived JSON files contain secondary projection data from historical runs, but per Architecture Decision AD-03 and SD-DATA-02, derived read-models cannot be imported or synthesized into public.telemetry_events as canonical source truth.",
+      "event_ids_recovered": 0,
+      "location": "/data/bff/lifecycle-projection/trade_journey_events.json, loop_runs.json",
+      "qualifies_as_canonical_source": false,
+      "status": "derived_only_rejected_as_source"
+    },
+    {
+      "candidate_id": "synthetic_test_fixtures",
+      "category": "test_fixtures",
+      "disposition": "Synthetic test event fixtures are for unit/integration testing only and are strictly prohibited from being imported into canonical production/dev source tables.",
+      "event_ids_recovered": 0,
+      "location": "services/*/fixtures/ (e.g. pnl_drift_telemetry_event.json, order_rejection_spike_telemetry.json)",
+      "qualifies_as_canonical_source": false,
+      "status": "test_fixtures_rejected_as_source"
+    }
+  ],
+  "deployment_sha": "5517afdda923774c1d5f2c80688c76827dae5f91",
+  "disposition_summary": "Pre-boundary source history prior to 2026-08-22 05:21:28+00 / 11:48:48+00:00 is irrecoverable due to the historical deploy prune defect (G-01 fixed by PFG-DATA-TELEMETRY-PRUNE-20260822). Post-boundary telemetry is actively accumulating and preserved intact in public.telemetry_events.",
+  "environment": "dev",
+  "evaluated_at": "2026-08-22T14:32:15.479555+00:00",
+  "known_history_start": "2026-08-22T11:48:48+00:00",
+  "overall_history_disposition": "partial",
+  "schema_version": "pantheon.telemetry_backup_candidate_inventory.v1"
+}
