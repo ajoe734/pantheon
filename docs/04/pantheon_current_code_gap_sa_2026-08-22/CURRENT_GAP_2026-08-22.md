@@ -256,20 +256,24 @@ does when Source egress is intentionally manual-only.
 
 ### 7.3 Required correction
 
-Use the existing RuntimeBinding, Source snapshot, producer, and fleet. Add a
-bounded paper-session lifecycle:
+Use the existing RuntimeBinding, Source snapshot, producer, and fleet. Express
+the bounded paper-session lifecycle through the existing RuntimeBinding
+transitions:
 
 ```text
 prepared
   -> active_with_fresh_snapshot
-  -> paused_stale_input
+  -> pending_pause
+  -> paused (reason_code=market_input_stale)
   -> resumed_with_new_snapshot | retired
 ```
 
-`paused_stale_input` is a functional state, not process failure. It must stop
-signal production and child work, preserve readback, identify the stale
-snapshot, and require an explicit bounded Source refresh plus resume/redeploy.
-It must not trigger continuous provider pull automatically.
+`paused_stale_input` may be used as a projected functional label, but it is not
+a new RuntimeBinding enum or state store. The existing `paused` status plus
+structured `market_input_stale` metadata must stop signal production and child
+work, preserve readback, identify the stale snapshot, and require an explicit
+bounded Source refresh plus resume/redeploy. It must not trigger continuous
+provider pull automatically.
 
 ## 8. G-04 — Twelve-loop truth still mixes stable catalog and runtime admission
 

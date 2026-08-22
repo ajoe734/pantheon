@@ -98,7 +98,8 @@ reconcile-only Source controller
   -> signal/order/fill/position/telemetry
 
 snapshot expires
-  -> paper session paused_stale_input
+  -> RuntimeBinding active -> pending_pause -> paused
+  -> pause metadata reason_code=market_input_stale
   -> child execution stopped; readback preserved
   -> explicit one-shot refresh
   -> resume with new snapshot OR canonical retire/redeploy
@@ -302,13 +303,16 @@ cutover and its required soak/approval gates.
 
 **Implementation**
 
-1. Add a durable paper session status and transition metadata.
-2. On stale snapshot, atomically transition active session to
-   `paused_stale_input`.
+1. Reuse `RuntimeBindingStatus` and add structured transition metadata; do not
+   add a paper-only status or state store.
+2. On stale snapshot, atomically transition the binding
+   `active -> pending_pause -> paused` with
+   `reason_code=market_input_stale`.
 3. Stop signal emission and binding-scoped child execution.
 4. Preserve the last terminal signal/order/fill/position and stale snapshot
    identity/time.
-5. Add explicit resume with a new canonical snapshot or canonical retire and
+5. Resume the same binding through the existing `paused -> active` transition
+   only with a new admitted canonical snapshot, or use canonical retire and
    redeploy.
 6. Project paused state into Loop 9 and Management.
 
