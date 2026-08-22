@@ -1,0 +1,49 @@
+{
+  "schema_version": "pantheon.product_functional_closure.dev_telemetry_prune_scope_evidence.v1",
+  "task": {
+    "id": "PFG-DATA-TELEMETRY-PRUNE-20260822",
+    "title": "Prevent dev deployment from pruning canonical telemetry",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-DATA-TELEMETRY-PRUNE-20260822/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "scripts/deploy_nonprod_vm.sh prune_dev_management_ai_telemetry_for_disk() truncate scope",
+    "not_changing": [
+      "The dev-root/postgres-backend/PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE gating that decides whether the prune runs at all",
+      "The diagnostic before/after size listing across all schemas",
+      "Any production or non-dev deployment path"
+    ],
+    "composes_with": [
+      "scripts/test_management_ai_postgres_bootstrap_contract.py",
+      "docker-compose.yml MANAGEMENT_AI_STORE_SCHEMA default"
+    ]
+  },
+  "defect": {
+    "summary": "The truncation loop matched n.nspname IN (target_schema, 'public'), so every dev root deploy truncated public.telemetry_events (the canonical table) in addition to the derived Management AI schema's copy.",
+    "impact": "Canonical telemetry_events data in the public schema was silently emptied on every dev root deploy that ran the disk-pruning step, even though the prune was only meant to bound the derived Management AI store."
+  },
+  "fix": {
+    "summary": "Scoped the TRUNCATE loop to n.nspname = target_schema only (MANAGEMENT_AI_STORE_SCHEMA, default management_ai) and added an explicit refusal (RAISE NOTICE + RETURN) if that schema ever resolves to 'public', so the canonical table can never be truncated by this path even via misconfiguration.",
+    "file": "scripts/deploy_nonprod_vm.sh",
+    "function": "prune_dev_management_ai_telemetry_for_disk"
+  },
+  "validation": {
+    "commands": [
+      "bash -n scripts/deploy_nonprod_vm.sh",
+      "/home/lupin/pantheon/.venv/bin/python -m pytest -q scripts/test_deploy_nonprod_telemetry_prune.py scripts/test_management_ai_postgres_bootstrap_contract.py"
+    ],
+    "results": {
+      "bash_syntax_check": "passed",
+      "focused_pytest_suite": "10 passed"
+    }
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "required_focus": [
+      "Confirm the truncate predicate no longer matches n.nspname = 'public' under any config",
+      "Confirm the dev-root/postgres-backend/env-flag gating above the fixed block is unchanged",
+      "Confirm the added public-schema refusal cannot be bypassed by a differently-cased or quoted schema value passed through MANAGEMENT_AI_STORE_SCHEMA"
+    ]
+  }
+}
