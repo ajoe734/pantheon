@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import asyncpg
@@ -376,3 +377,103 @@ def test_db_behavior_drift_guard_catches_canonical_mutation(
             await conn.close()
 
     asyncio.run(_test())
+
+
+# -----------------------------------------------------------------------------
+# Deploy Script CLI Dry-Run Tests for Schema Resolution & Rejection
+# -----------------------------------------------------------------------------
+
+def _run_deploy_dry_run(env_overrides: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    if env_overrides:
+        env.update(env_overrides)
+    cmd = [
+        str(DEPLOY_SCRIPT),
+        "--environment", "dev",
+        "--sha", "95a1455e3dc1a275b8d541fd2c432c3971013308",
+        "--project-id", "pantheon-lupin-dev-20260719",
+        "--dry-run",
+    ]
+    return subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
+
+
+def test_deploy_script_defaults_to_management_ai_when_unset() -> None:
+    env = {k: v for k, v in os.environ.items() if k not in ("MANAGEMENT_AI_STORE_SCHEMA", "DEV_MANAGEMENT_AI_STORE_SCHEMA")}
+    res = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment", "dev",
+            "--sha", "95a1455e3dc1a275b8d541fd2c432c3971013308",
+            "--project-id", "pantheon-lupin-dev-20260719",
+            "--dry-run",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0
+    assert "management_ai_store_schema=management_ai" in res.stdout
+
+
+def test_deploy_script_rejects_empty_schema_in_env() -> None:
+    res = _run_deploy_dry_run({"MANAGEMENT_AI_STORE_SCHEMA": ""})
+    assert res.returncode != 0
+    assert "MANAGEMENT_AI_STORE_SCHEMA is empty or invalid SQL identifier: ''" in res.stderr
+
+
+def test_deploy_script_rejects_empty_dev_schema_in_env() -> None:
+    env_overrides = {"DEV_MANAGEMENT_AI_STORE_SCHEMA": ""}
+    # Remove MANAGEMENT_AI_STORE_SCHEMA so it inherits from DEV_MANAGEMENT_AI_STORE_SCHEMA
+    env = {k: v for k, v in os.environ.items() if k != "MANAGEMENT_AI_STORE_SCHEMA"}
+    env.update(env_overrides)
+    res = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment", "dev",
+            "--sha", "95a1455e3dc1a275b8d541fd2c432c3971013308",
+            "--project-id", "pantheon-lupin-dev-20260719",
+            "--dry-run",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode != 0
+    assert "MANAGEMENT_AI_STORE_SCHEMA is empty or invalid SQL identifier: ''" in res.stderr
+
+
+def test_deploy_script_rejects_both_empty_schemas_in_env() -> None:
+    res = _run_deploy_dry_run({
+        "MANAGEMENT_AI_STORE_SCHEMA": "",
+        "DEV_MANAGEMENT_AI_STORE_SCHEMA": "",
+    })
+    assert res.returncode != 0
+    assert "MANAGEMENT_AI_STORE_SCHEMA is empty or invalid SQL identifier: ''" in res.stderr
+
+
+def test_deploy_script_rejects_public_schema_in_env() -> None:
+    res = _run_deploy_dry_run({"MANAGEMENT_AI_STORE_SCHEMA": "public"})
+    assert res.returncode != 0
+    assert "MANAGEMENT_AI_STORE_SCHEMA cannot be 'public'" in res.stderr
+
+    res_upper = _run_deploy_dry_run({"MANAGEMENT_AI_STORE_SCHEMA": "PUBLIC"})
+    assert res_upper.returncode != 0
+    assert "MANAGEMENT_AI_STORE_SCHEMA cannot be 'public'" in res_upper.stderr
+
+
+def test_deploy_script_rejects_invalid_identifier_in_env() -> None:
+    res = _run_deploy_dry_run({"MANAGEMENT_AI_STORE_SCHEMA": "bad;identifier"})
+    assert res.returncode != 0
+    assert "MANAGEMENT_AI_STORE_SCHEMA is empty or invalid SQL identifier: 'bad;identifier'" in res.stderr
+
+    res_num = _run_deploy_dry_run({"MANAGEMENT_AI_STORE_SCHEMA": "123invalid"})
+    assert res_num.returncode != 0
+    assert "MANAGEMENT_AI_STORE_SCHEMA is empty or invalid SQL identifier: '123invalid'" in res_num.stderr
+
+
+def test_deploy_script_accepts_valid_custom_schema_in_env() -> None:
+    res = _run_deploy_dry_run({"MANAGEMENT_AI_STORE_SCHEMA": "custom_management_v2"})
+    assert res.returncode == 0
+    assert "management_ai_store_schema=custom_management_v2" in res.stdout

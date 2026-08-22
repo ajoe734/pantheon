@@ -23,15 +23,14 @@ to bound the size of the derived Management AI store.
 # 1. Shell syntax check
 bash -n scripts/deploy_nonprod_vm.sh
 
-# 2. Comprehensive static contract and PostgreSQL behavioral tests
+# 2. Comprehensive static contract, PostgreSQL behavioral, and CLI dry-run tests
 python3 -m pytest -v \
   scripts/test_deploy_nonprod_telemetry_prune.py \
   scripts/test_management_ai_postgres_bootstrap_contract.py
 
 # 3. Two consecutive deployment dry-runs
-./scripts/deploy_nonprod_vm.sh --environment dev --sha 76c417f87ce0a89b27b67691c999fc73f9ec9991 --project-id pantheon-lupin-dev-20260719 --dry-run
-./scripts/deploy_nonprod_vm.sh --environment dev --sha 76c417f87ce0a89b27b67691c999fc73f9ec9991 --project-id pantheon-lupin-dev-20260719 --dry-run
+./scripts/deploy_nonprod_vm.sh --environment dev --sha HEAD --project-id pantheon-lupin-dev-20260719 --dry-run
+./scripts/deploy_nonprod_vm.sh --environment dev --sha HEAD --project-id pantheon-lupin-dev-20260719 --dry-run
 ```
 
-All 18 tests passed (11 prune tests including 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests). Both dry runs succeeded with identical plans.
-
+All 25 tests passed (18 prune tests including 7 CLI dry-run schema tests and 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests). Both dry runs succeeded with identical plans.

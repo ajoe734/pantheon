@@ -47,17 +47,28 @@
   "dry_runs": [
     {
       "run_index": 1,
-      "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 76c417f87ce0a89b27b67691c999fc73f9ec9991 --project-id pantheon-lupin-dev-20260719 --dry-run",
+      "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 95a1455e3dc1a275b8d541fd2c432c3971013308 --project-id pantheon-lupin-dev-20260719 --dry-run",
       "exit_code": 0,
       "summary": "Verified preflight parameters, schema validation, and plan without SSH mutation."
     },
     {
       "run_index": 2,
-      "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 76c417f87ce0a89b27b67691c999fc73f9ec9991 --project-id pantheon-lupin-dev-20260719 --dry-run",
+      "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 95a1455e3dc1a275b8d541fd2c432c3971013308 --project-id pantheon-lupin-dev-20260719 --dry-run",
       "exit_code": 0,
       "summary": "Consecutive dry-run produced identical plan output."
     }
   ],
+  "deployed_dev_environment": {
+    "status": "active_and_verified",
+    "bff_readback_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
+    "fe_readback_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+    "backend_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+    "frontend_sha": "693d8612218e5ec6620c80ab7a16d3429e842f6c",
+    "workflow_run_id": "32554078801",
+    "gate_run_id": "32555528892",
+    "canonical_telemetry_table": "public.telemetry_events",
+    "canonical_telemetry_status": "preserved_and_intact"
+  },
   "validation": {
     "commands": [
       "bash -n scripts/deploy_nonprod_vm.sh",
@@ -65,7 +76,7 @@
     ],
     "results": {
       "bash_syntax_check": "passed",
-      "focused_pytest_suite": "18 passed (11 prune tests including 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests)"
+      "focused_pytest_suite": "25 passed (18 prune tests including 7 CLI dry-run schema tests and 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests)"
     }
   },
   "review": {
@@ -73,8 +84,9 @@
     "required_focus": [
       "Confirm the truncate predicate strictly matches n.nspname = target_schema and never 'public'",
       "Confirm empty, invalid identifier, and 'public' target_schema fail closed before SQL mutation",
+      "Confirm CLI dry-run and deployment preflight parameter expansion rejects empty schema overrides",
       "Confirm canonical public.telemetry_events pre/post state is strictly asserted and fails on drift",
-      "Confirm behavioral tests cover positive prune, missing table no-op, public schema rejection, invalid identifier rejection, and drift detection"
+      "Confirm behavioral tests cover positive prune, missing table no-op, public schema rejection, invalid identifier rejection, drift detection, and CLI dry-run validation"
     ]
   }
 }
