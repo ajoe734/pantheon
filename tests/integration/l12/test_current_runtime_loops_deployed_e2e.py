@@ -52,6 +52,20 @@ TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
 TENANT_ID = "default"
 EVOLUTION_TENANT_ID = "pantheon-default"
 PARENT_ARTIFACT_ID = "artifact-tw-session-momentum-v1"
+CANONICAL_LOOP_IDS = {
+    "source_ingestion",
+    "strategy_distillation",
+    "alpha_replication",
+    "persona_teaching",
+    "agora_interaction_evidence",
+    "human_imitation_shadow_evaluation",
+    "consultation",
+    "promotion_deployment",
+    "capital_pool_execution",
+    "telemetry_reconciliation",
+    "evolution",
+    "bff_health_monitoring",
+}
 
 pytestmark = pytest.mark.skipif(
     os.getenv("PANTHEON_L12_DEPLOYED_E2E", "").strip().lower()
@@ -1059,6 +1073,14 @@ class RuntimeChain:
             headers=self.bff_headers,
         )
 
+    def _bff_loop_health(self) -> dict[str, Any]:
+        return self.http.request(
+            "bff",
+            "GET",
+            "/bff/v5/loop-health",
+            headers=self.bff_headers,
+        )
+
     def _bff_auth_readiness(self) -> dict[str, Any]:
         return self.http.request(
             "bff",
@@ -1538,6 +1560,43 @@ class RuntimeChain:
                 timeout=120,
             )
             healthy_targets = healthy["data"]["targets"]
+            management_readback = self._bff_loop_health()
+            management_items = management_readback.get("items") or management_readback.get("data") or []
+            management_rows = {
+                str(item.get("loop_id") or ""): item
+                for item in management_items
+                if isinstance(item, Mapping) and item.get("classification") == "canonical"
+            }
+            if set(management_rows) != CANONICAL_LOOP_IDS:
+                raise DeployedProofError(
+                    "BFF loop-health did not publish exactly twelve canonical Management rows"
+                )
+            retired_static_claims = {
+                "current_maturity",
+                "target_maturity",
+                "maturity",
+                "evidence",
+                "execution_tasks",
+                "maturity_projection",
+            }
+            management_projection = {}
+            for loop_id, row in management_rows.items():
+                if retired_static_claims.intersection(row):
+                    raise DeployedProofError(
+                        f"BFF loop-health row {loop_id} retained static runtime/task claims"
+                    )
+                runtime_maturity = row.get("runtime_maturity")
+                if not isinstance(runtime_maturity, Mapping):
+                    raise DeployedProofError(
+                        f"BFF loop-health row {loop_id} lacks current runtime maturity"
+                    )
+                management_projection[loop_id] = {
+                    "controller_health_accepted": bool(
+                        (row.get("controller_health") or {}).get("current_record_accepted")
+                    ),
+                    "runtime_maturity": dict(runtime_maturity),
+                    "truth_level": (row.get("truth_source") or {}).get("level"),
+                }
             self.evidence.add_case(
                 "loop_12_bff_typed_health",
                 loop=12,
@@ -1545,7 +1604,14 @@ class RuntimeChain:
                 owner_worker=self.evidence.identities["operator-bff"],
                 terminal_output_id="paper-fleet-reconciler",
                 authority_readback=healthy_targets["paper-fleet-reconciler"],
-                next_consumer_readback=healthy_targets["runtime-manager"],
+                next_consumer_readback={
+                    "management_loop_health": {
+                        "canonical_loop_ids": sorted(management_rows),
+                        "endpoint": "/bff/v5/loop-health",
+                        "rows": management_projection,
+                    },
+                    "runtime_manager": healthy_targets["runtime-manager"],
+                },
                 started_at=loop12_started,
                 compose_services=["operator-bff", "paper-fleet-reconciler", "runtime-manager"],
                 assertions={
@@ -1573,6 +1639,29 @@ class RuntimeChain:
                     timeout=120,
                 )
                 targets = failed["data"]["targets"]
+                loop_health = self._bff_loop_health()
+                loop_items = loop_health.get("items") or loop_health.get("data") or []
+                capital_loop = next(
+                    (
+                        item
+                        for item in loop_items
+                        if isinstance(item, Mapping)
+                        and item.get("loop_id") == "capital_pool_execution"
+                    ),
+                    None,
+                )
+                if not isinstance(capital_loop, Mapping):
+                    raise DeployedProofError(
+                        "BFF loop-health did not publish the Capital loop during worker failure"
+                    )
+                downstream_state = capital_loop.get("downstream_actual_state") or {}
+                if (
+                    downstream_state.get("status") != "degraded"
+                    or "paper-fleet-reconciler" not in str(downstream_state.get("summary") or "")
+                ):
+                    raise DeployedProofError(
+                        "BFF did not attribute the paper fleet worker failure to Capital loop"
+                    )
                 self.evidence.add_case(
                     "negative_typed_worker_failure",
                     loop=12,
@@ -1580,7 +1669,14 @@ class RuntimeChain:
                     owner_worker=self.evidence.identities["operator-bff"],
                     terminal_output_id="paper-fleet-reconciler:unhealthy",
                     authority_readback=targets["paper-fleet-reconciler"],
-                    next_consumer_readback=targets["runtime-manager"],
+                    next_consumer_readback={
+                        "failure_attribution": {
+                            "loop_id": capital_loop.get("loop_id"),
+                            "summary": downstream_state.get("summary"),
+                            "status": downstream_state.get("status"),
+                        },
+                        "runtime_manager": targets["runtime-manager"],
+                    },
                     started_at=loop12_started,
                     compose_services=["operator-bff", "paper-fleet-reconciler", "runtime-manager"],
                     assertions={
@@ -1809,7 +1905,11 @@ def test_loop_12_bff_reads_typed_worker_and_api_health(
 ) -> None:
     case = deployed_runtime_chain["cases"]["loop_12_bff_typed_health"]
     assert case["authority_readback"]["ok"] is True
-    assert case["next_consumer_readback"]["ok"] is True
+    assert case["next_consumer_readback"]["runtime_manager"]["ok"] is True
+    management = case["next_consumer_readback"]["management_loop_health"]
+    assert management["endpoint"] == "/bff/v5/loop-health"
+    assert set(management["canonical_loop_ids"]) == CANONICAL_LOOP_IDS
+    assert set(management["rows"]) == CANONICAL_LOOP_IDS
 
 
 def test_loop_12_bff_uses_strict_short_lived_jwt_authentication(
@@ -1849,7 +1949,11 @@ def test_typed_worker_failure_does_not_mask_api_readiness(
 ) -> None:
     case = deployed_runtime_chain["cases"]["negative_typed_worker_failure"]
     assert case["authority_readback"]["ok"] is False
-    assert case["next_consumer_readback"]["ok"] is True
+    assert case["next_consumer_readback"]["runtime_manager"]["ok"] is True
+    attribution = case["next_consumer_readback"]["failure_attribution"]
+    assert attribution["loop_id"] == "capital_pool_execution"
+    assert attribution["status"] == "degraded"
+    assert "paper-fleet-reconciler" in attribution["summary"]
 
 
 def test_bounded_lifecycle_cursor_and_resource_limits(
