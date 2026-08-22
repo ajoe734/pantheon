@@ -26,7 +26,7 @@ Loops 5 through 7 following the false terminal closeout of PFG-L12-HUMAN-E2E-202
    - `pantheon-source-ingest-scheduler` container: `SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`, `SOURCE_INGEST_CONTROLLER_MAX_TICKS=0`.
 
 4. **Human Learning Deployed E2E Proof (Loops 5 through 7)**:
-   - Run `PANTHEON_L12_HUMAN_LEARNING_E2E=1` against live Compose services with automatic strict dev-login authentication.
+   - Run `PANTHEON_L12_HUMAN_LEARNING_E2E=1` against live Compose services with automatic strict dev-login authentication without hardcoded credentials.
    - Loop 5: Agora Interaction Evidence -> Policy Learning Shadow Imitation Candidate.
    - Loop 6: Policy Learning Candidate -> Research Orchestrator Experiment Run.
    - Loop 7: Consultation Request -> Supervised Workflow Executor -> OpenClaw Advisory Memo -> Governance Gate Handoff.
@@ -36,7 +36,7 @@ Loops 5 through 7 following the false terminal closeout of PFG-L12-HUMAN-E2E-202
 
 The complete Human Learning E2E test suite (`test_current_human_learning_deployed_e2e.py`) passed against the live deployment.
 
-### Test Results (6 passed in 115.39s)
+### Test Results (6 passed in 137.82s)
 - `test_deployed_agora_interaction_evidence_identity_chain`: **PASSED**
 - `test_deployed_imitation_research_handoff_identity_chain`: **PASSED**
 - `test_deployed_consultation_governance_handoff_identity_chain`: **PASSED**
@@ -45,14 +45,14 @@ The complete Human Learning E2E test suite (`test_current_human_learning_deploye
 - `test_deployed_suite_has_no_fixture_or_product_store_shortcut`: **PASSED**
 
 ### Durable Identity Correlation Chain
-- `evidence_id`: `ev-l12-hl-80fa1f2521`
-- `dataset_version_id`: `dsv-442123e2da01e5482def1c86`
-- `agora_handoff_id`: `gh-0507b45396039d0fe639ce21`
-- `candidate_id`: `sic-95f7792e4f6e246fe363d29880c91bee`
-- `experiment_task_id`: `rtask-exp-sic-95f7792e4f6e246fe363d29880c91bee`
-- `experiment_run_id`: `rrun-exp-sic-95f7792e4f6e246fe363d29880c91bee`
-- `consult_request_id`: `cr-l12-hl-80fa1f2521`
-- `memo_id`: `mem-bdea159082e044e2da97`
-- `governance_handoff_id`: `gh-eeaebe53d300213cea16`
+- `evidence_id`: `ev-l12-hl-883562eec4`
+- `dataset_version_id`: `dsv-ca79753d3ce32721d4fe9a87`
+- `agora_handoff_id`: `gh-15aec7cf93c6607b35432734`
+- `candidate_id`: `sic-0f35caa2bee2ad366f58b8edfeed79c3`
+- `experiment_task_id`: `rtask-exp-sic-0f35caa2bee2ad366f58b8edfeed79c3`
+- `experiment_run_id`: `rrun-exp-sic-0f35caa2bee2ad366f58b8edfeed79c3`
+- `consult_request_id`: `cr-l12-hl-883562eec4`
+- `memo_id`: `mem-775779bca79d2216e500`
+- `governance_handoff_id`: `gh-2f3d6e1e528f8a81c158`
 
 The full run report is preserved in [deployed-run.json](file:///tmp/pantheon-worker-worktrees/coordination-root/pfg-l12-human-e2e-live-r2-20260821/docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json).

@@ -11,21 +11,17 @@
     "review_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/evidence.json"
   },
   "scope": {
-    "owned_layer": "Post-merge dev deployment orchestration, hosted Human E2E proof recovery, OpenClaw consultation provider wiring and findings normalization, Compose/Dockerfile entrypoint alignment, and E2E test harness strict authentication",
+    "owned_layer": "Post-merge dev deployment verification, exact-SHA ancestry recording, hosted Human Learning E2E proof recovery (Loops 5-7), source scheduler/egress posture assertion, and E2E test harness secure auth resolution",
     "not_changing": [
+      "Tenant runtime programs or business logic",
       "Canonical downstream Agora, Policy Learning, Research, or Governance domain rules",
-      "Live broker, capital, or production authority",
-      "Tenant business logic outside consultation adapter contribution normalization"
+      "Live broker, capital, or production authority"
     ],
     "composes_with": [
       "PFG-L12-HUMAN-E2E-20260820",
       "PFG-DEV-INTEGRATION-20260820"
     ],
     "changed_files": [
-      "docker-compose.yml",
-      "services/consultation/workflow_executor.py",
-      "services/openclaw-gateway-adapter/Dockerfile",
-      "services/openclaw-gateway-adapter/consultation_provider.py",
       "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
       "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/README.md",
       "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json",
@@ -48,8 +44,7 @@
       "workflow_name": "nonprod-deploy.yml",
       "gate_run_id": "32555528892",
       "gate_workflow_name": "pantheon-integration-gate.yml",
-      "pair_id": "98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529",
-      "live_adapter_service_alignment": "Compose consultation_provider:app entrypoint, consultation findings normalization, and dev-login auth header forwarding are verified live on dev VM containers"
+      "pair_id": "98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529"
     },
     "hosted_version_readback": {
       "status": "passed",
@@ -88,18 +83,18 @@
     "hosted_human_learning_e2e": {
       "status": "passed",
       "test_suite": "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
-      "test_results": "6 passed in 115.39s",
+      "test_results": "6 passed in 137.82s",
       "report_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json",
       "identity_chain": {
-        "evidence_id": "ev-l12-hl-80fa1f2521",
-        "dataset_version_id": "dsv-442123e2da01e5482def1c86",
-        "agora_handoff_id": "gh-0507b45396039d0fe639ce21",
-        "candidate_id": "sic-95f7792e4f6e246fe363d29880c91bee",
-        "experiment_task_id": "rtask-exp-sic-95f7792e4f6e246fe363d29880c91bee",
-        "experiment_run_id": "rrun-exp-sic-95f7792e4f6e246fe363d29880c91bee",
-        "consult_request_id": "cr-l12-hl-80fa1f2521",
-        "memo_id": "mem-bdea159082e044e2da97",
-        "governance_handoff_id": "gh-eeaebe53d300213cea16"
+        "evidence_id": "ev-l12-hl-883562eec4",
+        "dataset_version_id": "dsv-ca79753d3ce32721d4fe9a87",
+        "agora_handoff_id": "gh-15aec7cf93c6607b35432734",
+        "candidate_id": "sic-0f35caa2bee2ad366f58b8edfeed79c3",
+        "experiment_task_id": "rtask-exp-sic-0f35caa2bee2ad366f58b8edfeed79c3",
+        "experiment_run_id": "rrun-exp-sic-0f35caa2bee2ad366f58b8edfeed79c3",
+        "consult_request_id": "cr-l12-hl-883562eec4",
+        "memo_id": "mem-775779bca79d2216e500",
+        "governance_handoff_id": "gh-2f3d6e1e528f8a81c158"
       }
     },
     "restart_replay_identity_stable": {

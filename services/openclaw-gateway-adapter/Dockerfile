@@ -63,4 +63,4 @@ COPY . /workspace
 ENV PORT=8104
 EXPOSE 8104
 
-CMD ["sh", "-c", "uvicorn consultation_provider:app --app-dir services/openclaw-gateway-adapter --host 0.0.0.0 --port ${PORT:-8104}"]
+CMD ["sh", "-c", "uvicorn main:app --app-dir services/openclaw-gateway-adapter --host 0.0.0.0 --port ${PORT:-8104}"]

@@ -256,15 +256,7 @@ def _prompt(payload: ConsultationContributionRequest) -> str:
                 "link": "durable evidence reference",
             }
         ],
-        "findings": [
-            {
-                "severity": "info | low | medium | high | critical",
-                "category": "risk_review",
-                "claim": "verified advisory claim",
-                "recommendation": "risk bound recommendation",
-                "evidence_refs": [],
-            }
-        ],
+        "findings": [],
     }
     return (
         "You are producing an advisory Pantheon Consultation contribution. "
