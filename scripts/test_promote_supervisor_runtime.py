@@ -103,6 +103,28 @@ def test_render_v2_config_requires_one_clean_authoritative_source(tmp_path: Path
     ]
 
 
+def test_render_v2_config_projects_deployment_repository_roots(tmp_path: Path) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    execute_root = tmp_path / "execute-plans"
+    execute_root.mkdir()
+    _git(execute_root, "init", "-b", "dev")
+
+    rendered, _identity = promotion.render_v2_config(
+        candidate,
+        status_root=status_root,
+        live_config_path=tmp_path / "runtime" / "live.json",
+        python_executable=Path(sys.executable),
+        repository_source_roots={
+            "pantheon": candidate,
+            "execute_plans": execute_root,
+        },
+    )
+
+    repositories = rendered["coordination"]["repositories"]
+    assert repositories["pantheon"]["local_path"] == str(candidate.resolve())
+    assert repositories["execute_plans"]["local_path"] == str(execute_root.resolve())
+
+
 def test_seal_command_runtime_removes_write_bits_and_preserves_execute_bits(
     tmp_path: Path,
 ) -> None:

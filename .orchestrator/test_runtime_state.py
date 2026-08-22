@@ -312,13 +312,20 @@ class LoadRuntimeStateTests(unittest.TestCase):
                 "version": 2,
                 "workers": {},
                 "queue": {"version": 2, "events": {}},
-                "worker_worktree_cleanup": {"last_run": last_run},
+                "worker_worktree_cleanup": {
+                    "last_run": last_run,
+                    "last_orphan_prune_at": "2026-06-20T07:00:00Z",
+                },
             },
         )
 
         state = runtime_state.load_runtime_state(self.config)
 
         self.assertEqual(state["worker_worktree_cleanup"]["last_run"], last_run)
+        self.assertEqual(
+            state["worker_worktree_cleanup"]["last_orphan_prune_at"],
+            "2026-06-20T07:00:00Z",
+        )
 
     def test_ordinary_v2_load_rejects_a_retired_cache_shape(self) -> None:
         self._write_json(

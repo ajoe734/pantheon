@@ -128,6 +128,44 @@ def test_build_live_config_ignores_live_overlay_and_renders_v2_paths(tmp_path: P
     assert rendered["paths"]["status_file"] == str(status / "ai-status.json")
 
 
+def test_build_live_config_projects_explicit_repository_source_roots(tmp_path: Path) -> None:
+    command, status = _roots(tmp_path)
+    execute_root = tmp_path / "execute-plans"
+    execute_root.mkdir()
+    _git(execute_root, "init", "-b", "dev")
+    repo_config = json.loads(
+        (command / ".orchestrator" / "config.json").read_text(encoding="utf-8")
+    )
+
+    rendered = provision.build_live_config(
+        repo_config,
+        existing_live_config=None,
+        command_root=command,
+        status_root=status,
+        live_config_path=tmp_path / "runtime" / "live.json",
+        python_executable=Path(sys.executable),
+        repository_source_roots={
+            "pantheon": command,
+            "execute_plans": execute_root,
+        },
+    )
+
+    repositories = rendered["coordination"]["repositories"]
+    assert repositories["pantheon"]["local_path"] == str(command.resolve())
+    assert repositories["execute_plans"]["local_path"] == str(execute_root.resolve())
+
+
+def test_repository_source_root_requires_absolute_git_root(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must be absolute"):
+        provision.parse_repository_source_roots(["pantheon=relative/root"])
+
+    with pytest.raises(ValueError, match="not a Git checkout"):
+        provision.apply_repository_source_roots(
+            {"coordination": {"repositories": {}}},
+            {"pantheon": tmp_path},
+        )
+
+
 def test_cli_creates_one_v2_config_without_merging_an_incumbent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

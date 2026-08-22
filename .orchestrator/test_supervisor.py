@@ -690,11 +690,7 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
                 {
                     "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
                     "worker_worktrees": {
-                        "enabled": True,
                         "root": str(root / "worker-worktrees"),
-                        "base_ref": "origin/dev",
-                        "reuse_existing": True,
-                        "execution_reasons": [supervisor.REASON_OWNED_READY],
                     },
                     "coordination": {
                         "repositories": {
@@ -720,11 +716,12 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
                 metadata={"task": task, "task_generation": 1},
             )
             state: dict[str, object] = {"worker_worktrees": {"leases": {}}}
+            worker_base_snapshots: dict[str, dict[str, str]] = {}
 
             with (
                 mock.patch.object(
-                    supervisor, "_worker_base_ref_precondition", return_value=(True, None)
-                ),
+                    supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+                ) as fetch_base,
                 mock.patch.object(supervisor, "write_activity_log"),
             ):
                 ok, error = supervisor.prepare_worker_workspace(
@@ -733,6 +730,7 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
                     request,
                     queue_event_id="evt-agora",
                     target_agent="Codex",
+                    worker_base_snapshots=worker_base_snapshots,
                 )
 
             self.assertTrue(ok, error)
@@ -744,12 +742,14 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
             self.assertEqual(request.metadata["workspace_repository_id"], "execute_plans")
             self.assertEqual(request.metadata["workspace_source_root"], str(execute_root))
             self.assertEqual(request.metadata["workspace_base_ref"], "origin/dev")
+            self.assertEqual(request.metadata["workspace_base_sha"], current_dev_head)
             self.assertEqual(self._git(workspace, "rev-parse", "--show-toplevel"), str(workspace))
             self.assertEqual(self._git(workspace, "rev-parse", "HEAD"), current_dev_head)
             self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
             lease = state["worker_worktrees"]["leases"][str(task["id"])]
             self.assertEqual(lease["repository_id"], "execute_plans")
             self.assertEqual(lease["source_root"], str(execute_root))
+            self.assertEqual(lease["base_sha"], current_dev_head)
             self.assertIn("Cross-repository delivery authority", request.message)
             self.assertEqual(
                 request.metadata["workspace_target_files"],
@@ -765,11 +765,42 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
                     replay_request,
                     queue_event_id="evt-agora-replay",
                     target_agent="Codex",
+                    worker_base_snapshots=worker_base_snapshots,
                 )
             self.assertTrue(replay_ok, replay_error)
+            fetch_base.assert_called_once()
             self.assertEqual(
                 replay_request.metadata["workspace_repository_id"], "execute_plans"
             )
+            second_task = task_fixture("AGORA-FE-CANDIDATE-20260814")
+            second_task["artifacts"] = list(task["artifacts"])
+            second_request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=str(second_task["id"]),
+                reason=supervisor.REASON_OWNED_READY,
+                context_files=[],
+                target_files=list(second_task["artifacts"]),
+                metadata={"task": second_task, "task_generation": 1},
+            )
+            with mock.patch.object(supervisor, "write_activity_log"):
+                second_ok, second_error = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    second_request,
+                    queue_event_id="evt-agora-second",
+                    target_agent="Codex",
+                    worker_base_snapshots=worker_base_snapshots,
+                )
+            self.assertTrue(second_ok, second_error)
+            self.assertEqual(second_request.metadata["workspace_base_sha"], current_dev_head)
+            self.assertEqual(
+                self._git(Path(str(second_request.metadata["workspace_path"])), "rev-parse", "HEAD"),
+                current_dev_head,
+            )
+            fetch_base.assert_called_once()
             with mock.patch.object(supervisor, "write_activity_log"):
                 cleaned = supervisor.cleanup_inactive_worker_worktrees(config, state)
             self.assertTrue(cleaned)
@@ -783,6 +814,14 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
     def test_repo_config_uses_one_capacity_and_account_schema(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         supervisor.validate_provider_accounts(config)
+        self.assertEqual(
+            set(config["worker_worktrees"]),
+            {"root"},
+        )
+        self.assertNotIn("base_branches", config["worker_worktree_cleanup"])
+        self.assertIn(
+            "orphan_prune_interval_seconds", config["worker_worktree_cleanup"]
+        )
         settings = config["ready_dispatcher"]
         self.assertNotIn("disabled_agents", settings)
         self.assertNotIn("max_tasks_per_agent", settings)

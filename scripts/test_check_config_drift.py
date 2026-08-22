@@ -7,11 +7,32 @@ from pathlib import Path
 from check_config_drift import (
     DEFAULT_INTENTIONAL_OVERRIDES,
     find_drift,
+    find_repository_source_drift,
     get_dotted,
     set_dotted,
     git_commits_behind,
     main,
 )
+
+
+def test_repository_source_root_drift_requires_promotion() -> None:
+    report = find_repository_source_drift(
+        {"coordination": {"repositories": {"pantheon": {"local_path": "/old/dev-root"}}}},
+        {"pantheon": "/new/dev-root", "execute_plans": "/code/execute-plans"},
+    )
+
+    assert report == [
+        {
+            "repository_id": "pantheon",
+            "expected_local_path": "/new/dev-root",
+            "live_local_path": "/old/dev-root",
+        },
+        {
+            "repository_id": "execute_plans",
+            "expected_local_path": "/code/execute-plans",
+            "live_local_path": None,
+        },
+    ]
 
 
 def test_find_drift_flags_nonallowlisted_toggle() -> None:
