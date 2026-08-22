@@ -52,17 +52,12 @@ def _require_read_role(identity):
 
 
 def _client(events, *, transport=None, latency_recorder=None, utc_now="2026-07-12T00:05:00Z"):
-    materializer = JourneyMaterializer()
-    materializer.rebuild(events)
-    store = tj.TradeJourneyEventStore()
-    store.materializer = lambda: materializer
     reader = InMemoryPostgresProjectionReader(events)
 
     app = FastAPI()
     app.include_router(tj.create_trade_journeys_router(
         extract_identity=_identity,
         require_read_role=_require_read_role,
-        get_event_store=lambda: store,
         get_projection_reader=lambda: reader,
         utc_now=lambda: utc_now,
         get_slo_alert_transport=lambda: transport,

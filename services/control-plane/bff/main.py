@@ -81,7 +81,6 @@ from services.foundation.health import (  # noqa: E402
     readiness_status_code,
     register_fastapi_health_routes,
 )
-from services.trade_journey.lifecycle_projector import projector_readiness  # noqa: E402
 from services.source_ingestion.replication_bridge import (  # noqa: E402
     StrategySeedReplicationBridge,
     StrategySeedReplicationBridgeError,

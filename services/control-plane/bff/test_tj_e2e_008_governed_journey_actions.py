@@ -29,8 +29,6 @@ def _client(dispatch=None, *, unrelated_events=0, action_ledger=None):
             "source": "test", "stage": "order_submission", "stage_status": "succeeded",
         })
     reader = InMemoryPostgresProjectionReader(events)
-    store = tj.TradeJourneyEventStore()
-    store.materializer = lambda: reader.materializer
 
     def identity(auth):
         if not auth:
@@ -51,7 +49,6 @@ def _client(dispatch=None, *, unrelated_events=0, action_ledger=None):
         extract_identity=identity,
         require_read_role=read_role,
         require_operator_role=operator_role,
-        get_event_store=lambda: store,
         get_projection_reader=lambda: reader,
         dispatch_action=dispatch or (lambda command: {
             "status": "succeeded", "receipt_id": "receipt-1",

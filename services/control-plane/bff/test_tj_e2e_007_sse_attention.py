@@ -24,8 +24,6 @@ def _event(event_id: str, journey_id: str, minute: int, stage: str = "broker_ack
 
 def _client(events):
     reader = InMemoryPostgresProjectionReader(events)
-    store = tj.TradeJourneyEventStore()
-    store.materializer = lambda: reader.materializer
 
     def identity(auth):
         if not auth:
@@ -35,7 +33,6 @@ def _client(events):
     app = FastAPI()
     app.include_router(tj.create_trade_journeys_router(
         extract_identity=identity, require_read_role=lambda _: None,
-        get_event_store=lambda: store,
         get_projection_reader=lambda: reader,
         utc_now=lambda: "2026-07-12T00:20:00Z"))
     return TestClient(app), reader.materializer

@@ -17,7 +17,6 @@ id" from "not yours" (gap spec section 12).
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import hashlib
 import json
 import os
@@ -42,11 +41,6 @@ from services.trade_journey.materializer import (
     JourneyProjection,
     MaterializationError,
 )
-from services.trade_journey.telemetry_bridge import (
-    load_store_events,
-    merge_with_store,
-    write_store_atomic,
-)
 from services.trade_journey.slo_data_quality import (
     compute_data_quality_metrics,
     evaluate_data_quality,
@@ -64,9 +58,6 @@ from trade_journey_projection_store import (
     configured_projection_reader,
 )
 
-EVENTS_STORE_ENV = "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"
-PROJECTOR_STORE_SCHEMA = "pantheon.trade-journey-projection.v1"
-PROJECTOR_CONTROLLER_ID = "canonical-lifecycle-projector"
 _ALLOWED_ENVIRONMENTS = {"paper", "broker_sandbox", "canary", "live"}
 _ANOMALY_DIAGNOSTIC_CODES = {"identifier_conflict", "conflicting_terminal_states", "orphan_identifier"}
 _ALLOWED_SORTS = {"updated_at_desc", "updated_at_asc", "created_at_desc", "created_at_asc"}
@@ -111,30 +102,6 @@ _JOURNEY_ACTIONS = {
     "reconciliation_retry", "incident_acknowledge",
 }
 _LIVE_ACTIONS = {"pause", "cancel", "reconciliation_retry"}
-
-
-def _projector_store_metadata(raw: Any) -> Dict[str, Any]:
-    """Return truth metadata only for the lifecycle-projector-owned wrapper."""
-    if not isinstance(raw, Mapping):
-        return {}
-    schema_version = str(raw.get("schema_version") or "")
-    raw_controller = raw.get("controller")
-    controller = dict(raw_controller) if isinstance(raw_controller, Mapping) else {}
-    controller_id = str(
-        controller.get("controller_id") or controller.get("controller_name") or ""
-    )
-    projector_owned = (
-        schema_version == PROJECTOR_STORE_SCHEMA
-        or controller_id == PROJECTOR_CONTROLLER_ID
-    )
-    if not projector_owned:
-        return {}
-    return {
-        "schema_version": schema_version or PROJECTOR_STORE_SCHEMA,
-        "generation": raw.get("generation"),
-        "projector_owned": True,
-        "controller": controller,
-    }
 
 
 class TradeJourneyActionRequest(BaseModel):
@@ -216,100 +183,6 @@ class TradeJourneyDetailEnvelope(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-
-# --------------------------------------------------------------------------- #
-# Event store adapter
-# --------------------------------------------------------------------------- #
-
-
-class TradeJourneyEventStore:
-    """Loads raw journey events from a JSON file and materializes on demand.
-
-    The materializer is cached by ``(path, mtime)`` so repeated reads within a
-    request burst do not re-run ``rebuild()``; a changed source file
-    invalidates the cache automatically. Tests may monkeypatch
-    ``materializer()``/``events()`` directly instead of writing a fixture
-    file (see ``test_bff_lineage_contract.py`` for the pattern this mirrors).
-    """
-
-    def __init__(self, path_env: str = EVENTS_STORE_ENV) -> None:
-        self._path_env = path_env
-        self._cache_key: Optional[Tuple[str, float]] = None
-        self._materializer: Optional[JourneyMaterializer] = None
-        self._events: List[Dict[str, Any]] = []
-        self._projection_metadata: Dict[str, Any] = {}
-
-    def _source_path(self) -> Optional[Path]:
-        raw = os.getenv(self._path_env, "").strip()
-        if not raw:
-            return None
-        path = Path(raw)
-        return path if path.is_file() else None
-
-    def _refresh(self) -> bool:
-        path = self._source_path()
-        if path is None:
-            self._materializer = None
-            self._events = []
-            self._projection_metadata = {}
-            self._cache_key = None
-            return False
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            self._materializer = None
-            self._events = []
-            self._projection_metadata = {}
-            self._cache_key = None
-            return False
-        key = (str(path), mtime)
-        if key == self._cache_key and self._materializer is not None:
-            return True
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            self._materializer = None
-            self._events = []
-            self._projection_metadata = {}
-            self._cache_key = None
-            return False
-        self._projection_metadata = _projector_store_metadata(raw)
-        if isinstance(raw, list):
-            events = [dict(item) for item in raw if isinstance(item, Mapping)]
-        elif isinstance(raw, Mapping) and isinstance(raw.get("events"), list):
-            events = [dict(item) for item in raw["events"] if isinstance(item, Mapping)]
-        else:
-            events = []
-        materializer = JourneyMaterializer()
-        try:
-            materializer.rebuild(events)
-        except MaterializationError:
-            self._materializer = None
-            self._events = []
-            self._cache_key = None
-            return False
-        self._materializer = materializer
-        self._events = events
-        self._cache_key = key
-        return True
-
-    def materializer(self) -> Optional[JourneyMaterializer]:
-        return self._materializer if self._refresh() else None
-
-    def events(self) -> List[Dict[str, Any]]:
-        self._refresh()
-        return list(self._events)
-
-    def projection_metadata(self) -> Dict[str, Any]:
-        """Expose cached projector/controller truth for response composition."""
-        self._refresh()
-        return json.loads(json.dumps(self._projection_metadata))
-
-    def projector_owned(self) -> bool:
-        return bool(self.projection_metadata().get("projector_owned"))
-
-
-EVENT_STORE = TradeJourneyEventStore()
 
 # TJ-E2E-011: real request-latency samples for the `detail`/`resolve` p95
 # SLO targets (gap-spec section 13), and the governed alert transport that
@@ -455,75 +328,9 @@ def _mask_live_graph(data: Dict[str, Any], identity: Any, environment: str) -> D
     return masked
 
 
-def _store_projection_metadata(store: Optional[TradeJourneyEventStore]) -> Dict[str, Any]:
-    getter = getattr(store, "projection_metadata", None)
-    if not callable(getter):
-        return {}
-    metadata = getter()
-    return metadata if isinstance(metadata, dict) else {}
-
-
-def _projector_freshness(metadata: Mapping[str, Any]) -> Dict[str, Any]:
-    if not metadata.get("projector_owned"):
-        return {}
-    controller = metadata.get("controller")
-    controller = dict(controller) if isinstance(controller, Mapping) else {}
-    generation = metadata.get("generation")
-    if generation is None:
-        generation = controller.get("generation")
-    return {
-        "projection_schema_version": metadata.get("schema_version"),
-        "generation": generation,
-        "projector_owned": True,
-        "projection_mode": controller.get("mode"),
-        "truth_level": controller.get("truth_level"),
-        "accepted_live": bool(controller.get("accepted_live")),
-        "controller": controller,
-    }
-
-
-def _effective_projection_read_state(read_state: str, metadata: Mapping[str, Any]) -> str:
-    if not metadata.get("projector_owned"):
-        return read_state
-    controller = metadata.get("controller")
-    canonical_live = bool(
-        isinstance(controller, Mapping)
-        and controller.get("accepted_live") is True
-        and controller.get("status") == "ready"
-        and controller.get("mode") == "live"
-        and controller.get("truth_level") == "canonical_live"
-    )
-    if not canonical_live and read_state != "unavailable":
-        return "degraded"
-    return read_state
-
-
-def _meta(
-    snapshot_at: str,
-    read_state: str,
-    materializer: JourneyMaterializer,
-    *,
-    store: Optional[TradeJourneyEventStore] = None,
-) -> Dict[str, Any]:
-    projection_metadata = _store_projection_metadata(store)
-    return {
-        "snapshot_at": snapshot_at,
-        "read_state": _effective_projection_read_state(read_state, projection_metadata),
-        "freshness": {
-            "materializer_revision": materializer.revision,
-            "rebuild_status": materializer.rebuild_status,
-            "source_watermarks": dict(materializer.source_watermarks),
-            **_projector_freshness(projection_metadata),
-        },
-    }
-
-
 def _unavailable_meta(
     snapshot_at: str,
-    *,
-    store: Optional[TradeJourneyEventStore] = None,
 ) -> Dict[str, Any]:
-    projection_metadata = _store_projection_metadata(store)
     return {
         "snapshot_at": snapshot_at,
         "read_state": "unavailable",
@@ -531,7 +338,6 @@ def _unavailable_meta(
             "materializer_revision": 0,
             "rebuild_status": "idle",
             "source_watermarks": {},
-            **_projector_freshness(projection_metadata),
         },
     }
 
@@ -540,11 +346,10 @@ def _unavailable_envelope(
     snapshot_at: str,
     *,
     entity_id: str,
-    store: Optional[TradeJourneyEventStore] = None,
 ) -> Dict[str, Any]:
     return {
         "data": {"id": entity_id, "status": "unavailable"},
-        "meta": _unavailable_meta(snapshot_at, store=store),
+        "meta": _unavailable_meta(snapshot_at),
     }
 
 
@@ -553,12 +358,11 @@ def _unavailable_list_envelope(
     page_size: int,
     *,
     entity_id: str,
-    store: Optional[TradeJourneyEventStore] = None,
 ) -> Dict[str, Any]:
     return {
         "data": {"id": entity_id, "items": [], "status": "unavailable"},
         "page_info": {"next_page_token": None, "total": 0, "page_size": page_size, "returned": 0, "has_more": False},
-        "meta": _unavailable_meta(snapshot_at, store=store),
+        "meta": _unavailable_meta(snapshot_at),
     }
 
 
@@ -989,7 +793,6 @@ def create_trade_journeys_router(
     extract_identity: Callable[..., Any],
     require_read_role: Callable[[Any], None],
     require_operator_role: Optional[Callable[[Any], None]] = None,
-    get_event_store: Callable[[], TradeJourneyEventStore] = lambda: EVENT_STORE,
     get_projection_reader: Callable[[], Optional[TradeJourneyProjectionStore]] = lambda: configured_projection_reader(),
     dispatch_action: Callable[[Dict[str, Any]], Dict[str, Any]] = _unconfigured_action_dispatcher,
     action_ledger: ActionLedger = ACTION_LEDGER,
@@ -1697,144 +1500,5 @@ def create_trade_journeys_router(
             environment=environment,
         )
         return {"data": detail, "meta": meta}
-
-    @router.post(
-        "/bff/management/trade-journeys/events",
-        response_model=dict,
-    )
-    async def bff_publish_trade_journey_events(
-        events: List[dict],
-        authorization: Optional[str] = Header(default=None),
-    ):
-        """Append first-class journey events to the events store in real-time."""
-        identity = _identity(authorization)
-        if require_operator_role:
-            require_operator_role(identity)
-        else:
-            require_read_role(identity)
-
-        if not events:
-            return _err(400, "VALIDATION_FAILED", "Event batch cannot be empty")
-
-        normalized_batch = []
-        batch_ids = {}
-
-        for event in events:
-            if not isinstance(event, dict):
-                return _err(400, "VALIDATION_FAILED", "Each event must be a JSON object")
-
-            # 1. Required fields validation
-            for field in ("event_id", "journey_id", "tenant_id", "environment", "occurred_at"):
-                val = event.get(field)
-                if not isinstance(val, str) or not val.strip():
-                    return _err(400, "VALIDATION_FAILED", f"Event missing required field: {field}")
-
-            # 2. Tenant scope check
-            if not _tenant_allowed(identity, event["tenant_id"]):
-                return _err(403, "FORBIDDEN", f"Tenant access denied for tenant: {event['tenant_id']}")
-
-            # 3. Timezone-aware ISO-8601 validation
-            for ts_field in ("occurred_at", "recorded_at"):
-                val = event.get(ts_field)
-                if val:
-                    try:
-                        dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
-                        if dt.tzinfo is None:
-                            return _err(400, "VALIDATION_FAILED", f"{ts_field} must be timezone-aware")
-                    except Exception:
-                        return _err(400, "VALIDATION_FAILED", f"Invalid ISO-8601 format for {ts_field}")
-
-            # 4. stage validation (if stage present)
-            stage = event.get("stage")
-            if stage is not None and stage not in STAGES:
-                return _err(400, "VALIDATION_FAILED", f"Unknown stage: {stage}")
-
-            # Normalize event to ensure consistent key sorting/comparison
-            try:
-                norm_event = _normalize_event(event)
-            except Exception as exc:
-                return _err(400, "VALIDATION_FAILED", f"Failed to normalize event: {exc}")
-
-            event_id = norm_event["event_id"]
-            fingerprint = repr(_canonical(norm_event))
-
-            # Check duplicate within the batch
-            if event_id in batch_ids:
-                if batch_ids[event_id] != fingerprint:
-                    return _err(400, "CONFLICTING_DUPLICATE", f"Conflicting duplicate event_id within batch: {event_id}")
-            else:
-                batch_ids[event_id] = fingerprint
-                normalized_batch.append(norm_event)
-
-        store_path_str = os.getenv(EVENTS_STORE_ENV, "")
-        if not store_path_str:
-            return _err(503, "STORE_UNCONFIGURED", "Events store path is not configured")
-        store_path = Path(store_path_str)
-        lock_path = store_path.with_suffix(".lock")
-
-        try:
-            # Ensure the directory exists
-            store_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(lock_path, "w") as lock_file:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-
-                # Now we hold the lock!
-                if store_path.is_file():
-                    try:
-                        raw_store = json.loads(store_path.read_text(encoding="utf-8"))
-                    except (OSError, ValueError):
-                        return _err(
-                            503,
-                            "STORE_UNAVAILABLE",
-                            "Events store cannot be read safely",
-                            retryable=True,
-                        )
-                    if _projector_store_metadata(raw_store).get("projector_owned"):
-                        return _err(
-                            409,
-                            "PROJECTOR_OWNED_STORE",
-                            (
-                                "Canonical lifecycle projector owns this read-model file; "
-                                "publish through the canonical telemetry append path"
-                            ),
-                        )
-
-                existing = load_store_events(store_path)
-
-                # Check conflict with existing store events
-                existing_normalized = {}
-                for ev in existing:
-                    if isinstance(ev, dict) and "event_id" in ev:
-                        try:
-                            norm_ev = _normalize_event(ev)
-                            existing_normalized[norm_ev["event_id"]] = repr(_canonical(norm_ev))
-                        except Exception:
-                            # Skip unnormalizable existing events
-                            pass
-
-                for norm_event in normalized_batch:
-                    event_id = norm_event["event_id"]
-                    fingerprint = repr(_canonical(norm_event))
-                    if event_id in existing_normalized:
-                        if existing_normalized[event_id] != fingerprint:
-                            return _err(409, "CONFLICTING_DUPLICATE", f"Conflicting duplicate event_id: {event_id}")
-
-                # Merge/append to preserve telemetry_backfill events!
-                merged_dict = {}
-                for ev in existing:
-                    if isinstance(ev, dict) and "event_id" in ev:
-                        merged_dict[ev["event_id"]] = ev
-                for ev in normalized_batch:
-                    merged_dict[ev["event_id"]] = ev
-
-                merged_list = sorted(
-                    merged_dict.values(),
-                    key=lambda event: (event.get("occurred_at") or "", event.get("event_id") or "")
-                )
-
-                write_store_atomic(store_path, merged_list)
-        except Exception as exc:
-            return _err(500, "WRITE_FAILED", f"Failed to write events to store: {exc}")
-        return {"status": "ok", "count": len(normalized_batch)}
 
     return router

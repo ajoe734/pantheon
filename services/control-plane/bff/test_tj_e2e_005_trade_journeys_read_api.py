@@ -308,30 +308,19 @@ class _StubIdentity:
         self.claims = claims or {}
 
 
-def _seeded_store(events, *, raw_events=None):
-    store = tj.TradeJourneyEventStore()
-    materializer = _materializer_with(events)
-    store.materializer = lambda: materializer
-    store.events = lambda: (raw_events if raw_events is not None else events)
-    return store
-
-
 def _client_with(events, *, raw_events=None, controller=None):
-    store = _seeded_store(events, raw_events=raw_events)
-    tj.EVENT_STORE = store
     reader = InMemoryPostgresProjectionReader(events, controller=controller)
     bff_main.read_store._trade_journey_projection_reader_override = reader
     return TestClient(bff_main.app), reader
 
 
-def _direct_client(events, *, raw_events=None, projection_reader=None):
+def _direct_client(events, *, projection_reader=None):
     """Isolated app wired straight to `create_trade_journeys_router` with a
     test-double identity extractor.
     """
     from fastapi import FastAPI, HTTPException
     from models import OperatorIdentity
 
-    store = _seeded_store(events, raw_events=raw_events)
     if projection_reader is None:
         projection_reader = InMemoryPostgresProjectionReader(events)
 
@@ -354,10 +343,9 @@ def _direct_client(events, *, raw_events=None, projection_reader=None):
     app.include_router(tj.create_trade_journeys_router(
         extract_identity=extract_identity,
         require_read_role=require_read_role,
-        get_event_store=lambda: store,
         get_projection_reader=lambda: projection_reader,
     ))
-    return TestClient(app, raise_server_exceptions=False), store
+    return TestClient(app, raise_server_exceptions=False), projection_reader
 
 
 _BASE_EVENTS = [
@@ -373,12 +361,10 @@ _BASE_EVENTS = [
 
 
 def _run(fn):
-    original_store = tj.EVENT_STORE
     original_reader = getattr(bff_main.read_store, "_trade_journey_projection_reader_override", None)
     try:
         fn()
     finally:
-        tj.EVENT_STORE = original_store
         bff_main.read_store._trade_journey_projection_reader_override = original_reader
 
 
@@ -1150,131 +1136,19 @@ def test_tj_e2e_005_list_pagination_handles_many_journeys_within_budget() -> Non
     _run(scenario)
 
 
-def test_tj_e2e_005_publish_events_appends_and_saves_to_store_file(tmp_path) -> None:
-    store_file = tmp_path / "trade_journey_events.json"
-    # Seed empty list
-    store_file.write_text("[]", encoding="utf-8")
-
-    # We set the environment variable so the route finds the temp file
-    original_store_env = os.environ.get("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE")
-    os.environ["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"] = str(store_file)
-
-    try:
-        client = TestClient(bff_main.app)
-        new_event = {
-            "event_id": "test-evt-123",
-            "journey_id": "tj-123",
-            "tenant_id": "tenant-a",
-            "environment": "paper",
-            "occurred_at": "2026-07-12T00:00:00Z",
-            "stage": "signal_generation",
-            "stage_status": "succeeded",
-        }
-
-        # 1. Test authorization check (no header)
-        resp_unauth = client.post("/bff/management/trade-journeys/events", json=[new_event])
-        assert resp_unauth.status_code == 401
-
-        # 2. Test empty batch error
-        resp_empty = client.post("/bff/management/trade-journeys/events", json=[], headers=OPERATOR_HEADERS)
-        assert resp_empty.status_code == 400
-        assert "batch cannot be empty" in resp_empty.text
-
-        # 3. Test validation error (missing required field)
-        invalid_event = {**new_event}
-        invalid_event.pop("tenant_id")
-        resp_invalid = client.post("/bff/management/trade-journeys/events", json=[invalid_event], headers=OPERATOR_HEADERS)
-        assert resp_invalid.status_code == 400
-        assert "VALIDATION_FAILED" in resp_invalid.text
-
-        # 4. Test validation error (non-timezone-aware timestamp)
-        invalid_ts_event = {**new_event, "occurred_at": "2026-07-12 00:00:00"}
-        resp_invalid_ts = client.post("/bff/management/trade-journeys/events", json=[invalid_ts_event], headers=OPERATOR_HEADERS)
-        assert resp_invalid_ts.status_code == 400
-        assert "must be timezone-aware" in resp_invalid_ts.text
-
-        # 5. Test validation error (conflicting duplicate event in the batch)
-        dup_batch_event_1 = {**new_event, "event_id": "dup-batch"}
-        dup_batch_event_2 = {**new_event, "event_id": "dup-batch", "occurred_at": "2026-07-12T00:05:00Z"}
-        resp_dup_batch = client.post(
-            "/bff/management/trade-journeys/events",
-            json=[dup_batch_event_1, dup_batch_event_2],
-            headers=OPERATOR_HEADERS
-        )
-        assert resp_dup_batch.status_code == 400
-        assert "CONFLICTING_DUPLICATE" in resp_dup_batch.text
-
-        # 6. Test successful publish
-        resp = client.post("/bff/management/trade-journeys/events", json=[new_event], headers=OPERATOR_HEADERS)
-        assert resp.status_code == 200, resp.text
-        assert resp.json() == {"status": "ok", "count": 1}
-
-        # 7. Test validation error (conflicting duplicate event in the store)
-        conflicting_store_event = {**new_event, "occurred_at": "2026-07-12T00:05:00Z"}
-        resp_store_conflict = client.post(
-            "/bff/management/trade-journeys/events",
-            json=[conflicting_store_event],
-            headers=OPERATOR_HEADERS
-        )
-        assert resp_store_conflict.status_code == 409
-        assert "CONFLICTING_DUPLICATE" in resp_store_conflict.text
-
-        # 8. Test tenant scope rejection (403)
-        tenant_constrained_headers = {"Authorization": "Bearer op-tj-005:operator:tenant-b"}
-        resp_forbidden = client.post("/bff/management/trade-journeys/events", json=[new_event], headers=tenant_constrained_headers)
-        assert resp_forbidden.status_code == 403
-
-        # Verify it was saved to the temp file
-        content = json.loads(store_file.read_text(encoding="utf-8"))["events"]
-        assert len(content) == 1
-        assert content[0]["event_id"] == "test-evt-123"
-
-    finally:
-        if original_store_env is not None:
-            os.environ["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"] = original_store_env
-        else:
-            os.environ.pop("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", None)
-
-
-def test_tj_e2e_005_publish_rejects_projector_owned_store_without_mutation(
-    tmp_path, monkeypatch
-) -> None:
-    store_file = tmp_path / "trade_journey_events.json"
-    payload = {
-        "schema_version": "pantheon.trade-journey-projection.v1",
-        "generation": 2,
-        "controller": {
-            "controller_id": "canonical-lifecycle-projector",
-            "status": "ready",
-            "mode": "live",
-            "truth_level": "canonical_live",
-            "accepted_live": True,
-        },
-        "events": _BASE_EVENTS,
+def test_tj_e2e_005_publish_events_route_is_retired_and_cannot_write_json() -> None:
+    client = TestClient(bff_main.app)
+    new_event = {
+        "event_id": "test-evt-123",
+        "journey_id": "tj-123",
+        "tenant_id": "tenant-a",
+        "environment": "paper",
+        "occurred_at": "2026-07-12T00:00:00Z",
+        "stage": "signal_generation",
+        "stage_status": "succeeded",
     }
-    original = json.dumps(payload, sort_keys=True)
-    store_file.write_text(original, encoding="utf-8")
-    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE", str(store_file))
-
-    response = TestClient(bff_main.app).post(
-        "/bff/management/trade-journeys/events",
-        headers=OPERATOR_HEADERS,
-        json=[
-            {
-                "event_id": "must-not-write",
-                "journey_id": "tj_1",
-                "tenant_id": "tenant-a",
-                "environment": "paper",
-                "occurred_at": "2026-07-12T00:09:00Z",
-                "stage": "reconciliation",
-                "stage_status": "succeeded",
-            }
-        ],
-    )
-
-    assert response.status_code == 409, response.text
-    assert response.json()["error"]["code"] == "PROJECTOR_OWNED_STORE"
-    assert store_file.read_text(encoding="utf-8") == original
+    resp = client.post("/bff/management/trade-journeys/events", json=[new_event], headers=OPERATOR_HEADERS)
+    assert resp.status_code in {404, 405}, f"Expected route to be retired (404/405), got {resp.status_code}"
 
 
 # --------------------------------------------------------------------------- #

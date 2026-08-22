@@ -22,13 +22,14 @@ captured. Do not infer a later gate from an earlier pass.
   session.
 - Build and deploy with `PANTHEON_CANARY_EXECUTION_ENABLED=false`,
   `PANTHEON_LIVE_BROKER_ENABLED=false`, and `BROKER_PAPER_ENABLED=true`.
-- Keep the compose defaults `LIFECYCLE_PROJECTOR_WRITER_BACKEND=disabled` and
-  `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=json`. Activation is explicit.
-- The service key `loop-run-projector-scheduler` becomes the bounded relational
-  worker when its backend is `shadow`; it is not a second writer. The stopped
-  JSON implementation is not restarted alongside it.
-- Preserve the `bff-data` volume and its final JSON generation. JSON is a
-  recovery reader only after cutover and must report stale truth honestly.
+- Compose defaults are `LIFECYCLE_PROJECTOR_WRITER_BACKEND=shadow` and
+  `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres`. Legacy JSON writers and
+  readers are retired and fail closed.
+- The service key `loop-run-projector-scheduler` runs the bounded relational
+  worker writing to PostgreSQL (`trade_journey_projections`,
+  `trade_journey_controller_state`, etc.).
+- Legacy JSON bundle files are retired and quarantined/pruned under `LIFECYCLE-PROJ-RETIRE-001`.
+  PostgreSQL is the sole canonical storage and reader backend.
 - `telemetry_events` remains the normal backfill authority. Before an exact
   root deploy, prove that the selected deploy path will not prune or truncate
   it. Capture lifecycle-row count and retained high watermark before and after
@@ -84,8 +85,7 @@ backlog and unexplained mismatch are zero.
 
 Independent review must approve the exact PR head. Merge the PR to `dev`, then
 deploy that merge SHA through the existing nonprod workflow under the shared
-lease. The initial deployment deliberately retains the JSON reader and disabled
-relational writer.
+lease. Deployment operates with the canonical PostgreSQL reader and relational writer.
 
 Before activation, capture these identities:
 
@@ -280,27 +280,30 @@ and paper-to-live detail `404`, and stale/scope-conflicting page token `400`.
 The evidence artifact persists no response payloads, token, credentials, DSN,
 or raw lifecycle payload.
 
-## 8. BFF-only rollback and forward recovery
+## 8. Postgres-only deployment rollback and forward recovery
 
-Record the relational controller and receipt counts before rollback. Roll back
-only the reader and recreate only BFF:
+Because legacy JSON readers and writers are fully retired, rollback is performed
+at the image and code deployment level (rolling back to the prior stable container
+image or git SHA) rather than switching back to retired JSON files:
 
 ```bash
-PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=json \
+# Recreate container services with the previous validated image / commit SHA
 docker compose -p pantheon -f docker-compose.yml up -d \
-  --force-recreate --no-deps operator-bff
+  --force-recreate --no-deps operator-bff loop-run-projector-scheduler
 ```
 
-Required: the relational worker remains stopped only if diagnosis requires it;
-no source/projection rows are deleted; the preserved JSON bundle is readable;
-if its controller is old, `/readyz` and response metadata label it stale rather
-than manufacturing freshness.
+Required:
+- No database migration or data destruction is performed during service recreate.
+- PostgreSQL projection tables and controller states remain intact.
+- Upon restart, the relational worker verifies schema, connects, and resumes from
+  the recorded checkpoint sequence.
+- BFF `/readyz` validates `dependencies.lifecycle_projector.reader_backend=postgres`
+  and reports healthy status when backlog is 0.
 
-Forward recovery reuses the same schema and controller, waits for backlog zero,
-then recreates only BFF with `postgres` and the same governed DSN/schema/secret.
-Re-run the authenticated hosted readback. Receipt count, maximum ingested
-sequence, and the canary journey/loop must be unchanged or monotonically
-advanced—never lower or duplicated.
+Forward recovery re-deploys the validated target SHA, verifies backlog zero,
+and confirms `/readyz` health and authenticated hosted readbacks. Receipt count,
+maximum ingested sequence, and canary journey/loop records must be unchanged
+or monotonically advanced—never lower or duplicated.
 
 ## 9. Actual 24-hour observation
 

@@ -332,4 +332,3 @@ def test_run_retirement_execute_rejects_unlisted_file_mutation(tmp_path: Path):
             dry_run_manifest_path=manifest_path,
             allow_custom_root=True,
         )
-
