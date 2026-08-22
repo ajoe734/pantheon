@@ -87,17 +87,7 @@
     "auto_restore_enabled": false
   },
   "worker_worktrees": {
-    "enabled": true,
-    "root": "/tmp/pantheon-worker-worktrees",
-    "source_root": "",
-    "base_ref": "origin/dev",
-    "reuse_existing": true,
-    "execution_reasons": [
-      "owned_ready_dispatch",
-      "owned_in_progress_dispatch",
-      "owned_finalize_dispatch",
-      "review_ready_dispatch"
-    ]
+    "root": "/tmp/pantheon-worker-worktrees"
   },
   "coordination": {
     "repositories": {
@@ -118,11 +108,7 @@
     "archive_root": "/tmp/pantheon-worker-worktree-archive",
     "archive_max_file_bytes": 20971520,
     "max_removals_per_tick": 25,
-    "base_branches": [
-      "dev",
-      "master",
-      "main"
-    ]
+    "orphan_prune_interval_seconds": 600
   },
   "worker_retry": {
     "enabled": true,

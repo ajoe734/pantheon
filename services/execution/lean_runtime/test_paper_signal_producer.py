@@ -409,5 +409,107 @@ class TestPaperSignalProducer(unittest.TestCase):
         mock_urlopen.assert_not_called()
 
 
+class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
+    """Verify that pure snapshot admission rule returns correct and deterministic decisions."""
+
+    def test_shared_admission_fresh_snapshot(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        now = "2026-08-22T12:00:00Z"
+        snapshot = {
+            "snapshot_id": "snap-pass-001",
+            "symbol": "AAPL.US",
+            "event_time": "2026-08-22T11:59:00Z",
+            "observed_at": "2026-08-22T11:59:05Z",
+            "source_ref": "source-ref-1",
+            "lineage": {"source": "manual"},
+            "closes": [150.0, 151.0, 152.0],
+        }
+        dec = admit_market_snapshot(
+            snapshot,
+            expected_symbol="AAPL.US",
+            max_age_seconds=86400,
+            minimum_closes=2,
+            now_iso=now,
+        )
+        self.assertTrue(dec.admitted)
+        self.assertEqual(dec.snapshot_id, "snap-pass-001")
+        self.assertAlmostEqual(dec.age_seconds, 60.0, places=1)
+        self.assertIsNone(dec.reason_code)
+
+    def test_shared_admission_stale_snapshot(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        now = "2026-08-22T12:00:00Z"
+        snapshot = {
+            "snapshot_id": "snap-stale-001",
+            "symbol": "AAPL.US",
+            "event_time": "2026-08-20T00:00:00Z",
+            "observed_at": "2026-08-20T00:00:00Z",
+            "source_ref": "source-ref-1",
+            "lineage": {"source": "manual"},
+            "closes": [150.0, 151.0],
+        }
+        dec = admit_market_snapshot(
+            snapshot,
+            expected_symbol="AAPL.US",
+            max_age_seconds=86400,
+            minimum_closes=2,
+            now_iso=now,
+        )
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_stale")
+        self.assertEqual(dec.snapshot_id, "snap-stale-001")
+        self.assertTrue(dec.age_seconds > 86400)
+
+    def test_shared_admission_future_timestamp(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        now = "2026-08-22T12:00:00Z"
+        snapshot = {
+            "snapshot_id": "snap-future-001",
+            "symbol": "AAPL.US",
+            "event_time": "2026-08-22T13:00:00Z",
+            "observed_at": "2026-08-22T12:00:00Z",
+            "source_ref": "source-ref-1",
+            "lineage": {"source": "manual"},
+            "closes": [150.0, 151.0],
+        }
+        dec = admit_market_snapshot(
+            snapshot,
+            expected_symbol="AAPL.US",
+            max_age_seconds=86400,
+            minimum_closes=2,
+            now_iso=now,
+        )
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_invalid")
+        self.assertIn("future", dec.detail)
+
+    def test_shared_admission_missing_or_insufficient_closes(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        now = "2026-08-22T12:00:00Z"
+        snap_no_closes = {
+            "snapshot_id": "snap-no-closes",
+            "symbol": "AAPL.US",
+            "event_time": "2026-08-22T11:59:00Z",
+            "source_ref": "ref",
+            "lineage": {},
+        }
+        dec1 = admit_market_snapshot(snap_no_closes, max_age_seconds=86400, now_iso=now)
+        self.assertFalse(dec1.admitted)
+        self.assertEqual(dec1.reason_code, "market_input_missing")
+
+        snap_one_close = {
+            **snap_no_closes,
+            "closes": [150.0],
+        }
+        dec2 = admit_market_snapshot(snap_one_close, minimum_closes=2, max_age_seconds=86400, now_iso=now)
+        self.assertFalse(dec2.admitted)
+        self.assertEqual(dec2.reason_code, "market_input_insufficient")
+
+
 if __name__ == "__main__":
     unittest.main()
+

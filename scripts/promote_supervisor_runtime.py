@@ -26,6 +26,7 @@ from provision_live_supervisor_config import (
     build_live_config,
     ensure_approval_queue_marker,
     load_json_object,
+    parse_repository_source_roots,
     validated_immutable_command_root,
     validated_root,
     write_json_atomic,
@@ -103,6 +104,7 @@ def render_v2_config(
     status_root: Path,
     live_config_path: Path,
     python_executable: Path,
+    repository_source_roots: Mapping[str, Path | str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Render a new V2 runtime config without using an incumbent overlay."""
 
@@ -115,6 +117,7 @@ def render_v2_config(
         status_root=status_root,
         live_config_path=live_config_path,
         python_executable=python_executable,
+        repository_source_roots=repository_source_roots,
     )
     _validate_authoritative_store(rendered)
     return rendered, identity
@@ -440,6 +443,7 @@ def replace_supervisor(
     python_executable: Path,
     termination_timeout: float,
     evidence_path: Path | None = None,
+    repository_source_roots: Mapping[str, Path | str] | None = None,
 ) -> dict[str, Any]:
     """Stop old, install exact V2 config, then launch exact V2 source."""
 
@@ -450,6 +454,7 @@ def replace_supervisor(
         status_root=status_root,
         live_config_path=live_config_path,
         python_executable=python_executable,
+        repository_source_roots=repository_source_roots,
     )
     rendered_bytes = (json.dumps(rendered, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     approval_queue_value = rendered.get("paths", {}).get("approval_queue")
@@ -528,6 +533,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--termination-timeout", type=float, default=15.0)
     parser.add_argument("--evidence-path")
+    parser.add_argument(
+        "--repository-source-root",
+        action="append",
+        default=[],
+        metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
+        help="Render an absolute source checkout into coordination.repositories.",
+    )
     parser.add_argument("--promote", action="store_true", help="Stop and replace the runtime.")
     parser.add_argument("--discover-only", action="store_true", help="Render and validate only.")
     parser.add_argument("--json", action="store_true")
@@ -544,6 +556,9 @@ def main(argv: list[str] | None = None) -> int:
     live_config_path = _path(args.live_config)
     python_executable = _path(args.python)
     try:
+        repository_source_roots = parse_repository_source_roots(
+            args.repository_source_root
+        )
         if not python_executable.is_file():
             raise ValueError(f"python executable does not exist: {python_executable}")
         validated_root(status_root, label="status root", required=(".git", "ai-status.json"))
@@ -553,6 +568,7 @@ def main(argv: list[str] | None = None) -> int:
                 status_root=status_root,
                 live_config_path=live_config_path,
                 python_executable=python_executable,
+                repository_source_roots=repository_source_roots,
             )
             result: dict[str, Any] = {
                 "schema_version": 2,
@@ -562,6 +578,13 @@ def main(argv: list[str] | None = None) -> int:
                 "live_config": str(live_config_path),
                 "task_state_store": dict(rendered["task_state_store"]),
                 "supervisor_command": rendered["watchdog"]["supervisor_command"],
+                "repository_source_roots": {
+                    repository_id: str(entry.get("local_path"))
+                    for repository_id, entry in (
+                        (rendered.get("coordination") or {}).get("repositories") or {}
+                    ).items()
+                    if isinstance(entry, dict) and entry.get("local_path")
+                },
             }
         else:
             evidence_path = _path(args.evidence_path) if args.evidence_path else None
@@ -572,6 +595,7 @@ def main(argv: list[str] | None = None) -> int:
                 python_executable=python_executable,
                 termination_timeout=args.termination_timeout,
                 evidence_path=evidence_path,
+                repository_source_roots=repository_source_roots,
             )
     except (OSError, ValueError) as exc:
         result = {"outcome": "failed", "exit_code": 1, "error": f"{type(exc).__name__}: {exc}"}

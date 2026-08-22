@@ -641,12 +641,13 @@ def transition_binding(binding_id):
     """
     body = request.get_json(force=True) or {}
     new_status = body.get("new_status", "")
+    metadata_patch = body.get("metadata_patch")
     if not new_status:
         return jsonify({"error": {"code": "MISSING_FIELDS", "message": "new_status is required"}}), 400
 
     svc = _get_service()
     try:
-        binding = svc.transition(binding_id, new_status)
+        binding = svc.transition(binding_id, new_status, metadata_patch=metadata_patch)
         return jsonify(binding.to_dict()), 200
     except RuntimeManagerError as exc:
         return jsonify({"error": {"code": "PRECONDITION_FAILED", "message": str(exc)}}), 409

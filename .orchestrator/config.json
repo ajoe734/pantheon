@@ -93,17 +93,7 @@
     "auto_restore_enabled": true
   },
   "worker_worktrees": {
-    "enabled": true,
-    "root": "/tmp/pantheon-worker-worktrees",
-    "source_root": "",
-    "base_ref": "origin/dev",
-    "reuse_existing": true,
-    "execution_reasons": [
-      "owned_ready_dispatch",
-      "owned_in_progress_dispatch",
-      "owned_finalize_dispatch",
-      "review_ready_dispatch"
-    ]
+    "root": "/tmp/pantheon-worker-worktrees"
   },
   "coordination": {
     "repositories": {
@@ -123,11 +113,7 @@
     "archive_root": "/tmp/pantheon-worker-worktree-archive",
     "archive_max_file_bytes": 20971520,
     "max_removals_per_tick": 25,
-    "base_branches": [
-      "dev",
-      "master",
-      "main"
-    ]
+    "orphan_prune_interval_seconds": 600
   },
   "worker_retry": {
     "enabled": true,
@@ -481,13 +467,13 @@
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
-        "model": "gemini-3.6-flash-low",
+        "model": "gemini-3.7-flash-high",
         "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "gemini-3.6-flash-low",
-        "fallback": "Claude Sonnet 4.6 (Thinking)",
+        "primary": "gemini-3.7-flash-high",
+        "fallback": "claude-sonnet-4-6",
         "cooldown_seconds": 900
       },
       "approval": {
@@ -509,12 +495,13 @@
         "config_home": "/home/lupin/.gemini-agy2",
         "home": "/home/lupin/.gemini-agy2",
         "include_directories": true,
+        "model": "gemini-3.7-flash-high",
         "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "",
-        "fallback": "Claude Sonnet 4.6 (Thinking)",
+        "primary": "gemini-3.7-flash-high",
+        "fallback": "claude-sonnet-4-6",
         "cooldown_seconds": 900
       },
       "approval": {
