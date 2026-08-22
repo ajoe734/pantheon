@@ -10,16 +10,16 @@
   "cases": [
     {
       "authority_readback": {
-        "dataset_version_id": "dsv-417ad512cf6a18d06c2b35d7",
-        "handoff_id": "gh-0507b45396039d0fe639ce21"
+        "dataset_version_id": "dsv-442123e2da01e5482def1c86",
+        "handoff_id": "gh-23190b1366972d5720efbc4b"
       },
       "case_index": 1,
-      "completed_at": "2026-08-22T08:11:03Z",
+      "completed_at": "2026-08-22T08:40:15Z",
       "last_successful_boundary": "policy_learning.restart_replay_readback",
       "loop_id": "agora_interaction_evidence",
       "next_consumer": {
         "consumer": "policy-learning-agora-handoff-drainer",
-        "receipt_id": "sic-64ca31ef2c8d819689f240cfe5ce2b3d",
+        "receipt_id": "sic-95f7792e4f6e246fe363d29880c91bee",
         "receipt_type": "ShadowImitationCandidate",
         "replay": {
           "after": {
@@ -28,7 +28,7 @@
             "health": "starting",
             "image_id": "sha256:fb04e692ea788407a4e3855efdc9d2fcf7dd97c0c84003410690c27db455e7f6",
             "restart_count": 0,
-            "started_at": "2026-08-22T08:11:02.856547895Z",
+            "started_at": "2026-08-22T08:40:15.091043043Z",
             "state": "running"
           },
           "before": {
@@ -37,7 +37,7 @@
             "health": "healthy",
             "image_id": "sha256:fb04e692ea788407a4e3855efdc9d2fcf7dd97c0c84003410690c27db455e7f6",
             "restart_count": 0,
-            "started_at": "2026-08-22T08:10:25.070421165Z",
+            "started_at": "2026-08-22T08:39:37.337557622Z",
             "state": "running"
           },
           "service": "policy-learning-shadow-eval-scheduler"
@@ -59,7 +59,7 @@
           "health": "healthy",
           "image_id": "sha256:fb04e692ea788407a4e3855efdc9d2fcf7dd97c0c84003410690c27db455e7f6",
           "restart_count": 0,
-          "started_at": "2026-08-22T08:07:26.496829729Z",
+          "started_at": "2026-08-22T08:11:02.856547895Z",
           "state": "running"
         },
         "policy-learning-svc": {
@@ -72,7 +72,7 @@
           "state": "running"
         }
       },
-      "started_at": "2026-08-22T08:09:53Z",
+      "started_at": "2026-08-22T08:39:05Z",
       "status": "passed",
       "successful_boundaries": [
         "agora_and_policy.owner_compose_identities",
@@ -86,7 +86,7 @@
         "policy_learning.restart_replay_readback"
       ],
       "terminal_output": {
-        "id": "sic-64ca31ef2c8d819689f240cfe5ce2b3d",
+        "id": "sic-95f7792e4f6e246fe363d29880c91bee",
         "restart": {
           "after": {
             "compose_service": "policy-learning-shadow-eval-scheduler",
@@ -94,7 +94,7 @@
             "health": "starting",
             "image_id": "sha256:fb04e692ea788407a4e3855efdc9d2fcf7dd97c0c84003410690c27db455e7f6",
             "restart_count": 0,
-            "started_at": "2026-08-22T08:10:25.070421165Z",
+            "started_at": "2026-08-22T08:39:37.337557622Z",
             "state": "running"
           },
           "before": {
@@ -103,7 +103,7 @@
             "health": "healthy",
             "image_id": "sha256:fb04e692ea788407a4e3855efdc9d2fcf7dd97c0c84003410690c27db455e7f6",
             "restart_count": 0,
-            "started_at": "2026-08-22T08:07:26.496829729Z",
+            "started_at": "2026-08-22T08:11:02.856547895Z",
             "state": "running"
           },
           "service": "policy-learning-shadow-eval-scheduler"
@@ -112,23 +112,23 @@
         "type": "ShadowImitationCandidate"
       },
       "trigger": {
-        "dataset_version_id": "dsv-417ad512cf6a18d06c2b35d7",
-        "id": "ev-l12-hl-78bf830dbb",
+        "dataset_version_id": "dsv-442123e2da01e5482def1c86",
+        "id": "ev-l12-hl-80fa1f2521",
         "type": "AgoraInteractionEvidence"
       }
     },
     {
       "authority_readback": {
-        "run_id": "rrun-exp-sic-64ca31ef2c8d819689f240cfe5ce2b3d",
-        "task_id": "rtask-exp-sic-64ca31ef2c8d819689f240cfe5ce2b3d"
+        "run_id": "rrun-exp-sic-95f7792e4f6e246fe363d29880c91bee",
+        "task_id": "rtask-exp-sic-95f7792e4f6e246fe363d29880c91bee"
       },
       "case_index": 2,
-      "completed_at": "2026-08-22T08:11:03Z",
+      "completed_at": "2026-08-22T08:40:15Z",
       "last_successful_boundary": "research.run_readback",
       "loop_id": "imitation_research_handoff",
       "next_consumer": {
         "consumer": "research-orchestrator-svc",
-        "receipt_id": "rrun-exp-sic-64ca31ef2c8d819689f240cfe5ce2b3d",
+        "receipt_id": "rrun-exp-sic-95f7792e4f6e246fe363d29880c91bee",
         "receipt_type": "ExperimentRun"
       },
       "owner": {
@@ -140,7 +140,7 @@
         "started_at": "2026-08-22T05:42:09.679580548Z",
         "state": "running"
       },
-      "started_at": "2026-08-22T08:11:03Z",
+      "started_at": "2026-08-22T08:40:15Z",
       "status": "passed",
       "successful_boundaries": [
         "research.owner_compose_identity",
@@ -148,27 +148,27 @@
         "research.run_readback"
       ],
       "terminal_output": {
-        "run_id": "rrun-exp-sic-64ca31ef2c8d819689f240cfe5ce2b3d",
-        "task_id": "rtask-exp-sic-64ca31ef2c8d819689f240cfe5ce2b3d",
+        "run_id": "rrun-exp-sic-95f7792e4f6e246fe363d29880c91bee",
+        "task_id": "rtask-exp-sic-95f7792e4f6e246fe363d29880c91bee",
         "type": "ExperimentRun"
       },
       "trigger": {
-        "id": "sic-64ca31ef2c8d819689f240cfe5ce2b3d",
+        "id": "sic-95f7792e4f6e246fe363d29880c91bee",
         "type": "ShadowImitationCandidate"
       }
     },
     {
       "authority_readback": {
-        "memo_id": "mem-1ba71290c9d20a381749",
-        "request_id": "cr-l12-hl-78bf830dbb"
+        "memo_id": "mem-bdea159082e044e2da97",
+        "request_id": "cr-l12-hl-80fa1f2521"
       },
       "case_index": 3,
-      "completed_at": "2026-08-22T08:11:40Z",
+      "completed_at": "2026-08-22T08:41:00Z",
       "last_successful_boundary": "consultation.restart_governance_readback",
       "loop_id": "consultation_governance_handoff",
       "next_consumer": {
         "consumer": "governance",
-        "receipt_id": "gh-ad98489c6066d4beeeba",
+        "receipt_id": "gh-eeaebe53d300213cea16",
         "receipt_type": "ConsultGateHandoff",
         "replay": {
           "after": {
@@ -177,7 +177,7 @@
             "health": "starting",
             "image_id": "sha256:b51b9e19ab61e42d6f68734a27404084d915bf3ebc5db33700a178a9a2ce3901",
             "restart_count": 0,
-            "started_at": "2026-08-22T08:11:37.714408583Z",
+            "started_at": "2026-08-22T08:40:57.865880875Z",
             "state": "running"
           },
           "before": {
@@ -186,7 +186,7 @@
             "health": "healthy",
             "image_id": "sha256:b51b9e19ab61e42d6f68734a27404084d915bf3ebc5db33700a178a9a2ce3901",
             "restart_count": 0,
-            "started_at": "2026-08-22T08:08:21.659538169Z",
+            "started_at": "2026-08-22T08:11:37.714408583Z",
             "state": "running"
           },
           "service": "consultation-svc"
@@ -199,7 +199,7 @@
           "health": "healthy",
           "image_id": "sha256:b51b9e19ab61e42d6f68734a27404084d915bf3ebc5db33700a178a9a2ce3901",
           "restart_count": 0,
-          "started_at": "2026-08-22T08:08:21.659538169Z",
+          "started_at": "2026-08-22T08:11:37.714408583Z",
           "state": "running"
         },
         "governance": {
@@ -221,7 +221,7 @@
           "state": "running"
         }
       },
-      "started_at": "2026-08-22T08:11:03Z",
+      "started_at": "2026-08-22T08:40:15Z",
       "status": "passed",
       "successful_boundaries": [
         "consultation_openclaw_governance.owner_compose_identities",
@@ -234,22 +234,22 @@
         "consultation.restart_governance_readback"
       ],
       "terminal_output": {
-        "governance_handoff_id": "gh-ad98489c6066d4beeeba",
-        "id": "mem-1ba71290c9d20a381749",
+        "governance_handoff_id": "gh-eeaebe53d300213cea16",
+        "id": "mem-bdea159082e044e2da97",
         "type": "ConsultMemo"
       },
       "trigger": {
-        "id": "cr-l12-hl-78bf830dbb",
+        "id": "cr-l12-hl-80fa1f2521",
         "type": "ConsultRequest"
       }
     }
   ],
-  "completed_at": "2026-08-22T08:11:40Z",
+  "completed_at": "2026-08-22T08:41:00Z",
   "compose_project": "pantheon",
   "first_failure": null,
-  "git_sha": "5fd3875d5d88861369435a85736bdafbda75c3db",
+  "git_sha": "a53d4a08fe6e2d9b5c7d8c39b790f40362140da7",
   "schema_version": "pantheon.l12.human-learning.deployed-e2e.v1",
-  "started_at": "2026-08-22T08:09:53Z",
+  "started_at": "2026-08-22T08:39:05Z",
   "status": "passed",
   "task_id": "PFG-L12-HUMAN-E2E-LIVE-R2-20260821"
 }

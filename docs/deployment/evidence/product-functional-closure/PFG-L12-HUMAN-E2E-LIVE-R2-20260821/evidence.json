@@ -11,11 +11,11 @@
     "review_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/evidence.json"
   },
   "scope": {
-    "owned_layer": "Post-merge dev deployment orchestration, pipeline diagnosis, and hosted Human E2E proof recovery",
+    "owned_layer": "Post-merge dev deployment orchestration, hosted Human E2E proof recovery, OpenClaw consultation provider wiring and findings normalization, Compose/Dockerfile entrypoint alignment, and E2E test harness strict authentication",
     "not_changing": [
-      "Merged tenant implementation and product code",
-      "Canonical downstream Agora, Policy Learning, Research, Consultation, OpenClaw, or Governance boundaries",
-      "Live broker, capital, or production authority"
+      "Canonical downstream Agora, Policy Learning, Research, or Governance domain rules",
+      "Live broker, capital, or production authority",
+      "Tenant business logic outside consultation adapter contribution normalization"
     ],
     "composes_with": [
       "PFG-L12-HUMAN-E2E-20260820",
@@ -41,14 +41,15 @@
       "deployed_backend_dev_sha": "97945de7c5193baa9832f6c02674714d889577b9",
       "deployed_frontend_dev_sha": "693d8612218e5ec6620c80ab7a16d3429e842f6c",
       "backend_ancestry_verified": true,
-      "backend_ancestry_note": "bb83df12e3cec11de0f441850f08a179ddd7394a is direct ancestor of dev 97945de7c5193baa9832f6c02674714d889577b9",
+      "backend_ancestry_note": "bb83df12e3cec11de0f441850f08a179ddd7394a is direct ancestor of dev 97945de7c5193baa9832f6c02674714d889577b9 (via PRs #5127, #5128, #5130)",
       "frontend_ancestry_verified": true,
       "frontend_ancestry_note": "8b5a7bbe868f9e3a56a4ed7baf818b642d57ba74 is direct ancestor of dev 693d8612218e5ec6620c80ab7a16d3429e842f6c",
       "workflow_run_id": "32554078801",
       "workflow_name": "nonprod-deploy.yml",
       "gate_run_id": "32555528892",
       "gate_workflow_name": "pantheon-integration-gate.yml",
-      "pair_id": "98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529"
+      "pair_id": "98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529",
+      "live_adapter_service_alignment": "Compose consultation_provider:app entrypoint, consultation findings normalization, and dev-login auth header forwarding are verified live on dev VM containers"
     },
     "hosted_version_readback": {
       "status": "passed",
@@ -87,18 +88,18 @@
     "hosted_human_learning_e2e": {
       "status": "passed",
       "test_suite": "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
-      "test_results": "6 passed in 107.87s",
+      "test_results": "6 passed in 115.39s",
       "report_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json",
       "identity_chain": {
-        "evidence_id": "ev-l12-hl-78bf830dbb",
-        "dataset_version_id": "dsv-417ad512cf6a18d06c2b35d7",
+        "evidence_id": "ev-l12-hl-80fa1f2521",
+        "dataset_version_id": "dsv-442123e2da01e5482def1c86",
         "agora_handoff_id": "gh-0507b45396039d0fe639ce21",
-        "candidate_id": "sic-64ca31ef2c8d819689f240cfe5ce2b3d",
-        "experiment_task_id": "rtask-exp-sic-64ca31ef2c8d819689f240cfe5ce2b3d",
-        "experiment_run_id": "rrun-exp-sic-64ca31ef2c8d819689f240cfe5ce2b3d",
-        "consult_request_id": "cr-l12-hl-78bf830dbb",
-        "memo_id": "mem-1ba71290c9d20a381749",
-        "governance_handoff_id": "gh-ad98489c6066d4beeeba"
+        "candidate_id": "sic-95f7792e4f6e246fe363d29880c91bee",
+        "experiment_task_id": "rtask-exp-sic-95f7792e4f6e246fe363d29880c91bee",
+        "experiment_run_id": "rrun-exp-sic-95f7792e4f6e246fe363d29880c91bee",
+        "consult_request_id": "cr-l12-hl-80fa1f2521",
+        "memo_id": "mem-bdea159082e044e2da97",
+        "governance_handoff_id": "gh-eeaebe53d300213cea16"
       }
     },
     "restart_replay_identity_stable": {
