@@ -5,7 +5,7 @@ Task: `LIFECYCLE-PROJ-CUTOVER-001`
 Target: `pantheon-lupin-dev` in `pantheon-lupin-dev-20260719`
 
 Reader rollback boundary: `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND`
-Last updated: 2026-08-21
+Last updated: 2026-08-22
 
 This is a paper-only target-dev procedure. It does not authorize production,
 live capital, broker actions, legacy data retirement, or a destructive schema
@@ -29,13 +29,18 @@ captured. Do not infer a later gate from an earlier pass.
   JSON implementation is not restarted alongside it.
 - Preserve the `bff-data` volume and its final JSON generation. JSON is a
   recovery reader only after cutover and must report stale truth honestly.
-- `telemetry_events` is the only backfill authority. Before an exact root
-  deploy, prove that the selected deploy path will not prune or truncate that
-  table before the backfill commits. Capture the lifecycle-row count and
-  retained high watermark both before and after deployment. If a non-empty
-  legacy bundle remains but the canonical lifecycle source window is empty,
-  stop: do not backfill from derived JSON and do not clear legacy state to
-  manufacture parity.
+- `telemetry_events` remains the normal backfill authority. Before an exact
+  root deploy, prove that the selected deploy path will not prune or truncate
+  it. Capture lifecycle-row count and retained high watermark before and after
+  deployment.
+- This task has one reviewed target-dev recovery exception. Human/Ops
+  determined on 2026-08-22 that the reader never left JSON, the relational
+  writer stayed disabled, the relational projection remained empty, no source
+  backup or snapshot exists, and the three-file legacy JSON bundle is intact.
+  The accepted disposition is to import that exact folded baseline, not to
+  restore the unrecoverable truncated source rows. The exception is bound to
+  the checksums in section 3 and does not apply to another environment, bundle,
+  task, or future truncation.
 - Never record a DSN, credential, access token, raw payload, or page-token
   secret in evidence. Record only allowlisted controller/config fields and
   checksums.
@@ -98,10 +103,21 @@ Required: hosted BFF source SHA equals the merged SHA; both container image IDs
 are recorded; the migration and compose checksums are recorded; the reader is
 still `json`; no canary claim has been made.
 
-## 3. Additive migration and resumable backfill
+## 3. Additive migration and reviewed fresh legacy baseline
 
 Apply only the additive migration. Do not run a down migration or truncate the
-canonical source or projection schema.
+canonical source or projection schema. Before importing, prove the BFF reader
+is `json`, the relational writer is `disabled`, all relational projection tables
+and controllers are empty, and size/mtime remain unchanged across the checksum
+pass.
+
+The reviewed immutable bundle identity is:
+
+```text
+trade_journey_events.json  2102154569 bytes  sha256:774e6c3b8871704e6d19cfc2db9783b7c7b97702129f97208d50ea929321c7bb
+loop_runs.json               317514745 bytes  sha256:6ba7cde66e7d7b6c1a4bd6352e7fd2a6918f7a7b0f651b76e7c0b204598baacc
+controller_state.json       3170778131 bytes  sha256:c138b59620b6765c3e81294ff346d33790a5d19205ce1299ba8fabae2c08cab0
+```
 
 ```bash
 docker compose -p pantheon -f docker-compose.yml exec -T postgres \
@@ -116,15 +132,26 @@ docker compose -p pantheon -f docker-compose.yml run --rm -T --no-deps \
   python -m scripts.lifecycle_projector_migrate \
     --controller-id canonical-lifecycle-projector \
     --tenant-scope '*' --environment-scope '*' \
-    --snapshot-path /data/bff/lifecycle-projection/cutover-migrate.snapshot.json \
+    --legacy-controller-state /data/bff/lifecycle-projection/controller_state.json \
+    --expected-legacy-sha256 c138b59620b6765c3e81294ff346d33790a5d19205ce1299ba8fabae2c08cab0 \
+    --legacy-checkpoint 7100730 \
+    --legacy-controller-deployment-sha 97945de7c5193baa9832f6c02674714d889577b9 \
+    --snapshot-path /data/bff/lifecycle-projection/cutover-legacy-baseline.snapshot.json \
     --evidence-out /data/bff/lifecycle-projection/cutover-migrate-result.json
 ```
 
 Re-run the migration command once. The second run must resume from the durable
-snapshot without new derived mutation or data loss.
+snapshot without new derived mutation or data loss. The bounded result must
+report `import_complete=true`, `live_controller_seeded=true`,
+`live_controller_mode=recovery`, `live_controller_status=repair_only`, and
+`accepted_live=false`. The importer streams one folded aggregate at a time;
+it must not load the multi-GiB file into memory.
 
 Capture the migration controller separately from the live controller. Its ID is
 `canonical-lifecycle-projector-migrate`; it never grants live-read authority.
+The seeded live controller exists only to bridge the accepted pre-truncation
+checkpoint. Shadow polling, not the baseline import, is what may later change
+it to `live/ready/accepted_live=true`.
 
 ## 4. Pre-switch parity, capacity, and security gates
 
@@ -136,9 +163,9 @@ LIFECYCLE_PROJECTION_DSN='postgresql://pantheon_app:<redacted>@postgres:5432/pan
 docker compose -p pantheon -f docker-compose.yml exec -T \
   -e LIFECYCLE_PROJECTION_DSN loop-run-projector-scheduler \
   python -m scripts.lifecycle_projector_parity \
-    --legacy-journey-events /data/bff/lifecycle-projection/current/trade_journey_events.json \
-    --legacy-loop-runs /data/bff/lifecycle-projection/current/loop_runs.json \
     --legacy-controller-state /data/bff/lifecycle-projection/controller_state.json \
+    --expected-legacy-sha256 c138b59620b6765c3e81294ff346d33790a5d19205ce1299ba8fabae2c08cab0 \
+    --legacy-checkpoint 7100730 \
     --out /data/bff/lifecycle-projection/pre-switch-parity.json
 
 docker cp pantheon-loop-run-projector-scheduler-1:/data/bff/lifecycle-projection/pre-switch-parity.json \
@@ -148,6 +175,8 @@ docker cp pantheon-loop-run-projector-scheduler-1:/data/bff/lifecycle-projection
 Required:
 
 - stage, journey, loop, identity, and quarantine category hashes recorded;
+- source and PostgreSQL row counts match for every category, using the bounded
+  streaming multiset digest rather than loading or sorting the full bundle;
 - `unexplained_mismatch_count=0` and backlog zero;
 - `LIFECYCLE-PROJ-CAPACITY-001` reviewed evidence still passes its stated
   resource, fault, and latency thresholds;

@@ -75,6 +75,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         default="",
         help="required exact SHA-256 for --legacy-controller-state",
     )
+    parser.add_argument(
+        "--legacy-checkpoint",
+        type=int,
+        default=None,
+        help="reviewed controller checkpoint bound to the exact legacy checksum",
+    )
+    parser.add_argument(
+        "--legacy-controller-deployment-sha",
+        default="",
+        help="allowlisted legacy controller deployment identity for evidence",
+    )
     args = parser.parse_args(argv)
 
     if not args.dsn:
@@ -84,6 +95,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.legacy_controller_state is not None:
         if not args.expected_legacy_sha256:
             parser.error("--expected-legacy-sha256 is required with --legacy-controller-state")
+        if args.legacy_checkpoint is None:
+            parser.error("--legacy-checkpoint is required with --legacy-controller-state")
         coordinator = LegacyBundleBackfillCoordinator(
             store,
             controller_id=args.controller_id,
@@ -92,12 +105,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             controller_state_path=args.legacy_controller_state,
             expected_sha256=args.expected_legacy_sha256,
             snapshot_path=args.snapshot_path,
+            accepted_checkpoint=args.legacy_checkpoint,
+            accepted_controller_deployment_sha=args.legacy_controller_deployment_sha,
             deployment_sha=args.deployment_sha,
             batch_size=args.batch_size,
         )
     else:
         if args.expected_legacy_sha256:
             parser.error("--expected-legacy-sha256 requires --legacy-controller-state")
+        if args.legacy_checkpoint is not None or args.legacy_controller_deployment_sha:
+            parser.error("legacy controller metadata requires --legacy-controller-state")
         # Include ignored rows so the migration controller can advance a
         # contiguous global source checkpoint across non-lifecycle telemetry.
         source = PostgresLifecycleSource(args.dsn, include_non_lifecycle=True)

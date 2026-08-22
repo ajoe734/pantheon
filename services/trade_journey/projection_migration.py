@@ -752,6 +752,8 @@ class LegacyBundleBackfillCoordinator:
         controller_state_path: Path,
         expected_sha256: str,
         snapshot_path: Path,
+        accepted_checkpoint: int | None = None,
+        accepted_controller_deployment_sha: str = "",
         deployment_sha: str = "",
         batch_size: int = 100,
     ) -> None:
@@ -769,6 +771,8 @@ class LegacyBundleBackfillCoordinator:
         self.controller_state_path = controller_state_path
         self.expected_sha256 = expected_sha256.lower()
         self.snapshot_path = snapshot_path
+        self.accepted_checkpoint = accepted_checkpoint
+        self.accepted_controller_deployment_sha = accepted_controller_deployment_sha
         self.deployment_sha = deployment_sha
         self.batch_size = batch_size
 
@@ -793,6 +797,22 @@ class LegacyBundleBackfillCoordinator:
         tmp.replace(self.snapshot_path)
 
     def _accepted_controller(self) -> tuple[Mapping[str, Any], int]:
+        if self.accepted_checkpoint is not None:
+            checkpoint = int(self.accepted_checkpoint)
+            if checkpoint <= 0:
+                raise ValueError("accepted legacy checkpoint must be positive")
+            return (
+                {
+                    "controller_id": self.controller_id,
+                    "checkpoint": checkpoint,
+                    "backlog": 0,
+                    "quarantine_count": 0,
+                    "accepted_live": True,
+                    "last_error": None,
+                    "deployment_sha": self.accepted_controller_deployment_sha,
+                },
+                checkpoint,
+            )
         controller = read_legacy_bundle_member(self.controller_state_path, "controller")
         if not isinstance(controller, Mapping):
             raise ValueError("legacy controller state controller must be an object")
@@ -1009,6 +1029,35 @@ class LegacyBundleBackfillCoordinator:
 # ---------------------------------------------------------------------------
 # Deterministic old/new parity.
 # ---------------------------------------------------------------------------
+
+
+class StreamingMultisetDigest:
+    """Order-independent, duplicate-sensitive digest for large row sets."""
+
+    _MODULUS = 1 << 256
+
+    def __init__(self) -> None:
+        self.count = 0
+        self._xor = 0
+        self._sum = 0
+        self._sum_squares = 0
+
+    def update(self, row: Mapping[str, Any]) -> None:
+        payload = json.dumps(
+            dict(row), sort_keys=True, separators=(",", ":"), default=str
+        )
+        value = int.from_bytes(hashlib.sha256(payload.encode("utf-8")).digest(), "big")
+        self.count += 1
+        self._xor ^= value
+        self._sum = (self._sum + value) % self._MODULUS
+        self._sum_squares = (self._sum_squares + value * value) % self._MODULUS
+
+    def hexdigest(self) -> str:
+        summary = (
+            f"{self.count}:{self._xor:064x}:{self._sum:064x}:"
+            f"{self._sum_squares:064x}"
+        )
+        return hashlib.sha256(summary.encode("ascii")).hexdigest()
 
 
 def stable_hash(rows: Iterable[Mapping[str, Any]], *, key_fields: Sequence[str]) -> str:
