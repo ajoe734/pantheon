@@ -34,7 +34,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: agora-hosted-service-proof-dev
@@ -60,10 +59,9 @@ jobs:
       AGORA_HOSTED_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
       AGORA_HOSTED_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
       REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-      DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
-      DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
       DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
-      GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.201.204.12' }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
 
     steps:
       - name: Checkout dispatched Pantheon revision
@@ -111,14 +109,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Authenticate to Google Cloud via Workload Identity Federation
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
-        with:
-          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
-          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-cloud-build@pantheon-lupin-dev-20260719.iam.gserviceaccount.com' }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+      - name: Prepare pinned direct SSH transport
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          scripts/dev_vm_ssh.sh prepare "${credentials_dir}" >/dev/null
 
       - name: Acquire shared dev environment lease
         id: lease
@@ -236,15 +234,15 @@ jobs:
           before_instance_id="$(PANTHEON_ENVIRONMENT_LEASE_TOKEN="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" \
             "${controller}/scripts/run_with_dev_environment_lease.sh" bash -c '
               set -euo pipefail
-              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
-                --command "set -euo pipefail; cd ${remote_dir_q}; test \\\"\\$(git rev-parse HEAD)\\\" = ${expected_q}; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_WORKSHOP_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_GOVERNANCE_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_DATASET_STORE_BACKEND=postgres'\'' >/dev/null; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py seed --workshop-id ${workshop_q} --tenant-id ${tenant_q} --user-id ${user_q} >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{.Id}}'\''"
+              "${GITHUB_WORKSPACE}/scripts/dev_vm_ssh.sh" exec \
+                "set -euo pipefail; cd ${remote_dir_q}; test \\\"\\$(git rev-parse HEAD)\\\" = ${expected_q}; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_WORKSHOP_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_GOVERNANCE_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_DATASET_STORE_BACKEND=postgres'\'' >/dev/null; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py seed --workshop-id ${workshop_q} --tenant-id ${tenant_q} --user-id ${user_q} >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{.Id}}'\''"
             ')"
           [[ -n "${before_instance_id}" ]]
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" \
             "${controller}/scripts/run_with_dev_environment_lease.sh" bash -c '
               set -euo pipefail
-              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
-                --command "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml up -d --no-deps --force-recreate operator-bff >/dev/null"
+              "${GITHUB_WORKSPACE}/scripts/dev_vm_ssh.sh" exec \
+                "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml up -d --no-deps --force-recreate operator-bff >/dev/null"
             '
           {
             echo "artifacts=${artifacts}"
@@ -294,8 +292,8 @@ jobs:
           after_instance_id="$(PANTHEON_ENVIRONMENT_LEASE_TOKEN="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" \
             "${controller}/scripts/run_with_dev_environment_lease.sh" bash -c '
               set -euo pipefail
-              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
-                --command "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_q} --tenant-id ${tenant_q} --user-id \"${OPERATOR_USER_ID}\" >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{.Id}}'\''"
+              "${GITHUB_WORKSPACE}/scripts/dev_vm_ssh.sh" exec \
+                "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_q} --tenant-id ${tenant_q} --user-id \"${OPERATOR_USER_ID}\" >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{.Id}}'\''"
             ')"
           [[ -n "${after_instance_id}" && "${after_instance_id}" != "${BEFORE_INSTANCE_ID}" ]]
           common=(

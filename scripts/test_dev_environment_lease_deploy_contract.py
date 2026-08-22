@@ -306,8 +306,8 @@ def test_all_third_party_actions_are_full_sha_pinned() -> None:
     workflow = _workflow()
 
     assert workflow.count(f"actions/checkout@{CHECKOUT_SHA}") == 7
-    assert workflow.count(f"google-github-actions/auth@{AUTH_SHA}") == 3
-    assert workflow.count(f"google-github-actions/setup-gcloud@{GCLOUD_SHA}") == 3
+    assert workflow.count(f"google-github-actions/auth@{AUTH_SHA}") == 2
+    assert workflow.count(f"google-github-actions/setup-gcloud@{GCLOUD_SHA}") == 2
     for line in workflow.splitlines():
         if "uses:" in line:
             ref = line.rsplit("@", 1)[-1]

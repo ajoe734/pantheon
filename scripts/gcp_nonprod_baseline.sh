@@ -291,16 +291,16 @@ ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/cloudbuild.builds.
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/artifactregistry.writer"
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/storage.objectAdmin"
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/serviceusage.serviceUsageConsumer"
-# The nonprod workflow reaches the managed VM through `gcloud compute ssh`.
-# Instance Admin supplies the VM read and SSH-metadata permissions, while the
-# serviceAccountUser binding below limits VM-SA attachment to the existing
-# default compute identity.
-ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/compute.instanceAdmin.v1"
-
-run gcloud iam service-accounts add-iam-policy-binding "${COMPUTE_DEFAULT_SA}" \
-  --project="${PROJECT_ID}" \
-  --member="serviceAccount:${CLOUD_BUILD_SA}" \
-  --role="roles/iam.serviceAccountUser"
+# Dev deployment uses its pinned direct-SSH transport and does not grant the
+# GitHub deploy identity permission to mutate VM SSH metadata.  Legacy
+# non-dev environments still use gcloud compute ssh until they are migrated.
+if [[ "${ENV_NAME}" != "dev" ]]; then
+  ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/compute.instanceAdmin.v1"
+  run gcloud iam service-accounts add-iam-policy-binding "${COMPUTE_DEFAULT_SA}" \
+    --project="${PROJECT_ID}" \
+    --member="serviceAccount:${CLOUD_BUILD_SA}" \
+    --role="roles/iam.serviceAccountUser"
+fi
 
 run gcloud iam service-accounts add-iam-policy-binding "${CLOUD_BUILD_SA}" \
   --project="${PROJECT_ID}" \
