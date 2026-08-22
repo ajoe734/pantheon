@@ -41,11 +41,11 @@
   },
   "artifact_checksums_sha256": {
     "docker-compose.yml": "691c75bdf661f4df1c30f813c8b65f7fabff73012bc1601ce15363bc1c5fbde4",
-    "scripts/lifecycle_projector_migrate.py": "9010631745f7c221128bca6d6fe3158848389c3e809e27039ac11f29361de434",
-    "scripts/lifecycle_projector_parity.py": "088cd236fbf8862ab1833c058a9b82363ad6b9a640c97141bb2912b690541dd6",
-    "services/trade_journey/projection_migration.py": "b1a6bea31572ef33541ff5f42ddb030bf724cfd3d70b36b28770366acf00f1f9",
+    "scripts/lifecycle_projector_migrate.py": "04ecbb39e70185c0d73c720af9a29c34161ec04eef99b597b88b9e73a7574d8e",
+    "scripts/lifecycle_projector_parity.py": "9b66b7904d894707b615623e11200202a994d2402e649db54608cea2afd75e1a",
+    "services/trade_journey/projection_migration.py": "cfe64e8361d583c9b33c386e2d7685b91c5c00d5c5d44405e5639fcd445aef86",
     "services/trade_journey/projection_store.py": "d75b25c629235afff4dc07c69160c54869428f5f17463466e8d06b830ba76a86",
-    "services/trade_journey/test_projection_migration.py": "06c84f39ac2867ae92952e415823c25445d1de7d4afdc73e55a976f1e49e362c",
+    "services/trade_journey/test_projection_migration.py": "0bb43b433abcb1357305a1ccf3962d593be5f7e3f214a3461e7320df3f808f35",
     "services/trade_journey/hosted_lifecycle_probe.py": "11a752db9fb46ff2e83a1ee4f7d496766261a401d4270265cba520b9ccfba7db",
     "services/trade_journey/hosted_bff_readback.py": "be15238e52eb8c3a3aa9c69a0c44a0156866f45bacb739011feb24f5017c7987",
     "services/trade_journey/test_hosted_lifecycle_probe.py": "f26f18e92d9c3ef65931d48fe6dc0c271e4a9618547c62a7f22d16366b9e5750",
@@ -53,7 +53,7 @@
     "services/control-plane/bff/main.py": "30b4a1ebd83dedda996c318617ee53cb782029fd91a6c24ed61d05b44659d90f",
     "services/control-plane/bff/test_lifecycle_projector_readiness.py": "533e3fcc5928a8ed5f1189c19c5ab5f1dbbe7e083b4b8f4bf2e69ecd15ecff15",
     "services/trade_journey/test_lifecycle_projector_compose.py": "2b7ddc49fbc7e79a89a38f2560403a489c895db55b2ae83a4aaea67ec5c006fb",
-    "docs/operations/lifecycle-projector-incremental-runbook.md": "f4c24705ed359d41d650b2b1e8685ec04e110d5be4584844d2ff5617458fe4da",
+    "docs/operations/lifecycle-projector-incremental-runbook.md": "ef9c3a9c2cbba73f0ea7bf43b547e1ba9c9efba2b739652c62dae0c8954c9e6f",
     "services/trade_journey/migrations/001_create_trade_journey_projection_schema.sql": "732939a70680f8561f1d4cbbf4b075c6f2ae0a23403b0e4adf90b47103525374"
   },
   "pre_switch_verification": {
@@ -79,6 +79,24 @@
         "count/quarantine/offset-gated recovery-only live controller seed",
         "idempotent exact-checksum rerun",
         "order-independent duplicate-sensitive streaming parity digest"
+      ]
+    },
+    "review_reopen_controller_binding_gate": {
+      "verified_at_utc": "2026-08-22T14:56:06Z",
+      "implementation_validation_head": "8b38da1f2134c80faa36403a6ef988f767e4c4d1",
+      "focused_command": ".venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_migration.py -k 'legacy_bundle or streaming_parity or json_stream or streaming_multiset' -rs",
+      "focused_result": "18 passed, 22 deselected in 4.35s",
+      "database_command": "TEST_DATABASE_URL=<redacted-local-test-postgres-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_migration.py -rs",
+      "database_result": "40 passed in 5.45s",
+      "adjacent_store_command": "TEST_DATABASE_URL=<redacted-local-test-postgres-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_store.py::test_projection_store_mixed_batch_filters_duplicate_owned_mutations services/trade_journey/test_projection_store.py::test_projection_store_contiguous_checkpoint_advancement -rs",
+      "adjacent_store_result": "2 passed in 1.36s",
+      "compose_and_static_result": "7 compose tests passed in 2.96s; docker compose config valid; py_compile and git diff --check clean",
+      "coverage": [
+        "source controller checkpoint 8 rejected when reviewed CLI checkpoint is 999 before any projection transaction, adoption, or snapshot write",
+        "source deployment SHA a... rejected when reviewed CLI deployment SHA is f... before any projection transaction, adoption, or snapshot write",
+        "strict controller ID, checkpoint, deployment SHA, backlog, quarantine, accepted-live, last-error, required-field, and scalar-type validation",
+        "streaming parity rejects unbound controller identity or checkpoint before PostgreSQL reads",
+        "positive exact-bound legacy baseline import, idempotent retry, real-PostgreSQL adoption, and zero-mismatch streaming parity"
       ]
     },
     "adjacent_store_gate": {
