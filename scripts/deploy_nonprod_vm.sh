@@ -2020,6 +2020,13 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
+    # Keep the requested immutable identity in the environment for every
+    # Compose call in this root deployment.  In particular, the lifecycle
+    # projector is force-recreated after the full stack build; a command-local
+    # GIT_SHA on only the first `compose up` would recreate that projector with
+    # the compose default (`unknown`) and make the exact-SHA readiness gate
+    # impossible to satisfy.
+    export GIT_SHA="${PANTHEON_DEPLOY_SHA}"
     # Dev deploys activate every default-safe compose profile. Each selected
     # profile is either a long-running daemon, an init container, or a one-shot
     # smoke whose Dockerfile + smoke script have been verified to build and pass
@@ -2066,7 +2073,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     prune_dev_docker_storage_for_build
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
-    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
     LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \

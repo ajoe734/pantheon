@@ -691,7 +691,8 @@ def test_bff_only_readiness_also_uses_exact_waiter() -> None:
     bff = _component_block(script, "bff", "exec")
     compose_up = (
         "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --build --no-deps operator-bff loop-run-projector-scheduler"
+        "up -d --build --force-recreate --no-deps "
+        "operator-bff loop-run-projector-scheduler"
     )
     helper_call = (
         "wait_for_exact_bff_lifecycle_readiness \\\n"
