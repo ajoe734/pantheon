@@ -11,6 +11,9 @@ and 2026-08-20 gap documents.
 - [`SA_IMPLEMENTATION_PLAN_2026-08-22.md`](SA_IMPLEMENTATION_PLAN_2026-08-22.md)
   — target architecture, migration sequence, implementable work packages,
   dependency graph, and acceptance contracts.
+- [`SD_IMPLEMENTATION_DESIGN_2026-08-22.md`](SD_IMPLEMENTATION_DESIGN_2026-08-22.md)
+  — file-level detailed design, data and state contracts, migration mechanics,
+  positive/negative tests, and worker-ready task boundaries.
 
 ## Scope
 
