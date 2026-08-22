@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,13 @@ APPROVAL_SCHEMA_VERSION = "pantheon.lifecycle-projector-retirement-approval.v1"
 TASK_ID = "LIFECYCLE-PROJ-RETIRE-001"
 DEFAULT_LIFECYCLE_ROOT = "/data/bff/lifecycle-projection"
 DEFAULT_QUARANTINE_SUBDIR = "quarantine"
+CANONICAL_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+SIGNING_KEY_ENV_VARS = (
+    "PANTHEON_HUMAN_OPS_SIGNING_KEY",
+    "PANTHEON_OPERATOR_APPROVAL_SECRET",
+    "PANTHEON_RETIREMENT_SIGNING_KEY",
+)
 
 FORBIDDEN_ROOTS = frozenset(
     {
@@ -130,6 +138,26 @@ def compute_inventory_digest(items: List[Dict[str, Any]]) -> str:
     return h.hexdigest()
 
 
+def resolve_signing_key(
+    signing_key_override: Optional[str | bytes] = None,
+) -> Optional[bytes]:
+    """Resolve the authoritative Human/Ops signing key from parameters or environment."""
+    if signing_key_override is not None:
+        if isinstance(signing_key_override, str):
+            key_bytes = signing_key_override.strip().encode("utf-8")
+        else:
+            key_bytes = bytes(signing_key_override)
+        if key_bytes:
+            return key_bytes
+
+    for env_name in SIGNING_KEY_ENV_VARS:
+        val = os.environ.get(env_name)
+        if val and val.strip():
+            return val.strip().encode("utf-8")
+
+    return None
+
+
 def compute_approval_signature(
     task_id: str,
     actor: str,
@@ -139,8 +167,17 @@ def compute_approval_signature(
     recovery_possible: bool,
     quarantine_path: Optional[str],
     approved_at_utc: str,
+    *,
+    signing_key: str | bytes,
 ) -> str:
-    """Compute a deterministic SHA-256 signature for an authoritative Human/Ops approval record."""
+    """Compute an authoritative HMAC-SHA256 signature for a Human/Ops approval record."""
+    if isinstance(signing_key, str):
+        key_bytes = signing_key.strip().encode("utf-8")
+    else:
+        key_bytes = bytes(signing_key)
+    if not key_bytes:
+        raise RetirementValidationError("Signing key cannot be empty.")
+
     canonical_payload = {
         "action": action,
         "actor": actor,
@@ -155,24 +192,133 @@ def compute_approval_signature(
     canonical_bytes = json.dumps(
         canonical_payload, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
-    return hashlib.sha256(canonical_bytes).hexdigest()
+    return hmac.new(key_bytes, canonical_bytes, hashlib.sha256).hexdigest()
 
 
-def resolve_governed_status_root(status_root_override: Optional[Path] = None) -> Path:
-    """Resolve the authoritative status root for Human/Ops approval records.
+def _is_unkeyed_sha256_hash(
+    record_signature: str,
+    task_id: str,
+    actor: str,
+    action: str,
+    root_path: str,
+    inventory_sha256: str,
+    recovery_possible: bool,
+    quarantine_path: Optional[str],
+    approved_at_utc: str,
+) -> bool:
+    """Check if the provided signature is an unkeyed/forgeable SHA-256 hash."""
+    canonical_payload = {
+        "action": action,
+        "actor": actor,
+        "approved": True,
+        "approved_at_utc": approved_at_utc,
+        "inventory_sha256": inventory_sha256,
+        "quarantine_path": quarantine_path,
+        "recovery_possible": recovery_possible,
+        "root_path": root_path,
+        "task_id": task_id,
+    }
+    canonical_bytes = json.dumps(
+        canonical_payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    unkeyed_hash = hashlib.sha256(canonical_bytes).hexdigest()
+    return hmac.compare_digest(record_signature, unkeyed_hash)
 
-    Prefers explicit override (for testing), then PANTHEON_STATUS_ROOT environment
-    variable, then repository root containing ai-status.json or .orchestrator.
+
+def resolve_governed_status_root(
+    status_root_override: Optional[Path] = None,
+    allow_custom_root: bool = False,
+) -> Path:
+    """Resolve the authoritative immutable status root for Human/Ops approval records.
+
+    The status root must be an authoritative repository or supervisor coordination root.
+    Arbitrary caller-controlled environment overrides are strictly prohibited.
     """
+    if allow_custom_root or os.environ.get("PANTHEON_ALLOW_TEST_CUSTOM_ROOT") == "1":
+        if status_root_override is not None:
+            return status_root_override.resolve()
+        env_root = os.environ.get("PANTHEON_STATUS_ROOT")
+        if env_root and env_root.strip():
+            return Path(env_root).resolve()
+
     if status_root_override is not None:
-        return status_root_override.resolve()
+        resolved = status_root_override.resolve()
+        if (resolved / "ai-status.json").exists() and not (resolved / "ai-status.json").is_symlink():
+            return resolved
+        raise RetirementValidationError(
+            f"Explicit status root override {str(resolved)!r} is not a valid canonical status root."
+        )
+
+    canonical_identity_raw = os.environ.get("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON")
+    if canonical_identity_raw and canonical_identity_raw.strip():
+        try:
+            identity_data = json.loads(canonical_identity_raw)
+        except Exception as exc:
+            raise RetirementValidationError(
+                f"PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON is invalid JSON: {exc}"
+            ) from exc
+
+        if not isinstance(identity_data, dict):
+            raise RetirementValidationError(
+                "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON must be a JSON object"
+            )
+
+        bound_status_root = identity_data.get("status_root")
+        bound_status_file = identity_data.get("status_file")
+        bound_archive_root = identity_data.get("archive_root")
+        bound_event_log = identity_data.get("event_log")
+        identity_sha256 = identity_data.get("identity_sha256")
+
+        if not all([bound_status_root, bound_status_file, bound_archive_root, bound_event_log, identity_sha256]):
+            raise RetirementValidationError(
+                "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON is missing required fields"
+            )
+
+        expected_payload = {
+            "schema_version": int(identity_data.get("schema_version", 1)),
+            "status_root": str(bound_status_root),
+            "status_file": str(bound_status_file),
+            "archive_root": str(bound_archive_root),
+            "event_log": str(bound_event_log),
+        }
+        encoded = json.dumps(expected_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        computed_identity_sha = hashlib.sha256(encoded).hexdigest()
+        if computed_identity_sha != identity_sha256:
+            raise RetirementValidationError(
+                "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON identity_sha256 integrity mismatch"
+            )
+
+        resolved_bound_root = Path(bound_status_root).resolve()
+        if not resolved_bound_root.exists() or not (resolved_bound_root / "ai-status.json").exists():
+            raise RetirementValidationError(
+                f"Authoritative status root from identity binding {str(resolved_bound_root)!r} does not exist or lacks ai-status.json"
+            )
+
+        env_status_root = os.environ.get("PANTHEON_STATUS_ROOT")
+        if env_status_root and env_status_root.strip():
+            if Path(env_status_root).resolve() != resolved_bound_root:
+                raise RetirementValidationError(
+                    f"PANTHEON_STATUS_ROOT override {env_status_root!r} conflicts with authoritative identity root {str(resolved_bound_root)!r}"
+                )
+
+        return resolved_bound_root
+
     env_root = os.environ.get("PANTHEON_STATUS_ROOT")
     if env_root and env_root.strip():
-        return Path(env_root).resolve()
-    script_dir = Path(__file__).resolve().parent
-    repo_root = script_dir.parent
-    if (repo_root / "ai-status.json").exists() or (repo_root / ".orchestrator").exists():
-        return repo_root.resolve()
+        if allow_custom_root or os.environ.get("PANTHEON_ALLOW_TEST_CUSTOM_ROOT") == "1":
+            return Path(env_root).resolve()
+
+        resolved_env_root = Path(env_root).resolve()
+        if resolved_env_root != CANONICAL_REPO_ROOT:
+            raise RetirementValidationError(
+                f"Caller-controlled PANTHEON_STATUS_ROOT override ({str(resolved_env_root)!r}) outside the repository root "
+                f"({str(CANONICAL_REPO_ROOT)!r}) is prohibited for destructive retirement execution without authoritative identity."
+            )
+        return resolved_env_root
+
+    if (CANONICAL_REPO_ROOT / "ai-status.json").exists() or (CANONICAL_REPO_ROOT / ".orchestrator").exists():
+        return CANONICAL_REPO_ROOT.resolve()
+
     return Path.cwd().resolve()
 
 
@@ -390,6 +536,7 @@ def load_and_validate_approval_record(
     expected_quarantine_path: Optional[str],
     status_root: Optional[Path] = None,
     allow_custom_root: bool = False,
+    signing_key: Optional[str | bytes] = None,
 ) -> Dict[str, Any]:
     """Load and validate an authoritative, signed Human/Ops approval record bound to the governed status root."""
     if record_path is None:
@@ -403,7 +550,12 @@ def load_and_validate_approval_record(
             f"Approval record file does not exist at {record_path}."
         )
 
-    governed_root = resolve_governed_status_root(status_root)
+    if record_path.is_symlink():
+        raise RetirementValidationError(
+            f"Approval record path cannot be a symlink: {record_path}."
+        )
+
+    governed_root = resolve_governed_status_root(status_root, allow_custom_root=allow_custom_root)
     resolved_record_path = record_path.resolve()
     resolved_governed_root = governed_root.resolve()
 
@@ -513,12 +665,35 @@ def load_and_validate_approval_record(
     # Validate authoritative signature
     record_signature = (
         record.get("signature_sha256")
+        or record.get("signature_hmac_sha256")
         or record.get("signature")
         or record.get("approval_signature")
     )
     if not record_signature:
         raise RetirementValidationError(
             "Approval record must contain an authoritative signature ('signature_sha256'); unsigned records are rejected."
+        )
+
+    # Explicitly detect and reject forgeable unkeyed deterministic hashes
+    if _is_unkeyed_sha256_hash(
+        record_signature=record_signature,
+        task_id=expected_task_id,
+        actor=actor,
+        action=expected_action,
+        root_path=expected_root_path,
+        inventory_sha256=expected_inventory_sha256,
+        recovery_possible=expected_recovery_possible,
+        quarantine_path=expected_quarantine_path,
+        approved_at_utc=approved_at_utc,
+    ):
+        raise RetirementValidationError(
+            "Approval record signature is a forgeable unkeyed SHA-256 hash; authoritative HMAC-SHA256 signature from Human/Ops is required."
+        )
+
+    resolved_key = resolve_signing_key(signing_key)
+    if not resolved_key:
+        raise RetirementValidationError(
+            "Authoritative Human/Ops signing key (PANTHEON_HUMAN_OPS_SIGNING_KEY) is required to verify approval record; unauthenticated execution is prohibited."
         )
 
     expected_signature = compute_approval_signature(
@@ -530,11 +705,12 @@ def load_and_validate_approval_record(
         recovery_possible=expected_recovery_possible,
         quarantine_path=expected_quarantine_path,
         approved_at_utc=approved_at_utc,
+        signing_key=resolved_key,
     )
-    if record_signature != expected_signature:
+    if not hmac.compare_digest(record_signature, expected_signature):
         raise RetirementValidationError(
             f"Approval record signature mismatch: record specifies {record_signature!r}, "
-            f"expected exact signature {expected_signature!r}."
+            f"expected exact HMAC signature {expected_signature!r}."
         )
 
     return record
@@ -559,7 +735,13 @@ def execute_retirement(
     approval_record_str = str(approval_record_path) if approval_record_path else None
     approval_record_sha = _compute_sha256(approval_record_path) if approval_record_path and approval_record_path.exists() else None
     approval_time = approval_record.get("approved_at_utc") if approval_record else None
-    approval_sig = approval_record.get("signature_sha256") or approval_record.get("signature") if approval_record else None
+    approval_sig = (
+        approval_record.get("signature_sha256")
+        or approval_record.get("signature_hmac_sha256")
+        or approval_record.get("signature")
+        if approval_record
+        else None
+    )
 
     if action in {"archive", "quarantine"}:
         if quarantine_dir is None:
@@ -692,6 +874,7 @@ def run_retirement(
     status_root: Optional[Path] = None,
     approval_token: str = "",
     approver: str = "",
+    signing_key: Optional[str | bytes] = None,
 ) -> Dict[str, Any]:
     safe_root = validate_path_safety(root_path, allow_custom_root=allow_custom_root)
 
@@ -718,16 +901,22 @@ def run_retirement(
         if action != "delete" and safe_quarantine is not None
         else None
     )
-    req_sig = compute_approval_signature(
-        task_id=TASK_ID,
-        actor="Human/Ops",
-        action=action,
-        root_path=str(safe_root),
-        inventory_sha256=inventory_digest,
-        recovery_possible=action != "delete",
-        quarantine_path=req_quarantine_path,
-        approved_at_utc=req_approved_at,
-    )
+
+    resolved_key = resolve_signing_key(signing_key)
+    if resolved_key:
+        req_sig = compute_approval_signature(
+            task_id=TASK_ID,
+            actor="Human/Ops",
+            action=action,
+            root_path=str(safe_root),
+            inventory_sha256=inventory_digest,
+            recovery_possible=action != "delete",
+            quarantine_path=req_quarantine_path,
+            approved_at_utc=req_approved_at,
+            signing_key=resolved_key,
+        )
+    else:
+        req_sig = "<REQUIRED_HUMAN_OPS_HMAC_SHA256_SIGNATURE>"
 
     manifest: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -855,6 +1044,7 @@ def run_retirement(
             expected_quarantine_path=manifest["quarantine_path"],
             status_root=status_root,
             allow_custom_root=allow_custom_root,
+            signing_key=signing_key,
         )
 
         receipt = execute_retirement(
@@ -919,6 +1109,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Alias for --approval-record",
     )
     parser.add_argument(
+        "--signing-key",
+        "--operator-key",
+        default="",
+        help="Authoritative Human/Ops signing key for HMAC signature verification",
+    )
+    parser.add_argument(
         "--approval-token",
         default="",
         help="Legacy token flag (cannot bypass --approval-record)",
@@ -959,6 +1155,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             allow_custom_root=allow_custom_root,
             approval_token=args.approval_token,
             approver=args.approver,
+            signing_key=args.signing_key or None,
         )
     except RetirementValidationError as exc:
         print(f"Error: {exc}", file=sys.stderr)

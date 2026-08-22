@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import pytest
 
 from scripts.lifecycle_projector_legacy_retire import (
     APPROVAL_SCHEMA_VERSION,
+    CANONICAL_REPO_ROOT,
     DEFAULT_LIFECYCLE_ROOT,
     DEFAULT_QUARANTINE_SUBDIR,
     TASK_ID,
@@ -21,6 +23,15 @@ from scripts.lifecycle_projector_legacy_retire import (
     validate_destination_path_safety,
     validate_path_safety,
 )
+
+TEST_SIGNING_KEY = "test-secret-human-ops-signing-key-12345"
+
+
+@pytest.fixture(autouse=True)
+def setup_test_env(monkeypatch):
+    monkeypatch.setenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", "1")
+    monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", TEST_SIGNING_KEY)
+    monkeypatch.delenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", raising=False)
 
 
 def _seed_legacy_projection_fixture(root: Path) -> None:
@@ -66,6 +77,7 @@ def _create_approval_record(
     approved_at_utc: str = "2026-08-22T18:00:00Z",
     signature_sha256: str | None = None,
     include_signature: bool = True,
+    signing_key: str | bytes = TEST_SIGNING_KEY,
 ) -> dict:
     act = action if action is not None else manifest.get("action", "archive")
     rec = (
@@ -94,6 +106,7 @@ def _create_approval_record(
             recovery_possible=rec,
             quarantine_path=q_path,
             approved_at_utc=approved_at_utc,
+            signing_key=signing_key,
         )
     else:
         sig = signature_sha256
@@ -921,3 +934,230 @@ def test_cli_main_dry_run_and_execute_governed_mode(tmp_path: Path, monkeypatch)
     receipt_data = json.loads(receipt_output.read_text(encoding="utf-8"))
     assert receipt_data["mode"] == "executed"
     assert receipt_data["execution_receipt"]["status"] == "completed"
+
+
+def test_execute_rejects_caller_env_root_override_outside_repo(tmp_path: Path, monkeypatch):
+    """Regression test: caller cannot point PANTHEON_STATUS_ROOT outside the repository root."""
+    monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
+    monkeypatch.delenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", raising=False)
+    attacker_dir = tmp_path / "attacker_controlled_dir"
+    attacker_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(attacker_dir))
+
+    with pytest.raises(
+        RetirementValidationError,
+        match="Caller-controlled PANTHEON_STATUS_ROOT override .* outside the repository root",
+    ):
+        resolve_governed_status_root()
+
+
+def test_execute_rejects_unkeyed_deterministic_hash_forge(tmp_path: Path):
+    """Regression test: caller cannot satisfy the execution gate with an unkeyed SHA-256 hash."""
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    _seed_legacy_projection_fixture(root)
+
+    dry_run_manifest = run_retirement(
+        root_path=root, action="archive", execute=False, allow_custom_root=True
+    )
+    manifest_path = status_root / "dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
+
+    # Compute unkeyed SHA-256 deterministic hash of the canonical payload
+    approved_at = "2026-08-22T18:00:00Z"
+    canonical_payload = {
+        "action": "archive",
+        "actor": "Human/Ops",
+        "approved": True,
+        "approved_at_utc": approved_at,
+        "inventory_sha256": dry_run_manifest["inventory_sha256"],
+        "quarantine_path": dry_run_manifest["quarantine_path"],
+        "recovery_possible": True,
+        "root_path": str(root),
+        "task_id": TASK_ID,
+    }
+    unkeyed_hash = hashlib.sha256(
+        json.dumps(canonical_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    forged_record = _create_approval_record(
+        dry_run_manifest,
+        approved_at_utc=approved_at,
+        signature_sha256=unkeyed_hash,
+    )
+    approval_path = status_root / "forged-unkeyed-approval.json"
+    approval_path.write_text(json.dumps(forged_record), encoding="utf-8")
+
+    with pytest.raises(
+        RetirementValidationError,
+        match="forgeable unkeyed SHA-256 hash",
+    ):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_record_path=approval_path,
+            dry_run_manifest_path=manifest_path,
+            status_root=status_root,
+            allow_custom_root=True,
+        )
+
+
+def test_execute_rejects_missing_signing_key_in_execute_mode(tmp_path: Path, monkeypatch):
+    """Regression test: execute mode fails closed when no authoritative signing key is present."""
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    _seed_legacy_projection_fixture(root)
+
+    dry_run_manifest = run_retirement(
+        root_path=root, action="archive", execute=False, allow_custom_root=True
+    )
+    manifest_path = status_root / "dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
+
+    approval_record = _create_approval_record(dry_run_manifest)
+    approval_path = status_root / "approval.json"
+    approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
+
+    # Remove all signing keys from environment
+    monkeypatch.delenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("PANTHEON_OPERATOR_APPROVAL_SECRET", raising=False)
+    monkeypatch.delenv("PANTHEON_RETIREMENT_SIGNING_KEY", raising=False)
+
+    with pytest.raises(
+        RetirementValidationError,
+        match="signing key .* is required",
+    ):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_record_path=approval_path,
+            dry_run_manifest_path=manifest_path,
+            status_root=status_root,
+            allow_custom_root=True,
+            signing_key=None,
+        )
+
+
+def test_execute_rejects_wrong_signing_key(tmp_path: Path):
+    """Regression test: signature verification fails when signed with wrong key."""
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    _seed_legacy_projection_fixture(root)
+
+    dry_run_manifest = run_retirement(
+        root_path=root, action="archive", execute=False, allow_custom_root=True
+    )
+    manifest_path = status_root / "dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
+
+    # Sign with wrong key
+    wrong_key_record = _create_approval_record(
+        dry_run_manifest, signing_key="attacker-wrong-secret-key"
+    )
+    approval_path = status_root / "wrong-key-approval.json"
+    approval_path.write_text(json.dumps(wrong_key_record), encoding="utf-8")
+
+    with pytest.raises(
+        RetirementValidationError,
+        match="signature mismatch: record specifies .*, expected exact HMAC signature",
+    ):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_record_path=approval_path,
+            dry_run_manifest_path=manifest_path,
+            status_root=status_root,
+            allow_custom_root=True,
+            signing_key=TEST_SIGNING_KEY,
+        )
+
+
+def test_canonical_task_state_identity_binding_valid(tmp_path: Path, monkeypatch):
+    """Verify that canonical supervisor task state identity binding securely resolves status root."""
+    monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
+    monkeypatch.delenv("PANTHEON_STATUS_ROOT", raising=False)
+
+    bound_root = tmp_path / "supervisor_status_root"
+    bound_root.mkdir(parents=True, exist_ok=True)
+    (bound_root / "ai-status.json").write_text("{}", encoding="utf-8")
+
+    identity_payload = {
+        "schema_version": 1,
+        "status_root": str(bound_root),
+        "status_file": str(bound_root / "ai-status.json"),
+        "archive_root": str(bound_root / "ai-task-archive"),
+        "event_log": str(bound_root / "ai-activity-log.jsonl"),
+    }
+    encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+
+    identity_json = json.dumps({**identity_payload, "identity_sha256": identity_sha256})
+    monkeypatch.setenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", identity_json)
+
+    resolved = resolve_governed_status_root()
+    assert resolved == bound_root.resolve()
+
+
+def test_canonical_task_state_identity_binding_rejects_tampered_hash(tmp_path: Path, monkeypatch):
+    """Verify that tampered task state identity hash is rejected."""
+    monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
+    monkeypatch.delenv("PANTHEON_STATUS_ROOT", raising=False)
+
+    bound_root = tmp_path / "supervisor_status_root"
+    bound_root.mkdir(parents=True, exist_ok=True)
+    (bound_root / "ai-status.json").write_text("{}", encoding="utf-8")
+
+    identity_payload = {
+        "schema_version": 1,
+        "status_root": str(bound_root),
+        "status_file": str(bound_root / "ai-status.json"),
+        "archive_root": str(bound_root / "ai-task-archive"),
+        "event_log": str(bound_root / "ai-activity-log.jsonl"),
+    }
+    identity_json = json.dumps({**identity_payload, "identity_sha256": "0" * 64})
+    monkeypatch.setenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", identity_json)
+
+    with pytest.raises(
+        RetirementValidationError,
+        match="identity_sha256 integrity mismatch",
+    ):
+        resolve_governed_status_root()
+
+
+def test_canonical_task_state_identity_binding_rejects_conflicting_status_root_env(
+    tmp_path: Path, monkeypatch
+):
+    """Verify that conflicting PANTHEON_STATUS_ROOT is rejected when canonical identity is bound."""
+    monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
+
+    bound_root = tmp_path / "supervisor_status_root"
+    bound_root.mkdir(parents=True, exist_ok=True)
+    (bound_root / "ai-status.json").write_text("{}", encoding="utf-8")
+
+    identity_payload = {
+        "schema_version": 1,
+        "status_root": str(bound_root),
+        "status_file": str(bound_root / "ai-status.json"),
+        "archive_root": str(bound_root / "ai-task-archive"),
+        "event_log": str(bound_root / "ai-activity-log.jsonl"),
+    }
+    encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+
+    identity_json = json.dumps({**identity_payload, "identity_sha256": identity_sha256})
+    monkeypatch.setenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", identity_json)
+
+    # Conflicting status root
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(tmp_path / "conflicting_root"))
+
+    with pytest.raises(
+        RetirementValidationError,
+        match="conflicts with authoritative identity root",
+    ):
+        resolve_governed_status_root()
