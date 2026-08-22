@@ -31,7 +31,9 @@ TEST_SIGNING_KEY = "test-secret-human-ops-signing-key-12345"
 
 @pytest.fixture(autouse=True)
 def setup_test_env(monkeypatch):
-    monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", TEST_SIGNING_KEY)
+    monkeypatch.delenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("PANTHEON_OPERATOR_APPROVAL_SECRET", raising=False)
+    monkeypatch.delenv("PANTHEON_RETIREMENT_SIGNING_KEY", raising=False)
     monkeypatch.delenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", raising=False)
     monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
 
@@ -387,6 +389,7 @@ def test_execute_rejects_signature_mismatch_in_approval_record(tmp_path: Path):
             dry_run_manifest_path=manifest_path,
             status_root=status_root,
             allow_custom_root=True,
+            signing_key=TEST_SIGNING_KEY,
         )
 
 
@@ -662,6 +665,7 @@ def test_execute_archive_moves_to_quarantine_with_receipt(tmp_path: Path):
         quarantine_dir=quarantine_dir,
         status_root=status_root,
         allow_custom_root=True,
+        signing_key=TEST_SIGNING_KEY,
     )
 
     assert manifest["mode"] == "executed"
@@ -690,6 +694,7 @@ def test_execute_delete_removes_files_with_receipt(tmp_path: Path):
         action="delete",
         execute=False,
         allow_custom_root=True,
+        signing_key=TEST_SIGNING_KEY,
     )
     manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
@@ -706,6 +711,7 @@ def test_execute_delete_removes_files_with_receipt(tmp_path: Path):
         dry_run_manifest_path=manifest_path,
         status_root=status_root,
         allow_custom_root=True,
+        signing_key=TEST_SIGNING_KEY,
     )
 
     assert manifest["mode"] == "executed"
@@ -922,6 +928,8 @@ def test_cli_main_dry_run_and_execute_governed_mode(tmp_path: Path, monkeypatch)
     runtime_dir.mkdir(parents=True, exist_ok=True)
     event_log = runtime_dir / "task-state-events-v2.jsonl"
     event_log.write_text("", encoding="utf-8")
+    key_file = runtime_dir / "human-ops-signing.key"
+    key_file.write_text(TEST_SIGNING_KEY, encoding="utf-8")
     live_config = {
         "paths": {"status_file": str(status_root / "ai-status.json")},
         "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
@@ -1149,12 +1157,12 @@ def test_cli_rejects_forged_hmac_key_in_approval_record(tmp_path: Path, monkeypa
 
     monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
     monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
-    monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", TEST_SIGNING_KEY)
 
     runtime_dir = status_root.parent / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     event_log = runtime_dir / "task-state-events-v2.jsonl"
     event_log.write_text("", encoding="utf-8")
+    (runtime_dir / "human-ops-signing.key").write_text(TEST_SIGNING_KEY, encoding="utf-8")
     live_config = {
         "paths": {"status_file": str(status_root / "ai-status.json")},
         "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
@@ -1163,7 +1171,6 @@ def test_cli_rejects_forged_hmac_key_in_approval_record(tmp_path: Path, monkeypa
     live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
     monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
     monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
-
 
     manifest_output = status_root / "dry-run.json"
     rc = cli_main(["--root", str(root), "--output", str(manifest_output)])
@@ -1205,6 +1212,7 @@ def test_cli_rejects_combined_override_chain_attack(tmp_path: Path, monkeypatch)
     runtime_dir.mkdir(parents=True, exist_ok=True)
     event_log = runtime_dir / "task-state-events-v2.jsonl"
     event_log.write_text("", encoding="utf-8")
+    (runtime_dir / "human-ops-signing.key").write_text(TEST_SIGNING_KEY, encoding="utf-8")
     live_config = {
         "paths": {"status_file": str(status_root / "ai-status.json")},
         "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
@@ -1212,7 +1220,6 @@ def test_cli_rejects_combined_override_chain_attack(tmp_path: Path, monkeypatch)
     live_config_file = runtime_dir / "live-supervisor-config.json"
     live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
     monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
-    monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", TEST_SIGNING_KEY)
 
     manifest_output = status_root / "dry-run.json"
     rc = cli_main(["--root", str(root), "--output", str(manifest_output)])
@@ -1287,6 +1294,7 @@ def test_cli_rejects_legacy_signing_key_aliases(tmp_path: Path, monkeypatch):
     runtime_dir.mkdir(parents=True, exist_ok=True)
     event_log = runtime_dir / "task-state-events-v2.jsonl"
     event_log.write_text("", encoding="utf-8")
+    (runtime_dir / "human-ops-signing.key").write_text(TEST_SIGNING_KEY, encoding="utf-8")
     live_config = {
         "paths": {"status_file": str(status_root / "ai-status.json")},
         "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
@@ -1305,7 +1313,7 @@ def test_cli_rejects_legacy_signing_key_aliases(tmp_path: Path, monkeypatch):
     approval_path = status_root / "approval.json"
     approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
 
-    # Set legacy aliases without canonical PANTHEON_HUMAN_OPS_SIGNING_KEY
+    # Set legacy aliases without canonical protected key files
     monkeypatch.delenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", raising=False)
     monkeypatch.setenv("PANTHEON_OPERATOR_APPROVAL_SECRET", legacy_key)
     monkeypatch.setenv("PANTHEON_RETIREMENT_SIGNING_KEY", legacy_key)
@@ -1322,6 +1330,163 @@ def test_cli_rejects_legacy_signing_key_aliases(tmp_path: Path, monkeypatch):
         ]
     )
     assert rc == 1
+
+
+def test_cli_rejects_attacker_env_key_when_protected_key_files_absent_archive(tmp_path: Path, monkeypatch):
+    """Negative regression test: CLI fails closed in archive mode when protected key files are absent,
+    even if an attacker sets PANTHEON_HUMAN_OPS_SIGNING_KEY in the environment and provides a matching HMAC record.
+    """
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    _seed_legacy_projection_fixture(root)
+
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+
+    runtime_dir = status_root.parent / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    live_config = {
+        "paths": {"status_file": str(status_root / "ai-status.json")},
+        "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
+    }
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
+
+    # Point fixed key paths to non-existent files to simulate absent/unreadable protected key sources
+    monkeypatch.setattr(
+        "scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SIGNING_KEY_PATHS",
+        (
+            runtime_dir / "nonexistent-human-ops.key",
+            runtime_dir / "nonexistent-authority-signing.env",
+        ),
+    )
+
+    manifest_output = status_root / "dry-run.json"
+    rc = cli_main(["--root", str(root), "--output", str(manifest_output)])
+    assert rc == 0
+    dry_run = json.loads(manifest_output.read_text(encoding="utf-8"))
+
+    # Attacker crafts HMAC approval record signed with attacker-chosen key
+    attacker_key = "attacker-controlled-secret-key-666"
+    attacker_record = _create_approval_record(
+        dry_run,
+        action="archive",
+        signing_key=attacker_key,
+    )
+    approval_path = status_root / "attacker-approval.json"
+    approval_path.write_text(json.dumps(attacker_record), encoding="utf-8")
+
+    # Attacker sets environment variable PANTHEON_HUMAN_OPS_SIGNING_KEY to attacker key
+    monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", attacker_key)
+
+    rc = cli_main(
+        [
+            "--root",
+            str(root),
+            "--action",
+            "archive",
+            "--execute",
+            "--dry-run-manifest",
+            str(manifest_output),
+            "--approval-record",
+            str(approval_path),
+        ]
+    )
+    # Must fail closed
+    assert rc == 1
+
+    # Verify no files were moved to quarantine
+    assert (root / "controller_state.json").exists()
+    assert (root / "health_state.json").exists()
+    assert (root / "trade_journey_events.json").exists()
+    assert (root / "loop_runs.json").exists()
+    assert (root / "gen-000001").exists()
+    assert not (root / "quarantine").exists()
+
+
+def test_cli_rejects_attacker_env_key_when_protected_key_files_absent_delete(tmp_path: Path, monkeypatch):
+    """Negative regression test: CLI fails closed in delete mode when protected key files are absent,
+    even if an attacker sets PANTHEON_HUMAN_OPS_SIGNING_KEY in the environment and provides a matching HMAC record.
+    """
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    _seed_legacy_projection_fixture(root)
+
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+
+    runtime_dir = status_root.parent / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    live_config = {
+        "paths": {"status_file": str(status_root / "ai-status.json")},
+        "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
+    }
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SUPERVISOR_CONFIG_PATH", live_config_file)
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
+
+    # Point fixed key paths to non-existent files
+    monkeypatch.setattr(
+        "scripts.lifecycle_projector_legacy_retire.AUTHORITATIVE_SIGNING_KEY_PATHS",
+        (
+            runtime_dir / "nonexistent-human-ops.key",
+            runtime_dir / "nonexistent-authority-signing.env",
+        ),
+    )
+
+    manifest_output = status_root / "dry-run.json"
+    rc = cli_main(["--root", str(root), "--action", "delete", "--output", str(manifest_output)])
+    assert rc == 0
+    dry_run = json.loads(manifest_output.read_text(encoding="utf-8"))
+
+    # Attacker crafts HMAC approval record signed with attacker-chosen key
+    attacker_key = "attacker-controlled-secret-key-777"
+    attacker_record = _create_approval_record(
+        dry_run,
+        action="delete",
+        recovery_possible=False,
+        quarantine_path=None,
+        signing_key=attacker_key,
+    )
+    approval_path = status_root / "attacker-approval.json"
+    approval_path.write_text(json.dumps(attacker_record), encoding="utf-8")
+
+    # Attacker sets environment variable PANTHEON_HUMAN_OPS_SIGNING_KEY to attacker key
+    monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", attacker_key)
+
+    rc = cli_main(
+        [
+            "--root",
+            str(root),
+            "--action",
+            "delete",
+            "--execute",
+            "--dry-run-manifest",
+            str(manifest_output),
+            "--approval-record",
+            str(approval_path),
+        ]
+    )
+    # Must fail closed
+    assert rc == 1
+
+    # Verify no files were deleted
+    assert (root / "controller_state.json").exists()
+    assert (root / "health_state.json").exists()
+    assert (root / "trade_journey_events.json").exists()
+    assert (root / "loop_runs.json").exists()
+    assert (root / "gen-000001").exists()
 
 
 def test_execute_rejects_caller_env_root_override_outside_repo(tmp_path: Path, monkeypatch):

@@ -50,10 +50,6 @@ AUTHORITATIVE_SIGNING_KEY_PATHS = (
     Path("/home/lupin/pantheon-ci-deploy/runtime/authority-signing.env"),
 )
 
-SIGNING_KEY_ENV_VARS = (
-    "PANTHEON_HUMAN_OPS_SIGNING_KEY",
-)
-
 FORBIDDEN_ROOTS = frozenset(
     {
         "/",
@@ -145,9 +141,18 @@ def compute_inventory_digest(items: List[Dict[str, Any]]) -> str:
 
 def resolve_signing_key(
     signing_key_override: Optional[str | bytes] = None,
+    *,
+    status_root: Optional[Path] = None,
+    allow_custom_root: bool = False,
 ) -> Optional[bytes]:
-    """Resolve the authoritative Human/Ops signing key with bound provenance."""
-    if signing_key_override is not None:
+    """Resolve the authoritative Human/Ops signing key with bound provenance.
+
+    The signing key is loaded strictly from verified authoritative supervisor
+    or Human-Ops protected key files. Caller-controlled environment variables
+    (such as PANTHEON_HUMAN_OPS_SIGNING_KEY) cannot satisfy the execution gate
+    and are never used as a fallback.
+    """
+    if allow_custom_root and signing_key_override is not None:
         if isinstance(signing_key_override, str):
             key_bytes = signing_key_override.strip().encode("utf-8")
         else:
@@ -155,9 +160,56 @@ def resolve_signing_key(
         if key_bytes:
             return key_bytes
 
-    for key_path in AUTHORITATIVE_SIGNING_KEY_PATHS:
+    candidate_key_paths: List[Path] = list(AUTHORITATIVE_SIGNING_KEY_PATHS)
+
+    authoritative_config_path = AUTHORITATIVE_SUPERVISOR_CONFIG_PATH.resolve()
+    live_config_env = os.environ.get("PANTHEON_LIVE_SUPERVISOR_CONFIG")
+
+    config_candidates: List[Path] = []
+    if authoritative_config_path.exists() and authoritative_config_path.is_file():
+        config_candidates.append(authoritative_config_path)
+    elif allow_custom_root and live_config_env and live_config_env.strip():
+        config_candidates.append(Path(live_config_env.strip()).resolve())
+
+    canonical_identity_raw = os.environ.get("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON")
+    if canonical_identity_raw and canonical_identity_raw.strip():
+        try:
+            identity_data = json.loads(canonical_identity_raw)
+            if isinstance(identity_data, dict):
+                event_log_raw = identity_data.get("event_log")
+                if event_log_raw:
+                    runtime_dir = Path(event_log_raw).resolve().parent
+                    candidate_key_paths.append(runtime_dir / "human-ops-signing.key")
+                    candidate_key_paths.append(runtime_dir / "authority-signing.env")
+        except Exception:
+            pass
+
+    for config_candidate in config_candidates:
+        if config_candidate.exists() and config_candidate.is_file():
+            try:
+                config_data = json.loads(config_candidate.read_text(encoding="utf-8"))
+                store = config_data.get("task_state_store")
+                if isinstance(store, dict) and store.get("mode") == "authoritative":
+                    event_log_raw = store.get("event_log")
+                    if event_log_raw:
+                        runtime_dir = Path(event_log_raw).resolve().parent
+                        candidate_key_paths.append(runtime_dir / "human-ops-signing.key")
+                        candidate_key_paths.append(runtime_dir / "authority-signing.env")
+            except Exception:
+                pass
+
+    if status_root is not None:
+        resolved_status_root = status_root.resolve()
+        candidate_key_paths.append(resolved_status_root.parent / "runtime" / "human-ops-signing.key")
+        candidate_key_paths.append(resolved_status_root.parent / "runtime" / "authority-signing.env")
+
+    for key_path in candidate_key_paths:
         resolved_key_path = key_path.resolve()
-        if resolved_key_path.exists() and resolved_key_path.is_file() and not resolved_key_path.is_symlink():
+        if (
+            resolved_key_path.exists()
+            and resolved_key_path.is_file()
+            and not resolved_key_path.is_symlink()
+        ):
             try:
                 content = resolved_key_path.read_text(encoding="utf-8").strip()
                 if resolved_key_path.name.endswith(".env"):
@@ -171,11 +223,6 @@ def resolve_signing_key(
                     return content.encode("utf-8")
             except OSError:
                 pass
-
-    for env_name in SIGNING_KEY_ENV_VARS:
-        val = os.environ.get(env_name)
-        if val and val.strip():
-            return val.strip().encode("utf-8")
 
     return None
 
@@ -802,10 +849,14 @@ def load_and_validate_approval_record(
             "Approval record signature is a forgeable unkeyed SHA-256 hash; authoritative HMAC-SHA256 signature from Human/Ops is required."
         )
 
-    resolved_key = resolve_signing_key(signing_key)
+    resolved_key = resolve_signing_key(
+        signing_key,
+        status_root=status_root,
+        allow_custom_root=allow_custom_root,
+    )
     if not resolved_key:
         raise RetirementValidationError(
-            "Authoritative Human/Ops signing key (PANTHEON_HUMAN_OPS_SIGNING_KEY) is required to verify approval record; unauthenticated execution is prohibited."
+            "Authoritative Human/Ops signing key (human-ops-signing.key or authority-signing.env) is required to verify approval record; unauthenticated execution is prohibited."
         )
 
     expected_signature = compute_approval_signature(
@@ -1014,7 +1065,11 @@ def run_retirement(
         else None
     )
 
-    resolved_key = resolve_signing_key(signing_key)
+    resolved_key = resolve_signing_key(
+        signing_key,
+        status_root=status_root,
+        allow_custom_root=allow_custom_root,
+    )
     if resolved_key:
         req_sig = compute_approval_signature(
             task_id=TASK_ID,
