@@ -101,7 +101,7 @@ KNOWN_LEGACY_SYMLINKS = frozenset({"current", "staging"})
 GEN_DIR_PATTERN = re.compile(r"^gen-\d{6}$")
 STAGING_DIR_PATTERN = re.compile(r"^staging-[a-zA-Z0-9_-]+$")
 STAGING_FILE_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+\.json$")
-ALLOWED_APPROVERS = frozenset({"Human/Ops", "operator_a", "operator_b"})
+ALLOWED_APPROVERS = frozenset({"Human/Ops"})
 
 
 class RetirementValidationError(ValueError):
@@ -128,6 +128,52 @@ def compute_inventory_digest(items: List[Dict[str, Any]]) -> str:
         line = f"{item.get('relative_path')}:{item.get('size_bytes')}:{item.get('sha256')}\n"
         h.update(line.encode("utf-8"))
     return h.hexdigest()
+
+
+def compute_approval_signature(
+    task_id: str,
+    actor: str,
+    action: str,
+    root_path: str,
+    inventory_sha256: str,
+    recovery_possible: bool,
+    quarantine_path: Optional[str],
+    approved_at_utc: str,
+) -> str:
+    """Compute a deterministic SHA-256 signature for an authoritative Human/Ops approval record."""
+    canonical_payload = {
+        "action": action,
+        "actor": actor,
+        "approved": True,
+        "approved_at_utc": approved_at_utc,
+        "inventory_sha256": inventory_sha256,
+        "quarantine_path": quarantine_path,
+        "recovery_possible": recovery_possible,
+        "root_path": root_path,
+        "task_id": task_id,
+    }
+    canonical_bytes = json.dumps(
+        canonical_payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(canonical_bytes).hexdigest()
+
+
+def resolve_governed_status_root(status_root_override: Optional[Path] = None) -> Path:
+    """Resolve the authoritative status root for Human/Ops approval records.
+
+    Prefers explicit override (for testing), then PANTHEON_STATUS_ROOT environment
+    variable, then repository root containing ai-status.json or .orchestrator.
+    """
+    if status_root_override is not None:
+        return status_root_override.resolve()
+    env_root = os.environ.get("PANTHEON_STATUS_ROOT")
+    if env_root and env_root.strip():
+        return Path(env_root).resolve()
+    script_dir = Path(__file__).resolve().parent
+    repo_root = script_dir.parent
+    if (repo_root / "ai-status.json").exists() or (repo_root / ".orchestrator").exists():
+        return repo_root.resolve()
+    return Path.cwd().resolve()
 
 
 def validate_path_safety(root_path: Path, allow_custom_root: bool = False) -> Path:
@@ -167,7 +213,7 @@ def validate_path_safety(root_path: Path, allow_custom_root: bool = False) -> Pa
         ):
             raise RetirementValidationError(
                 f"Target path {resolved_str!r} is outside the allowed default root {DEFAULT_LIFECYCLE_ROOT!r}. "
-                "Use --allow-custom-root for testing with explicit temporary directories."
+                "Retirement of non-lifecycle paths is prohibited."
             )
 
     return resolved
@@ -342,8 +388,10 @@ def load_and_validate_approval_record(
     expected_action: str,
     expected_recovery_possible: bool,
     expected_quarantine_path: Optional[str],
+    status_root: Optional[Path] = None,
+    allow_custom_root: bool = False,
 ) -> Dict[str, Any]:
-    """Load and validate a non-forgeable governed Human/Ops approval record."""
+    """Load and validate an authoritative, signed Human/Ops approval record bound to the governed status root."""
     if record_path is None:
         raise RetirementValidationError(
             "Execution requires --approval-record pointing to an authorized Human/Ops approval record JSON file; "
@@ -353,6 +401,26 @@ def load_and_validate_approval_record(
     if not record_path.exists():
         raise RetirementValidationError(
             f"Approval record file does not exist at {record_path}."
+        )
+
+    governed_root = resolve_governed_status_root(status_root)
+    resolved_record_path = record_path.resolve()
+    resolved_governed_root = governed_root.resolve()
+
+    # Enforce containment in the authoritative governed status root to reject self-authored/unauthoritative JSON
+    try:
+        is_contained = resolved_record_path.is_relative_to(resolved_governed_root)
+    except AttributeError:
+        # Python < 3.9 fallback
+        is_contained = (
+            resolved_record_path == resolved_governed_root
+            or resolved_governed_root in resolved_record_path.parents
+        )
+
+    if not is_contained:
+        raise RetirementValidationError(
+            f"Approval record path {str(resolved_record_path)!r} is outside the governed status root {str(resolved_governed_root)!r}; "
+            "self-authored or unauthoritative approval records outside the status root are prohibited."
         )
 
     try:
@@ -436,6 +504,39 @@ def load_and_validate_approval_record(
                 f"got {record_quarantine!r}."
             )
 
+    approved_at_utc = record.get("approved_at_utc")
+    if not approved_at_utc or not isinstance(approved_at_utc, str):
+        raise RetirementValidationError(
+            "Approval record must include an approved_at_utc timestamp string."
+        )
+
+    # Validate authoritative signature
+    record_signature = (
+        record.get("signature_sha256")
+        or record.get("signature")
+        or record.get("approval_signature")
+    )
+    if not record_signature:
+        raise RetirementValidationError(
+            "Approval record must contain an authoritative signature ('signature_sha256'); unsigned records are rejected."
+        )
+
+    expected_signature = compute_approval_signature(
+        task_id=expected_task_id,
+        actor=actor,
+        action=expected_action,
+        root_path=expected_root_path,
+        inventory_sha256=expected_inventory_sha256,
+        recovery_possible=expected_recovery_possible,
+        quarantine_path=expected_quarantine_path,
+        approved_at_utc=approved_at_utc,
+    )
+    if record_signature != expected_signature:
+        raise RetirementValidationError(
+            f"Approval record signature mismatch: record specifies {record_signature!r}, "
+            f"expected exact signature {expected_signature!r}."
+        )
+
     return record
 
 
@@ -458,6 +559,7 @@ def execute_retirement(
     approval_record_str = str(approval_record_path) if approval_record_path else None
     approval_record_sha = _compute_sha256(approval_record_path) if approval_record_path and approval_record_path.exists() else None
     approval_time = approval_record.get("approved_at_utc") if approval_record else None
+    approval_sig = approval_record.get("signature_sha256") or approval_record.get("signature") if approval_record else None
 
     if action in {"archive", "quarantine"}:
         if quarantine_dir is None:
@@ -517,6 +619,7 @@ def execute_retirement(
             "approver": approver_actor,
             "approval_record_path": approval_record_str,
             "approval_record_sha256": approval_record_sha,
+            "approval_record_signature": approval_sig,
             "approval_record_approved_at_utc": approval_time,
             "dry_run_manifest_path": dry_run_manifest_path,
             "bound_inventory_sha256": bound_inventory_sha256,
@@ -566,6 +669,7 @@ def execute_retirement(
             "approver": approver_actor,
             "approval_record_path": approval_record_str,
             "approval_record_sha256": approval_record_sha,
+            "approval_record_signature": approval_sig,
             "approval_record_approved_at_utc": approval_time,
             "dry_run_manifest_path": dry_run_manifest_path,
             "bound_inventory_sha256": bound_inventory_sha256,
@@ -585,6 +689,7 @@ def run_retirement(
     dry_run_manifest_path: Optional[Path] = None,
     quarantine_dir: Optional[Path] = None,
     allow_custom_root: bool = False,
+    status_root: Optional[Path] = None,
     approval_token: str = "",
     approver: str = "",
 ) -> Dict[str, Any]:
@@ -607,14 +712,31 @@ def run_retirement(
     total_bytes = sum(item["size_bytes"] for item in items)
     inventory_digest = compute_inventory_digest(items)
 
+    req_approved_at = _utc_now()
+    req_quarantine_path = (
+        str(safe_quarantine)
+        if action != "delete" and safe_quarantine is not None
+        else None
+    )
+    req_sig = compute_approval_signature(
+        task_id=TASK_ID,
+        actor="Human/Ops",
+        action=action,
+        root_path=str(safe_root),
+        inventory_sha256=inventory_digest,
+        recovery_possible=action != "delete",
+        quarantine_path=req_quarantine_path,
+        approved_at_utc=req_approved_at,
+    )
+
     manifest: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "task_id": TASK_ID,
-        "generated_at_utc": _utc_now(),
+        "generated_at_utc": req_approved_at,
         "mode": "executed" if execute else "dry_run",
         "action": action,
         "root_path": str(safe_root),
-        "quarantine_path": str(safe_quarantine) if action != "delete" and safe_quarantine is not None else None,
+        "quarantine_path": req_quarantine_path,
         "inventory_sha256": inventory_digest,
         "total_files": total_files,
         "total_bytes": total_bytes,
@@ -625,11 +747,13 @@ def run_retirement(
             "task_id": TASK_ID,
             "actor": "Human/Ops",
             "approved": True,
+            "approved_at_utc": req_approved_at,
             "action": action,
             "recovery_possible": action != "delete",
             "root_path": str(safe_root),
-            "quarantine_path": str(safe_quarantine) if action != "delete" and safe_quarantine is not None else None,
+            "quarantine_path": req_quarantine_path,
             "inventory_sha256": inventory_digest,
+            "signature_sha256": req_sig,
         },
         "execution_receipt": None,
     }
@@ -720,7 +844,7 @@ def run_retirement(
                 f"live digest {inventory_digest} ({len(items)} items). Execution aborted."
             )
 
-        # 2. Validate non-forgeable governed Human/Ops approval record
+        # 2. Validate authoritative Human/Ops approval record bound to governed status root
         approval_record = load_and_validate_approval_record(
             approval_record_path,
             expected_task_id=TASK_ID,
@@ -729,6 +853,8 @@ def run_retirement(
             expected_action=action,
             expected_recovery_possible=manifest["recovery_possible"],
             expected_quarantine_path=manifest["quarantine_path"],
+            status_root=status_root,
+            allow_custom_root=allow_custom_root,
         )
 
         receipt = execute_retirement(
@@ -784,7 +910,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--approval-record",
         type=Path,
         default=None,
-        help="Required path to approved Human/Ops approval record JSON file for --execute mode",
+        help="Required path to approved Human/Ops approval record JSON file in the governed status root for --execute mode",
     )
     parser.add_argument(
         "--human-ops-evidence",
@@ -809,12 +935,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Custom quarantine directory for archived files",
     )
     parser.add_argument(
-        "--allow-custom-root",
-        action="store_true",
-        default=False,
-        help="Allow custom root outside /data/bff/lifecycle-projection (for testing only)",
-    )
-    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -825,6 +945,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     execute_mode = bool(args.execute)
     approval_record_file = args.approval_record or args.human_ops_evidence
 
+    # Custom roots are prohibited in production and governed independently for testing
+    allow_custom_root = os.environ.get("PANTHEON_ALLOW_TEST_CUSTOM_ROOT") == "1"
+
     try:
         manifest = run_retirement(
             root_path=args.root,
@@ -833,7 +956,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             approval_record_path=approval_record_file,
             dry_run_manifest_path=args.dry_run_manifest,
             quarantine_dir=args.quarantine_dir,
-            allow_custom_root=args.allow_custom_root,
+            allow_custom_root=allow_custom_root,
             approval_token=args.approval_token,
             approver=args.approver,
         )

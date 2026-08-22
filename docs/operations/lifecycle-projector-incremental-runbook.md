@@ -344,7 +344,8 @@ through an allow-listed, checksummed process.
 - **Default compose configuration**: `operator-bff` uses `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres` and `loop-run-projector-scheduler` uses `LIFECYCLE_PROJECTOR_WRITER_BACKEND=shadow`. Legacy JSON generator and retention environment variables are removed.
 - **Fail-closed readiness**: If any component attempts to select a legacy JSON reader or writer, readiness fails closed immediately with `legacy_reader_retired:json` or an explicit configuration exception.
 - **Dry-run inventory first**: Run `scripts/lifecycle_projector_legacy_retire.py --dry-run` to inventory all candidate files and verify SHA-256 checksums before any file mutation.
-- **Governed Human/Ops approval record required**: Execution requires `--execute`, `--dry-run-manifest <PATH>`, and `--approval-record <PATH>` bound to the exact dry-run inventory digest, root, action, recovery posture, and quarantine destination. Caller-supplied string tokens cannot bypass governed approval.
+- **Governed Human/Ops approval record required**: Execution requires `--execute`, `--dry-run-manifest <PATH>`, and `--approval-record <PATH>` pointing to an authoritative, signed Human/Ops approval record located within the governed status root (`$PANTHEON_STATUS_ROOT`). The record binds the exact dry-run inventory digest, root, action, recovery posture, quarantine destination, and authoritative SHA-256 signature. Caller-supplied string tokens or self-authored records outside the status root cannot bypass governed approval.
+- **Production CLI root governance**: The production CLI strictly targets `/data/bff/lifecycle-projection`. The `--allow-custom-root` flag is removed from the production CLI; testing with custom paths is permitted only under the governed test environment (`PANTHEON_ALLOW_TEST_CUSTOM_ROOT=1`).
 - **Quarantine over raw deletion**: In default retirement mode (`--action archive` or `--action quarantine`), obsolete generation directories and root files are moved into a quarantine folder (`/data/bff/lifecycle-projection/quarantine`), preserving recovery capability if needed.
 
 ### Step 1: Execute dry-run scan
@@ -356,7 +357,7 @@ python3 scripts/lifecycle_projector_legacy_retire.py \
 ```
 
 ### Step 2: Human/Ops review & approval record generation
-Human/Ops reviews the dry-run manifest and generates a signed approval record `human-ops-approval.json`:
+Human/Ops reviews the dry-run manifest and generates an authoritative signed approval record `approval-record.json` inside the governed status root (`$PANTHEON_STATUS_ROOT/docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RETIRE-001/`):
 ```json
 {
   "schema_version": "pantheon.lifecycle-projector-retirement-approval.v1",
@@ -369,6 +370,7 @@ Human/Ops reviews the dry-run manifest and generates a signed approval record `h
   "root_path": "/data/bff/lifecycle-projection",
   "quarantine_path": "/data/bff/lifecycle-projection/quarantine",
   "inventory_sha256": "<dry-run-inventory-sha256>",
+  "signature_sha256": "<deterministic-canonical-signature-sha256>",
   "notes": "Approved by Human/Ops after reviewing exact dry-run inventory digest."
 }
 ```
@@ -380,7 +382,7 @@ python3 scripts/lifecycle_projector_legacy_retire.py \
   --action quarantine \
   --execute \
   --dry-run-manifest /var/tmp/pantheon-evidence/LIFECYCLE-PROJ-RETIRE-001/dry-run-manifest.json \
-  --approval-record /var/tmp/pantheon-evidence/LIFECYCLE-PROJ-RETIRE-001/human-ops-approval.json \
+  --approval-record "${PANTHEON_STATUS_ROOT}/docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RETIRE-001/approval-record.json" \
   --output /var/tmp/pantheon-evidence/LIFECYCLE-PROJ-RETIRE-001/retirement-receipt.json
 ```
 

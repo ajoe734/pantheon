@@ -11,10 +11,12 @@ from scripts.lifecycle_projector_legacy_retire import (
     DEFAULT_QUARANTINE_SUBDIR,
     TASK_ID,
     RetirementValidationError,
+    compute_approval_signature,
     compute_inventory_digest,
     execute_retirement,
     load_and_validate_approval_record,
     main as cli_main,
+    resolve_governed_status_root,
     run_retirement,
     validate_destination_path_safety,
     validate_path_safety,
@@ -61,6 +63,9 @@ def _create_approval_record(
     quarantine_path: str | None = None,
     inventory_sha256: str | None = None,
     schema_version: str = APPROVAL_SCHEMA_VERSION,
+    approved_at_utc: str = "2026-08-22T18:00:00Z",
+    signature_sha256: str | None = None,
+    include_signature: bool = True,
 ) -> dict:
     act = action if action is not None else manifest.get("action", "archive")
     rec = (
@@ -68,27 +73,47 @@ def _create_approval_record(
         if recovery_possible is not None
         else manifest.get("recovery_possible", act != "delete")
     )
-    return {
+    r_path = root_path if root_path is not None else manifest.get("root_path")
+    q_path = (
+        quarantine_path
+        if quarantine_path is not None
+        else manifest.get("quarantine_path")
+    )
+    inv_sha = (
+        inventory_sha256
+        if inventory_sha256 is not None
+        else manifest.get("inventory_sha256")
+    )
+    if include_signature and signature_sha256 is None:
+        sig = compute_approval_signature(
+            task_id=task_id,
+            actor=actor,
+            action=act,
+            root_path=r_path,
+            inventory_sha256=inv_sha,
+            recovery_possible=rec,
+            quarantine_path=q_path,
+            approved_at_utc=approved_at_utc,
+        )
+    else:
+        sig = signature_sha256
+
+    record = {
         "schema_version": schema_version,
         "task_id": task_id,
         "actor": actor,
         "approved": approved,
-        "approved_at_utc": "2026-08-22T18:00:00Z",
+        "approved_at_utc": approved_at_utc,
         "action": act,
         "recovery_possible": rec,
-        "root_path": root_path if root_path is not None else manifest.get("root_path"),
-        "quarantine_path": (
-            quarantine_path
-            if quarantine_path is not None
-            else manifest.get("quarantine_path")
-        ),
-        "inventory_sha256": (
-            inventory_sha256
-            if inventory_sha256 is not None
-            else manifest.get("inventory_sha256")
-        ),
+        "root_path": r_path,
+        "quarantine_path": q_path,
+        "inventory_sha256": inv_sha,
         "notes": "Approved by Human/Ops after reviewing exact dry-run inventory digest.",
     }
+    if sig is not None:
+        record["signature_sha256"] = sig
+    return record
 
 
 def test_safety_validation_rejects_broad_paths():
@@ -234,17 +259,19 @@ def test_execute_rejects_caller_supplied_token_bypass_without_approval_record(tm
 
 def test_execute_rejects_unauthorized_approver_in_approval_record(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
         root_path=root, action="archive", execute=False, allow_custom_root=True
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     # Spoofed/unauthorized approver in record
     unauthorized_record = _create_approval_record(dry_run_manifest, actor="malicious_user")
-    approval_path = tmp_path / "unauthorized-approval.json"
+    approval_path = status_root / "unauthorized-approval.json"
     approval_path.write_text(json.dumps(unauthorized_record), encoding="utf-8")
 
     with pytest.raises(RetirementValidationError, match="authorized operator"):
@@ -254,22 +281,114 @@ def test_execute_rejects_unauthorized_approver_in_approval_record(tmp_path: Path
             execute=True,
             approval_record_path=approval_path,
             dry_run_manifest_path=manifest_path,
+            status_root=status_root,
+            allow_custom_root=True,
+        )
+
+
+def test_execute_rejects_self_authored_approval_record_outside_status_root(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    _seed_legacy_projection_fixture(root)
+
+    dry_run_manifest = run_retirement(
+        root_path=root, action="archive", execute=False, allow_custom_root=True
+    )
+    manifest_path = status_root / "dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
+
+    # Self-authored record placed in untrusted directory outside status_root
+    untrusted_dir = tmp_path / "untrusted"
+    untrusted_dir.mkdir(parents=True, exist_ok=True)
+    approval_record = _create_approval_record(dry_run_manifest)
+    self_authored_path = untrusted_dir / "self-authored-approval.json"
+    self_authored_path.write_text(json.dumps(approval_record), encoding="utf-8")
+
+    with pytest.raises(RetirementValidationError, match="outside the governed status root"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_record_path=self_authored_path,
+            dry_run_manifest_path=manifest_path,
+            status_root=status_root,
+            allow_custom_root=True,
+        )
+
+
+def test_execute_rejects_unsigned_approval_record(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    _seed_legacy_projection_fixture(root)
+
+    dry_run_manifest = run_retirement(
+        root_path=root, action="archive", execute=False, allow_custom_root=True
+    )
+    manifest_path = status_root / "dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
+
+    unsigned_record = _create_approval_record(dry_run_manifest, include_signature=False)
+    approval_path = status_root / "unsigned-approval.json"
+    approval_path.write_text(json.dumps(unsigned_record), encoding="utf-8")
+
+    with pytest.raises(RetirementValidationError, match="authoritative signature"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_record_path=approval_path,
+            dry_run_manifest_path=manifest_path,
+            status_root=status_root,
+            allow_custom_root=True,
+        )
+
+
+def test_execute_rejects_signature_mismatch_in_approval_record(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    _seed_legacy_projection_fixture(root)
+
+    dry_run_manifest = run_retirement(
+        root_path=root, action="archive", execute=False, allow_custom_root=True
+    )
+    manifest_path = status_root / "dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
+
+    tampered_record = _create_approval_record(
+        dry_run_manifest, signature_sha256="deadbeef" * 8
+    )
+    approval_path = status_root / "tampered-approval.json"
+    approval_path.write_text(json.dumps(tampered_record), encoding="utf-8")
+
+    with pytest.raises(RetirementValidationError, match="signature mismatch"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_record_path=approval_path,
+            dry_run_manifest_path=manifest_path,
+            status_root=status_root,
             allow_custom_root=True,
         )
 
 
 def test_execute_rejects_unapproved_record(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
         root_path=root, action="archive", execute=False, allow_custom_root=True
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     unapproved_record = _create_approval_record(dry_run_manifest, approved=False)
-    approval_path = tmp_path / "unapproved-record.json"
+    approval_path = status_root / "unapproved-record.json"
     approval_path.write_text(json.dumps(unapproved_record), encoding="utf-8")
 
     with pytest.raises(RetirementValidationError, match="must be boolean True"):
@@ -279,22 +398,25 @@ def test_execute_rejects_unapproved_record(tmp_path: Path):
             execute=True,
             approval_record_path=approval_path,
             dry_run_manifest_path=manifest_path,
+            status_root=status_root,
             allow_custom_root=True,
         )
 
 
 def test_execute_rejects_task_id_mismatch_in_approval_record(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
         root_path=root, action="archive", execute=False, allow_custom_root=True
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     wrong_task_record = _create_approval_record(dry_run_manifest, task_id="OTHER-TASK-999")
-    approval_path = tmp_path / "wrong-task-approval.json"
+    approval_path = status_root / "wrong-task-approval.json"
     approval_path.write_text(json.dumps(wrong_task_record), encoding="utf-8")
 
     with pytest.raises(RetirementValidationError, match="task mismatch"):
@@ -304,22 +426,25 @@ def test_execute_rejects_task_id_mismatch_in_approval_record(tmp_path: Path):
             execute=True,
             approval_record_path=approval_path,
             dry_run_manifest_path=manifest_path,
+            status_root=status_root,
             allow_custom_root=True,
         )
 
 
 def test_execute_rejects_inventory_digest_mismatch_in_approval_record(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
         root_path=root, action="archive", execute=False, allow_custom_root=True
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     stale_record = _create_approval_record(dry_run_manifest, inventory_sha256="0" * 64)
-    approval_path = tmp_path / "stale-approval.json"
+    approval_path = status_root / "stale-approval.json"
     approval_path.write_text(json.dumps(stale_record), encoding="utf-8")
 
     with pytest.raises(RetirementValidationError, match="inventory digest mismatch"):
@@ -329,24 +454,27 @@ def test_execute_rejects_inventory_digest_mismatch_in_approval_record(tmp_path: 
             execute=True,
             approval_record_path=approval_path,
             dry_run_manifest_path=manifest_path,
+            status_root=status_root,
             allow_custom_root=True,
         )
 
 
 def test_execute_rejects_root_mismatch_in_approval_record(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
         root_path=root, action="archive", execute=False, allow_custom_root=True
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     mismatched_root_record = _create_approval_record(
         dry_run_manifest, root_path="/data/bff/other-root"
     )
-    approval_path = tmp_path / "mismatched-root-approval.json"
+    approval_path = status_root / "mismatched-root-approval.json"
     approval_path.write_text(json.dumps(mismatched_root_record), encoding="utf-8")
 
     with pytest.raises(RetirementValidationError, match="root mismatch"):
@@ -356,25 +484,28 @@ def test_execute_rejects_root_mismatch_in_approval_record(tmp_path: Path):
             execute=True,
             approval_record_path=approval_path,
             dry_run_manifest_path=manifest_path,
+            status_root=status_root,
             allow_custom_root=True,
         )
 
 
 def test_execute_rejects_action_mismatch_in_approval_record(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
         root_path=root, action="archive", execute=False, allow_custom_root=True
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     # Record specifies delete when executing archive
     mismatched_action_record = _create_approval_record(
         dry_run_manifest, action="delete", recovery_possible=False, quarantine_path=None
     )
-    approval_path = tmp_path / "mismatched-action-approval.json"
+    approval_path = status_root / "mismatched-action-approval.json"
     approval_path.write_text(json.dumps(mismatched_action_record), encoding="utf-8")
 
     with pytest.raises(RetirementValidationError, match="action mismatch"):
@@ -384,24 +515,27 @@ def test_execute_rejects_action_mismatch_in_approval_record(tmp_path: Path):
             execute=True,
             approval_record_path=approval_path,
             dry_run_manifest_path=manifest_path,
+            status_root=status_root,
             allow_custom_root=True,
         )
 
 
 def test_execute_rejects_recovery_posture_mismatch_in_approval_record(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
         root_path=root, action="archive", execute=False, allow_custom_root=True
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     mismatched_rec_record = _create_approval_record(
         dry_run_manifest, recovery_possible=False
     )
-    approval_path = tmp_path / "mismatched-rec-approval.json"
+    approval_path = status_root / "mismatched-rec-approval.json"
     approval_path.write_text(json.dumps(mismatched_rec_record), encoding="utf-8")
 
     with pytest.raises(RetirementValidationError, match="recovery posture mismatch"):
@@ -411,12 +545,15 @@ def test_execute_rejects_recovery_posture_mismatch_in_approval_record(tmp_path: 
             execute=True,
             approval_record_path=approval_path,
             dry_run_manifest_path=manifest_path,
+            status_root=status_root,
             allow_custom_root=True,
         )
 
 
 def test_execute_rejects_quarantine_path_mismatch_in_approval_record(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     quarantine_a = tmp_path / "quarantine_a"
@@ -427,13 +564,13 @@ def test_execute_rejects_quarantine_path_mismatch_in_approval_record(tmp_path: P
         quarantine_dir=quarantine_a,
         allow_custom_root=True,
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     mismatched_quarantine_record = _create_approval_record(
         dry_run_manifest, quarantine_path=str((tmp_path / "quarantine_other").resolve())
     )
-    approval_path = tmp_path / "mismatched-quarantine-approval.json"
+    approval_path = status_root / "mismatched-quarantine-approval.json"
     approval_path.write_text(json.dumps(mismatched_quarantine_record), encoding="utf-8")
 
     with pytest.raises(RetirementValidationError, match="quarantine path mismatch"):
@@ -444,22 +581,25 @@ def test_execute_rejects_quarantine_path_mismatch_in_approval_record(tmp_path: P
             approval_record_path=approval_path,
             dry_run_manifest_path=manifest_path,
             quarantine_dir=quarantine_a,
+            status_root=status_root,
             allow_custom_root=True,
         )
 
 
 def test_execute_rejects_drifted_inventory(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
         root_path=root, action="archive", execute=False, allow_custom_root=True
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     approval_record = _create_approval_record(dry_run_manifest)
-    approval_path = tmp_path / "approval-record.json"
+    approval_path = status_root / "approval-record.json"
     approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
 
     # Modify a file after dry-run
@@ -472,12 +612,15 @@ def test_execute_rejects_drifted_inventory(tmp_path: Path):
             execute=True,
             approval_record_path=approval_path,
             dry_run_manifest_path=manifest_path,
+            status_root=status_root,
             allow_custom_root=True,
         )
 
 
 def test_execute_archive_moves_to_quarantine_with_receipt(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     quarantine_dir = tmp_path / "quarantine"
@@ -488,11 +631,11 @@ def test_execute_archive_moves_to_quarantine_with_receipt(tmp_path: Path):
         quarantine_dir=quarantine_dir,
         allow_custom_root=True,
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     approval_record = _create_approval_record(dry_run_manifest)
-    approval_path = tmp_path / "human-ops-approval.json"
+    approval_path = status_root / "human-ops-approval.json"
     approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
 
     manifest = run_retirement(
@@ -502,6 +645,7 @@ def test_execute_archive_moves_to_quarantine_with_receipt(tmp_path: Path):
         approval_record_path=approval_path,
         dry_run_manifest_path=manifest_path,
         quarantine_dir=quarantine_dir,
+        status_root=status_root,
         allow_custom_root=True,
     )
 
@@ -514,6 +658,7 @@ def test_execute_archive_moves_to_quarantine_with_receipt(tmp_path: Path):
     assert receipt["approver"] == "Human/Ops"
     assert receipt["approval_record_path"] == str(approval_path)
     assert len(receipt["approval_record_sha256"]) == 64
+    assert len(receipt["approval_record_signature"]) == 64
     assert receipt["bound_inventory_sha256"] == dry_run_manifest["inventory_sha256"]
     assert (quarantine_dir / "controller_state.json").exists()
     assert not (root / "controller_state.json").exists()
@@ -521,6 +666,8 @@ def test_execute_archive_moves_to_quarantine_with_receipt(tmp_path: Path):
 
 def test_execute_delete_removes_files_with_receipt(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
@@ -529,11 +676,11 @@ def test_execute_delete_removes_files_with_receipt(tmp_path: Path):
         execute=False,
         allow_custom_root=True,
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     approval_record = _create_approval_record(dry_run_manifest)
-    approval_path = tmp_path / "human-ops-delete-approval.json"
+    approval_path = status_root / "human-ops-delete-approval.json"
     approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
 
     manifest = run_retirement(
@@ -542,6 +689,7 @@ def test_execute_delete_removes_files_with_receipt(tmp_path: Path):
         execute=True,
         approval_record_path=approval_path,
         dry_run_manifest_path=manifest_path,
+        status_root=status_root,
         allow_custom_root=True,
     )
 
@@ -558,6 +706,8 @@ def test_execute_delete_removes_files_with_receipt(tmp_path: Path):
 
 def test_execute_delete_preserves_unlisted_file_and_nonempty_directory_mutation_toctou(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
@@ -566,11 +716,11 @@ def test_execute_delete_preserves_unlisted_file_and_nonempty_directory_mutation_
         execute=False,
         allow_custom_root=True,
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     approval_record = _create_approval_record(dry_run_manifest)
-    approval_path = tmp_path / "approval.json"
+    approval_path = status_root / "approval.json"
     approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
 
     # Mutation / TOCTOU simulation: an unlisted file is placed into gen-000001 after scan
@@ -602,6 +752,8 @@ def test_execute_delete_preserves_unlisted_file_and_nonempty_directory_mutation_
 
 def test_run_retirement_execute_rejects_unlisted_file_mutation(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
     dry_run_manifest = run_retirement(
@@ -610,11 +762,11 @@ def test_run_retirement_execute_rejects_unlisted_file_mutation(tmp_path: Path):
         execute=False,
         allow_custom_root=True,
     )
-    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     approval_record = _create_approval_record(dry_run_manifest)
-    approval_path = tmp_path / "approval.json"
+    approval_path = status_root / "approval.json"
     approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
 
     # Add unlisted file after dry-run
@@ -627,6 +779,7 @@ def test_run_retirement_execute_rejects_unlisted_file_mutation(tmp_path: Path):
             execute=True,
             approval_record_path=approval_path,
             dry_run_manifest_path=manifest_path,
+            status_root=status_root,
             allow_custom_root=True,
         )
 
@@ -704,18 +857,36 @@ def test_run_retirement_execute_rejects_unsafe_quarantine_destination(tmp_path: 
         )
 
 
-def test_cli_main_dry_run_and_execute_with_approval_record(tmp_path: Path, capsys):
+def test_cli_main_rejects_allow_custom_root_flag(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main(["--allow-custom-root"])
+    assert exc_info.value.code == 2
+
+
+def test_cli_main_rejects_custom_root_without_governance_env(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
+    custom_root = tmp_path / "custom-lifecycle"
+    _seed_legacy_projection_fixture(custom_root)
+    rc = cli_main(["--root", str(custom_root)])
+    assert rc == 1
+
+
+def test_cli_main_dry_run_and_execute_governed_mode(tmp_path: Path, monkeypatch):
     root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
     _seed_legacy_projection_fixture(root)
 
-    manifest_output = tmp_path / "dry-run.json"
+    monkeypatch.setenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", "1")
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+
+    manifest_output = status_root / "dry-run.json"
     rc = cli_main(
         [
             "--root",
             str(root),
             "--action",
             "archive",
-            "--allow-custom-root",
             "--output",
             str(manifest_output),
         ]
@@ -726,10 +897,10 @@ def test_cli_main_dry_run_and_execute_with_approval_record(tmp_path: Path, capsy
     assert dry_run["mode"] == "dry_run"
 
     approval_record = _create_approval_record(dry_run)
-    approval_path = tmp_path / "approval.json"
+    approval_path = status_root / "approval.json"
     approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
 
-    receipt_output = tmp_path / "receipt.json"
+    receipt_output = status_root / "receipt.json"
     rc = cli_main(
         [
             "--root",
@@ -741,7 +912,6 @@ def test_cli_main_dry_run_and_execute_with_approval_record(tmp_path: Path, capsy
             str(manifest_output),
             "--approval-record",
             str(approval_path),
-            "--allow-custom-root",
             "--output",
             str(receipt_output),
         ]
