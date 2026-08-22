@@ -84,7 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--legacy-controller-deployment-sha",
         default="",
-        help="allowlisted legacy controller deployment identity for evidence",
+        help="required reviewed deployment identity bound to the legacy controller",
     )
     args = parser.parse_args(argv)
 
@@ -97,6 +97,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--expected-legacy-sha256 is required with --legacy-controller-state")
         if args.legacy_checkpoint is None:
             parser.error("--legacy-checkpoint is required with --legacy-controller-state")
+        if not args.legacy_controller_deployment_sha:
+            parser.error(
+                "--legacy-controller-deployment-sha is required with --legacy-controller-state"
+            )
         coordinator = LegacyBundleBackfillCoordinator(
             store,
             controller_id=args.controller_id,

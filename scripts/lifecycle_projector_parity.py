@@ -42,6 +42,7 @@ from services.trade_journey.projection_migration import (
     projection_stage_rows,
     sha256_file,
     summarize_parity,
+    validate_legacy_controller_binding,
 )
 
 
@@ -113,10 +114,11 @@ def _stream_legacy_baseline_parity(
     actual_sha256 = sha256_file(controller_state)
     if actual_sha256 != expected_sha256.lower():
         raise ValueError("legacy controller-state checksum does not match accepted evidence")
-    if not controller_id:
-        raise ValueError("legacy controller identity is required")
-    if legacy_checkpoint <= 0:
-        raise ValueError("reviewed legacy checkpoint must be positive")
+    controller = validate_legacy_controller_binding(
+        controller_state,
+        expected_controller_id=controller_id,
+        expected_checkpoint=legacy_checkpoint,
+    )
 
     legacy = {name: StreamingMultisetDigest() for name in ("stage", "journey", "loop", "identity", "quarantine")}
     for _journey_id, aggregate in iter_legacy_aggregates(controller_state):
@@ -186,8 +188,9 @@ def _stream_legacy_baseline_parity(
         }
     return {
         "source_sha256": actual_sha256,
-        "controller_id": controller_id,
-        "controller_checkpoint": legacy_checkpoint,
+        "controller_id": controller["controller_id"],
+        "controller_checkpoint": controller["checkpoint"],
+        "controller_deployment_sha": controller["deployment_sha"],
         "categories": categories,
         "mismatch_count": mismatch_count,
         "unexplained_mismatch_count": unexplained_mismatch_count,

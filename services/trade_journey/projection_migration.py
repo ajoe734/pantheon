@@ -197,6 +197,79 @@ def read_legacy_bundle_member(path: Path, member: str) -> Any:
         return reader.read_value()
 
 
+def validate_legacy_controller_binding(
+    path: Path,
+    *,
+    expected_controller_id: str,
+    expected_checkpoint: int,
+    expected_deployment_sha: str | None = None,
+) -> Mapping[str, Any]:
+    """Fail closed unless the checksummed bundle's controller is admissible.
+
+    The caller verifies the enclosing file checksum before calling this helper.
+    Values are intentionally not coerced: a missing field, a stringified
+    integer, or a truthy non-boolean must not become recovery authority.  The
+    accepted identity and checkpoint are bound on every import and streaming
+    parity run; the importer additionally binds the reviewed deployment SHA.
+    """
+
+    controller = read_legacy_bundle_member(path, "controller")
+    if not isinstance(controller, Mapping):
+        raise ValueError("legacy controller state controller must be an object")
+    required_fields = {
+        "controller_id",
+        "checkpoint",
+        "deployment_sha",
+        "backlog",
+        "quarantine_count",
+        "accepted_live",
+        "last_error",
+    }
+    missing_fields = sorted(required_fields.difference(controller))
+    if missing_fields:
+        raise ValueError(
+            "legacy controller is missing required fields: "
+            + ", ".join(missing_fields)
+        )
+
+    controller_id = controller["controller_id"]
+    if not isinstance(controller_id, str) or not controller_id:
+        raise ValueError("legacy controller identity must be a non-empty string")
+    if controller_id != expected_controller_id:
+        raise ValueError("legacy controller identity does not match the reviewed controller")
+
+    checkpoint = controller["checkpoint"]
+    if type(checkpoint) is not int or checkpoint <= 0:
+        raise ValueError("legacy controller checkpoint must be a positive integer")
+    if type(expected_checkpoint) is not int or expected_checkpoint <= 0:
+        raise ValueError("reviewed legacy checkpoint must be a positive integer")
+    if checkpoint != expected_checkpoint:
+        raise ValueError("legacy controller checkpoint does not match the reviewed checkpoint")
+
+    deployment_sha = controller["deployment_sha"]
+    if not isinstance(deployment_sha, str) or not deployment_sha:
+        raise ValueError("legacy controller deployment SHA must be a non-empty string")
+    if expected_deployment_sha is not None:
+        if not isinstance(expected_deployment_sha, str) or not expected_deployment_sha:
+            raise ValueError("reviewed legacy controller deployment SHA is required")
+        if deployment_sha != expected_deployment_sha:
+            raise ValueError(
+                "legacy controller deployment SHA does not match the reviewed deployment SHA"
+            )
+
+    backlog = controller["backlog"]
+    if type(backlog) is not int or backlog != 0:
+        raise ValueError("legacy controller backlog must be the integer zero")
+    quarantine_count = controller["quarantine_count"]
+    if type(quarantine_count) is not int or quarantine_count != 0:
+        raise ValueError("legacy controller quarantine count must be the integer zero")
+    if controller["accepted_live"] is not True:
+        raise ValueError("legacy controller accepted_live must be exactly true")
+    if controller["last_error"] is not None:
+        raise ValueError("legacy controller last_error must be null")
+    return controller
+
+
 def iter_legacy_aggregates(path: Path) -> Iterator[tuple[str, BoundedAggregateState]]:
     """Yield one folded legacy aggregate at a time from controller state."""
 
@@ -797,39 +870,17 @@ class LegacyBundleBackfillCoordinator:
         tmp.replace(self.snapshot_path)
 
     def _accepted_controller(self) -> tuple[Mapping[str, Any], int]:
-        if self.accepted_checkpoint is not None:
-            checkpoint = int(self.accepted_checkpoint)
-            if checkpoint <= 0:
-                raise ValueError("accepted legacy checkpoint must be positive")
-            return (
-                {
-                    "controller_id": self.controller_id,
-                    "checkpoint": checkpoint,
-                    "backlog": 0,
-                    "quarantine_count": 0,
-                    "accepted_live": True,
-                    "last_error": None,
-                    "deployment_sha": self.accepted_controller_deployment_sha,
-                },
-                checkpoint,
-            )
-        controller = read_legacy_bundle_member(self.controller_state_path, "controller")
-        if not isinstance(controller, Mapping):
-            raise ValueError("legacy controller state controller must be an object")
-        checkpoint = int(controller.get("checkpoint") or 0)
-        if checkpoint <= 0:
-            raise ValueError("legacy controller checkpoint must be positive")
-        if str(controller.get("controller_id") or "") != self.controller_id:
-            raise ValueError("legacy controller identity does not match the requested controller")
-        if not bool(controller.get("accepted_live")):
-            raise ValueError("legacy controller was not accepted live")
-        if int(controller.get("backlog") or 0) != 0:
-            raise ValueError("legacy controller backlog is not zero")
-        if int(controller.get("quarantine_count") or 0) != 0:
-            raise ValueError("legacy controller has unresolved quarantine")
-        if controller.get("last_error") not in (None, ""):
-            raise ValueError("legacy controller has a recorded error")
-        return controller, checkpoint
+        if self.accepted_checkpoint is None:
+            raise ValueError("reviewed legacy checkpoint is required")
+        if not self.accepted_controller_deployment_sha:
+            raise ValueError("reviewed legacy controller deployment SHA is required")
+        controller = validate_legacy_controller_binding(
+            self.controller_state_path,
+            expected_controller_id=self.controller_id,
+            expected_checkpoint=self.accepted_checkpoint,
+            expected_deployment_sha=self.accepted_controller_deployment_sha,
+        )
+        return controller, self.accepted_checkpoint
 
     @staticmethod
     def _validate_aggregate(aggregate: BoundedAggregateState) -> None:

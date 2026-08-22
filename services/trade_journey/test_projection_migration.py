@@ -483,6 +483,134 @@ def test_legacy_bundle_backfill_rejects_unreviewed_checksum(tmp_path: Path):
     assert store.adoptions == []
 
 
+@pytest.mark.parametrize(
+    ("controller_patch", "accepted_checkpoint", "accepted_deployment_sha", "error"),
+    [
+        ({"controller_id": "other-controller"}, 8, "a" * 40, "identity"),
+        ({}, 999, "a" * 40, "checkpoint"),
+        ({"checkpoint": "8"}, 8, "a" * 40, "positive integer"),
+        ({}, 8, "f" * 40, "deployment SHA"),
+        ({"deployment_sha": ""}, 8, "a" * 40, "non-empty string"),
+        ({"backlog": 1}, 8, "a" * 40, "backlog"),
+        ({"backlog": False}, 8, "a" * 40, "backlog"),
+        ({"quarantine_count": 1}, 8, "a" * 40, "quarantine"),
+        ({"accepted_live": False}, 8, "a" * 40, "accepted_live"),
+        ({"last_error": "prior projector failure"}, 8, "a" * 40, "last_error"),
+    ],
+)
+def test_legacy_bundle_backfill_rejects_controller_binding_before_writes(
+    tmp_path: Path,
+    controller_patch: dict[str, Any],
+    accepted_checkpoint: int,
+    accepted_deployment_sha: str,
+    error: str,
+):
+    payload = _legacy_controller_state()
+    payload["controller"].update(controller_patch)
+    source = tmp_path / "controller_state.json"
+    source.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    store = FakeProjectionStore()
+    coordinator = LegacyBundleBackfillCoordinator(
+        store,
+        controller_id="canonical-lifecycle-projector",
+        tenant_scope="*",
+        environment_scope="*",
+        controller_state_path=source,
+        expected_sha256=sha256_file(source),
+        snapshot_path=tmp_path / "legacy.snapshot.json",
+        accepted_checkpoint=accepted_checkpoint,
+        accepted_controller_deployment_sha=accepted_deployment_sha,
+    )
+
+    with pytest.raises(ValueError, match=error):
+        coordinator.run()
+    assert store.transactions == []
+    assert store.adoptions == []
+    assert not coordinator.snapshot_path.exists()
+
+
+def test_legacy_bundle_backfill_rejects_missing_controller_safe_field(tmp_path: Path):
+    payload = _legacy_controller_state()
+    del payload["controller"]["backlog"]
+    source = tmp_path / "controller_state.json"
+    source.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    store = FakeProjectionStore()
+    coordinator = LegacyBundleBackfillCoordinator(
+        store,
+        controller_id="canonical-lifecycle-projector",
+        tenant_scope="*",
+        environment_scope="*",
+        controller_state_path=source,
+        expected_sha256=sha256_file(source),
+        snapshot_path=tmp_path / "legacy.snapshot.json",
+        accepted_checkpoint=8,
+        accepted_controller_deployment_sha="a" * 40,
+    )
+
+    with pytest.raises(ValueError, match="missing required fields: backlog"):
+        coordinator.run()
+    assert store.transactions == []
+    assert store.adoptions == []
+
+
+def test_legacy_bundle_cli_requires_reviewed_controller_deployment_sha(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    from scripts.lifecycle_projector_migrate import main
+
+    with pytest.raises(SystemExit, match="2"):
+        main(
+            [
+                "--dsn",
+                "postgresql://must-not-be-reached",
+                "--controller-id",
+                "canonical-lifecycle-projector",
+                "--snapshot-path",
+                str(tmp_path / "legacy.snapshot.json"),
+                "--legacy-controller-state",
+                str(tmp_path / "controller_state.json"),
+                "--expected-legacy-sha256",
+                "0" * 64,
+                "--legacy-checkpoint",
+                "8",
+            ]
+        )
+
+    assert "--legacy-controller-deployment-sha is required" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("controller_id", "legacy_checkpoint", "error"),
+    [
+        ("other-controller", 8, "identity"),
+        ("canonical-lifecycle-projector", 999, "checkpoint"),
+    ],
+)
+def test_streaming_parity_rejects_unbound_controller_before_database_reads(
+    tmp_path: Path,
+    controller_id: str,
+    legacy_checkpoint: int,
+    error: str,
+):
+    from scripts.lifecycle_projector_parity import _stream_legacy_baseline_parity
+
+    source = tmp_path / "controller_state.json"
+    source.write_text(
+        json.dumps(_legacy_controller_state(), sort_keys=True), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=error):
+        _stream_legacy_baseline_parity(
+            dsn="postgresql://must-not-be-reached",
+            schema="trade_journey_projection",
+            controller_state=source,
+            expected_sha256=sha256_file(source),
+            controller_id=controller_id,
+            legacy_checkpoint=legacy_checkpoint,
+            classifications={},
+        )
+
+
 # ---------------------------------------------------------------------------
 # Deterministic old/new parity
 # ---------------------------------------------------------------------------

@@ -147,6 +147,13 @@ report `import_complete=true`, `live_controller_seeded=true`,
 `accepted_live=false`. The importer streams one folded aggregate at a time;
 it must not load the multi-GiB file into memory.
 
+Before the first aggregate import or controller seed, the importer streams the
+`controller` member from that same checksummed file and requires exact matches
+for controller ID, reviewed checkpoint, and reviewed deployment SHA. It also
+requires integer-zero backlog and quarantine count, boolean `accepted_live=true`,
+and null `last_error`; missing, string-coerced, or mismatched values fail closed
+without a projection transaction or snapshot write.
+
 Capture the migration controller separately from the live controller. Its ID is
 `canonical-lifecycle-projector-migrate`; it never grants live-read authority.
 The seeded live controller exists only to bridge the accepted pre-truncation
@@ -174,6 +181,9 @@ docker cp pantheon-loop-run-projector-scheduler-1:/data/bff/lifecycle-projection
 
 Required:
 
+- streaming parity revalidates the checksummed controller's exact ID and
+  checkpoint plus the same safe backlog/quarantine/live/error fields before it
+  reads PostgreSQL, and records the source controller deployment SHA;
 - stage, journey, loop, identity, and quarantine category hashes recorded;
 - source and PostgreSQL row counts match for every category, using the bounded
   streaming multiset digest rather than loading or sorting the full bundle;
