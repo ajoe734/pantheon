@@ -322,10 +322,54 @@ the observation as failed and triggers the BFF-only rollback. After 24 actual
 hours, checksum all redacted samples and publish start/end/duration plus zero
 violation counts in `evidence.json`.
 
-## Closeout
+## 10. Post-soak legacy JSON retirement (`LIFECYCLE-PROJ-RETIRE-001`)
 
-The task remains `in_progress` until the exact merged deployment, shadow gate,
-authorized canary, all-dev switch, real lifecycle, negatives, rollback/forward,
-and actual 24-hour observation have all executed. Independent review must bind
-to the exact evidence checksums. Legacy retirement is a later task and must not
-be performed here.
+Following completion of the 7-day target-dev soak with zero parity, capacity,
+freshness, or security violations, legacy JSON files are retired and pruned
+through an allow-listed, checksummed process.
+
+### Operational invariants:
+- **Default compose configuration**: `operator-bff` uses `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres` and `loop-run-projector-scheduler` uses `LIFECYCLE_PROJECTOR_WRITER_BACKEND=shadow`. Legacy JSON generator and retention environment variables are removed.
+- **Fail-closed readiness**: If any component attempts to select a legacy JSON reader or writer, readiness fails closed immediately with `legacy_reader_retired:json` or an explicit configuration exception.
+- **Dry-run inventory first**: Run `scripts/lifecycle_projector_legacy_retire.py --dry-run` to inventory all candidate files and verify SHA-256 checksums before any file mutation.
+- **Explicit approval required**: Execution requires `--execute` and `--approval-token <TOKEN>` from Human/Ops.
+- **Quarantine over raw deletion**: In default retirement mode (`--action archive` or `--action quarantine`), obsolete generation directories and root files are moved into a quarantine folder (`/data/bff/lifecycle-projection/quarantine`), preserving recovery capability if needed.
+
+### Step 1: Execute dry-run scan
+```bash
+python3 scripts/lifecycle_projector_legacy_retire.py \
+  --root /data/bff/lifecycle-projection \
+  --dry-run \
+  --output /var/tmp/pantheon-evidence/LIFECYCLE-PROJ-RETIRE-001/dry-run-manifest.json
+```
+
+### Step 2: Human/Ops review & execution
+```bash
+python3 scripts/lifecycle_projector_legacy_retire.py \
+  --root /data/bff/lifecycle-projection \
+  --action quarantine \
+  --execute \
+  --approval-token "Human/Ops-approved" \
+  --approver "Human/Ops" \
+  --output /var/tmp/pantheon-evidence/LIFECYCLE-PROJ-RETIRE-001/retirement-receipt.json
+```
+
+### Step 3: Postgres-only health validation
+```bash
+curl -fsS http://127.0.0.1:18001/readyz
+curl -fsS http://127.0.0.1:18001/bff/version
+```
+
+Verify that `dependencies.lifecycle_projector.reader_backend` is `postgres`, `status` is `ready`, `backlog` is `0`, and all public BFF endpoints respond normally without legacy JSON fallback.
+
+---
+
+## Residual Risk Register (Post-Retirement)
+
+| Risk Item | Likelihood | Impact | Mitigation & Safeguards |
+| :--- | :--- | :--- | :--- |
+| **Postgres connection exhaustion / saturation** | Low | Medium | Dedicated connection pooling via `ProjectionStore`; bounded batching (`LIFECYCLE_PROJECTOR_BATCH_SIZE=500`); fail-closed `/readyz` alerts immediately if latency or connection drop occurs. |
+| **Telemetry ingestion backlog spike** | Low | Low | Incremental relational projector processes batches with cursor checkpointing; high-watermark delta is continuously monitored in `/readyz` (`backlog == 0` invariant). |
+| **Corrupted projection row / quarantine event** | Very Low | Medium | Strict validation on every lifecycle event; anomalous events are recorded in `quarantine` table without blocking subsequent events; `/readyz` flags non-zero quarantine count. |
+| **Recovery after node or pod restart** | Low | Low | State is durable in PostgreSQL tables (`trade_journey_projections`, `trade_journey_controller_state`); worker restarts automatically reconnect and resume from checkpoint sequence. |
+| **Accidental invocation of legacy reader** | Very Low | Low | Legacy JSON reader paths removed from code and compose; configuring `json` fails closed with 503 degraded status. |

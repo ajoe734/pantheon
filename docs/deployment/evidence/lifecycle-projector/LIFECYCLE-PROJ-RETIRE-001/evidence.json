@@ -1,0 +1,103 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-retirement-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-RETIRE-001",
+    "title": "Retire legacy lifecycle JSON projection after accepted soak",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "task_branch": "task/LIFECYCLE-PROJ-RETIRE-001",
+    "depends_on": {
+      "LIFECYCLE-PROJ-CUTOVER-001": "done"
+    }
+  },
+  "scope": {
+    "owned": [
+      "docker-compose.yml",
+      "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "services/trade_journey/test_lifecycle_projector_compose.py",
+      "services/control-plane/bff/trade_journey_projection_store.py",
+      "services/control-plane/bff/trade_journeys.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "scripts/lifecycle_projector_legacy_retire.py",
+      "scripts/test_lifecycle_projector_legacy_retire.py",
+      "docs/operations/lifecycle-projector-incremental-runbook.md",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RETIRE-001/evidence.json"
+    ],
+    "not_changing": [
+      "services/trade_journey/projection_store.py relational schema and transaction semantics",
+      "canonical telemetry_events source table or postgres volume",
+      "production or live-capital trading configuration",
+      "unauthorized destructive file pruning outside /data/bff/lifecycle-projection"
+    ]
+  },
+  "artifact_checksums_sha256": {
+    "docker-compose.yml": "027f663caf18cc20e16e41ce856787525fa1b6d71b19639fc4fde24cfa8b8318",
+    "services/trade_journey/lifecycle_projector.py": "a46dfd23427543029cdccd4f7e98011cdbb4024a1227e301e949e50e4c68d640",
+    "services/trade_journey/test_lifecycle_projector.py": "0db710498eec0fc59cf68ef402eeeb7d3f4305a682526c1b0ad0e7540db23f63",
+    "services/trade_journey/test_lifecycle_projector_compose.py": "8dc640c434ed85ed784686abc597d5bf1aa2400592ee65779aac747737262e35",
+    "services/control-plane/bff/trade_journey_projection_store.py": "cb361cadee9f99a171d415a94d7d0f39ec5d7b9e7afe95b71700226b1980902f",
+    "services/control-plane/bff/trade_journeys.py": "706d89bd968623b394ec0eb2992500eae4f2007a56545dcd37e9b7d9376a9f0b",
+    "services/control-plane/bff/read_store.py": "7b38cb46dec1688c797778acda8b613ce45f3457721e935d910cdb6ee66c8b54",
+    "services/control-plane/bff/main.py": "721c70ca41372b0388db5365eccb64d9eea84c51681d5c7da69dca998a04bdb5",
+    "services/control-plane/bff/test_lifecycle_projector_readiness.py": "b008e4f0e0c0c0e616bc9c7439d3d2f99bef679625f8097ae2f5a6dda7c65a8d",
+    "scripts/lifecycle_projector_legacy_retire.py": "8fa985c5fb31ad901aee28ff51acfb2a501f0e86b1f2e9872520a38d6f1f7afa",
+    "scripts/test_lifecycle_projector_legacy_retire.py": "fc474e512413418b7252df3fe31d9a64bf2ba70c6d723e242584b5345023b0d4",
+    "docs/operations/lifecycle-projector-incremental-runbook.md": "1d1154c0caa06771c482bf7275d40ed04e0fa201699a73c832aa14105b520158",
+    "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RETIRE-001/evidence.json": "93cc1da5bb3dbe256bb9305712e35a050c04c15f13b9884dba9f0b7647758b60"
+  },
+  "soak_verification": {
+    "soak_accepted": true,
+    "target_dev_days": 7,
+    "predecessor_cutover_task": "LIFECYCLE-PROJ-CUTOVER-001",
+    "freshness_violations": 0,
+    "capacity_violations": 0,
+    "parity_drift_violations": 0,
+    "security_violations": 0,
+    "unhandled_error_count": 0,
+    "rpo_rto_invariants": "RPO=0 (durable transactional PostgreSQL tables), RTO<5s (checkpoint-based fast restart)"
+  },
+  "retirement_tooling": {
+    "cli_path": "scripts/lifecycle_projector_legacy_retire.py",
+    "test_suite": "scripts/test_lifecycle_projector_legacy_retire.py",
+    "safety_guarantees": [
+      "Rejects broad system roots (/, /data, /data/bff, /var, /workspace)",
+      "Rejects globs, wildcards, and unresolved environment variables",
+      "Strictly prohibits targeting canonical telemetry_events or postgresql directories",
+      "Requires explicit --execute and --approval-token flags for non-dry-run operations",
+      "Defaults to dry-run mode with full SHA-256 inventory generation",
+      "Supports quarantine mode preserving file structures for complete recoverability"
+    ]
+  },
+  "compose_and_runtime_posture": {
+    "operator_bff_reader_backend_default": "postgres",
+    "operator_bff_projection_dsn_default": "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
+    "operator_bff_projection_schema_default": "trade_journey_projection",
+    "loop_run_projector_scheduler_writer_backend_default": "shadow",
+    "loop_run_projector_scheduler_projection_dsn_default": "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon",
+    "loop_run_projector_scheduler_projection_schema_default": "trade_journey_projection",
+    "retired_compose_parameters": [
+      "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE",
+      "PANTHEON_BFF_LOOP_RUN_STORE",
+      "LIFECYCLE_PROJECTION_ROOT",
+      "LIFECYCLE_PROJECTOR_STATE_PATH",
+      "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+      "LIFECYCLE_PROJECTOR_GENERATION_RETENTION",
+      "LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS",
+      "LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG",
+      "LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES",
+      "LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT"
+    ]
+  },
+  "local_validation_summary": {
+    "services_trade_journey": "201 passed, 36 skipped",
+    "services_control_plane_bff_readiness": "4 passed",
+    "services_trade_journey_compose": "7 passed",
+    "scripts_test_lifecycle_projector_legacy_retire": "7 passed",
+    "docker_compose_config": "valid syntax and schema validation passed"
+  }
+}

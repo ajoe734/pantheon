@@ -2332,29 +2332,30 @@ def _record_worker_failure(projector: Any, error: BaseException) -> bool:
 
 
 def _relational_writer_backend() -> str:
-    return os.getenv(RELATIONAL_WRITER_BACKEND_ENV, "disabled").strip().lower()
+    return os.getenv(RELATIONAL_WRITER_BACKEND_ENV, "shadow").strip().lower()
 
 
-def _configured_relational_projector() -> RelationalLifecycleProjector | None:
-    """Build the disabled-by-default relational shadow writer.
+def _configured_relational_projector() -> RelationalLifecycleProjector:
+    """Build the canonical relational lifecycle projector.
 
-    No value silently enables a writer.  In particular, an invalid backend or
-    missing projection DML DSN is a configuration error rather than a fallback
-    to the legacy JSON publisher.
+    Legacy JSON writer is retired. Only relational writer (backend: 'shadow',
+    'postgres', 'relational') is supported.
     """
 
     backend = _relational_writer_backend()
-    if backend in {"", "disabled", "legacy_json", "json"}:
-        return None
-    if backend != RELATIONAL_WRITER_BACKEND_SHADOW:
+    if backend in {"disabled", "legacy_json", "json"}:
         raise RuntimeError(
-            f"{RELATIONAL_WRITER_BACKEND_ENV} must be disabled or "
-            f"{RELATIONAL_WRITER_BACKEND_SHADOW!r}; cutover is not authorized"
+            f"Legacy JSON projector writer is retired; {RELATIONAL_WRITER_BACKEND_ENV} "
+            f"must be 'shadow', 'postgres', or 'relational' (got {backend!r})"
         )
-    dsn = os.getenv(RELATIONAL_WRITER_DSN_ENV, "").strip()
+    if backend not in {RELATIONAL_WRITER_BACKEND_SHADOW, "postgres", "relational"}:
+        raise RuntimeError(
+            f"{RELATIONAL_WRITER_BACKEND_ENV} must be 'shadow', 'postgres', or 'relational'"
+        )
+    dsn = os.getenv(RELATIONAL_WRITER_DSN_ENV, "").strip() or os.getenv("TELEMETRY_DB_DSN", "").strip()
     if not dsn:
         raise RuntimeError(
-            f"{RELATIONAL_WRITER_DSN_ENV} is required for relational shadow writing"
+            f"{RELATIONAL_WRITER_DSN_ENV} or TELEMETRY_DB_DSN is required for relational writing"
         )
     store = ProjectionStore(
         dsn,
@@ -2371,31 +2372,8 @@ async def run_worker() -> int:
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     if not dsn:
         raise RuntimeError("TELEMETRY_DB_DSN is required")
-    relational_projector = _configured_relational_projector()
-    if relational_projector is None:
-        root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
-        state_path = Path(
-            os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json"))
-        )
-        health_state_path = Path(
-            os.getenv(
-                "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
-                str(root / "health_state.json"),
-            )
-        )
-        projector: LifecycleProjector | RelationalLifecycleProjector = LifecycleProjector(
-            state_path=state_path,
-            health_state_path=health_state_path,
-            bundle_root=root,
-            deployment_sha=os.getenv("GIT_SHA", "unknown"),
-        )
-    else:
-        projector = relational_projector
-    source = (
-        PostgresLifecycleSource(dsn, include_non_lifecycle=True)
-        if relational_projector is not None
-        else PostgresLifecycleSource(dsn)
-    )
+    projector = _configured_relational_projector()
+    source = PostgresLifecycleSource(dsn, include_non_lifecycle=True)
     interval = max(0.1, float(os.getenv("LIFECYCLE_PROJECTOR_POLL_SECONDS", "1")))
     batch_size = max(1, int(os.getenv("LIFECYCLE_PROJECTOR_BATCH_SIZE", "500")))
     max_ticks = max(0, int(os.getenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "0")))
@@ -2437,41 +2415,24 @@ async def run_worker() -> int:
 
 def healthcheck() -> int:
     relational_projector = _configured_relational_projector()
-    if relational_projector is not None:
-        controller = relational_projector.controller
-        ready = (
-            controller["status"] == "ready"
-            and bool(controller["accepted_live"])
-            and controller["mode"] == "live"
-            and int(controller["backlog"]) == 0
-            and int(controller["quarantine_count"]) == 0
-        )
-        payload = {
-            "schema_version": "pantheon.lifecycle-projector-relational-health.v1",
-            "writer_backend": RELATIONAL_WRITER_BACKEND_SHADOW,
-            "ready": ready,
-            "controller": controller,
-        }
-        if not ready:
-            print(f"lifecycle relational projector unhealthy: {_canonical_json(payload)}")
-            return 1
-        print(_canonical_json(payload))
-        return 0
-    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
-    state_path = Path(
-        os.getenv(
-            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
-            str(root / "health_state.json"),
-        )
+    controller = relational_projector.controller
+    ready = (
+        controller["status"] == "ready"
+        and bool(controller["accepted_live"])
+        and controller["mode"] == "live"
+        and int(controller["backlog"]) == 0
+        and int(controller["quarantine_count"]) == 0
     )
-    readiness = projector_readiness(
-        state_path=state_path,
-        bundle_root=root,
-    )
-    if not readiness["ready"]:
-        print(f"lifecycle projector unhealthy: {_canonical_json(readiness)}")
+    payload = {
+        "schema_version": "pantheon.lifecycle-projector-relational-health.v1",
+        "writer_backend": RELATIONAL_WRITER_BACKEND_SHADOW,
+        "ready": ready,
+        "controller": controller,
+    }
+    if not ready:
+        print(f"lifecycle relational projector unhealthy: {_canonical_json(payload)}")
         return 1
-    print(_canonical_json(readiness))
+    print(_canonical_json(payload))
     return 0
 
 
@@ -2480,16 +2441,7 @@ def _backfill(input_path: Path, *, mode: str) -> int:
     records = raw.get("records") if isinstance(raw, Mapping) else raw
     if not isinstance(records, list):
         raise ValueError("backfill input must be a list or {'records': [...]} object")
-    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
-    projector = LifecycleProjector(
-        state_path=os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json")),
-        health_state_path=os.getenv(
-            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
-            str(root / "health_state.json"),
-        ),
-        bundle_root=root,
-        deployment_sha=os.getenv("GIT_SHA", "unknown"),
-    )
+    projector = _configured_relational_projector()
     result = projector.project_records(records, mode=mode)
     print(_canonical_json(result.__dict__))
     return 0

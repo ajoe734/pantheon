@@ -357,7 +357,7 @@ def test_relational_projector_has_no_legacy_snapshot_serialization_path(monkeypa
     assert "state_path" not in source
 
     monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "active")
-    with pytest.raises(RuntimeError, match="cutover is not authorized"):
+    with pytest.raises(RuntimeError, match="must be 'shadow', 'postgres', or 'relational'"):
         lifecycle_projector_module._configured_relational_projector()
 
 
@@ -536,7 +536,39 @@ def test_postgres_lifecycle_source_startup_close_cannot_extend_deadline(monkeypa
     assert calls == ["connect", "fetchrow", "close", "terminate"]
 
 
-def test_worker_startup_verifies_read_contract_before_publishing_identity(monkeypatch, tmp_path):
+class _FakeRelationalProjector:
+    def __init__(self, checkpoint: int = 0, deployment_sha: str = "unknown"):
+        self.checkpoint = checkpoint
+        self.deployment_sha = deployment_sha
+        self.controller = {
+            "checkpoint": checkpoint,
+            "deployment_sha": deployment_sha,
+            "status": "ready",
+            "source_high_watermark": 0,
+            "backlog": 0,
+            "accepted_live": True,
+            "last_error": None,
+        }
+
+    def project_records(self, rows, mode="live", source_high_watermark=0):
+        if rows:
+            self.checkpoint = rows[-1]["ingested_seq"]
+            self.controller["checkpoint"] = self.checkpoint
+        self.controller["source_high_watermark"] = source_high_watermark
+        self.controller["mode"] = mode
+
+    def record_poll(self, source_high_watermark=0, backlog=0, mode="live"):
+        self.controller["source_high_watermark"] = source_high_watermark
+        self.controller["backlog"] = backlog
+        self.controller["mode"] = mode
+
+    def record_source_failure(self, error, backlog=0):
+        self.controller["status"] = "degraded"
+        self.controller["last_error"] = str(error)
+        self.controller["backlog"] = backlog
+
+
+def test_worker_startup_verifies_read_contract_before_publishing_identity(monkeypatch):
     calls: list[str] = []
 
     class Source:
@@ -561,26 +593,31 @@ def test_worker_startup_verifies_read_contract_before_publishing_identity(monkey
             calls.append("close")
 
     source = Source()
-    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda _: source)
+    fake_projector = _FakeRelationalProjector(
+        deployment_sha="cafebabecafebabecafebabecafebabecafebabe"
+    )
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: fake_projector,
+    )
+    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda *args, **kwargs: source)
     monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
-    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
     monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "1")
     monkeypatch.setenv("GIT_SHA", "cafebabecafebabecafebabecafebabecafebabe")
 
     assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
     assert calls == ["verify", "high", "listen", "high", "fetch", "close"]
-    assert _current_json(tmp_path, "loop_runs.json")["controller"]["deployment_sha"] == (
+    assert fake_projector.controller["deployment_sha"] == (
         "cafebabecafebabecafebabecafebabecafebabe"
     )
 
 
-def test_worker_reaffirms_retained_snapshot_after_source_window_truncates(
-    monkeypatch, tmp_path
-):
-    prior = _projector(tmp_path)
-    row = lifecycle_rows()[0]
-    row["ingested_seq"] = 6_099_223
-    prior.project_records([row], mode="live", source_high_watermark=6_099_223)
+def test_worker_reaffirms_retained_snapshot_after_source_window_truncates(monkeypatch):
+    fake_projector = _FakeRelationalProjector(
+        checkpoint=6_099_223,
+        deployment_sha="feedfacefeedfacefeedfacefeedfacefeedface",
+    )
 
     class Source:
         async def verify_read_contract(self) -> None:
@@ -604,14 +641,18 @@ def test_worker_reaffirms_retained_snapshot_after_source_window_truncates(
         async def close(self) -> None:
             return None
 
-    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda _: Source())
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: fake_projector,
+    )
+    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda *args, **kwargs: Source())
     monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
-    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
     monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "1")
     monkeypatch.setenv("GIT_SHA", "feedfacefeedfacefeedfacefeedfacefeedface")
 
     assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
-    controller = _current_json(tmp_path, "loop_runs.json")["controller"]
+    controller = fake_projector.controller
     assert controller["deployment_sha"] == "feedfacefeedfacefeedfacefeedfacefeedface"
     assert controller["checkpoint"] == 6_099_223
     assert controller["source_high_watermark"] == 0
@@ -619,7 +660,7 @@ def test_worker_reaffirms_retained_snapshot_after_source_window_truncates(
     assert controller["accepted_live"] is True
 
 
-def test_worker_startup_contract_failure_publishes_degraded_health(monkeypatch, tmp_path):
+def test_worker_startup_contract_failure_publishes_degraded_health(monkeypatch):
     calls: list[str] = []
 
     class Source:
@@ -643,18 +684,24 @@ def test_worker_startup_contract_failure_publishes_degraded_health(monkeypatch, 
             calls.append("close")
 
     source = Source()
-    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda _: source)
+    fake_projector = _FakeRelationalProjector(
+        deployment_sha="cafebabecafebabecafebabecafebabecafebabe"
+    )
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: fake_projector,
+    )
+    monkeypatch.setattr(lifecycle_projector_module, "PostgresLifecycleSource", lambda *args, **kwargs: source)
     monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
-    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
     monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "1")
     monkeypatch.setenv("GIT_SHA", "cafebabecafebabecafebabecafebabecafebabe")
 
     assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
-    controller = _current_json(tmp_path, "loop_runs.json")["controller"]
     assert calls == ["verify", "close", "close"]
-    assert controller["status"] == "degraded"
-    assert controller["deployment_sha"] == "cafebabecafebabecafebabecafebabecafebabe"
-    assert "TimeoutError: telemetry schema check timed out" == controller["last_error"]
+    assert fake_projector.controller["status"] == "degraded"
+    assert fake_projector.controller["deployment_sha"] == "cafebabecafebabecafebabecafebabecafebabe"
+    assert "TimeoutError: telemetry schema check timed out" == fake_projector.controller["last_error"]
 
 
 def test_full_canonical_lifecycle_projects_one_identity_consistent_journey_and_loop(tmp_path):

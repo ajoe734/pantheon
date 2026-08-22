@@ -172,11 +172,15 @@ class TradeJourneyProjectionStore:
 
     @classmethod
     def from_environment(cls) -> Optional["TradeJourneyProjectionStore"]:
-        backend = os.getenv(READER_BACKEND_ENV, "json").strip().lower()
-        if backend in {"", "json", "disabled"}:
+        backend = os.getenv(READER_BACKEND_ENV, "postgres").strip().lower()
+        if backend in {"json", "legacy_json"}:
+            raise ProjectionReadUnavailable(
+                f"Legacy JSON projection reader is retired; {READER_BACKEND_ENV} must be 'postgres' (got {backend!r})"
+            )
+        if backend in {"", "disabled"}:
             return None
         if backend != "postgres":
-            raise ProjectionReadUnavailable(f"{READER_BACKEND_ENV} must be json or postgres")
+            raise ProjectionReadUnavailable(f"{READER_BACKEND_ENV} must be postgres (got {backend!r})")
         dsn = os.getenv(READER_DSN_ENV, "").strip()
         secret = os.getenv(READER_TOKEN_SECRET_ENV, "")
         return cls(dsn, schema=os.getenv(READER_SCHEMA_ENV, DEFAULT_SCHEMA), token_secret=secret)

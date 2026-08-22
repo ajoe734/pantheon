@@ -59,6 +59,7 @@ from trade_journey_projection_store import (
     ProjectionReadError,
     ProjectionReadUnavailable,
     TradeJourneyProjectionStore,
+    configured_projection_reader,
 )
 
 EVENTS_STORE_ENV = "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"
@@ -987,7 +988,7 @@ def create_trade_journeys_router(
     require_read_role: Callable[[Any], None],
     require_operator_role: Optional[Callable[[Any], None]] = None,
     get_event_store: Callable[[], TradeJourneyEventStore] = lambda: EVENT_STORE,
-    get_projection_reader: Callable[[], Optional[TradeJourneyProjectionStore]] = lambda: None,
+    get_projection_reader: Callable[[], Optional[TradeJourneyProjectionStore]] = lambda: configured_projection_reader(),
     dispatch_action: Callable[[Dict[str, Any]], Dict[str, Any]] = _unconfigured_action_dispatcher,
     action_ledger: ActionLedger = ACTION_LEDGER,
     utc_now: Callable[[], str] = _default_utc_now,
@@ -1027,8 +1028,15 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
         if environment == "live" and request.action in _LIVE_ACTIONS and os.getenv("PANTHEON_TRADE_JOURNEY_LIVE_ACTIONS", "false").lower() != "true":
             return _err(403, "LIVE_ACTION_DISABLED", "Live-capital journey actions are feature-flagged off")
-        materializer = get_event_store().materializer()
-        projection = materializer.get(journey_id, tenant_id=tenant_id, environment=environment) if materializer and _tenant_allowed(identity, tenant_id) else None
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                projection = reader.get_journey(tenant_id=tenant_id, environment=environment, journey_id=journey_id) if _tenant_allowed(identity, tenant_id) else None
+            except ProjectionReadUnavailable:
+                return _err(503, "SERVICE_UNAVAILABLE", "Postgres projection reader unavailable")
+        else:
+            materializer = get_event_store().materializer()
+            projection = materializer.get(journey_id, tenant_id=tenant_id, environment=environment) if materializer and _tenant_allowed(identity, tenant_id) else None
         if projection is None:
             return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
         if request.expected_revision != projection.snapshot.get("revision"):
