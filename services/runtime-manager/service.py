@@ -1895,7 +1895,13 @@ class RuntimeManagerService:
             "position_lineage": position_lineage,
         }
 
-    def transition(self, binding_id: str, new_status: str) -> RuntimeBinding:
+    def transition(
+        self,
+        binding_id: str,
+        new_status: str,
+        *,
+        metadata_patch: Optional[Dict[str, Any]] = None,
+    ) -> RuntimeBinding:
         """Transition a binding to a new status via the allowed state machine."""
         with self._control_lock:
             binding = self._store.require(binding_id)
@@ -1909,7 +1915,11 @@ class RuntimeManagerService:
                         f"safe_mode={safe_mode!r}; complete governed safe-mode "
                         "recovery before resuming runtime."
                     )
-            return self._store.transition_status(binding_id, new_status)
+            return self._store.transition_status(
+                binding_id,
+                new_status,
+                metadata_patch=metadata_patch,
+            )
 
     # ------------------------------------------------------------------ #
     # Kill-switch fast path (KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY)  #
