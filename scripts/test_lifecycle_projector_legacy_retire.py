@@ -7,6 +7,7 @@ import pytest
 
 from scripts.lifecycle_projector_legacy_retire import (
     RetirementValidationError,
+    compute_inventory_digest,
     run_retirement,
     validate_path_safety,
 )
@@ -24,11 +25,13 @@ def _seed_legacy_projection_fixture(root: Path) -> None:
     )
     (root / "trade_journey_events.json").write_text("[]", encoding="utf-8")
     (root / "loop_runs.json").write_text("[]", encoding="utf-8")
+    (root / "cutover-legacy-baseline.snapshot.json").write_text("{}", encoding="utf-8")
 
     gen1 = root / "gen-000001"
     gen1.mkdir()
     (gen1 / "trade_journey_events.json").write_text("[]", encoding="utf-8")
     (gen1 / "loop_runs.json").write_text("[]", encoding="utf-8")
+    (gen1 / "controller_state.json").write_text("{}", encoding="utf-8")
 
     staging = root / "staging-temp"
     staging.mkdir()
@@ -44,7 +47,11 @@ def test_safety_validation_rejects_broad_paths():
     with pytest.raises(RetirementValidationError, match="broad or system directory"):
         validate_path_safety(Path("/data"), allow_custom_root=True)
     with pytest.raises(RetirementValidationError, match="broad or system directory"):
+        validate_path_safety(Path("/data/bff"), allow_custom_root=True)
+    with pytest.raises(RetirementValidationError, match="broad or system directory"):
         validate_path_safety(Path("/var"), allow_custom_root=True)
+    with pytest.raises(RetirementValidationError, match="broad or system directory"):
+        validate_path_safety(Path("/workspace"), allow_custom_root=True)
 
 
 def test_safety_validation_rejects_globs_and_unresolved_vars():
@@ -61,7 +68,34 @@ def test_safety_validation_rejects_canonical_sources():
         validate_path_safety(Path("/tmp/test/pgdata"), allow_custom_root=True)
 
 
-def test_dry_run_scans_inventory_without_mutations(tmp_path: Path):
+def test_scan_fails_closed_on_unallowlisted_root_file(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    _seed_legacy_projection_fixture(root)
+    (root / "unauthorized_data.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(RetirementValidationError, match="Unexpected un-allowlisted file"):
+        run_retirement(root_path=root, action="archive", execute=False, allow_custom_root=True)
+
+
+def test_scan_fails_closed_on_unallowlisted_directory(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    _seed_legacy_projection_fixture(root)
+    (root / "random_dir").mkdir()
+
+    with pytest.raises(RetirementValidationError, match="Unexpected un-allowlisted directory"):
+        run_retirement(root_path=root, action="archive", execute=False, allow_custom_root=True)
+
+
+def test_scan_fails_closed_on_unallowlisted_generation_file(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    _seed_legacy_projection_fixture(root)
+    (root / "gen-000001" / "rogue_script.sh").write_text("#!/bin/sh", encoding="utf-8")
+
+    with pytest.raises(RetirementValidationError, match="Unexpected non-allowlisted file"):
+        run_retirement(root_path=root, action="archive", execute=False, allow_custom_root=True)
+
+
+def test_dry_run_scans_inventory_and_computes_digest(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
     _seed_legacy_projection_fixture(root)
 
@@ -73,39 +107,114 @@ def test_dry_run_scans_inventory_without_mutations(tmp_path: Path):
     )
 
     assert manifest["schema_version"] == "pantheon.lifecycle-projector-legacy-retirement.v1"
+    assert manifest["task_id"] == "LIFECYCLE-PROJ-RETIRE-001"
     assert manifest["mode"] == "dry_run"
     assert manifest["action"] == "archive"
-    assert manifest["total_files"] >= 6
+    assert manifest["total_files"] == 10
+    assert len(manifest["inventory_sha256"]) == 64
     assert manifest["execution_receipt"] is None
     assert (root / "controller_state.json").exists()
     assert (root / "current").is_symlink()
 
 
-def test_execute_requires_approval_token(tmp_path: Path):
+def test_execute_requires_dry_run_manifest(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
     _seed_legacy_projection_fixture(root)
 
-    with pytest.raises(RetirementValidationError, match="requires an explicit --approval-token"):
+    with pytest.raises(RetirementValidationError, match="requires --dry-run-manifest"):
         run_retirement(
             root_path=root,
             action="archive",
             execute=True,
-            approval_token="",
+            approval_token="Human/Ops-approved",
+            approver="Human/Ops",
+            dry_run_manifest_path=None,
             allow_custom_root=True,
         )
 
 
-def test_execute_archive_moves_to_quarantine(tmp_path: Path):
+def test_execute_rejects_drifted_inventory(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    _seed_legacy_projection_fixture(root)
+
+    dry_run_manifest = run_retirement(
+        root_path=root, action="archive", execute=False, allow_custom_root=True
+    )
+    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
+
+    # Modify a file after dry-run
+    (root / "trade_journey_events.json").write_text('[{"modified": true}]', encoding="utf-8")
+
+    with pytest.raises(RetirementValidationError, match="Live inventory drifted"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_token="Human/Ops-approved",
+            approver="Human/Ops",
+            dry_run_manifest_path=manifest_path,
+            allow_custom_root=True,
+        )
+
+
+def test_execute_rejects_unauthorized_approver_or_token(tmp_path: Path):
+    root = tmp_path / "lifecycle-projection"
+    _seed_legacy_projection_fixture(root)
+
+    dry_run_manifest = run_retirement(
+        root_path=root, action="archive", execute=False, allow_custom_root=True
+    )
+    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
+
+    # Spoofed approver
+    with pytest.raises(RetirementValidationError, match="not in the authorized operator allowlist"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_token="Human/Ops-approved",
+            approver="malicious_user",
+            dry_run_manifest_path=manifest_path,
+            allow_custom_root=True,
+        )
+
+    # Invalid token format
+    with pytest.raises(RetirementValidationError, match="valid structured approval token"):
+        run_retirement(
+            root_path=root,
+            action="archive",
+            execute=True,
+            approval_token="any-random-string",
+            approver="Human/Ops",
+            dry_run_manifest_path=manifest_path,
+            allow_custom_root=True,
+        )
+
+
+def test_execute_archive_moves_to_quarantine_with_receipt(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
     _seed_legacy_projection_fixture(root)
 
     quarantine_dir = tmp_path / "quarantine"
+    dry_run_manifest = run_retirement(
+        root_path=root,
+        action="archive",
+        execute=False,
+        quarantine_dir=quarantine_dir,
+        allow_custom_root=True,
+    )
+    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
+
     manifest = run_retirement(
         root_path=root,
         action="archive",
         execute=True,
-        approval_token="Human/Ops-approved",
+        approval_token="Human/Ops-approved:LIFECYCLE-PROJ-RETIRE-001",
         approver="Human/Ops",
+        dry_run_manifest_path=manifest_path,
         quarantine_dir=quarantine_dir,
         allow_custom_root=True,
     )
@@ -116,13 +225,25 @@ def test_execute_archive_moves_to_quarantine(tmp_path: Path):
     assert receipt["status"] == "completed"
     assert receipt["action"] == "quarantine"
     assert receipt["recovery_possible"] is True
+    assert receipt["approver"] == "Human/Ops"
+    assert receipt["approval_token"] == "Human/Ops-approved:LIFECYCLE-PROJ-RETIRE-001"
+    assert receipt["bound_inventory_sha256"] == dry_run_manifest["inventory_sha256"]
     assert (quarantine_dir / "controller_state.json").exists()
     assert not (root / "controller_state.json").exists()
 
 
-def test_execute_delete_removes_files(tmp_path: Path):
+def test_execute_delete_removes_files_with_receipt(tmp_path: Path):
     root = tmp_path / "lifecycle-projection"
     _seed_legacy_projection_fixture(root)
+
+    dry_run_manifest = run_retirement(
+        root_path=root,
+        action="delete",
+        execute=False,
+        allow_custom_root=True,
+    )
+    manifest_path = tmp_path / "dry-run-manifest.json"
+    manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
     manifest = run_retirement(
         root_path=root,
@@ -130,6 +251,7 @@ def test_execute_delete_removes_files(tmp_path: Path):
         execute=True,
         approval_token="Human/Ops-approved",
         approver="Human/Ops",
+        dry_run_manifest_path=manifest_path,
         allow_custom_root=True,
     )
 

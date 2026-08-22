@@ -349,7 +349,8 @@ python3 scripts/lifecycle_projector_legacy_retire.py \
   --root /data/bff/lifecycle-projection \
   --action quarantine \
   --execute \
-  --approval-token "Human/Ops-approved" \
+  --dry-run-manifest /var/tmp/pantheon-evidence/LIFECYCLE-PROJ-RETIRE-001/dry-run-manifest.json \
+  --approval-token "Human/Ops-approved:LIFECYCLE-PROJ-RETIRE-001" \
   --approver "Human/Ops" \
   --output /var/tmp/pantheon-evidence/LIFECYCLE-PROJ-RETIRE-001/retirement-receipt.json
 ```

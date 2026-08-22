@@ -3,14 +3,20 @@
 
 This tool scans the legacy lifecycle JSON projection directory, generates a
 checksummed exact-path inventory of obsolete dev generations and legacy root
-files, and safely archives or prunes them only with explicit operator approval.
+files, and safely archives or prunes them only with explicit operator approval
+and an exact bound dry-run inventory.
 
 Security invariants:
 - Reject broad paths (e.g., '/', '/data', '/data/bff', '/workspace', '/var').
 - Reject globs, wildcards, and unresolved shell variables.
-- Strictly prohibit targeting canonical sources (e.g. telemetry_events).
+- Strictly prohibit targeting canonical sources (e.g. telemetry_events, pgdata).
 - Prohibit targeting relational projection tables or PostgreSQL database cluster.
-- Default to dry-run mode; require explicit --execute and approval token for execution.
+- Only allow-list known legacy files, gen-NNNNNN directories, and staging directories;
+  fail-closed immediately on any un-allowlisted file or directory.
+- Default to dry-run mode producing an inventory manifest and inventory digest.
+- Execution requires an exact --dry-run-manifest binding, verified approver identity,
+  and structured Human/Ops approval token.
+- Live scan before execution must match the dry-run inventory digest item-for-item.
 - Maintain a complete SHA-256 manifest and deletion/quarantine receipt.
 """
 
@@ -25,7 +31,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 SCHEMA_VERSION = "pantheon.lifecycle-projector-legacy-retirement.v1"
 TASK_ID = "LIFECYCLE-PROJ-RETIRE-001"
@@ -50,6 +56,7 @@ FORBIDDEN_ROOTS = frozenset(
         "/proc",
         "/sys",
         "/dev",
+        "/opt",
     }
 )
 
@@ -77,11 +84,26 @@ KNOWN_LEGACY_ROOT_FILES = frozenset(
     }
 )
 
+KNOWN_GEN_FILES = frozenset(
+    {
+        "controller_state.json",
+        "health_state.json",
+        "trade_journey_events.json",
+        "loop_runs.json",
+    }
+)
+
 KNOWN_LEGACY_SYMLINKS = frozenset({"current", "staging"})
+
+GEN_DIR_PATTERN = re.compile(r"^gen-\d{6}$")
+STAGING_DIR_PATTERN = re.compile(r"^staging-[a-zA-Z0-9_-]+$")
+STAGING_FILE_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+\.json$")
+APPROVAL_TOKEN_PATTERN = re.compile(r"^Human/Ops-approved(:[a-zA-Z0-9_.-]+)?$")
+ALLOWED_APPROVERS = frozenset({"Human/Ops", "operator_a", "operator_b"})
 
 
 class RetirementValidationError(ValueError):
-    """Raised when safety validation rejects a target path or parameter."""
+    """Raised when safety validation rejects a target path, parameter, or inventory."""
 
 
 def _utc_now() -> str:
@@ -93,6 +115,16 @@ def _compute_sha256(path: Path) -> str:
     with open(path, "rb") as f:
         while chunk := f.read(65536):
             h.update(chunk)
+    return h.hexdigest()
+
+
+def compute_inventory_digest(items: List[Dict[str, Any]]) -> str:
+    """Compute a deterministic SHA-256 digest over the sorted inventory items."""
+    sorted_items = sorted(items, key=lambda x: str(x.get("relative_path", "")))
+    h = hashlib.sha256()
+    for item in sorted_items:
+        line = f"{item.get('relative_path')}:{item.get('size_bytes')}:{item.get('sha256')}\n"
+        h.update(line.encode("utf-8"))
     return h.hexdigest()
 
 
@@ -155,7 +187,7 @@ def scan_legacy_inventory(
         rel_name = entry.name
 
         if entry.is_symlink():
-            if rel_name in KNOWN_LEGACY_SYMLINKS or rel_name.startswith("gen-"):
+            if rel_name in KNOWN_LEGACY_SYMLINKS or GEN_DIR_PATTERN.match(rel_name):
                 items.append(
                     {
                         "path": str(entry.resolve()),
@@ -168,45 +200,82 @@ def scan_legacy_inventory(
                         "is_dir": False,
                     }
                 )
+            else:
+                raise RetirementValidationError(
+                    f"Unexpected un-allowlisted symlink in lifecycle root: {rel_name!r}; scan failed closed."
+                )
             continue
 
         if entry.is_dir():
-            if rel_name.startswith("gen-") or rel_name.startswith("staging"):
-                for sub_file in sorted(entry.rglob("*")):
-                    if sub_file.is_file():
-                        rel_path = str(sub_file.relative_to(root))
-                        items.append(
-                            {
-                                "path": str(sub_file.resolve()),
-                                "entry_path": str(sub_file),
-                                "relative_path": rel_path,
-                                "size_bytes": sub_file.stat().st_size,
-                                "sha256": _compute_sha256(sub_file),
-                                "category": (
-                                    "legacy_generation_file"
-                                    if rel_name.startswith("gen-")
-                                    else "legacy_staging_file"
-                                ),
-                                "is_symlink": False,
-                                "is_dir": False,
-                            }
+            if GEN_DIR_PATTERN.match(rel_name):
+                for sub_file in sorted(entry.iterdir(), key=lambda p: p.name):
+                    if sub_file.is_dir() or sub_file.is_symlink():
+                        raise RetirementValidationError(
+                            f"Unexpected nested directory or symlink in generation {rel_name}: {sub_file.name!r}; scan failed closed."
                         )
+                    if sub_file.name not in KNOWN_GEN_FILES:
+                        raise RetirementValidationError(
+                            f"Unexpected non-allowlisted file in generation {rel_name}: {sub_file.name!r}; scan failed closed."
+                        )
+                    rel_path = str(sub_file.relative_to(root))
+                    items.append(
+                        {
+                            "path": str(sub_file.resolve()),
+                            "entry_path": str(sub_file),
+                            "relative_path": rel_path,
+                            "size_bytes": sub_file.stat().st_size,
+                            "sha256": _compute_sha256(sub_file),
+                            "category": "legacy_generation_file",
+                            "is_symlink": False,
+                            "is_dir": False,
+                        }
+                    )
+            elif STAGING_DIR_PATTERN.match(rel_name):
+                for sub_file in sorted(entry.iterdir(), key=lambda p: p.name):
+                    if sub_file.is_dir() or sub_file.is_symlink():
+                        raise RetirementValidationError(
+                            f"Unexpected nested directory or symlink in staging {rel_name}: {sub_file.name!r}; scan failed closed."
+                        )
+                    if not STAGING_FILE_PATTERN.match(sub_file.name) and sub_file.name not in KNOWN_GEN_FILES:
+                        raise RetirementValidationError(
+                            f"Unexpected non-allowlisted file in staging {rel_name}: {sub_file.name!r}; scan failed closed."
+                        )
+                    rel_path = str(sub_file.relative_to(root))
+                    items.append(
+                        {
+                            "path": str(sub_file.resolve()),
+                            "entry_path": str(sub_file),
+                            "relative_path": rel_path,
+                            "size_bytes": sub_file.stat().st_size,
+                            "sha256": _compute_sha256(sub_file),
+                            "category": "legacy_staging_file",
+                            "is_symlink": False,
+                            "is_dir": False,
+                        }
+                    )
+            else:
+                raise RetirementValidationError(
+                    f"Unexpected un-allowlisted directory in lifecycle root: {rel_name!r}; scan failed closed."
+                )
             continue
 
         if entry.is_file():
-            if rel_name in KNOWN_LEGACY_ROOT_FILES or rel_name.endswith(".json"):
-                items.append(
-                    {
-                        "path": str(entry.resolve()),
-                        "entry_path": str(entry),
-                        "relative_path": rel_name,
-                        "size_bytes": entry.stat().st_size,
-                        "sha256": _compute_sha256(entry),
-                        "category": "legacy_root_file",
-                        "is_symlink": False,
-                        "is_dir": False,
-                    }
+            if rel_name not in KNOWN_LEGACY_ROOT_FILES:
+                raise RetirementValidationError(
+                    f"Unexpected un-allowlisted file in lifecycle root: {rel_name!r}; scan failed closed."
                 )
+            items.append(
+                {
+                    "path": str(entry.resolve()),
+                    "entry_path": str(entry),
+                    "relative_path": rel_name,
+                    "size_bytes": entry.stat().st_size,
+                    "sha256": _compute_sha256(entry),
+                    "category": "legacy_root_file",
+                    "is_symlink": False,
+                    "is_dir": False,
+                }
+            )
 
     return items
 
@@ -217,10 +286,14 @@ def execute_retirement(
     action: str,
     quarantine_dir: Path,
     approver: str,
+    approval_token: str,
+    dry_run_manifest_path: Optional[str] = None,
+    bound_inventory_sha256: str = "",
 ) -> Dict[str, Any]:
     executed_at = _utc_now()
     processed_count = 0
     processed_bytes = 0
+    item_receipts: List[Dict[str, Any]] = []
 
     if action in {"archive", "quarantine"}:
         quarantine_dir.mkdir(parents=True, exist_ok=True)
@@ -246,6 +319,15 @@ def execute_retirement(
                 processed_bytes += item["size_bytes"]
 
             processed_count += 1
+            item_receipts.append(
+                {
+                    "relative_path": rel,
+                    "action": "quarantined",
+                    "sha256": item["sha256"],
+                    "size_bytes": item["size_bytes"],
+                    "destination": str(dest),
+                }
+            )
 
         for gen_dir in sorted(root.glob("gen-*")):
             if gen_dir.is_dir() and not any(gen_dir.iterdir()):
@@ -267,8 +349,12 @@ def execute_retirement(
             "files_processed": processed_count,
             "bytes_processed": processed_bytes,
             "approver": approver,
+            "approval_token": approval_token,
+            "dry_run_manifest_path": dry_run_manifest_path,
+            "bound_inventory_sha256": bound_inventory_sha256,
             "quarantine_location": str(quarantine_dir),
             "recovery_possible": True,
+            "receipt_items": item_receipts,
         }
 
     if action == "delete":
@@ -281,6 +367,14 @@ def execute_retirement(
                 src.unlink()
                 processed_bytes += item["size_bytes"]
                 processed_count += 1
+                item_receipts.append(
+                    {
+                        "relative_path": item["relative_path"],
+                        "action": "deleted",
+                        "sha256": item["sha256"],
+                        "size_bytes": item["size_bytes"],
+                    }
+                )
 
         for gen_dir in sorted(root.glob("gen-*")):
             if gen_dir.is_dir():
@@ -296,8 +390,12 @@ def execute_retirement(
             "files_processed": processed_count,
             "bytes_processed": processed_bytes,
             "approver": approver,
+            "approval_token": approval_token,
+            "dry_run_manifest_path": dry_run_manifest_path,
+            "bound_inventory_sha256": bound_inventory_sha256,
             "quarantine_location": None,
             "recovery_possible": False,
+            "receipt_items": item_receipts,
         }
 
     raise ValueError(f"Unsupported action: {action!r}")
@@ -309,6 +407,7 @@ def run_retirement(
     execute: bool = False,
     approval_token: str = "",
     approver: str = "Human/Ops",
+    dry_run_manifest_path: Optional[Path] = None,
     quarantine_dir: Optional[Path] = None,
     allow_custom_root: bool = False,
 ) -> Dict[str, Any]:
@@ -320,6 +419,7 @@ def run_retirement(
     items = scan_legacy_inventory(safe_root, quarantine_dir=quarantine_dir)
     total_files = len(items)
     total_bytes = sum(item["size_bytes"] for item in items)
+    inventory_digest = compute_inventory_digest(items)
 
     manifest: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -329,6 +429,7 @@ def run_retirement(
         "action": action,
         "root_path": str(safe_root),
         "quarantine_path": str(quarantine_dir) if action != "delete" else None,
+        "inventory_sha256": inventory_digest,
         "total_files": total_files,
         "total_bytes": total_bytes,
         "recovery_possible": action != "delete",
@@ -337,16 +438,75 @@ def run_retirement(
     }
 
     if execute:
-        if not approval_token:
+        # 1. Require and validate dry-run manifest binding
+        if dry_run_manifest_path is None or not dry_run_manifest_path.exists():
             raise RetirementValidationError(
-                "Execution requires an explicit --approval-token or --confirm-human-ops-approved."
+                "Execution requires --dry-run-manifest pointing to an approved dry-run manifest file."
             )
+
+        try:
+            manifest_content = dry_run_manifest_path.read_text(encoding="utf-8")
+            approved_manifest = json.loads(manifest_content)
+        except Exception as err:
+            raise RetirementValidationError(
+                f"Failed to parse --dry-run-manifest at {dry_run_manifest_path}: {err}"
+            ) from err
+
+        if approved_manifest.get("schema_version") != SCHEMA_VERSION:
+            raise RetirementValidationError(
+                f"Dry-run manifest schema mismatch: expected {SCHEMA_VERSION!r}, got {approved_manifest.get('schema_version')!r}"
+            )
+
+        if approved_manifest.get("task_id") != TASK_ID:
+            raise RetirementValidationError(
+                f"Dry-run manifest task mismatch: expected {TASK_ID!r}, got {approved_manifest.get('task_id')!r}"
+            )
+
+        if approved_manifest.get("mode") != "dry_run":
+            raise RetirementValidationError(
+                f"Bound manifest is not in dry_run mode: {approved_manifest.get('mode')!r}"
+            )
+
+        manifest_root = approved_manifest.get("root_path")
+        if manifest_root != str(safe_root):
+            raise RetirementValidationError(
+                f"Root mismatch: dry-run manifest root {manifest_root!r} != target root {str(safe_root)!r}"
+            )
+
+        approved_items = approved_manifest.get("items", [])
+        expected_digest = approved_manifest.get("inventory_sha256") or compute_inventory_digest(
+            approved_items
+        )
+
+        if inventory_digest != expected_digest or len(items) != len(approved_items):
+            raise RetirementValidationError(
+                f"Live inventory drifted from approved dry-run manifest! "
+                f"Expected digest {expected_digest} ({len(approved_items)} items), "
+                f"live digest {inventory_digest} ({len(items)} items). Execution aborted."
+            )
+
+        # 2. Validate approver identity
+        if approver not in ALLOWED_APPROVERS:
+            raise RetirementValidationError(
+                f"Approver {approver!r} is not in the authorized operator allowlist: {sorted(ALLOWED_APPROVERS)}"
+            )
+
+        # 3. Validate structured approval token
+        if not approval_token or not APPROVAL_TOKEN_PATTERN.match(approval_token):
+            raise RetirementValidationError(
+                "Execution requires a valid structured approval token matching 'Human/Ops-approved' "
+                f"or 'Human/Ops-approved:<reason>'; received: {approval_token!r}"
+            )
+
         receipt = execute_retirement(
             safe_root,
             items,
             action=action,
             quarantine_dir=quarantine_dir,
             approver=approver,
+            approval_token=approval_token,
+            dry_run_manifest_path=str(dry_run_manifest_path),
+            bound_inventory_sha256=inventory_digest,
         )
         manifest["execution_receipt"] = receipt
 
@@ -379,12 +539,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--execute",
         action="store_true",
         default=False,
-        help="Execute retirement/pruning with operator approval token",
+        help="Execute retirement/pruning with operator approval token and dry-run manifest binding",
+    )
+    parser.add_argument(
+        "--dry-run-manifest",
+        type=Path,
+        default=None,
+        help="Required path to approved dry-run manifest for --execute mode",
     )
     parser.add_argument(
         "--approval-token",
         default="",
-        help="Required token/reason for --execute mode (e.g. 'Human/Ops-approved')",
+        help="Required token for --execute mode (e.g. 'Human/Ops-approved' or 'Human/Ops-approved:LIFECYCLE-PROJ-RETIRE-001')",
     )
     parser.add_argument(
         "--approver",
@@ -401,7 +567,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--allow-custom-root",
         action="store_true",
         default=False,
-        help="Allow custom root outside /data/bff/lifecycle-projection (for tests)",
+        help="Allow custom root outside /data/bff/lifecycle-projection (for testing only)",
     )
     parser.add_argument(
         "--output",
@@ -420,6 +586,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             execute=execute_mode,
             approval_token=args.approval_token,
             approver=args.approver,
+            dry_run_manifest_path=args.dry_run_manifest,
             quarantine_dir=args.quarantine_dir,
             allow_custom_root=args.allow_custom_root,
         )
