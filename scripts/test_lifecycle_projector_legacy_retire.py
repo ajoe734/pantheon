@@ -1967,4 +1967,3 @@ def test_resolve_governed_status_root_rejects_identity_when_supervisor_config_ab
         match="authoritative supervisor configuration is absent",
     ):
         resolve_governed_status_root(allow_custom_root=False)
-

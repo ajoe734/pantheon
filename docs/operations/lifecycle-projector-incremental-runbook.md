@@ -8,9 +8,9 @@ Reader backend: `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres` (sole canon
 Last updated: 2026-08-22
 
 > [!NOTE]
-> **Operational Status & Historical Phasing**:
-> - **Post-Retirement State (`LIFECYCLE-PROJ-RETIRE-001`)**: Legacy JSON readers and writers are completely retired and decommissioned. The runtime environment operates exclusively on `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres` and `LIFECYCLE_PROJECTOR_WRITER_BACKEND=shadow`. Setting `reader=json` is rejected and fails closed.
-> - **Historical Cutover Reference (Sections 1–7)**: Sections 1–7 document the one-time baseline import and shadow cutover executed during `LIFECYCLE-PROJ-CUTOVER-001` when the reader was transitioned from `json` to `postgres`.
+> **Operational Status & Phasing**:
+> - **Retirement Scope (`LIFECYCLE-PROJ-RETIRE-001`)**: Decommissions legacy JSON readers and writers from application/BFF code, enforces fail-closed rejection of `reader=json`, and provides the dry-run and HMAC-SHA256-signed retirement tool (`scripts/lifecycle_projector_legacy_retire.py`) for legacy JSON file pruning following the required 7-day post-cutover target-dev soak period.
+> - **Historical Cutover Reference (Sections 1–7)**: Sections 1–7 document the one-time baseline import and shadow cutover executed during `LIFECYCLE-PROJ-CUTOVER-001` on 2026-08-22 when the reader was transitioned from `json` to `postgres`.
 
 This is a paper-only target-dev procedure. It does not authorize production,
 live capital, broker actions, legacy data retirement, or a destructive schema
@@ -33,20 +33,20 @@ captured. Do not infer a later gate from an earlier pass.
 - The service key `loop-run-projector-scheduler` runs the bounded relational
   worker writing to PostgreSQL (`trade_journey_projections`,
   `trade_journey_controller_state`, etc.).
-- Legacy JSON bundle files are retired and quarantined/pruned under `LIFECYCLE-PROJ-RETIRE-001`.
-  PostgreSQL is the sole canonical storage and reader backend.
+- Legacy JSON bundle files are retired and quarantined/pruned under `LIFECYCLE-PROJ-RETIRE-001`
+  following completion of the 7-day target-dev soak. PostgreSQL is the sole canonical storage and reader backend.
 - `telemetry_events` remains the normal backfill authority. Before an exact
   root deploy, prove that the selected deploy path will not prune or truncate
   it. Capture lifecycle-row count and retained high watermark before and after
   deployment.
-- This task has one reviewed target-dev recovery exception. Human/Ops
-  determined on 2026-08-22 that the reader never left JSON, the relational
-  writer stayed disabled, the relational projection remained empty, no source
-  backup or snapshot exists, and the three-file legacy JSON bundle is intact.
-  The accepted disposition is to import that exact folded baseline, not to
-  restore the unrecoverable truncated source rows. The exception is bound to
-  the checksums in section 3 and does not apply to another environment, bundle,
-  task, or future truncation.
+- Historical target-dev cutover recovery context: Human/Ops determined on 2026-08-22
+  during predecessor cutover (`LIFECYCLE-PROJ-CUTOVER-001`) that the reader had never
+  left JSON, the relational writer had stayed disabled, the relational projection was empty,
+  no source backup or snapshot existed, and the three-file legacy JSON bundle was intact.
+  The cutover imported that exact folded baseline to establish PostgreSQL-only operation.
+  Post-cutover, a full 7-day soak on target-dev with zero freshness/capacity/parity/security
+  violations and explicit Human/Ops approval are required before operational file deletion
+  under `LIFECYCLE-PROJ-RETIRE-001`.
 - Never record a DSN, credential, access token, raw payload, or page-token
   secret in evidence. Record only allowlisted controller/config fields and
   checksums.

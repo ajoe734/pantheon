@@ -5,7 +5,7 @@
     "title": "Retire legacy lifecycle JSON projection after accepted soak",
     "owner": "Antigravity",
     "reviewer": "Codex2",
-    "status": "review",
+    "status": "in_progress",
     "base_branch": "dev",
     "task_branch": "task/LIFECYCLE-PROJ-RETIRE-001",
     "depends_on": {
@@ -46,9 +46,9 @@
   },
   "artifact_checksums_sha256": {
     "docker-compose.yml": "027f663caf18cc20e16e41ce856787525fa1b6d71b19639fc4fde24cfa8b8318",
-    "docs/operations/lifecycle-projector-incremental-runbook.md": "1de9c7d322b54608c2834671eb8b60a619ac2c66c96c98227f325249cce2899f",
+    "docs/operations/lifecycle-projector-incremental-runbook.md": "9002a70e0f59d9dcb2306727801ea4e564419163ca75d31368c134de0fe1ce76",
     "scripts/lifecycle_projector_legacy_retire.py": "f4180bd402aca7da5d1f983371b86d96a79e6ec05470eb35dd38c14cf5d3765b",
-    "scripts/test_lifecycle_projector_legacy_retire.py": "0df574f9dc43490be7b68ea06f3d01df1962cb14f3ebaad15331b8994df9ef86",
+    "scripts/test_lifecycle_projector_legacy_retire.py": "75cfe7c896e8acefdea2b335a7c568d7bbef48dd1cde331ac854997316a96816",
     "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json": "db3a15a59c13a610a67217a78d3f91bfef423dd11d696801c17a0888222fd03e",
     "services/control-plane/bff/main.py": "8ad7b633e2421113a89c961329ace548f4386a2f93443831efdad9fcf0eed3a4",
     "services/control-plane/bff/read_store.py": "3f1b3bca1252bd3271d2ad463c5a79068662bdd1ad33ba7ceefe682dc5f975a1",
@@ -68,99 +68,23 @@
     "services/trade_journey/test_lifecycle_projector_compose.py": "8dc640c434ed85ed784686abc597d5bf1aa2400592ee65779aac747737262e35"
   },
   "soak_verification": {
-    "soak_accepted": true,
-    "target_dev_days": 7,
+    "soak_accepted": false,
+    "target_dev_days_required": 7,
+    "target_dev_days_observed": 0,
     "observation_window_utc": {
-      "start_time_utc": "2026-08-15T00:00:00Z",
-      "end_time_utc": "2026-08-22T00:00:00Z",
-      "total_duration_hours": 168
+      "start_time_utc": null,
+      "end_time_utc": null,
+      "total_duration_hours": 0
     },
     "predecessor_cutover_task": "LIFECYCLE-PROJ-CUTOVER-001",
+    "cutover_reconciliation_note": "Target-dev cutover was established on 2026-08-22 under LIFECYCLE-PROJ-CUTOVER-001 (reconciled with PFG-DATA-TELEMETRY-BASELINE-20260822 after the 2026-08-22 recovery exception). The required 7-day Postgres-only target-dev soak period must be observed post-cutover before operational legacy file deletion/quarantine is executed.",
     "freshness_violations": 0,
     "capacity_violations": 0,
     "parity_drift_violations": 0,
     "security_violations": 0,
     "unhandled_error_count": 0,
     "rpo_rto_invariants": "RPO=0 (durable transactional PostgreSQL tables), RTO<5s (checkpoint-based fast restart)",
-    "daily_accepted_samples": [
-      {
-        "day": 1,
-        "sample_time_utc": "2026-08-15T23:59:00Z",
-        "controller_checkpoint": 7104520,
-        "active_journeys": 128,
-        "loop_runs_processed": 1420,
-        "error_count": 0,
-        "parity_violations": 0,
-        "latency_p99_ms": 22.4,
-        "reader_status": "postgres_healthy"
-      },
-      {
-        "day": 2,
-        "sample_time_utc": "2026-08-16T23:59:00Z",
-        "controller_checkpoint": 7108915,
-        "active_journeys": 144,
-        "loop_runs_processed": 1580,
-        "error_count": 0,
-        "parity_violations": 0,
-        "latency_p99_ms": 21.8,
-        "reader_status": "postgres_healthy"
-      },
-      {
-        "day": 3,
-        "sample_time_utc": "2026-08-17T23:59:00Z",
-        "controller_checkpoint": 7113400,
-        "active_journeys": 162,
-        "loop_runs_processed": 1790,
-        "error_count": 0,
-        "parity_violations": 0,
-        "latency_p99_ms": 23.1,
-        "reader_status": "postgres_healthy"
-      },
-      {
-        "day": 4,
-        "sample_time_utc": "2026-08-18T23:59:00Z",
-        "controller_checkpoint": 7118120,
-        "active_journeys": 175,
-        "loop_runs_processed": 1940,
-        "error_count": 0,
-        "parity_violations": 0,
-        "latency_p99_ms": 20.9,
-        "reader_status": "postgres_healthy"
-      },
-      {
-        "day": 5,
-        "sample_time_utc": "2026-08-19T23:59:00Z",
-        "controller_checkpoint": 7122850,
-        "active_journeys": 189,
-        "loop_runs_processed": 2110,
-        "error_count": 0,
-        "parity_violations": 0,
-        "latency_p99_ms": 24.0,
-        "reader_status": "postgres_healthy"
-      },
-      {
-        "day": 6,
-        "sample_time_utc": "2026-08-20T23:59:00Z",
-        "controller_checkpoint": 7127600,
-        "active_journeys": 204,
-        "loop_runs_processed": 2280,
-        "error_count": 0,
-        "parity_violations": 0,
-        "latency_p99_ms": 22.1,
-        "reader_status": "postgres_healthy"
-      },
-      {
-        "day": 7,
-        "sample_time_utc": "2026-08-21T23:59:00Z",
-        "controller_checkpoint": 7132480,
-        "active_journeys": 215,
-        "loop_runs_processed": 2450,
-        "error_count": 0,
-        "parity_violations": 0,
-        "latency_p99_ms": 21.5,
-        "reader_status": "postgres_healthy"
-      }
-    ]
+    "daily_accepted_samples": []
   },
   "hosted_postgres_only_restart_readback_recovery_proof": {
     "readiness_gate": {
@@ -269,5 +193,12 @@
     "services_control_plane_bff_tj_e2e_011": "5 passed in 5.99s",
     "services_execution_lean_runtime_paper_runtime": "61 passed in 9.62s",
     "docker_compose_config": "valid syntax and schema validation passed"
+  },
+  "closeout": {
+    "ready_for_pr": true,
+    "implementation_review_ready": true,
+    "operational_acceptance_review_ready": false,
+    "ready_for_done": false,
+    "reason": "Implementation and retirement tooling are validated locally. Operational retirement of legacy dev files is blocked pending the 7-day post-cutover target-dev soak and explicit Human/Ops approval record."
   }
 }
