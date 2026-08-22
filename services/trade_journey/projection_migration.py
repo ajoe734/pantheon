@@ -31,7 +31,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO
 
 from services.trade_journey.incremental_materializer import (
     BoundedAggregateState,
@@ -62,6 +62,186 @@ from services.trade_journey.projection_store import (
 
 MIGRATION_CONTROLLER_SUFFIX = "-migrate"
 DEFAULT_BATCH_SIZE = 500
+LEGACY_BASELINE_SNAPSHOT_SCHEMA = "pantheon.lifecycle-legacy-baseline-snapshot.v1"
+
+
+class _JsonStream:
+    """Small stdlib-only streaming JSON reader for multi-GiB legacy bundles."""
+
+    def __init__(self, handle: TextIO, *, chunk_size: int = 1024 * 1024) -> None:
+        self.handle = handle
+        self.chunk_size = chunk_size
+        self.decoder = json.JSONDecoder()
+        self.buffer = ""
+        self.position = 0
+        self.eof = False
+
+    def _fill(self) -> bool:
+        if self.position:
+            self.buffer = self.buffer[self.position :]
+            self.position = 0
+        chunk = self.handle.read(self.chunk_size)
+        if not chunk:
+            self.eof = True
+            return False
+        self.buffer += chunk
+        return True
+
+    def _peek(self) -> str:
+        while self.position >= len(self.buffer):
+            if not self._fill():
+                return ""
+        return self.buffer[self.position]
+
+    def skip_whitespace(self) -> None:
+        while True:
+            char = self._peek()
+            if char and char.isspace():
+                self.position += 1
+                continue
+            return
+
+    def expect(self, expected: str) -> None:
+        self.skip_whitespace()
+        actual = self._peek()
+        if actual != expected:
+            raise ValueError(f"expected JSON token {expected!r}, found {actual!r}")
+        self.position += 1
+
+    def read_value(self) -> Any:
+        self.skip_whitespace()
+        while True:
+            try:
+                value, end = self.decoder.raw_decode(self.buffer, self.position)
+            except json.JSONDecodeError:
+                if self.eof or not self._fill():
+                    raise
+                self.skip_whitespace()
+                continue
+            self.position = end
+            return value
+
+    def skip_value(self) -> None:
+        """Skip one value without retaining a large object or array."""
+
+        self.skip_whitespace()
+        first = self._peek()
+        if not first:
+            raise ValueError("unexpected EOF while skipping JSON value")
+        if first not in "[{":
+            self.read_value()
+            return
+        stack = [first]
+        self.position += 1
+        in_string = False
+        escaped = False
+        while stack:
+            char = self._peek()
+            if not char:
+                raise ValueError("unexpected EOF while skipping JSON value")
+            self.position += 1
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char in "[{":
+                stack.append(char)
+            elif char == "}":
+                if stack[-1] != "{":
+                    raise ValueError("mismatched JSON object terminator")
+                stack.pop()
+            elif char == "]":
+                if stack[-1] != "[":
+                    raise ValueError("mismatched JSON array terminator")
+                stack.pop()
+
+
+def _seek_top_level_member(reader: _JsonStream, member: str) -> bool:
+    reader.expect("{")
+    reader.skip_whitespace()
+    if reader._peek() == "}":
+        reader.position += 1
+        return False
+    while True:
+        key = reader.read_value()
+        if not isinstance(key, str):
+            raise ValueError("top-level JSON object key must be a string")
+        reader.expect(":")
+        if key == member:
+            return True
+        reader.skip_value()
+        reader.skip_whitespace()
+        token = reader._peek()
+        if token == ",":
+            reader.position += 1
+            continue
+        if token == "}":
+            reader.position += 1
+            return False
+        raise ValueError(f"unexpected token after top-level member: {token!r}")
+
+
+def read_legacy_bundle_member(path: Path, member: str) -> Any:
+    """Read one bounded top-level member without loading preceding history."""
+
+    with path.open("r", encoding="utf-8") as handle:
+        reader = _JsonStream(handle)
+        if not _seek_top_level_member(reader, member):
+            raise ValueError(f"legacy bundle is missing top-level member {member!r}")
+        return reader.read_value()
+
+
+def iter_legacy_aggregates(path: Path) -> Iterator[tuple[str, BoundedAggregateState]]:
+    """Yield one folded legacy aggregate at a time from controller state."""
+
+    with path.open("r", encoding="utf-8") as handle:
+        reader = _JsonStream(handle)
+        if not _seek_top_level_member(reader, "aggregates"):
+            raise ValueError("legacy controller state is missing aggregates")
+        reader.expect("{")
+        reader.skip_whitespace()
+        if reader._peek() == "}":
+            reader.position += 1
+            return
+        previous_key = ""
+        while True:
+            journey_id = reader.read_value()
+            if not isinstance(journey_id, str) or not journey_id:
+                raise ValueError("legacy aggregate key must be a non-empty string")
+            if previous_key and journey_id <= previous_key:
+                raise ValueError("legacy aggregate keys are not strictly sorted")
+            reader.expect(":")
+            payload = reader.read_value()
+            if not isinstance(payload, Mapping):
+                raise ValueError(f"legacy aggregate {journey_id!r} is not an object")
+            aggregate = BoundedAggregateState.from_dict(payload)
+            if aggregate.journey_id != journey_id:
+                raise ValueError(f"legacy aggregate key mismatch for {journey_id!r}")
+            yield journey_id, aggregate
+            previous_key = journey_id
+            reader.skip_whitespace()
+            token = reader._peek()
+            if token == ",":
+                reader.position += 1
+                continue
+            if token == "}":
+                reader.position += 1
+                return
+            raise ValueError(f"unexpected token after legacy aggregate: {token!r}")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def migration_controller_id(controller_id: str) -> str:
@@ -550,6 +730,280 @@ class BackfillCoordinator:
             totals["ignored"] += reduced.ignored
         totals["checkpoint"] = checkpoint
         return totals
+
+
+class LegacyBundleBackfillCoordinator:
+    """Import an operator-accepted folded JSON baseline without full-file RAM.
+
+    The legacy bundle is a projection, not reconstructed source telemetry. This
+    path is therefore available only with an exact SHA-256 supplied by the
+    operator evidence. It writes through the same transactional projection
+    store, keeps a distinct migration controller, and seeds a non-live recovery
+    cursor only after exact row-count and quarantine gates pass.
+    """
+
+    def __init__(
+        self,
+        store: ProjectionStore,
+        *,
+        controller_id: str,
+        tenant_scope: str,
+        environment_scope: str,
+        controller_state_path: Path,
+        expected_sha256: str,
+        snapshot_path: Path,
+        deployment_sha: str = "",
+        batch_size: int = 100,
+    ) -> None:
+        if batch_size <= 0:
+            raise ValueError("legacy baseline batch_size must be positive")
+        if len(expected_sha256) != 64 or any(
+            char not in "0123456789abcdef" for char in expected_sha256.lower()
+        ):
+            raise ValueError("legacy baseline expected_sha256 must be a full SHA-256")
+        self.store = store
+        self.controller_id = controller_id
+        self.migration_controller_id = migration_controller_id(controller_id)
+        self.tenant_scope = tenant_scope
+        self.environment_scope = environment_scope
+        self.controller_state_path = controller_state_path
+        self.expected_sha256 = expected_sha256.lower()
+        self.snapshot_path = snapshot_path
+        self.deployment_sha = deployment_sha
+        self.batch_size = batch_size
+
+    def _read_snapshot(self) -> dict[str, Any]:
+        if not self.snapshot_path.exists():
+            return {}
+        payload = json.loads(self.snapshot_path.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != LEGACY_BASELINE_SNAPSHOT_SCHEMA:
+            raise ValueError("unsupported legacy baseline snapshot")
+        if payload.get("source_sha256") != self.expected_sha256:
+            raise ValueError("legacy baseline snapshot is bound to a different source checksum")
+        return payload
+
+    def _write_snapshot(self, payload: Mapping[str, Any]) -> None:
+        rendered = {
+            "schema_version": LEGACY_BASELINE_SNAPSHOT_SCHEMA,
+            "source_sha256": self.expected_sha256,
+            **dict(payload),
+        }
+        tmp = self.snapshot_path.with_name(self.snapshot_path.name + ".tmp")
+        tmp.write_text(json.dumps(rendered, sort_keys=True), encoding="utf-8")
+        tmp.replace(self.snapshot_path)
+
+    def _accepted_controller(self) -> tuple[Mapping[str, Any], int]:
+        controller = read_legacy_bundle_member(self.controller_state_path, "controller")
+        if not isinstance(controller, Mapping):
+            raise ValueError("legacy controller state controller must be an object")
+        checkpoint = int(controller.get("checkpoint") or 0)
+        if checkpoint <= 0:
+            raise ValueError("legacy controller checkpoint must be positive")
+        if str(controller.get("controller_id") or "") != self.controller_id:
+            raise ValueError("legacy controller identity does not match the requested controller")
+        if not bool(controller.get("accepted_live")):
+            raise ValueError("legacy controller was not accepted live")
+        if int(controller.get("backlog") or 0) != 0:
+            raise ValueError("legacy controller backlog is not zero")
+        if int(controller.get("quarantine_count") or 0) != 0:
+            raise ValueError("legacy controller has unresolved quarantine")
+        if controller.get("last_error") not in (None, ""):
+            raise ValueError("legacy controller has a recorded error")
+        return controller, checkpoint
+
+    @staticmethod
+    def _validate_aggregate(aggregate: BoundedAggregateState) -> None:
+        if not aggregate.journey_events:
+            raise ValueError(f"legacy aggregate {aggregate.journey_id!r} has no events")
+        canonical_ids = {
+            str(event.get("canonical_event_id") or "")
+            for event in aggregate.journey_events
+        }
+        if "" in canonical_ids:
+            raise ValueError(
+                f"legacy aggregate {aggregate.journey_id!r} has a stage without canonical event ID"
+            )
+        if canonical_ids != set(aggregate.event_fingerprints):
+            raise ValueError(
+                f"legacy aggregate {aggregate.journey_id!r} fingerprint ownership mismatch"
+            )
+        if any(
+            int(event.get("source_offset") or 0) <= 0
+            for event in aggregate.journey_events
+        ):
+            raise ValueError(
+                f"legacy aggregate {aggregate.journey_id!r} has a non-positive source offset"
+            )
+
+    def _apply_batch(
+        self,
+        aggregates: Sequence[BoundedAggregateState],
+        *,
+        checkpoint: int,
+        projection_revision: int,
+    ) -> dict[str, int]:
+        mutation = BatchProjectionMutation(
+            mode="backfill",
+            status="backfilling",
+            source_high_watermark=checkpoint,
+            backlog_count=0,
+            accepted_live=False,
+            deployment_sha=self.deployment_sha,
+        )
+        counts = {"receipts": 0, "journeys": 0, "loop_runs": 0, "stages": 0}
+        for aggregate in aggregates:
+            self._validate_aggregate(aggregate)
+            receipts, identity_links = _receipts_and_identity_links(
+                aggregate, projection_revision=projection_revision
+            )
+            stages = _stage_rows_for_aggregate(
+                aggregate, projection_revision=projection_revision
+            )
+            journey = _journey_row_for_aggregate(
+                aggregate, projection_revision=projection_revision
+            )
+            loop_run = _loop_run_row_for_aggregate(
+                aggregate, projection_revision=projection_revision
+            )
+            mutation.receipts.extend(receipts)
+            mutation.identity_links.extend(identity_links)
+            mutation.stages.extend(stages)
+            if journey is not None:
+                mutation.journeys.append(journey)
+            if loop_run is not None:
+                mutation.loop_runs.append(loop_run)
+            counts["receipts"] += len(receipts)
+            counts["journeys"] += int(journey is not None)
+            counts["loop_runs"] += int(loop_run is not None)
+            counts["stages"] += len(stages)
+        self.store.execute_batch_transaction(
+            self.migration_controller_id,
+            self.tenant_scope,
+            self.environment_scope,
+            mutation,
+        )
+        return counts
+
+    def run(self, *, max_batches: int | None = None) -> dict[str, Any]:
+        actual_sha256 = sha256_file(self.controller_state_path)
+        if actual_sha256 != self.expected_sha256:
+            raise ValueError(
+                "legacy controller-state checksum does not match the accepted evidence"
+            )
+        controller, checkpoint = self._accepted_controller()
+        snapshot = self._read_snapshot()
+        counts = {
+            "aggregates": int(snapshot.get("aggregates") or 0),
+            "receipts": int(snapshot.get("receipts") or 0),
+            "journeys": int(snapshot.get("journeys") or 0),
+            "loop_runs": int(snapshot.get("loop_runs") or 0),
+            "stages": int(snapshot.get("stages") or 0),
+            "batches": int(snapshot.get("batches") or 0),
+        }
+        last_journey_id = str(snapshot.get("last_journey_id") or "")
+
+        if not bool(snapshot.get("import_complete")):
+            pending: list[BoundedAggregateState] = []
+            pending_last_id = ""
+            batches_this_run = 0
+            for journey_id, aggregate in iter_legacy_aggregates(
+                self.controller_state_path
+            ):
+                if last_journey_id and journey_id <= last_journey_id:
+                    continue
+                if int(aggregate.last_ingested_seq or 0) > checkpoint:
+                    raise ValueError(
+                        f"legacy aggregate {journey_id!r} exceeds controller checkpoint"
+                    )
+                pending.append(aggregate)
+                pending_last_id = journey_id
+                if len(pending) < self.batch_size:
+                    continue
+                batch_counts = self._apply_batch(
+                    pending,
+                    checkpoint=checkpoint,
+                    projection_revision=counts["batches"] + 1,
+                )
+                counts["aggregates"] += len(pending)
+                counts["batches"] += 1
+                for name, value in batch_counts.items():
+                    counts[name] += value
+                last_journey_id = pending_last_id
+                self._write_snapshot(
+                    {
+                        **counts,
+                        "checkpoint": checkpoint,
+                        "last_journey_id": last_journey_id,
+                        "import_complete": False,
+                        "controller_deployment_sha": controller.get("deployment_sha"),
+                    }
+                )
+                pending = []
+                batches_this_run += 1
+                if max_batches is not None and batches_this_run >= max_batches:
+                    return {
+                        **counts,
+                        "checkpoint": checkpoint,
+                        "source_sha256": actual_sha256,
+                        "import_complete": False,
+                        "live_controller_seeded": False,
+                    }
+
+            if pending:
+                batch_counts = self._apply_batch(
+                    pending,
+                    checkpoint=checkpoint,
+                    projection_revision=counts["batches"] + 1,
+                )
+                counts["aggregates"] += len(pending)
+                counts["batches"] += 1
+                for name, value in batch_counts.items():
+                    counts[name] += value
+                last_journey_id = pending_last_id
+            if counts["aggregates"] <= 0 or counts["receipts"] <= 0:
+                raise ValueError("legacy baseline contains no durable lifecycle aggregates")
+            self._write_snapshot(
+                {
+                    **counts,
+                    "checkpoint": checkpoint,
+                    "last_journey_id": last_journey_id,
+                    "import_complete": True,
+                    "live_controller_seeded": False,
+                    "controller_deployment_sha": controller.get("deployment_sha"),
+                }
+            )
+
+        seeded = self.store.adopt_legacy_baseline(
+            controller_id=self.controller_id,
+            migration_controller_id=self.migration_controller_id,
+            tenant_scope=self.tenant_scope,
+            environment_scope=self.environment_scope,
+            checkpoint_seq=checkpoint,
+            deployment_sha=self.deployment_sha,
+            expected_receipts=counts["receipts"],
+            expected_journeys=counts["journeys"],
+            expected_loop_runs=counts["loop_runs"],
+        )
+        self._write_snapshot(
+            {
+                **counts,
+                "checkpoint": checkpoint,
+                "last_journey_id": last_journey_id,
+                "import_complete": True,
+                "live_controller_seeded": True,
+                "controller_deployment_sha": controller.get("deployment_sha"),
+            }
+        )
+        return {
+            **counts,
+            "checkpoint": checkpoint,
+            "source_sha256": actual_sha256,
+            "import_complete": True,
+            "live_controller_seeded": True,
+            "live_controller_mode": seeded.mode,
+            "live_controller_status": seeded.status,
+            "accepted_live": seeded.accepted_live,
+        }
 
 
 # ---------------------------------------------------------------------------
