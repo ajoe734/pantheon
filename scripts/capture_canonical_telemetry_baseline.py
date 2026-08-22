@@ -105,25 +105,25 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
 
     # 1. captured_at
     captured_at = data["captured_at"]
-    if not isinstance(captured_at, str) or not captured_at:
+    if isinstance(captured_at, bool) or not isinstance(captured_at, str) or not captured_at.strip():
         raise ValueError(f"captured_at must be a non-empty RFC3339 string, got {captured_at!r}")
     _parse_rfc3339(captured_at)
 
     # 2. environment
     environment = data["environment"]
-    if not isinstance(environment, str) or not environment.strip():
+    if isinstance(environment, bool) or not isinstance(environment, str) or not environment.strip():
         raise ValueError(f"environment must be a non-empty string, got {environment!r}")
 
     # 3. deployment_sha (must be full 40-char hex string)
     deployment_sha = data["deployment_sha"]
-    if not isinstance(deployment_sha, str) or not HEX_SHA40_PATTERN.match(deployment_sha):
+    if isinstance(deployment_sha, bool) or not isinstance(deployment_sha, str) or not HEX_SHA40_PATTERN.match(deployment_sha):
         raise ValueError(
             f"deployment_sha must be a full 40-character hexadecimal SHA (not truncated), got {deployment_sha!r}"
         )
 
-    # 4. source_table (must strictly equal \x27public.telemetry_events\x27)
+    # 4. source_table (must strictly equal 'public.telemetry_events')
     source_table = data["source_table"]
-    if source_table != CANONICAL_SOURCE_TABLE:
+    if isinstance(source_table, bool) or not isinstance(source_table, str) or source_table != CANONICAL_SOURCE_TABLE:
         raise ValueError(
             f"source_table must be strictly {CANONICAL_SOURCE_TABLE!r}, got {source_table!r}. "
             f"Derived tables or secondary JSON projections cannot be treated as canonical source truth."
@@ -136,20 +136,34 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
 
     # 6. min_created_at
     min_created_at = data["min_created_at"]
+    parsed_min: datetime.datetime | None = None
     if min_created_at is not None:
-        if not isinstance(min_created_at, str):
+        if isinstance(min_created_at, bool) or not isinstance(min_created_at, str):
             raise ValueError(f"min_created_at must be an RFC3339 string or null, got {min_created_at!r}")
-        _parse_rfc3339(min_created_at)
+        parsed_min = _parse_rfc3339(min_created_at)
 
     # 7. max_created_at
     max_created_at = data["max_created_at"]
+    parsed_max: datetime.datetime | None = None
     if max_created_at is not None:
-        if not isinstance(max_created_at, str):
+        if isinstance(max_created_at, bool) or not isinstance(max_created_at, str):
             raise ValueError(f"max_created_at must be an RFC3339 string or null, got {max_created_at!r}")
-        _parse_rfc3339(max_created_at)
+        parsed_max = _parse_rfc3339(max_created_at)
 
-    if row_count > 0 and min_created_at is None:
-        raise ValueError("min_created_at cannot be null when row_count > 0")
+    if row_count > 0:
+        if min_created_at is None:
+            raise ValueError("min_created_at cannot be null when row_count > 0")
+        if max_created_at is None:
+            raise ValueError("max_created_at cannot be null when row_count > 0")
+        if parsed_min is not None and parsed_max is not None and parsed_min > parsed_max:
+            raise ValueError(
+                f"min_created_at ({min_created_at!r}) cannot be after max_created_at ({max_created_at!r})"
+            )
+    else:
+        if min_created_at is not None:
+            raise ValueError("min_created_at must be null when row_count is 0")
+        if max_created_at is not None:
+            raise ValueError("max_created_at must be null when row_count is 0")
 
     # 8. source_high_watermark
     source_high_watermark = data["source_high_watermark"]
@@ -159,17 +173,19 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
 
     if row_count > 0 and source_high_watermark is None:
         raise ValueError("source_high_watermark cannot be null when row_count > 0")
+    if row_count == 0 and source_high_watermark is not None:
+        raise ValueError("source_high_watermark must be null when row_count is 0")
 
     # 9. known_history_start
     known_history_start = data["known_history_start"]
     if known_history_start is not None:
-        if not isinstance(known_history_start, str):
+        if isinstance(known_history_start, bool) or not isinstance(known_history_start, str):
             raise ValueError(f"known_history_start must be an RFC3339 string or null, got {known_history_start!r}")
         _parse_rfc3339(known_history_start)
 
     # 10. history_disposition
     history_disposition = data["history_disposition"]
-    if history_disposition not in ALLOWED_DISPOSITIONS:
+    if isinstance(history_disposition, bool) or not isinstance(history_disposition, str) or history_disposition not in ALLOWED_DISPOSITIONS:
         raise ValueError(
             f"history_disposition must be one of {sorted(ALLOWED_DISPOSITIONS)}, got {history_disposition!r}"
         )
@@ -177,22 +193,41 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
     # 11. recovery_source
     recovery_source = data["recovery_source"]
     if history_disposition == "complete":
-        if recovery_source is None or not str(recovery_source).strip():
+        if recovery_source is None:
             raise ValueError(
-                "history_disposition is \x27complete\x27 but recovery_source proof reference is missing or empty. "
-                "Complete history disposition requires authoritative backup proof reference."
+                "history_disposition is 'complete' but recovery_source proof reference is missing (null). "
+                "Complete history disposition requires an authoritative backup proof reference string."
             )
-        if "lifecycle_projection" in str(recovery_source).lower() or "projection" in str(recovery_source).lower():
+        if isinstance(recovery_source, bool) or not isinstance(recovery_source, str):
+            raise ValueError(
+                f"recovery_source must be a non-empty string proof reference for complete disposition, "
+                f"got {type(recovery_source).__name__}: {recovery_source!r}"
+            )
+        if not recovery_source.strip():
+            raise ValueError(
+                "history_disposition is 'complete' but recovery_source proof reference is empty whitespace. "
+                "Complete history disposition requires an authoritative backup proof reference string."
+            )
+        if "lifecycle_projection" in recovery_source.lower() or "projection" in recovery_source.lower():
             raise ValueError(
                 f"recovery_source cannot reference derived Lifecycle projection ({recovery_source!r}). "
                 "Derived JSON cannot be treated as canonical source truth."
             )
-    elif recovery_source is not None and not isinstance(recovery_source, str):
-        raise ValueError(f"recovery_source must be a string or null, got {recovery_source!r}")
+    else:
+        if recovery_source is not None:
+            if isinstance(recovery_source, bool) or not isinstance(recovery_source, str):
+                raise ValueError(
+                    f"recovery_source must be a string or null, got {type(recovery_source).__name__}: {recovery_source!r}"
+                )
+            if "lifecycle_projection" in recovery_source.lower() or "projection" in recovery_source.lower():
+                raise ValueError(
+                    f"recovery_source cannot reference derived Lifecycle projection ({recovery_source!r}). "
+                    "Derived JSON cannot be treated as canonical source truth."
+                )
 
     # 12. query_sha256
     query_sha256 = data["query_sha256"]
-    if not isinstance(query_sha256, str) or not HEX_SHA256_PATTERN.match(query_sha256):
+    if isinstance(query_sha256, bool) or not isinstance(query_sha256, str) or not HEX_SHA256_PATTERN.match(query_sha256):
         raise ValueError(f"query_sha256 must be a 64-character hexadecimal SHA-256 string, got {query_sha256!r}")
 
     expected_query_sha256 = compute_query_sha256(CANONICAL_BASELINE_QUERY)
@@ -203,7 +238,7 @@ def validate_baseline_artifact(data: Mapping[str, Any]) -> dict[str, Any]:
 
     # 13. operator_note
     operator_note = data["operator_note"]
-    if not isinstance(operator_note, str):
+    if isinstance(operator_note, bool) or not isinstance(operator_note, str):
         raise ValueError(f"operator_note must be a string, got {operator_note!r}")
 
     return dict(data)

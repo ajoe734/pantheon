@@ -1,10 +1,10 @@
 {
   "acceptance_criteria_verification": {
-    "allow_only_complete_partial_irrecoverable_unknown_require_proof": "Passed - validate_baseline_artifact enforces ALLOWED_DISPOSITIONS and strictly requires non-null, non-derived recovery_source proof reference for complete disposition.",
+    "allow_only_complete_partial_irrecoverable_unknown_require_proof": "Passed - validate_baseline_artifact enforces ALLOWED_DISPOSITIONS and strictly requires non-null, non-derived, non-boolean string recovery_source proof reference for complete disposition.",
     "inventory_every_backup_candidate_without_synthesizing_events": "Passed - backup candidate inventory audits all five candidate categories and affirms zero event synthesis.",
     "publish_honest_reviewed_baseline_unblocking_lifecycle_cutover": "Passed - honest baseline published identifying post-boundary migration checkpoint (2026-08-22T11:48:48+00:00 / min ingested_seq 7122484) unblocking LIFECYCLE-PROJ-CUTOVER-001.",
-    "record_row_count_min_max_high_watermark_full_sha_query_hash": "Passed - baseline artifact captures row count (7153), min/max created_at, source_high_watermark (7129636), full 40-char SHA (5517afdda923774c1d5f2c80688c76827dae5f91), and query SHA256 (cbb98d00313c8d8d2b26b9f2a4440cbecbd1c28fd87fda520746ce1724e33239).",
-    "reject_truncated_sha_missing_query_hash_unsupported_disposition_derived_json": "Passed - 54 unit tests verify rejection of short SHAs, missing hashes, unsupported statuses, and derived JSON as recovery source."
+    "record_row_count_min_max_high_watermark_full_sha_query_hash": "Passed - baseline artifact captures row count (7153), min/max created_at with strict boundary consistency (min <= max, max required when row_count > 0), source_high_watermark (7129636), full 40-char SHA (5517afdda923774c1d5f2c80688c76827dae5f91), and query SHA256 (cbb98d00313c8d8d2b26b9f2a4440cbecbd1c28fd87fda520746ce1724e33239).",
+    "reject_truncated_sha_missing_query_hash_unsupported_disposition_derived_json": "Passed - 81 unit tests verify rejection of short SHAs, missing hashes, unsupported statuses, non-string/boolean/derived recovery proof, and null/inconsistent max timestamps."
   },
   "candidate_inventory_summary": {
     "docker_postgres_volume": "partial_active_source - holds canonical events post-boundary from 2026-08-22T11:48:48+00:00 forward",
@@ -72,7 +72,7 @@
       "sha256sum -c docs/deployment/evidence/product-functional-closure/PFG-DATA-TELEMETRY-BASELINE-20260822/evidence.sha256"
     ],
     "results": [
-      "54 passed in pytest test suite with 100% pass rate.",
+      "81 passed in pytest test suite with 100% pass rate.",
       "Baseline artifact successfully verified with validate_baseline_artifact.",
       "Root-relative SHA256 checksums verified."
     ]

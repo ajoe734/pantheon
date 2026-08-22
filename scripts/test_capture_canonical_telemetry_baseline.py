@@ -151,7 +151,7 @@ def test_complete_disposition_requires_recovery_source() -> None:
         validate_baseline_artifact(data)
 
     data_empty = _make_valid_artifact(history_disposition="complete", recovery_source="   ")
-    with pytest.raises(ValueError, match="recovery_source proof reference is missing"):
+    with pytest.raises(ValueError, match="recovery_source proof reference is empty"):
         validate_baseline_artifact(data_empty)
 
 
@@ -195,9 +195,91 @@ def test_row_count_positive_with_null_watermark_rejected() -> None:
         validate_baseline_artifact(data)
 
 
-def test_row_count_positive_with_null_min_time_rejected() -> None:
-    data = _make_valid_artifact(row_count=10, min_created_at=None)
-    with pytest.raises(ValueError, match="min_created_at cannot be null when row_count > 0"):
+def test_row_count_positive_with_null_max_time_rejected() -> None:
+    data = _make_valid_artifact(row_count=10, max_created_at=None)
+    with pytest.raises(ValueError, match="max_created_at cannot be null when row_count > 0"):
+        validate_baseline_artifact(data)
+
+
+def test_row_count_positive_with_min_after_max_rejected() -> None:
+    data = _make_valid_artifact(
+        row_count=10,
+        min_created_at="2026-08-22T15:00:00+00:00",
+        max_created_at="2026-08-22T14:00:00+00:00",
+    )
+    with pytest.raises(ValueError, match="cannot be after max_created_at"):
+        validate_baseline_artifact(data)
+
+
+def test_row_count_zero_with_non_null_timestamps_or_watermark_rejected() -> None:
+    data_min = _make_valid_artifact(row_count=0, min_created_at="2026-08-22T11:48:48+00:00", max_created_at=None, source_high_watermark=None)
+    with pytest.raises(ValueError, match="min_created_at must be null when row_count is 0"):
+        validate_baseline_artifact(data_min)
+
+    data_max = _make_valid_artifact(row_count=0, min_created_at=None, max_created_at="2026-08-22T14:00:00+00:00", source_high_watermark=None)
+    with pytest.raises(ValueError, match="max_created_at must be null when row_count is 0"):
+        validate_baseline_artifact(data_max)
+
+    data_wm = _make_valid_artifact(row_count=0, min_created_at=None, max_created_at=None, source_high_watermark=100)
+    with pytest.raises(ValueError, match="source_high_watermark must be null when row_count is 0"):
+        validate_baseline_artifact(data_wm)
+
+
+@pytest.mark.parametrize("bad_recovery_source", [
+    True,
+    False,
+    123,
+    45.6,
+    ["backup.sql"],
+    {"source": "backup.sql"},
+])
+def test_complete_disposition_rejects_non_string_recovery_source(bad_recovery_source) -> None:
+    data = _make_valid_artifact(history_disposition="complete", recovery_source=bad_recovery_source)
+    with pytest.raises(ValueError, match="recovery_source must be a non-empty string proof reference"):
+        validate_baseline_artifact(data)
+
+
+@pytest.mark.parametrize("bad_recovery_source", [
+    True,
+    False,
+    123,
+    ["backup.sql"],
+])
+def test_partial_disposition_rejects_non_string_recovery_source(bad_recovery_source) -> None:
+    data = _make_valid_artifact(history_disposition="partial", recovery_source=bad_recovery_source)
+    with pytest.raises(ValueError, match="recovery_source must be a string or null"):
+        validate_baseline_artifact(data)
+
+
+@pytest.mark.parametrize("forbidden_source", [
+    "lifecycle_projection.json",
+    "/data/bff/lifecycle-projection/trade_journey_events.json",
+    "trade_journey_projection.event_receipts",
+])
+def test_partial_disposition_rejects_lifecycle_projection_as_recovery_source(forbidden_source: str) -> None:
+    data = _make_valid_artifact(history_disposition="partial", recovery_source=forbidden_source)
+    with pytest.raises(ValueError, match="cannot reference derived Lifecycle projection"):
+        validate_baseline_artifact(data)
+
+
+@pytest.mark.parametrize("field_name", [
+    "captured_at",
+    "environment",
+    "deployment_sha",
+    "source_table",
+    "min_created_at",
+    "max_created_at",
+    "known_history_start",
+    "history_disposition",
+    "query_sha256",
+    "operator_note",
+    "row_count",
+    "source_high_watermark",
+])
+def test_boolean_types_rejected_across_fields(field_name: str) -> None:
+    data = _make_valid_artifact()
+    data[field_name] = True
+    with pytest.raises(ValueError):
         validate_baseline_artifact(data)
 
 
