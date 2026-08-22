@@ -50,7 +50,7 @@
     "services/trade_journey/hosted_bff_readback.py": "be15238e52eb8c3a3aa9c69a0c44a0156866f45bacb739011feb24f5017c7987",
     "services/trade_journey/test_hosted_lifecycle_probe.py": "f26f18e92d9c3ef65931d48fe6dc0c271e4a9618547c62a7f22d16366b9e5750",
     "services/trade_journey/test_hosted_bff_readback.py": "787ee1dabf5b183af0920b58d8746501da16a77e26eb41fae1b0e8e6f84a829b",
-    "services/control-plane/bff/main.py": "30b4a1ebd83dedda996c318617ee53cb782029fd91a6c24ed61d05b44659d90f",
+    "services/control-plane/bff/main.py": "da34f368bba48e628a5d89ab2ef1732def2d1847e3a30b7741490cf0b9984a27",
     "services/control-plane/bff/test_lifecycle_projector_readiness.py": "533e3fcc5928a8ed5f1189c19c5ab5f1dbbe7e083b4b8f4bf2e69ecd15ecff15",
     "services/trade_journey/test_lifecycle_projector_compose.py": "2b7ddc49fbc7e79a89a38f2560403a489c895db55b2ae83a4aaea67ec5c006fb",
     "docs/operations/lifecycle-projector-incremental-runbook.md": "ef9c3a9c2cbba73f0ea7bf43b547e1ba9c9efba2b739652c62dae0c8954c9e6f",
@@ -91,6 +91,13 @@
       "adjacent_store_command": "TEST_DATABASE_URL=<redacted-local-test-postgres-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_store.py::test_projection_store_mixed_batch_filters_duplicate_owned_mutations services/trade_journey/test_projection_store.py::test_projection_store_contiguous_checkpoint_advancement -rs",
       "adjacent_store_result": "2 passed in 1.36s",
       "compose_and_static_result": "7 compose tests passed in 2.96s; docker compose config valid; py_compile and git diff --check clean",
+      "dev_composition": {
+        "verified_at_utc": "2026-08-22T14:58:32Z",
+        "origin_dev_sha": "4caa25e509831171f727b2edcdea4677566d8236",
+        "composition_head": "ea3aed312e41fba076f772f35bf54dfc991627e5",
+        "database_result": "40 migration tests plus 2 adjacent store tests passed in 6.29s",
+        "compose_and_bff_readiness_result": "7 compose tests plus 4 BFF readiness tests passed in 9.63s; docker compose config and git diff check valid"
+      },
       "coverage": [
         "source controller checkpoint 8 rejected when reviewed CLI checkpoint is 999 before any projection transaction, adoption, or snapshot write",
         "source deployment SHA a... rejected when reviewed CLI deployment SHA is f... before any projection transaction, adoption, or snapshot write",
