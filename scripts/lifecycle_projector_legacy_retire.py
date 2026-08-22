@@ -234,16 +234,70 @@ def resolve_governed_status_root(
     The status root must be an authoritative repository or supervisor coordination root.
     Arbitrary caller-controlled environment overrides are strictly prohibited.
     """
-    if allow_custom_root or os.environ.get("PANTHEON_ALLOW_TEST_CUSTOM_ROOT") == "1":
+    if allow_custom_root:
         if status_root_override is not None:
             return status_root_override.resolve()
         env_root = os.environ.get("PANTHEON_STATUS_ROOT")
         if env_root and env_root.strip():
             return Path(env_root).resolve()
 
+    # Determine authoritative supervisor config and expected canonical identity
+    live_config_env = os.environ.get("PANTHEON_LIVE_SUPERVISOR_CONFIG")
+    live_config_candidates: List[Path] = []
+    if live_config_env and live_config_env.strip():
+        live_config_candidates.append(Path(live_config_env.strip()).resolve())
+    live_config_candidates.append(
+        Path("/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json").resolve()
+    )
+
+    authoritative_identity: Optional[Dict[str, Any]] = None
+    authoritative_status_root: Optional[Path] = None
+
+    for config_candidate in live_config_candidates:
+        if config_candidate.exists() and config_candidate.is_file():
+            try:
+                config_data = json.loads(config_candidate.read_text(encoding="utf-8"))
+                store = config_data.get("task_state_store")
+                if isinstance(store, dict) and store.get("mode") == "authoritative":
+                    event_log_raw = store.get("event_log")
+                    paths = config_data.get("paths", {})
+                    status_file_raw = paths.get("status_file", "ai-status.json")
+                    status_file = Path(status_file_raw)
+                    if not status_file.is_absolute():
+                        status_file = config_candidate.parent.parent / status_file
+                    status_root = status_file.parent.resolve()
+                    event_log = Path(event_log_raw).resolve() if event_log_raw else None
+
+                    if event_log and status_root.exists() and (status_root / "ai-status.json").exists():
+                        payload = {
+                            "schema_version": 1,
+                            "status_root": str(status_root),
+                            "status_file": str(status_root / "ai-status.json"),
+                            "archive_root": str(status_root / "ai-task-archive"),
+                            "event_log": str(event_log),
+                        }
+                        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                        identity_sha256 = hashlib.sha256(encoded).hexdigest()
+                        authoritative_identity = {**payload, "identity_sha256": identity_sha256}
+                        authoritative_status_root = status_root
+                        break
+            except Exception:
+                pass
+
+    if authoritative_status_root is None:
+        if (CANONICAL_REPO_ROOT / "ai-status.json").exists() or (CANONICAL_REPO_ROOT / ".orchestrator").exists():
+            authoritative_status_root = CANONICAL_REPO_ROOT.resolve()
+
     if status_root_override is not None:
         resolved = status_root_override.resolve()
-        if (resolved / "ai-status.json").exists() and not (resolved / "ai-status.json").is_symlink():
+        if (
+            authoritative_status_root is not None
+            and resolved == authoritative_status_root
+        ) or (
+            (resolved / "ai-status.json").exists()
+            and not (resolved / "ai-status.json").is_symlink()
+            and resolved == CANONICAL_REPO_ROOT.resolve()
+        ):
             return resolved
         raise RetirementValidationError(
             f"Explicit status root override {str(resolved)!r} is not a valid canonical status root."
@@ -289,6 +343,18 @@ def resolve_governed_status_root(
             )
 
         resolved_bound_root = Path(bound_status_root).resolve()
+
+        if authoritative_identity is not None:
+            if identity_data != authoritative_identity:
+                raise RetirementValidationError(
+                    "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON does not match the authoritative supervisor task state identity."
+                )
+        else:
+            if resolved_bound_root != CANONICAL_REPO_ROOT.resolve():
+                raise RetirementValidationError(
+                    f"PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON status root {str(resolved_bound_root)!r} does not match canonical repository root {str(CANONICAL_REPO_ROOT.resolve())!r}"
+                )
+
         if not resolved_bound_root.exists() or not (resolved_bound_root / "ai-status.json").exists():
             raise RetirementValidationError(
                 f"Authoritative status root from identity binding {str(resolved_bound_root)!r} does not exist or lacks ai-status.json"
@@ -305,16 +371,17 @@ def resolve_governed_status_root(
 
     env_root = os.environ.get("PANTHEON_STATUS_ROOT")
     if env_root and env_root.strip():
-        if allow_custom_root or os.environ.get("PANTHEON_ALLOW_TEST_CUSTOM_ROOT") == "1":
-            return Path(env_root).resolve()
-
         resolved_env_root = Path(env_root).resolve()
-        if resolved_env_root != CANONICAL_REPO_ROOT:
+        expected_target = authoritative_status_root or CANONICAL_REPO_ROOT.resolve()
+        if resolved_env_root != expected_target and resolved_env_root != CANONICAL_REPO_ROOT.resolve():
             raise RetirementValidationError(
-                f"Caller-controlled PANTHEON_STATUS_ROOT override ({str(resolved_env_root)!r}) outside the repository root "
-                f"({str(CANONICAL_REPO_ROOT)!r}) is prohibited for destructive retirement execution without authoritative identity."
+                f"Caller-controlled PANTHEON_STATUS_ROOT override ({str(resolved_env_root)!r}) outside authoritative status root "
+                f"({str(expected_target)!r}) is prohibited for destructive retirement execution without authoritative identity."
             )
         return resolved_env_root
+
+    if authoritative_status_root is not None and (authoritative_status_root / "ai-status.json").exists():
+        return authoritative_status_root
 
     if (CANONICAL_REPO_ROOT / "ai-status.json").exists() or (CANONICAL_REPO_ROOT / ".orchestrator").exists():
         return CANONICAL_REPO_ROOT.resolve()
@@ -1109,12 +1176,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Alias for --approval-record",
     )
     parser.add_argument(
-        "--signing-key",
-        "--operator-key",
-        default="",
-        help="Authoritative Human/Ops signing key for HMAC signature verification",
-    )
-    parser.add_argument(
         "--approval-token",
         default="",
         help="Legacy token flag (cannot bypass --approval-record)",
@@ -1141,8 +1202,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     execute_mode = bool(args.execute)
     approval_record_file = args.approval_record or args.human_ops_evidence
 
-    # Custom roots are prohibited in production and governed independently for testing
-    allow_custom_root = os.environ.get("PANTHEON_ALLOW_TEST_CUSTOM_ROOT") == "1"
+    # Custom roots and caller-chosen keys are strictly prohibited in the CLI
+    allow_custom_root = False
 
     try:
         manifest = run_retirement(
@@ -1155,7 +1216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             allow_custom_root=allow_custom_root,
             approval_token=args.approval_token,
             approver=args.approver,
-            signing_key=args.signing_key or None,
+            signing_key=None,
         )
     except RetirementValidationError as exc:
         print(f"Error: {exc}", file=sys.stderr)

@@ -46,9 +46,9 @@
   },
   "artifact_checksums_sha256": {
     "docker-compose.yml": "027f663caf18cc20e16e41ce856787525fa1b6d71b19639fc4fde24cfa8b8318",
-    "docs/operations/lifecycle-projector-incremental-runbook.md": "34532bbbd019e40092d7ab412143f7274b80413ebff876a02e3ea8138f444023",
-    "scripts/lifecycle_projector_legacy_retire.py": "e1b0e824b4afb816459663aea76c999375509cd4146268336f7c4d77f60bd397",
-    "scripts/test_lifecycle_projector_legacy_retire.py": "76b7cdd3b8100509b848b3c7bb8599ee48effb88f59f5d3417cd4430016be79c",
+    "docs/operations/lifecycle-projector-incremental-runbook.md": "aec866cbf3790867433e9a2ce02b7bdda4110c0496e5d36aa7c89e2863a27414",
+    "scripts/lifecycle_projector_legacy_retire.py": "45a7b2d9493ac4a391adbb8edf7439c8602633842f949b12acf935db8a05b801",
+    "scripts/test_lifecycle_projector_legacy_retire.py": "782b547664632e925fd987c096f94b3b671b14cf4b671afc795a94dce8776d04",
     "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json": "db3a15a59c13a610a67217a78d3f91bfef423dd11d696801c17a0888222fd03e",
     "services/control-plane/bff/main.py": "8ad7b633e2421113a89c961329ace548f4386a2f93443831efdad9fcf0eed3a4",
     "services/control-plane/bff/read_store.py": "3f1b3bca1252bd3271d2ad463c5a79068662bdd1ad33ba7ceefe682dc5f975a1",
@@ -180,28 +180,28 @@
     },
     "retirement_safety_gate": {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_lifecycle_projector_legacy_retire.py",
-      "result": "35 passed in 3.15s",
+      "result": "48 passed in 3.65s",
       "coverage": "Fail-closed allowlisting for root and generation files; broad/system path and canonical source rejections; safe quarantine destination validation; exact approved dry-run manifest and quarantine_path binding; live drift verification; TOCTOU/mutation protection preserving unlisted files and verified non-empty directories; structured Human/Ops approval record bound to governed status root with cryptographic signature validation, rejection of self-authored records, and CLI custom root governance."
     },
     "contract_preservation_gates": {
       "tj_e2e_005_read_api": {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
-        "result": "36 passed in 14.02s",
+        "result": "35 passed in 13.46s",
         "coverage": "Canonical Trade Journey BFF read API contracts preserved against PostgreSQL projection reader: list, detail, timeline, graph, evidence, replay, resolve, metrics, auth/role scoping, and probe prevention."
       },
       "tj_e2e_007_sse_attention": {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_tj_e2e_007_sse_attention.py",
-        "result": "3 passed in 2.20s",
+        "result": "3 passed in 5.69s",
         "coverage": "Revisioned SSE invalidation and attention severity sorting contracts verified with PostgreSQL projection reader."
       },
       "tj_e2e_008_governed_actions": {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_tj_e2e_008_governed_journey_actions.py",
-        "result": "5 passed in 2.10s",
+        "result": "5 passed in 6.37s",
         "coverage": "Governed journey action admission, RBAC, and reservation ledger contracts verified with PostgreSQL projection reader."
       },
       "tj_e2e_011_slo_alert": {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_tj_e2e_011_slo_alert_endpoint.py",
-        "result": "5 passed in 5.95s",
+        "result": "5 passed in 5.99s",
         "coverage": "SLO/data-quality metrics and governed alert transport verified with PostgreSQL projection reader."
       }
     },
@@ -232,7 +232,7 @@
       "Execution requires non-forgeable governed Human/Ops --approval-record located within the immutable governed status root (bound to canonical repository root or supervisor task state identity) and signed with an authoritative HMAC-SHA256 signature (PANTHEON_HUMAN_OPS_SIGNING_KEY) matching exact task id, root, action, recovery posture, quarantine path, and inventory SHA-256 digest",
       "Rejects caller-controlled status root environment overrides outside repository root and explicitly rejects forgeable unkeyed SHA-256 deterministic hashes",
       "Rejects self-authored or unauthoritative approval records located outside the governed status root",
-      "Strictly governs custom roots: --allow-custom-root is removed from the production CLI, enforcing exact /data/bff/lifecycle-projection target root in production",
+      "Strictly governs custom roots and keys: custom root overrides, test-mode bypasses, and caller-selected CLI verification keys are removed from the production CLI; signature verification keys are resolved strictly from protected supervisor/Human-Ops sources (PANTHEON_HUMAN_OPS_SIGNING_KEY), enforcing exact /data/bff/lifecycle-projection target root in production",
       "Prohibits caller-supplied token or approver bypass without an authorized Human/Ops approval record",
       "Supports quarantine mode preserving full directory structures for complete recoverability"
     ]
@@ -258,16 +258,16 @@
     ]
   },
   "local_validation_summary": {
-    "services_trade_journey": "34 passed in 4.90s",
-    "services_control_plane_bff_readiness": "4 passed in 8.05s",
-    "services_trade_journey_compose": "7 passed in 2.20s",
-    "scripts_test_lifecycle_projector_legacy_retire": "42 passed in 5.58s",
-    "services_trade_journey_hosted_probe": "20 passed in 3.29s",
-    "services_control_plane_bff_tj_e2e_005": "36 passed in 14.02s",
-    "services_control_plane_bff_tj_e2e_007": "3 passed in 2.20s",
-    "services_control_plane_bff_tj_e2e_008": "5 passed in 2.10s",
-    "services_control_plane_bff_tj_e2e_011": "5 passed in 5.95s",
-    "services_execution_lean_runtime_paper_runtime": "61 passed in 10.28s",
+    "services_trade_journey": "14 passed, 1 skipped in 1.35s",
+    "services_control_plane_bff_readiness": "4 passed in 5.36s",
+    "services_trade_journey_compose": "7 passed in 1.50s",
+    "scripts_test_lifecycle_projector_legacy_retire": "48 passed in 3.65s",
+    "services_trade_journey_hosted_probe": "20 passed in 2.98s",
+    "services_control_plane_bff_tj_e2e_005": "35 passed in 13.46s",
+    "services_control_plane_bff_tj_e2e_007": "3 passed in 5.69s",
+    "services_control_plane_bff_tj_e2e_008": "5 passed in 6.37s",
+    "services_control_plane_bff_tj_e2e_011": "5 passed in 5.99s",
+    "services_execution_lean_runtime_paper_runtime": "61 passed in 9.62s",
     "docker_compose_config": "valid syntax and schema validation passed"
   }
 }

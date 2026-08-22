@@ -29,9 +29,9 @@ TEST_SIGNING_KEY = "test-secret-human-ops-signing-key-12345"
 
 @pytest.fixture(autouse=True)
 def setup_test_env(monkeypatch):
-    monkeypatch.setenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", "1")
     monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", TEST_SIGNING_KEY)
     monkeypatch.delenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", raising=False)
+    monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
 
 
 def _seed_legacy_projection_fixture(root: Path) -> None:
@@ -876,8 +876,27 @@ def test_cli_main_rejects_allow_custom_root_flag(capsys):
     assert exc_info.value.code == 2
 
 
-def test_cli_main_rejects_custom_root_without_governance_env(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
+def test_cli_main_rejects_signing_key_and_operator_key_flags():
+    """Negative regression test: CLI rejects --signing-key and --operator-key flags."""
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main(["--signing-key", "attacker-chosen-key"])
+    assert exc_info.value.code == 2
+
+    with pytest.raises(SystemExit) as exc_info2:
+        cli_main(["--operator-key", "attacker-chosen-key"])
+    assert exc_info2.value.code == 2
+
+
+def test_cli_main_rejects_custom_root_outside_default_root(tmp_path: Path):
+    custom_root = tmp_path / "custom-lifecycle"
+    _seed_legacy_projection_fixture(custom_root)
+    rc = cli_main(["--root", str(custom_root)])
+    assert rc == 1
+
+
+def test_cli_main_rejects_test_custom_root_env_bypass(tmp_path: Path, monkeypatch):
+    """Negative regression test: setting PANTHEON_ALLOW_TEST_CUSTOM_ROOT=1 cannot bypass CLI root restriction."""
+    monkeypatch.setenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", "1")
     custom_root = tmp_path / "custom-lifecycle"
     _seed_legacy_projection_fixture(custom_root)
     rc = cli_main(["--root", str(custom_root)])
@@ -888,10 +907,26 @@ def test_cli_main_dry_run_and_execute_governed_mode(tmp_path: Path, monkeypatch)
     root = tmp_path / "lifecycle-projection"
     status_root = tmp_path / "status_root"
     status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
     _seed_legacy_projection_fixture(root)
 
-    monkeypatch.setenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", "1")
-    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    # In unit tests, isolate default root and canonical repo root via test mocking
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+    monkeypatch.delenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", raising=False)
+    monkeypatch.delenv("PANTHEON_STATUS_ROOT", raising=False)
+
+    runtime_dir = status_root.parent / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    live_config = {
+        "paths": {"status_file": str(status_root / "ai-status.json")},
+        "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
+    }
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
 
     manifest_output = status_root / "dry-run.json"
     rc = cli_main(
@@ -936,17 +971,181 @@ def test_cli_main_dry_run_and_execute_governed_mode(tmp_path: Path, monkeypatch)
     assert receipt_data["execution_receipt"]["status"] == "completed"
 
 
+def test_cli_rejects_forged_canonical_task_state_identity_json(tmp_path: Path, monkeypatch):
+    """Negative regression test: CLI rejects execution with forged task state identity env."""
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    _seed_legacy_projection_fixture(root)
+
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+
+    runtime_dir = status_root.parent / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    live_config = {
+        "paths": {"status_file": str(status_root / "ai-status.json")},
+        "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
+    }
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
+
+    manifest_output = status_root / "dry-run.json"
+    rc = cli_main(["--root", str(root), "--output", str(manifest_output)])
+    assert rc == 0
+    dry_run = json.loads(manifest_output.read_text(encoding="utf-8"))
+
+    attacker_root = tmp_path / "attacker_root"
+    attacker_root.mkdir(parents=True, exist_ok=True)
+    (attacker_root / "ai-status.json").write_text("{}", encoding="utf-8")
+
+    forged_payload = {
+        "schema_version": 1,
+        "status_root": str(attacker_root),
+        "status_file": str(attacker_root / "ai-status.json"),
+        "archive_root": str(attacker_root / "ai-task-archive"),
+        "event_log": str(attacker_root / "ai-activity-log.jsonl"),
+    }
+    encoded = json.dumps(forged_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+    monkeypatch.setenv(
+        "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON",
+        json.dumps({**forged_payload, "identity_sha256": identity_sha256}),
+    )
+
+    approval_record = _create_approval_record(dry_run)
+    approval_path = status_root / "approval.json"
+    approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
+
+    rc = cli_main(
+        [
+            "--root",
+            str(root),
+            "--execute",
+            "--dry-run-manifest",
+            str(manifest_output),
+            "--approval-record",
+            str(approval_path),
+        ]
+    )
+    assert rc == 1
+
+
+def test_cli_rejects_caller_controlled_status_root_env(tmp_path: Path, monkeypatch):
+    """Negative regression test: CLI rejects execution with caller-overridden PANTHEON_STATUS_ROOT."""
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    _seed_legacy_projection_fixture(root)
+
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+
+    runtime_dir = status_root.parent / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    live_config = {
+        "paths": {"status_file": str(status_root / "ai-status.json")},
+        "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
+    }
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
+
+    manifest_output = status_root / "dry-run.json"
+    rc = cli_main(["--root", str(root), "--output", str(manifest_output)])
+    assert rc == 0
+    dry_run = json.loads(manifest_output.read_text(encoding="utf-8"))
+
+    attacker_root = tmp_path / "attacker_status_root"
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(attacker_root))
+
+    approval_record = _create_approval_record(dry_run)
+    approval_path = status_root / "approval.json"
+    approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
+
+    rc = cli_main(
+        [
+            "--root",
+            str(root),
+            "--execute",
+            "--dry-run-manifest",
+            str(manifest_output),
+            "--approval-record",
+            str(approval_path),
+        ]
+    )
+    assert rc == 1
+
+
+def test_cli_rejects_forged_hmac_key_in_approval_record(tmp_path: Path, monkeypatch):
+    """Negative regression test: CLI rejects approval record signed with an attacker's HMAC key."""
+    root = tmp_path / "lifecycle-projection"
+    status_root = tmp_path / "status_root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    _seed_legacy_projection_fixture(root)
+
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.DEFAULT_LIFECYCLE_ROOT", str(root))
+    monkeypatch.setattr("scripts.lifecycle_projector_legacy_retire.CANONICAL_REPO_ROOT", status_root)
+    monkeypatch.setenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", TEST_SIGNING_KEY)
+
+    runtime_dir = status_root.parent / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
+    live_config = {
+        "paths": {"status_file": str(status_root / "ai-status.json")},
+        "task_state_store": {"mode": "authoritative", "event_log": str(event_log)},
+    }
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
+
+
+    manifest_output = status_root / "dry-run.json"
+    rc = cli_main(["--root", str(root), "--output", str(manifest_output)])
+    assert rc == 0
+    dry_run = json.loads(manifest_output.read_text(encoding="utf-8"))
+
+    attacker_signed_record = _create_approval_record(
+        dry_run, signing_key="attacker-arbitrary-hmac-key"
+    )
+    approval_path = status_root / "attacker-approval.json"
+    approval_path.write_text(json.dumps(attacker_signed_record), encoding="utf-8")
+
+    rc = cli_main(
+        [
+            "--root",
+            str(root),
+            "--execute",
+            "--dry-run-manifest",
+            str(manifest_output),
+            "--approval-record",
+            str(approval_path),
+        ]
+    )
+    assert rc == 1
+
+
 def test_execute_rejects_caller_env_root_override_outside_repo(tmp_path: Path, monkeypatch):
     """Regression test: caller cannot point PANTHEON_STATUS_ROOT outside the repository root."""
     monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
     monkeypatch.delenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", raising=False)
+    monkeypatch.delenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", raising=False)
     attacker_dir = tmp_path / "attacker_controlled_dir"
     attacker_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(attacker_dir))
 
     with pytest.raises(
         RetirementValidationError,
-        match="Caller-controlled PANTHEON_STATUS_ROOT override .* outside the repository root",
+        match="Caller-controlled PANTHEON_STATUS_ROOT override .* outside authoritative status root",
     ):
         resolve_governed_status_root()
 
@@ -964,7 +1163,6 @@ def test_execute_rejects_unkeyed_deterministic_hash_forge(tmp_path: Path):
     manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
-    # Compute unkeyed SHA-256 deterministic hash of the canonical payload
     approved_at = "2026-08-22T18:00:00Z"
     canonical_payload = {
         "action": "archive",
@@ -1021,7 +1219,6 @@ def test_execute_rejects_missing_signing_key_in_execute_mode(tmp_path: Path, mon
     approval_path = status_root / "approval.json"
     approval_path.write_text(json.dumps(approval_record), encoding="utf-8")
 
-    # Remove all signing keys from environment
     monkeypatch.delenv("PANTHEON_HUMAN_OPS_SIGNING_KEY", raising=False)
     monkeypatch.delenv("PANTHEON_OPERATOR_APPROVAL_SECRET", raising=False)
     monkeypatch.delenv("PANTHEON_RETIREMENT_SIGNING_KEY", raising=False)
@@ -1055,7 +1252,6 @@ def test_execute_rejects_wrong_signing_key(tmp_path: Path):
     manifest_path = status_root / "dry-run-manifest.json"
     manifest_path.write_text(json.dumps(dry_run_manifest), encoding="utf-8")
 
-    # Sign with wrong key
     wrong_key_record = _create_approval_record(
         dry_run_manifest, signing_key="attacker-wrong-secret-key"
     )
@@ -1078,30 +1274,98 @@ def test_execute_rejects_wrong_signing_key(tmp_path: Path):
         )
 
 
-def test_canonical_task_state_identity_binding_valid(tmp_path: Path, monkeypatch):
-    """Verify that canonical supervisor task state identity binding securely resolves status root."""
+def test_canonical_task_state_identity_binding_valid_with_live_config(tmp_path: Path, monkeypatch):
+    """Verify that canonical supervisor task state identity binding securely matches live config."""
     monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
     monkeypatch.delenv("PANTHEON_STATUS_ROOT", raising=False)
 
-    bound_root = tmp_path / "supervisor_status_root"
-    bound_root.mkdir(parents=True, exist_ok=True)
-    (bound_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    supervisor_root = tmp_path / "supervisor_root"
+    status_root = supervisor_root / "coordination-root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    runtime_dir = supervisor_root / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
 
-    identity_payload = {
-        "schema_version": 1,
-        "status_root": str(bound_root),
-        "status_file": str(bound_root / "ai-status.json"),
-        "archive_root": str(bound_root / "ai-task-archive"),
-        "event_log": str(bound_root / "ai-activity-log.jsonl"),
+    live_config = {
+        "paths": {
+            "status_file": str(status_root / "ai-status.json"),
+        },
+        "task_state_store": {
+            "mode": "authoritative",
+            "event_log": str(event_log),
+        },
     }
-    encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
 
-    identity_json = json.dumps({**identity_payload, "identity_sha256": identity_sha256})
+    payload = {
+        "schema_version": 1,
+        "status_root": str(status_root),
+        "status_file": str(status_root / "ai-status.json"),
+        "archive_root": str(status_root / "ai-task-archive"),
+        "event_log": str(event_log),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+    identity_json = json.dumps({**payload, "identity_sha256": identity_sha256})
     monkeypatch.setenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", identity_json)
 
     resolved = resolve_governed_status_root()
-    assert resolved == bound_root.resolve()
+    assert resolved == status_root.resolve()
+
+
+def test_canonical_task_state_identity_binding_rejects_forged_binding(tmp_path: Path, monkeypatch):
+    """Verify that forged canonical identity not matching live supervisor config is rejected."""
+    monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
+    monkeypatch.delenv("PANTHEON_STATUS_ROOT", raising=False)
+
+    supervisor_root = tmp_path / "supervisor_root"
+    status_root = supervisor_root / "coordination-root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    runtime_dir = supervisor_root / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
+
+    live_config = {
+        "paths": {
+            "status_file": str(status_root / "ai-status.json"),
+        },
+        "task_state_store": {
+            "mode": "authoritative",
+            "event_log": str(event_log),
+        },
+    }
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
+
+    # Attacker crafts identity pointing to a fake root with valid sha256
+    attacker_root = tmp_path / "attacker_root"
+    attacker_root.mkdir(parents=True, exist_ok=True)
+    (attacker_root / "ai-status.json").write_text("{}", encoding="utf-8")
+
+    forged_payload = {
+        "schema_version": 1,
+        "status_root": str(attacker_root),
+        "status_file": str(attacker_root / "ai-status.json"),
+        "archive_root": str(attacker_root / "ai-task-archive"),
+        "event_log": str(attacker_root / "ai-activity-log.jsonl"),
+    }
+    encoded = json.dumps(forged_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+    identity_json = json.dumps({**forged_payload, "identity_sha256": identity_sha256})
+    monkeypatch.setenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", identity_json)
+
+    with pytest.raises(
+        RetirementValidationError,
+        match="does not match the authoritative supervisor task state identity",
+    ):
+        resolve_governed_status_root()
 
 
 def test_canonical_task_state_identity_binding_rejects_tampered_hash(tmp_path: Path, monkeypatch):
@@ -1136,21 +1400,38 @@ def test_canonical_task_state_identity_binding_rejects_conflicting_status_root_e
     """Verify that conflicting PANTHEON_STATUS_ROOT is rejected when canonical identity is bound."""
     monkeypatch.delenv("PANTHEON_ALLOW_TEST_CUSTOM_ROOT", raising=False)
 
-    bound_root = tmp_path / "supervisor_status_root"
-    bound_root.mkdir(parents=True, exist_ok=True)
-    (bound_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    supervisor_root = tmp_path / "supervisor_root"
+    status_root = supervisor_root / "coordination-root"
+    status_root.mkdir(parents=True, exist_ok=True)
+    (status_root / "ai-status.json").write_text("{}", encoding="utf-8")
+    runtime_dir = supervisor_root / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    event_log = runtime_dir / "task-state-events-v2.jsonl"
+    event_log.write_text("", encoding="utf-8")
 
-    identity_payload = {
-        "schema_version": 1,
-        "status_root": str(bound_root),
-        "status_file": str(bound_root / "ai-status.json"),
-        "archive_root": str(bound_root / "ai-task-archive"),
-        "event_log": str(bound_root / "ai-activity-log.jsonl"),
+    live_config = {
+        "paths": {
+            "status_file": str(status_root / "ai-status.json"),
+        },
+        "task_state_store": {
+            "mode": "authoritative",
+            "event_log": str(event_log),
+        },
     }
-    encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+    live_config_file = runtime_dir / "live-supervisor-config.json"
+    live_config_file.write_text(json.dumps(live_config), encoding="utf-8")
+    monkeypatch.setenv("PANTHEON_LIVE_SUPERVISOR_CONFIG", str(live_config_file))
 
-    identity_json = json.dumps({**identity_payload, "identity_sha256": identity_sha256})
+    payload = {
+        "schema_version": 1,
+        "status_root": str(status_root),
+        "status_file": str(status_root / "ai-status.json"),
+        "archive_root": str(status_root / "ai-task-archive"),
+        "event_log": str(event_log),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    identity_sha256 = hashlib.sha256(encoded).hexdigest()
+    identity_json = json.dumps({**payload, "identity_sha256": identity_sha256})
     monkeypatch.setenv("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", identity_json)
 
     # Conflicting status root
@@ -1161,3 +1442,4 @@ def test_canonical_task_state_identity_binding_rejects_conflicting_status_root_e
         match="conflicts with authoritative identity root",
     ):
         resolve_governed_status_root()
+
