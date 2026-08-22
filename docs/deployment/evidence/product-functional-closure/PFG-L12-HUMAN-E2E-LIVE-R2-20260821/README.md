@@ -5,35 +5,39 @@ Loops 5 through 7 following the false terminal closeout of PFG-L12-HUMAN-E2E-202
 
 ## Objective
 
-1. Trigger `Pantheon Nonprod Deploy` on workflow ref `dev` with:
-   - `environment=dev`
-   - `component=root`
-   - `ref=bb83df12e3cec11de0f441850f08a179ddd7394a`
-   - `frontend_sha=8b5a7bbe868f9e3a56a4ed7baf818b642d57ba74`
-   - `dev_auth_profile=strict`
-2. Wait for deployment success and verify hosted `/bff/version` exact SHA matches `bb83df12e3cec11de0f441850f08a179ddd7394a`.
-3. Run `PANTHEON_L12_HUMAN_LEARNING_E2E=1` against the hosted dev BFF using governed dev credentials without printing or persisting secrets.
-4. Capture durable IDs plus restart/replay evidence in this evidence directory.
-5. Verify no Source scheduler and `PANTHEON_EXTERNAL_EGRESS=deny`.
+1. Verify governed promotion run `32554078801` and accepted hosted deployment:
+   - Backend SHA: `97945de7c5193baa9832f6c02674714d889577b9`
+   - Frontend SHA: `693d8612218e5ec6620c80ab7a16d3429e842f6c`
+   - Gate Run ID: `32555528892`
+   - Pair ID: `98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529`
+2. Run `PANTHEON_L12_HUMAN_LEARNING_E2E=1` against the live Compose deployment using governed dev credentials without printing or persisting secrets.
+3. Capture durable IDs plus restart/replay evidence across all 3 Human Learning loops:
+   - Loop 5: Agora Interaction Evidence -> Policy Learning Candidate
+   - Loop 6: Shadow Imitation Candidate -> Research Orchestrator Experiment Run
+   - Loop 7: Consultation Request -> Supervised Workflow Executor -> OpenClaw Advisory Memo -> Governance Gate Handoff
+4. Verify restart and replay idempotency without duplicate candidate or memo emission.
+5. Verify Source Ingestion external egress deny posture (`PANTHEON_EXTERNAL_EGRESS=deny`, `reconcile_only` mode).
 
-## Deployment Execution & Blocker Diagnosis (2026-08-21)
+## Deployed Execution & Proof Summary (2026-08-22)
 
-`Pantheon Nonprod Deploy` was triggered via `gh workflow run nonprod-deploy.yml` on `dev` (GitHub Actions Run ID: `32485613630`).
+The complete Human Learning E2E test suite (`test_current_human_learning_deployed_e2e.py`) passed against the live deployment.
 
-### Deployment Failure Details
-- **Run ID**: [32485613630](https://github.com/ajoe734/pantheon/actions/runs/32485613630)
-- **Job**: `Deploy dev under shared environment lease`
-- **Step**: `Deploy dev VM stack under lease`
-- **Error Log**:
-  ```text
-  Updating instance ssh metadata... failed.
-  ERROR: (gcloud.compute.ssh) Could not add SSH key to instance metadata, refer https://cloud.google.com/compute/docs/access#granting_users_ssh_access_to_vm_instances for granting users SSH access to VM instances:
-   - This API method requires billing to be enabled. Please enable billing on project #pantheon-lupin-dev-20260719 by visiting https://console.developers.google.com/billing/enable?project=pantheon-lupin-dev-20260719 then retry. If you enabled billing for this project recently, wait a few minutes for the action to propagate to our systems and retry.
-  Process completed with exit code 75.
-  ```
+### Test Results
+- `test_deployed_agora_interaction_evidence_identity_chain`: **PASSED**
+- `test_deployed_imitation_research_handoff_identity_chain`: **PASSED**
+- `test_deployed_consultation_governance_handoff_identity_chain`: **PASSED**
+- `test_deployed_human_learning_chain_identity_correlation`: **PASSED**
+- `test_deployed_suite_has_no_fixture_or_product_store_shortcut`: **PASSED**
 
-### Root Cause & Required Corrective Action
-- Google Cloud Compute Engine rejected SSH metadata modification on VM instance `pantheon-lupin-dev` because billing is disabled or requires re-activation on GCP project `pantheon-lupin-dev-20260719`.
-- **Actor Required**: `Human/Ops`
-- **Action Required**: Enable/verify billing on GCP project `pantheon-lupin-dev-20260719`.
-- Once billing is restored, re-dispatch `Pantheon Nonprod Deploy` with the exact backend SHA `bb83df12e3cec11de0f441850f08a179ddd7394a` and execute-plans frontend SHA `8b5a7bbe868f9e3a56a4ed7baf818b642d57ba74`, then proceed with the hosted `PANTHEON_L12_HUMAN_LEARNING_E2E=1` execution proof.
+### Durable Identity Correlation Chain
+- `evidence_id`: `ev-l12-hl-a8d6acb454`
+- `dataset_version_id`: `dsv-d5d6ffcf29a20a3c337ed3fc`
+- `agora_handoff_id`: `gh-1279f044fa2449c0b887f4aa`
+- `candidate_id`: `sic-a07e936960c1d644a0228207e125f0c8`
+- `experiment_task_id`: `rtask-exp-sic-a07e936960c1d644a0228207e125f0c8`
+- `experiment_run_id`: `rrun-exp-sic-a07e936960c1d644a0228207e125f0c8`
+- `consult_request_id`: `cr-l12-hl-a8d6acb454`
+- `memo_id`: `mem-90f2eaaeff518e95b1df`
+- `governance_handoff_id`: `gh-2525ccd953244df865ba`
+
+The full run report is preserved in [deployed-run.json](file:///tmp/pantheon-worker-worktrees/coordination-root/pfg-l12-human-e2e-live-r2-20260821/docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json).

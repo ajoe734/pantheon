@@ -45,7 +45,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-TASK_ID = "PFG-L12-HUMAN-E2E-20260820"
+TASK_ID = "PFG-L12-HUMAN-E2E-LIVE-R2-20260821"
 DEFAULT_REPORT_PATH = (
     REPO_ROOT
     / "docs"
@@ -111,6 +111,10 @@ class DeployedHumanLearningHarness:
         self.timeout_seconds = float(os.getenv("PANTHEON_L12_POLL_TIMEOUT_SECONDS", "210"))
         self.poll_seconds = float(os.getenv("PANTHEON_L12_POLL_INTERVAL_SECONDS", "2"))
         self.tenant_id = os.getenv("PANTHEON_L12_HUMAN_LEARNING_TENANT_ID", "pantheon-local").strip()
+        self.consultation_tenant_id = os.getenv(
+            "PANTHEON_L12_CONSULTATION_TENANT_ID",
+            os.getenv("PANTHEON_TENANT_ID", "tenant-dev"),
+        ).strip()
         self.bff_url = os.getenv("PANTHEON_L12_BFF_URL", "http://127.0.0.1:18001").rstrip("/")
         self.policy_learning_url = os.getenv(
             "PANTHEON_L12_POLICY_LEARNING_URL", "http://127.0.0.1:18100"
@@ -148,14 +152,14 @@ class DeployedHumanLearningHarness:
 
     # -- infra helpers -----------------------------------------------------
 
-    def _command(self, argv: Sequence[str]) -> str:
+    def _command(self, argv: Sequence[str], *, timeout: float = 60.0) -> str:
         completed = subprocess.run(
             list(argv),
             cwd=REPO_ROOT,
             check=False,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout,
         )
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip() or "command failed"
@@ -293,8 +297,9 @@ class DeployedHumanLearningHarness:
         except urllib.error.HTTPError as exc:
             status = exc.code
             raw = exc.read(4_096).decode("utf-8", errors="replace")
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"{method} {path} connection failed: {exc.reason}") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            reason = getattr(exc, "reason", str(exc))
+            raise RuntimeError(f"{method} {path} connection failed: {reason}") from exc
         if status not in expected:
             raise RuntimeError(
                 f"{method} {path} returned HTTP {status}; expected {list(expected)}; "
@@ -430,6 +435,8 @@ class DeployedHumanLearningHarness:
     def _bff_headers(self, *, idempotency_key: str | None = None) -> dict[str, str]:
         headers = {
             "Authorization": f"Bearer {self.bff_bearer}",
+            "X-Tenant-Id": self.tenant_id,
+            "X-Pantheon-Tenant": self.tenant_id,
             "X-Pantheon-Tenant-Id": self.tenant_id,
         }
         if idempotency_key:
@@ -439,6 +446,8 @@ class DeployedHumanLearningHarness:
     def _agora_service_headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.agora_handoff_token}",
+            "X-Tenant-Id": self.tenant_id,
+            "X-Pantheon-Tenant": self.tenant_id,
             "X-Pantheon-Tenant-Id": self.tenant_id,
             "X-Pantheon-Service-Actor": AGORA_SERVICE_ACTOR,
         }
@@ -446,13 +455,17 @@ class DeployedHumanLearningHarness:
     def _policy_learning_headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.policy_learning_token}",
+            "X-Tenant-Id": self.tenant_id,
+            "X-Pantheon-Tenant": self.tenant_id,
             "X-Pantheon-Tenant-Id": self.tenant_id,
         }
 
     def _consultation_headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.consultation_token}",
-            "X-Pantheon-Tenant-Id": self.tenant_id,
+            "X-Tenant-Id": self.consultation_tenant_id,
+            "X-Pantheon-Tenant": self.consultation_tenant_id,
+            "X-Pantheon-Tenant-Id": self.consultation_tenant_id,
         }
 
     # -- Loop 5: Agora interaction evidence -> durable handoff -> intake ----
@@ -698,7 +711,11 @@ class DeployedHumanLearningHarness:
             lambda: self._http_json(
                 self.research_url,
                 f"/api/research-orchestrator/runs/{urllib.parse.quote(experiment_run_id, safe='')}",
-                headers={"X-Pantheon-Tenant-Id": self.tenant_id},
+                headers={
+                    "X-Tenant-Id": self.tenant_id,
+                    "X-Pantheon-Tenant": self.tenant_id,
+                    "X-Pantheon-Tenant-Id": self.tenant_id,
+                },
             ),
         )
         self._require(
@@ -731,7 +748,7 @@ class DeployedHumanLearningHarness:
         request_id = f"cr-l12-hl-{self.run_token}"
         req_payload = {
             "request_id": request_id,
-            "tenant_id": self.tenant_id,
+            "tenant_id": self.consultation_tenant_id,
             "request_type": "strategy_review",
             "requested_by": {"actor_type": "operator", "actor_id": "l12-current-e2e-operator"},
             "target_type": "experiment_run",

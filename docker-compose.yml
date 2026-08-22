@@ -120,7 +120,7 @@ services:
       CONSULTATION_AUTH_REQUIRED: ${CONSULTATION_AUTH_REQUIRED:-true}
       CONSULTATION_SERVICE_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
       CONSULTATION_API_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
-      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-tenant-dev}}
       CONSULTATION_PROVIDER_URL: http://openclaw-gateway-adapter:8104/api/openclaw-adapter/consultation/contributions
       CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
       CONSULTATION_PROVIDER_SERVICE_ACTOR: consultation-workflow-executor
@@ -835,6 +835,7 @@ services:
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
       CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
       CONSULTATION_PROVIDER_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
+    command: ["sh", "-c", "uvicorn consultation_provider:app --app-dir services/openclaw-gateway-adapter --host 0.0.0.0 --port $${PORT:-8104}"]
     volumes:
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
@@ -973,7 +974,7 @@ services:
       PANTHEON_GOVERNANCE_MFA_VALUES: ${PANTHEON_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}
       CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-pantheon-local-consultation-handoff-token}
       CONSULTATION_HANDOFF_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
-      CONSULTATION_HANDOFF_ALLOWED_TENANTS: ${CONSULTATION_HANDOFF_ALLOWED_TENANTS:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
+      CONSULTATION_HANDOFF_ALLOWED_TENANTS: ${CONSULTATION_HANDOFF_ALLOWED_TENANTS:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-tenant-dev}}}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
