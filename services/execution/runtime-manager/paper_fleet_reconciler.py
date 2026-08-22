@@ -55,14 +55,17 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import fcntl
 
+_HERE = Path(__file__).resolve().parent
+_REPO_ROOT = _HERE.parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
     admit_market_snapshot,
     parse_rfc3339 as _admission_parse_rfc3339,
 )
 
-_HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parents[2]
 _DEFAULT_WORKER_SCRIPT = str(
     _HERE.parent / "lean_runtime" / "paper_runtime.py"
 )
