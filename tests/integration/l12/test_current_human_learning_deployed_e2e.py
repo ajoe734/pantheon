@@ -157,11 +157,14 @@ class DeployedHumanLearningHarness:
         client_id = (
             os.getenv("DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID", "")
             or os.getenv("PANTHEON_L12_DEV_LOGIN_CLIENT_ID", "")
+            or os.getenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID", "")
             or "pantheon-dev-operator-a-v1"
         )
-        client_secret = self._secret_from_env_or_file(
-            "DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET", default=""
-        ) or self._secret_from_env_or_file("PANTHEON_L12_DEV_LOGIN_CLIENT_SECRET", default="")
+        client_secret = (
+            self._secret_from_env_or_file("DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET", default="")
+            or self._secret_from_env_or_file("PANTHEON_L12_DEV_LOGIN_CLIENT_SECRET", default="")
+            or self._secret_from_env_or_file("PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET", default="")
+        )
         if client_id and client_secret:
             try:
                 body = self._http_json(
