@@ -3,12 +3,12 @@
   "task": {
     "id": "PFG-DATA-TELEMETRY-PRUNE-20260822",
     "title": "Prevent dev deployment from pruning canonical telemetry",
-    "owner": "Claude",
+    "owner": "Antigravity2",
     "reviewer": "Codex",
     "review_file": "docs/deployment/evidence/product-functional-closure/PFG-DATA-TELEMETRY-PRUNE-20260822/evidence.json"
   },
   "scope": {
-    "owned_layer": "scripts/deploy_nonprod_vm.sh prune_dev_management_ai_telemetry_for_disk() truncate scope",
+    "owned_layer": "scripts/deploy_nonprod_vm.sh prune_dev_management_ai_telemetry_for_disk() and configure_management_ai_dev_env() truncate scope and validation",
     "not_changing": [
       "The dev-root/postgres-backend/PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE gating that decides whether the prune runs at all",
       "The diagnostic before/after size listing across all schemas",
@@ -16,6 +16,7 @@
     ],
     "composes_with": [
       "scripts/test_management_ai_postgres_bootstrap_contract.py",
+      "scripts/test_deploy_nonprod_telemetry_prune.py",
       "docker-compose.yml MANAGEMENT_AI_STORE_SCHEMA default"
     ]
   },
@@ -24,26 +25,56 @@
     "impact": "Canonical telemetry_events data in the public schema was silently emptied on every dev root deploy that ran the disk-pruning step, even though the prune was only meant to bound the derived Management AI store."
   },
   "fix": {
-    "summary": "Scoped the TRUNCATE loop to n.nspname = target_schema only (MANAGEMENT_AI_STORE_SCHEMA, default management_ai) and added an explicit refusal (RAISE NOTICE + RETURN) if that schema ever resolves to 'public', so the canonical table can never be truncated by this path even via misconfiguration.",
+    "summary": "Scoped the TRUNCATE loop strictly to n.nspname = target_schema (MANAGEMENT_AI_STORE_SCHEMA, default management_ai); added fail-closed preflight and DO-block validation rejecting empty, non-identifier, or 'public' schemas with hard errors; and added pre/post canonical public telemetry preservation sentinels comparing row count, min created_at, and deterministic checksum to fail closed on any canonical drift.",
     "file": "scripts/deploy_nonprod_vm.sh",
-    "function": "prune_dev_management_ai_telemetry_for_disk"
+    "functions": [
+      "configure_management_ai_dev_env",
+      "prune_dev_management_ai_telemetry_for_disk"
+    ]
   },
+  "canonical_sentinel": {
+    "canonical_table": "public.telemetry_events",
+    "canonical_row_count_before": 34,
+    "canonical_row_count_after": 34,
+    "canonical_min_created_at_before": "2026-08-22T11:48:48+00:00",
+    "canonical_min_created_at_after": "2026-08-22T11:48:48+00:00",
+    "canonical_checksum_before": "94e46a0b483a6174278700019861538d",
+    "canonical_checksum_after": "94e46a0b483a6174278700019861538d",
+    "derived_schema": "management_ai",
+    "derived_tables_pruned": [],
+    "result": "preserved"
+  },
+  "dry_runs": [
+    {
+      "run_index": 1,
+      "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 76c417f87ce0a89b27b67691c999fc73f9ec9991 --project-id pantheon-lupin-dev-20260719 --dry-run",
+      "exit_code": 0,
+      "summary": "Verified preflight parameters, schema validation, and plan without SSH mutation."
+    },
+    {
+      "run_index": 2,
+      "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 76c417f87ce0a89b27b67691c999fc73f9ec9991 --project-id pantheon-lupin-dev-20260719 --dry-run",
+      "exit_code": 0,
+      "summary": "Consecutive dry-run produced identical plan output."
+    }
+  ],
   "validation": {
     "commands": [
       "bash -n scripts/deploy_nonprod_vm.sh",
-      "/home/lupin/pantheon/.venv/bin/python -m pytest -q scripts/test_deploy_nonprod_telemetry_prune.py scripts/test_management_ai_postgres_bootstrap_contract.py"
+      "python3 -m pytest -v scripts/test_deploy_nonprod_telemetry_prune.py scripts/test_management_ai_postgres_bootstrap_contract.py"
     ],
     "results": {
       "bash_syntax_check": "passed",
-      "focused_pytest_suite": "10 passed"
+      "focused_pytest_suite": "18 passed (11 prune tests including 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests)"
     }
   },
   "review": {
     "status": "pending_independent_review",
     "required_focus": [
-      "Confirm the truncate predicate no longer matches n.nspname = 'public' under any config",
-      "Confirm the dev-root/postgres-backend/env-flag gating above the fixed block is unchanged",
-      "Confirm the added public-schema refusal cannot be bypassed by a differently-cased or quoted schema value passed through MANAGEMENT_AI_STORE_SCHEMA"
+      "Confirm the truncate predicate strictly matches n.nspname = target_schema and never 'public'",
+      "Confirm empty, invalid identifier, and 'public' target_schema fail closed before SQL mutation",
+      "Confirm canonical public.telemetry_events pre/post state is strictly asserted and fails on drift",
+      "Confirm behavioral tests cover positive prune, missing table no-op, public schema rejection, invalid identifier rejection, and drift detection"
     ]
   }
 }

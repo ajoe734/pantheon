@@ -328,6 +328,15 @@ configure_management_ai_dev_env() {
   MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL:-$DEV_MANAGEMENT_AI_DATABASE_URL}"
   # Dev compose has a durable local attachment store; use GCS only when configured.
   PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-$DEV_MANAGEMENT_AI_ATTACH_BUCKET}"
+
+  if [[ "${MANAGEMENT_AI_STORE_BACKEND:-}" == "postgres" && "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}" == "true" ]]; then
+    if [[ -z "$MANAGEMENT_AI_STORE_SCHEMA" || ! "$MANAGEMENT_AI_STORE_SCHEMA" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+      error "MANAGEMENT_AI_STORE_SCHEMA is empty or invalid SQL identifier: '$MANAGEMENT_AI_STORE_SCHEMA'"
+    fi
+    if [[ "${MANAGEMENT_AI_STORE_SCHEMA,,}" == "public" ]]; then
+      error "MANAGEMENT_AI_STORE_SCHEMA cannot be 'public'; refusing to target canonical telemetry schema"
+    fi
+  fi
 }
 
 configure_management_ai_dev_kernel_env() {
@@ -1768,6 +1777,13 @@ prune_dev_management_ai_telemetry_for_disk() {
   local mgmt_db="${PANTHEON_MANAGEMENT_AI_DB_NAME:-pantheon}"
   local mgmt_schema="${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
 
+  if [[ -z "$mgmt_schema" || ! "$mgmt_schema" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    error "refusing to prune telemetry_events: MANAGEMENT_AI_STORE_SCHEMA is empty or invalid SQL identifier: '$mgmt_schema'"
+  fi
+  if [[ "${mgmt_schema,,}" == "public" ]]; then
+    error "refusing to prune telemetry_events: MANAGEMENT_AI_STORE_SCHEMA resolves to canonical public schema"
+  fi
+
   info "pruning dev Postgres telemetry_events before root deploy: db=${mgmt_db} schema=${mgmt_schema}"
   COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
     docker compose -p pantheon -f docker-compose.yml up -d postgres
@@ -1806,13 +1822,46 @@ DO $prune$
 DECLARE
   item record;
   target_schema text := current_setting('pantheon.mgmt_ai_schema');
+  target_schema_clean text := lower(trim(target_schema));
+
+  canonical_exists boolean := false;
+  canonical_count_before bigint := 0;
+  canonical_count_after bigint := 0;
+  canonical_min_created_before timestamptz := null;
+  canonical_min_created_after timestamptz := null;
+  canonical_checksum_before text := 'none';
+  canonical_checksum_after text := 'none';
+
+  pruned_tables text[] := ARRAY[]::text[];
+  sentinel_json jsonb;
 BEGIN
-  IF target_schema = 'public' THEN
-    RAISE NOTICE 'refusing to prune telemetry_events: '
-      'MANAGEMENT_AI_STORE_SCHEMA resolves to canonical public schema';
-    RETURN;
+  -- 1. Fail closed on empty, invalid identifier, or canonical public schema
+  IF target_schema IS NULL OR trim(target_schema) = '' THEN
+    RAISE EXCEPTION 'refusing to prune telemetry_events: target schema is empty';
   END IF;
 
+  IF target_schema !~ '^[a-zA-Z_][a-zA-Z0-9_]*$' THEN
+    RAISE EXCEPTION 'refusing to prune telemetry_events: target schema "%" is not a valid SQL identifier', target_schema;
+  END IF;
+
+  IF target_schema_clean = 'public' THEN
+    RAISE EXCEPTION 'refusing to prune telemetry_events: MANAGEMENT_AI_STORE_SCHEMA resolves to canonical public schema';
+  END IF;
+
+  -- 2. Capture canonical public telemetry state before mutation
+  SELECT EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'telemetry_events' AND c.relkind IN ('r', 'p')
+  ) INTO canonical_exists;
+
+  IF canonical_exists THEN
+    SELECT COUNT(*), MIN(created_at), COALESCE(MD5(STRING_AGG(COALESCE(event_id::text, '') || ':' || COALESCE(created_at::text, ''), ',' ORDER BY created_at ASC, event_id ASC)), 'empty')
+      INTO canonical_count_before, canonical_min_created_before, canonical_checksum_before
+      FROM public.telemetry_events;
+  END IF;
+
+  -- 3. Discover and prune allow-listed derived tables in target_schema ONLY
   FOR item IN
     SELECT n.nspname AS schema_name, c.relname AS table_name
     FROM pg_class c
@@ -1823,7 +1872,37 @@ BEGIN
   LOOP
     RAISE NOTICE 'truncating %.%', item.schema_name, item.table_name;
     EXECUTE format('TRUNCATE TABLE %I.%I', item.schema_name, item.table_name);
+    pruned_tables := array_append(pruned_tables, format('%s.%s', item.schema_name, item.table_name));
   END LOOP;
+
+  -- 4. Capture canonical post-state and enforce strict preservation sentinel
+  IF canonical_exists THEN
+    SELECT COUNT(*), MIN(created_at), COALESCE(MD5(STRING_AGG(COALESCE(event_id::text, '') || ':' || COALESCE(created_at::text, ''), ',' ORDER BY created_at ASC, event_id ASC)), 'empty')
+      INTO canonical_count_after, canonical_min_created_after, canonical_checksum_after
+      FROM public.telemetry_events;
+
+    IF canonical_count_before != canonical_count_after
+       OR canonical_min_created_before IS DISTINCT FROM canonical_min_created_after
+       OR canonical_checksum_before != canonical_checksum_after THEN
+      RAISE EXCEPTION 'canonical telemetry drift detected: count before=% after=%, min_created before=% after=%, checksum before=% after=%',
+        canonical_count_before, canonical_count_after, canonical_min_created_before, canonical_min_created_after, canonical_checksum_before, canonical_checksum_after;
+    END IF;
+  END IF;
+
+  -- 5. Build and emit deterministic sentinel artifact
+  sentinel_json := jsonb_build_object(
+    'canonical_table', 'public.telemetry_events',
+    'canonical_row_count_before', canonical_count_before,
+    'canonical_row_count_after', canonical_count_after,
+    'canonical_min_created_at_before', canonical_min_created_before,
+    'canonical_min_created_at_after', canonical_min_created_after,
+    'canonical_checksum_before', canonical_checksum_before,
+    'canonical_checksum_after', canonical_checksum_after,
+    'derived_schema', target_schema,
+    'derived_tables_pruned', to_jsonb(pruned_tables),
+    'result', 'preserved'
+  );
+  RAISE NOTICE 'TELEMETRY_PRUNE_SENTINEL: %', sentinel_json::text;
 END
 $prune$;
 

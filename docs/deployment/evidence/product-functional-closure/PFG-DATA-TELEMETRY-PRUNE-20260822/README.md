@@ -12,27 +12,26 @@ to bound the size of the derived Management AI store.
 
 ## Fix
 
-- The `TRUNCATE` loop now matches `n.nspname = target_schema` only, dropping
-  the `'public'` alternative entirely.
-- Added an explicit guard: if `MANAGEMENT_AI_STORE_SCHEMA` ever resolves to
-  `public` (misconfiguration), the function logs a refusal and returns without
-  truncating anything, so the canonical table cannot be pruned by this path
-  under any schema configuration.
-- No other gating (`PANTHEON_DEPLOY_ENV`, `PANTHEON_DEPLOY_COMPONENT`,
-  `MANAGEMENT_AI_STORE_BACKEND`, `PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE`) or
-  the diagnostic before/after size listing was changed.
+- **Strict Schema Scoping**: The `TRUNCATE` loop now matches `n.nspname = target_schema` only, eliminating `public` namespace matching.
+- **Preflight & DO-Block Fail-Closed Guards**: If `MANAGEMENT_AI_STORE_SCHEMA` is empty, an invalid SQL identifier, or resolves to `public` (case-insensitive), both bash preflight and PostgreSQL DO-block raise hard exceptions and fail deployment before any mutation occurs.
+- **Canonical Telemetry Preservation Sentinels**: Measures pre-state and post-state of `public.telemetry_events` (row count, min `created_at`, deterministic MD5 checksum over sorted events) within the PostgreSQL DO-block and raises `canonical telemetry drift detected` on any discrepancy.
+- **Sentinel Artifact**: Emits `TELEMETRY_PRUNE_SENTINEL` JSON with pre/post counts, timestamps, checksums, and list of pruned derived tables (`result: preserved`).
 
 ## Verification
 
 ```bash
+# 1. Shell syntax check
 bash -n scripts/deploy_nonprod_vm.sh
-/home/lupin/pantheon/.venv/bin/python -m pytest -q \
+
+# 2. Comprehensive static contract and PostgreSQL behavioral tests
+python3 -m pytest -v \
   scripts/test_deploy_nonprod_telemetry_prune.py \
   scripts/test_management_ai_postgres_bootstrap_contract.py
+
+# 3. Two consecutive deployment dry-runs
+./scripts/deploy_nonprod_vm.sh --environment dev --sha 76c417f87ce0a89b27b67691c999fc73f9ec9991 --project-id pantheon-lupin-dev-20260719 --dry-run
+./scripts/deploy_nonprod_vm.sh --environment dev --sha 76c417f87ce0a89b27b67691c999fc73f9ec9991 --project-id pantheon-lupin-dev-20260719 --dry-run
 ```
 
-Both commands passed (10 tests). The new
-`scripts/test_deploy_nonprod_telemetry_prune.py` asserts the truncate
-predicate no longer includes `'public'`, that the public-schema refusal guard
-exists ahead of the truncate loop, and that the existing dev/postgres/env-flag
-gating around the function is unchanged.
+All 18 tests passed (11 prune tests including 5 live PostgreSQL behavioral tests + 7 bootstrap contract tests). Both dry runs succeeded with identical plans.
+
