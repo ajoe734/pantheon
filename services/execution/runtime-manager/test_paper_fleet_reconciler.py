@@ -12,7 +12,7 @@ import threading
 import time
 import unittest
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -1637,7 +1637,484 @@ class TestRedisFencedLeaderLease(_RealRedisDockerTestCase):
         self.assertEqual(store.kind, "redis_fenced_leader_store")
 
 
+class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
+    """
+    SD-PAPER-01: Bounded paper session on manual Source data.
+    Tests pause and resume lifecycle transitions driven by market snapshot freshness.
+    """
+
+    def setUp(self) -> None:
+        self.transitions: List[Dict[str, Any]] = []
+
+    def _make_store_and_recon(
+        self,
+        bindings: List[Dict[str, Any]],
+        *,
+        source_snapshot: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Any, Any]:
+        from runtime_binding import RuntimeBinding, RuntimeBindingStore
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        store = RuntimeBindingStore()
+        known = {
+            "binding_id",
+            "runtime_id",
+            "capital_pool_id",
+            "artifact_id",
+            "artifact_version",
+            "plan_id",
+            "persona_capital_binding_id",
+            "deployment_mode",
+            "status",
+            "effective_at",
+            "retired_at",
+            "rollback_parent",
+            "metadata",
+        }
+        for b_dict in bindings:
+            meta = dict(b_dict.get("metadata") or {})
+            for k, v in b_dict.items():
+                if k not in known:
+                    meta[k] = v
+            clean_dict = {k: v for k, v in b_dict.items() if k in known}
+            clean_dict["metadata"] = meta
+            clean_dict.setdefault("effective_at", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+            rb = RuntimeBinding(**clean_dict)
+            store.create(rb, single_runtime_enforced=False)
+
+        transitions = self.transitions
+
+        class _MockReconciler(PaperFleetReconciler):
+            def _spawn(inner_self, binding_id: str, port: int, env: Any) -> _FakeProcess:
+                proc = _FakeProcess(pid=100)
+                return proc
+
+            def _resolve_market_snapshot(inner_self, binding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                if source_snapshot is not None:
+                    return source_snapshot
+                return super()._resolve_market_snapshot(binding)
+
+            def _transition_binding(
+                inner_self,
+                binding_id: str,
+                new_status: str,
+                *,
+                metadata_patch: Optional[Dict[str, Any]] = None,
+            ) -> bool:
+                transitions.append({
+                    "binding_id": binding_id,
+                    "new_status": new_status,
+                    "metadata_patch": metadata_patch,
+                })
+                return super()._transition_binding(
+                    binding_id,
+                    new_status,
+                    metadata_patch=metadata_patch,
+                )
+
+        recon = _MockReconciler(
+            store=store,
+            leader_store=_unit_leader_store(),
+            poll_interval_seconds=999,
+            restart_backoff_seconds=0,
+            drain_timeout_seconds=1,
+        )
+        return store, recon
+
+    def test_fresh_snapshot_retains_and_starts_active_worker(self) -> None:
+        now = datetime.now(timezone.utc)
+        fresh_snap = {
+            "snapshot_id": "snap-fresh-001",
+            "symbol": "AAPL.US",
+            "event_time": (now - timedelta(seconds=60)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ingest://normalized/us-price/AAPL",
+            "lineage": {"source": "manual_test"},
+            "closes": [150.0, 152.0, 153.5],
+        }
+        b = _make_binding(
+            "b-fresh-001",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            market_input=fresh_snap,
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=fresh_snap)
+
+        snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 1)
+        self.assertEqual(snap["running_count"], 1)
+        self.assertEqual(len(self.transitions), 0)
+
+        # Second cycle retains worker
+        snap2 = recon.reconcile_once()
+        self.assertEqual(snap2["worker_count"], 1)
+        self.assertEqual(snap2["running_count"], 1)
+        self.assertEqual(len(self.transitions), 0)
+
+    def test_stale_snapshot_transitions_active_to_pending_pause_to_paused_and_stops_worker(self) -> None:
+        now = datetime.now(timezone.utc)
+        stale_snap = {
+            "snapshot_id": "snap-stale-001",
+            "symbol": "AAPL.US",
+            "event_time": (now - timedelta(seconds=100000)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ingest://normalized/us-price/AAPL",
+            "lineage": {"source": "manual_test"},
+            "closes": [150.0, 152.0],
+        }
+        b = _make_binding(
+            "b-stale-001",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            market_input=stale_snap,
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=stale_snap)
+
+        snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(snap["running_count"], 0)
+
+        # Verified status transitions: active -> pending_pause -> paused
+        self.assertEqual(len(self.transitions), 2)
+        self.assertEqual(self.transitions[0]["new_status"], "pending_pause")
+        self.assertEqual(self.transitions[1]["new_status"], "paused")
+
+        # Verified structured metadata
+        saved = store.get("b-stale-001")
+        self.assertIsNotNone(saved)
+        self.assertEqual(saved.status, "paused")
+        adm = saved.metadata.get("session_admission")
+        self.assertIsNotNone(adm)
+        self.assertEqual(adm["reason_code"], "market_input_stale")
+        self.assertEqual(adm["source_snapshot_id"], "snap-stale-001")
+        self.assertEqual(adm["max_age_seconds"], 86400)
+        self.assertIsNone(adm["resume_snapshot_id"])
+        self.assertIsNone(adm["resumed_at"])
+
+    def test_repeated_stale_reconciles_are_idempotent(self) -> None:
+        now = datetime.now(timezone.utc)
+        stale_snap = {
+            "snapshot_id": "snap-stale-001",
+            "symbol": "AAPL.US",
+            "event_time": (now - timedelta(seconds=100000)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ref",
+            "lineage": {"source": "manual_test"},
+            "closes": [150.0, 152.0],
+        }
+        b = _make_binding(
+            "b-stale-idemp",
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            market_input=stale_snap,
+            metadata={
+                "session_admission": {
+                    "reason_code": "market_input_stale",
+                    "source_snapshot_id": "snap-stale-001",
+                    "source_event_time": stale_snap["event_time"],
+                    "observed_at": now.isoformat(),
+                    "max_age_seconds": 86400,
+                    "pause_command_ref": "cmd-001",
+                    "resume_snapshot_id": None,
+                    "resumed_at": None,
+                }
+            },
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=stale_snap)
+
+        # Run 3 consecutive reconcile cycles
+        for _ in range(3):
+            snap = recon.reconcile_once()
+            self.assertEqual(snap["worker_count"], 0)
+            self.assertEqual(snap["running_count"], 0)
+
+        # Zero new transitions performed
+        self.assertEqual(len(self.transitions), 0)
+        self.assertEqual(store.get("b-stale-idemp").status, "paused")
+
+    def test_new_admitted_snapshot_resumes_paused_binding_once(self) -> None:
+        now = datetime.now(timezone.utc)
+        old_time = (now - timedelta(seconds=100000)).isoformat().replace("+00:00", "Z")
+        new_time = (now - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+
+        new_snap = {
+            "snapshot_id": "snap-fresh-002",
+            "symbol": "AAPL.US",
+            "event_time": new_time,
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ingest://normalized/us-price/AAPL",
+            "lineage": {"source": "manual_pull"},
+            "closes": [155.0, 156.0, 157.0],
+        }
+
+        b = _make_binding(
+            "b-resume-001",
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={
+                "session_admission": {
+                    "reason_code": "market_input_stale",
+                    "source_snapshot_id": "snap-old-001",
+                    "source_event_time": old_time,
+                    "observed_at": old_time,
+                    "max_age_seconds": 86400,
+                    "pause_command_ref": "cmd-pause-001",
+                    "resume_snapshot_id": None,
+                    "resumed_at": None,
+                }
+            },
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=new_snap)
+
+        snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 1)
+        self.assertEqual(snap["running_count"], 1)
+
+        # Transition paused -> active recorded
+        self.assertEqual(len(self.transitions), 1)
+        self.assertEqual(self.transitions[0]["new_status"], "active")
+
+        # Resume metadata recorded
+        saved = store.get("b-resume-001")
+        self.assertEqual(saved.status, "active")
+        adm = saved.metadata["session_admission"]
+        self.assertEqual(adm["source_snapshot_id"], "snap-old-001")
+        self.assertEqual(adm["resume_snapshot_id"], "snap-fresh-002")
+        self.assertIsNotNone(adm["resumed_at"])
+
+    def test_same_stale_snapshot_cannot_resume(self) -> None:
+        now = datetime.now(timezone.utc)
+        snap_time = (now - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+        same_snap = {
+            "snapshot_id": "snap-same-001",
+            "symbol": "AAPL.US",
+            "event_time": snap_time,
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ref",
+            "lineage": {"source": "manual"},
+            "closes": [150.0, 151.0],
+        }
+        b = _make_binding(
+            "b-same-snap",
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={
+                "session_admission": {
+                    "reason_code": "market_input_stale",
+                    "source_snapshot_id": "snap-same-001",
+                    "source_event_time": snap_time,
+                    "observed_at": snap_time,
+                    "max_age_seconds": 86400,
+                    "pause_command_ref": "cmd-001",
+                    "resume_snapshot_id": None,
+                    "resumed_at": None,
+                }
+            },
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=same_snap)
+
+        snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 0)
+        self.assertEqual(store.get("b-same-snap").status, "paused")
+
+    def test_older_or_same_timestamp_snapshot_cannot_resume(self) -> None:
+        now = datetime.now(timezone.utc)
+        old_time = (now - timedelta(seconds=5000)).isoformat().replace("+00:00", "Z")
+        older_time = (now - timedelta(seconds=10000)).isoformat().replace("+00:00", "Z")
+
+        older_snap = {
+            "snapshot_id": "snap-diff-id-001",
+            "symbol": "AAPL.US",
+            "event_time": older_time,
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ref",
+            "lineage": {"source": "manual"},
+            "closes": [150.0, 151.0],
+        }
+        b = _make_binding(
+            "b-older-snap",
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={
+                "session_admission": {
+                    "reason_code": "market_input_stale",
+                    "source_snapshot_id": "snap-orig-001",
+                    "source_event_time": old_time,
+                    "observed_at": old_time,
+                    "max_age_seconds": 86400,
+                    "pause_command_ref": "cmd-001",
+                    "resume_snapshot_id": None,
+                    "resumed_at": None,
+                }
+            },
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=older_snap)
+
+        snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 0)
+        self.assertEqual(store.get("b-older-snap").status, "paused")
+
+    def test_invalid_or_future_or_wrong_scope_snapshot_cannot_resume(self) -> None:
+        now = datetime.now(timezone.utc)
+        old_time = (now - timedelta(seconds=50000)).isoformat().replace("+00:00", "Z")
+
+        # Future snapshot (>300s)
+        future_snap = {
+            "snapshot_id": "snap-future-001",
+            "symbol": "AAPL.US",
+            "event_time": (now + timedelta(seconds=1000)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ref",
+            "lineage": {"source": "manual"},
+            "closes": [150.0, 151.0],
+        }
+        b = _make_binding(
+            "b-invalid-resume",
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={
+                "session_admission": {
+                    "reason_code": "market_input_stale",
+                    "source_snapshot_id": "snap-orig-001",
+                    "source_event_time": old_time,
+                    "observed_at": old_time,
+                    "max_age_seconds": 86400,
+                    "pause_command_ref": "cmd-001",
+                    "resume_snapshot_id": None,
+                    "resumed_at": None,
+                }
+            },
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=future_snap)
+        snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 0)
+
+        # Malformed closes snapshot
+        malformed_snap = {
+            "snapshot_id": "snap-malformed-001",
+            "symbol": "AAPL.US",
+            "event_time": (now - timedelta(seconds=60)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ref",
+            "lineage": {"source": "manual"},
+            "closes": ["not_a_number"],
+        }
+        store2, recon2 = self._make_store_and_recon([b], source_snapshot=malformed_snap)
+        snap2 = recon2.reconcile_once()
+        self.assertEqual(snap2["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 0)
+
+        # Wrong symbol snapshot
+        wrong_sym_snap = {
+            "snapshot_id": "snap-wrong-001",
+            "symbol": "MSFT.US",
+            "event_time": (now - timedelta(seconds=60)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ref",
+            "lineage": {"source": "manual"},
+            "closes": [150.0, 151.0],
+        }
+        store3, recon3 = self._make_store_and_recon([b], source_snapshot=wrong_sym_snap)
+        snap3 = recon3.reconcile_once()
+        self.assertEqual(snap3["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 0)
+
+    def test_restart_while_paused_stays_paused_starts_no_worker(self) -> None:
+        now = datetime.now(timezone.utc)
+        old_time = (now - timedelta(seconds=100000)).isoformat().replace("+00:00", "Z")
+        stale_snap = {
+            "snapshot_id": "snap-stale-001",
+            "symbol": "AAPL.US",
+            "event_time": old_time,
+            "observed_at": old_time,
+            "source_ref": "source-ref",
+            "lineage": {"source": "manual"},
+            "closes": [150.0, 151.0],
+        }
+        b = _make_binding(
+            "b-restart-paused",
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={
+                "session_admission": {
+                    "reason_code": "market_input_stale",
+                    "source_snapshot_id": "snap-stale-001",
+                    "source_event_time": old_time,
+                    "observed_at": old_time,
+                    "max_age_seconds": 86400,
+                    "pause_command_ref": "cmd-001",
+                    "resume_snapshot_id": None,
+                    "resumed_at": None,
+                }
+            },
+        )
+        store, recon1 = self._make_store_and_recon([b], source_snapshot=stale_snap)
+        recon1.reconcile_once()
+
+        # Simulate fresh process restart by creating a new reconciler instance against the same store
+        from paper_fleet_reconciler import PaperFleetReconciler
+        recon2 = PaperFleetReconciler(
+            store=store,
+            poll_interval_seconds=999,
+            restart_backoff_seconds=0,
+            drain_timeout_seconds=1,
+        )
+        snap = recon2.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(snap["running_count"], 0)
+        self.assertEqual(store.get("b-restart-paused").status, "paused")
+
+    def test_operator_pause_is_never_auto_resumed(self) -> None:
+        now = datetime.now(timezone.utc)
+        fresh_snap = {
+            "snapshot_id": "snap-fresh-001",
+            "symbol": "AAPL.US",
+            "event_time": (now - timedelta(seconds=60)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ref",
+            "lineage": {"source": "manual"},
+            "closes": [150.0, 151.0],
+        }
+        # Operator pause has no session_admission or non-stale reason
+        b1 = _make_binding(
+            "b-op-pause-1",
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={"operator_note": "manual audit pause"},
+        )
+        b2 = _make_binding(
+            "b-op-pause-2",
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={
+                "session_admission": {
+                    "reason_code": "operator_requested_pause",
+                    "source_snapshot_id": "snap-001",
+                }
+            },
+        )
+        store, recon = self._make_store_and_recon([b1, b2], source_snapshot=fresh_snap)
+
+        snap = recon.reconcile_once()
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 0)
+        self.assertEqual(store.get("b-op-pause-1").status, "paused")
+        self.assertEqual(store.get("b-op-pause-2").status, "paused")
+
+
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).parent))
     unittest.main()
+

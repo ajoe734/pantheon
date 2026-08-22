@@ -28,6 +28,10 @@ from services.execution.artifact_loader import (
     ArtifactLoader,
     ExecutionMode,
 )
+from services.execution.market_snapshot_admission import (
+    SnapshotAdmissionDecision,
+    admit_market_snapshot,
+)
 
 from services.worker_health import healthcheck as check_worker_health
 from services.worker_health import write_health
@@ -575,12 +579,19 @@ def _market_input_for_binding(
             f"Source snapshot symbol {snapshot_symbol!r} does not match binding symbol {requested_symbol!r}",
         )
     if policy is not None:
-        _validate_source_snapshot_policy_input(
+        decision = admit_market_snapshot(
             raw,
-            policy=policy,
+            expected_symbol=requested_symbol or None,
+            max_age_seconds=policy["max_age_seconds"],
+            minimum_closes=policy["minimum_closes"],
             now_iso=now_iso,
             binding_id=str(binding.get("binding_id") or "<unknown>"),
         )
+        if not decision.admitted:
+            raise SignalDecisionUnavailable(
+                decision.reason_code or "market_input_invalid",
+                decision.detail or f"Snapshot admission rejected: {decision.reason_code}",
+            )
     return {
         "closes": normalized_closes,
         "symbol": snapshot_symbol or raw.get("symbol"),
@@ -640,52 +651,6 @@ def _market_input_policy(
         "max_age_seconds": max_age_seconds,
         "minimum_closes": minimum_closes,
     }
-
-
-def _parse_market_timestamp(value: Any, *, field_name: str) -> datetime:
-    text = str(value or "").strip()
-    if not text:
-        raise SignalDecisionUnavailable("market_input_invalid", f"market snapshot {field_name} is required")
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise SignalDecisionUnavailable(
-            "market_input_invalid",
-            f"market snapshot {field_name} is not ISO-8601",
-        ) from exc
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _validate_source_snapshot_policy_input(
-    raw: Mapping[str, Any],
-    *,
-    policy: Mapping[str, int],
-    now_iso: str,
-    binding_id: str,
-) -> None:
-    required = ("snapshot_id", "event_time", "source_ref", "lineage")
-    missing = [field for field in required if raw.get(field) in (None, "", [], {})]
-    if missing:
-        raise SignalDecisionUnavailable(
-            "market_input_invalid",
-            f"binding {binding_id} Source snapshot is missing {', '.join(missing)}",
-        )
-    event_time = _parse_market_timestamp(raw.get("event_time"), field_name="event_time")
-    now = _parse_market_timestamp(now_iso, field_name="producer now")
-    age_seconds = (now - event_time).total_seconds()
-    if age_seconds > policy["max_age_seconds"]:
-        raise SignalDecisionUnavailable(
-            "market_input_stale",
-            f"binding {binding_id} Source snapshot {raw.get('snapshot_id')!r} is {int(age_seconds)}s old; "
-            f"maximum is {policy['max_age_seconds']}s",
-        )
-    if age_seconds < -300:
-        raise SignalDecisionUnavailable(
-            "market_input_invalid",
-            f"binding {binding_id} Source snapshot event_time is too far in the future",
-        )
 
 
 def _strategy_symbol(

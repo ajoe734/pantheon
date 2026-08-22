@@ -543,7 +543,7 @@ class RuntimeManager:
 
     # ---- Lifecycle transitions ----
 
-    def pause(self, binding_id: str) -> RuntimeManagerOutcome:
+    def pause(self, binding_id: str, *, metadata_patch: Optional[Dict[str, Any]] = None) -> RuntimeManagerOutcome:
         """
         Begin draining orders: active → pending_pause.
 
@@ -553,6 +553,7 @@ class RuntimeManager:
         updated = self._store.transition_status(
             binding_id,
             RuntimeBindingStatus.PENDING_PAUSE.value,
+            metadata_patch=metadata_patch,
         )
         return RuntimeManagerOutcome(
             binding=updated,
@@ -560,10 +561,11 @@ class RuntimeManager:
                 RuntimeEventType.BINDING_PAUSED,
                 updated,
                 note="pending_pause: draining orders",
+                metadata=metadata_patch or {},
             )],
         )
 
-    def complete_pause(self, binding_id: str) -> RuntimeManagerOutcome:
+    def complete_pause(self, binding_id: str, *, metadata_patch: Optional[Dict[str, Any]] = None) -> RuntimeManagerOutcome:
         """
         Confirm drain complete: pending_pause → paused.
 
@@ -572,6 +574,7 @@ class RuntimeManager:
         updated = self._store.transition_status(
             binding_id,
             RuntimeBindingStatus.PAUSED.value,
+            metadata_patch=metadata_patch,
         )
         return RuntimeManagerOutcome(
             binding=updated,
@@ -579,29 +582,41 @@ class RuntimeManager:
                 RuntimeEventType.BINDING_PAUSED,
                 updated,
                 note="paused: drain complete",
+                metadata=metadata_patch or {},
             )],
         )
 
-    def resume(self, binding_id: str) -> RuntimeManagerOutcome:
+    def resume(self, binding_id: str, *, metadata_patch: Optional[Dict[str, Any]] = None) -> RuntimeManagerOutcome:
         """Resume a paused binding: paused → active."""
         updated = self._store.transition_status(
             binding_id,
             RuntimeBindingStatus.ACTIVE.value,
+            metadata_patch=metadata_patch,
         )
         return RuntimeManagerOutcome(
             binding=updated,
-            events=[_make_event(RuntimeEventType.BINDING_RESUMED, updated)],
+            events=[_make_event(
+                RuntimeEventType.BINDING_RESUMED,
+                updated,
+                metadata=metadata_patch or {},
+            )],
         )
 
-    def record_failure(self, binding_id: str, reason: str) -> RuntimeManagerOutcome:
+    def record_failure(self, binding_id: str, reason: str, *, metadata_patch: Optional[Dict[str, Any]] = None) -> RuntimeManagerOutcome:
         """Transition a binding to failed state (terminal)."""
         updated = self._store.transition_status(
             binding_id,
             RuntimeBindingStatus.FAILED.value,
+            metadata_patch=metadata_patch,
         )
         return RuntimeManagerOutcome(
             binding=updated,
-            events=[_make_event(RuntimeEventType.BINDING_FAILED, updated, note=reason)],
+            events=[_make_event(
+                RuntimeEventType.BINDING_FAILED,
+                updated,
+                note=reason,
+                metadata=metadata_patch or {},
+            )],
         )
 
     # ---- Replace ----
