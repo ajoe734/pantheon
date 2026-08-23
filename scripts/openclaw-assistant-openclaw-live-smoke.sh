@@ -113,9 +113,10 @@ if not reply.strip():
     raise SystemExit("OpenResponses stream completed without assistant text")
 if "OPENCLAW_LIVE" not in reply:
     raise SystemExit(f"OpenResponses stream missed sentinel: {reply!r}")
-if done[0].get("transport") != "responses_http":
-    raise SystemExit(f"Unexpected stream transport: {done[0].get(\"transport\")!r}")
-print(json.dumps({"transport": done[0]["transport"], "reply_bytes": len(reply.encode("utf-8"))}))
+transport = done[0].get("transport")
+if transport != "responses_http":
+    raise SystemExit(f"Unexpected stream transport: {transport!r}")
+print(json.dumps({"transport": transport, "reply_bytes": len(reply.encode("utf-8"))}))
 ')
 echo "${STREAM_PROOF}" | jq .
 echo "OK: OpenResponses stream returned a non-empty assistant turn"
