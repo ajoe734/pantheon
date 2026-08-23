@@ -740,10 +740,18 @@ class AssistantOpenClawProvider:
                         chunks.append(delta)
                         yield {"type": "delta", "text": delta}
                 elif etype == "response.completed":
+                    reply = "".join(chunks)
+                    if not reply:
+                        yield {
+                            "type": "error",
+                            "error_code": "OPENCLAW_RESPONSES_EMPTY",
+                            "message": "Gateway completed /v1/responses without assistant text.",
+                        }
+                        return
                     emitted_done = True
                     yield {
                         "type": "done",
-                        "text": "".join(chunks),
+                        "text": reply,
                         "elapsed_ms": int((time.monotonic() - started_at) * 1000),
                         "transport": "responses_http",
                     }
@@ -763,9 +771,17 @@ class AssistantOpenClawProvider:
 
         if not emitted_done:
             # Stream ended (e.g. [DONE]) without an explicit completed event.
+            reply = "".join(chunks)
+            if not reply:
+                yield {
+                    "type": "error",
+                    "error_code": "OPENCLAW_RESPONSES_EMPTY",
+                    "message": "Gateway ended /v1/responses without assistant text.",
+                }
+                return
             yield {
                 "type": "done",
-                "text": "".join(chunks),
+                "text": reply,
                 "elapsed_ms": int((time.monotonic() - started_at) * 1000),
                 "transport": "responses_http",
             }
