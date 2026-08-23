@@ -3590,6 +3590,11 @@ def start_worker_for_request(
         "work_progress_snapshot": initial_work_progress_snapshot,
         "last_commit_progress_at": None,
         "last_work_progress_at": None,
+        "provider_stream_last_event_key": None,
+        "provider_progress_event_type": None,
+        "provider_terminal_status": None,
+        "provider_error": None,
+        "provider_usage": None,
         "commit_progress_count": 0,
         "status_root": request.metadata.get("status_root"),
         "status_command_runtime": issued_command_runtime,
@@ -4440,20 +4445,122 @@ def file_iso_mtime(path: Path) -> str | None:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
+def normalize_provider_stream_event(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Normalize provider-specific stream envelopes into the existing shape.
+
+    Antigravity's ``stream-json`` mode wraps its lifecycle records as
+    ``{"event": ..., "result": {...}}``/``{"event": ..., "step_update": {...}}``.
+    The supervisor already has one structured-provider path for Claude and
+    similar adapters; this keeps AGY on that path instead of introducing a
+    second parser or state machine.
+    """
+
+    if not isinstance(payload, Mapping):
+        return None
+    event = str(payload.get("event") or "").strip().lower()
+    if event == "init":
+        normalized = dict(payload)
+        normalized["type"] = "init"
+        normalized["provider_event"] = "init"
+        return normalized
+    if event == "step_update":
+        step = payload.get("step_update")
+        normalized = dict(payload)
+        normalized["type"] = "step_update"
+        normalized["provider_event"] = "step_update"
+        if isinstance(step, Mapping):
+            normalized["step_type"] = str(step.get("type") or step.get("step_type") or "").strip().lower()
+        return normalized
+    if event == "result":
+        result = payload.get("result")
+        normalized = dict(result) if isinstance(result, Mapping) else {}
+        normalized["type"] = "result"
+        normalized["provider_event"] = "result"
+        normalized["result"] = result
+        for key in ("conversation_id", "session_id", "session_url", "pr_url"):
+            if normalized.get(key) in (None, "") and payload.get(key) not in (None, ""):
+                normalized[key] = payload.get(key)
+        return normalized
+    if payload.get("type"):
+        return dict(payload)
+    return None
+
+
+def _provider_stream_session_id(payload: Mapping[str, Any]) -> str | None:
+    for key in ("session_id", "conversation_id", "session", "conversation"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for key in ("result", "step_update"):
+        nested = payload.get(key)
+        if isinstance(nested, Mapping):
+            value = _provider_stream_session_id(nested)
+            if value:
+                return value
+    return None
+
+
+def provider_stream_event_key(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def provider_stream_event_is_meaningful(payload: Mapping[str, Any]) -> bool:
+    event_type = str(payload.get("type") or "").strip().lower()
+    if event_type == "init":
+        return False
+    if event_type == "step_update":
+        step = payload.get("step_update")
+        if not isinstance(step, Mapping):
+            return False
+        step_type = str(step.get("type") or step.get("step_type") or "").strip().lower()
+        return step_type not in {"", "user_input", "checkpoint"}
+    if event_type == "user":
+        return False
+    return bool(event_type)
+
+
+def _provider_result_error(payload: Mapping[str, Any]) -> Any:
+    if payload.get("is_error") is True:
+        return payload.get("error") or payload.get("status") or "provider_result_error"
+    if payload.get("error") not in (None, "", {}, []):
+        return payload.get("error")
+    status = str(payload.get("status") or "").strip().lower()
+    subtype = str(payload.get("subtype") or "").strip().lower()
+    if status in PROVIDER_STREAM_FAILURE_STATUSES or subtype in PROVIDER_STREAM_FAILURE_SUBTYPES:
+        return payload.get("message") or payload.get("status") or payload.get("subtype")
+    return None
+
+
+def update_from_log(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Ingest provider output and advance progress only on a new meaningful event."""
     log_path_value = worker.get("log_path")
     if not log_path_value:
-        return
+        return False
     log_path = Path(log_path_value)
     if not log_path.exists():
-        return
+        return False
     mtime = file_iso_mtime(log_path)
     if mtime and (not worker.get("last_event_at") or mtime > worker.get("last_event_at", "")):
         worker["last_event_at"] = mtime
     try:
         content = log_path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
-        return
+        return False
+    meaningful_progress_advanced = False
+    latest_meaningful_key: str | None = None
+    latest_meaningful_type: str | None = None
     for line in content.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -4462,18 +4569,49 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
             payload = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not worker.get("session_id") and payload.get("session_id"):
-            worker["session_id"] = payload.get("session_id")
+        normalized = normalize_provider_stream_event(payload)
+        if normalized is None:
+            continue
+        session_id = _provider_stream_session_id(normalized) or _provider_stream_session_id(payload)
+        if not worker.get("session_id") and session_id:
+            worker["session_id"] = session_id
             worker.setdefault("resume_token", worker["session_id"])
-        if payload.get("type") == "result":
-            if payload.get("stop_reason") == "tool_deferred":
+        if normalized.get("type") == "result":
+            if normalized.get("stop_reason") == "tool_deferred":
                 worker["status"] = "waiting_approval"
-                worker["deferred_tool_use"] = payload.get("deferred_tool_use")
-            if payload.get("pr_url") and not worker.get("pr_url"):
-                worker["pr_url"] = normalize_pr_url(config, payload.get("pr_url"))
+                worker["deferred_tool_use"] = normalized.get("deferred_tool_use")
+            if normalized.get("pr_url") and not worker.get("pr_url"):
+                worker["pr_url"] = normalize_pr_url(config, normalized.get("pr_url"))
                 worker["pr_url_source"] = "result_payload"
-            if payload.get("session_url") and not worker.get("session_url"):
-                worker["session_url"] = payload.get("session_url")
+                worker["prepared_review_head"] = True
+            if normalized.get("session_url") and not worker.get("session_url"):
+                worker["session_url"] = normalized.get("session_url")
+            usage = normalized.get("usage")
+            if isinstance(usage, Mapping):
+                numeric_usage = {
+                    str(key): value
+                    for key, value in usage.items()
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                }
+                if numeric_usage:
+                    worker["provider_usage"] = numeric_usage
+            error = _provider_result_error(normalized)
+            if error is not None:
+                worker["provider_terminal_status"] = "error"
+                worker["provider_error"] = error
+            else:
+                status = str(normalized.get("status") or normalized.get("subtype") or "success").strip().lower()
+                worker["provider_terminal_status"] = status or "success"
+
+        if provider_stream_event_is_meaningful(normalized):
+            latest_meaningful_key = provider_stream_event_key(normalized)
+            latest_meaningful_type = str(normalized.get("type") or "")
+
+    if latest_meaningful_key and latest_meaningful_key != worker.get("provider_stream_last_event_key"):
+        worker["provider_stream_last_event_key"] = latest_meaningful_key
+        worker["provider_progress_event_type"] = latest_meaningful_type
+        worker["last_work_progress_at"] = _isoformat_utc(now or datetime.now(timezone.utc))
+        meaningful_progress_advanced = True
     if not worker.get("session_id"):
         for pattern in SESSION_ID_PATTERNS:
             match = pattern.search(content)
@@ -4493,6 +4631,7 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
             if "/agent" in url or "/sessions/" in url:
                 worker["session_url"] = url
                 break
+    return meaningful_progress_advanced
 
 
 def worker_was_terminated_by_sigterm(worker: dict[str, Any]) -> bool:
@@ -4555,6 +4694,7 @@ def is_authoritative_provider_failure_envelope(
 
     if not worker_uses_structured_provider_stream(worker):
         return False
+    payload = normalize_provider_stream_event(payload) or payload
     message = payload.get("message")
     role = message.get("role") if isinstance(message, dict) else None
     if payload.get("type") == "user" or role == "user":
@@ -4996,21 +5136,16 @@ def worker_lease_progress_is_fresh(
     # work-progress dimension is exempted.
     if str(worker.get("status") or "") in {"waiting_approval", "suspended_approval"}:
         return True
-    progress_candidates = [
-        dt
-        for dt in (
-            _parse_iso_utc(
-                str(
-                    worker.get("last_work_progress_at")
-                    or worker.get("last_process_activity_at")
-                    or ""
-                )
-            ),
-            _parse_iso_utc(str(worker.get("last_event_at") or "")),
+    # Lease renewal is tied to meaningful provider output or an observed
+    # commit/worktree change. Log mtime, heartbeat, CPU, and I/O are health
+    # signals only; none proves that the worker made task progress.
+    latest_progress = _parse_iso_utc(str(worker.get("last_work_progress_at") or ""))
+    if latest_progress is None:
+        latest_progress = _parse_iso_utc(
+            str(worker.get("lease_acquired_at") or worker.get("started_at") or "")
         )
-        if dt is not None
-    ]
-    latest_progress = max(progress_candidates, default=None)
+    if latest_progress is None:
+        return False
     return rewrite_worker_lifecycle.lease_progress_is_fresh(
         last_progress_epoch=(latest_progress.timestamp() if latest_progress else None),
         now_epoch=now_dt.timestamp(),
@@ -7390,6 +7525,85 @@ def status_event_matches_worker_process(
     return isinstance(lease, Mapping) and dict(lease) == identity
 
 
+def canonical_worker_terminal_status(
+    config: dict[str, Any],
+    worker: Mapping[str, Any],
+    task: Mapping[str, Any] | None,
+    *,
+    activity_events: list[dict[str, Any]] | None,
+    required_role: str | None = None,
+) -> str | None:
+    """Return a terminal task status proven by this worker's exact event.
+
+    A current terminal task row is not enough to complete an arbitrary exited
+    process: the append-only lifecycle event must be bound to the worker's
+    exact PID generation and actor. This reuses the existing activity log and
+    status-command lease binding; it is not a second completion mechanism.
+    """
+
+    if not isinstance(task, Mapping):
+        return None
+    dispatch_reason = str((worker.get("request_snapshot") or {}).get("reason") or "").strip()
+    if dispatch_reason in {REASON_REVIEW_READY}:
+        expected_role = "reviewer"
+        expected_actor = str(task.get("reviewer") or "").strip()
+    elif dispatch_reason in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_OWNED_FINALIZE,
+    }:
+        expected_role = "owner"
+        expected_actor = str(task.get("owner") or "").strip()
+    else:
+        return None
+    if required_role and expected_role != required_role:
+        return None
+    worker_actor = canonical_agent_name(
+        config,
+        display_name_for(
+            config,
+            str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
+        ),
+    )
+    if not worker_actor or worker_actor.casefold() != canonical_agent_name(config, expected_actor).casefold():
+        return None
+
+    settings = ready_dispatch_settings(config)
+    review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
+    approved_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+    task_status = str(task.get("status") or "").strip().lower()
+    terminal_event_types = frozenset({"handoff", "review_approved", "done"})
+    latest_terminal = _latest_task_governance_event(
+        worker,
+        activity_events,
+        event_types=terminal_event_types,
+    )
+    if latest_terminal is None or not status_event_matches_worker_process(latest_terminal, worker):
+        return None
+    event_actor = str(
+        latest_terminal.get("agent")
+        or latest_terminal.get("actor")
+        or latest_terminal.get("author")
+        or ""
+    ).strip()
+    if event_actor and canonical_agent_name(config, event_actor).casefold() != worker_actor.casefold():
+        return None
+    event_type = str(latest_terminal.get("type") or "").strip().lower()
+    valid_statuses = {
+        "handoff": review_statuses,
+        "review_approved": approved_statuses,
+        "done": done_statuses,
+    }.get(event_type, frozenset())
+    if task_status not in valid_statuses:
+        return None
+    if event_type == "review_approved" and expected_role != "reviewer":
+        return None
+    if event_type in {"handoff", "done"} and expected_role != "owner":
+        return None
+    return task_status
+
+
 def active_worker_governance_lease_decision(
     config: dict[str, Any],
     worker: Mapping[str, Any],
@@ -7650,6 +7864,8 @@ def owner_worker_canonical_handoff_status(
     config: dict[str, Any],
     worker: dict[str, Any],
     task: dict[str, Any] | None,
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """Return the canonical outcome reached by this exact owner worker.
 
@@ -7660,29 +7876,13 @@ def owner_worker_canonical_handoff_status(
     the reviewer.
     """
 
-    if not isinstance(task, dict):
-        return None
-    dispatch_reason = str(
-        (worker.get("request_snapshot") or {}).get("reason") or ""
-    ).strip()
-    if dispatch_reason not in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}:
-        return None
-    worker_actor = display_name_for(
+    return canonical_worker_terminal_status(
         config,
-        str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
-    ).strip()
-    owner = str(task.get("owner") or "").strip()
-    if not worker_actor or worker_actor != owner:
-        return None
-
-    settings = ready_dispatch_settings(config)
-    outcome_statuses = (
-        normalized_status_set(settings.get("review_statuses"), ["review"])
-        | normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
-        | normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+        worker,
+        task,
+        activity_events=activity_events,
+        required_role="owner",
     )
-    task_status = str(task.get("status") or "").strip().lower()
-    return task_status if task_status in outcome_statuses else None
 
 
 def _prepare_missing_handoff_blocker_locked(
@@ -9414,7 +9614,8 @@ def poll_worker_observation_stage(
     if marker_changed:
         poll_counts["marker_updates"] += 1
         changed = True
-    update_from_log(config, worker)
+    meaningful_progress_advanced = update_from_log(config, worker, now=now)
+    commit_progress_advanced = False
     alive = pid_is_alive(worker.get("pid"))
     if (
         alive
@@ -9446,12 +9647,10 @@ def poll_worker_observation_stage(
             worker,
             now,
         )
-        if process_activity_advanced and heartbeat_fresh:
-            progress_at = _isoformat_utc(now)
-            worker["last_process_activity_at"] = progress_at
-            worker["last_work_progress_at"] = progress_at
-            changed = True
-        else:
+        # Process-tree activity is retained as diagnostic telemetry only. It
+        # must not renew a work lease or reset the meaningful-progress stall
+        # clock; otherwise a wedged AGY process can live forever on CPU/I/O.
+        if process_activity_advanced and not heartbeat_fresh:
             process_activity_advanced = False
 
     if (
@@ -9505,6 +9704,8 @@ def poll_worker_observation_stage(
     return {
         "changed": changed,
         "alive": alive,
+        "meaningful_progress_advanced": meaningful_progress_advanced,
+        "commit_progress_advanced": commit_progress_advanced,
         "process_activity_advanced": process_activity_advanced,
         "stop": stop,
     }
@@ -9658,17 +9859,16 @@ def poll_worker_stall_stage(
     worker: dict[str, Any],
     *,
     alive: bool,
-    last_event_advanced: bool,
-    process_activity_advanced: bool,
+    progress_advanced: bool,
     now: datetime,
     stall_after: float,
 ) -> dict[str, bool]:
-    """Handle recovery/stall transitions for a live worker as one stage."""
+    """Mark a stale worker; lease expiry remains the sole termination path."""
     if not alive:
         return {"changed": False, "stop": False}
 
     changed = False
-    if worker.get("status") == "stalled" and (last_event_advanced or process_activity_advanced):
+    if worker.get("status") == "stalled" and progress_advanced:
         worker["status"] = "running"
         worker["last_event_at"] = worker.get("last_event_at") or utc_now()
         write_activity_log(
@@ -9677,7 +9877,7 @@ def poll_worker_stall_stage(
                 "type": "worker_recovered",
                 "provider": worker.get("provider"),
                 "task_id": worker.get("task_id"),
-                "message": "Worker produced output or measurable process activity after being marked stalled; status restored to running.",
+                "message": "Worker produced meaningful provider or commit progress after being marked stalled; status restored to running.",
                 "worker_run_id": worker["run_id"],
             },
         )
@@ -9687,62 +9887,10 @@ def poll_worker_stall_stage(
         )
         return {"changed": True, "stop": True}
 
-    last_event_dt = _parse_iso_utc(str(worker.get("last_event_at") or ""))
-    last_work_progress_dt = _parse_iso_utc(
-        str(
-            worker.get("last_work_progress_at")
-            or worker.get("last_process_activity_at")
-            or ""
-        )
-    )
-    activity_timestamps = [
-        value
-        for value in (last_event_dt, last_work_progress_dt)
-        if value is not None
-    ]
-    if process_activity_advanced and last_event_dt and (now - last_event_dt).total_seconds() >= stall_after:
-        last_notice_dt = _parse_iso_utc(str(worker.get("last_stall_deferred_at") or ""))
-        if last_notice_dt is None or (now - last_notice_dt).total_seconds() >= stall_after:
-            worker["last_stall_deferred_at"] = _isoformat_utc(now)
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_stall_deferred",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": "No provider output, but fresh heartbeat and measurable process-tree activity were observed; stall action deferred.",
-                    "worker_run_id": worker["run_id"],
-                    "process_commands": (worker.get("process_activity_snapshot") or {}).get("commands", []),
-                },
-            )
-            changed = True
-    if activity_timestamps:
-        stalled_for_seconds = (now - max(activity_timestamps)).total_seconds()
-        if worker.get("status") == "stalled" and stalled_for_seconds >= stall_after * 2:
-            if not terminate_worker_pid(worker.get("pid")):
-                return {"changed": changed, "stop": True}
-            worker["status"] = "failed"
-            worker["last_event_at"] = utc_now()
-            worker["last_error"] = (
-                "Worker had no output or measurable process activity for "
-                f"{int(stalled_for_seconds)} seconds and was terminated for redispatch."
-            )
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_failed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": worker["last_error"],
-                    "worker_run_id": worker["run_id"],
-                },
-            )
-            finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-            console_log(
-                f"worker terminated after extended stall: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
-                quiet=SUPERVISOR_LOG_QUIET,
-            )
-            return {"changed": True, "stop": True}
+    last_work_progress_dt = _parse_iso_utc(str(worker.get("last_work_progress_at") or ""))
+    baseline = last_work_progress_dt or _parse_iso_utc(str(worker.get("lease_acquired_at") or ""))
+    if baseline is not None:
+        stalled_for_seconds = (now - baseline).total_seconds()
         if stalled_for_seconds >= stall_after and worker.get("status") != "stalled":
             worker["status"] = "stalled"
             write_activity_log(
@@ -9751,11 +9899,14 @@ def poll_worker_stall_stage(
                     "type": "worker_stalled",
                     "provider": worker.get("provider"),
                     "task_id": worker.get("task_id"),
-                    "message": f"Worker appears stalled after {int(stall_after)} seconds without output or measurable process-tree activity.",
+                    "message": f"Worker appears stalled after {int(stall_after)} seconds without meaningful provider or commit progress.",
                     "worker_run_id": worker["run_id"],
                 },
             )
             changed = True
+    # Preserve the existing stage short-circuit for live workers. The
+    # observation stage's lease expiry is the only code allowed to terminate
+    # this process; this stage only changes the diagnostic status.
     return {"changed": changed, "stop": True}
 
 
@@ -9781,7 +9932,9 @@ def poll_worker_failure_stage(
         "superseded",
     }:
         return {"changed": False, "stop": True}
-    failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
+    # Structured provider result errors remain authoritative even when the
+    # wrapper exits with code 0; AGY reports some terminal failures that way.
+    failure_reason = detect_worker_failure(worker)
     if not failure_reason:
         return {"changed": False, "stop": False}
 
@@ -9912,20 +10065,21 @@ def poll_worker_completion_stage(
     *,
     task_map: dict[str, dict[str, Any]],
     redispatch_statuses: set[str],
+    governance_activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, bool]:
     """Classify a cleanly exited worker and apply its terminal transition."""
     if worker.get("status") in {"completed", "failed", "waiting_approval", "suspended_approval"}:
         return {"changed": False, "stop": True}
 
-    task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
-    terminal_statuses = {
-        str(value).lower()
-        for value in ready_dispatch_settings(config).get(
-            "worker_terminal_statuses",
-            ["done", "review_approved"],
-        )
-    }
-    if task_status in terminal_statuses:
+    task = task_map.get(worker.get("task_id"))
+    task_status = str((task or {}).get("status") or "").lower()
+    canonical_terminal_status = canonical_worker_terminal_status(
+        config,
+        worker,
+        task,
+        activity_events=governance_activity_events,
+    )
+    if canonical_terminal_status is not None:
         worker["status"] = "completed"
         worker["last_event_at"] = utc_now()
         write_activity_log(
@@ -10074,7 +10228,12 @@ def poll_worker_assignment_stage(
     generation_fence_crossed = isinstance(
         task, Mapping
     ) and not worker_matches_current_task_generation(worker, task)
-    handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
+    handoff_status = canonical_worker_terminal_status(
+        config,
+        worker,
+        task,
+        activity_events=governance_activity_events,
+    )
     lease_guard_decision: dict[str, Any] | None = None
     if handoff_status is not None:
         if alive:
@@ -10288,7 +10447,9 @@ def poll_workers(
         if run_id:
             resolved_by_run.setdefault(run_id, []).append(item)
 
-    stall_after = float(config.get("supervisor", {}).get("stall_after_seconds", 300))
+    stall_after = float(
+        worker_runtime_settings(config).get("work_progress_stale_seconds", 360)
+    )
     now = datetime.now(timezone.utc)
     changed = retry_due_workers(config, state, now) or changed
     poll_counts = {
@@ -10298,8 +10459,11 @@ def poll_workers(
         "expired_lease_workers_failed": 0,
     }
     workers = state.setdefault("workers", {})
+    if workers and not activity_events:
+        activity_events = recent_governance_activity_events(config)
+    if workers and not governance_activity_events:
+        governance_activity_events = activity_events or recent_governance_activity_events(config)
     for run_id, worker in list(workers.items()):
-        previous_last_event_at = worker.get("last_event_at")
         orphan = poll_worker_orphan_stage(
             config,
             state,
@@ -10321,7 +10485,10 @@ def poll_workers(
         )
         changed = bool(observation["changed"]) or changed
         alive = bool(observation["alive"])
-        process_activity_advanced = bool(observation["process_activity_advanced"])
+        progress_advanced = bool(
+            observation.get("meaningful_progress_advanced")
+            or observation.get("commit_progress_advanced")
+        )
         if observation["stop"]:
             continue
         assignment = poll_worker_assignment_stage(
@@ -10338,11 +10505,6 @@ def poll_workers(
         changed = bool(assignment["changed"]) or changed
         if assignment["stop"]:
             continue
-        last_event_advanced = bool(
-            previous_last_event_at
-            and worker.get("last_event_at")
-            and worker.get("last_event_at") > previous_last_event_at
-        )
         approval = poll_worker_approval_stage(
             config,
             state,
@@ -10360,8 +10522,7 @@ def poll_workers(
             state,
             worker,
             alive=alive,
-            last_event_advanced=last_event_advanced,
-            process_activity_advanced=process_activity_advanced,
+            progress_advanced=progress_advanced,
             now=now,
             stall_after=stall_after,
         )
@@ -10384,6 +10545,7 @@ def poll_workers(
             worker,
             task_map=task_map,
             redispatch_statuses=redispatch_statuses,
+            governance_activity_events=governance_activity_events,
         )
         changed = bool(completion["changed"]) or changed
     changed = cleanup_inactive_worker_worktrees(config, state) or changed
@@ -11359,6 +11521,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     except KeyError:
         status_snapshot = {}
         task_map = {}
+    governance_activity_events = recent_governance_activity_events(config)
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
@@ -11422,7 +11585,12 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             )
             changed = True
             continue
-        handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
+        handoff_status = canonical_worker_terminal_status(
+            config,
+            worker,
+            task,
+            activity_events=governance_activity_events,
+        )
         if handoff_status is not None:
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
@@ -11448,49 +11616,10 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
 
         runner_succeeded = worker_runner_succeeded(worker)
 
-        task_status = str((task or {}).get("status") or "").lower()
-        terminal_statuses = {
-            str(value).lower()
-            for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
-        }
-        dispatch_reason = str(
-            (worker.get("request_snapshot") or {}).get("reason") or ""
-        ).strip()
-        finalize_statuses = normalized_status_set(
-            ready_dispatch_settings(config).get("finalize_statuses"),
-            ["review_approved"],
-        )
-        finalize_still_open = (
-            dispatch_reason == REASON_OWNED_FINALIZE
-            and task_status in finalize_statuses
-        )
-        if (
-            runner_succeeded
-            and task_status in terminal_statuses
-            and not finalize_still_open
-        ):
-            worker["status"] = "completed"
-            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
-            finalize_queue_event_record(config, state, worker, "completed")
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_completed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": "Worker exited successfully during supervisor boot reconciliation.",
-                    "worker_run_id": run_id,
-                    "pr_url": worker.get("pr_url"),
-                    "session_url": worker.get("session_url"),
-                },
-            )
-            changed = True
-            continue
-
         if runner_succeeded:
             reason = GENERIC_WORKER_EXIT_REASON
 
-        detected_reason = None if runner_succeeded else detect_worker_failure(worker)
+        detected_reason = detect_worker_failure(worker)
         failure_kind = ""
         raw_ref: str | None = None
         if detected_reason:
@@ -12113,6 +12242,41 @@ def recent_task_failure_counts(
                 continue
         counts[task_id] = counts.get(task_id, 0) + 1
     return counts
+
+
+def recent_governance_activity_events(
+    config: dict[str, Any],
+    *,
+    tail_bytes: int = 2 * 1024 * 1024,
+) -> list[dict[str, Any]]:
+    """Read the bounded tail of the existing activity log for exact bindings."""
+
+    path_str = (config.get("paths") or {}).get("activity_log")
+    if not path_str:
+        return []
+    path = Path(path_str)
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(0, size - tail_bytes))
+            raw = handle.read()
+    except OSError:
+        return []
+    lines = raw.decode("utf-8", errors="ignore").splitlines()
+    if size > tail_bytes and lines:
+        lines = lines[1:]
+    events: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            event = json.loads(line.strip())
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(event, dict)
+            and str(event.get("type") or "") in GOVERNANCE_LIFECYCLE_EVENT_TYPES
+        ):
+            events.append(event)
+    return events
 
 
 def agent_dispatch_loads(

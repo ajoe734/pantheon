@@ -593,6 +593,8 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(result.target, "Antigravity2")
         self.assertIn("--model", result.command)
         self.assertEqual(result.command[result.command.index("--model") + 1], "gemini-2.5-flash-lite")
+        self.assertIn("--output-format", result.command)
+        self.assertEqual(result.command[result.command.index("--output-format") + 1], "stream-json")
         self.assertIn("--print-timeout", result.command)
         self.assertEqual(result.command[result.command.index("--print-timeout") + 1], "15m")
         self.assertIn("--dangerously-skip-permissions", result.command)
