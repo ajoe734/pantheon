@@ -6093,6 +6093,138 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["merge_target_sha"], "devsha")
         self.assertTrue(delivery["head_merged_to_target"])
 
+    def test_collect_done_uses_exact_approved_head_after_workspace_fast_forward(self) -> None:
+        approved_head = "a" * 40
+        workspace_head = "d" * 40
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+            ai_status.APPROVAL_BINDING_KEY: {
+                "pr": 152,
+                "head_sha": approved_head,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+            ai_status.GITHUB_REVIEW_BRIDGE_KEY: {
+                "decision": "approve",
+                "mode": "required_commit_status",
+                "pr": 152,
+                "head_sha": approved_head,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "status_id": 99,
+                "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
+                "status_state": "success",
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+                ("rev-parse", "HEAD"): workspace_head,
+                ("rev-parse", approved_head): approved_head,
+                ("show", "-s", "--format=%s", approved_head): "REG-002: deliver reviewed fix",
+                ("show", "-s", "--format=%b", approved_head): (
+                    "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
+                ),
+                ("show", "-s", "--format=%an", approved_head): "Codex",
+                ("show", "-s", "--format=%ae", approved_head): "codex@example.com",
+                ("status", "--porcelain"): "",
+                ("remote",): "origin",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): workspace_head,
+            }
+            try:
+                return responses[tuple(args)]
+            except KeyError as exc:
+                raise AssertionError(f"unexpected git command: {args}") from exc
+
+        succeeded_calls: list[list[str]] = []
+
+        def fake_git_command_succeeds(args: list[str], **kwargs: object) -> bool:
+            succeeded_calls.append(args)
+            if args == ["cat-file", "-e", f"{approved_head}^{{commit}}"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", approved_head, "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git predicate: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(
+                ai_status,
+                "git_command_succeeds",
+                side_effect=fake_git_command_succeeds,
+            ),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        self.assertEqual(delivery["commit"], approved_head)
+        self.assertEqual(delivery["workspace_head"], workspace_head)
+        self.assertEqual(delivery["commit_source"], "canonical_approved_head")
+        self.assertEqual(delivery["merge_test_commit"], approved_head)
+        self.assertIn(
+            ["merge-base", "--is-ancestor", approved_head, "origin/dev"],
+            succeeded_calls,
+        )
+
+    def test_collect_done_does_not_trust_unverified_approved_head_binding(self) -> None:
+        approved_head = "a" * 40
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+            ai_status.APPROVAL_BINDING_KEY: {
+                "pr": 152,
+                "head_sha": approved_head,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+            ai_status.GITHUB_REVIEW_BRIDGE_KEY: {
+                "decision": "approve",
+                "mode": "required_commit_status",
+                "pr": 152,
+                "head_sha": approved_head,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "status_id": 99,
+                "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
+                "status_state": "failure",
+            },
+        }
+
+        responses = iter(
+            [
+                "task/REG-002",
+                "d" * 40,
+                "Merge pull request #999 from ajoe734/task/OTHER-TASK",
+                "OTHER-TASK: unrelated later merge\n",
+                "GitHub",
+                "noreply@github.com",
+            ]
+        )
+        with (
+            mock.patch.dict(
+                os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                side_effect=lambda *args, **kwargs: next(responses),
+            ),
+            self.assertRaisesRegex(
+                SystemExit,
+                "latest commit subject must include task id REG-002",
+            ),
+        ):
+            ai_status.collect_done_delivery_metadata(task, "Codex")
+
     def test_delivery_merge_target_branch_uses_dev_for_execute_plans(self) -> None:
         # execute-plans mirrors Pantheon's per-task-PR-into-dev model; its
         # GitHub-configured default branch is `dev`, not `main`. Regression
