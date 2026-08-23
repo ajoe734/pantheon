@@ -805,6 +805,9 @@ def test_db_behavior_concurrent_append_from_independent_session(
         conn1 = await asyncpg.connect(isolated_db)
         conn2 = await asyncpg.connect(isolated_db)
         try:
+            await conn1.execute("SET lock_timeout = '3000ms';")
+            await conn2.execute("SET lock_timeout = '3000ms';")
+
             await conn1.execute("CREATE SCHEMA IF NOT EXISTS test_concurrent_session_mgmt;")
             await conn1.execute(
                 """
@@ -861,8 +864,11 @@ def test_db_behavior_concurrent_append_from_independent_session(
                 return await _run_sql_block(conn1, "test_concurrent_session_mgmt")
 
             async def _run_concurrent_append() -> None:
-                # 1. Wait until conn1 enters BEFORE TRUNCATE trigger (guaranteeing baseline was captured)
-                await conn2.execute(f"SELECT pg_advisory_lock({LOCK_BASELINE_CAPTURED});")
+                # 1. Bounded wait until conn1 enters BEFORE TRUNCATE trigger (guaranteeing baseline was captured)
+                await asyncio.wait_for(
+                    conn2.execute(f"SELECT pg_advisory_lock({LOCK_BASELINE_CAPTURED});"),
+                    timeout=3.0,
+                )
                 try:
                     # 2. Insert concurrent canonical row from independent connection
                     await conn2.execute(
@@ -876,7 +882,11 @@ def test_db_behavior_concurrent_append_from_independent_session(
                     await conn2.execute(f"SELECT pg_advisory_unlock({LOCK_APPEND_COMPLETED});")
                     await conn2.execute(f"SELECT pg_advisory_unlock({LOCK_BASELINE_CAPTURED});")
 
-            notices, _ = await asyncio.gather(_run_prune(), _run_concurrent_append())
+            # Bounded execution: guarantee neither session can hang or deadlock the test suite
+            notices, _ = await asyncio.wait_for(
+                asyncio.gather(_run_prune(), _run_concurrent_append()),
+                timeout=5.0,
+            )
 
             assert await conn1.fetchval("SELECT COUNT(*) FROM test_concurrent_session_mgmt.telemetry_events") == 0
             assert await conn1.fetchval("SELECT COUNT(*) FROM public.telemetry_events") == 3
@@ -888,6 +898,65 @@ def test_db_behavior_concurrent_append_from_independent_session(
             assert sentinel_data["canonical_matched_count"] == 2
             assert sentinel_data["canonical_row_count_after"] == 3
             assert sentinel_data["result"] == "preserved"
+        finally:
+            try:
+                await conn1.execute("SELECT pg_advisory_unlock_all();")
+            except Exception:
+                pass
+            try:
+                await conn2.execute("SELECT pg_advisory_unlock_all();")
+            except Exception:
+                pass
+            await conn1.close()
+            await conn2.close()
+
+    asyncio.run(_test())
+
+
+def test_db_behavior_concurrent_append_barrier_unblocks_cleanly_on_prune_failure(
+    isolated_db: str,
+) -> None:
+    async def _test() -> None:
+        conn1 = await asyncpg.connect(isolated_db)
+        conn2 = await asyncpg.connect(isolated_db)
+        try:
+            await conn1.execute("SET lock_timeout = '2000ms';")
+            await conn2.execute("SET lock_timeout = '2000ms';")
+
+            LOCK_BASELINE_CAPTURED = 888003
+            LOCK_APPEND_COMPLETED = 888004
+
+            await conn1.execute(f"SELECT pg_advisory_lock({LOCK_BASELINE_CAPTURED});")
+            await conn2.execute(f"SELECT pg_advisory_lock({LOCK_APPEND_COMPLETED});")
+
+            # Pruning an invalid/forbidden schema (e.g. public) fails before the trigger
+            async def _run_failing_prune() -> list[str]:
+                return await _run_sql_block(conn1, "public")
+
+            async def _run_concurrent_append() -> None:
+                try:
+                    await asyncio.wait_for(
+                        conn2.execute(f"SELECT pg_advisory_lock({LOCK_BASELINE_CAPTURED});"),
+                        timeout=1.0,
+                    )
+                except (asyncio.TimeoutError, asyncpg.PostgresError):
+                    # Expected to time out cleanly since conn1 fails before reaching trigger
+                    pass
+                finally:
+                    try:
+                        await conn2.execute(f"SELECT pg_advisory_unlock({LOCK_APPEND_COMPLETED});")
+                    except Exception:
+                        pass
+                    try:
+                        await conn2.execute(f"SELECT pg_advisory_unlock({LOCK_BASELINE_CAPTURED});")
+                    except Exception:
+                        pass
+
+            with pytest.raises(asyncpg.PostgresError, match="refusing to prune telemetry_events: MANAGEMENT_AI_STORE_SCHEMA resolves to canonical public schema"):
+                await asyncio.wait_for(
+                    asyncio.gather(_run_failing_prune(), _run_concurrent_append()),
+                    timeout=3.0,
+                )
         finally:
             try:
                 await conn1.execute("SELECT pg_advisory_unlock_all();")

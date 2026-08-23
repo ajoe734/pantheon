@@ -45,7 +45,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_deploy_nonprod_telemetry_prune.py scripts/test_management_ai_postgres_bootstrap_contract.py",
-        "result": "33 passed (26 prune tests including two-session concurrent-append, trigger-based concurrent-append, payload/event_type UPDATE detection, and deletion/truncation negative tests + 7 bootstrap contract tests)"
+        "result": "34 passed (27 prune tests including bounded two-session concurrent-append advisory lock barrier, prune failure unblock, trigger-based concurrent-append, payload/event_type UPDATE detection, and deletion/truncation negative tests + 7 bootstrap contract tests)"
       },
       {
         "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 95a1455e3dc1a275b8d541fd2c432c3971013308 --project-id pantheon-lupin-dev-20260719 --dry-run",

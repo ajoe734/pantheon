@@ -24,5 +24,5 @@ When legitimate concurrent appends (INSERTs) into `public.telemetry_events` occu
 ## Verification
 
 - `bash -n scripts/deploy_nonprod_vm.sh` (passed)
-- `.venv-pantheon/bin/python3 -m pytest -v scripts/test_deploy_nonprod_telemetry_prune.py scripts/test_management_ai_postgres_bootstrap_contract.py` (33 passed)
+- `.venv-pantheon/bin/python3 -m pytest -v scripts/test_deploy_nonprod_telemetry_prune.py scripts/test_management_ai_postgres_bootstrap_contract.py` (34 passed)
 - `./scripts/deploy_nonprod_vm.sh --environment dev --sha 95a1455e3dc1a275b8d541fd2c432c3971013308 --project-id pantheon-lupin-dev-20260719 --dry-run` (passed)
