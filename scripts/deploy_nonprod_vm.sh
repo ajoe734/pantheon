@@ -38,6 +38,8 @@ DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${DEV_LIFECYCLE_PROJECTOR_HEALTH
 # DEV_BFF_AUTH_STUB=true DEV_BFF_AUTH_MODE=permissive.
 DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
 DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
+DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS="${DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS:-120}"
+DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS="${DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS:-2}"
 DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"
 # Governed verifier/dev-login credentials for the strict auth cutover. These
 # must come from a secret source (GitHub Actions secrets in CI), never from
@@ -586,6 +588,8 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS=$(shell_quote "$DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
+  command_prefix+=" PANTHEON_DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS=$(shell_quote "$DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS")"
+  command_prefix+=" PANTHEON_DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS=$(shell_quote "$DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS")"
   command_prefix+=" PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED=$(shell_quote "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_ISSUER=$(shell_quote "$DEV_BFF_JWT_ISSUER")"
@@ -1195,30 +1199,68 @@ assert auth_mode == "strict", f"auth_mode={auth_mode!r}, expected strict"
   access_token="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])' <<<"$login_payload")"
   curl -fsS "${base_url}/bff/me" -H "Authorization: Bearer ${access_token}" >/dev/null \
     || error "authenticated /bff/me check failed with a freshly issued dev-login token"
-  local readiness_payload
-  readiness_payload="$(curl -fsS "${base_url}/bff/auth/readiness" \
-    -H "Authorization: Bearer ${access_token}")" \
-    || error "strict browser readiness probe failed against ${base_url}/bff/auth/readiness"
-  python3 -c '
+  local readiness_timeout="${PANTHEON_DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS:-${DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS:-120}}"
+  local readiness_poll_interval="${PANTHEON_DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS:-${DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS:-2}}"
+  local readiness_started
+  readiness_started="$(date +%s)"
+  local readiness_payload=""
+  local readiness_error=""
+
+  info "asserting authenticated dev-login and strict browser readiness round trip succeed (bounded timeout=${readiness_timeout}s)"
+  while true; do
+    readiness_error=""
+    if readiness_payload="$(curl -fsS "${base_url}/bff/auth/readiness" \
+      -H "Authorization: Bearer ${access_token}" 2>&1)"; then
+      if readiness_error="$(python3 -c '
 import json
 import sys
 
 expected_sha = sys.argv[1]
-payload = json.loads(sys.argv[2])
+try:
+    payload = json.loads(sys.argv[2])
+except Exception as exc:
+    print(f"invalid JSON readiness payload: {exc}")
+    sys.exit(1)
+
 data = payload.get("data") or {}
 auth = data.get("auth") or {}
-assert data.get("sourceCommitSha") == expected_sha, data.get("sourceCommitSha")
-assert data.get("authReady") is True, data
-assert data.get("providerReady") is True, data
-assert data.get("ready") is True, data
-assert auth.get("mode") == "strict", auth
-assert auth.get("stub") is False, auth
-assert auth.get("sessionKind") in {"bearer", "cookie"}, auth
-assert auth.get("operatorRoleReady") is True, auth
-assert auth.get("interactionCapabilityReady") is True, auth
-assert auth.get("verifierReady") is True, auth
-' "${PANTHEON_DEPLOY_SHA}" "${readiness_payload}" \
-    || error "strict browser readiness contract is not satisfied"
+source_sha = data.get("sourceCommitSha")
+auth_ready = data.get("authReady")
+provider_ready = data.get("providerReady")
+overall_ready = data.get("ready")
+provider_info = data.get("provider")
+auth_mode = auth.get("mode")
+auth_stub = auth.get("stub")
+session_kind = auth.get("sessionKind")
+operator_role_ready = auth.get("operatorRoleReady")
+interaction_ready = auth.get("interactionCapabilityReady")
+verifier_ready = auth.get("verifierReady")
+try:
+    assert data.get("sourceCommitSha") == expected_sha, f"sourceCommitSha={source_sha!r}, expected {expected_sha!r}"
+    assert data.get("authReady") is True, f"authReady={auth_ready!r}"
+    assert data.get("providerReady") is True, f"providerReady={provider_ready!r}, provider={provider_info!r}"
+    assert data.get("ready") is True, f"ready={overall_ready!r}"
+    assert auth.get("mode") == "strict", f"auth.mode={auth_mode!r}"
+    assert auth.get("stub") is False, f"auth.stub={auth_stub!r}"
+    assert auth.get("sessionKind") in {"bearer", "cookie"}, f"auth.sessionKind={session_kind!r}"
+    assert auth.get("operatorRoleReady") is True, f"auth.operatorRoleReady={operator_role_ready!r}"
+    assert auth.get("interactionCapabilityReady") is True, f"auth.interactionCapabilityReady={interaction_ready!r}"
+    assert auth.get("verifierReady") is True, f"auth.verifierReady={verifier_ready!r}"
+except AssertionError as err:
+    print(f"contract assertion failed: {err}")
+    sys.exit(1)
+' "${PANTHEON_DEPLOY_SHA}" "${readiness_payload}" 2>&1)"; then
+        break
+      fi
+    else
+      readiness_error="strict browser readiness probe failed against ${base_url}/bff/auth/readiness: ${readiness_payload}"
+    fi
+
+    if (( $(date +%s) - readiness_started >= readiness_timeout )); then
+      error "strict browser readiness contract is not satisfied within ${readiness_timeout}s timeout: ${readiness_error}"
+    fi
+    sleep "${readiness_poll_interval}"
+  done
   info "authenticated dev-login and strict browser readiness round trip succeeded"
 
   info "asserting five dedicated dev-login identities and distinct subjects"
