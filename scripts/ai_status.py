@@ -2799,6 +2799,7 @@ def enforce_delivery_merged_gate(
     repository_id: str,
     branch: str,
     remote_names: list[str],
+    delivery_ref: str = "HEAD",
 ) -> None:
     target_branch = delivery_merge_target_branch(config, repository_id)
     delivery["merge_target_branch"] = target_branch
@@ -2823,9 +2824,10 @@ def enforce_delivery_merged_gate(
         )
     delivery["merge_target_sha"] = target_sha
     merged = git_command_succeeds(
-        ["merge-base", "--is-ancestor", "HEAD", target_ref],
+        ["merge-base", "--is-ancestor", delivery_ref, target_ref],
         cwd=repository_root,
     )
+    delivery["merge_test_commit"] = delivery_ref
     delivery["head_merged_to_target"] = merged
     if merged:
         return
@@ -2838,6 +2840,57 @@ def enforce_delivery_merged_gate(
         "refresh the PR branch if it is behind, and run `done` only after "
         "GitHub reports the PR merged."
     )
+
+
+def approved_closeout_commit_ref(
+    task: Mapping[str, Any],
+    *,
+    repository_root: Path,
+    branch: str,
+) -> str | None:
+    """Return the immutable reviewed head used for an approved closeout.
+
+    A reusable worker worktree may be fast-forwarded to a later ``dev`` tip
+    after the task PR merges.  That workspace movement must not replace the
+    exact task commit that the canonical reviewer approved.  Only a complete
+    canonical review-bridge binding may select this path; legacy or incomplete
+    rows retain the existing HEAD-based validation.
+    """
+
+    if str(task.get("status") or "").strip() != "review_approved":
+        return None
+    if not github_review_bridge_evidence_matches(task):
+        return None
+    binding = task.get(APPROVAL_BINDING_KEY)
+    if not isinstance(binding, Mapping):
+        return None
+    approved_head = str(binding.get("head_sha") or "").strip().lower()
+    approved_branch = str(binding.get("head_branch") or "").strip()
+    if not APPROVAL_HEAD_SHA_RE.fullmatch(approved_head):
+        raise SystemExit(
+            "Cannot finalize task: canonical approval has an invalid exact head SHA."
+        )
+    if approved_branch != branch:
+        raise SystemExit(
+            "Cannot finalize task: delivery branch does not match canonical approved "
+            f"head branch ({branch} != {approved_branch or 'missing'})."
+        )
+
+    commit_ref = f"{approved_head}^{{commit}}"
+    if not git_command_succeeds(["cat-file", "-e", commit_ref], cwd=repository_root):
+        subprocess.run(
+            ["git", "fetch", "--quiet", "origin", approved_head],
+            cwd=repository_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if not git_command_succeeds(["cat-file", "-e", commit_ref], cwd=repository_root):
+        raise SystemExit(
+            "Cannot finalize task: canonical approved head is unavailable in the "
+            f"delivery repository ({approved_head})."
+        )
+    return approved_head
 
 
 def parse_commit_metadata_lines(body: str) -> dict[str, str]:
@@ -3172,31 +3225,55 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             )
 
     if settings["require_commit_hash"]:
-        commit_hash = run_git_command(
+        workspace_head = run_git_command(
             ["rev-parse", "HEAD"],
             cwd=repository_root,
             failure_message="Cannot finalize task: a HEAD commit hash is required before moving to done.",
         )
-        if not commit_hash:
+        if not workspace_head:
             raise SystemExit("Cannot finalize task: a HEAD commit hash is required before moving to done.")
+        approved_ref = approved_closeout_commit_ref(
+            task,
+            repository_root=repository_root,
+            branch=branch,
+        )
+        commit_ref = approved_ref or "HEAD"
+        commit_hash = (
+            run_git_command(
+                ["rev-parse", commit_ref],
+                cwd=repository_root,
+                failure_message="Cannot finalize task: the delivered commit hash is unavailable.",
+            )
+            if approved_ref
+            else workspace_head
+        )
+        if not commit_hash:
+            raise SystemExit(
+                "Cannot finalize task: the delivered commit hash is required before moving to done."
+            )
         delivery["commit"] = commit_hash
+        delivery["commit_source"] = (
+            "canonical_approved_head" if approved_ref else "workspace_head"
+        )
+        if approved_ref:
+            delivery["workspace_head"] = workspace_head
         subject = run_git_command(
-            ["show", "-s", "--format=%s", "HEAD"],
+            ["show", "-s", "--format=%s", commit_ref],
             cwd=repository_root,
             failure_message="Cannot finalize task: latest commit subject is unavailable.",
         )
         body = run_git_command(
-            ["show", "-s", "--format=%b", "HEAD"],
+            ["show", "-s", "--format=%b", commit_ref],
             cwd=repository_root,
             failure_message="Cannot finalize task: latest commit body is unavailable.",
         )
         author_name = run_git_command(
-            ["show", "-s", "--format=%an", "HEAD"],
+            ["show", "-s", "--format=%an", commit_ref],
             cwd=repository_root,
             failure_message="Cannot finalize task: latest commit author name is unavailable.",
         )
         author_email = run_git_command(
-            ["show", "-s", "--format=%ae", "HEAD"],
+            ["show", "-s", "--format=%ae", commit_ref],
             cwd=repository_root,
             failure_message="Cannot finalize task: latest commit author email is unavailable.",
         )
@@ -3335,6 +3412,7 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             repository_id=repository_id,
             branch=branch,
             remote_names=remote_names,
+            delivery_ref=str(delivery.get("commit") or "HEAD"),
         )
 
     return delivery
