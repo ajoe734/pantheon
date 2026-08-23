@@ -17,7 +17,9 @@ activation, and capital authority.
 
 ## Hosted probe
 
-After the task branch is deployed to the Pantheon dev VM, run:
+The protected dev deployment workflow accepts only the exact current `dev` SHA,
+so run this after the reviewed task PR has merged and its commit is included in
+the deployed `dev` revision:
 
 ```bash
 OPENCLAW_GATEWAY_ADAPTER_URL=http://localhost:18104 \
