@@ -1874,6 +1874,9 @@ DECLARE
   canonical_checksum_before text := 'none';
   canonical_checksum_after text := 'none';
 
+  canonical_matched_count bigint := 0;
+  canonical_matched_checksum text := 'none';
+
   pruned_tables text[] := ARRAY[]::text[];
   sentinel_json jsonb;
 BEGIN
@@ -1898,9 +1901,14 @@ BEGIN
   ) INTO canonical_exists;
 
   IF canonical_exists THEN
+    DROP TABLE IF EXISTS _pantheon_canonical_telemetry_pre;
+    CREATE TEMP TABLE _pantheon_canonical_telemetry_pre ON COMMIT DROP AS
+      SELECT event_id, created_at
+      FROM public.telemetry_events;
+
     SELECT COUNT(*), MIN(created_at), COALESCE(MD5(STRING_AGG(COALESCE(event_id::text, '') || ':' || COALESCE(created_at::text, ''), ',' ORDER BY created_at ASC, event_id ASC)), 'empty')
       INTO canonical_count_before, canonical_min_created_before, canonical_checksum_before
-      FROM public.telemetry_events;
+      FROM _pantheon_canonical_telemetry_pre;
   END IF;
 
   -- 3. Discover and prune allow-listed derived tables in target_schema ONLY
@@ -1917,18 +1925,28 @@ BEGIN
     pruned_tables := array_append(pruned_tables, format('%s.%s', item.schema_name, item.table_name));
   END LOOP;
 
-  -- 4. Capture canonical post-state and enforce strict preservation sentinel
+  -- 4. Capture canonical post-state and enforce concurrency-safe preservation sentinel
   IF canonical_exists THEN
     SELECT COUNT(*), MIN(created_at), COALESCE(MD5(STRING_AGG(COALESCE(event_id::text, '') || ':' || COALESCE(created_at::text, ''), ',' ORDER BY created_at ASC, event_id ASC)), 'empty')
       INTO canonical_count_after, canonical_min_created_after, canonical_checksum_after
       FROM public.telemetry_events;
 
-    IF canonical_count_before != canonical_count_after
-       OR canonical_min_created_before IS DISTINCT FROM canonical_min_created_after
-       OR canonical_checksum_before != canonical_checksum_after THEN
-      RAISE EXCEPTION 'canonical telemetry drift detected: count before=% after=%, min_created before=% after=%, checksum before=% after=%',
-        canonical_count_before, canonical_count_after, canonical_min_created_before, canonical_min_created_after, canonical_checksum_before, canonical_checksum_after;
+    SELECT COUNT(*), COALESCE(MD5(STRING_AGG(COALESCE(cur.event_id::text, '') || ':' || COALESCE(cur.created_at::text, ''), ',' ORDER BY cur.created_at ASC, cur.event_id ASC)), 'empty')
+      INTO canonical_matched_count, canonical_matched_checksum
+      FROM public.telemetry_events cur
+      JOIN _pantheon_canonical_telemetry_pre pre ON cur.event_id = pre.event_id;
+
+    IF canonical_matched_count != canonical_count_before
+       OR canonical_matched_checksum != canonical_checksum_before
+       OR canonical_count_after < canonical_count_before
+       OR (canonical_count_before > 0 AND canonical_min_created_after > canonical_min_created_before) THEN
+      RAISE EXCEPTION 'canonical telemetry drift detected: count before=% matched=% after=%, min_created before=% after=%, checksum before=% matched=% after=%',
+        canonical_count_before, canonical_matched_count, canonical_count_after,
+        canonical_min_created_before, canonical_min_created_after,
+        canonical_checksum_before, canonical_matched_checksum, canonical_checksum_after;
     END IF;
+
+    DROP TABLE IF EXISTS _pantheon_canonical_telemetry_pre;
   END IF;
 
   -- 5. Build and emit deterministic sentinel artifact
@@ -1936,10 +1954,12 @@ BEGIN
     'canonical_table', 'public.telemetry_events',
     'canonical_row_count_before', canonical_count_before,
     'canonical_row_count_after', canonical_count_after,
+    'canonical_matched_count', canonical_matched_count,
     'canonical_min_created_at_before', canonical_min_created_before,
     'canonical_min_created_at_after', canonical_min_created_after,
     'canonical_checksum_before', canonical_checksum_before,
     'canonical_checksum_after', canonical_checksum_after,
+    'canonical_matched_checksum', canonical_matched_checksum,
     'derived_schema', target_schema,
     'derived_tables_pruned', to_jsonb(pruned_tables),
     'result', 'preserved'

@@ -66,9 +66,9 @@ def test_telemetry_prune_enforces_canonical_sentinel_preservation() -> None:
 
     assert "canonical_checksum_before" in block
     assert "canonical_checksum_after" in block
-    assert "canonical_count_before != canonical_count_after" in block
-    assert "canonical_min_created_before IS DISTINCT FROM canonical_min_created_after" in block
-    assert "canonical_checksum_before != canonical_checksum_after" in block
+    assert "canonical_matched_count != canonical_count_before" in block
+    assert "canonical_matched_checksum != canonical_checksum_before" in block
+    assert "canonical_count_after < canonical_count_before" in block
     assert "canonical telemetry drift detected" in block
     assert "TELEMETRY_PRUNE_SENTINEL:" in block
     assert "'result', 'preserved'" in block
@@ -324,7 +324,158 @@ def test_db_behavior_refuses_invalid_identifiers(
     asyncio.run(_test())
 
 
-def test_db_behavior_drift_guard_catches_canonical_mutation(
+def test_db_behavior_concurrent_append_during_prune_preserves_both_and_succeeds(
+    isolated_db: str,
+) -> None:
+    async def _test() -> None:
+        conn = await asyncpg.connect(isolated_db)
+        try:
+            await conn.execute("CREATE SCHEMA IF NOT EXISTS test_derived_mgmt;")
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS test_derived_mgmt.telemetry_events (
+                    event_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    payload JSONB NOT NULL,
+                    ingested_seq BIGSERIAL UNIQUE,
+                    ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+                );
+                """
+            )
+
+            # Seed canonical and derived data
+            await conn.execute(
+                """
+                INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-c-001', 'system.start', '2026-08-22T05:00:00Z', '{"k": 1}'),
+                ('evt-c-002', 'order.filled', '2026-08-22T06:00:00Z', '{"k": 2}'),
+                ('evt-c-003', 'system.stop',  '2026-08-22T07:00:00Z', '{"k": 3}');
+
+                INSERT INTO test_derived_mgmt.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-d-001', 'mgmt.turn', '2026-08-22T08:00:00Z', '{"derived": true}'),
+                ('evt-d-002', 'mgmt.turn', '2026-08-22T09:00:00Z', '{"derived": true}');
+                """
+            )
+
+            # Attach a trigger to test_derived_mgmt.telemetry_events to simulate a concurrent append
+            # to public.telemetry_events executing during the prune truncate step
+            await conn.execute(
+                """
+                CREATE OR REPLACE FUNCTION test_simulate_concurrent_append() RETURNS trigger AS $$
+                BEGIN
+                  INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload)
+                  VALUES ('evt-c-concurrent-004', 'order.placed', '2026-08-22T08:30:00Z', '{"concurrent": true}');
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                DROP TRIGGER IF EXISTS trg_test_concurrent_append ON test_derived_mgmt.telemetry_events;
+                CREATE TRIGGER trg_test_concurrent_append
+                BEFORE TRUNCATE ON test_derived_mgmt.telemetry_events
+                FOR EACH STATEMENT EXECUTE FUNCTION test_simulate_concurrent_append();
+                """
+            )
+
+            assert await conn.fetchval("SELECT COUNT(*) FROM public.telemetry_events") == 3
+            assert await conn.fetchval("SELECT COUNT(*) FROM test_derived_mgmt.telemetry_events") == 2
+
+            # Run SQL prune on derived schema
+            notices = await _run_sql_block(conn, "test_derived_mgmt")
+
+            # Verify derived table was truncated
+            assert await conn.fetchval("SELECT COUNT(*) FROM test_derived_mgmt.telemetry_events") == 0
+
+            # Verify canonical table preserved the 3 pre-existing rows AND accepted the concurrent append
+            assert await conn.fetchval("SELECT COUNT(*) FROM public.telemetry_events") == 4
+            event_ids = await conn.fetch("SELECT event_id FROM public.telemetry_events ORDER BY created_at ASC")
+            assert [r["event_id"] for r in event_ids] == [
+                "evt-c-001",
+                "evt-c-002",
+                "evt-c-003",
+                "evt-c-concurrent-004",
+            ]
+
+            # Verify sentinel notice was emitted with result: preserved
+            sentinel_notices = [n for n in notices if "TELEMETRY_PRUNE_SENTINEL:" in n]
+            assert len(sentinel_notices) == 1
+            assert '"result": "preserved"' in sentinel_notices[0]
+            assert '"canonical_row_count_before": 3' in sentinel_notices[0]
+            assert '"canonical_row_count_after": 4' in sentinel_notices[0]
+            assert '"canonical_matched_count": 3' in sentinel_notices[0]
+            assert '"test_derived_mgmt.telemetry_events"' in sentinel_notices[0]
+        finally:
+            await conn.close()
+
+    asyncio.run(_test())
+
+
+def test_db_behavior_concurrent_append_with_early_and_late_timestamps(
+    isolated_db: str,
+) -> None:
+    async def _test() -> None:
+        conn = await asyncpg.connect(isolated_db)
+        try:
+            await conn.execute("CREATE SCHEMA IF NOT EXISTS test_derived_mgmt;")
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS test_derived_mgmt.telemetry_events (
+                    event_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    payload JSONB NOT NULL
+                );
+                """
+            )
+
+            await conn.execute(
+                """
+                INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-c-002', 'order.filled', '2026-08-22T06:00:00Z', '{"k": 2}');
+
+                INSERT INTO test_derived_mgmt.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-d-001', 'mgmt.turn', '2026-08-22T08:00:00Z', '{"derived": true}');
+                """
+            )
+
+            # Trigger inserts one out-of-order earlier event and one later event
+            await conn.execute(
+                """
+                CREATE OR REPLACE FUNCTION test_simulate_multi_concurrent_append() RETURNS trigger AS $$
+                BEGIN
+                  INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload)
+                  VALUES
+                    ('evt-c-001', 'system.start', '2026-08-22T04:00:00Z', '{"early": true}'),
+                    ('evt-c-003', 'system.stop',  '2026-08-22T09:00:00Z', '{"late": true}');
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                DROP TRIGGER IF EXISTS trg_test_multi_concurrent ON test_derived_mgmt.telemetry_events;
+                CREATE TRIGGER trg_test_multi_concurrent
+                BEFORE TRUNCATE ON test_derived_mgmt.telemetry_events
+                FOR EACH STATEMENT EXECUTE FUNCTION test_simulate_multi_concurrent_append();
+                """
+            )
+
+            notices = await _run_sql_block(conn, "test_derived_mgmt")
+
+            assert await conn.fetchval("SELECT COUNT(*) FROM test_derived_mgmt.telemetry_events") == 0
+            assert await conn.fetchval("SELECT COUNT(*) FROM public.telemetry_events") == 3
+
+            sentinel_notices = [n for n in notices if "TELEMETRY_PRUNE_SENTINEL:" in n]
+            assert len(sentinel_notices) == 1
+            assert '"result": "preserved"' in sentinel_notices[0]
+            assert '"canonical_row_count_before": 1' in sentinel_notices[0]
+            assert '"canonical_row_count_after": 3' in sentinel_notices[0]
+            assert '"canonical_matched_count": 1' in sentinel_notices[0]
+        finally:
+            await conn.close()
+
+    asyncio.run(_test())
+
+
+def test_db_behavior_drift_guard_catches_canonical_row_deletion(
     isolated_db: str,
 ) -> None:
     async def _test() -> None:
@@ -333,46 +484,205 @@ def test_db_behavior_drift_guard_catches_canonical_mutation(
             await conn.execute("CREATE SCHEMA IF NOT EXISTS test_drift_schema;")
             await conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS test_drift_schema.telemetry_events (
+                    event_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    payload JSONB NOT NULL
+                );
+                """
+            )
+            await conn.execute(
+                """
                 INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload) VALUES
-                ('evt-c-001', 'system.start', '2026-08-22T05:00:00Z', '{"k": 1}');
+                ('evt-c-001', 'system.start', '2026-08-22T05:00:00Z', '{"k": 1}'),
+                ('evt-c-002', 'order.filled', '2026-08-22T06:00:00Z', '{"k": 2}');
+
+                INSERT INTO test_drift_schema.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-d-001', 'mgmt.turn', '2026-08-22T08:00:00Z', '{"derived": true}');
                 """
             )
 
-            # A custom DO block that simulates canonical table mutation during prune
-            drift_sim_sql = """
-            SELECT set_config('pantheon.mgmt_ai_schema', 'test_drift_schema', false);
-            DO $prune$
-            DECLARE
-              target_schema text := current_setting('pantheon.mgmt_ai_schema');
-              canonical_count_before bigint := 0;
-              canonical_count_after bigint := 0;
-              canonical_min_created_before timestamptz := null;
-              canonical_min_created_after timestamptz := null;
-              canonical_checksum_before text := 'none';
-              canonical_checksum_after text := 'none';
-            BEGIN
-              SELECT COUNT(*), MIN(created_at), COALESCE(MD5(STRING_AGG(COALESCE(event_id::text, '') || ':' || COALESCE(created_at::text, ''), ',' ORDER BY created_at ASC, event_id ASC)), 'empty')
-                INTO canonical_count_before, canonical_min_created_before, canonical_checksum_before
-                FROM public.telemetry_events;
+            # Trigger deletes a pre-existing canonical row during truncate
+            await conn.execute(
+                """
+                CREATE OR REPLACE FUNCTION test_simulate_canonical_delete() RETURNS trigger AS $$
+                BEGIN
+                  DELETE FROM public.telemetry_events WHERE event_id = 'evt-c-001';
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
 
-              -- Simulate accidental canonical deletion
-              DELETE FROM public.telemetry_events;
+                DROP TRIGGER IF EXISTS trg_test_delete ON test_drift_schema.telemetry_events;
+                CREATE TRIGGER trg_test_delete
+                BEFORE TRUNCATE ON test_drift_schema.telemetry_events
+                FOR EACH STATEMENT EXECUTE FUNCTION test_simulate_canonical_delete();
+                """
+            )
 
-              SELECT COUNT(*), MIN(created_at), COALESCE(MD5(STRING_AGG(COALESCE(event_id::text, '') || ':' || COALESCE(created_at::text, ''), ',' ORDER BY created_at ASC, event_id ASC)), 'empty')
-                INTO canonical_count_after, canonical_min_created_after, canonical_checksum_after
-                FROM public.telemetry_events;
-
-              IF canonical_count_before != canonical_count_after
-                 OR canonical_min_created_before IS DISTINCT FROM canonical_min_created_after
-                 OR canonical_checksum_before != canonical_checksum_after THEN
-                RAISE EXCEPTION 'canonical telemetry drift detected: count before=% after=%, min_created before=% after=%, checksum before=% after=%',
-                  canonical_count_before, canonical_count_after, canonical_min_created_before, canonical_min_created_after, canonical_checksum_before, canonical_checksum_after;
-              END IF;
-            END
-            $prune$;
-            """
             with pytest.raises(asyncpg.PostgresError, match="canonical telemetry drift detected"):
-                await conn.execute(drift_sim_sql)
+                await _run_sql_block(conn, "test_drift_schema")
+        finally:
+            await conn.close()
+
+    asyncio.run(_test())
+
+
+def test_db_behavior_drift_guard_catches_canonical_row_update(
+    isolated_db: str,
+) -> None:
+    async def _test() -> None:
+        conn = await asyncpg.connect(isolated_db)
+        try:
+            await conn.execute("CREATE SCHEMA IF NOT EXISTS test_drift_schema;")
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS test_drift_schema.telemetry_events (
+                    event_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    payload JSONB NOT NULL
+                );
+                """
+            )
+            await conn.execute(
+                """
+                INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-c-001', 'system.start', '2026-08-22T05:00:00Z', '{"k": 1}');
+
+                INSERT INTO test_drift_schema.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-d-001', 'mgmt.turn', '2026-08-22T08:00:00Z', '{"derived": true}');
+                """
+            )
+
+            # Trigger mutates created_at of pre-existing canonical row during truncate
+            await conn.execute(
+                """
+                CREATE OR REPLACE FUNCTION test_simulate_canonical_update() RETURNS trigger AS $$
+                BEGIN
+                  UPDATE public.telemetry_events
+                  SET created_at = '2099-01-01T00:00:00Z'
+                  WHERE event_id = 'evt-c-001';
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                DROP TRIGGER IF EXISTS trg_test_update ON test_drift_schema.telemetry_events;
+                CREATE TRIGGER trg_test_update
+                BEFORE TRUNCATE ON test_drift_schema.telemetry_events
+                FOR EACH STATEMENT EXECUTE FUNCTION test_simulate_canonical_update();
+                """
+            )
+
+            with pytest.raises(asyncpg.PostgresError, match="canonical telemetry drift detected"):
+                await _run_sql_block(conn, "test_drift_schema")
+        finally:
+            await conn.close()
+
+    asyncio.run(_test())
+
+
+def test_db_behavior_drift_guard_catches_deletion_masked_by_concurrent_append(
+    isolated_db: str,
+) -> None:
+    async def _test() -> None:
+        conn = await asyncpg.connect(isolated_db)
+        try:
+            await conn.execute("CREATE SCHEMA IF NOT EXISTS test_drift_schema;")
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS test_drift_schema.telemetry_events (
+                    event_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    payload JSONB NOT NULL
+                );
+                """
+            )
+            await conn.execute(
+                """
+                INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-c-001', 'system.start', '2026-08-22T05:00:00Z', '{"k": 1}'),
+                ('evt-c-002', 'order.filled', '2026-08-22T06:00:00Z', '{"k": 2}');
+
+                INSERT INTO test_drift_schema.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-d-001', 'mgmt.turn', '2026-08-22T08:00:00Z', '{"derived": true}');
+                """
+            )
+
+            # Trigger deletes 1 row and inserts 1 row so total count remains 2
+            await conn.execute(
+                """
+                CREATE OR REPLACE FUNCTION test_simulate_mask_deletion() RETURNS trigger AS $$
+                BEGIN
+                  DELETE FROM public.telemetry_events WHERE event_id = 'evt-c-001';
+                  INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload)
+                  VALUES ('evt-c-fake-003', 'fake.event', '2026-08-22T07:00:00Z', '{"fake": true}');
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                DROP TRIGGER IF EXISTS trg_test_mask ON test_drift_schema.telemetry_events;
+                CREATE TRIGGER trg_test_mask
+                BEFORE TRUNCATE ON test_drift_schema.telemetry_events
+                FOR EACH STATEMENT EXECUTE FUNCTION test_simulate_mask_deletion();
+                """
+            )
+
+            with pytest.raises(asyncpg.PostgresError, match="canonical telemetry drift detected"):
+                await _run_sql_block(conn, "test_drift_schema")
+        finally:
+            await conn.close()
+
+    asyncio.run(_test())
+
+
+def test_db_behavior_drift_guard_catches_canonical_truncate(
+    isolated_db: str,
+) -> None:
+    async def _test() -> None:
+        conn = await asyncpg.connect(isolated_db)
+        try:
+            await conn.execute("CREATE SCHEMA IF NOT EXISTS test_drift_schema;")
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS test_drift_schema.telemetry_events (
+                    event_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    payload JSONB NOT NULL
+                );
+                """
+            )
+            await conn.execute(
+                """
+                INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-c-001', 'system.start', '2026-08-22T05:00:00Z', '{"k": 1}');
+
+                INSERT INTO test_drift_schema.telemetry_events (event_id, event_type, created_at, payload) VALUES
+                ('evt-d-001', 'mgmt.turn', '2026-08-22T08:00:00Z', '{"derived": true}');
+                """
+            )
+
+            # Trigger truncates canonical table
+            await conn.execute(
+                """
+                CREATE OR REPLACE FUNCTION test_simulate_canonical_truncate() RETURNS trigger AS $$
+                BEGIN
+                  TRUNCATE TABLE public.telemetry_events;
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                DROP TRIGGER IF EXISTS trg_test_truncate ON test_drift_schema.telemetry_events;
+                CREATE TRIGGER trg_test_truncate
+                BEFORE TRUNCATE ON test_drift_schema.telemetry_events
+                FOR EACH STATEMENT EXECUTE FUNCTION test_simulate_canonical_truncate();
+                """
+            )
+
+            with pytest.raises(asyncpg.PostgresError, match="canonical telemetry drift detected"):
+                await _run_sql_block(conn, "test_drift_schema")
         finally:
             await conn.close()
 
