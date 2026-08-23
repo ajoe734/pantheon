@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import subprocess
@@ -827,23 +828,49 @@ def test_db_behavior_concurrent_append_from_independent_session(
                 """
             )
 
-            # Insert an append from connection 2 right before running prune in connection 1
-            await conn2.execute(
+            # Deterministic race: pause conn1 at BEFORE TRUNCATE trigger (after baseline capture)
+            await conn1.execute(
                 """
-                INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload)
-                VALUES ('evt-c-session2-003', 'telemetry.append', '2026-08-22T07:00:00Z', '{"session2": true}');
+                CREATE OR REPLACE FUNCTION test_pause_truncate_race() RETURNS trigger AS $$
+                BEGIN
+                  PERFORM pg_sleep(0.5);
+                  RETURN NULL;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                DROP TRIGGER IF EXISTS trg_test_pause_truncate ON test_concurrent_session_mgmt.telemetry_events;
+                CREATE TRIGGER trg_test_pause_truncate
+                BEFORE TRUNCATE ON test_concurrent_session_mgmt.telemetry_events
+                FOR EACH STATEMENT EXECUTE FUNCTION test_pause_truncate_race();
                 """
             )
 
-            notices = await _run_sql_block(conn1, "test_concurrent_session_mgmt")
+            async def _run_prune() -> list[str]:
+                return await _run_sql_block(conn1, "test_concurrent_session_mgmt")
+
+            async def _run_concurrent_append() -> None:
+                # Wait briefly so conn1 enters the prune DO block, captures baseline snapshot,
+                # and enters the BEFORE TRUNCATE trigger where it sleeps
+                await asyncio.sleep(0.1)
+                await conn2.execute(
+                    """
+                    INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload)
+                    VALUES ('evt-c-session2-003', 'telemetry.append', '2026-08-22T07:00:00Z', '{"session2": true}');
+                    """
+                )
+
+            notices, _ = await asyncio.gather(_run_prune(), _run_concurrent_append())
 
             assert await conn1.fetchval("SELECT COUNT(*) FROM test_concurrent_session_mgmt.telemetry_events") == 0
             assert await conn1.fetchval("SELECT COUNT(*) FROM public.telemetry_events") == 3
 
             sentinel_notices = [n for n in notices if "TELEMETRY_PRUNE_SENTINEL:" in n]
             assert len(sentinel_notices) == 1
-            assert '"result": "preserved"' in sentinel_notices[0]
-            assert '"canonical_matched_count": 3' in sentinel_notices[0]
+            sentinel_data = json.loads(sentinel_notices[0].split("TELEMETRY_PRUNE_SENTINEL: ", 1)[1])
+            assert sentinel_data["canonical_row_count_before"] == 2
+            assert sentinel_data["canonical_matched_count"] == 2
+            assert sentinel_data["canonical_row_count_after"] == 3
+            assert sentinel_data["result"] == "preserved"
         finally:
             await conn1.close()
             await conn2.close()
