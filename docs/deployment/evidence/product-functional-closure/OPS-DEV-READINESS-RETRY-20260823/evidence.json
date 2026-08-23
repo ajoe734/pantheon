@@ -1,0 +1,59 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "OPS-DEV-READINESS-RETRY-20260823",
+    "title": "Stabilize strict provider readiness after dev restart",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-DEV-READINESS-RETRY-20260823",
+    "review_file": "docs/deployment/evidence/product-functional-closure/OPS-DEV-READINESS-RETRY-20260823/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Nonprod dev deployment strict readiness validation retry and assertion contract",
+    "not_changing": [
+      "BFF endpoints or /bff/auth/readiness contract definition",
+      "Exact source SHA assertion",
+      "Strict auth and verifier assertions"
+    ],
+    "changed_files": [
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+      "docs/deployment/evidence/product-functional-closure/OPS-DEV-READINESS-RETRY-20260823/README.md",
+      "docs/deployment/evidence/product-functional-closure/OPS-DEV-READINESS-RETRY-20260823/evidence.json"
+    ],
+    "composes_with": [
+      "PFG-MGMT-AI-PROVIDER-20260820 OpenClaw bounded-answer readiness",
+      "PFG-DEV-INTEGRATION-20260820 dev Compose and stack deployment"
+    ]
+  },
+  "behavioral_proof": {
+    "retry_window": "Bounded post-restart retry loop with DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS (default: 120s) and DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS (default: 2s)",
+    "transient_recovery": "Transient OPENCLAW_GATEWAY_TIMEOUT or providerReady=false resolves to success on subsequent poll without workflow redispatch",
+    "fail_closed_expiry": "Permanent non-ready expires at bounded deadline with sanitized error evidence and exits non-zero",
+    "exact_sha_and_auth": "Exact commit SHA matching and strict auth mode/verifier checks remain strictly enforced on every readiness sample"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "result": "pass"
+      },
+      {
+        "command": "pytest -v scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+        "result": "29 passed"
+      },
+      {
+        "command": "python3 -m pytest -v services/control-plane/bff/tests/test_pint_016_strict_browser_readiness.py",
+        "result": "6 passed"
+      }
+    ]
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Codex2 REVIEW_FILE=docs/deployment/evidence/product-functional-closure/OPS-DEV-READINESS-RETRY-20260823/evidence.json through the governed approve command only after independently checking the exact PR head.",
+    "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
+  }
+}
