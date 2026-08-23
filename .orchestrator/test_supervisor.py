@@ -3545,7 +3545,7 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         self.assertEqual(worker["status"], "running")
         self.assertEqual(
             worker["governance_lease_guard"]["reason_code"],
-            "canonical_review_handoff",
+            "governance_only_transition",
         )
 
     def test_owner_handoff_ends_the_exact_worker_that_emitted_it(self) -> None:
@@ -3869,11 +3869,100 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
         )
 
     def test_running_with_fresh_progress_is_fresh(self) -> None:
-        worker = {"status": "running", "last_event_at": self.fresh_event_at}
+        worker = {"status": "running", "last_work_progress_at": self.fresh_event_at}
         self.assertTrue(
             supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
         )
 
+    def test_running_with_fresh_log_mtime_but_no_work_progress_is_stale(self) -> None:
+        worker = {
+            "status": "running",
+            "last_event_at": self.fresh_event_at,
+            "lease_acquired_at": self.stale_event_at,
+        }
+        self.assertFalse(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
+
+
+class ProviderStreamLifecycleTests(unittest.TestCase):
+    def test_antigravity_stream_progress_and_result_are_normalized_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "agy.log"
+            log_path.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in (
+                        {"event": "init", "conversation_id": "conv-1"},
+                        {
+                            "event": "step_update",
+                            "step_update": {"type": "agent_response", "text_delta": "ok"},
+                        },
+                        {
+                            "event": "result",
+                            "result": {
+                                "status": "success",
+                                "usage": {"input_tokens": 13, "output_tokens": 7},
+                                "session_url": "https://agy/session/conv-1",
+                            },
+                        },
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            worker = {
+                "log_path": str(log_path),
+                "command": ["agy", "--output-format", "stream-json"],
+                "status": "running",
+            }
+            now = datetime(2026, 8, 23, tzinfo=timezone.utc)
+            self.assertTrue(supervisor.update_from_log({}, worker, now=now))
+            self.assertEqual(worker["session_id"], "conv-1")
+            self.assertEqual(worker["provider_terminal_status"], "success")
+            self.assertEqual(worker["provider_usage"], {"input_tokens": 13, "output_tokens": 7})
+            self.assertEqual(worker["last_work_progress_at"], "2026-08-23T00:00:00Z")
+            self.assertFalse(supervisor.update_from_log({}, worker, now=now))
+
+    def test_antigravity_result_error_is_authoritative_with_zero_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "agy.log"
+            log_path.write_text(
+                json.dumps({"event": "result", "result": {"status": "error", "error": "quota"}})
+                + "\n",
+                encoding="utf-8",
+            )
+            worker = {
+                "log_path": str(log_path),
+                "command": ["agy", "--output-format", "stream-json"],
+                "runner_status": "completed",
+                "exit_code": 0,
+            }
+            self.assertIsNotNone(supervisor.detect_worker_failure(worker))
+
+    def test_terminal_status_requires_exact_worker_lease_event(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="review")
+        worker = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+        event = {
+            "task_id": "TASK-1",
+            "type": "handoff",
+            "ts": "2026-08-15T04:01:00Z",
+            "agent": "Codex",
+            "status_command": {"worker_lease": supervisor.worker_process_identity(worker)},
+        }
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config, worker, task, activity_events=[event]
+            ),
+            "review",
+        )
+        event["status_command"]["worker_lease"]["pid_start_ticks"] = 9999
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, worker, task, activity_events=[event]
+            )
+        )
 
 if __name__ == "__main__":
     unittest.main()

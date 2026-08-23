@@ -138,6 +138,9 @@ class AntigravityAdapter(BaseAdapter):
                 model = slot_model
         if model:
             command.extend(["--model", model])
+        output_format = str(settings.get("output_format") or "stream-json").strip().lower()
+        if output_format:
+            command.extend(["--output-format", output_format])
         print_timeout = str(settings.get("print_timeout") or "").strip()
         if print_timeout:
             command.extend(["--print-timeout", print_timeout])
