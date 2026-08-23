@@ -2522,9 +2522,12 @@ services:
       context: .
       dockerfile: Dockerfile.smoke
     environment:
+      PYTHONUNBUFFERED: "1"
       SOURCE_INGEST_URL: http://source-ingest:8097
       SEARCH_URL: http://search-svc:8098
       SOURCE_INGEST_EXTERNAL_FEED_HOST: source-search-bounded-smoke
+      SOURCE_SEARCH_SMOKE_TIMEOUT_SECONDS: ${SOURCE_SEARCH_SMOKE_TIMEOUT_SECONDS:-180}
+      SOURCE_SEARCH_SMOKE_REQUEST_TIMEOUT_SECONDS: ${SOURCE_SEARCH_SMOKE_REQUEST_TIMEOUT_SECONDS:-15}
     depends_on:
       source-ingest:
         condition: service_healthy

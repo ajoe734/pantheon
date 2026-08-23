@@ -628,7 +628,12 @@ def _fetch_policy_summary(fetch: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _schedule_summary(connector_id: str) -> dict[str, Any]:
-    schedule = schedule_config_store.get_schedule(connector_id)
+    return _schedule_summary_from_config(
+        schedule_config_store.get_schedule(connector_id)
+    )
+
+
+def _schedule_summary_from_config(schedule: Any | None) -> dict[str, Any]:
     if schedule is None:
         return {
             "configured": False,
@@ -1039,9 +1044,9 @@ def _connector_registry_entry(
     *,
     fetch: dict[str, Any] | None,
     state: dict[str, Any] | None,
+    schedule: dict[str, Any],
+    freshness: dict[str, Any],
 ) -> dict[str, Any]:
-    schedule = _schedule_summary(connector.connector_id)
-    freshness = _connector_freshness_summary(connector.connector_id)
     state_payload = state or {
         "connector_id": connector.connector_id,
         "attempts": 0,
@@ -1080,7 +1085,27 @@ def _connector_registry_entry(
 
 
 def _source_connector_entries() -> list[dict[str, Any]]:
-    configured_by_id = {config.connector.connector_id: config for config in connector_store.list_configs()}
+    # This is a fleet-wide projection. Point lookups replay the JSONL stores
+    # for cross-process consistency, so performing them once per connector
+    # makes persistent deployments connector-count multiplied by journal-size
+    # work. Read each durable store once and build every registry row from the
+    # same immutable-by-convention snapshots.
+    configs, fetch_states = connector_store.read_snapshot()
+    configured_by_id = {config.connector.connector_id: config for config in configs}
+    schedules = {
+        schedule.connector_id: schedule
+        for schedule in schedule_config_store.list_schedules()
+    }
+    freshness_snapshot = store.read_freshness_snapshot()
+    runs_by_connector: dict[str, list[Any]] = {}
+    for run in freshness_snapshot["runs"]:
+        connector_id = str(getattr(run, "connector_id", ""))
+        runs_by_connector.setdefault(connector_id, []).append(run)
+    receipts_by_connector: dict[str, list[IngestReceipt]] = {}
+    for receipt in freshness_snapshot["receipts"]:
+        receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
+    observed_at = datetime.now(timezone.utc)
+
     connector_ids = set(configured_by_id)
     connectors = list(manager.list_connectors())
     connector_ids.update(connector.connector_id for connector in connectors)
@@ -1091,18 +1116,32 @@ def _source_connector_entries() -> list[dict[str, Any]]:
         connector = config.connector if config else manager.get_connector(connector_id)
         if connector is None:
             continue
+        schedule_config = schedules.get(connector_id)
         entries.append(
             _connector_registry_entry(
                 connector,
                 fetch=dict(config.fetch) if config else None,
-                state=connector_store.get_fetch_state(connector_id) if config else None,
+                state=fetch_states.get(connector_id) if config else None,
+                schedule=_schedule_summary_from_config(schedule_config),
+                freshness=_connector_freshness_summary_from_snapshot(
+                    connector_id,
+                    connector_metadata=connector.metadata,
+                    schedule=schedule_config,
+                    watermark=freshness_snapshot["watermarks"].get(connector_id),
+                    runs=runs_by_connector.get(connector_id, ()),
+                    receipts=receipts_by_connector.get(connector_id, ()),
+                    now=observed_at,
+                ),
             )
         )
     return entries
 
 
-def _source_policy_registry_payload() -> dict[str, Any]:
-    entries = _source_connector_entries()
+def _source_policy_registry_payload(
+    entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if entries is None:
+        entries = _source_connector_entries()
     connector_policies = [dict(entry["crawler_policy"]) for entry in entries]
     return policy_registry_payload(
         connector_policies,
@@ -2671,7 +2710,7 @@ def source_connector_registry() -> dict[str, Any]:
         "schema_version": "source_connector_registry.v1",
         "connectors": entries,
         "provider_examples": _provider_example_payloads(),
-        "policy_registry": _source_policy_registry_payload(),
+        "policy_registry": _source_policy_registry_payload(entries),
         "financial_data_source_catalog": financial_catalog,
         "active_universe_policy": financial_catalog["active_universe_policy"],
     }
