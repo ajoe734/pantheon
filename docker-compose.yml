@@ -748,16 +748,14 @@ services:
         condition: service_completed_successfully
     command:
       [
-        "node",
-        "dist/index.js",
-        "gateway",
-        "--allow-unconfigured",
-        "--port",
-        "18789",
-        "--auth",
-        "token",
-        "--token",
-        "${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}",
+        "sh",
+        "-ec",
+        # OpenResponses is deliberately opt-in upstream.  Persist the narrow
+        # Management-AI streaming surface before every gateway start so a
+        # recreated dev volume cannot regress to a healthy-but-404 gateway.
+        # Keep the token in the container environment rather than interpolating
+        # it into the shell command.
+        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw

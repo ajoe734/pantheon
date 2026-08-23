@@ -47,6 +47,10 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
         "ANTHROPIC_CLAUDE_CODE_NPM_VERSION": "2.1.216",
         "GOOGLE_GEMINI_CLI_NPM_VERSION": "0.51.0",
     }
+    upstream_command = " ".join(upstream["command"])
+    assert "config set gateway.http.endpoints.responses.enabled true --json" in upstream_command
+    assert 'exec node dist/index.js gateway --allow-unconfigured' in upstream_command
+    assert '"$$OPENCLAW_GATEWAY_TOKEN"' in upstream_command
     assert upstream["depends_on"]["openclaw-data-init"]["condition"] == "service_completed_successfully"
     upstream_healthcheck = " ".join(upstream["healthcheck"]["test"])
     assert "/readyz" in upstream_healthcheck
@@ -149,6 +153,7 @@ def test_openclaw_pin_and_shared_model_pool_stay_in_lockstep() -> None:
     assert all(model_ref in model_pool for model_ref in expected_models)
     assert "plugins.entries.codex.enabled" in model_pool
     assert "plugins.entries.google.enabled" in model_pool
+    assert '"path":"gateway.http.endpoints.responses.enabled","value":true' in model_pool
     assert (
         '{"path":"agents.defaults.model.primary","value":"anthropic/claude-opus-4-8"}'
         in model_pool
