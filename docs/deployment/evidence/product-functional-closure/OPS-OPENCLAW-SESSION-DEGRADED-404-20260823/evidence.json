@@ -1,0 +1,66 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "OPS-OPENCLAW-SESSION-DEGRADED-404-20260823",
+    "title": "Normalize missing OpenClaw upstream session route for honest-stack deployment",
+    "owner": "Codex2",
+    "reviewer": "Antigravity2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-OPENCLAW-SESSION-DEGRADED-404-20260823",
+    "review_file": "docs/deployment/evidence/product-functional-closure/OPS-OPENCLAW-SESSION-DEGRADED-404-20260823/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "OpenClaw adapter facade normalization for an absent upstream session collection route",
+    "not_changing": [
+      "Global upstream HTTP status mapping",
+      "Session resource-specific get and cancel semantics",
+      "Optional capabilities endpoint handling",
+      "Broker, paper, canary, live, and capital execution gates"
+    ],
+    "changed_files": [
+      "services/openclaw-gateway-adapter/main.py",
+      "services/openclaw-gateway-adapter/test_main.py",
+      "services/openclaw-gateway-adapter/test_compose_activation.py",
+      "docs/deployment/evidence/product-functional-closure/OPS-OPENCLAW-SESSION-DEGRADED-404-20260823/evidence.json"
+    ],
+    "composes_with": [
+      "SVC-OPENCLAW-HONEST-STACK-SEMANTICS",
+      "SVC-OPENCLAW-UPSTREAM-CLIENT",
+      "Pantheon dev deployment honest-stack smoke"
+    ]
+  },
+  "behavioral_proof": {
+    "missing_session_collection_route": "An upstream UPSTREAM_NOT_FOUND with upstream_status=404 for /api/sessions is exposed as HTTP 503, UPSTREAM_UNAVAILABLE, retryable=true, owner_plane=openclaw_runtime, error_layer=upstream, and preserves the original upstream status in the typed envelope.",
+    "success_passthrough": "Valid upstream session create responses remain HTTP 201 with the unchanged normalized session envelope.",
+    "honest_stack_compatibility": "The smoke contract accepts HTTP 503 plus UPSTREAM_UNAVAILABLE as a safely deferred session path.",
+    "execution_boundary": "Capability output remains broker_execution=deferred, paper_adapter=deferred, live_adapter=deferred, and canary_adapter=deferred while the upstream gateway is otherwise reachable."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py --print-python; <task-python> -m pytest -q services/openclaw-gateway-adapter/test_main.py",
+        "result": "pass: 117 passed"
+      },
+      {
+        "command": "<task-python> -m pytest -q services/openclaw-gateway-adapter/test_compose_activation.py",
+        "result": "pass: 3 passed; combined adapter and compose run: 120 passed, 18 subtests passed"
+      },
+      {
+        "command": "<task-python> -m py_compile services/openclaw-gateway-adapter/main.py scripts/smoke_honest_stack.py; docker compose --profile openclaw --profile smoke config --quiet",
+        "result": "pass"
+      },
+      {
+        "command": "OPENCLAW_GATEWAY_PORT=28789 OPENCLAW_GATEWAY_ADAPTER_PORT=28104 COMPOSE_PROJECT_NAME=pantheon_ops_openclaw_404 docker compose --profile openclaw up -d --no-build --wait openclaw-gateway-adapter; curl POST /api/openclaw-adapter/sessions",
+        "result": "pass: actual healthy OpenClaw gateway returned upstream 404 for /api/sessions; adapter returned 503 UPSTREAM_UNAVAILABLE with retryable=true and preserved upstream_status=404"
+      }
+    ],
+    "post_merge_requirement": "Run the exact dev deployment honest-stack smoke against the merged Pantheon dev commit before owner closeout; this manifest makes no hosted deployment success claim."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Independently inspect the exact PR head, rerun the focused adapter and compose assertions, confirm the upstream 404 cannot enable any execution gate, then bind this already-committed manifest with AI_NAME=Antigravity2 REVIEW_FILE=docs/deployment/evidence/product-functional-closure/OPS-OPENCLAW-SESSION-DEGRADED-404-20260823/evidence.json through the governed approve command.",
+    "owner_claim": "Owner evidence is ready for independent review; no reviewer approval or hosted deployment success is claimed by this file."
+  }
+}
