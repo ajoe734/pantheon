@@ -32,8 +32,8 @@
     ]
   },
   "behavioral_proof": {
-    "concurrency_safety": "Pre-state snapshot matching against public.telemetry_events verifies all historical rows remain intact with identical checksums regardless of concurrent appends during prune",
-    "canonical_protection": "Strictly prevents and detects any DELETE, UPDATE, or TRUNCATE on canonical public.telemetry_events; fails closed on historical row loss or modification",
+    "concurrency_safety": "Pre-state snapshot matching against public.telemetry_events with full-row md5(to_jsonb(r)::text) digests verifies all historical rows remain intact with identical content regardless of concurrent appends during prune",
+    "canonical_protection": "Strictly prevents and detects any DELETE, UPDATE (including payload, event_type, created_at, or other columns), or TRUNCATE on canonical public.telemetry_events; fails closed on historical row loss or modification even if masked by appends",
     "single_prune_authority": "Uses existing prune_dev_management_ai_telemetry_for_disk function with no second cleanup path or alternative authority",
     "deterministic_sentinel": "Emits TELEMETRY_PRUNE_SENTINEL JSON containing pre/post row counts, matched count, min timestamps, and checksums verifying canonical table preservation"
   },
@@ -45,7 +45,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_deploy_nonprod_telemetry_prune.py scripts/test_management_ai_postgres_bootstrap_contract.py",
-        "result": "30 passed (23 prune tests including positive concurrent-append and negative canonical-mutation tests + 7 bootstrap contract tests)"
+        "result": "33 passed (26 prune tests including two-session concurrent-append, trigger-based concurrent-append, payload/event_type UPDATE detection, and deletion/truncation negative tests + 7 bootstrap contract tests)"
       },
       {
         "command": "./scripts/deploy_nonprod_vm.sh --environment dev --sha 95a1455e3dc1a275b8d541fd2c432c3971013308 --project-id pantheon-lupin-dev-20260719 --dry-run",

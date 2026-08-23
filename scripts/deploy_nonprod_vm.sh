@@ -1903,10 +1903,11 @@ BEGIN
   IF canonical_exists THEN
     DROP TABLE IF EXISTS _pantheon_canonical_telemetry_pre;
     CREATE TEMP TABLE _pantheon_canonical_telemetry_pre ON COMMIT DROP AS
-      SELECT event_id, created_at
-      FROM public.telemetry_events;
+      SELECT r.event_id, r.created_at, md5(to_jsonb(r)::text) AS row_digest
+      FROM public.telemetry_events r;
 
-    SELECT COUNT(*), MIN(created_at), COALESCE(MD5(STRING_AGG(COALESCE(event_id::text, '') || ':' || COALESCE(created_at::text, ''), ',' ORDER BY created_at ASC, event_id ASC)), 'empty')
+    SELECT COUNT(*), MIN(created_at),
+           COALESCE(MD5(STRING_AGG(COALESCE(event_id::text, '') || ':' || COALESCE(row_digest, ''), ',' ORDER BY created_at ASC, event_id ASC)), 'empty')
       INTO canonical_count_before, canonical_min_created_before, canonical_checksum_before
       FROM _pantheon_canonical_telemetry_pre;
   END IF;
@@ -1927,14 +1928,17 @@ BEGIN
 
   -- 4. Capture canonical post-state and enforce concurrency-safe preservation sentinel
   IF canonical_exists THEN
-    SELECT COUNT(*), MIN(created_at), COALESCE(MD5(STRING_AGG(COALESCE(event_id::text, '') || ':' || COALESCE(created_at::text, ''), ',' ORDER BY created_at ASC, event_id ASC)), 'empty')
+    SELECT COUNT(*), MIN(created_at),
+           COALESCE(MD5(STRING_AGG(COALESCE(cur.event_id::text, '') || ':' || COALESCE(md5(to_jsonb(cur)::text), ''), ',' ORDER BY cur.created_at ASC, cur.event_id ASC)), 'empty')
       INTO canonical_count_after, canonical_min_created_after, canonical_checksum_after
-      FROM public.telemetry_events;
+      FROM public.telemetry_events cur;
 
-    SELECT COUNT(*), COALESCE(MD5(STRING_AGG(COALESCE(cur.event_id::text, '') || ':' || COALESCE(cur.created_at::text, ''), ',' ORDER BY cur.created_at ASC, cur.event_id ASC)), 'empty')
+    SELECT COUNT(*),
+           COALESCE(MD5(STRING_AGG(COALESCE(cur.event_id::text, '') || ':' || COALESCE(md5(to_jsonb(cur)::text), ''), ',' ORDER BY pre.created_at ASC, pre.event_id ASC)), 'empty')
       INTO canonical_matched_count, canonical_matched_checksum
       FROM public.telemetry_events cur
-      JOIN _pantheon_canonical_telemetry_pre pre ON cur.event_id = pre.event_id;
+      JOIN _pantheon_canonical_telemetry_pre pre ON cur.event_id = pre.event_id
+      WHERE md5(to_jsonb(cur)::text) = pre.row_digest;
 
     IF canonical_matched_count != canonical_count_before
        OR canonical_matched_checksum != canonical_checksum_before
