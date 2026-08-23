@@ -81,7 +81,7 @@
   },
   "delivery": {
     "anchor_commit": {
-      "sha": "a4bacba7a",
+      "sha": "1b789b35d",
       "subject": "OPS-OPENCLAW-READINESS-RESTART-BUDGET-20260823: anchor readiness"
     },
     "pull_request": "pending"
