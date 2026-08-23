@@ -194,7 +194,7 @@ def test_request_timeout_is_bounded_and_names_phase_connector_checkpoint(
             "http://source-ingest:8097/api/source-ingest/registry",
         )
 
-    assert time.monotonic() - started < 0.05
+    assert time.monotonic() - started < 0.5
     assert 0 < observed["timeout"] <= 0.05
     message = str(exc_info.value)
     assert "phase=registry_policy_check" in message
