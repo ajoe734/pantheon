@@ -119,6 +119,8 @@ def test_honest_stack_smoke_checks_openclaw_adapter_degraded_boundary() -> None:
     assert "/api/openclaw-adapter/capabilities" in smoke
     assert "/api/openclaw-adapter/sessions" in smoke
     assert "CAPABILITY_DENIED" in smoke
+    assert "UPSTREAM_UNAVAILABLE" in smoke
+    assert "openclaw-gateway-adapter session path was not safely deferred" in smoke
 
 
 def test_openclaw_pin_and_shared_model_pool_stay_in_lockstep() -> None:

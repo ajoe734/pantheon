@@ -1,0 +1,89 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "OPS-OPENCLAW-READINESS-RESTART-BUDGET-20260823",
+    "title": "Make OpenClaw post-restart readiness converge within a bounded deployment budget",
+    "owner": "Codex2",
+    "reviewer": "Antigravity2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-OPENCLAW-READINESS-RESTART-BUDGET-20260823",
+    "review_file": "docs/deployment/evidence/product-functional-closure/OPS-OPENCLAW-READINESS-RESTART-BUDGET-20260823/evidence.json",
+    "evidence_cut_at": "2026-08-23"
+  },
+  "scope": {
+    "owned_layer": "The deployment OpenClaw live-smoke readiness probe and its focused behavioural contract tests.",
+    "not_changing": [
+      "The OpenClaw gateway, adapter readiness endpoint, provider implementation, and credential configuration are unchanged.",
+      "Live invoke and Responses stream requests remain non-retryable single turns.",
+      "The deployment lease, workflow routing, frontend, source ingestion, broker, paper, canary, live, and capital-binding controls are unchanged and remain fail closed."
+    ],
+    "changed_files": [
+      "scripts/openclaw-assistant-openclaw-live-smoke.sh",
+      "scripts/test_openclaw_assistant_openclaw_live_smoke.py",
+      "docs/deployment/evidence/product-functional-closure/OPS-OPENCLAW-READINESS-RESTART-BUDGET-20260823/README.md",
+      "docs/deployment/evidence/product-functional-closure/OPS-OPENCLAW-READINESS-RESTART-BUDGET-20260823/evidence.json"
+    ],
+    "composes_with": [
+      "PFG-MGMT-AI-RESPONSES-DEV-20260823 bounded actual-answer readiness contract",
+      "The protected root dev deployment OpenClaw smoke stage under its environment lease"
+    ]
+  },
+  "acceptance_contract": {
+    "bounded_budget": "The total readiness wall-clock budget defaults to 90 seconds and cannot exceed 90 seconds; every request receives no more than 20 seconds and no more than the remaining budget.",
+    "retryable_outcomes": [
+      "curl exit 7 (connection refused)",
+      "curl exit 28 (per-request timeout)",
+      "HTTP 503"
+    ],
+    "terminal_outcomes": "Any other curl failure, non-503 HTTP response, malformed readiness response, or ready=false answer fails immediately.",
+    "success": "The first HTTP 200 ready=true response stops readiness probing immediately.",
+    "failure_logging": "Known uppercase gateway error codes are retained; arbitrary upstream details are represented only by a short SHA-256 identifier.",
+    "side_effect_safety": "The live invoke and Responses stream remain one request each and are not retried."
+  },
+  "validation": {
+    "environment": "checkout-scoped .venv-pantheon; the test fake replaces curl only and does not use an adapter, credential, gateway token, broker, source-ingestion write, or capital authority.",
+    "commands": [
+      {
+        "command": "git diff --check",
+        "result": "pass"
+      },
+      {
+        "command": "bash -n scripts/openclaw-assistant-openclaw-live-smoke.sh",
+        "result": "pass"
+      },
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py --print-python && <returned-python> -m pytest -q scripts/test_openclaw_assistant_openclaw_live_smoke.py",
+        "result": "6 passed"
+      }
+    ],
+    "behavioural_cases": [
+      "HTTP 503 then ready=true retries once, omits raw failure data, and passes.",
+      "Connection refusal then ready=true retries once and passes.",
+      "Per-request timeout then ready=true retries once and passes.",
+      "Repeated HTTP 503 never-ready behaviour fails deterministically inside a two-second test budget.",
+      "A ready=false answer fails without retry.",
+      "A successful run makes exactly one readiness success, invoke, and stream request."
+    ]
+  },
+  "hosted_proof": {
+    "status": "awaiting_reviewed_dev_merge_and_exact_deployment",
+    "deployment_gate": "The protected dev workflow deploys only the exact current dev revision, then runs the four-stage OpenClaw live smoke under its environment lease. A task branch cannot supply equivalent deployed proof.",
+    "required_command": "OPENCLAW_GATEWAY_ADAPTER_URL=http://localhost:18104 bash scripts/openclaw-assistant-openclaw-live-smoke.sh",
+    "required_result": "All four stages pass: readiness converges to ready=true within the bounded budget; the live CLI invoke returns OPENCLAW_LIVE; transport=cli; and the Responses stream returns a non-empty OPENCLAW_LIVE terminal message with transport=responses_http.",
+    "recording_rule": "At closeout, record only the exact deployed SHA, workflow run identity or URL, endpoint outcome, transports, and sanitized byte/count/status facts in the governed delivery metadata; never add credentials or raw provider output."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Review the exact task PR head and this manifest. Verify the retry set and absolute caps are no wider than declared, every non-readiness live turn remains single-shot, and the focused fake-client tests cover all stated terminal and convergence cases. Bind this already-committed manifest with AI_NAME=Antigravity2 REVIEW_FILE=<this path> through the governed approve command.",
+    "owner_claim": "Local implementation and focused tests are ready for independent review. The leased exact-dev hosted smoke remains a post-merge closeout precondition."
+  },
+  "delivery": {
+    "anchor_commit": {
+      "sha": "1b789b35d",
+      "subject": "OPS-OPENCLAW-READINESS-RESTART-BUDGET-20260823: anchor readiness"
+    },
+    "pull_request": "pending"
+  }
+}
