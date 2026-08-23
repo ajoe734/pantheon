@@ -11,6 +11,7 @@ COMPOSE_FILE="${PANTHEON_COMPOSE_FILE:-docker-compose.yml}"
 MODEL_POOL_BATCH='[
   {"path":"plugins.entries.codex.enabled","value":true},
   {"path":"plugins.entries.google.enabled","value":true},
+  {"path":"gateway.http.endpoints.responses.enabled","value":true},
   {"path":"agents.defaults.model.primary","value":"anthropic/claude-opus-4-8"},
   {"path":"agents.defaults.model.fallbacks","value":["openai/gpt-5.6-sol","openai/gpt-5.5"]},
   {"path":"agents.defaults.models[\"openai/gpt-5.6-sol\"]","value":{"alias":"codex-sol","agentRuntime":{"id":"codex"}}},
@@ -54,8 +55,10 @@ fi
 configured="$(openclaw config get agents.defaults.models --json)"
 primary="$(openclaw config get agents.defaults.model.primary --json)"
 fallbacks="$(openclaw config get agents.defaults.model.fallbacks --json)"
+responses_enabled="$(openclaw config get gateway.http.endpoints.responses.enabled --json)"
 jq -e '. == "anthropic/claude-opus-4-8"' <<<"$primary" >/dev/null
 jq -e '. == ["openai/gpt-5.6-sol", "openai/gpt-5.5"]' <<<"$fallbacks" >/dev/null
+jq -e '. == true' <<<"$responses_enabled" >/dev/null
 for model_ref in \
   openai/gpt-5.6-sol \
   openai/gpt-5.5 \
@@ -66,4 +69,4 @@ for model_ref in \
 done
 
 openclaw --version
-printf 'Configured OpenClaw shared model pool: Claude primary with 2 ordered Codex fallbacks; 2 Claude and 1 Gemini also registered.\n'
+printf 'Configured OpenClaw shared model pool and enabled the OpenResponses HTTP endpoint.\n'

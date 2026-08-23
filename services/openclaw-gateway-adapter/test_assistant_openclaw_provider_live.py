@@ -599,6 +599,40 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "error")
         self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_DISABLED")
 
+    def test_stream_completed_without_text_reports_empty_response(self) -> None:
+        from unittest import mock
+
+        class FakeResp:
+            def __iter__(self):
+                return iter([b'data: {"type":"response.completed"}\n'])
+
+            def close(self):
+                pass
+
+        provider = self._provider()
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_EMPTY")
+
+    def test_stream_done_marker_without_text_reports_empty_response(self) -> None:
+        from unittest import mock
+
+        class FakeResp:
+            def __iter__(self):
+                return iter([b"data: [DONE]\\n"])
+
+            def close(self):
+                pass
+
+        provider = self._provider()
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_EMPTY")
+
     def test_stream_requires_token(self) -> None:
         provider = AssistantOpenClawProvider(
             gateway_url="ws://openclaw-gateway:18789", token="",
