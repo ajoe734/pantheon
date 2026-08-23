@@ -253,6 +253,90 @@ def test_controller_readback_reads_each_store_once_at_production_scale(
     assert len(result) == connector_count
 
 
+def test_registry_reads_each_persistent_store_once_at_production_scale(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, module = client
+    connector_count = 1_591
+    calls = {"configs": 0, "schedules": 0, "freshness": 0}
+    configs = []
+    fetch_states = {}
+    for index in range(connector_count):
+        connector_id = f"connector-{index}"
+        configs.append(
+            SimpleNamespace(
+                connector=module.SourceConnector.from_dict(
+                    _connector(connector_id=connector_id)
+                ),
+                fetch={"mode": "static_records", "records": []},
+            )
+        )
+        fetch_states[connector_id] = {
+            "connector_id": connector_id,
+            "attempts": 0,
+            "successful_attempts": 0,
+            "failed_attempts": 0,
+            "last_error": None,
+            "updated_at": None,
+        }
+
+    class ConnectorStore:
+        def read_snapshot(self):
+            calls["configs"] += 1
+            return configs, fetch_states
+
+        def list_configs(self):
+            raise AssertionError("registry must not replay configs")
+
+        def get_config(self, _connector_id):
+            raise AssertionError("registry must not perform point config reads")
+
+        def get_fetch_state(self, _connector_id):
+            raise AssertionError("registry must not replay fetch state per connector")
+
+    class ScheduleStore:
+        def list_schedules(self):
+            calls["schedules"] += 1
+            return []
+
+        def get_schedule(self, _connector_id):
+            raise AssertionError("registry must not replay schedules per connector")
+
+    class IngestStore:
+        def read_freshness_snapshot(self):
+            calls["freshness"] += 1
+            return {"runs": (), "receipts": (), "watermarks": {}}
+
+        def list_runs(self):
+            raise AssertionError("registry must not replay runs per connector")
+
+        def list_receipts(self, **_kwargs):
+            raise AssertionError("registry must not replay receipts per connector")
+
+        def get_watermark(self, _connector_id):
+            raise AssertionError("registry must not replay watermarks per connector")
+
+    class Manager:
+        def list_connectors(self):
+            return []
+
+        def get_connector(self, _connector_id):
+            raise AssertionError("all scale-test connectors are configured")
+
+    monkeypatch.setattr(module, "connector_store", ConnectorStore())
+    monkeypatch.setattr(module, "schedule_config_store", ScheduleStore())
+    monkeypatch.setattr(module, "store", IngestStore())
+    monkeypatch.setattr(module, "manager", Manager())
+
+    entries = module._source_connector_entries()
+    policy = module._source_policy_registry_payload(entries)
+
+    assert len(entries) == connector_count
+    assert len(policy["connector_policies"]) == connector_count
+    assert calls == {"configs": 1, "schedules": 1, "freshness": 1}
+
+
 def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
     test_client, data_dir, module = client
     response = test_client.post(
@@ -1207,4 +1291,3 @@ def test_controller_readback_thread_safety(client, monkeypatch: pytest.MonkeyPat
     response = test_client.get("/api/source-ingest/controller/readback")
     assert response.status_code == 200
     assert lock_acquired is True
-
