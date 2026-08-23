@@ -828,20 +828,32 @@ def test_db_behavior_concurrent_append_from_independent_session(
                 """
             )
 
-            # Deterministic race: pause conn1 at BEFORE TRUNCATE trigger (after baseline capture)
+            # Deterministic cross-session barrier using PostgreSQL session-level advisory locks:
+            # conn1 holds LOCK_BASELINE_CAPTURED (888001) until BEFORE TRUNCATE trigger fires.
+            # conn2 holds LOCK_APPEND_COMPLETED (888002) until its concurrent INSERT commits.
+            LOCK_BASELINE_CAPTURED = 888001
+            LOCK_APPEND_COMPLETED = 888002
+
+            await conn1.execute(f"SELECT pg_advisory_lock({LOCK_BASELINE_CAPTURED});")
+            await conn2.execute(f"SELECT pg_advisory_lock({LOCK_APPEND_COMPLETED});")
+
             await conn1.execute(
-                """
-                CREATE OR REPLACE FUNCTION test_pause_truncate_race() RETURNS trigger AS $$
+                f"""
+                CREATE OR REPLACE FUNCTION test_barrier_truncate_race() RETURNS trigger AS $$
                 BEGIN
-                  PERFORM pg_sleep(0.5);
+                  -- Signal conn2 that baseline snapshot has been captured and we entered BEFORE TRUNCATE
+                  PERFORM pg_advisory_unlock({LOCK_BASELINE_CAPTURED});
+                  -- Wait for conn2 to finish its concurrent append and release LOCK_APPEND_COMPLETED
+                  PERFORM pg_advisory_lock({LOCK_APPEND_COMPLETED});
+                  PERFORM pg_advisory_unlock({LOCK_APPEND_COMPLETED});
                   RETURN NULL;
                 END;
                 $$ LANGUAGE plpgsql;
 
-                DROP TRIGGER IF EXISTS trg_test_pause_truncate ON test_concurrent_session_mgmt.telemetry_events;
-                CREATE TRIGGER trg_test_pause_truncate
+                DROP TRIGGER IF EXISTS trg_test_barrier_truncate ON test_concurrent_session_mgmt.telemetry_events;
+                CREATE TRIGGER trg_test_barrier_truncate
                 BEFORE TRUNCATE ON test_concurrent_session_mgmt.telemetry_events
-                FOR EACH STATEMENT EXECUTE FUNCTION test_pause_truncate_race();
+                FOR EACH STATEMENT EXECUTE FUNCTION test_barrier_truncate_race();
                 """
             )
 
@@ -849,15 +861,20 @@ def test_db_behavior_concurrent_append_from_independent_session(
                 return await _run_sql_block(conn1, "test_concurrent_session_mgmt")
 
             async def _run_concurrent_append() -> None:
-                # Wait briefly so conn1 enters the prune DO block, captures baseline snapshot,
-                # and enters the BEFORE TRUNCATE trigger where it sleeps
-                await asyncio.sleep(0.1)
-                await conn2.execute(
-                    """
-                    INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload)
-                    VALUES ('evt-c-session2-003', 'telemetry.append', '2026-08-22T07:00:00Z', '{"session2": true}');
-                    """
-                )
+                # 1. Wait until conn1 enters BEFORE TRUNCATE trigger (guaranteeing baseline was captured)
+                await conn2.execute(f"SELECT pg_advisory_lock({LOCK_BASELINE_CAPTURED});")
+                try:
+                    # 2. Insert concurrent canonical row from independent connection
+                    await conn2.execute(
+                        """
+                        INSERT INTO public.telemetry_events (event_id, event_type, created_at, payload)
+                        VALUES ('evt-c-session2-003', 'telemetry.append', '2026-08-22T07:00:00Z', '{"session2": true}');
+                        """
+                    )
+                finally:
+                    # 3. Unblock conn1 so prune can proceed to post-read verification
+                    await conn2.execute(f"SELECT pg_advisory_unlock({LOCK_APPEND_COMPLETED});")
+                    await conn2.execute(f"SELECT pg_advisory_unlock({LOCK_BASELINE_CAPTURED});")
 
             notices, _ = await asyncio.gather(_run_prune(), _run_concurrent_append())
 
@@ -872,6 +889,14 @@ def test_db_behavior_concurrent_append_from_independent_session(
             assert sentinel_data["canonical_row_count_after"] == 3
             assert sentinel_data["result"] == "preserved"
         finally:
+            try:
+                await conn1.execute("SELECT pg_advisory_unlock_all();")
+            except Exception:
+                pass
+            try:
+                await conn2.execute("SELECT pg_advisory_unlock_all();")
+            except Exception:
+                pass
             await conn1.close()
             await conn2.close()
 
