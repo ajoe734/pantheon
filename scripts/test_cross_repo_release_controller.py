@@ -1149,4 +1149,3 @@ def test_execution_path_cli_main_stale_pair_rejected(tmp_path: Path, monkeypatch
     ])
 
     assert exit_code == 1
-
