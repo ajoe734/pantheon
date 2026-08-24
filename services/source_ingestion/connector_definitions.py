@@ -846,6 +846,8 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
     ),
 )
 
+DEPLOYED_CONNECTOR_DEFINITIONS: tuple[ConnectorDefinition, ...] = _CANONICAL_DEFINITIONS
+
 _DEFINITIONS_BY_ID: dict[str, ConnectorDefinition] = {
     defn.definition_id: defn for defn in _CANONICAL_DEFINITIONS
 }
