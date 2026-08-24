@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pantheon SD-SRCM-06 Alpha Rule Query",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "dataset_ref",
+    "universe",
+    "rule",
+    "limit"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "alpha_rule_query.v1"
+      ]
+    },
+    "dataset_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "universe": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "as_of": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "and",
+            "or",
+            "not",
+            "eq",
+            "neq",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "in",
+            "not_in",
+            "between"
+          ]
+        },
+        "field": {
+          "type": "string"
+        },
+        "value": {},
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "arg": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sort": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "field"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "minLength": 1
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    }
+  },
+  "additionalProperties": false
+}
