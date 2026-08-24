@@ -240,10 +240,10 @@
         "schema_conformance_status": "passed"
       },
       "pit_watermark_and_freshness": {
-        "event_time": "2026-08-24T13:45:00Z",
-        "available_time": "2026-08-24T16:30:00Z",
-        "ingest_time": "2026-08-24T16:35:00Z",
-        "watermark_value": "2026-08-24",
+        "event_time": "2026-08-21T00:00:00Z",
+        "available_time": "2026-08-21T16:30:00Z",
+        "ingest_time": "2026-08-21T16:35:00Z",
+        "watermark_value": "2026-08-21",
         "cadence_class": "daily_close",
         "freshness_sla_seconds": 7200
       },
@@ -252,7 +252,8 @@
         "source_record_id": "tw-taifex:taifex_futures_chip:TX:foreign_investors:52fcb5a7528418d0",
         "search_query": "TAIFEX foreign investors open interest",
         "search_readback_matched": true,
-        "citation_label": "TAIFEX TX Foreign Investors 2026-08-24"
+        "citation_label": "TAIFEX TX Foreign Investors 2026-08-21",
+        "note": "Canary live OpenAPI readback verified against 2026-08-21 published trade date (latest available published date from TAIFEX OpenAPI on current host)"
       },
       "lifecycle_and_rollback": {
         "create_disabled_verified": true,
@@ -421,8 +422,8 @@
     }
   ],
   "validation": {
-    "focused_unit_tests_passing": 42,
-    "full_ingestion_suite_passing": 822,
+    "focused_unit_tests_passing": 44,
+    "full_ingestion_suite_passing": 824,
     "validation_commands": [
       "pytest services/source_ingestion/tests/test_provider_management_coverage.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_external_source_connectors.py",
       "pytest services/source_ingestion/tests/"

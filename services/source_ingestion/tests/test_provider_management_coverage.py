@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import pytest
@@ -128,6 +129,19 @@ def validate_catalog_template_adapter_normalized_schema(tmpl: dict[str, Any]) ->
 
     connector_id = tmpl.get("connector_id")
     defn = _DEFINITIONS_BY_ID.get(connector_id) if connector_id else None
+    if connector_id and not defn:
+        raise AssertionError(f"Template {tmpl.get('template_id')} references unknown connector_id '{connector_id}'")
+
+    if defn:
+        tmpl_source_type = tmpl.get("source_type")
+        if tmpl_source_type:
+            assert (
+                tmpl_source_type in defn.source_types
+                or tmpl_source_type in defn.source_classes
+            ), (
+                f"Template {tmpl['template_id']} source_type '{tmpl_source_type}' not in definition "
+                f"source_types {defn.source_types} or source_classes {defn.source_classes}"
+            )
 
     # Map dataset -> list of expected field names
     dataset_expected_map: dict[str, list[str]] = {}
@@ -147,7 +161,7 @@ def validate_catalog_template_adapter_normalized_schema(tmpl: dict[str, Any]) ->
         # Normalize sample payload and verify every expected field is present in normalized row
         sample_payload = _sample_payload_for_adapter(adapter_token, dataset_name)
         if not sample_payload:
-            continue
+            raise AssertionError(f"No sample payload defined for adapter '{adapter_token}' and dataset '{dataset_name}'")
 
         if "TaifexDerivativesChipAdapter" in adapter_token:
             adapter = TaifexDerivativesChipAdapter()
@@ -157,18 +171,40 @@ def validate_catalog_template_adapter_normalized_schema(tmpl: dict[str, Any]) ->
             for field_name in expected_fields:
                 assert field_name in row, (
                     f"Template {tmpl['template_id']} dataset '{dataset_name}' declares expected_field '{field_name}' "
-                    f"missing from normalized row keys: {sorted(row.keys())}"
+                    f"missing from TAIFEX normalized row keys: {sorted(row.keys())}"
                 )
         elif "TdccShareholdingDistributionAdapter" in adapter_token:
             adapter = TdccShareholdingDistributionAdapter()
             rows = adapter.normalized_rows_from_payload(sample_payload)
-            assert len(rows) > 0
+            assert len(rows) > 0, "No normalized rows returned for TDCC"
             row = rows[0]
             for field_name in expected_fields:
                 assert field_name in row, (
                     f"Template {tmpl['template_id']} declares expected_field '{field_name}' "
                     f"missing from TDCC normalized row keys: {sorted(row.keys())}"
                 )
+        elif "AdmittedSocialMediaAdapter" in adapter_token:
+            adapter = AdmittedSocialMediaAdapter()
+            rows = adapter.normalized_rows_from_payload(sample_payload, platform="stocktwits")
+            assert len(rows) > 0, "No normalized rows returned for Social"
+            row = rows[0]
+            for field_name in expected_fields:
+                assert field_name in row, (
+                    f"Template {tmpl['template_id']} declares expected_field '{field_name}' "
+                    f"missing from Social normalized row keys: {sorted(row.keys())}"
+                )
+        elif "ExternalAlphaDbAdapter" in adapter_token:
+            adapter = ExternalAlphaDbAdapter()
+            records = adapter.normalized_rows_from_payload(sample_payload)
+            assert len(records) > 0, "No normalized records returned for Alpha DB"
+            rec_dict = records[0].to_dict()
+            for field_name in expected_fields:
+                assert field_name in rec_dict, (
+                    f"Template {tmpl['template_id']} declares expected_field '{field_name}' "
+                    f"missing from Alpha DB normalized record fields: {sorted(rec_dict.keys())}"
+                )
+        else:
+            raise AssertionError(f"Unhandled adapter token '{adapter_token}' in normalized schema validator")
 
 
 def test_catalog_templates_join_connector_definitions_and_allowed_adapters() -> None:
@@ -986,7 +1022,7 @@ def test_normalized_schema_reconciliation_fails_on_mismatches() -> None:
             },
         },
     }
-    with pytest.raises(AssertionError, match="missing from normalized row keys"):
+    with pytest.raises(AssertionError, match="missing from TAIFEX normalized row keys"):
         validate_catalog_template_adapter_normalized_schema(corrupted_futures_tmpl)
 
     # 2. TAIFEX options mismatch: declaring participant_group (which options rows do not produce)
@@ -1002,7 +1038,7 @@ def test_normalized_schema_reconciliation_fails_on_mismatches() -> None:
             },
         },
     }
-    with pytest.raises(AssertionError, match="missing from normalized row keys"):
+    with pytest.raises(AssertionError, match="missing from TAIFEX normalized row keys"):
         validate_catalog_template_adapter_normalized_schema(corrupted_options_tmpl)
 
     # 3. TDCC mismatch: declaring non-existent field
@@ -1033,3 +1069,136 @@ def test_normalized_schema_reconciliation_fails_on_mismatches() -> None:
     }
     with pytest.raises(AssertionError, match="not in definition datasets"):
         validate_catalog_template_adapter_normalized_schema(corrupted_dataset_tmpl)
+
+    # 5. Social mismatch: declaring nonexistent social field
+    corrupted_social_tmpl = {
+        "template_id": "template-corrupted-social",
+        "connector_id": "social-admitted-market-discussion",
+        "source_type": "social",
+        "fetch": {
+            "mode": "provider_owned_adapter",
+            "adapter": "AdmittedSocialMediaAdapter.records_from_payload",
+            "dataset": "social_admitted_post",
+            "expected_fields": ["post_id", "author_id_hash", "nonexistent_social_field"],
+        },
+    }
+    with pytest.raises(AssertionError, match="missing from Social normalized row keys"):
+        validate_catalog_template_adapter_normalized_schema(corrupted_social_tmpl)
+
+    # 6. Alpha DB mismatch: declaring nonexistent alpha field
+    corrupted_alpha_tmpl = {
+        "template_id": "template-corrupted-alpha",
+        "connector_id": "alpha-db-vendor-signals",
+        "source_type": "alpha_db",
+        "fetch": {
+            "mode": "provider_owned_adapter",
+            "adapter": "ExternalAlphaDbAdapter.records_from_payload",
+            "dataset": "alpha_signal_record",
+            "expected_fields": ["alpha_vendor_id", "signal_id", "nonexistent_alpha_field"],
+        },
+    }
+    with pytest.raises(AssertionError, match="missing from Alpha DB normalized record fields"):
+        validate_catalog_template_adapter_normalized_schema(corrupted_alpha_tmpl)
+
+    # 7. Unhandled adapter token
+    corrupted_unhandled_adapter_tmpl = {
+        "template_id": "template-corrupted-unhandled-adapter",
+        "connector_id": "tw-tdcc-shareholding-distribution",
+        "fetch": {
+            "mode": "provider_owned_adapter",
+            "adapter": "NonExistentAdapter.records_from_payload",
+            "dataset": "tdcc_shareholding_distribution",
+            "expected_fields": ["holder_level"],
+        },
+    }
+    with pytest.raises(AssertionError, match="No sample payload defined|Unhandled adapter"):
+        validate_catalog_template_adapter_normalized_schema(corrupted_unhandled_adapter_tmpl)
+
+
+def test_alpha_db_rejects_unvalued_signal_rows() -> None:
+    """Verify that external alpha DB drops unvalued signal rows instead of fabricating factor_score=0.0."""
+    adapter = ExternalAlphaDbAdapter()
+
+    # 1. Payload with no numerical signal fields (only entity / date metadata)
+    empty_factor_payload = [
+        {"symbol": "AAPL", "date": "2026-08-24 16:00:00"},
+        {"symbol": "MSFT", "date": "2026-08-24 16:00:00", "currency": "USD"},
+    ]
+    rows = adapter.normalized_rows_from_payload(empty_factor_payload)
+    assert len(rows) == 0, "Expected empty signal rows to be rejected without fabrication"
+
+    records = adapter.records_from_payload(empty_factor_payload)
+    assert len(records) == 0, "Expected empty signal records to be rejected without fabrication"
+
+    # 2. Payload with empty values mapping
+    empty_dict_payload = [
+        {"symbol": "AAPL", "date": "2026-08-24 16:00:00", "values": {}},
+    ]
+    assert len(adapter.normalized_rows_from_payload(empty_dict_payload)) == 0
+
+    # 3. Mixed payload: only valid row with numeric factor is kept
+    mixed_payload = [
+        {"symbol": "AAPL", "date": "2026-08-24 16:00:00", "rsi": 62.5},
+        {"symbol": "GOOG", "date": "2026-08-24 16:00:00"},  # no factors -> dropped
+    ]
+    mixed_records = adapter.records_from_payload(mixed_payload)
+    assert len(mixed_records) == 1
+    assert mixed_records[0].source_id.startswith("alpha_db:fmp-alpha-factors:technical_rsi_14d:AAPL:")
+
+
+def test_tdcc_and_taifex_emit_all_declared_pit_fields() -> None:
+    """Verify that TDCC and TAIFEX adapters emit valid RFC3339 PIT fields in both records and normalized rows."""
+    rfc3339_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
+
+    # TDCC
+    tdcc_adapter = TdccShareholdingDistributionAdapter()
+    tdcc_raw = [
+        {"Date": "2026-08-21", "Code": "2330", "HoldLevel": 15, "HoldingRange": "1,000,001以上", "PeopleCount": 1500, "Shares": 20000000000, "Percentage": 77.12}
+    ]
+    tdcc_rows = tdcc_adapter.normalized_rows_from_payload(tdcc_raw)
+    assert len(tdcc_rows) == 1
+    assert rfc3339_pattern.match(tdcc_rows[0]["event_time"])
+    assert rfc3339_pattern.match(tdcc_rows[0]["available_time"])
+    assert rfc3339_pattern.match(tdcc_rows[0]["ingest_time"])
+    assert tdcc_rows[0]["available_time"] == "2026-08-21T19:00:00Z"
+
+    tdcc_records = tdcc_adapter.records_from_payload(tdcc_raw)
+    assert len(tdcc_records) == 1
+    assert rfc3339_pattern.match(tdcc_records[0].metadata["event_time"])
+    assert rfc3339_pattern.match(tdcc_records[0].metadata["available_time"])
+    assert rfc3339_pattern.match(tdcc_records[0].metadata["ingest_time"])
+
+    # TAIFEX Futures
+    taifex_adapter = TaifexDerivativesChipAdapter()
+    taifex_fut_raw = [
+        {"Date": "2026-08-21", "Contract": "TX", "ParticipantGroup": "foreign_investors", "LongVolume": 1000, "ShortVolume": 800, "LongOpenInterest": 5000, "ShortOpenInterest": 4000}
+    ]
+    fut_rows = taifex_adapter.normalized_rows_from_payload(taifex_fut_raw, dataset="taifex_futures_chip")
+    assert len(fut_rows) == 1
+    assert rfc3339_pattern.match(fut_rows[0]["event_time"])
+    assert rfc3339_pattern.match(fut_rows[0]["available_time"])
+    assert rfc3339_pattern.match(fut_rows[0]["ingest_time"])
+    assert fut_rows[0]["available_time"] == "2026-08-21T16:30:00Z"
+
+    fut_records = taifex_adapter.records_from_payload(taifex_fut_raw, dataset="taifex_futures_chip")
+    assert len(fut_records) == 1
+    assert rfc3339_pattern.match(fut_records[0].metadata["event_time"])
+    assert rfc3339_pattern.match(fut_records[0].metadata["available_time"])
+    assert rfc3339_pattern.match(fut_records[0].metadata["ingest_time"])
+
+    # TAIFEX Options
+    taifex_opt_raw = [
+        {"Date": "2026-08-21", "Contract": "TXO", "CallVolume": 500, "PutVolume": 600, "CallOpenInterest": 2000, "PutOpenInterest": 2200, "PutCallRatio": 110.0}
+    ]
+    opt_rows = taifex_adapter.normalized_rows_from_payload(taifex_opt_raw, dataset="taifex_options_chip")
+    assert len(opt_rows) == 1
+    assert rfc3339_pattern.match(opt_rows[0]["event_time"])
+    assert rfc3339_pattern.match(opt_rows[0]["available_time"])
+    assert rfc3339_pattern.match(opt_rows[0]["ingest_time"])
+    assert opt_rows[0]["available_time"] == "2026-08-21T16:30:00Z"
+
+    opt_records = taifex_adapter.records_from_payload(taifex_opt_raw, dataset="taifex_options_chip")
+    assert len(opt_records) == 1
+    assert rfc3339_pattern.match(opt_records[0].metadata["event_time"])
+    assert rfc3339_pattern.match(opt_records[0].metadata["available_time"])
+    assert rfc3339_pattern.match(opt_records[0].metadata["ingest_time"])

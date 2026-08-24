@@ -527,7 +527,7 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
                 if k not in excluded_keys and isinstance(v, (int, float, bool))
             }
         if not values:
-            values = {"factor_score": 0.0}
+            return None
 
         raw_units = raw.get("units")
         units = dict(raw_units) if isinstance(raw_units, Mapping) else {k: "score" for k in values}

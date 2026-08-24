@@ -221,6 +221,19 @@ def _taifex_endpoint(dataset: str) -> str:
     return f"{TAIFEX_OPENAPI_BASE_URL}/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
 
 
+def _to_rfc3339(val: Any) -> str:
+    s = _text(val)
+    if not s:
+        return _utc_now()
+    if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", s):
+        return s
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", s):
+        return s.replace(" ", "T") + "Z"
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return s + "T00:00:00Z"
+    return s
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -1000,8 +1013,9 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
                         "symbol": row.get("symbol"),
                         "symbol_canonical": row.get("symbol_canonical"),
                         "date": row.get("date"),
-                        "event_time": row.get("date"),
-                        "available_time": row.get("available_time") or available_time or _utc_now(),
+                        "event_time": row.get("event_time") or (f"{row['date']}T00:00:00Z" if row.get("date") else _utc_now()),
+                        "available_time": row.get("available_time") or _to_rfc3339(available_time or (f"{row['date']}T19:00:00Z" if row.get("date") else _utc_now())),
+                        "ingest_time": row.get("ingest_time") or _to_rfc3339(_utc_now()),
                         "api_endpoint": resolved_endpoint,
                         "cadence": "weekly_after_tdcc_publication",
                         "universe_tier": _tier_name(universe_tier),
@@ -1054,9 +1068,16 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
             venue = _text(_first(raw, "venue", "Venue"), "TWSE")
             row_is_correction = bool(is_correction or _first(raw, "is_correction", "is_restated", "更正註記"))
 
+            event_time_rfc = f"{date}T00:00:00Z"
+            avail_time_rfc = _to_rfc3339(available_time or f"{date}T19:00:00Z")
+            ingest_time_rfc = _to_rfc3339(_utc_now())
+
             results.append({
                 "dataset": "tdcc_shareholding_distribution",
                 "date": date,
+                "event_time": event_time_rfc,
+                "available_time": avail_time_rfc,
+                "ingest_time": ingest_time_rfc,
                 "symbol": symbol,
                 "symbol_canonical": _symbol_canonical(symbol, venue),
                 "market": "TW",
@@ -1068,7 +1089,6 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
                 "percentage": percentage,
                 "source_dataset": source_dataset,
                 "api_endpoint": resolved_endpoint,
-                "available_time": available_time or f"{date}T19:00:00Z",
                 "is_correction": row_is_correction,
                 "correction_reason": correction_reason or ("TDCC weekly correction" if row_is_correction else ""),
                 "raw_row": dict(raw),
@@ -1279,8 +1299,9 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                         "contract": contract,
                         "participant_group": group,
                         "date": row.get("date"),
-                        "event_time": row.get("date"),
-                        "available_time": row.get("available_time") or available_time or _utc_now(),
+                        "event_time": row.get("event_time") or (f"{row['date']}T00:00:00Z" if row.get("date") else _utc_now()),
+                        "available_time": row.get("available_time") or _to_rfc3339(available_time or (f"{row['date']}T16:30:00Z" if row.get("date") else _utc_now())),
+                        "ingest_time": row.get("ingest_time") or _to_rfc3339(_utc_now()),
                         "api_endpoint": resolved_endpoint,
                         "cadence": "daily_after_taifex_publication",
                         "universe_tier": _tier_name(universe_tier),
@@ -1323,6 +1344,10 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             roll_day = self.is_contract_roll_day(date) if re.match(r"^\d{4}-\d{2}-\d{2}$", date) else False
             front_month = self.resolve_front_month_contract(date) if re.match(r"^\d{4}-\d{2}-\d{2}$", date) else ""
 
+            event_time_rfc = f"{date}T00:00:00Z"
+            avail_time_rfc = _to_rfc3339(available_time or f"{date}T16:30:00Z")
+            ingest_time_rfc = _to_rfc3339(_utc_now())
+
             if dataset == "taifex_options_chip":
                 call_volume = _int(_first(raw, "買權成交量", "CallVolume", "call_volume")) or 0
                 put_volume = _int(_first(raw, "賣權成交量", "PutVolume", "put_volume")) or 0
@@ -1335,6 +1360,9 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 results.append({
                     "dataset": "taifex_options_chip",
                     "date": date,
+                    "event_time": event_time_rfc,
+                    "available_time": avail_time_rfc,
+                    "ingest_time": ingest_time_rfc,
                     "contract": _text(_first(raw, "Contract", "契約名稱", "商品代號", "ContractCode"), "TXO"),
                     "market": "TW",
                     "venue": "TAIFEX",
@@ -1347,7 +1375,6 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "front_month_contract": front_month,
                     "source_dataset": source_dataset,
                     "api_endpoint": resolved_endpoint,
-                    "available_time": available_time or f"{date}T16:30:00Z",
                     "raw_row": dict(raw),
                 })
             else:
@@ -1368,6 +1395,9 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 results.append({
                     "dataset": "taifex_futures_chip",
                     "date": date,
+                    "event_time": event_time_rfc,
+                    "available_time": avail_time_rfc,
+                    "ingest_time": ingest_time_rfc,
                     "contract": contract,
                     "market": "TW",
                     "venue": "TAIFEX",
@@ -1382,7 +1412,6 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "front_month_contract": front_month,
                     "source_dataset": source_dataset,
                     "api_endpoint": resolved_endpoint,
-                    "available_time": available_time or f"{date}T16:30:00Z",
                     "raw_row": dict(raw),
                 })
         return tuple(results)
