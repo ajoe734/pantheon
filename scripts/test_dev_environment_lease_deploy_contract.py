@@ -511,12 +511,29 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
     rollback_lease_wait_seconds = int(rollback_wait_match.group(1))
     assert rollback_lease_wait_seconds >= lease_ttl_seconds, "rollback wait must at least accommodate lease TTL wait"
 
+    # Compensation step budget assertion
+    min_required_compensation_step_budget = (
+        rollback_lease_wait_seconds
+        + rollback_deadline_seconds
+    )
+    assert compensation_timeout_seconds >= min_required_compensation_step_budget, (
+        f"deploy_compensation timeout ({compensation_timeout_seconds}s) must accommodate rollback lease wait ({rollback_lease_wait_seconds}s) "
+        f"+ rollback deploy deadline ({rollback_deadline_seconds}s) = {min_required_compensation_step_budget}s"
+    )
+    assert compensation_timeout_seconds > min_required_compensation_step_budget, (
+        f"deploy_compensation timeout ({compensation_timeout_seconds}s) must provide headroom above {min_required_compensation_step_budget}s "
+        f"for bounded predecessor heartbeat stop, identity verification, probes, and release cleanup"
+    )
+    assert compensation_timeout_seconds - min_required_compensation_step_budget >= 180, (
+        f"deploy_compensation step timeout headroom ({compensation_timeout_seconds - min_required_compensation_step_budget}s) must be at least 180s"
+    )
+
     min_required_compensation_budget = (
         initial_lease_wait_seconds
         + initial_deadline_seconds
         + paper_bootstrap_timeout_seconds
         + public_smoke_timeout_seconds
-        + lease_ttl_seconds
+        + rollback_lease_wait_seconds
         + rollback_deadline_seconds
     )
 
@@ -524,7 +541,7 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
         f"deploy-dev job timeout ({job_timeout_seconds}s) must accommodate initial lease wait ({initial_lease_wait_seconds}s) "
         f"+ initial deploy deadline ({initial_deadline_seconds}s) + paper bootstrap timeout ({paper_bootstrap_timeout_seconds}s) "
         f"+ public smoke timeout ({public_smoke_timeout_seconds}s) "
-        f"+ quarantined lease TTL wait ({lease_ttl_seconds}s) + rollback compensation deadline ({rollback_deadline_seconds}s) = {min_required_compensation_budget}s"
+        f"+ rollback lease wait ({rollback_lease_wait_seconds}s) + rollback compensation deadline ({rollback_deadline_seconds}s) = {min_required_compensation_budget}s"
     )
     assert job_timeout_seconds > min_required_compensation_budget, (
         f"deploy-dev job timeout ({job_timeout_seconds}s) must provide headroom above {min_required_compensation_budget}s "

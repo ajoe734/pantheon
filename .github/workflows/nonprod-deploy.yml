@@ -83,7 +83,7 @@ jobs:
     name: Deploy dev under shared environment lease
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     environment: dev
     outputs:
       backend_sha: ${{ steps.target.outputs.sha }}
@@ -1267,7 +1267,7 @@ jobs:
         id: deploy_compensation
         if: ${{ always() && steps.lease.outcome == 'success' && steps.rollback_baseline.outputs.sha != '' && (steps.deploy.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success') }}
         continue-on-error: true
-        timeout-minutes: 35
+        timeout-minutes: 60
         env:
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
