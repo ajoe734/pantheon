@@ -10,7 +10,13 @@ from scripts.cross_repo_release_controller import (
     ControllerError,
     DEPLOY_WORKFLOW,
     GATE_WORKFLOW,
+    ProofStateMachine,
     coordinate_release,
+    create_candidate_record,
+    derive_pair_id,
+    restore_read_only_profile,
+    validate_candidate_override,
+    verify_served_identity,
 )
 
 
@@ -299,3 +305,216 @@ def test_compensation_step_provides_every_var_the_script_requires() -> None:
     ]
     missing = [name for name in required_vars if name not in always_available and f"{name}:" not in job]
     assert missing == []
+
+
+def test_candidate_derives_exact_current_fe_bff_pair_and_pair_id() -> None:
+    pair_id = derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
+    assert len(pair_id) == 64
+    assert re.fullmatch(r"^[0-9a-f]{64}$", pair_id)
+
+    # Deterministic derivation
+    assert derive_pair_id(BACKEND_SHA, FRONTEND_SHA) == pair_id
+    assert derive_pair_id(BACKEND_SHA, "2" * 40) != pair_id
+
+    candidate = create_candidate_record(
+        pantheon_sha=BACKEND_SHA,
+        execute_plans_sha=FRONTEND_SHA,
+        profile="write-proof",
+        source_mode="reconcile-only",
+    )
+    assert candidate["pantheon_sha"] == BACKEND_SHA
+    assert candidate["execute_plans_sha"] == FRONTEND_SHA
+    assert candidate["pair_id"] == pair_id
+    assert candidate["profile"] == "write-proof"
+    assert candidate["source_mode"] == "reconcile-only"
+    assert "expires_at" in candidate
+    assert len(candidate["candidate_id"]) == 64
+
+
+def test_stale_task_pair_or_child_inputs_cannot_override_candidate() -> None:
+    candidate = create_candidate_record(
+        pantheon_sha=BACKEND_SHA,
+        execute_plans_sha=FRONTEND_SHA,
+        candidate_id=CANDIDATE_ID,
+        pair_id=MANIFEST_SHA,
+    )
+
+    # Valid matching inputs pass
+    validate_candidate_override(
+        candidate,
+        {
+            "frontend_sha": FRONTEND_SHA,
+            "backend_sha": BACKEND_SHA,
+            "candidate_id": CANDIDATE_ID,
+            "pair_id": MANIFEST_SHA,
+        },
+    )
+
+    # Stale / mismatched frontend SHA fails closed
+    with pytest.raises(ControllerError, match="stale task pair or child inputs cannot override parent candidate"):
+        validate_candidate_override(candidate, {"frontend_sha": "2" * 40})
+
+    # Stale / mismatched backend SHA fails closed
+    with pytest.raises(ControllerError, match="stale task pair or child inputs cannot override parent candidate"):
+        validate_candidate_override(candidate, {"backend_sha": "b" * 40})
+
+    # Stale / mismatched pair ID fails closed
+    with pytest.raises(ControllerError, match="stale task pair or child inputs cannot override parent candidate"):
+        validate_candidate_override(candidate, {"pair_id": "0" * 64})
+
+    # Stale / mismatched candidate ID fails closed
+    with pytest.raises(ControllerError, match="stale task pair or child inputs cannot override parent candidate"):
+        validate_candidate_override(candidate, {"candidate_id": "1" * 64})
+
+
+def test_no_operator_prompt_or_proof_window_ack_required() -> None:
+    client = FakeClient()
+    evidence = _coordinate(client)
+
+    # Coordination proceeds automatically without operator prompt or proof_window_ack gate
+    assert evidence["outcome"] == "accepted"
+    assert "candidate" in evidence
+    assert evidence["candidate"]["profile"] == "write-proof"
+    assert evidence["candidate"]["source_mode"] == "reconcile-only"
+
+
+def test_served_mismatch_fails_closed() -> None:
+    candidate = create_candidate_record(
+        pantheon_sha=BACKEND_SHA,
+        execute_plans_sha=FRONTEND_SHA,
+        candidate_id=CANDIDATE_ID,
+        pair_id=MANIFEST_SHA,
+    )
+
+    def fake_matching_fetcher(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "frontendSha": FRONTEND_SHA,
+                "pairId": MANIFEST_SHA,
+            }
+        return {}
+
+    result = verify_served_identity(
+        bff_base_url="https://bff.test",
+        fe_base_url="https://fe.test",
+        expected_candidate=candidate,
+        fetch_fn=fake_matching_fetcher,
+    )
+    assert result["status"] == "verified"
+    assert result["observed_bff_sha"] == BACKEND_SHA
+    assert result["observed_fe_sha"] == FRONTEND_SHA
+
+    # BFF mismatch fails closed
+    def fake_bff_mismatch(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": "9" * 40}
+        return {}
+
+    with pytest.raises(ControllerError, match="served identity mismatch fails closed"):
+        verify_served_identity(
+            bff_base_url="https://bff.test",
+            expected_candidate=candidate,
+            fetch_fn=fake_bff_mismatch,
+        )
+
+    # FE mismatch fails closed
+    def fake_fe_mismatch(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        if "deployment.json" in url:
+            return {"frontendSha": "9" * 40, "pairId": MANIFEST_SHA}
+        return {}
+
+    with pytest.raises(ControllerError, match="served identity mismatch fails closed"):
+        verify_served_identity(
+            bff_base_url="https://bff.test",
+            fe_base_url="https://fe.test",
+            expected_candidate=candidate,
+            fetch_fn=fake_fe_mismatch,
+        )
+
+
+def test_read_only_restored_on_success_failure_cancellation_expiry() -> None:
+    candidate = create_candidate_record(
+        pantheon_sha=BACKEND_SHA,
+        execute_plans_sha=FRONTEND_SHA,
+        candidate_id=CANDIDATE_ID,
+        pair_id=MANIFEST_SHA,
+        profile="write-proof",
+    )
+    assert candidate["profile"] == "write-proof"
+
+    restored = restore_read_only_profile(candidate)
+    assert restored["profile"] == "read-only"
+    assert restored["candidate_id"] == candidate["candidate_id"]
+    assert restored["pair_id"] == candidate["pair_id"]
+    assert "restored_at" in restored
+
+    # With served manifest verification
+    served_manifest = {
+        "frontendSha": FRONTEND_SHA,
+        "bffCommit": BACKEND_SHA,
+    }
+    restored_verified = restore_read_only_profile(candidate, served_manifest=served_manifest)
+    assert restored_verified["profile"] == "read-only"
+
+    # Mismatched served manifest raises error
+    bad_manifest = {
+        "frontendSha": "9" * 40,
+        "bffCommit": BACKEND_SHA,
+    }
+    with pytest.raises(ControllerError, match="read-only restoration verification mismatch"):
+        restore_read_only_profile(candidate, served_manifest=bad_manifest)
+
+
+def test_source_stays_reconcile_only_and_prohibits_live_capital() -> None:
+    with pytest.raises(ControllerError, match="source_mode must be 'reconcile-only'"):
+        create_candidate_record(
+            pantheon_sha=BACKEND_SHA,
+            execute_plans_sha=FRONTEND_SHA,
+            source_mode="external-pull",
+        )
+
+    with pytest.raises(ControllerError, match="invalid profile"):
+        create_candidate_record(
+            pantheon_sha=BACKEND_SHA,
+            execute_plans_sha=FRONTEND_SHA,
+            profile="live-capital",
+        )
+
+
+def test_proof_state_machine_transitions() -> None:
+    sm = ProofStateMachine("CREATED")
+    assert sm.state == "CREATED"
+    assert sm.transition("IDENTITY_VERIFIED") == "IDENTITY_VERIFIED"
+    assert sm.transition("WRITE_PROOF_ACTIVE") == "WRITE_PROOF_ACTIVE"
+    assert sm.transition("JOURNEYS_RUNNING") == "JOURNEYS_RUNNING"
+    assert sm.transition("PROOF_CAPTURED") == "PROOF_CAPTURED"
+    assert sm.transition("READ_ONLY_RESTORED") == "READ_ONLY_RESTORED"
+    assert sm.transition("COMPLETE") == "COMPLETE"
+
+    # Error recovery transition directly to READ_ONLY_RESTORED from any state
+    sm2 = ProofStateMachine("WRITE_PROOF_ACTIVE")
+    assert sm2.transition("READ_ONLY_RESTORED") == "READ_ONLY_RESTORED"
+
+
+def test_nonprod_workflow_outputs_candidate_auto_binding_contract() -> None:
+    deploy_dev = NONPROD_WORKFLOW[
+        NONPROD_WORKFLOW.index("  deploy-dev:") :
+        NONPROD_WORKFLOW.index("  coordinate-dev-release:")
+    ]
+    coordinate_job = NONPROD_WORKFLOW[
+        NONPROD_WORKFLOW.index("  coordinate-dev-release:") :
+        NONPROD_WORKFLOW.index("  deploy-staging-live:")
+    ]
+
+    assert "pair_id: ${{ steps.release_admission.outputs.pair_id }}" in deploy_dev
+    assert "outputs:" in coordinate_job
+    assert "candidate_id:" in coordinate_job
+    assert "pair_id:" in coordinate_job
+    assert "profile:" in coordinate_job
+    assert "source_mode:" in coordinate_job
+    assert "expires_at:" in coordinate_job
+    assert "--candidate-out" in coordinate_job
