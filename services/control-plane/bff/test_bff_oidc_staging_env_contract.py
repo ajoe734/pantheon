@@ -107,7 +107,7 @@ def test_dev_compose_forwards_bff_auth_env_with_dev_stub_default() -> None:
 
     assert (
         "PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: "
-        "${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1200}"
+        "${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}"
     ) in block
 
     for key in (
@@ -144,6 +144,6 @@ def test_dev_compose_forwards_bff_auth_env_with_dev_stub_default() -> None:
 def test_dev_compose_login_ttl_contract_matches_proof_window_floor() -> None:
     block = _operator_bff_block(DEV_COMPOSE)
     assert (
-        "PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1200}"
+        "PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}"
     ) in block
 

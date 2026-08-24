@@ -165,6 +165,6 @@ def test_dev_login_ttl_contract_supports_bounded_proof_window() -> None:
     bff = services["operator-bff"]
     bff_env = _environment(bff)
     assert bff_env["PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS"] == (
-        "${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1200}"
+        "${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}"
     )
 

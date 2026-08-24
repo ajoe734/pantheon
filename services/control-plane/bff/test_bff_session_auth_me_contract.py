@@ -863,15 +863,15 @@ def test_bff_dev_login_default_ttl_meets_proof_floor(monkeypatch) -> None:
     assert login.status_code == 200, login.text
     payload = login.json()
     assert payload["token_type"] == "bearer"
-    assert payload["expires_in"] == 1200
+    assert payload["expires_in"] == 1800
     assert payload["meta"]["contract"] == "FE-INT-GATE-OIDC-DEV-LOGIN"
-    assert payload["meta"]["ttl_seconds"] == 1200
+    assert payload["meta"]["ttl_seconds"] == 1800
     assert payload["meta"]["identity"] == "operator"
 
     payload_b64 = payload["access_token"].split(".")[1]
     padded = payload_b64 + "=" * (-len(payload_b64) % 4)
     claims = json.loads(base64.urlsafe_b64decode(padded))
-    assert claims["exp"] - claims["iat"] == 1200
+    assert claims["exp"] - claims["iat"] == 1800
 
     me = client.get("/bff/me", headers={"Authorization": f"Bearer {payload['access_token']}"})
     assert me.status_code == 200, me.text
@@ -886,12 +886,12 @@ def test_bff_dev_login_default_ttl_meets_proof_floor(monkeypatch) -> None:
         ("200", 300),          # below 300 floor clamped to 300
         ("300", 300),          # minimum bound
         ("600", 600),          # intermediate valid
-        ("1200", 1200),        # proof floor
-        ("1800", 1800),        # 30-minute session
+        ("1200", 1200),        # 20-minute valid
+        ("1800", 1800),        # 30-minute default (strictly above proof window floor)
         ("3600", 3600),        # maximum bound
         ("7200", 3600),        # above 3600 cap clamped to 3600
-        ("invalid", 1200),     # unparseable falls back to default 1200
-        ("", 1200),            # empty falls back to default 1200
+        ("invalid", 1800),     # unparseable falls back to default 1800
+        ("", 1800),            # empty falls back to default 1800
         ("-500", 300),         # negative clamped to 300
     ],
 )
@@ -925,4 +925,84 @@ def test_bff_dev_login_ttl_bounds_and_invalid_fallback(monkeypatch, raw_ttl: str
 
     me = client.get("/bff/me", headers={"Authorization": f"Bearer {payload['access_token']}"})
     assert me.status_code == 200, me.text
+
+
+def test_bff_dev_login_minted_credential_passes_proof_preflight_validator(monkeypatch) -> None:
+    """Verify newly minted dev-login credentials strictly exceed the 1200-second proof preflight window."""
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-operator-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-operator-secret")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID", "ci-viewer-client")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET", "ci-viewer-secret")
+    monkeypatch.delenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", raising=False)
+
+    client = TestClient(bff_main.app)
+
+    # 1. Mint operator token
+    op_login = client.post(
+        "/bff/auth/dev-login",
+        json={
+            "grant_type": "client_credentials",
+            "client_id": "ci-operator-client",
+            "client_secret": "ci-operator-secret",
+        },
+    )
+    assert op_login.status_code == 200, op_login.text
+    op_token = op_login.json()["access_token"]
+
+    # 2. Mint viewer token
+    vw_login = client.post(
+        "/bff/auth/dev-login",
+        json={
+            "grant_type": "client_credentials",
+            "client_id": "ci-viewer-client",
+            "client_secret": "ci-viewer-secret",
+        },
+    )
+    assert vw_login.status_code == 200, vw_login.text
+    vw_token = vw_login.json()["access_token"]
+
+    # 3. Direct claims validation against proof floor requirement:
+    # Proof validator rejects expiresAt <= nowSeconds + 1200 (HOSTED_PROOF_MIN_CREDENTIAL_TTL_SECONDS = 1200)
+    now_seconds = int(time.time())
+    proof_window_floor = 1200
+
+    for token, label in [(op_token, "operator"), (vw_token, "viewer")]:
+        parts = token.split(".")
+        assert len(parts) == 3
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(padded))
+        expires_at = int(claims["exp"])
+        assert expires_at > now_seconds + proof_window_floor, (
+            f"{label} token exp={expires_at} must strictly exceed now + 1200 "
+            f"({now_seconds + proof_window_floor}); remaining={expires_at - now_seconds}s"
+        )
+
+    # 4. If the frontend proof validator script exists, execute it directly with node
+    import subprocess
+    import shutil
+    from pathlib import Path
+
+    validator_path = Path("/home/lupin/code/execute-plans/scripts/validate-persona-hosted-proof-env.mjs")
+    node_bin = shutil.which("node")
+    if validator_path.exists() and node_bin:
+        env = {
+            **os.environ,
+            "PANTHEON_BFF_RBAC_TOKENS_JSON": "",
+            "PANTHEON_PERSONA_INTERACTION_OPERATOR_TOKEN": op_token,
+            "PANTHEON_PERSONA_INTERACTION_VIEWER_TOKEN": vw_token,
+            "PANTHEON_FE_BASE_URL": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+            "PANTHEON_BFF_BASE_URL": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+        }
+        res = subprocess.run(
+            [node_bin, str(validator_path)],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert res.returncode == 0, f"Validator stderr: {res.stderr}\nstdout: {res.stdout}"
+        assert "prerequisites are available" in res.stdout
+
 
