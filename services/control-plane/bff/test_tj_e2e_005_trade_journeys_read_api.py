@@ -1575,4 +1575,3 @@ def test_action_dispatch_in_postgres_reader_mode() -> None:
     )
     assert unavail_resp.status_code == 503
     assert unavail_resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
-
