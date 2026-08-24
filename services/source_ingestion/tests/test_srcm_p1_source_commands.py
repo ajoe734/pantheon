@@ -784,7 +784,9 @@ class TestSourceManagementHTTPAPI:
         assert resp.status_code == 401
 
     def test_authorized_command_execution_over_http(self, test_client):
-        headers = {"Authorization": f"Bearer {controller_token}"}
+        from services.source_ingestion.main import CONTROLLER_TOKEN_PATH, load_controller_token
+        active_token = load_controller_token(token_path=CONTROLLER_TOKEN_PATH, create=True)
+        headers = {"Authorization": f"Bearer {active_token}"}
         resp = test_client.post(
             "/api/source-ingest/management/commands",
             headers=headers,
