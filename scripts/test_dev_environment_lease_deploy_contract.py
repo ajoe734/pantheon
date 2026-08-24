@@ -13,6 +13,10 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+import dev_environment_lease as lease
 WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 DEPLOY = ROOT / "scripts" / "deploy_nonprod_vm.sh"
 CONTROLLER_SHA = "9e564718da8c39199a4c311f1a667b74226e3428"
@@ -473,6 +477,26 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
     assert bootstrap_match is not None, "paper_bootstrap step must specify --timeout-seconds"
     paper_bootstrap_timeout_seconds = int(bootstrap_match.group(1))
 
+    # Public smoke step deadline and curl bounds
+    public_smoke_match = re.search(r"id:\s*public_smoke[\s\S]*?timeout-minutes:\s*(\d+)", dev)
+    assert public_smoke_match is not None, "public_smoke step must define timeout-minutes"
+    public_smoke_timeout_seconds = int(public_smoke_match.group(1)) * 60
+
+    public_smoke_section = dev.split("id: public_smoke", 1)[1].split("- name:", 1)[0]
+    for curl_line in re.findall(r"curl\s+[^\n]+", public_smoke_section):
+        assert "--connect-timeout" in curl_line, f"public_smoke curl missing --connect-timeout: {curl_line}"
+        assert "--max-time" in curl_line, f"public_smoke curl missing --max-time: {curl_line}"
+
+    # Compensation step deadline and curl bounds
+    comp_section = dev.split("id: deploy_compensation", 1)[1].split("- name:", 1)[0]
+    comp_match = re.search(r"timeout-minutes:\s*(\d+)", comp_section)
+    assert comp_match is not None, "deploy_compensation step must specify timeout-minutes"
+    compensation_timeout_seconds = int(comp_match.group(1)) * 60
+
+    for curl_line in re.findall(r"curl\s+[^\n]+", comp_section):
+        assert "--connect-timeout" in curl_line, f"deploy_compensation curl missing --connect-timeout: {curl_line}"
+        assert "--max-time" in curl_line, f"deploy_compensation curl missing --max-time: {curl_line}"
+
     # Quarantined lease TTL wait
     ttl_match = re.search(r"--ttl-seconds\s+(\d+)", dev)
     assert ttl_match is not None, "Lease acquire step must specify --ttl-seconds"
@@ -491,6 +515,7 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
         initial_lease_wait_seconds
         + initial_deadline_seconds
         + paper_bootstrap_timeout_seconds
+        + public_smoke_timeout_seconds
         + lease_ttl_seconds
         + rollback_deadline_seconds
     )
@@ -498,14 +523,15 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
     assert job_timeout_seconds >= min_required_compensation_budget, (
         f"deploy-dev job timeout ({job_timeout_seconds}s) must accommodate initial lease wait ({initial_lease_wait_seconds}s) "
         f"+ initial deploy deadline ({initial_deadline_seconds}s) + paper bootstrap timeout ({paper_bootstrap_timeout_seconds}s) "
+        f"+ public smoke timeout ({public_smoke_timeout_seconds}s) "
         f"+ quarantined lease TTL wait ({lease_ttl_seconds}s) + rollback compensation deadline ({rollback_deadline_seconds}s) = {min_required_compensation_budget}s"
     )
     assert job_timeout_seconds > min_required_compensation_budget, (
         f"deploy-dev job timeout ({job_timeout_seconds}s) must provide headroom above {min_required_compensation_budget}s "
-        f"for setup, image builds, public smoke, and post-rollback verification"
+        f"for setup, image builds, and post-rollback verification"
     )
-    assert job_timeout_seconds - min_required_compensation_budget >= 480, (
-        f"deploy-dev job timeout headroom ({job_timeout_seconds - min_required_compensation_budget}s) must be at least 480s"
+    assert job_timeout_seconds - min_required_compensation_budget >= 180, (
+        f"deploy-dev job timeout headroom ({job_timeout_seconds - min_required_compensation_budget}s) must be at least 180s"
     )
     assert "stop_predecessor_heartbeat" in dev, "deploy_compensation must define and invoke stop_predecessor_heartbeat"
 
@@ -999,6 +1025,113 @@ def test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant
     assert "FORBIDDEN_DUPLICATE_WORKERS=(\n  pantheon-paper-runtime\n)" in deploy_script
 
 
+def test_dev_root_deploy_migration_cleanup_retires_inactive_profile_containers() -> None:
+    """Root deploy must define and invoke retire_dormant_and_one_off_profile_containers,
+    which explicitly runs docker compose rm -f -s for inactive profiles:
+    dormant-smoke, smoke, activation-ready-smoke, openclaw-activation-ready-e2e,
+    source-search-bounded, and lifecycle-capacity-benchmark."""
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+
+    assert "retire_dormant_and_one_off_profile_containers() {" in deploy_script
+    root_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("root)", 1)[1].split(";;", 1)[0]
+    assert "retire_dormant_and_one_off_profile_containers" in root_section
+
+    for profile, service in [
+        ("dormant-smoke", "mlflow-dormant-smoke"),
+        ("dormant-smoke", "finrl-dormant-smoke"),
+        ("dormant-smoke", "rllib-dormant-smoke"),
+        ("dormant-smoke", "ray-tune-dormant-smoke"),
+        ("dormant-smoke", "qlib-dormant-smoke"),
+        ("dormant-smoke", "trl-dormant-smoke"),
+        ("dormant-smoke", "experiments-dormant-smoke"),
+        ("smoke", "smoke-stack"),
+        ("activation-ready-smoke", "oss-activation-ready-smoke-matrix"),
+        ("openclaw-activation-ready-e2e", "openclaw-activation-ready-e2e"),
+        ("source-search-bounded", "source-search-bounded-smoke"),
+        ("lifecycle-capacity-benchmark", "lifecycle-projector-capacity-benchmark"),
+    ]:
+        assert f'COMPOSE_PROFILES="{profile}"' in deploy_script or f"COMPOSE_PROFILES={profile}" in deploy_script
+        assert service in deploy_script
+
+
+def test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profiles() -> None:
+    """Parsing docker-compose.yml with default openclaw profile must prove that the active
+    persistent runtime includes all required loop services and strictly excludes all dormant,
+    smoke, benchmark, and legacy profile services."""
+    import yaml
+
+    compose_path = ROOT / "docker-compose.yml"
+    data = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+    services = data.get("services", {})
+
+    active_profile = "openclaw"
+    active_services = []
+    excluded_services = []
+
+    for svc_name, svc_cfg in services.items():
+        profiles = svc_cfg.get("profiles", [])
+        if not profiles or active_profile in profiles:
+            active_services.append(svc_name)
+        else:
+            excluded_services.append((svc_name, profiles))
+
+    required_persistent = [
+        "source-ingest",
+        "strategy-distillation-worker",
+        "alpha-replication-worker",
+        "training-session-svc",
+        "training-session-preview-worker",
+        "policy-learning-svc",
+        "policy-learning-shadow-eval-scheduler",
+        "consultation-svc",
+        "deployment",
+        "deployment-outbox-consumer",
+        "runtime-manager",
+        "broker",
+        "capital",
+        "paper-fleet-reconciler",
+        "paper-signal-producer",
+        "reconciliation-drift-svc",
+        "reconciliation-drift-consumer",
+        "reconciliation-drift-scheduler",
+        "reconciliation-drift-incident-listener",
+        "evolution",
+        "evolution-dispatch-worker",
+        "evolution-daily-sweep-scheduler",
+        "evolution-threshold-sweep-producer",
+        "operator-bff",
+        "loop-run-projector-scheduler",
+        "search-svc",
+        "search-index-scheduler",
+        "telemetry",
+        "governance",
+        "openclaw-gateway-adapter",
+        "postgres",
+        "signal-store",
+    ]
+    for req in required_persistent:
+        assert req in active_services, f"Required persistent service {req} missing from active runtime"
+
+    dormant_and_one_off_services = [
+        "mlflow-dormant-smoke",
+        "finrl-dormant-smoke",
+        "rllib-dormant-smoke",
+        "ray-tune-dormant-smoke",
+        "qlib-dormant-smoke",
+        "trl-dormant-smoke",
+        "experiments-dormant-smoke",
+        "smoke-stack",
+        "oss-activation-ready-smoke-matrix",
+        "openclaw-activation-ready-e2e",
+        "source-search-bounded-smoke",
+        "lifecycle-projector-capacity-benchmark",
+        "pantheon-paper-runtime",
+    ]
+    for dormant_svc in dormant_and_one_off_services:
+        assert dormant_svc not in active_services, f"Dormant/smoke service {dormant_svc} must NOT be in active persistent runtime"
+        assert any(dormant_svc == name for name, _ in excluded_services), f"{dormant_svc} must be in excluded_services"
+
+
 def test_dev_root_deploy_builds_candidate_before_mutating_active_runtime() -> None:
     """Dev root and BFF deploys must validate config, set and export target GIT_SHA,
     and build images before mutating or recreating running containers without --build."""
@@ -1486,7 +1619,7 @@ def _validate_deploy_compensation_step(step: str) -> None:
     assert "--component bff" in step
     assert '--rollback-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}"' in step
     assert 'PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_ROLLBACK_BACKEND_SHA}"' in step
-    assert 'current_bff="$(curl -fsS "${DEV_BFF_URL}/bff/version"' in step
+    assert 'current_bff="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_BFF_URL}/bff/version"' in step
     assert 'if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then' in step
     assert "skipping rollback deploy and verifying baseline pair" in step
     assert 'python3 "${controller}/scripts/dev_environment_lease.py" acquire' in step
@@ -1620,17 +1753,41 @@ if command == "heartbeat-loop":
         time.sleep(1)
 
 if command == "verify-heartbeat-identity":
-    identity = json.loads(Path(option("--identity-file")).read_text(encoding="utf-8"))
+    import importlib.util
+    identity_file = Path(option("--identity-file"))
+    if not identity_file.exists():
+        sys.exit("identity file not found")
+    identity = json.loads(identity_file.read_text(encoding="utf-8"))
     pid = int(option("--pid"))
-    expected_cli = str(Path(option("--expected-cli")).resolve())
-    state_file = str(Path(option("--state-file")).resolve())
-    cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
-    assert identity["pid"] == pid
-    assert identity["cmdlineSha256"] == hashlib.sha256(cmdline).hexdigest()
-    assert identity["expectedCli"] == expected_cli
-    assert identity["stateFile"] == state_file
-    print('{"status":"verified"}')
-    sys.exit(0)
+    expected_cli = option("--expected-cli")
+    state_file = option("--state-file")
+
+    prod_script = os.environ.get("PANTHEON_PROD_DEV_ENVIRONMENT_LEASE_SCRIPT")
+    if not prod_script or not Path(prod_script).exists():
+        p = Path(__file__).resolve()
+        for cur in [p, *p.parents]:
+            cand = cur / "scripts" / "dev_environment_lease.py"
+            if cand.exists() and cand != p:
+                prod_script = str(cand)
+                break
+
+    if prod_script and Path(prod_script).exists():
+        script_dir = str(Path(prod_script).parent)
+        if script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
+        import dev_environment_lease as mod
+        try:
+            verified = mod.verify_heartbeat_identity(
+                identity,
+                pid=pid,
+                expected_cli=expected_cli,
+                state_file=state_file,
+            )
+            print(json.dumps(verified))
+            sys.exit(0)
+        except Exception as exc:
+            sys.exit(f"verify_heartbeat_identity failed: {exc}")
+    sys.exit("unable to locate production dev_environment_lease.py")
 
 if command == "verify":
     state_path = Path(option("--state-file"))
@@ -1799,22 +1956,26 @@ def _setup_mock_compensation_environment(
     initial_heartbeat_log = initial_lease_dir / "heartbeat.log"
 
     if predecessor_heartbeat_state == "active":
-        proc = subprocess.Popen([sys.executable, "-c", "import time, signal, sys; signal.signal(signal.SIGTERM, lambda *_: sys.exit(0)); time.sleep(300)"])
-        initial_pid_file.write_text(f"{proc.pid}\n", encoding="utf-8")
-        cmdline = Path(f"/proc/{proc.pid}/cmdline").read_bytes() if Path(f"/proc/{proc.pid}/cmdline").exists() else b""
-        initial_identity_file.write_text(
-            json.dumps({
-                "schemaVersion": 1,
-                "status": "running",
-                "pid": proc.pid,
-                "startTicks": _start_ticks(proc.pid),
-                "cmdlineSha256": hashlib.sha256(cmdline).hexdigest(),
-                "expectedCli": str(fake_cli.resolve()),
-                "stateFile": str(initial_state_file.resolve()),
-                "recordedAt": "2026-08-24T00:00:00Z",
-            }) + "\n",
-            encoding="utf-8",
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                str(fake_cli.resolve()),
+                "heartbeat-loop",
+                "--state-file",
+                str(initial_state_file.resolve()),
+                "--identity-json-out",
+                str(initial_identity_file.resolve()),
+                "--shutdown-json-out",
+                str(initial_lease_dir / "heartbeat-stop.json"),
+                "--failure-json-out",
+                str(initial_failure_file.resolve()),
+            ]
         )
+        initial_pid_file.write_text(f"{proc.pid}\n", encoding="utf-8")
+        for _ in range(50):
+            if initial_identity_file.exists() and initial_identity_file.stat().st_size > 0:
+                break
+            time.sleep(0.05)
         initial_heartbeat_log.write_text(f"Heartbeat actively renewing (pid={proc.pid})\n", encoding="utf-8")
     else:
         initial_pid_file.write_text("99999999\n", encoding="utf-8")
@@ -1886,6 +2047,7 @@ def _setup_mock_compensation_environment(
         "PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE": str(initial_identity_file),
         "PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE": str(initial_failure_file),
         "PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG": str(initial_heartbeat_log),
+        "PANTHEON_PROD_DEV_ENVIRONMENT_LEASE_SCRIPT": str((ROOT / "scripts" / "dev_environment_lease.py").resolve()),
         "PANTHEON_MOCK_REMOTE_LEASE_FILE": str(mock_remote_lease_file),
         "PANTHEON_MOCK_LEASE_EVENTS_LOG": str(lease_events_log),
         "DEV_BFF_JWT_SECRET": "secret",
@@ -2103,12 +2265,128 @@ def test_dev_deploy_compensation_active_predecessor_heartbeat_stopped_and_recove
     assert "RELEASED" in lease_events
 
 
+def test_dev_deploy_compensation_predecessor_heartbeat_mismatched_identity_fails_closed_negative(tmp_path: Path) -> None:
+    """Negative test proving that if the predecessor heartbeat PID belongs to a process
+    whose identity does not match the identity file (or is PID reused/tampered),
+    stop_predecessor_heartbeat fails closed, does NOT send signals to that process,
+    and deploy_compensation exits with failure code 75."""
+    candidate_bff = "c" * 40
+    rollback_bff = "a" * 40
+    rollback_fe = "f" * 40
+    env, invocations_log, step_summary = _setup_mock_compensation_environment(
+        tmp_path,
+        initial_bff_sha=candidate_bff,
+        initial_fe_sha=rollback_fe,
+        rollback_bff_sha=rollback_bff,
+        rollback_fe_sha=rollback_fe,
+        deploy_behavior="success",
+        predecessor_heartbeat_state="active",
+    )
+    initial_pid = int((tmp_path / "initial_lease" / "heartbeat.pid").read_text(encoding="utf-8").strip())
+    assert Path(f"/proc/{initial_pid}").exists()
+
+    # Tamper with the identity file so cmdlineSha256 does not match the running process
+    identity_file = tmp_path / "initial_lease" / "heartbeat-identity.json"
+    identity_data = json.loads(identity_file.read_text(encoding="utf-8"))
+    identity_data["cmdlineSha256"] = "0" * 64
+    identity_file.write_text(json.dumps(identity_data) + "\n", encoding="utf-8")
+
+    script = _extract_deploy_compensation_run_script()
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 75, f"Compensation should fail closed with code 75, got {result.returncode}: {result.stderr}"
+    assert f"Predecessor heartbeat identity verification failed for pid={initial_pid}" in result.stderr
+
+    # Verify the mismatched process was NOT terminated and remains alive
+    assert Path(f"/proc/{initial_pid}").exists()
+    try:
+        os.kill(initial_pid, signal.SIGTERM)
+        os.waitpid(initial_pid, 0)
+    except Exception:
+        pass
+
+
+def test_dev_deploy_compensation_unstoppable_predecessor_fails_closed_negative(tmp_path: Path) -> None:
+    """Negative test proving that if a predecessor process remains alive after KILL escalation,
+    stop_predecessor_heartbeat fails closed and deploy_compensation exits with failure code 75."""
+    candidate_bff = "c" * 40
+    rollback_bff = "a" * 40
+    rollback_fe = "f" * 40
+    env, invocations_log, step_summary = _setup_mock_compensation_environment(
+        tmp_path,
+        initial_bff_sha=candidate_bff,
+        initial_fe_sha=rollback_fe,
+        rollback_bff_sha=rollback_bff,
+        rollback_fe_sha=rollback_fe,
+        deploy_behavior="success",
+        predecessor_heartbeat_state="active",
+    )
+    initial_pid = int((tmp_path / "initial_lease" / "heartbeat.pid").read_text(encoding="utf-8").strip())
+    assert Path(f"/proc/{initial_pid}").exists()
+
+    # Create a mock kill that ignores kill signals for initial_pid to simulate an unstoppable process
+    bin_dir = tmp_path / "bin"
+    mock_kill = bin_dir / "kill"
+    mock_kill.write_text(
+        f"""#!/usr/bin/env bash
+if [[ "$*" == *"-0"* ]]; then
+  exit 0
+fi
+if [[ "$*" == *"{initial_pid}"* ]]; then
+  exit 0
+fi
+exec /usr/bin/kill "$@"
+""",
+        encoding="utf-8",
+    )
+    mock_kill.chmod(0o755)
+
+    script = _extract_deploy_compensation_run_script()
+    override = f"""
+kill() {{
+  if [[ "$*" == *"-0"* ]]; then
+    return 0
+  fi
+  if [[ "$*" == *"{initial_pid}"* ]]; then
+    return 0
+  fi
+  builtin kill "$@"
+}}
+"""
+    script = override + "\n" + script
+
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 75, f"Compensation should fail closed with code 75, got {result.returncode}: {result.stderr}"
+    assert f"Predecessor heartbeat process (pid={initial_pid}) remains alive after SIGKILL" in result.stderr
+
+    # Clean up test process
+    try:
+        os.kill(initial_pid, signal.SIGKILL)
+        os.waitpid(initial_pid, 0)
+    except Exception:
+        pass
+
+
 def test_dev_deploy_compensation_quarantined_lease_contention_and_ttl_takeover() -> None:
     """Test proving that compensation lease acquisition properly models and handles
     active quarantined lease contention and unexpired TTL wait before taking over the lease."""
     from datetime import datetime, timedelta, timezone
-    import dev_environment_lease as lease
-    from scripts.test_dev_environment_lease import FakeClient, manager, state_for
+    from scripts.test_dev_environment_lease import FakeClient, manager, state_for, lease as test_lease
 
     client = FakeClient()
     mgr = manager(client)
@@ -2128,7 +2406,7 @@ def test_dev_deploy_compensation_quarantined_lease_contention_and_ttl_takeover()
 
     # 2. Attempt rollback acquisition while initial lease is still within unexpired TTL and wait_seconds=0 -> raises LeaseBusy
     rollback_owner = "pantheon:ajoe734/pantheon:12345:1:rollback"
-    with pytest.raises(lease.LeaseBusy) as exc_info:
+    with pytest.raises(test_lease.LeaseBusy) as exc_info:
         mgr.acquire(
             mode="deployment",
             owner=rollback_owner,

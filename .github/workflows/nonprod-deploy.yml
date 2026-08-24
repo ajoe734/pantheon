@@ -1039,6 +1039,7 @@ jobs:
 
       - name: Public dev BFF smoke and exact version proof under lease
         id: public_smoke
+        timeout-minutes: 5
         env:
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
@@ -1090,8 +1091,8 @@ jobs:
             exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
             bash -c '
               set -euo pipefail
-              curl -fsS "${DEV_BFF_URL}/health" >/dev/null
-              actual="$(curl -fsS "${DEV_BFF_URL}/bff/version" | python3 -c '\''import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")'\'')"
+              curl --connect-timeout 10 --max-time 30 -fsS "${DEV_BFF_URL}/health" >/dev/null
+              actual="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_BFF_URL}/bff/version" | python3 -c '\''import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")'\'')"
               [[ "${actual}" == "${TARGET_SHA}" ]]
               origins="${DEV_BFF_CANONICAL_CORS_ORIGIN}"
               if [[ -n "${DEV_BFF_CORS_ORIGIN}" && ",${origins}," != *",${DEV_BFF_CORS_ORIGIN},"* ]]; then
@@ -1101,7 +1102,7 @@ jobs:
               for origin in "${cors_origins[@]}"; do
                 origin="${origin//[[:space:]]/}"
                 [[ -z "${origin}" ]] && continue
-                curl -sS -D - -o "${RUNNER_TEMP}/dev-cors-body" -X OPTIONS "${DEV_BFF_URL}/health" \
+                curl --connect-timeout 10 --max-time 30 -sS -D - -o "${RUNNER_TEMP}/dev-cors-body" -X OPTIONS "${DEV_BFF_URL}/health" \
                   -H "Origin: ${origin}" -H "Access-Control-Request-Method: GET" \
                   | grep -qi "access-control-allow-origin: ${origin}"
               done
@@ -1266,6 +1267,7 @@ jobs:
         id: deploy_compensation
         if: ${{ always() && steps.lease.outcome == 'success' && steps.rollback_baseline.outputs.sha != '' && (steps.deploy.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success') }}
         continue-on-error: true
+        timeout-minutes: 35
         env:
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
@@ -1383,7 +1385,7 @@ jobs:
               exit 1
               ;;
           esac
-          current_bff="$(curl -fsS "${DEV_BFF_URL}/bff/version" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
+          current_bff="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_BFF_URL}/bff/version" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
           if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then
             echo "Hosted BFF is already at baseline ${current_bff}; skipping rollback deploy and verifying baseline pair"
           else
@@ -1483,15 +1485,26 @@ jobs:
               case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
 
               echo "[dev-deploy-compensation] Stopping active predecessor heartbeat (pid=${pred_pid}) before rollback lease acquisition..."
-              if [[ -n "${identity_file}" && -f "${identity_file}" && -n "${state_file}" && -f "${state_file}" ]]; then
-                python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
-                  --identity-file "${identity_file}" \
-                  --pid "${pred_pid}" \
-                  --expected-cli "${controller}/scripts/dev_environment_lease.py" \
-                  --state-file "${state_file}" >/dev/null || true
+              if [[ -z "${identity_file}" || ! -f "${identity_file}" || -z "${state_file}" || ! -f "${state_file}" ]]; then
+                echo "[dev-deploy-compensation] Missing identity/state files for active predecessor heartbeat (pid=${pred_pid})" >&2
+                return 1
               fi
 
-              kill -TERM "${pred_pid}" 2>/dev/null || true
+              if ! python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+                --identity-file "${identity_file}" \
+                --pid "${pred_pid}" \
+                --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+                --state-file "${state_file}" >/dev/null; then
+                echo "[dev-deploy-compensation] Predecessor heartbeat identity verification failed for pid=${pred_pid}" >&2
+                return 1
+              fi
+
+              kill -TERM "${pred_pid}" 2>/dev/null || {
+                kill -0 "${pred_pid}" 2>/dev/null || return 0
+                state="$(ps -o stat= -p "${pred_pid}" 2>/dev/null | tr -d '[:space:]' || true)"
+                case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
+                return 1
+              }
               kill -CONT "${pred_pid}" 2>/dev/null || true
               for _ in $(seq 1 40); do
                 kill -0 "${pred_pid}" 2>/dev/null || return 0
@@ -1500,17 +1513,41 @@ jobs:
                 sleep 0.25
               done
 
-              kill -KILL "${pred_pid}" 2>/dev/null || true
+              if ! python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+                --identity-file "${identity_file}" \
+                --pid "${pred_pid}" \
+                --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+                --state-file "${state_file}" >/dev/null; then
+                echo "[dev-deploy-compensation] Predecessor heartbeat identity verification failed before SIGKILL escalation for pid=${pred_pid}" >&2
+                return 1
+              fi
+
+              kill -KILL "${pred_pid}" 2>/dev/null || {
+                kill -0 "${pred_pid}" 2>/dev/null || return 0
+                state="$(ps -o stat= -p "${pred_pid}" 2>/dev/null | tr -d '[:space:]' || true)"
+                case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
+                return 1
+              }
               for _ in $(seq 1 20); do
                 kill -0 "${pred_pid}" 2>/dev/null || return 0
                 state="$(ps -o stat= -p "${pred_pid}" 2>/dev/null | tr -d '[:space:]' || true)"
                 case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
                 sleep 0.25
               done
+
+              if kill -0 "${pred_pid}" 2>/dev/null; then
+                state="$(ps -o stat= -p "${pred_pid}" 2>/dev/null | tr -d '[:space:]' || true)"
+                case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
+                echo "[dev-deploy-compensation] Predecessor heartbeat process (pid=${pred_pid}) remains alive after SIGKILL" >&2
+                return 1
+              fi
               return 0
             }
 
-            stop_predecessor_heartbeat
+            if ! stop_predecessor_heartbeat; then
+              echo "[dev-deploy-compensation] Failed to stop predecessor heartbeat cleanly; failing closed" >&2
+              exit 75
+            fi
 
             PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
               python3 "${controller}/scripts/dev_environment_lease.py" acquire \
@@ -1594,9 +1631,9 @@ jobs:
 
             rollback_deploy_succeeded=true
           fi
-          actual_bff="$(curl -fsS "${DEV_BFF_URL}/bff/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")')"
+          actual_bff="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_BFF_URL}/bff/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")')"
           [[ "${actual_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]
-          actual_fe="$(curl -fsS "${DEV_FE_URL}/deployment.json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("frontendSha") or d.get("commit") or "")')"
+          actual_fe="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_FE_URL}/deployment.json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("frontendSha") or d.get("commit") or "")')"
           [[ "${actual_fe}" == "${PANTHEON_ROLLBACK_FRONTEND_SHA}" ]]
           if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then
             echo "Preserved exact hosted dev baseline pair without deploy mutation: BFF=${actual_bff} FE=${actual_fe}" >> "${GITHUB_STEP_SUMMARY}"

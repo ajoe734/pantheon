@@ -2134,6 +2134,47 @@ retire_legacy_static_paper_runtime() {
     docker compose -p pantheon -f docker-compose.yml rm -f -s pantheon-paper-runtime
 }
 
+retire_dormant_and_one_off_profile_containers() {
+  local active_profiles=",${PANTHEON_DEV_COMPOSE_PROFILES:-},"
+  if [[ "${active_profiles}" != *",dormant-smoke,"* ]]; then
+    info "retiring inactive dormant-smoke profile containers"
+    COMPOSE_PROFILES="dormant-smoke" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s \
+        mlflow-dormant-smoke \
+        finrl-dormant-smoke \
+        rllib-dormant-smoke \
+        ray-tune-dormant-smoke \
+        qlib-dormant-smoke \
+        trl-dormant-smoke \
+        experiments-dormant-smoke 2>/dev/null || true
+  fi
+  if [[ "${active_profiles}" != *",smoke,"* ]]; then
+    info "retiring inactive smoke profile containers"
+    COMPOSE_PROFILES="smoke" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s smoke-stack 2>/dev/null || true
+  fi
+  if [[ "${active_profiles}" != *",activation-ready-smoke,"* ]]; then
+    info "retiring inactive activation-ready-smoke profile containers"
+    COMPOSE_PROFILES="activation-ready-smoke" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s oss-activation-ready-smoke-matrix 2>/dev/null || true
+  fi
+  if [[ "${active_profiles}" != *",openclaw-activation-ready-e2e,"* ]]; then
+    info "retiring inactive openclaw-activation-ready-e2e profile containers"
+    COMPOSE_PROFILES="openclaw-activation-ready-e2e" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s openclaw-activation-ready-e2e 2>/dev/null || true
+  fi
+  if [[ "${active_profiles}" != *",source-search-bounded,"* ]]; then
+    info "retiring inactive source-search-bounded profile containers"
+    COMPOSE_PROFILES="source-search-bounded" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s source-search-bounded-smoke 2>/dev/null || true
+  fi
+  if [[ "${active_profiles}" != *",lifecycle-capacity-benchmark,"* ]]; then
+    info "retiring inactive lifecycle-capacity-benchmark profile containers"
+    COMPOSE_PROFILES="lifecycle-capacity-benchmark" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s lifecycle-projector-capacity-benchmark 2>/dev/null || true
+  fi
+}
+
 verify_dev_paper_fleet() {
   local attempt
   local status=""
@@ -2388,6 +2429,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
     prune_dev_management_ai_telemetry_for_disk
+    retire_dormant_and_one_off_profile_containers
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
@@ -2501,6 +2543,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || rollback_dev_bff_on_failure "shared_model_pool"
     retire_legacy_static_paper_runtime \
       || rollback_dev_bff_on_failure "retire_legacy_paper"
+    retire_dormant_and_one_off_profile_containers \
+      || rollback_dev_bff_on_failure "retire_dormant_profiles"
     verify_dev_paper_fleet \
       || rollback_dev_bff_on_failure "paper_fleet"
     curl_with_retry http://127.0.0.1:18001/health \
