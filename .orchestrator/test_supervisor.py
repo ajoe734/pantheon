@@ -11,6 +11,7 @@ authoritative TaskStore projection.
 from __future__ import annotations
 
 import ast
+import copy
 import inspect
 import json
 import os
@@ -1386,6 +1387,245 @@ class SharedPlannerContractTests(unittest.TestCase):
 
         elapsed = decide(900, {event["key"]: "2026-08-10T23:00:00Z"})
         self.assertTrue(elapsed["eligible"])
+
+    def test_task_review_reopen_revision_sources_and_bounds(self) -> None:
+        task = task_fixture(task_id="TASK-1", status="in_progress")
+        self.assertEqual(supervisor.task_review_reopen_revision(task), 0)
+
+        task_explicit = {**task, "review_reopen_revision": 2}
+        self.assertEqual(supervisor.task_review_reopen_revision(task_explicit), 2)
+
+        task_str = {**task, "reopen_revision": "3"}
+        self.assertEqual(supervisor.task_review_reopen_revision(task_str), 3)
+
+        activity_events = [
+            {"ts": "2026-08-24T12:00:00Z", "agent": "Codex", "type": "start", "task_id": "TASK-1"},
+            {"ts": "2026-08-24T12:01:00Z", "agent": "Codex", "type": "handoff", "task_id": "TASK-1"},
+            {"ts": "2026-08-24T12:02:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1", "message": "fix 1"},
+            {"ts": "2026-08-24T12:03:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-2", "message": "other task"},
+            {"ts": "2026-08-24T12:04:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1", "message": "fix 2"},
+        ]
+        self.assertEqual(
+            supervisor.task_review_reopen_revision(task, activity_events=activity_events),
+            2,
+        )
+        task_2 = task_fixture(task_id="TASK-2", status="in_progress")
+        self.assertEqual(
+            supervisor.task_review_reopen_revision(task_2, activity_events=activity_events),
+            1,
+        )
+
+    def test_review_reopen_advances_reopen_revision_and_redispatches_owner_once(self) -> None:
+        task = task_fixture(task_id="TASK-1", status="in_progress", owner="Codex", reviewer="Codex2")
+        task_map = {"TASK-1": task}
+        state = with_healthy_delivery_health(self.config, {"workers": {}, "queue": {"events": {}}})
+        resolver = supervisor.task_resolver_for_config(self.config, task_map)
+        settings = supervisor.ready_dispatch_settings(self.config)
+
+        # 1. Initial in-progress state before reopen has revision 0
+        first_event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            resolver,
+            activity_events=[],
+        )
+        self.assertNotIn("review_reopen_revision", first_event)
+        seen_event_keys = {first_event["key"]: "2026-08-24T12:00:00Z"}
+
+        # Ordinary in-progress polling is blocked by unchanged cooldown
+        decision_initial_poll = supervisor.evaluate_dispatch_candidate(
+            self.config,
+            state,
+            {"tasks": [task]},
+            task,
+            "Codex",
+            resolver,
+            settings=settings,
+            active_task_ids=set(),
+            pending_task_ids=set(),
+            pending_event_keys=set(),
+            agent_loads={},
+            active_account_loads={},
+            pending_account_loads={},
+            seen_event_keys=seen_event_keys,
+            checked_at="2026-08-24T12:01:00Z",
+            cooldown_seconds=900,
+            activity_events=[],
+        )
+        self.assertFalse(decision_initial_poll["eligible"])
+        self.assertEqual(decision_initial_poll["first_blocking_gate"], "unchanged_cooldown")
+
+        # 2. Reviewer reopens the task (owner, reviewer, generation remain unchanged)
+        reopen_events_1 = [
+            {"ts": "2026-08-24T12:02:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1", "message": "fix requested"}
+        ]
+        decision_after_reopen = supervisor.evaluate_dispatch_candidate(
+            self.config,
+            state,
+            {"tasks": [task]},
+            task,
+            "Codex",
+            resolver,
+            settings=settings,
+            active_task_ids=set(),
+            pending_task_ids=set(),
+            pending_event_keys=set(),
+            agent_loads={},
+            active_account_loads={},
+            pending_account_loads={},
+            seen_event_keys=seen_event_keys,
+            checked_at="2026-08-24T12:02:05Z",
+            cooldown_seconds=900,
+            activity_events=reopen_events_1,
+        )
+        self.assertTrue(decision_after_reopen["eligible"])
+        self.assertEqual(decision_after_reopen["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+        reopened_event_1 = decision_after_reopen["event"]
+        self.assertEqual(reopened_event_1["review_reopen_revision"], 1)
+        self.assertEqual(reopened_event_1["task"]["review_reopen_revision"], 1)
+        self.assertNotEqual(reopened_event_1["key"], first_event["key"])
+
+        # 3. Simulate dispatch of reopened task: record new key in seen_event_keys
+        seen_event_keys[reopened_event_1["key"]] = "2026-08-24T12:02:05Z"
+
+        # Subsequent in-progress polling with the same reopen state is suppressed
+        decision_reopen_poll = supervisor.evaluate_dispatch_candidate(
+            self.config,
+            state,
+            {"tasks": [task]},
+            task,
+            "Codex",
+            resolver,
+            settings=settings,
+            active_task_ids=set(),
+            pending_task_ids=set(),
+            pending_event_keys=set(),
+            agent_loads={},
+            active_account_loads={},
+            pending_account_loads={},
+            seen_event_keys=seen_event_keys,
+            checked_at="2026-08-24T12:02:30Z",
+            cooldown_seconds=900,
+            activity_events=reopen_events_1,
+        )
+        self.assertFalse(decision_reopen_poll["eligible"])
+        self.assertEqual(decision_reopen_poll["first_blocking_gate"], "unchanged_cooldown")
+
+        # 4. A second rejection advances revision to 2 and redispatches owner again
+        reopen_events_2 = reopen_events_1 + [
+            {"ts": "2026-08-24T12:05:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1", "message": "second fix"}
+        ]
+        decision_after_reopen_2 = supervisor.evaluate_dispatch_candidate(
+            self.config,
+            state,
+            {"tasks": [task]},
+            task,
+            "Codex",
+            resolver,
+            settings=settings,
+            active_task_ids=set(),
+            pending_task_ids=set(),
+            pending_event_keys=set(),
+            agent_loads={},
+            active_account_loads={},
+            pending_account_loads={},
+            seen_event_keys=seen_event_keys,
+            checked_at="2026-08-24T12:05:05Z",
+            cooldown_seconds=900,
+            activity_events=reopen_events_2,
+        )
+        self.assertTrue(decision_after_reopen_2["eligible"])
+        reopened_event_2 = decision_after_reopen_2["event"]
+        self.assertEqual(reopened_event_2["review_reopen_revision"], 2)
+        self.assertNotEqual(reopened_event_2["key"], reopened_event_1["key"])
+
+    def test_stale_dispatch_skip_message_with_review_reopen_revision(self) -> None:
+        task = task_fixture(task_id="TASK-1", status="in_progress", owner="Codex")
+        resolver = supervisor.task_resolver_for_config(self.config, {"TASK-1": task})
+        reopen_events_1 = [
+            {"ts": "2026-08-24T12:00:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1"}
+        ]
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            resolver,
+            activity_events=reopen_events_1,
+        )
+        event.update({"event_key": event["key"], "target_display_name": "Codex"})
+
+        # Event matches current task state at revision 1
+        self.assertIsNone(
+            supervisor.stale_dispatch_skip_message(
+                self.config,
+                event,
+                {"TASK-1": task},
+                activity_events=reopen_events_1,
+            )
+        )
+
+        # When a second reopen occurs, the queued revision 1 event is recognized as stale
+        reopen_events_2 = reopen_events_1 + [
+            {"ts": "2026-08-24T12:05:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1"}
+        ]
+        skip_msg = supervisor.stale_dispatch_skip_message(
+            self.config,
+            event,
+            {"TASK-1": task},
+            activity_events=reopen_events_2,
+        )
+        self.assertIsNotNone(skip_msg)
+        self.assertIn("task state changed after the wake-up was queued", skip_msg or "")
+
+    def test_explain_dispatch_reflects_reopen_eligibility(self) -> None:
+        config = copy.deepcopy(self.config)
+        config["ready_dispatcher"]["unchanged_task_cooldown_seconds"] = 900
+        task = task_fixture(task_id="TASK-1", status="in_progress", owner="Codex", reviewer="Codex2")
+        resolver = supervisor.task_resolver_for_config(config, {"TASK-1": task})
+        first_event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            resolver,
+            activity_events=[],
+        )
+        now = supervisor.utc_now()
+        state = with_healthy_delivery_health(
+            config,
+            {"workers": {}, "seen_event_keys": {first_event["key"]: now}},
+        )
+
+        # Before reopen, explain shows Codex blocked under unchanged cooldown
+        explanation_before = supervisor.explain_dispatch_for_task(
+            config,
+            state,
+            "TASK-1",
+            status={"tasks": [task]},
+            activity_events=[],
+        )
+        self.assertTrue(explanation_before["agents"]["Codex"]["blocked"])
+        self.assertEqual(
+            explanation_before["agents"]["Codex"]["first_blocking_gate"],
+            "unchanged_cooldown",
+        )
+
+        # After reviewer reopen, explain shows Codex eligible
+        reopen_events = [
+            {"ts": now, "agent": "Codex2", "type": "reopen", "task_id": "TASK-1"}
+        ]
+        explanation_after = supervisor.explain_dispatch_for_task(
+            config,
+            state,
+            "TASK-1",
+            status={"tasks": [task]},
+            activity_events=reopen_events,
+        )
+        self.assertFalse(explanation_after["agents"]["Codex"]["blocked"])
+        self.assertEqual(
+            explanation_after["agents"]["Codex"]["candidate_reason"],
+            supervisor.REASON_OWNED_IN_PROGRESS,
+        )
 
 
 class DurableQueueContractTests(unittest.TestCase):
