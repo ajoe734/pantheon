@@ -102,19 +102,40 @@ class FakeClient:
         )
 
 
-def _coordinate(client: FakeClient) -> dict[str, Any]:
+def _default_fetch_fn(url: str) -> dict[str, Any]:
+    if "version" in url:
+        return {"source_commit_sha": BACKEND_SHA}
+    if "deployment.json" in url:
+        return {
+            "frontendSha": FRONTEND_SHA,
+            "pairId": derive_pair_id(BACKEND_SHA, FRONTEND_SHA),
+        }
+    return {}
+
+
+def _coordinate(
+    client: FakeClient,
+    *,
+    fetch_fn: Any = None,
+    **overrides: Any,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "frontend_sha": FRONTEND_SHA,
+        "backend_sha": BACKEND_SHA,
+        "bff_base_url": "https://bff.test",
+        "release_candidate_id": CANDIDATE_ID,
+        "compatibility_manifest_sha256": MANIFEST_SHA,
+        "controller_run_id": CONTROLLER_RUN_ID,
+        "gate_timeout_seconds": 5,
+        "deploy_timeout_seconds": 5,
+        "poll_seconds": 0,
+        "fetch_fn": fetch_fn or _default_fetch_fn,
+        "sleep": lambda _: None,
+    }
+    kwargs.update(overrides)
     return coordinate_release(
         client,  # type: ignore[arg-type]
-        frontend_sha=FRONTEND_SHA,
-        backend_sha=BACKEND_SHA,
-        bff_base_url="https://bff.test",
-        release_candidate_id=CANDIDATE_ID,
-        compatibility_manifest_sha256=MANIFEST_SHA,
-        controller_run_id=CONTROLLER_RUN_ID,
-        gate_timeout_seconds=5,
-        deploy_timeout_seconds=5,
-        poll_seconds=0,
-        sleep=lambda _: None,
+        **kwargs,
     )
 
 
@@ -149,15 +170,24 @@ def test_coordinates_exact_gate_then_exact_deploy_on_dev() -> None:
     assert evidence["integration_gate"]["run_id"] == "101"
     assert evidence["frontend_deploy"]["run_id"] == "202"
     assert evidence["outcome"] == "accepted"
+    assert evidence["proof_state"] == "COMPLETE"
+    assert evidence["candidate"]["profile"] == "read-only"
+    assert evidence["candidate"]["pair_id"] == derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
+    assert evidence["served_verification"]["status"] == "verified"
 
 
-def test_gate_failure_stops_before_frontend_deploy() -> None:
+def test_gate_failure_stops_before_frontend_deploy(tmp_path: Path) -> None:
     client = FakeClient(gate_conclusion="failure")
+    candidate_out = tmp_path / "candidate.json"
 
     with pytest.raises(ControllerError, match="concluded failure"):
-        _coordinate(client)
+        _coordinate(client, candidate_out=candidate_out)
 
     assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW]
+    # Check that candidate_out was restored to read-only even on failure
+    import json
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
 
 
 def test_ambiguous_dispatch_fails_closed() -> None:
@@ -182,24 +212,121 @@ def test_invalid_or_branch_like_identity_is_rejected(
     field: str, value: str, message: str
 ) -> None:
     client = FakeClient()
-    kwargs: dict[str, Any] = {
-        "frontend_sha": FRONTEND_SHA,
-        "backend_sha": BACKEND_SHA,
-        "bff_base_url": "https://bff.test",
-        "release_candidate_id": CANDIDATE_ID,
-        "compatibility_manifest_sha256": MANIFEST_SHA,
-        "controller_run_id": CONTROLLER_RUN_ID,
-        "gate_timeout_seconds": 5,
-        "deploy_timeout_seconds": 5,
-        "poll_seconds": 0,
-        "sleep": lambda _: None,
-    }
-    kwargs[field] = value
+    kwargs: dict[str, Any] = {field: value}
 
     with pytest.raises(ControllerError, match=message):
-        coordinate_release(client, **kwargs)  # type: ignore[arg-type]
+        _coordinate(client, **kwargs)
 
     assert client.dispatches == []
+
+
+def test_arbitrary_pair_id_rejected_in_create_candidate_record() -> None:
+    canonical_pair = derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
+
+    # Valid matching pair ID is accepted
+    record = create_candidate_record(
+        pantheon_sha=BACKEND_SHA,
+        execute_plans_sha=FRONTEND_SHA,
+        pair_id=canonical_pair,
+    )
+    assert record["pair_id"] == canonical_pair
+
+    # Arbitrary 64-hex pair ID is rejected immediately
+    arbitrary_pair = "f" * 64
+    with pytest.raises(ControllerError, match="does not match canonically derived pair ID"):
+        create_candidate_record(
+            pantheon_sha=BACKEND_SHA,
+            execute_plans_sha=FRONTEND_SHA,
+            pair_id=arbitrary_pair,
+        )
+
+
+def test_stale_override_rejection_in_coordinate_release_execution_path() -> None:
+    client = FakeClient()
+
+    # Mismatched pair_id in coordinate_release fails closed before any dispatch
+    with pytest.raises(ControllerError, match="does not match canonically derived pair ID"):
+        _coordinate(client, pair_id="f" * 64)
+    assert client.dispatches == []
+
+
+def test_served_mismatch_before_child_dispatch_in_coordinate_release() -> None:
+    client = FakeClient()
+
+    # BFF mismatch fails closed before dispatch
+    def fake_bff_mismatch(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": "9" * 40}
+        return {}
+
+    with pytest.raises(ControllerError, match="served identity mismatch fails closed"):
+        _coordinate(client, fetch_fn=fake_bff_mismatch)
+    assert client.dispatches == []
+
+    # Network / transport error fails closed before dispatch
+    def fake_transport_error(url: str) -> dict[str, Any]:
+        raise RuntimeError("connection refused")
+
+    with pytest.raises(ControllerError, match="served identity verification failed reaching BFF"):
+        _coordinate(client, fetch_fn=fake_transport_error)
+    assert client.dispatches == []
+
+
+def test_adversarial_monkeypatch_served_verification_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient()
+
+    def raise_probe(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("adversarial probe served verification failed")
+
+    monkeypatch.setattr(
+        "scripts.cross_repo_release_controller.verify_served_identity",
+        raise_probe,
+    )
+
+    with pytest.raises(RuntimeError, match="adversarial probe served verification failed"):
+        _coordinate(client)
+    assert client.dispatches == []
+
+
+def test_adversarial_monkeypatch_restoration_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient()
+
+    def raise_probe(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("adversarial probe restoration failed")
+
+    monkeypatch.setattr(
+        "scripts.cross_repo_release_controller.restore_read_only_profile",
+        raise_probe,
+    )
+
+    with pytest.raises(RuntimeError, match="adversarial probe restoration failed"):
+        _coordinate(client)
+
+
+def test_read_only_restoration_on_all_terminal_outcomes(tmp_path: Path) -> None:
+    import json
+
+    # 1. Success outcome
+    client_success = FakeClient()
+    candidate_out_success = tmp_path / "candidate_success.json"
+    evidence = _coordinate(client_success, candidate_out=candidate_out_success)
+    assert evidence["candidate"]["profile"] == "read-only"
+    assert "restored_at" in evidence["candidate"]
+    data_success = json.loads(candidate_out_success.read_text(encoding="utf-8"))
+    assert data_success["profile"] == "read-only"
+
+    # 2. Failure outcome (gate failure)
+    client_failure = FakeClient(gate_conclusion="failure")
+    candidate_out_failure = tmp_path / "candidate_failure.json"
+    with pytest.raises(ControllerError, match="concluded failure"):
+        _coordinate(client_failure, candidate_out=candidate_out_failure)
+    data_failure = json.loads(candidate_out_failure.read_text(encoding="utf-8"))
+    assert data_failure["profile"] == "read-only"
+    assert "restored_at" in data_failure
 
 
 def test_nonprod_workflow_seals_exact_dev_pair_before_any_switch() -> None:
@@ -332,11 +459,12 @@ def test_candidate_derives_exact_current_fe_bff_pair_and_pair_id() -> None:
 
 
 def test_stale_task_pair_or_child_inputs_cannot_override_candidate() -> None:
+    canonical_pair = derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
     candidate = create_candidate_record(
         pantheon_sha=BACKEND_SHA,
         execute_plans_sha=FRONTEND_SHA,
         candidate_id=CANDIDATE_ID,
-        pair_id=MANIFEST_SHA,
+        pair_id=canonical_pair,
     )
 
     # Valid matching inputs pass
@@ -346,7 +474,7 @@ def test_stale_task_pair_or_child_inputs_cannot_override_candidate() -> None:
             "frontend_sha": FRONTEND_SHA,
             "backend_sha": BACKEND_SHA,
             "candidate_id": CANDIDATE_ID,
-            "pair_id": MANIFEST_SHA,
+            "pair_id": canonical_pair,
         },
     )
 
@@ -374,16 +502,17 @@ def test_no_operator_prompt_or_proof_window_ack_required() -> None:
     # Coordination proceeds automatically without operator prompt or proof_window_ack gate
     assert evidence["outcome"] == "accepted"
     assert "candidate" in evidence
-    assert evidence["candidate"]["profile"] == "write-proof"
+    assert evidence["candidate"]["profile"] == "read-only"
     assert evidence["candidate"]["source_mode"] == "reconcile-only"
 
 
 def test_served_mismatch_fails_closed() -> None:
+    canonical_pair = derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
     candidate = create_candidate_record(
         pantheon_sha=BACKEND_SHA,
         execute_plans_sha=FRONTEND_SHA,
         candidate_id=CANDIDATE_ID,
-        pair_id=MANIFEST_SHA,
+        pair_id=canonical_pair,
     )
 
     def fake_matching_fetcher(url: str) -> dict[str, Any]:
@@ -392,7 +521,7 @@ def test_served_mismatch_fails_closed() -> None:
         if "deployment.json" in url:
             return {
                 "frontendSha": FRONTEND_SHA,
-                "pairId": MANIFEST_SHA,
+                "pairId": canonical_pair,
             }
         return {}
 
@@ -405,6 +534,7 @@ def test_served_mismatch_fails_closed() -> None:
     assert result["status"] == "verified"
     assert result["observed_bff_sha"] == BACKEND_SHA
     assert result["observed_fe_sha"] == FRONTEND_SHA
+    assert result["observed_pair_id"] == canonical_pair
 
     # BFF mismatch fails closed
     def fake_bff_mismatch(url: str) -> dict[str, Any]:
@@ -424,7 +554,7 @@ def test_served_mismatch_fails_closed() -> None:
         if "version" in url:
             return {"source_commit_sha": BACKEND_SHA}
         if "deployment.json" in url:
-            return {"frontendSha": "9" * 40, "pairId": MANIFEST_SHA}
+            return {"frontendSha": "9" * 40, "pairId": canonical_pair}
         return {}
 
     with pytest.raises(ControllerError, match="served identity mismatch fails closed"):
@@ -437,11 +567,12 @@ def test_served_mismatch_fails_closed() -> None:
 
 
 def test_read_only_restored_on_success_failure_cancellation_expiry() -> None:
+    canonical_pair = derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
     candidate = create_candidate_record(
         pantheon_sha=BACKEND_SHA,
         execute_plans_sha=FRONTEND_SHA,
         candidate_id=CANDIDATE_ID,
-        pair_id=MANIFEST_SHA,
+        pair_id=canonical_pair,
         profile="write-proof",
     )
     assert candidate["profile"] == "write-proof"
@@ -451,6 +582,10 @@ def test_read_only_restored_on_success_failure_cancellation_expiry() -> None:
     assert restored["candidate_id"] == candidate["candidate_id"]
     assert restored["pair_id"] == candidate["pair_id"]
     assert "restored_at" in restored
+
+    # Idempotent call returns same profile
+    restored_again = restore_read_only_profile(restored)
+    assert restored_again["profile"] == "read-only"
 
     # With served manifest verification
     served_manifest = {
@@ -495,9 +630,17 @@ def test_proof_state_machine_transitions() -> None:
     assert sm.transition("READ_ONLY_RESTORED") == "READ_ONLY_RESTORED"
     assert sm.transition("COMPLETE") == "COMPLETE"
 
+    # Idempotent same-state transition
+    assert sm.transition("COMPLETE") == "COMPLETE"
+
     # Error recovery transition directly to READ_ONLY_RESTORED from any state
     sm2 = ProofStateMachine("WRITE_PROOF_ACTIVE")
     assert sm2.transition("READ_ONLY_RESTORED") == "READ_ONLY_RESTORED"
+
+    # Invalid state transition raises error
+    sm3 = ProofStateMachine("CREATED")
+    with pytest.raises(ControllerError, match="invalid state transition"):
+        sm3.transition("COMPLETE")
 
 
 def test_nonprod_workflow_outputs_candidate_auto_binding_contract() -> None:

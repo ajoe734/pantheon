@@ -104,10 +104,13 @@ def create_candidate_record(
 ) -> dict[str, Any]:
     pantheon_sha = exact_sha(pantheon_sha, "backend SHA")
     execute_plans_sha = exact_sha(execute_plans_sha, "frontend SHA")
-    if pair_id:
-        derived_pair_id = exact_digest(pair_id, "pair ID")
-    else:
-        derived_pair_id = derive_pair_id(pantheon_sha, execute_plans_sha)
+    canonical_pair = derive_pair_id(pantheon_sha, execute_plans_sha)
+    if pair_id is not None:
+        supplied_pair = exact_digest(pair_id, "pair ID")
+        if supplied_pair != canonical_pair:
+            raise ControllerError(
+                f"supplied pair ID {supplied_pair} does not match canonically derived pair ID {canonical_pair}"
+            )
 
     if profile not in PROOF_PROFILES:
         raise ControllerError(f"invalid profile: {profile}")
@@ -124,7 +127,7 @@ def create_candidate_record(
         cid = canonical_json_sha256({
             "execute_plans_sha": execute_plans_sha,
             "expires_at": expires_at,
-            "pair_id": derived_pair_id,
+            "pair_id": canonical_pair,
             "pantheon_sha": pantheon_sha,
             "profile": profile,
             "source_mode": source_mode,
@@ -134,7 +137,7 @@ def create_candidate_record(
         "candidate_id": cid,
         "pantheon_sha": pantheon_sha,
         "execute_plans_sha": execute_plans_sha,
-        "pair_id": derived_pair_id,
+        "pair_id": canonical_pair,
         "profile": profile,
         "expires_at": expires_at,
         "source_mode": source_mode,
@@ -158,28 +161,28 @@ def validate_candidate_override(
     pair_id = child_inputs.get("pair_id") or child_inputs.get("pairId")
     candidate_id = child_inputs.get("candidate_id") or child_inputs.get("release_candidate_id")
 
-    if fe_sha:
+    if fe_sha is not None:
         norm_fe = exact_sha(fe_sha, "child frontend SHA")
         if norm_fe != parent_candidate["execute_plans_sha"]:
             raise ControllerError(
                 f"stale task pair or child inputs cannot override parent candidate: "
                 f"frontend SHA {norm_fe} != parent {parent_candidate['execute_plans_sha']}"
             )
-    if bff_sha:
+    if bff_sha is not None:
         norm_bff = exact_sha(bff_sha, "child backend SHA")
         if norm_bff != parent_candidate["pantheon_sha"]:
             raise ControllerError(
                 f"stale task pair or child inputs cannot override parent candidate: "
                 f"backend SHA {norm_bff} != parent {parent_candidate['pantheon_sha']}"
             )
-    if pair_id:
+    if pair_id is not None:
         norm_pair = exact_digest(pair_id, "child pair ID")
         if norm_pair != parent_candidate["pair_id"]:
             raise ControllerError(
                 f"stale task pair or child inputs cannot override parent candidate: "
                 f"pair ID {norm_pair} != parent {parent_candidate['pair_id']}"
             )
-    if candidate_id:
+    if candidate_id is not None:
         norm_cid = exact_digest(candidate_id, "child candidate ID")
         if norm_cid != parent_candidate["candidate_id"]:
             raise ControllerError(
@@ -227,6 +230,8 @@ def verify_served_identity(
     observed_fe_sha = None
     observed_pair_id = None
     if fe_base_url:
+        if not (fe_base_url.startswith("https://") or fe_base_url.startswith("http://")):
+            raise ControllerError("FE base URL must use HTTPS or HTTP")
         fe_deployment_url = f"{fe_base_url.rstrip('/')}/deployment.json"
         try:
             fe_data = fetcher(fe_deployment_url)
@@ -265,7 +270,8 @@ def restore_read_only_profile(
 ) -> dict[str, Any]:
     restored = dict(candidate_record)
     restored["profile"] = "read-only"
-    restored["restored_at"] = utc_now()
+    if "restored_at" not in restored:
+        restored["restored_at"] = utc_now()
     if served_manifest:
         fe_sha = exact_sha(
             served_manifest.get("frontendSha") or served_manifest.get("commit") or "",
@@ -292,6 +298,8 @@ class ProofStateMachine:
     def transition(self, next_state: str) -> str:
         if next_state not in PROOF_STATES:
             raise ControllerError(f"invalid proof state: {next_state}")
+        if next_state == self.state:
+            return self.state
         curr_idx = PROOF_STATES.index(self.state)
         next_idx = PROOF_STATES.index(next_state)
         if next_state == "READ_ONLY_RESTORED" or next_idx == curr_idx + 1:
@@ -495,6 +503,8 @@ def coordinate_release(
     pair_id: str | None = None,
     candidate_profile: str = "write-proof",
     candidate_out: str | Path | None = None,
+    fe_base_url: str | None = None,
+    fetch_fn: Callable[[str], dict[str, Any]] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     frontend_sha = exact_sha(frontend_sha, "frontend SHA")
@@ -508,6 +518,10 @@ def coordinate_release(
     controller_run_id = exact_run_id(controller_run_id, "controller run ID")
     if not str(bff_base_url).startswith("https://"):
         raise ControllerError("BFF base URL must use HTTPS")
+    if fe_base_url is not None and not (str(fe_base_url).startswith("https://") or str(fe_base_url).startswith("http://")):
+        raise ControllerError("FE base URL must use HTTPS or HTTP")
+
+    state_machine = ProofStateMachine("CREATED")
 
     candidate = create_candidate_record(
         pantheon_sha=backend_sha,
@@ -534,62 +548,92 @@ def coordinate_release(
 
     emit_github_outputs(candidate)
 
+    # 1. Identity verification BEFORE any child dispatch
+    state_machine.transition("IDENTITY_VERIFIED")
+    served_verification = verify_served_identity(
+        bff_base_url=bff_base_url,
+        expected_candidate=candidate,
+        fe_base_url=fe_base_url,
+        fetch_fn=fetch_fn,
+    )
+
+    # 2. Write-proof active during proof / dispatch window
+    state_machine.transition("WRITE_PROOF_ACTIVE")
+    state_machine.transition("JOURNEYS_RUNNING")
+
     started_at = utc_now()
     gate_title = f"Release candidate {release_candidate_id}"
-    gate = dispatch_and_wait(
-        client,
-        expected=ExpectedRun(
-            workflow=GATE_WORKFLOW,
-            title=gate_title,
-            head_sha=frontend_sha,
-        ),
-        inputs={
-            "fe_sha": frontend_sha,
-            "bff_sha": backend_sha,
-            "bff_base_url": bff_base_url,
-            "pantheon_contract_ref": backend_sha,
-            "release_candidate_id": release_candidate_id,
-            "compatibility_manifest_sha256": compatibility_manifest_sha256,
-            "release_controller_run_id": controller_run_id,
-            "soft_fail": "false",
-        },
-        timeout_seconds=gate_timeout_seconds,
-        poll_seconds=poll_seconds,
-        sleep=sleep,
-    )
-    gate_run_id = str(validate_run(
-        gate,
-        ExpectedRun(GATE_WORKFLOW, gate_title, frontend_sha),
-    ))
 
-    deploy_title = f"Deploy release candidate {release_candidate_id}"
-    deploy = dispatch_and_wait(
-        client,
-        expected=ExpectedRun(
-            workflow=DEPLOY_WORKFLOW,
-            title=deploy_title,
-            head_sha=frontend_sha,
-        ),
-        inputs={
-            "candidate_sha": frontend_sha,
-            "gate_run_id": gate_run_id,
-            "release_candidate_id": release_candidate_id,
-            "compatibility_manifest_sha256": compatibility_manifest_sha256,
-            "release_controller_run_id": controller_run_id,
-            "deployment_profile": "read-only",
-            "proof_window_ack": "false",
-            "emergency_override": "false",
-            "rollback_drill": "false",
-            "override_reason": "",
-        },
-        timeout_seconds=deploy_timeout_seconds,
-        poll_seconds=poll_seconds,
-        sleep=sleep,
-    )
+    try:
+        gate = dispatch_and_wait(
+            client,
+            expected=ExpectedRun(
+                workflow=GATE_WORKFLOW,
+                title=gate_title,
+                head_sha=frontend_sha,
+            ),
+            inputs={
+                "fe_sha": frontend_sha,
+                "bff_sha": backend_sha,
+                "bff_base_url": bff_base_url,
+                "pantheon_contract_ref": backend_sha,
+                "release_candidate_id": release_candidate_id,
+                "compatibility_manifest_sha256": compatibility_manifest_sha256,
+                "release_controller_run_id": controller_run_id,
+                "soft_fail": "false",
+            },
+            timeout_seconds=gate_timeout_seconds,
+            poll_seconds=poll_seconds,
+            sleep=sleep,
+        )
+        gate_run_id = str(validate_run(
+            gate,
+            ExpectedRun(GATE_WORKFLOW, gate_title, frontend_sha),
+        ))
+
+        deploy_title = f"Deploy release candidate {release_candidate_id}"
+        deploy = dispatch_and_wait(
+            client,
+            expected=ExpectedRun(
+                workflow=DEPLOY_WORKFLOW,
+                title=deploy_title,
+                head_sha=frontend_sha,
+            ),
+            inputs={
+                "candidate_sha": frontend_sha,
+                "gate_run_id": gate_run_id,
+                "release_candidate_id": release_candidate_id,
+                "compatibility_manifest_sha256": compatibility_manifest_sha256,
+                "release_controller_run_id": controller_run_id,
+                "deployment_profile": "read-only",
+                "proof_window_ack": "false",
+                "emergency_override": "false",
+                "rollback_drill": "false",
+                "override_reason": "",
+            },
+            timeout_seconds=deploy_timeout_seconds,
+            poll_seconds=poll_seconds,
+            sleep=sleep,
+        )
+        state_machine.transition("PROOF_CAPTURED")
+    finally:
+        # Restore read-only profile across success, failure, cancellation, expiry
+        candidate = restore_read_only_profile(candidate)
+        state_machine.transition("READ_ONLY_RESTORED")
+        if candidate_out:
+            cand_path = Path(candidate_out)
+            cand_path.write_text(json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        emit_github_outputs(candidate)
+
+    state_machine.transition("COMPLETE")
+
     return {
         "schema_version": "pantheon.cross-repo-release-controller-evidence.v1",
         "release_candidate_id": release_candidate_id,
         "candidate": candidate,
+        "served_verification": served_verification,
+        "proof_state": state_machine.state,
+        "proof_history": state_machine.history,
         "compatibility_manifest_sha256": compatibility_manifest_sha256,
         "compatibility_status": "compatible",
         "controller": {
@@ -628,6 +672,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--frontend-sha", required=True)
     parser.add_argument("--backend-sha", required=True)
     parser.add_argument("--bff-base-url", required=True)
+    parser.add_argument("--fe-base-url", default=None)
     parser.add_argument("--release-candidate-id", required=True)
     parser.add_argument("--compatibility-manifest-sha256", required=True)
     parser.add_argument("--controller-run-id", required=True)
@@ -664,6 +709,7 @@ def main(argv: list[str] | None = None) -> int:
             frontend_sha=args.frontend_sha,
             backend_sha=args.backend_sha,
             bff_base_url=args.bff_base_url,
+            fe_base_url=args.fe_base_url,
             release_candidate_id=args.release_candidate_id,
             compatibility_manifest_sha256=args.compatibility_manifest_sha256,
             controller_run_id=args.controller_run_id,
