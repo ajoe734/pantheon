@@ -2855,6 +2855,8 @@ def bind_external_worker_context(
     status_root = config_path(config, "status_file").parents[0].resolve()
     command_root = THIS_DIR.parent.resolve()
     bound_context: list[str] = []
+    missing_context: list[str] = []
+    inline_task_briefs: list[tuple[str, str]] = []
     for raw_path in request.context_files:
         raw_value = str(raw_path or "").strip()
         if not raw_value:
@@ -2869,8 +2871,11 @@ def bind_external_worker_context(
                     continue
                 if resolved.is_file():
                     bound_context.append(str(resolved))
-                break
+                    break
+            if not resolved.is_file():
+                missing_context.append(raw_value)
             continue
+        found = False
         for root in (status_root, command_root):
             resolved = (root / candidate).resolve()
             try:
@@ -2879,7 +2884,15 @@ def bind_external_worker_context(
                 continue
             if resolved.is_file():
                 bound_context.append(str(resolved))
+                found = True
                 break
+        if found:
+            continue
+        missing_context.append(raw_value)
+        if ".orchestrator/task-briefs/" in raw_value and request.task_id:
+            inline_task_briefs.append(
+                (raw_value, _generated_worker_task_brief(config, request.task_id))
+            )
 
     # Keep the delivery checkout pristine.  A generated Pantheon task brief in
     # an execute-plans worktree is neither product source nor valid evidence.
@@ -2890,6 +2903,22 @@ def bind_external_worker_context(
         if artifact_repository_id(config, artifact, repository_id) == repository_id
     ]
     request.metadata["workspace_target_files"] = delivery_targets
+    if missing_context:
+        # The wake-up template already contains the relative context list. Do
+        # not leave paths that cannot be read in that list: models otherwise
+        # retry the missing read at the end of a productive run and turn it
+        # into a false worker failure. Task briefs remain available as inline
+        # generated context without adding untracked files to the delivery
+        # repository; other unavailable context is explicitly marked so the
+        # worker can use governed task state instead.
+        for missing in missing_context:
+            replacement = f"- (unavailable context; use governed task state): {missing}"
+            request.message = request.message.replace(f"- {missing}", replacement)
+    if inline_task_briefs:
+        request.metadata["inline_context_files"] = [path for path, _ in inline_task_briefs]
+        request.message += "\n\nGenerated task-scoped context (inline; not a repository artifact):\n"
+        for path, brief in inline_task_briefs:
+            request.message += f"\n### {path}\n{brief.rstrip()}\n"
     context_lines = "\n".join(f"- {path}" for path in request.context_files) or "- (none; use governed task show)"
     target_lines = "\n".join(f"- {path}" for path in delivery_targets) or "- (none)"
     request.message += (
