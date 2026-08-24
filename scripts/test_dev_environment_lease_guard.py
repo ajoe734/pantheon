@@ -78,6 +78,8 @@ if command == "heartbeat-loop":
     else:
         signal.signal(signal.SIGTERM, lambda *_args: sys.exit(0))
     signal.signal(signal.SIGINT, lambda *_args: sys.exit(0))
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
     while True:
         time.sleep(1)
 
@@ -592,7 +594,8 @@ def test_heartbeat_survives_subshell_step_exit_and_sighup() -> None:
         step_script = f"""
         python3 "{paths['cli']}" heartbeat-loop \
             --state-file "{paths['state']}" \
-            --identity-json-out "{paths['heartbeat_identity']}" &
+            --identity-json-out "{paths['heartbeat_identity']}" \
+            >/dev/null 2>&1 &
         pid=$!
         disown "$pid" 2>/dev/null || true
         printf '%s\\n' "$pid" > "{paths['heartbeat_pid']}"
