@@ -5,7 +5,10 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -243,7 +246,7 @@ def test_dev_release_admission_depends_only_on_verified_bff_fe_pair() -> None:
 
 
 def test_rollback_baseline_uses_the_accepted_frontend_pair_manifest() -> None:
-    """A failed BFF cannot erase the last accepted release identity needed to
+    """A failed BFF cannot erase the last accepted or standby release identity needed to
     repair it. The immutable frontend deployment manifest carries that pair;
     a known dev-ancestor live BFF drift is recorded, never promoted to the
     rollback baseline."""
@@ -255,17 +258,17 @@ def test_rollback_baseline_uses_the_accepted_frontend_pair_manifest() -> None:
     assert baseline.index('"${DEV_FE_URL%/}/deployment.json" > "${deployment_json}"') < baseline.index(
         '"${DEV_BFF_URL%/}/bff/version" > "${version_json}"'
     )
-    assert 'baseline_source="accepted_frontend_pair_manifest"' in baseline
-    assert 'baseline_source="accepted_frontend_pair_manifest+live_bff_match"' in baseline
-    assert 'baseline_source="accepted_frontend_pair_manifest+live_bff_drift_recovery"' in baseline
+    assert 'baseline_source="${deployment_state}_frontend_pair_manifest"' in baseline
+    assert 'baseline_source="${deployment_state}_frontend_pair_manifest+live_bff_match"' in baseline
+    assert 'baseline_source="${deployment_state}_frontend_pair_manifest+live_bff_drift_recovery"' in baseline
     assert '[[ "${observed_previous}" =~ ^[0-9a-f]{40}$ ]]' in baseline
     assert '"${observed_previous}" refs/remotes/origin/dev' in baseline
     assert "Hosted BFF drift identity is not an exact commit SHA." in baseline
     assert "Hosted BFF drift identity is not contained in Pantheon dev." in baseline
-    assert "retaining the accepted pair as rollback authority" in baseline
-    assert "recovering from the accepted frontend pair manifest" in baseline
-    assert 'manifest.get("deploymentState") != "accepted"' in baseline
-    assert 'manifest.get("bffCommitEvidence") is not True' in baseline
+    assert 'retaining the ${deployment_state} pair as rollback authority' in baseline
+    assert 'recovering from the ${deployment_state} frontend pair manifest' in baseline
+    assert 'deployment_state not in ("accepted", "standby")' in baseline
+    assert 'bff_commit_evidence is not True' in baseline
     assert 'bff.get("baseUrl", "").rstrip("/") != expected_bff_url' in baseline
     assert '"baseline_source": sys.argv[7]' in baseline
     assert '"observed_live_bff_sha": sys.argv[8] or None' in baseline
@@ -437,3 +440,297 @@ def test_staging_dry_run_does_not_require_dev_lease() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "environment=staging-live" in result.stdout
+
+
+SAMPLE_BACKEND_SHA = "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"
+SAMPLE_FRONTEND_SHA = "cc4007f7f78a31c73548ce85457af17a45a4c4b9"
+SAMPLE_BFF_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+
+
+def _extract_rollback_baseline_python_script() -> str:
+    import textwrap
+
+    workflow = _workflow()
+    dev = _job(workflow, "deploy-dev", "deploy-staging-live")
+    start_marker = "<<'PY'\n"
+    start = dev.index(start_marker, dev.index("Capture exact hosted FE and BFF rollback baseline")) + len(start_marker)
+    match = re.search(r"\n\s*PY\n", dev[start:])
+    if not match:
+        raise ValueError("Could not find end of python script")
+    return textwrap.dedent(dev[start : start + match.start()])
+
+
+def _run_rollback_baseline_python_script(
+    manifest: dict,
+    expected_bff_url: str = SAMPLE_BFF_URL,
+    tmp_path: Path | None = None,
+) -> tuple[str, str, str]:
+    script = _extract_rollback_baseline_python_script()
+    import tempfile
+    if tmp_path is None:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as f:
+            json.dump(manifest, f)
+            manifest_path = f.name
+    else:
+        manifest_file = tmp_path / "deployment.json"
+        manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
+        manifest_path = str(manifest_file)
+    try:
+        res = subprocess.run(
+            [sys.executable, "-c", script, manifest_path, expected_bff_url],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"Script failed with code {res.returncode}: {res.stderr.strip()}")
+        parts = res.stdout.strip().split()
+        return parts[0], parts[1], parts[2]
+    finally:
+        if tmp_path is None:
+            os.unlink(manifest_path)
+
+
+def _sample_accepted_manifest(
+    *,
+    backend_sha: str = SAMPLE_BACKEND_SHA,
+    frontend_sha: str = SAMPLE_FRONTEND_SHA,
+    bff_url: str = SAMPLE_BFF_URL,
+) -> dict:
+    return {
+        "schemaVersion": 1,
+        "app": "execute-plans",
+        "repository": "ajoe734/execute-plans",
+        "sourceBranch": "dev",
+        "deploymentState": "accepted",
+        "bffCommitEvidence": True,
+        "commit": frontend_sha,
+        "frontendSha": frontend_sha,
+        "frontend": {
+            "repository": "ajoe734/execute-plans",
+            "commitSha": frontend_sha,
+        },
+        "bffCommit": backend_sha,
+        "bffSourceCommitSha": backend_sha,
+        "bff": {
+            "baseUrl": bff_url,
+            "sourceCommitSha": backend_sha,
+            "sourceCommitKnown": True,
+        },
+    }
+
+
+def _sample_standby_manifest(
+    *,
+    backend_sha: str = SAMPLE_BACKEND_SHA,
+    frontend_sha: str = SAMPLE_FRONTEND_SHA,
+    bff_url: str = SAMPLE_BFF_URL,
+    profile: str = "read-only",
+    deployment_profile: str = "read-only",
+    build_mode: dict | None = None,
+    release_admission: dict | None = None,
+    agora_compatibility: dict | None = None,
+) -> dict:
+    manifest = _sample_accepted_manifest(
+        backend_sha=backend_sha,
+        frontend_sha=frontend_sha,
+        bff_url=bff_url,
+    )
+    manifest["deploymentState"] = "standby"
+    manifest["profile"] = profile
+    manifest["deploymentProfile"] = deployment_profile
+    manifest["buildMode"] = build_mode or {
+        "VITE_BFF_MODE": "live",
+        "VITE_BFF_FALLBACK": "strict",
+        "VITE_BFF_REAL_WRITES": "false",
+        "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+        "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false",
+    }
+    manifest["releaseAdmission"] = release_admission or {
+        "schemaVersion": "pantheon.dev-release-candidate-admission.v1",
+        "releaseCandidateId": "a" * 64,
+        "compatibilityStatus": "compatible",
+        "backend": {
+            "repository": "ajoe734/pantheon",
+            "branch": "dev",
+            "commitSha": backend_sha,
+        },
+        "frontend": {
+            "repository": "ajoe734/execute-plans",
+            "branch": "dev",
+            "commitSha": frontend_sha,
+        },
+    }
+    manifest["agoraCompatibility"] = agora_compatibility or {
+        "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
+        "compatibility_status": "accepted",
+        "backend": {
+            "repo": "ajoe734/pantheon",
+            "runtime_commit": backend_sha,
+        },
+        "frontend": {
+            "repo": "ajoe734/execute-plans",
+            "runtime_commit": frontend_sha,
+        },
+    }
+    return manifest
+
+
+def test_rollback_baseline_script_accepts_valid_accepted_manifest(tmp_path: Path) -> None:
+    manifest = _sample_accepted_manifest()
+    backend, frontend, state = _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+    assert backend == SAMPLE_BACKEND_SHA
+    assert frontend == SAMPLE_FRONTEND_SHA
+    assert state == "accepted"
+
+
+def test_rollback_baseline_script_accepts_valid_read_only_standby_manifest(tmp_path: Path) -> None:
+    manifest = _sample_standby_manifest()
+    backend, frontend, state = _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+    assert backend == SAMPLE_BACKEND_SHA
+    assert frontend == SAMPLE_FRONTEND_SHA
+    assert state == "standby"
+
+
+@pytest.mark.parametrize("invalid_state", ["rejected", "pending", "write-proof", "development", "", None, 123])
+def test_rollback_baseline_script_rejects_invalid_deployment_state(invalid_state: any, tmp_path: Path) -> None:
+    manifest = _sample_accepted_manifest()
+    manifest["deploymentState"] = invalid_state
+    with pytest.raises(RuntimeError, match="frontend deployment manifest is not an accepted or verified standby"):
+        _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("profile", "deployment_profile"),
+    [
+        ("operator-live", "read-only"),
+        ("read-only", "operator-live"),
+        ("write-proof", "write-proof"),
+        ("development", "read-only"),
+        ("read-only", "development"),
+    ],
+)
+def test_rollback_baseline_script_rejects_standby_with_non_read_only_profiles(
+    profile: str,
+    deployment_profile: str,
+    tmp_path: Path,
+) -> None:
+    manifest = _sample_standby_manifest(profile=profile, deployment_profile=deployment_profile)
+    with pytest.raises(RuntimeError, match="standby frontend deployment manifest must use read-only profile"):
+        _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "build_override",
+    [
+        {"VITE_BFF_REAL_WRITES": "true"},
+        {"VITE_BFF_ALLOW_DEV_STUB_WRITES": "true"},
+        {"VITE_BFF_EMBEDDED_BEARER_TOKEN": "true"},
+        {"VITE_BFF_MODE": "mock"},
+        {"VITE_BFF_FALLBACK": "loose"},
+    ],
+)
+def test_rollback_baseline_script_rejects_standby_with_unsafe_build_mode(
+    build_override: dict,
+    tmp_path: Path,
+) -> None:
+    base_build = {
+        "VITE_BFF_MODE": "live",
+        "VITE_BFF_FALLBACK": "strict",
+        "VITE_BFF_REAL_WRITES": "false",
+        "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+        "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false",
+    }
+    base_build.update(build_override)
+    manifest = _sample_standby_manifest(build_mode=base_build)
+    with pytest.raises(RuntimeError, match="standby frontend deployment manifest must use strict live read-only build mode"):
+        _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+
+
+def test_rollback_baseline_script_rejects_standby_with_missing_build_mode(tmp_path: Path) -> None:
+    manifest = _sample_standby_manifest()
+    manifest["buildMode"] = None
+    with pytest.raises(RuntimeError, match="standby frontend deployment manifest has invalid buildMode"):
+        _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+
+
+def test_rollback_baseline_script_rejects_standby_with_missing_release_admission(tmp_path: Path) -> None:
+    manifest = _sample_standby_manifest()
+    manifest["releaseAdmission"] = None
+    with pytest.raises(RuntimeError, match="standby frontend deployment manifest lacks releaseAdmission"):
+        _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "admission_override",
+    [
+        {"schemaVersion": "invalid.version"},
+        {"compatibilityStatus": "incompatible"},
+        {"backend": {"repository": "other/pantheon", "branch": "dev", "commitSha": SAMPLE_BACKEND_SHA}},
+        {"backend": {"repository": "ajoe734/pantheon", "branch": "main", "commitSha": SAMPLE_BACKEND_SHA}},
+        {"backend": {"repository": "ajoe734/pantheon", "branch": "dev", "commitSha": "b" * 40}},
+        {"frontend": {"repository": "other/execute-plans", "branch": "dev", "commitSha": SAMPLE_FRONTEND_SHA}},
+        {"frontend": {"repository": "ajoe734/execute-plans", "branch": "main", "commitSha": SAMPLE_FRONTEND_SHA}},
+        {"frontend": {"repository": "ajoe734/execute-plans", "branch": "dev", "commitSha": "c" * 40}},
+    ],
+)
+def test_rollback_baseline_script_rejects_standby_with_mismatched_release_admission(
+    admission_override: dict,
+    tmp_path: Path,
+) -> None:
+    manifest = _sample_standby_manifest()
+    manifest["releaseAdmission"].update(admission_override)
+    with pytest.raises(RuntimeError, match="standby frontend deployment manifest has invalid or mismatched releaseAdmission"):
+        _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+
+
+def test_rollback_baseline_script_rejects_standby_with_missing_agora_compatibility(tmp_path: Path) -> None:
+    manifest = _sample_standby_manifest()
+    manifest["agoraCompatibility"] = None
+    with pytest.raises(RuntimeError, match="standby frontend deployment manifest lacks agoraCompatibility"):
+        _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "agora_override",
+    [
+        {"schema_version": "invalid.schema"},
+        {"compatibility_status": "rejected"},
+        {"backend": {"repo": "other/pantheon", "runtime_commit": SAMPLE_BACKEND_SHA}},
+        {"backend": {"repo": "ajoe734/pantheon", "runtime_commit": "b" * 40}},
+        {"frontend": {"repo": "other/execute-plans", "runtime_commit": SAMPLE_FRONTEND_SHA}},
+        {"frontend": {"repo": "ajoe734/execute-plans", "runtime_commit": "c" * 40}},
+    ],
+)
+def test_rollback_baseline_script_rejects_standby_with_mismatched_agora_compatibility(
+    agora_override: dict,
+    tmp_path: Path,
+) -> None:
+    manifest = _sample_standby_manifest()
+    manifest["agoraCompatibility"].update(agora_override)
+    with pytest.raises(RuntimeError, match="standby frontend deployment manifest has invalid or mismatched agoraCompatibility"):
+        _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("mutate_fn", "expected_err_pattern"),
+    [
+        (lambda m: m.update({"schemaVersion": 2}), "not an accepted or verified standby"),
+        (lambda m: m.update({"app": "other-app"}), "not an accepted or verified standby"),
+        (lambda m: m.update({"repository": "other/repo"}), "not an accepted or verified standby"),
+        (lambda m: m.update({"sourceBranch": "feat"}), "not an accepted or verified standby"),
+        (lambda m: m.update({"bffCommitEvidence": False}), "not an accepted or verified standby"),
+        (lambda m: m.update({"bff": {"baseUrl": "https://wrong-bff.io", "sourceCommitSha": SAMPLE_BACKEND_SHA}}), "not bound to the expected BFF endpoint"),
+        (lambda m: m.update({"bffCommit": "b" * 40}), "conflicting backend release identity values"),
+        (lambda m: m.update({"commit": "c" * 40}), "conflicting frontend release identity values"),
+    ],
+)
+def test_rollback_baseline_script_rejects_tampered_top_level_identities(
+    mutate_fn: any,
+    expected_err_pattern: str,
+    tmp_path: Path,
+) -> None:
+    manifest = _sample_standby_manifest()
+    mutate_fn(manifest)
+    with pytest.raises(RuntimeError, match=expected_err_pattern):
+        _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
