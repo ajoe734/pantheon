@@ -816,3 +816,123 @@ def test_run_worker_startup_fails_immediately_without_psycopg_driver(monkeypatch
     monkeypatch.setitem(sys.modules, "psycopg", None)
     with pytest.raises(RuntimeError, match="psycopg is required for ProjectionStore"):
         asyncio.run(lifecycle_projector_module.run_worker())
+
+
+def test_record_poll_transitions_to_ready_when_live_and_backlog_zero() -> None:
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store, deployment_sha="relational-poll-test", clock=lambda: NOW
+    )
+    rows = lifecycle_rows()
+    # First, project records in recovery mode up to seq 2
+    projector.project_records(rows[:2], mode="recovery", source_high_watermark=2)
+    assert projector.controller["status"] == "recovering"
+    assert projector.controller["accepted_live"] is False
+    assert projector.controller["checkpoint"] == 2
+
+    # Polling in live mode with 0 backlog after catch-up must transition controller to ready
+    projector.record_poll(source_high_watermark=2, backlog=0, mode="live")
+    ctrl = projector.controller
+    assert ctrl["status"] == "ready"
+    assert ctrl["accepted_live"] is True
+    assert ctrl["mode"] == "live"
+    assert ctrl["backlog"] == 0
+    assert ctrl["source_high_watermark"] == 2
+    assert ctrl["checkpoint"] == 2
+
+
+def test_record_poll_preserves_recovering_when_backlog_positive_or_recovery_mode() -> None:
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store, deployment_sha="relational-poll-test", clock=lambda: NOW
+    )
+    rows = lifecycle_rows()
+    projector.project_records(rows[:2], mode="recovery", source_high_watermark=2)
+
+    # Positive backlog in live mode remains recovering
+    projector.record_poll(source_high_watermark=5, backlog=3, mode="live")
+    ctrl = projector.controller
+    assert ctrl["status"] == "recovering"
+    assert ctrl["accepted_live"] is False
+    assert ctrl["backlog"] == 3
+
+    # Zero backlog in recovery mode remains recovering
+    projector.record_poll(source_high_watermark=2, backlog=0, mode="recovery")
+    ctrl = projector.controller
+    assert ctrl["status"] == "recovering"
+    assert ctrl["accepted_live"] is False
+    assert ctrl["mode"] == "recovery"
+
+
+
+def test_project_records_sets_ready_status_when_live_and_batch_catches_up() -> None:
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store, deployment_sha="relational-live-catchup", clock=lambda: NOW
+    )
+    rows = lifecycle_rows()
+
+    # Ingesting batch up to watermark in live mode produces ready controller
+    result = projector.project_records(rows[:2], mode="live", source_high_watermark=2)
+    assert result.accepted == 2
+    ctrl = projector.controller
+    assert ctrl["status"] == "ready"
+    assert ctrl["accepted_live"] is True
+    assert ctrl["mode"] == "live"
+    assert ctrl["backlog"] == 0
+
+
+def test_run_worker_catchup_transitions_from_recovery_to_live_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store, deployment_sha="live-ready-catchup-sha", clock=lambda: NOW
+    )
+    rows = lifecycle_rows()[:2]
+
+    class Source:
+        def __init__(self):
+            self.tick = 0
+
+        async def verify_read_contract(self) -> None:
+            return None
+
+        async def high_watermark(self) -> int:
+            return 2
+
+        async def start_listener(self) -> None:
+            return None
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            self.tick += 1
+            if checkpoint < 2:
+                return rows
+            return []
+
+        async def wait(self, timeout: float) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: projector,
+    )
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "PostgresLifecycleSource",
+        lambda *args, **kwargs: Source(),
+    )
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "2")
+    monkeypatch.setenv("GIT_SHA", "live-ready-catchup-sha")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    ctrl = projector.controller
+    assert ctrl["checkpoint"] == 2
+    assert ctrl["source_high_watermark"] == 2
+    assert ctrl["backlog"] == 0
+    assert ctrl["mode"] == "live"
+    assert ctrl["status"] == "ready"
+    assert ctrl["accepted_live"] is True

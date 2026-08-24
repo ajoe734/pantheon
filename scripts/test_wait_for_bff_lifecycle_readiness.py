@@ -749,3 +749,30 @@ def test_agora_restart_persistence_uses_exact_waiter_before_verify() -> None:
     assert "for _ in $(seq 1 30)" not in agora
     assert 'curl -fsS "${DEV_BFF_URL}/readyz"' not in agora
     assert agora.index(restart) < agora.index(waiter) < agora.index(verify)
+
+
+def test_transient_connection_reset_during_startup_converges_to_ready() -> None:
+    fake = FakeTime()
+    # Simulate connection reset / unreachable (0, None) during initial container startup,
+    # followed by recovering, and finally exact ready
+    _, fetch = sequence_fetch(
+        [
+            (0, None),  # connection reset / ECONNRESET
+            (0, None),  # connection reset / ECONNREFUSED
+            (503, payload(ready=False, checkpoint=8, source=10)),
+            (503, payload(ready=False, checkpoint=10, source=10)),
+            (200, payload(ready=True)),
+            (200, payload(ready=True, checkpoint=11, source=11)),
+        ]
+    )
+    wait_for_readiness(
+        fetch,
+        expected_deployment_sha=SHA,
+        initial_timeout_seconds=5,
+        recovery_extension_seconds=4,
+        stalled_timeout_seconds=2,
+        poll_interval_seconds=1,
+        monotonic=fake.monotonic,
+        sleep=fake.sleep,
+    )
+    assert fake.value == 5
