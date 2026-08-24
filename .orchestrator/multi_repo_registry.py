@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from common import config_status_root
 
@@ -30,7 +30,7 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
         "repo": "ajoe734/execute-plans",
         "local_path": "../code/execute-plans",
         "default_branch": "dev",
-        "artifact_prefixes": ["execute-plans/"],
+        "artifact_prefixes": ["execute-plans/", "frontend-checkout/"],
         "coordination_dir": ".coordination",
         "requests_dir": ".coordination/requests",
         "responses_dir": ".coordination/responses",
@@ -244,14 +244,49 @@ def _path_repository_id(config: dict[str, Any], value: Path) -> str | None:
     return matches[0][1]
 
 
-def artifact_repository_id(config: dict[str, Any], artifact_path: str | Path | None) -> str:
+def task_declared_target_repository(task: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(task, Mapping):
+        return None
+    source_ref = task.get("source_ref") if isinstance(task.get("source_ref"), Mapping) else {}
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), Mapping) else {}
+    for candidate in (
+        task.get("target_repo"),
+        task.get("target_repository"),
+        task.get("target_repo_id"),
+        task.get("repository_id"),
+        source_ref.get("target_repo"),
+        source_ref.get("target_repository"),
+        source_ref.get("target_repo_id"),
+        source_ref.get("repository_id"),
+        metadata.get("target_repo"),
+        metadata.get("target_repository"),
+        metadata.get("target_repo_id"),
+        metadata.get("repository_id"),
+    ):
+        if candidate is not None and str(candidate).strip():
+            return str(candidate).strip()
+    return None
+
+
+def task_target_repository_id(
+    config: dict[str, Any], task: Mapping[str, Any] | None
+) -> str | None:
+    declared = task_declared_target_repository(task)
+    if not declared:
+        return None
+    return matching_repo_id(config, declared)
+
+
+def artifact_explicit_repository_id(
+    config: dict[str, Any], artifact_path: str | Path | None
+) -> str | None:
     candidate = _normalized_artifact_path(artifact_path)
     if not candidate:
-        return "pantheon"
+        return None
 
     path = Path(candidate)
     if path.is_absolute():
-        return _path_repository_id(config, path) or "pantheon"
+        return _path_repository_id(config, path)
 
     for repo_id in repositories(config):
         if repo_id == "pantheon":
@@ -262,7 +297,24 @@ def artifact_repository_id(config: dict[str, Any], artifact_path: str | Path | N
         for prefix in repository_artifact_colon_prefixes(config, repo_id):
             if candidate == prefix or candidate.startswith(prefix):
                 return repo_id
-    return "pantheon"
+    for prefix in repository_artifact_prefixes(config, "pantheon"):
+        if candidate == prefix[:-1] or candidate.startswith(prefix):
+            return "pantheon"
+    for prefix in repository_artifact_colon_prefixes(config, "pantheon"):
+        if candidate == prefix or candidate.startswith(prefix):
+            return "pantheon"
+    return None
+
+
+def artifact_repository_id(
+    config: dict[str, Any],
+    artifact_path: str | Path | None,
+    default_repo_id: str | None = None,
+) -> str:
+    explicit = artifact_explicit_repository_id(config, artifact_path)
+    if explicit is not None:
+        return explicit
+    return default_repo_id or "pantheon"
 
 
 def repository_relative_artifact_path(
@@ -298,25 +350,121 @@ def repository_relative_artifact_path(
     return Path(candidate)
 
 
-def task_artifact_repository_ids(config: dict[str, Any], task: dict[str, Any]) -> list[str]:
+def task_artifact_repository_ids(
+    config: dict[str, Any], task: Mapping[str, Any] | None
+) -> list[str]:
+    if not isinstance(task, Mapping):
+        return ["pantheon"]
+    declared_target = task_target_repository_id(config, task)
+    raw_target = task_declared_target_repository(task)
+    default_repo = (
+        declared_target
+        if declared_target is not None
+        else ("pantheon" if not raw_target else None)
+    )
+
     repo_ids: list[str] = []
     seen: set[str] = set()
-    for artifact in task.get("artifacts") or []:
-        repo_id = artifact_repository_id(config, artifact)
-        if repo_id in seen:
-            continue
-        seen.add(repo_id)
-        repo_ids.append(repo_id)
-    return repo_ids or ["pantheon"]
+    raw_artifacts = task.get("artifacts") or []
+    for artifact in raw_artifacts:
+        explicit_repo = artifact_explicit_repository_id(config, artifact)
+        if explicit_repo is not None:
+            repo_id = explicit_repo
+        elif default_repo is not None:
+            repo_id = default_repo
+        else:
+            repo_id = "unknown"
+        if repo_id not in seen:
+            seen.add(repo_id)
+            repo_ids.append(repo_id)
+    if not repo_ids:
+        if declared_target:
+            return [declared_target]
+        return ["pantheon"]
+    return repo_ids
 
 
-def task_primary_repository_id(config: dict[str, Any], task: dict[str, Any]) -> str | None:
-    repo_ids = task_artifact_repository_ids(config, task)
-    non_pantheon = [repo_id for repo_id in repo_ids if repo_id != "pantheon"]
-    if len(non_pantheon) == 1:
-        return non_pantheon[0]
-    if len(non_pantheon) > 1:
+def task_primary_repository_id(
+    config: dict[str, Any], task: Mapping[str, Any] | None
+) -> str | None:
+    if not isinstance(task, Mapping):
+        return "pantheon"
+
+    raw_target = task_declared_target_repository(task)
+    declared_target = task_target_repository_id(config, task)
+    if raw_target and declared_target is None:
         return None
+
+    raw_artifacts = task.get("artifacts") or []
+    explicit_repos: set[str] = set()
+    for art in raw_artifacts:
+        rep = artifact_explicit_repository_id(config, art)
+        if rep is not None:
+            explicit_repos.add(rep)
+
+    explicit_non_pantheon = {r for r in explicit_repos if r != "pantheon"}
+    if len(explicit_non_pantheon) > 1:
+        return None
+
+    if declared_target is not None:
+        if any(r != declared_target for r in explicit_repos):
+            return None
+        return declared_target
+
+    if len(explicit_non_pantheon) == 1:
+        return next(iter(explicit_non_pantheon))
+
+    if "pantheon" in explicit_repos or raw_artifacts:
+        return "pantheon"
+
+    return "pantheon"
+
+
+def validate_task_repository_scope(
+    config: dict[str, Any],
+    task: Mapping[str, Any] | None,
+) -> str:
+    task_map = task if isinstance(task, Mapping) else {}
+    task_id = str(task_map.get("id") or "?").strip() or "?"
+
+    raw_target = task_declared_target_repository(task_map)
+    declared_target = task_target_repository_id(config, task_map)
+    if raw_target and declared_target is None:
+        if "+" in raw_target or "," in raw_target:
+            raise ValueError(
+                f"Task {task_id} has ambiguous multi-repository target_repo: {raw_target!r}. "
+                "Split into separate single-repository tasks or specify one target_repo."
+            )
+        raise ValueError(
+            f"Task {task_id} specifies unrecognized target_repo: {raw_target!r}."
+        )
+
+    raw_artifacts = task_map.get("artifacts") or []
+    explicit_repos: set[str] = set()
+    for art in raw_artifacts:
+        rep = artifact_explicit_repository_id(config, art)
+        if rep is not None:
+            explicit_repos.add(rep)
+
+    explicit_non_pantheon = {r for r in explicit_repos if r != "pantheon"}
+    if len(explicit_non_pantheon) > 1:
+        raise ValueError(
+            f"Task {task_id} artifacts span multiple non-Pantheon repositories "
+            f"({', '.join(sorted(explicit_non_pantheon))}). Split into separate per-repository tasks."
+        )
+
+    if declared_target is not None:
+        conflicts = sorted(r for r in explicit_repos if r != declared_target)
+        if conflicts:
+            raise ValueError(
+                f"Task {task_id} has conflicting repository scope: declared target_repo is "
+                f"{declared_target!r} but artifact prefix requires {', '.join(conflicts)}."
+            )
+        return declared_target
+
+    if len(explicit_non_pantheon) == 1:
+        return next(iter(explicit_non_pantheon))
+
     return "pantheon"
 
 
