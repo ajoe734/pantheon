@@ -2458,10 +2458,13 @@ class PaperRuntimeService:
             self._binding_resolver,
             runtime_context=runtime_context,
         )
-        self._legacy_journey_publish_enabled = _as_bool(
-            os.getenv("PANTHEON_LEGACY_JOURNEY_BFF_PUBLISH_ENABLED"),
-            default=False,
-        )
+        if _as_bool(os.getenv("PANTHEON_LEGACY_JOURNEY_BFF_PUBLISH_ENABLED")):
+            raise RuntimeError(
+                "PANTHEON_LEGACY_JOURNEY_BFF_PUBLISH_ENABLED is retired and cannot be enabled. "
+                "Direct legacy trade journey publishing to /bff/management/trade-journeys/events "
+                "has been removed. Canonical telemetry events via /api/telemetry/events are required."
+            )
+        self._legacy_journey_publish_enabled = False
         performance_state_path = os.getenv("PANTHEON_PERFORMANCE_STATE_PATH") or None
         lifecycle_scope = "".join(
             character
@@ -2538,16 +2541,6 @@ class PaperRuntimeService:
         self._shutdown = threading.Event()
         self._thread: threading.Thread | None = None
         self._heartbeat_thread: threading.Thread | None = None
-        self._outbox_path = os.getenv("PANTHEON_OUTBOX_PATH") or "/data/runtime/outbox.jsonl"
-        outbox_dir = os.path.dirname(self._outbox_path)
-        if self._legacy_journey_publish_enabled and outbox_dir:
-            try:
-                os.makedirs(outbox_dir, exist_ok=True)
-            except Exception:
-                self._outbox_path = os.path.join(tempfile.gettempdir(), "outbox.jsonl")
-        self._outbox_lock = threading.Lock()
-        self._outbox_event = threading.Event()
-        self._outbox_thread: threading.Thread | None = None
         self._started_at = _iso_now()
         self._synthetic_market = (
             SyntheticMarketData()
@@ -2578,23 +2571,6 @@ class PaperRuntimeService:
         self._emit_deploy_started()
         self._maybe_emit_heartbeat()
 
-        if self._legacy_journey_publish_enabled:
-            # Temporary compatibility publisher. Canonical live journey writes
-            # flow through telemetry and the lifecycle projector by default.
-            outbox_dir = os.path.dirname(self._outbox_path)
-            if outbox_dir:
-                try:
-                    os.makedirs(outbox_dir, exist_ok=True)
-                except Exception as exc:
-                    log.warning("Failed to create outbox directory %s: %s", outbox_dir, exc)
-
-            self._outbox_thread = threading.Thread(
-                target=self._outbox_loop,
-                daemon=True,
-                name="paper-runtime-legacy-journey-outbox",
-            )
-            self._outbox_thread.start()
-
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="paper-runtime-loop")
         self._thread.start()
         self._heartbeat_thread = threading.Thread(
@@ -2607,13 +2583,10 @@ class PaperRuntimeService:
 
     def stop(self) -> None:
         self._shutdown.set()
-        self._outbox_event.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
         if self._heartbeat_thread is not None:
             self._heartbeat_thread.join(timeout=5)
-        if self._outbox_thread is not None:
-            self._outbox_thread.join(timeout=5)
 
     def drain_once(self) -> dict[str, Any]:
         # Lifecycle replay performs remote I/O and a durable JSON rewrite.  It
@@ -3035,7 +3008,6 @@ class PaperRuntimeService:
                     event_id=decision_event_id,
                     created_at=occurred_at,
                 )
-            self._publish_legacy_journey_events(event)
             return
 
         event_payload = event.to_dict()
@@ -3220,167 +3192,6 @@ class PaperRuntimeService:
                 event_id=position_event_id,
                 created_at=_iso_now(),
             )
-
-        self._publish_legacy_journey_events(event)
-
-    def _publish_legacy_journey_events(self, event: OrderEvent) -> None:
-        """Opt-in compatibility writer; canonical telemetry remains sole default."""
-        if not self._legacy_journey_publish_enabled:
-            return
-        metadata = self._signal_lifecycle_metadata(event.metadata)
-        envelope = metadata.get("correlation_envelope")
-        envelope = dict(envelope) if isinstance(envelope, Mapping) else {}
-        signal_id = metadata.get("signal_id")
-        binding = self._binding_resolver.resolve() or {}
-        tenant_id = metadata.get("tenant_id") or envelope.get("tenant_id") or binding.get("tenant_id") or "default"
-        environment = metadata.get("environment") or envelope.get("environment") or binding.get("deployment_stage") or "paper"
-        journey_id = metadata.get("journey_id") or envelope.get("journey_id")
-        if not journey_id:
-            journey_id = f"tj-{signal_id}" if signal_id else f"tj-evt-{event.event_id}"
-        common = {
-            "journey_id": journey_id,
-            "tenant_id": tenant_id,
-            "environment": environment,
-            "occurred_at": event.created_at,
-            "recorded_at": _iso_now(),
-            "source": "runtime_legacy_direct",
-            "signal_id": signal_id,
-            "symbol": event.symbol,
-            "run_id": metadata.get("run_id"),
-            "correlation_envelope": envelope,
-        }
-        specs: list[tuple[str, str, int]] = []
-        if event.event_type == "signal_generation":
-            specs = [("signal_generation", "succeeded", 1)]
-            common["occurred_at"] = event.metadata.get("timestamp") or event.created_at
-        elif event.event_type in {"paper_fill_simulated", "paper_order_simulated", "order_rejection"}:
-            specs.append(("trade_decision", metadata.get("decision_status") or "succeeded", 2))
-            order_status = "succeeded"
-            if event.event_type == "paper_order_simulated":
-                order_status = "noop"
-            elif event.event_type == "order_rejection":
-                order_status = "rejected"
-            specs.append(("order_submission", order_status, 3))
-            if event.event_type in {"paper_fill_simulated", "order_rejection"}:
-                specs.append(
-                    (
-                        "fill_management",
-                        "succeeded" if event.event_type == "paper_fill_simulated" else "failed",
-                        4,
-                    )
-                )
-        journey_events = []
-        for stage, status, sequence in specs:
-            item = {
-                **common,
-                "event_id": f"{event.event_id}:{stage}",
-                "stage": stage,
-                "stage_status": status,
-                "sequence": sequence,
-            }
-            if stage == "fill_management" and event.event_type == "paper_fill_simulated":
-                item.update(
-                    quantity=abs(event.quantity),
-                    price=event.fill_price,
-                    side="sell" if event.quantity < 0 else "buy",
-                )
-            journey_events.append(item)
-        self._publish_journey_events(journey_events)
-
-    def _publish_journey_events(self, events: list[dict[str, Any]]) -> None:
-        if not self._legacy_journey_publish_enabled or not events:
-            return
-        if not self._outbox_thread or not self._outbox_thread.is_alive():
-            # Fallback to synchronous publish in tests or if the thread isn't running
-            self._send_to_bff(events)
-            return
-
-        with self._outbox_lock:
-            try:
-                outbox_dir = os.path.dirname(self._outbox_path)
-                if outbox_dir:
-                    os.makedirs(outbox_dir, exist_ok=True)
-                with open(self._outbox_path, "a", encoding="utf-8") as f:
-                    for event in events:
-                        f.write(json.dumps(event, allow_nan=False) + "\n")
-            except Exception as exc:
-                log.error("Failed to append events to outbox: %s", exc)
-        self._outbox_event.set()
-
-    def _outbox_loop(self) -> None:
-        while not self._shutdown.is_set():
-            self._outbox_event.wait(timeout=1.0)
-            self._outbox_event.clear()
-
-            events_to_send = []
-            with self._outbox_lock:
-                if os.path.exists(self._outbox_path):
-                    try:
-                        with open(self._outbox_path, "r", encoding="utf-8") as f:
-                            for line in f:
-                                if line.strip():
-                                    events_to_send.append(json.loads(line))
-                    except Exception as exc:
-                        log.error("Failed to read outbox file: %s", exc)
-
-            if not events_to_send:
-                continue
-
-            success = self._send_to_bff(events_to_send)
-            if success:
-                with self._outbox_lock:
-                    if os.path.exists(self._outbox_path):
-                        try:
-                            current_events = []
-                            with open(self._outbox_path, "r", encoding="utf-8") as f:
-                                for line in f:
-                                    if line.strip():
-                                        current_events.append(json.loads(line))
-                            sent_ids = {e["event_id"] for e in events_to_send}
-                            remaining = [e for e in current_events if e["event_id"] not in sent_ids]
-                            if remaining:
-                                tmp_path = self._outbox_path + ".tmp"
-                                with open(tmp_path, "w", encoding="utf-8") as f:
-                                    for e in remaining:
-                                        f.write(json.dumps(e, allow_nan=False) + "\n")
-                                os.replace(tmp_path, self._outbox_path)
-                            else:
-                                if os.path.exists(self._outbox_path):
-                                    os.remove(self._outbox_path)
-                        except Exception as exc:
-                            log.error("Failed to update outbox file: %s", exc)
-            else:
-                self._shutdown.wait(timeout=2.0)
-
-    def _send_to_bff(self, events: list[dict[str, Any]]) -> bool:
-        if not self._legacy_journey_publish_enabled:
-            return False
-        bff_url = os.getenv("PANTHEON_BFF_URL", "http://operator-bff:8080").strip().rstrip("/")
-        url = f"{bff_url}/bff/management/trade-journeys/events"
-        body = json.dumps(events, allow_nan=False).encode("utf-8")
-
-        token = os.getenv("PANTHEON_BFF_TOKEN") or os.getenv("BFF_TOKEN") or "op-dev:admin:mfa"
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-
-        req = urllib.request.Request(
-            url,
-            data=body,
-            headers=headers,
-            method="POST",
-        )
-        try:
-            timeout = int(os.getenv("PANTHEON_BFF_TIMEOUT_SECONDS", "5"))
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                resp.read()
-            return True
-        except Exception as exc:
-            log.warning("Failed to publish outbox events to BFF (will retry): %s", exc)
-            return False
 
     def _maybe_emit_heartbeat(self) -> None:
         if not self._telemetry.enabled:

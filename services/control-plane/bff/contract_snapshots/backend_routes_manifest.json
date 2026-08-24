@@ -3,7 +3,7 @@
     "snapshot_date": "2026-08-13",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 667,
+    "total_routes": 666,
     "status_values": [
       "implemented",
       "alias",
@@ -3964,12 +3964,6 @@
     {
       "method": "POST",
       "path": "/bff/management/strategy-seeds/{param}/submit-replication",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/trade-journeys/events",
       "family": "unknown",
       "status": "implemented"
     },
