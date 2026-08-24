@@ -1,20 +1,21 @@
 # Development-Tooling Architecture Gaps and System Design — 2026-08-24
 
-**Document ID:** `OPS-DEV-TOOLING-ARCH-GAP-20260824`  
-**Status:** Canonical Tooling Architecture Record  
-**Target Domain:** Development Tooling Control Plane (`.orchestrator/`, `scripts/`, `ai-task-archive/`, V2 TaskStore)  
+**Document ID:** `OPS-DEV-TOOLING-ARCH-GAP-20260824`
+**Document Tier:** L3 Supporting Design & Operational Architecture Record (under `AI_COLLABORATION_GUIDE.md` § 1 / `CANONICAL_DOCUMENT_MAP.md`)
+**Target Domain:** Development Tooling Control Plane (`.orchestrator/`, `scripts/`, `ai-task-archive/`, V2 TaskStore)
 **Boundary Classification:** Development Tooling only. Product Runtime (`services/`, BFF, Ingestion) and Capital Pathways remain untouched.
+**Conflict Rule:** In case of conflict, canonical L0/L1 documents (`AI_COLLABORATION_GUIDE.md`, `TARGET_ARCHITECTURE.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`) take precedence. This document provides gap analysis and architectural designs for future development tooling implementation tasks.
 
 ---
 
 ## 1. Executive Summary & Context
 
-During the functional closure sprint (2026-08-20 to 2026-08-24), execution across the Pantheon backend (`ajoe734/pantheon`) and the frontend (`ajoe734/execute-plans`) exposed recurring architectural friction in the development tooling control plane. While the V2 TaskStore, supervisor, and auto-worker pipeline successfully enforce strict state immutability, audit logging, and exact-head review gating, several structural gaps led to worker deadlocks, manual intervention cycles, and coordination workarounds:
+During the functional closure sprint (2026-08-20 to 2026-08-24), execution across the Pantheon backend (`ajoe734/pantheon`) and the frontend (`ajoe734/execute-plans`) exposed recurring architectural friction in the development tooling control plane. While the V2 TaskStore, supervisor, and auto-worker pipeline successfully enforce append-only state transition journals, cryptographic head validation, nonterminal row disappearance checks, and exact-head review gating, several structural gaps led to worker deadlocks, manual intervention cycles, and coordination workarounds:
 
-1. **Immutable Task Correction vs. Mutation Deadlock:** Once registered in the V2 TaskStore, task definitions (acceptance criteria, dependencies, artifacts, and execution parameters) are strictly immutable. When requirements need refinement or correction (e.g., removing unfeasible soak ceremonies or correcting acceptance scopes), workers were forced to choose between illegal direct state mutation (rejected by TaskStore integrity gates) or abandoning task continuity.
+1. **Task Amendment Authority Gap vs. History Integrity:** The V2 TaskStore validates append-only state deltas, cryptographic head integrity, and nonterminal row disappearance (`task-state nonterminal drop rejected`), but neither the store nor `scripts/ai_status.py` provides a governed command or event model (`task_amended`) to amend task definitions (e.g., acceptance criteria, dependencies, artifact scopes) in flight. When requirements need refinement (e.g., removing unfeasible soak ceremonies or narrowing acceptance scopes), workers had to choose between out-of-band state file edits (which break cryptographic digests or trigger nonterminal drop rejections), premature task supersession, or creating duplicate replacement tasks that break downstream dependency links.
 2. **Dependency-Aware Reopen & Evidence Handoff Gaps:** When a reviewer rejected a PR head and reopened a task, the supervisor lacked a native dependency propagation mechanism to signal downstream tasks, while root tasks lacked a formal contract to hand off verified evidence to consumer tasks.
-3. **Artifact Ownership & Overlap Admission Blindspots:** The supervisor admitted tasks based purely on agent quotas and physical slot capacity without verifying write-scope collisions, leading to worktree index pollution and cross-task commit interference.
-4. **Ad-Hoc Cross-Repository & Sidecar Coordination:** Cross-repository work between `pantheon` and `execute-plans` and auxiliary tasks (e.g., caller inventories, contract audits) relied on loose string conventions (`execute-plans:` artifact prefixes, detached sidecar briefs) rather than first-class DAG nodes.
+3. **Artifact Write Overlap & Live Dispatch Exclusion:** While `scripts/ai_status.py` provides static catalog/assignment-time `artifact_conflict_guard` and `enforce_artifact_conflict_admission()`, supervisor execution admission (`dispatch_admission.py`) checks quota and endpoint availability but lacks live write-scope mutual exclusion across concurrently leased tasks, resulting in worktree index contention on shared files.
+4. **Cross-Repository Routing & Parent/Sidecar DAG Scheduling:** While `multi_repo_registry.py` and `target_repo` resolve repository paths and enforce integration targets (`dev`), the development control plane lacks first-class parent-child task primitives (`parent_task_id`, `task_nature=sidecar`, `subphase`) and automatic subphase dependency gating, forcing auxiliary tasks (caller inventories, contract verifications) into disconnected top-level tasks.
 5. **Exact-Head Review Rejection Recovery & Stale State Stranding:** Review rejection paths failed closed when PRs were already merged or closed, and task state transitions frequently left stale `waiting_for` markers, skewing fleet dispatch metrics.
 
 This document records the exact failure modes observed in live operations, isolates their root causes, and specifies an implementation-ready design for each area.
@@ -25,11 +26,11 @@ This document records the exact failure modes observed in live operations, isola
 +------------------------------------+------------------------------------+-------------------------+
 |        V2 TASKSTORE & STATE        |        SUPERVISOR DISPATCH         |    WORKER & REVIEW GATE |
 +------------------------------------+------------------------------------+-------------------------+
-| [GAP 1] Append-Only Task           | [GAP 3] Artifact Write Overlap     | [GAP 5] Exact-Head      |
-|         Amendment Log              |         Admission Gating           |         Rejection Exit  |
+| [GAP 1] Governed Task Amendment    | [GAP 3] Live Artifact Write        | [GAP 5] Exact-Head      |
+|         Event Ledger               |         Overlap Gating             |         Rejection Exit  |
 |                                    |                                    |                         |
-| [GAP 2] DAG Reopen Propagation     | [GAP 4] Native Cross-Repo &        | [GAP 5] Automated       |
-|         & Root Evidence Handoff    |         Sidecar DAG Scheduling     |         waiting_for GC  |
+| [GAP 2] DAG Reopen Propagation     | [GAP 4] Native Parent-Sidecar      | [GAP 5] Automated       |
+|         & Root Evidence Handoff    |         Subphase DAG Scheduling    |         waiting_for GC  |
 +------------------------------------+------------------------------------+-------------------------+
 ```
 
@@ -41,27 +42,29 @@ The architectural findings in this document are grounded in concrete operational
 
 | Incident / Task Reference | Observed Symptom & Failure Mode | Tooling Root Cause |
 |---|---|---|
-| **Lifecycle Review Reject & PR #5147** (`LIFECYCLE-PROJ-RETIRE-001`, `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824`) | `LIFECYCLE-PROJ-RETIRE-001` contained unfeasible dev requirements (7-day soak, retirement HMAC CLI). Attempting to edit task fields was rejected by TaskStore integrity checks; creating replacement tasks risked orphaning the original 7-task history. | Lack of an append-only task amendment contract in V2 TaskStore. |
-| **FE Caller-Matrix & Candidate Review** (`PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`, `PFG-CANDIDATE-AUTO-BINDING-20260824`) | Caller inventory sidecars had to be created as disconnected top-level tasks; frontend candidate pairing required repetitive manual authorizations due to lack of automatic pair derivation. | Multi-repo targets and sidecar subphases lacked native schema representation in TaskStore and supervisor dispatch. |
-| **Management Closeout Worktree Collision** (`PPL-ALLOC-007`, `PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824`) | `PPL-ALLOC-007` was blocked because the `execute-plans` worktree contained uncommitted `PPL-ALLOC-006` adapter diffs. Parallel tasks touched shared files without mutual exclusion. | Supervisor dispatch admission evaluated agent capacity but was blind to artifact write-path overlaps. |
+| **Lifecycle Review Reject & PR #5147** (`LIFECYCLE-PROJ-RETIRE-001`, `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824`) | `LIFECYCLE-PROJ-RETIRE-001` contained unfeasible dev requirements (7-day soak, retirement HMAC CLI). Attempting to edit task fields out-of-band risked hash divergence; creating replacement tasks risked orphaning the original 7-task history. | Lack of a governed append-only task amendment authority and `task_amended` journal event in V2 TaskStore / `ai_status.py`. |
+| **FE Caller-Matrix & Candidate Review** (`PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`, `PFG-CANDIDATE-AUTO-BINDING-20260824`) | Caller inventory sidecars had to be created as disconnected top-level tasks; frontend candidate pairing required repetitive manual authorizations due to lack of automatic pair derivation. | Multi-repo routing exists via `multi_repo_registry.py`, but sidecar subphases and parent-child task DAG relationships lacked first-class schema and supervisor dispatch gating. |
+| **Management Closeout Worktree Collision** (`PPL-ALLOC-007`, `PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824`) | `PPL-ALLOC-007` was blocked because the `execute-plans` worktree contained uncommitted `PPL-ALLOC-006` adapter diffs. Parallel tasks touched shared files without mutual exclusion. | Catalog-level `artifact_conflict_guard` was not evaluated as dynamic write-path mutual exclusion during concurrent supervisor dispatch. |
 | **Root Deploy Reopen Livelock** (`OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824`, `OPS-SUPERVISOR-REOPEN-REDISPATCH-20260824`) | Reviewer rejected PR head across 10+ cycles. Supervisor deduplication (`seen_event_keys`) treated reopened in-progress tasks as unchanged, blocking owner redispatch under `unchanged_cooldown`. | Dispatch identity signature lacked bounded review-reopen revision tracking. |
 | **Premature Merge Rejection Defect** (`docs/04/pantheon_twelve_loop_gap_2026-07-26`, PRs #4212, #4213, #4214) | PRs merged before review; when reviewers attempted rejection, `reopen` failed closed because the GitHub PR was no longer open. | GitHub review bridge lacked a pure-lifecycle rejection path for merged/closed heads. |
 | **Stale `waiting_for` Stranding** (`PPL-ALLOC-007`, `TJ-E2E-012`) | Tasks reassigned from `Human/Ops` to `Claude` retained `waiting_for: Human/Ops` or `waiting_for: Antigravity` in `ai-status.json` even after moving to `in_progress`. | State transitions in `task_machine.py` and `ai_status.py` did not uniformly purge blocker metadata upon reactivation. |
 
 ---
 
-## 3. Gap 1: Immutable-Task Correction & Append-Only Amendments
+## 3. Gap 1: Governed Task Amendment & Append-Only Event Model
 
-### 3.1 Current Behavior & Failure Mode
-The V2 TaskStore (`.orchestrator/rewrite/task_state_store.py`) strictly enforces append-only transition journals with cryptographic head validation. Task records are initialized at genesis with fixed `title`, `summary_zh`, `acceptance`, `depends_on`, `artifacts`, and `phase`. 
+### 3.1 Current Behavior & Baseline Analysis
+The V2 TaskStore (`.orchestrator/rewrite/task_state_store.py`) strictly enforces append-only transition journals with cryptographic head validation and validates nonterminal row disappearance (`task-state nonterminal drop rejected`). TaskStore does not reject field corrections on individual metadata keys, but rather validates state delta transitions and prevents arbitrary row removal.
+
+However, the governance layer (`scripts/ai_status.py` and `task_machine.py`) lacks a dedicated **amendment authority**. Task specifications (`title`, `summary_zh`, `acceptance`, `depends_on`, `artifacts`, `phase`) are initialized at genesis and can only be modified through ad-hoc manual state manipulation or task recreation.
 
 When real-world conditions require correcting an existing task (e.g., removing a non-applicable requirement, narrowing an artifact scope, or correcting a dependency):
-- Direct in-place modification of `ai-status.json` or head files throws `TaskStateStoreError: task-state nonterminal drop rejected` or corrupts the head SHA.
+- Direct in-place modification of `ai-status.json` or head files bypasses audit logging and can corrupt head offsets or trigger nonterminal drop rejections if rows are malformed.
 - Marking the task `superseded` terminates the task history prematurely, confusing multi-wave tracking.
 - Materializing a duplicate replacement task creates orphaned rows and breaks downstream dependency links that pointed to the original task ID.
 
-### 3.2 Architectural Design: Append-Only Task Amendment Ledger
-To correct task parameters without mutating history or violating journal immutability, TaskStore introduces the `task_amended` event type.
+### 3.2 Architectural Design: Governed `task_amended` Event Ledger
+To correct task parameters without mutating historical records, bypassing audit logging, or violating journal integrity, TaskStore and `ai_status.py` introduce the governed `task_amended` event type.
 
 ```
 +-------------------------------------------------------------------------------------+
@@ -98,12 +101,22 @@ To correct task parameters without mutating history or violating journal immutab
 }
 ```
 
+#### Governed Command Interface
+```bash
+AI_NAME=Human/Ops \
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" amend \
+  PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824 \
+  --acceptance "Activate PostgreSQL projector; remove 7-day soak" \
+  --artifacts "services/trade_journey/lifecycle_projector.py,services/trade_journey/projection_store.py" \
+  --rationale "Correct dev-only Lifecycle closure scope"
+```
+
 #### Replay and Snapshot Logic
 1. `TaskStateStore.load_snapshot()` reads the base task definition from the genesis snapshot or head file.
 2. If `task_amended` events exist in the journal tail for that `task_id`, the store applies amendments sequentially in ascending `amendment_seq` order.
 3. Allowed amendable fields: `title`, `summary_zh`, `acceptance`, `artifacts`, `required_artifacts`, `depends_on`, `metadata`.
 4. Forbidden amendable fields: `status`, `owner`, `reviewer`, `generation` (these remain strictly governed by `task_machine.py` lifecycle and assignment transitions).
-5. The computed effective task snapshot is served to workers and supervisor without modifying the physical genesis record.
+5. The computed effective task snapshot is served to workers and supervisor without modifying historical genesis entries.
 
 ---
 
@@ -155,26 +168,24 @@ The consumer task's start gate (`task_start.sh` or supervisor admission) runs a 
 
 ---
 
-## 5. Gap 3: Mandatory Artifact Ownership & Overlap Admission
+## 5. Gap 3: Artifact Ownership & Overlap Admission
 
-### 5.1 Current Behavior & Failure Mode
-Currently, tasks declare `artifacts: ["services/control-plane/bff", "execute-plans:src"]`. These declarations are loose string lists. The supervisor's `evaluate_dispatch_intent` in `dispatch_admission.py` checks:
-- Global capacity limit
-- Per-lane concurrency limit
-- Provider/account health
-- Physical endpoint reservations
+### 5.1 Existing Capabilities & Remaining Operational Delta
+Currently, `scripts/ai_status.py` implements static catalog/assignment admission checks through `artifact_conflict_guard` and `enforce_artifact_conflict_admission()`. This guards against assigning overlapping tasks when an explicit allowlist or static catalog exists.
 
-It **does not check** whether two concurrently running tasks claim write access to the same files or directories. This caused the `PPL-ALLOC-007` worktree collision and git index contention on shared files (such as `docker-compose.yml`, `scripts/deploy_nonprod_vm.sh`, and `execute-plans/src/App.tsx`).
+However, a critical operational delta remains at **supervisor execution dispatch time**:
+- In `dispatch_admission.py` / `supervisor.py`, `evaluate_dispatch_intent` evaluates global capacity, per-lane concurrency, and endpoint health, but does not check live write-scope collisions across currently leased auto-worker worktrees.
+- When multiple tasks without pre-declared `artifact_conflict_guard` allowlists run concurrently (or touch shared configuration/build files like `docker-compose.yml`, `scripts/deploy_nonprod_vm.sh`, or `execute-plans/src/App.tsx`), parallel workers experience git index conflicts and uncommitted worktree pollution (as observed in `PPL-ALLOC-007`).
 
-### 5.2 Architectural Design: Path-Based Mutual Exclusion Gating
+### 5.2 Architectural Design: Live Path-Based Mutual Exclusion Gating
 
 ```
-Active Task A:  owned_write_paths = ["services/trade_journey/*"]
-Candidate Task B: owned_write_paths = ["services/trade_journey/projection_store.py"]
+Active Task A Lease:    owned_write_paths = ["services/trade_journey/*"]
+Candidate Task B Intent: owned_write_paths = ["services/trade_journey/projection_store.py"]
 
-       Supervisor Dispatch Admission
+       Supervisor Dispatch Admission (dispatch_admission.py)
                     |
-      [Check Artifact Overlap]
+      [Check Live Artifact Overlap]
                     |
       Overlap Detected in services/trade_journey/!
                     |
@@ -183,6 +194,7 @@ Candidate Task B: owned_write_paths = ["services/trade_journey/projection_store.
 ```
 
 #### Task Schema Extension: Explicit Artifact Declarations
+Extending the existing `artifacts` and `artifact_conflict_guard` models:
 ```json
 {
   "artifacts_manifest": {
@@ -201,34 +213,35 @@ Candidate Task B: owned_write_paths = ["services/trade_journey/projection_store.
 
 #### Admission Gate Algorithm in `dispatch_admission.py`
 1. When evaluating a `TaskIntent` for candidate task $C$:
-   - Collect $W(C) = C.\text{owned\_write\_paths}$.
+   - Collect $W(C) = C.\text{owned\_write\_paths}$ (defaulting to normalized `artifacts` if `artifacts_manifest` is absent).
    - Collect active write sets from all currently leased tasks: $W_{\text{active}} = \bigcup_{L \in \text{leased}} L.\text{owned\_write\_paths}$.
 2. For each path $p_c \in W(C)$ and $p_a \in W_{\text{active}}$:
    - Check if $p_c$ is identical to $p_a$, or if one is a parent directory of the other.
-   - If an overlap is detected:
+   - If an overlap is detected and neither task has an explicit `artifact_conflict_guard` allowlist authorizing the overlap:
      - Return `DispatchDecision(eligible=False, reason=DispatchBlockReason.ARTIFACT_WRITE_OVERLAP, conflicting_task_id=L.task_id)`.
 3. Paths listed under `referenced_read_paths` are shared read-only and never trigger admission blocking.
 4. Paths listed under `shared_composed_paths` (e.g. `docker-compose.yml`) require an explicit single-owner integration task or a wave barrier.
 
 ---
 
-## 6. Gap 4: First-Class Cross-Repository Sidecars & Subphase Dispatch
+## 6. Gap 4: Cross-Repository Routing & Parent/Sidecar Subphase Dispatch
 
-### 6.1 Current Behavior & Failure Mode
-Pantheon is a multi-repository system (`ajoe734/pantheon` and `ajoe734/execute-plans`). Currently:
-- Frontend tasks use ad-hoc prefixes like `execute-plans:src/...` in artifact lists.
-- Sidecars (such as caller inventories, contract diffs, or smoke fixtures) are tracked as independent top-level tasks without hierarchical grouping or subphase constraints.
-- Task worktrees for `execute-plans` were occasionally initialized against `main` instead of `dev` because the registry resolution was not unified.
+### 6.1 Existing Capabilities & Remaining Operational Delta
+Multi-repository routing is already established in `.orchestrator/multi_repo_registry.py`, which provides prefix-based path resolution, repository aliases, and target branch enforcement (`dev` for `pantheon` and `execute_plans`).
 
-### 6.2 Architectural Design: Typed Multi-Repo & Sidecar DAG Models
+However, the development control plane lacks native primitives for **parent-child task relationships and subphase coordination**:
+- Sidecar tasks (such as caller inventories, contract verification audits, or test fixtures) must currently be created as disconnected top-level tasks.
+- A parent implementation task has no formal mechanism to declare that it is waiting for a child sidecar to finish, requiring manual status updates or ad-hoc blockers.
+
+### 6.2 Architectural Design: Typed Parent/Sidecar Models & Subphase Gating
 
 ```
                    +-----------------------------------------------+
-                   |      Parent Task: PFG-BE-CONSOLIDATE-20260820 |
-                   |      Repo: ajoe734/pantheon                   |
-                   |      Status: blocked_on_subphase              |
-                   +-----------------------+-----------------------+
-                                           |
+                    |      Parent Task: PFG-BE-CONSOLIDATE-20260820 |
+                    |      Repo: ajoe734/pantheon                   |
+                    |      Status: blocked_on_subphase              |
+                    +-----------------------+-----------------------+
+                                            |
                     +----------------------+----------------------+
                     |                                             |
                     v                                             v
@@ -257,12 +270,10 @@ Pantheon is a multi-repository system (`ajoe734/pantheon` and `ajoe734/execute-p
 }
 ```
 
-#### Multi-Repo Registry Integration
-1. `multi_repo_registry.py` is the single source of truth for repository configurations (`pantheon` and `execute_plans`).
-2. When the supervisor allocates a task worktree:
-   - Queries `target_repo` to determine repository root and default integration branch (`dev`).
-   - Ensures `execute-plans` tasks are branched from and PR'd to `ajoe734/execute-plans:dev`.
-3. Parent tasks with pending sidecars automatically enter `blocked_on_subphase` until all declared child sidecars reach `done` or `review_approved`.
+#### Dispatch and Lifecycle Integration
+1. Leverage `multi_repo_registry.py` for all repo path and branch resolution.
+2. Parent tasks with declared child sidecars automatically enter `blocked_on_subphase` state in `task_machine.py` until all child sidecars reach `done` or `review_approved`.
+3. Auto-workers dispatched to sidecar tasks inherit a lightweight read-only or narrow-audit worktree lease, ensuring zero interference with the parent task branch.
 
 ---
 
@@ -312,7 +323,7 @@ AI_NAME=Codex2 \
 In `ai_status.py`:
 ```python
 def sanitize_task_blocker_state(task: dict[str, Any]) -> None:
-    """Ensure waiting_for exists only when task is blocked."""
+    # Ensure waiting_for exists only when task is blocked.
     if task.get("status") != "blocked":
         task.pop("waiting_for", None)
         task.pop("block_reason", None)
@@ -323,13 +334,25 @@ This sanitizer runs automatically during every state transition (`start`, `progr
 
 ## 8. Verification & Validation Framework
 
-To ensure development tooling reliability, the proposed changes are validated through a focused test matrix across pure logic and integration harnesses:
+### 8.1 Current Task Verification
+For this architecture record task (`PFG-DEV-TOOLING-ARCHITECTURE-GAP-20260824`), verification validates document cleanliness, lack of trailing whitespace, boundary compliance, and regression safety across existing supervisor tests:
+
+```bash
+# 1. Exact PR branch diff cleanliness check (must be clean with exit code 0)
+git diff --check origin/dev...HEAD
+
+# 2. Existing supervisor dispatch unit test verification
+PYTHONPATH=.orchestrator:. python3 -m unittest discover -s .orchestrator -p test_explain_dispatch.py
+```
+
+### 8.2 Planned Tooling Acceptance Test Matrix (To be implemented in downstream tooling implementation tasks)
+The test matrix below defines the planned acceptance suites to be constructed when implementing the corresponding tooling features in future engineering tasks:
 
 ```
 +---------------------------------------------------------------------------------------+
-|                               TOOLING VERIFICATION MATRIX                             |
+|                       FUTURE TOOLING ACCEPTANCE TEST MATRIX                           |
 +----------------------+----------------------------------------------------------------+
-| Test Suite           | Verification Scope & Assertions                                |
+| Test Suite (Planned) | Verification Scope & Assertions                                |
 +----------------------+----------------------------------------------------------------+
 | test_task_state_     | - Test TaskAmendedEvent replay and effective snapshot view     |
 | store_amendments.py  | - Verify immutable base definition preservation                |
@@ -349,18 +372,6 @@ To ensure development tooling reliability, the proposed changes are validated th
 +----------------------+----------------------------------------------------------------+
 ```
 
-### Exact Verification Commands
-```bash
-# 1. Run supervisor and task machine unit test suites
-PYTHONPATH=.orchestrator:. python3 -m unittest discover -s .orchestrator -p "test_*.py"
-
-# 2. Run TaskStore rewrite and admission test suites
-PYTHONPATH=.orchestrator/rewrite:. python3 -m unittest discover -s .orchestrator/rewrite -p "test_*.py"
-
-# 3. Verify status script integrity and state transition invariants
-python3 scripts/test_ai_status_contract.py
-```
-
 ---
 
 ## 9. Migration & Rollout Strategy
@@ -371,18 +382,18 @@ python3 scripts/test_ai_status_contract.py
    - Existing event logs and snapshots remain 100% backward-compatible.
 
 2. **Phase 2: Dispatch Admission Gating (Additive Guard)**
-   - Introduce `artifacts_manifest` parsing in `dispatch_admission.py`.
+   - Introduce live `artifacts_manifest` write-overlap checking in `dispatch_admission.py`.
    - Tasks lacking explicit `owned_write_paths` fallback to whole-directory matching without blocking existing flows.
 
 3. **Phase 3: Multi-Repo Sidecar DAG Activation**
-   - Activate typed `target_repo` and `parent_task_id` resolution in supervisor planning.
+   - Activate typed `parent_task_id`, `task_nature`, and `subphase` resolution in supervisor planning.
    - Migrate legacy sidecar briefs to structured parent-child task records.
 
 ---
 
 ## 10. Document Authority & Boundaries
 
-- **Authority:** This document is an L3 operational architecture record under `CANONICAL_DOCUMENT_MAP.md`.
+- **Authority:** This document is an L3 operational architecture record under `AI_COLLABORATION_GUIDE.md` § 1 and `CANONICAL_DOCUMENT_MAP.md`.
 - **Product Safety Guarantee:** This document specifies changes strictly within the Development Tooling Control Plane (`.orchestrator/`, `scripts/`, `ai-task-archive/`). It does not modify product business services, BFF routes, data source ingestion engines, or execution/trading broker runtimes.
 - **Reference Contracts:**
   - `docs/02-architecture/development-tooling-product-boundary.md`

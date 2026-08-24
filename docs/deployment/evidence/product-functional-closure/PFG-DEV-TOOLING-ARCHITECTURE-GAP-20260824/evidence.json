@@ -33,9 +33,9 @@
     ]
   },
   "gap_architecture_designs": {
-    "immutable_task_correction": "Append-only TaskAmendedEvent in TaskStore journal preserves full event history while enabling effective task spec corrections.",
+    "immutable_task_correction": "Append-only TaskAmendedEvent in TaskStore journal preserves full event history while enabling effective task spec corrections under governed amendment authority.",
     "dependency_aware_reopen": "DAG dependency recalculation on reopen combined with structured RootEvidenceHandoff contracts.",
-    "artifact_ownership_overlap": "Explicit artifacts_manifest (owned_write_paths, referenced_read_paths) with supervisor path-overlap mutual exclusion gating.",
+    "artifact_ownership_overlap": "Explicit artifacts_manifest (owned_write_paths, referenced_read_paths) with supervisor path-overlap mutual exclusion gating extending existing artifact_conflict_guard.",
     "cross_repo_sidecars": "First-class target_repo, task_nature, parent_task_id, and subphase fields integrated with multi_repo_registry.py.",
     "exact_head_rejection_recovery": "Pure lifecycle supersede exit for closed/merged PR heads and deterministic waiting_for cleanup on state transitions."
   },
@@ -43,8 +43,8 @@
     "environment": "task worktree; document and contract validation only; product runtime and capital authority untouched",
     "commands": [
       {
-        "command": "git diff --check",
-        "result": "pass"
+        "command": "git diff --check origin/dev...HEAD",
+        "result": "clean (exit 0)"
       },
       {
         "command": "PYTHONPATH=.orchestrator:. python3 -m unittest discover -s .orchestrator -p test_explain_dispatch.py",

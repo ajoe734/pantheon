@@ -14,12 +14,12 @@ This task records and designs the development-tooling architecture corrections f
 
 ## Core Gaps & Proposed Designs Covered
 
-1. **Immutable Task Correction vs. Append-Only Amendments**:
+1. **Task Amendment Authority Gap vs. Append-Only Amendments**:
    - Design of `TaskAmendedEvent` in the V2 TaskStore append-only journal, allowing safe amendment of non-lifecycle task fields without mutating historical genesis records or corrupting journal head digests.
 2. **Dependency-Aware Reopen & Root-Evidence Handoff**:
    - Automatic DAG dependency state invalidation upon task reopening, coupled with structured `RootEvidenceHandoff` verification contracts.
 3. **Mandatory Artifact Ownership & Overlap Admission**:
-   - Explicit `artifacts_manifest` (`owned_write_paths`, `referenced_read_paths`) and path-based mutual exclusion admission gating in `dispatch_admission.py`.
+   - Explicit `artifacts_manifest` (`owned_write_paths`, `referenced_read_paths`) and path-based mutual exclusion admission gating in `dispatch_admission.py` extending the existing `artifact_conflict_guard`.
 4. **First-Class Cross-Repository Sidecars & Subphase Dispatch**:
    - Native `target_repo`, `task_nature`, `parent_task_id`, and `subphase` schema support in TaskStore, integrated with `multi_repo_registry.py`.
 5. **Exact-Head Review Rejection Recovery & `waiting_for` Cleanup**:
@@ -27,6 +27,7 @@ This task records and designs the development-tooling architecture corrections f
 
 ## Verification
 
-- Markdown syntax and git diff cleanliness (`git diff --check`).
+- Markdown syntax and git diff cleanliness (`git diff --check origin/dev...HEAD`).
+- Existing supervisor test passes (`PYTHONPATH=.orchestrator:. python3 -m unittest discover -s .orchestrator -p test_explain_dispatch.py`).
 - Document authority and boundary compliance (`docs/02-architecture/development-tooling-product-boundary.md`).
 - All product runtimes, BFF endpoints, Source Ingestion services, and capital pathways remain untouched.
