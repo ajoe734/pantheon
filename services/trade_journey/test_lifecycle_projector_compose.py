@@ -332,4 +332,3 @@ def test_rendered_compose_operator_bff_readiness_with_postgres_reader(
     assert dep["reader_backend"] == "postgres"
     assert dep["writer_backend"] == "postgres"
     assert dep["reasons"] == []
-
