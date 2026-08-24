@@ -43,7 +43,7 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 | 9 | `src/lib/bff/` vs `src/lib/bff-v1/` Overlap | BFF Client Layer | Duplicate legacy client & mutation overlays coexisting with `bff-v1` | 176 import sites across 147 files | `replace_then_delete` | Canonical `src/lib/bff-v1/` adapters |
 | 10 | `src/lib/bff-v1/runActionSafe.ts` | Management Mutations | Toast-aware mutation wrapper with idempotency headers | 29 files (11 prod pages, 5 lib files, 5 tests, 2 scripts, 6 docs/evidence) | `retain` | Canonical implementation |
 | 11 | `src/management/components/NonProductionActionButton.tsx` | UI Safety Guard | Honestly disabled action button with tooltip explanation | 69 literal JSX sites across 28 files (68 sites in 27 prod UI files + 1 in test file), 28 import files | `retain` | Canonical implementation |
-| 12 | `src/management/components/agent/uiActionRegistry.ts` | Management AI | Allowlisted UI action registry with 7 contract types | 4 files (1 component, 2 test suites, 1 evidence doc) | `retain` | Canonical implementation |
+| 12 | `src/management/components/agent/uiActionRegistry.ts` | Management AI | Allowlisted UI action registry with 7 contract types | 2 direct code files (1 prod component `AgentPanelBody.tsx`, 1 direct test suite `uiActionRegistry.test.ts` [47 tests]), 1 self-definition, 1 evidence doc; 2 broader context test suites (`useAgentPanel.test.ts`, `capabilitiesProductionTruth.test.ts`) | `retain` | Canonical implementation |
 
 ---
 
@@ -578,19 +578,23 @@ Every candidate is evaluated against strict caller-traceability rules defined in
   "path_or_symbol": "src/management/components/agent/uiActionRegistry.ts:AVAILABLE_UI_ACTIONS",
   "behavior": "Allowlisted UI action registry for Management AI assistant with 7 contract kinds (navigate, openDrawer, selectEntity, setFilter, focusPanel, refreshCurrentView, runBffAction). Validates incoming actions before high-risk confirmation or execution.",
   "callers": [
-    "src/management/components/agent/uiActionRegistry.ts:36, 50, 67, 120 (registry definition and helpers)",
-    "src/management/components/agent/AgentPanelBody.tsx:47, 726 (imports and maps AVAILABLE_UI_ACTIONS for assistant NL execution)",
-    "src/management/components/agent/useAgentPanel.test.ts:3 (panel state normalization tests)",
-    "src/management/pages/capabilitiesProductionTruth.test.ts (production truth tests)",
-    "docs/deployment/evidence/PFG-MGMT-AI-FE-ACTIONS-20260820/evidence.json:17"
+    "src/management/components/agent/uiActionRegistry.ts:45, 60, 62, 124, 130, 137, 146, 152 (registry definition, schemas, and internal helpers)",
+    "src/management/components/agent/AgentPanelBody.tsx:47-53 (imports AVAILABLE_UI_ACTIONS, executeUiAction, getActionCorrelationKey, isHighRiskAction, isKnownUiActionKind, UiAction), 790 (maps AVAILABLE_UI_ACTIONS in availableUiActions payload), 846 (getActionCorrelationKey), 860 (isKnownUiActionKind validation), 884 (actionCorrelationId), 903 (executeUiAction), 1621 (getActionCorrelationKey), 1622 (isHighRiskAction), 1636 (runUiAction)",
+    "src/management/components/agent/uiActionRegistry.test.ts:2-17 (direct unit test suite importing AVAILABLE_UI_ACTIONS, AVAILABLE_UI_ACTION_KINDS, isKnownUiActionKind, ALLOWED_ROUTE_PREFIXES, SUPPORTED_DRAWERS, SUPPORTED_PANELS, CREATABLE_ENTITIES, isCreatableEntity, executeUiAction, getActionCorrelationKey, isHighRiskAction, isValidUiAction, type UiAction, type UiActionExecuteCtx; 47 unit test cases across lines 19-520)",
+    "docs/deployment/evidence/PFG-MGMT-AI-FE-ACTIONS-20260820/evidence.json:11, 36 (evidence documentation)"
+  ],
+  "broader_context_evidence": [
+    "src/management/components/agent/useAgentPanel.test.ts (broader agent panel hook tests; no direct uiActionRegistry symbol references)",
+    "src/management/pages/capabilitiesProductionTruth.test.ts (broader management capability suite; no direct uiActionRegistry symbol references)"
   ],
   "runtime_or_deploy_refs": [
     "Management AI NL assistant drawer on all /management/* routes"
   ],
   "replacement": "Canonical implementation; retain allowlisted registry",
-  "replacement_proof": "src/management/components/agent/useAgentPanel.test.ts, docs/deployment/evidence/PFG-MGMT-AI-FE-ACTIONS-20260820/evidence.json",
+  "replacement_proof": "src/management/components/agent/uiActionRegistry.test.ts (47 unit tests passed verifying allowlist schemas, action execution, replay prevention, and confirmation flow), docs/deployment/evidence/PFG-MGMT-AI-FE-ACTIONS-20260820/evidence.json",
   "disposition": "retain",
   "validation": [
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/components/agent/uiActionRegistry.test.ts",
     "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/components/agent/useAgentPanel.test.ts",
     "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/pages/capabilitiesProductionTruth.test.ts"
   ]
@@ -648,7 +652,7 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 |                                                    Honest Disabled Actions        |
 |                                                    (68 prod + 1 test JSX sites)   |
 |                                                                                   |
-|  uiActionRegistry (4 files, 6 refs) ------------[retain allowlist]---------->     |
+|  uiActionRegistry (2 direct callers, 2 context) -[retain allowlist]---------->    |
 |                                                    Management AI Operations       |
 |                                                    (7 declared action kinds)      |
 |                                                                                   |
@@ -668,7 +672,7 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 2. **Parent Task Execution Sequence:**
    - **Step 1 (Agora):** Adopt `src/agora/components/CandidateReviewDrawer.tsx` in `TradingRoomPage.tsx`; remove inline drawer; replace hardcoded lens candidate pools with dynamic workshop recipes; rerun Agora tests.
    - **Step 2 (Management Live Hygiene):** Migrate 24 `safeAdapt` call sites in `management.ts` to `withStrictLiveOrMock` / typed error envelopes, then delete `safeAdapt` helper; remove static `seed` events and fake "live" badge in `ActivityMonitor.tsx`; wire `PostmortemLibrary.tsx` to canonical incident API; rerun Management tests.
-   - **Step 3 (Adapter Convergence):** Migrate remaining `src/lib/bff/` callers to `src/lib/bff-v1/`; verify tree-shaking isolates `src/mocks/seed.ts` from strict-live production build bundle.
+   - **Step 3 (Adapter Convergence & Safety):** Migrate remaining `src/lib/bff/` callers to `src/lib/bff-v1/`; verify tree-shaking isolates `src/mocks/seed.ts` from strict-live production build bundle; retain canonical `uiActionRegistry.ts` allowlist for Management AI assistant operations and `NonProductionActionButton.tsx` for unbacked action safety.
    - **Step 4 (Validation):** Execute full browser E2E test suites in both Agora and Management Console.
 
 ---
@@ -676,12 +680,13 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 ## 6. Verification Summary
 
 Focused validation performed in `execute-plans` pinned to `0eec7659c9503ba3799ed5666cfa00f2b031e7fa`:
-- `src/agora/components/CandidateReviewDrawer.test.tsx` (26 tests passed)
-- `src/agora/pages/trading-room/TradingRoomPage.test.tsx` (77 tests passed)
+- `src/management/components/agent/uiActionRegistry.test.ts` (47 tests passed)
+- `src/agora/components/CandidateReviewDrawer.test.tsx` (27 tests passed)
+- `src/agora/pages/trading-room/TradingRoomPage.test.tsx` (64 tests passed)
 - `src/management/components/NonProductionActionButton.test.tsx` (1 test passed)
 - `src/management/pages/capabilitiesProductionTruth.test.ts` (3 tests passed)
 - `src/management/components/agent/useAgentPanel.test.ts` (3 tests passed)
-- `src/lib/bff-v1/__tests__/writes.test.ts` (19 tests passed)
+- `src/lib/bff-v1/__tests__/writes.test.ts` (25 tests passed)
 - `src/lib/bff-v1/__tests__/strictLiveReadOffline.test.ts` (2 tests passed)
-- `src/lib/bff-v1/__tests__/management.test.ts` (34 tests passed)
-- Total: **165 passed / 165 tests** across 8 test suites.
+- `src/lib/bff-v1/__tests__/management.test.ts` (37 tests passed)
+- Total: **209 passed / 209 tests** across 9 test suites.
