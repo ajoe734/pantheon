@@ -357,8 +357,214 @@ def test_relational_projector_has_no_legacy_snapshot_serialization_path(monkeypa
     assert "state_path" not in source
 
     monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "active")
-    with pytest.raises(RuntimeError, match="cutover is not authorized"):
+    with pytest.raises(RuntimeError, match="unsupported backend"):
         lifecycle_projector_module._configured_relational_projector()
+
+
+def test_relational_writer_backend_configuration(monkeypatch):
+    # Disabled / legacy modes return None
+    for disabled_val in ("", "disabled", "legacy_json", "json"):
+        monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", disabled_val)
+        assert lifecycle_projector_module._configured_relational_projector() is None
+
+    # Invalid backend raises RuntimeError
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "invalid_backend")
+    with pytest.raises(RuntimeError, match="unsupported backend 'invalid_backend'"):
+        lifecycle_projector_module._configured_relational_projector()
+
+    # Postgres backend without DSN fails closed
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "postgres")
+    monkeypatch.delenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", raising=False)
+    with pytest.raises(RuntimeError, match="LIFECYCLE_PROJECTOR_PROJECTION_DSN is required"):
+        lifecycle_projector_module._configured_relational_projector()
+
+    # Shadow backend without DSN fails closed
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "shadow")
+    monkeypatch.delenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", raising=False)
+    with pytest.raises(RuntimeError, match="LIFECYCLE_PROJECTOR_PROJECTION_DSN is required"):
+        lifecycle_projector_module._configured_relational_projector()
+
+    # Postgres backend with DSN builds RelationalLifecycleProjector
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "postgres")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", "postgresql://user:pass@localhost:5432/db")
+    monkeypatch.setenv("GIT_SHA", "candidate-sha-123")
+    monkeypatch.setattr(
+        ProjectionStore,
+        "get_controller_state",
+        lambda self, *args: ControllerStateRow(
+            controller_id="canonical-lifecycle-projector",
+            tenant_scope="*",
+            environment_scope="*",
+            checkpoint_seq=0,
+            source_high_watermark=0,
+            backlog_count=0,
+            projection_revision=0,
+            deployment_sha="candidate-sha-123",
+            mode="live",
+            status="ready",
+            accepted_live=True,
+            unresolved_quarantine_count=0,
+        ),
+    )
+    proj = lifecycle_projector_module._configured_relational_projector()
+    assert isinstance(proj, RelationalLifecycleProjector)
+    assert proj.deployment_sha == "candidate-sha-123"
+
+
+def test_relational_projector_healthcheck_postgres_mode(monkeypatch, capsys):
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "postgres")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_PROJECTION_DSN", "postgresql://user:pass@localhost:5432/db")
+    monkeypatch.setenv("GIT_SHA", "test-sha-456")
+
+    class _MockStore:
+        def __init__(self, controller_row):
+            self.controller_row = controller_row
+
+        def get_controller_state(self, *args):
+            return self.controller_row
+
+    ready_row = ControllerStateRow(
+        controller_id="canonical-lifecycle-projector",
+        tenant_scope="*",
+        environment_scope="*",
+        checkpoint_seq=10,
+        source_high_watermark=10,
+        backlog_count=0,
+        projection_revision=3,
+        deployment_sha="test-sha-456",
+        mode="live",
+        status="ready",
+        accepted_live=True,
+        unresolved_quarantine_count=0,
+    )
+    store = _MockStore(ready_row)
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: RelationalLifecycleProjector(store, deployment_sha="test-sha-456"),
+    )
+
+    exit_code = lifecycle_projector_module.healthcheck()
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out.strip())
+    assert payload["ready"] is True
+    assert payload["writer_backend"] == "postgres"
+    assert payload["controller"]["accepted_live"] is True
+    assert payload["controller"]["mode"] == "live"
+    assert payload["controller"]["status"] == "ready"
+    assert payload["controller"]["backlog"] == 0
+
+    # Unhealthy controller: backlog > 0
+    unready_row = ControllerStateRow(
+        controller_id="canonical-lifecycle-projector",
+        tenant_scope="*",
+        environment_scope="*",
+        checkpoint_seq=5,
+        source_high_watermark=10,
+        backlog_count=5,
+        projection_revision=3,
+        deployment_sha="test-sha-456",
+        mode="recovery",
+        status="recovering",
+        accepted_live=False,
+        unresolved_quarantine_count=0,
+    )
+    store.controller_row = unready_row
+    exit_code = lifecycle_projector_module.healthcheck()
+    assert exit_code == 1
+
+
+def test_relational_projector_backfill_postgres_mode(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "postgres")
+    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
+
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, deployment_sha="backfill-sha", clock=lambda: NOW)
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: projector,
+    )
+
+    rows = lifecycle_rows()
+    input_file = tmp_path / "backfill.json"
+    input_file.write_text(json.dumps({"records": rows[:3]}), encoding="utf-8")
+
+    exit_code = lifecycle_projector_module._backfill(input_file, mode="backfill")
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    result = json.loads(captured.out.strip())
+    assert result["accepted"] == 3
+    assert result["checkpoint"] == 3
+    assert result["mode"] == "backfill"
+
+    # Watermark and backlog invariants
+    ctrl = projector.controller
+    assert ctrl["checkpoint"] == 3
+    assert ctrl["source_high_watermark"] == 3
+    assert ctrl["backlog"] == 0
+    assert ctrl["checkpoint"] <= ctrl["source_high_watermark"]
+
+    # Zero JSON generation / temp files created under projection root
+    assert not (tmp_path / "controller_state.json").exists()
+    assert not (tmp_path / "health_state.json").exists()
+    assert not (tmp_path / "current").exists()
+    assert not (tmp_path / "generations").exists()
+    assert not (tmp_path / "staging").exists()
+
+
+def test_relational_projector_mode_transitions_and_quarantine_invariants(tmp_path):
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store, deployment_sha="mode-test-sha", clock=lambda: NOW
+    )
+    rows = lifecycle_rows()
+
+    # 1. Backfill mode: accepted_live is False
+    res_backfill = projector.project_records(rows[:2], mode="backfill", source_high_watermark=len(rows))
+    assert res_backfill.checkpoint == 2
+    ctrl = projector.controller
+    assert ctrl["mode"] == "backfill"
+    assert ctrl["accepted_live"] is False
+    assert ctrl["status"] == "recovering"
+    assert ctrl["backlog"] == 6
+
+    # 2. Recovery mode: accepted_live is False until backlog reaches 0
+    res_recovery = projector.project_records(rows[2:4], mode="recovery", source_high_watermark=len(rows))
+    assert res_recovery.checkpoint == 4
+    ctrl = projector.controller
+    assert ctrl["mode"] == "recovery"
+    assert ctrl["accepted_live"] is False
+    assert ctrl["status"] == "recovering"
+    assert ctrl["backlog"] == 4
+
+    # 3. Live mode with source_high_watermark == checkpoint: accepted_live is True, status is ready
+    res_live = projector.project_records(rows[4:], mode="live", source_high_watermark=len(rows))
+    assert res_live.checkpoint == len(rows)
+    ctrl = projector.controller
+    assert ctrl["mode"] == "live"
+    assert ctrl["accepted_live"] is True
+    assert ctrl["status"] == "ready"
+    assert ctrl["backlog"] == 0
+    assert ctrl["quarantine_count"] == 0
+
+    # 4. Conflicting duplicate of an existing event raises ConflictingLifecycleEvent
+    conflicting_row = {
+        "ingested_seq": 1,
+        "ingested_at": NOW,
+        "event_id": rows[0]["event_id"],
+        "event_type": "signal_generation",
+        "created_at": NOW,
+        "payload": {
+            "event_id": rows[0]["event_id"],
+            "event_type": "signal_generation",
+            "created_at": NOW,
+            "extra_field_changes_fingerprint": True,
+        },
+    }
+    with pytest.raises(ConflictingLifecycleEvent, match="conflicting canonical event_id"):
+        projector.project_records([conflicting_row], mode="live", source_high_watermark=len(rows))
 
 
 @pytest.fixture

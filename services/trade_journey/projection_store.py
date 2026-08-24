@@ -1229,6 +1229,15 @@ class ProjectionStore:
                 # Derive the checkpoint from durable database truth. The recursive
                 # index lookups also cross a previously persisted gap tail when the
                 # missing receipt arrives in a later transaction.
+                start_seq = (
+                    curr_checkpoint_seq
+                    if curr_checkpoint_seq > 0
+                    else (
+                        min(receipt.ingested_seq for receipt in mutation.receipts) - 1
+                        if mutation.receipts
+                        else 0
+                    )
+                )
                 cur.execute(
                     f"""
                     WITH RECURSIVE contiguous(seq) AS (
@@ -1247,7 +1256,7 @@ class ProjectionStore:
                     SELECT MAX(seq) FROM contiguous
                     """,
                     (
-                        curr_checkpoint_seq,
+                        start_seq,
                         tenant_scope,
                         tenant_scope,
                         environment_scope,

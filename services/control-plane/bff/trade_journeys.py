@@ -1027,8 +1027,34 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
         if environment == "live" and request.action in _LIVE_ACTIONS and os.getenv("PANTHEON_TRADE_JOURNEY_LIVE_ACTIONS", "false").lower() != "true":
             return _err(403, "LIVE_ACTION_DISABLED", "Live-capital journey actions are feature-flagged off")
-        materializer = get_event_store().materializer()
-        projection = materializer.get(journey_id, tenant_id=tenant_id, environment=environment) if materializer and _tenant_allowed(identity, tenant_id) else None
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                projection = (
+                    reader.get_journey(
+                        tenant_id=tenant_id,
+                        environment=environment,
+                        journey_id=journey_id,
+                    )
+                    if _tenant_allowed(identity, tenant_id)
+                    else None
+                )
+            except ProjectionReadUnavailable:
+                return _err(
+                    503,
+                    "DEPENDENCY_UNAVAILABLE",
+                    "Trade journey projection store unavailable",
+                    retryable=True,
+                )
+        else:
+            materializer = get_event_store().materializer()
+            projection = (
+                materializer.get(
+                    journey_id, tenant_id=tenant_id, environment=environment
+                )
+                if materializer and _tenant_allowed(identity, tenant_id)
+                else None
+            )
         if projection is None:
             return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
         if request.expected_revision != projection.snapshot.get("revision"):
@@ -1096,16 +1122,30 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
         if not _tenant_allowed(identity, tenant_id):
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
-        materializer = get_event_store().materializer()
-        if materializer is None:
-            return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade journey materializer unavailable", retryable=True)
         try:
             cursor = int(last_event_id or 0)
             if cursor < 0:
                 raise ValueError
         except ValueError:
             return _err(400, "VALIDATION_FAILED", "Last-Event-ID must be a non-negative integer")
-        revision = materializer.revision
+
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                controller = reader.controller_freshness(
+                    tenant_id=tenant_id,
+                    environment=environment,
+                )
+            except ProjectionReadUnavailable:
+                return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade journey projection store unavailable", retryable=True)
+            if controller is None:
+                return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade journey controller unavailable", retryable=True)
+            revision = int(controller.get("generation") or 0)
+        else:
+            materializer = get_event_store().materializer()
+            if materializer is None:
+                return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade journey materializer unavailable", retryable=True)
+            revision = materializer.revision
 
         async def stream():
             event = "snapshot_refetch_required" if cursor and cursor != revision - 1 else "journeys_changed"
@@ -1132,6 +1172,37 @@ def create_trade_journeys_router(
         if not _tenant_allowed(identity, tenant_id):
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
         snapshot_at = utc_now()
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                projections = reader.get_all_projections(
+                    tenant_id=tenant_id,
+                    environment=environment,
+                    include_stages=False,
+                )
+            except ProjectionReadUnavailable:
+                return _unavailable_list_envelope(
+                    snapshot_at, 200, entity_id="trade-journey-attention"
+                )
+            now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
+            items = [
+                _mask_live_sensitive(item, identity, projection.environment)
+                for projection in projections
+                if (item := _attention_item(projection, now=now)) is not None
+            ]
+            items.sort(key=lambda item: ({"critical": 0, "high": 1, "medium": 2}[item["severity"]], -item["age_seconds"]))
+            return {
+                "data": {
+                    "id": "trade-journey-attention",
+                    "tenant_id": tenant_id,
+                    "environment": environment,
+                    "items": items,
+                },
+                "page_info": {"total": len(items), "returned": len(items), "has_more": False},
+                "meta": _projection_reader_meta(
+                    snapshot_at, "formal", reader, tenant_id=tenant_id, environment=environment
+                ),
+            }
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
@@ -1252,7 +1323,13 @@ def create_trade_journeys_router(
         reader = get_projection_reader()
         if reader is not None:
             try:
-                metrics = reader.metrics(tenant_id=tenant_id, environment=environment)
+                now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
+                projections = reader.get_all_projections(
+                    tenant_id=tenant_id,
+                    environment=environment,
+                    include_stages=True,
+                )
+                metrics = _metrics(projections, now=now)
                 data = {"id": "trade-journey-metrics", "tenant_id": tenant_id, "environment": environment, **metrics}
                 read_state = "formal" if metrics["total_journeys"] else "partial"
                 return {"data": data, "meta": _projection_reader_meta(snapshot_at, read_state, reader, tenant_id=tenant_id, environment=environment)}
@@ -1295,6 +1372,50 @@ def create_trade_journeys_router(
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
 
         snapshot_at = utc_now()
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                projections = reader.get_all_projections(
+                    tenant_id=tenant_id,
+                    environment=environment,
+                    include_stages=True,
+                )
+                controller = reader.controller_freshness(
+                    tenant_id=tenant_id,
+                    environment=environment,
+                ) or {}
+            except ProjectionReadUnavailable:
+                return _unavailable_envelope(snapshot_at, entity_id="trade-journey-slo")
+            now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
+            targets = load_slo_targets(environment)
+            metrics = compute_data_quality_metrics(
+                projections,
+                environment=environment,
+                source_watermarks={"postgres": str(controller.get("checkpoint") or 0)},
+                now=now,
+                stalled_after_seconds=targets.stalled_after_seconds,
+                detail_api_latencies_ms=latency_recorder.samples("detail"),
+                resolve_api_latencies_ms=latency_recorder.samples("resolve"),
+            )
+            incidents = evaluate_data_quality(metrics, targets, projections, now=now)
+            published = get_slo_alert_transport().publish_incidents(incidents)
+            dashboard_snapshot = render_dashboard_snapshot(load_dashboard(), metrics, targets)
+            data = {
+                "id": "trade-journey-slo",
+                "tenant_id": tenant_id,
+                "environment": environment,
+                "metrics": metrics_to_dict(metrics),
+                "incidents": [incident_to_dict(incident) for incident in incidents],
+                "alerts_published": len(published),
+                "dashboard": dashboard_snapshot,
+            }
+            read_state = "formal" if projections else "partial"
+            return {
+                "data": data,
+                "meta": _projection_reader_meta(
+                    snapshot_at, read_state, reader, tenant_id=tenant_id, environment=environment
+                ),
+            }
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
@@ -1690,6 +1811,45 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", "as_of must be a timezone-aware ISO-8601 timestamp")
 
         snapshot_at = utc_now()
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                projection = reader.get_journey(
+                    tenant_id=tenant_id,
+                    environment=environment,
+                    journey_id=journey_id,
+                ) if _tenant_allowed(identity, tenant_id) else None
+                if projection is None:
+                    return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
+                timeline = reader.page_timeline(
+                    tenant_id=tenant_id,
+                    environment=environment,
+                    journey_id=journey_id,
+                    page_size=200,
+                )
+            except ProjectionReadUnavailable:
+                return _unavailable_envelope(
+                    snapshot_at, entity_id=f"{journey_id}-replay"
+                )
+            historical_events = [
+                event
+                for event in timeline.items
+                if (parsed := _parse_iso(event.get("occurred_at"))) is not None and parsed <= as_of_dt
+            ]
+            replay_materializer = JourneyMaterializer()
+            try:
+                replay_materializer.rebuild(historical_events)
+            except MaterializationError:
+                return _err(503, "DEPENDENCY_UNAVAILABLE", "Replay could not rebuild a consistent snapshot", retryable=True)
+            rep_projection = replay_materializer.get(journey_id, tenant_id=tenant_id, environment=environment)
+            now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
+            if rep_projection is None:
+                data = {"id": f"{journey_id}-replay", "journey_id": journey_id, "as_of": as_of, "exists_at_as_of": False}
+                return {"data": data, "meta": _projection_reader_meta(snapshot_at, "formal", reader, tenant_id=tenant_id, environment=environment)}
+            detail = _mask_live_sensitive(_detail(rep_projection, now=now), identity, rep_projection.environment)
+            detail["as_of"] = as_of
+            detail["exists_at_as_of"] = True
+            return {"data": detail, "meta": _projection_reader_meta(snapshot_at, detail.get("read_state", "formal"), reader, tenant_id=tenant_id, environment=environment)}
         store = get_event_store()
         materializer = store.materializer()
         if materializer is None:
