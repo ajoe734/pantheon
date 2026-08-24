@@ -88,6 +88,19 @@ def _text(value: Any, default: str = "") -> str:
     return text if text else default
 
 
+ADMITTED_SOCIAL_PLATFORMS = frozenset({"stocktwits"})
+
+
+def _validate_admitted_platform(platform: str) -> str:
+    clean = str(platform or "").strip().lower()
+    if clean not in ADMITTED_SOCIAL_PLATFORMS:
+        raise SourceEvidenceError(
+            f"Social platform '{platform}' is not an admitted social provider; "
+            f"admitted platforms are: {sorted(ADMITTED_SOCIAL_PLATFORMS)}"
+        )
+    return clean
+
+
 @dataclass(frozen=True)
 class AdmittedSocialMediaAdapter(SourceConnectorProvider):
     """Governed social market-discussion adapter with trust and tombstone policies."""
@@ -137,12 +150,23 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
                 "source_type": "social",
                 "dataset_schema_hash": SOCIAL_ADMITTED_SCHEMA_HASH,
                 "auth_modes": ["none", "api_key"],
+                "auth_type": "none",
+                "secret_ref_id": self.secret_ref_id,
                 "entitlement_tags": ["social-research"],
-                "access_scope": ["research", "search_index"],
+                "access_scope": ["research", "search_index", "experiment", "sentiment_modeling"],
+                "allowed_use": ["research", "search_index", "experiment", "sentiment_modeling"],
                 "allowed_host_patterns": ["api.stocktwits.com", "stocktwits.com"],
+                "terms_ref": "source-ingest://license/stocktwits-terms-v1",
+                "retention_policy": "tombstone_purge_on_deletion_30d_cache",
+                "full_text_rights": "display_snippets_and_derived_features_only_no_raw_redistribution",
+                "community_scope": "public_streams_only",
                 "governance": {
                     "direct_execution_allowed": False,
                     "canonical_sink": "SourceRecord/EvidenceBundle",
+                    "retention_days": 30,
+                    "tombstone_propagation": True,
+                    "full_text_redistribution_allowed": False,
+                    "public_community_only": True,
                 },
                 **dict(self.connector_metadata),
             },
@@ -198,7 +222,8 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
         platform: str = "stocktwits",
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
-        normalized_rows = self.normalized_rows_from_payload(payload, platform=platform)
+        admitted_platform = _validate_admitted_platform(platform)
+        normalized_rows = self.normalized_rows_from_payload(payload, platform=admitted_platform)
         connector_instance = self.connector()
         records: list[SourceRecord] = []
 
@@ -207,23 +232,23 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
             event_time = str(row["event_time"])
             available_time = str(row["available_time"])
             row_hash = _stable_hash(row)
-            source_id = f"social:{platform}:{post_id}:{row_hash}"
-            content_ref = f"social://{platform}/post/{post_id}"
+            source_id = f"social:{admitted_platform}:{post_id}:{row_hash}"
+            content_ref = f"social://{admitted_platform}/post/{post_id}"
 
             unvalidated_record = SourceRecord(
                 source_id=source_id,
                 connector_id=self.connector_id,
                 source_type=SourceType.SOCIAL,
-                title=f"Social post [{platform}] {post_id} on {event_time[:10]}",
+                title=f"Social post [{admitted_platform}] {post_id} on {event_time[:10]}",
                 content_ref=content_ref,
                 metadata={
                     "source_class": "social",
                     "provider": "StockTwits",
-                    "platform": platform,
+                    "platform": admitted_platform,
                     "author_id_hash": row["author_id_hash"],
                     "post_id": post_id,
                     "thread_id": row.get("thread_id"),
-                    "platform_policy_ref": row.get("platform_policy_ref", "source-ingest://license/social-admitted-terms-v1"),
+                    "platform_policy_ref": row.get("platform_policy_ref", "source-ingest://license/stocktwits-terms-v1"),
                     "trust_score": row["trust_score"],
                     "is_bot": row.get("is_bot", False),
                     "is_moderated": row.get("is_moderated", False),
@@ -235,7 +260,7 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
                     "event_time": event_time,
                     "available_time": available_time,
                     "ingest_time": row.get("ingest_time", _utc_now()),
-                    "access_scope": ["research", "search_index"],
+                    "access_scope": ["research", "search_index", "experiment", "sentiment_modeling"],
                     "license_scope": "community_admitted",
                     "entitlement_tags": ["social-research"],
                     "schema_hash": SOCIAL_ADMITTED_SCHEMA_HASH,
@@ -255,6 +280,7 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
         *,
         platform: str = "stocktwits",
     ) -> tuple[dict[str, Any], ...]:
+        admitted_platform = _validate_admitted_platform(platform)
         raw_items: list[Mapping[str, Any]] = []
         if isinstance(payload, Mapping):
             for key in ("items", "messages", "posts", "data", "results"):
@@ -268,13 +294,14 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
 
         results: list[dict[str, Any]] = []
         for raw in raw_items:
-            norm = self._normalize_item(raw, platform=platform)
+            norm = self._normalize_item(raw, platform=admitted_platform)
             if norm is not None:
                 results.append(norm)
 
         return tuple(results)
 
     def _normalize_item(self, raw: Mapping[str, Any], *, platform: str) -> dict[str, Any] | None:
+        admitted_platform = _validate_admitted_platform(platform)
         post_id = _text(raw.get("post_id") or raw.get("id") or raw.get("message_id"))
         if not post_id:
             return None
@@ -304,38 +331,48 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
         event_time_raw = _to_rfc3339(raw.get("event_time") or raw.get("created_at") or raw.get("published_at") or raw.get("time") or _utc_now())
         available_time_raw = _to_rfc3339(raw.get("available_time") or event_time_raw)
 
-        # Sentiment representation: platform-tagged sentiment vs NLP model
-        sentiment_payload = raw.get("sentiment")
-        entities_payload = raw.get("entities")
-        platform_sentiment = None
-        if isinstance(entities_payload, Mapping):
-            ent_sentiment = entities_payload.get("sentiment")
-            if isinstance(ent_sentiment, Mapping):
-                platform_sentiment = ent_sentiment.get("basic")
+        is_tombstone = bool(raw.get("is_tombstone", False) or raw.get("deleted", False))
 
-        if isinstance(sentiment_payload, Mapping):
-            sentiment = {
-                "label": _text(sentiment_payload.get("label"), "neutral"),
-                "score": float(sentiment_payload.get("score", 0.0)),
-                "model_version": _text(sentiment_payload.get("model_version"), "user_or_model_specified"),
-                "is_derived": bool(sentiment_payload.get("is_derived", True)),
-            }
-        elif platform_sentiment:
-            plat_label = str(platform_sentiment).strip().lower()
-            score = 1.0 if plat_label == "bullish" else (-1.0 if plat_label == "bearish" else 0.0)
-            sentiment = {
-                "label": plat_label,
-                "score": score,
-                "model_version": "stocktwits_platform_sentiment.v1",
-                "is_derived": False,
-            }
-        else:
+        # Sentiment representation: platform-tagged sentiment vs NLP model vs tombstone
+        if is_tombstone:
             sentiment = {
                 "label": "neutral",
                 "score": 0.0,
-                "model_version": "unspecified",
+                "model_version": "tombstone",
                 "is_derived": False,
             }
+        else:
+            sentiment_payload = raw.get("sentiment")
+            entities_payload = raw.get("entities")
+            platform_sentiment = None
+            if isinstance(entities_payload, Mapping):
+                ent_sentiment = entities_payload.get("sentiment")
+                if isinstance(ent_sentiment, Mapping):
+                    platform_sentiment = ent_sentiment.get("basic")
+
+            if isinstance(sentiment_payload, Mapping):
+                sentiment = {
+                    "label": _text(sentiment_payload.get("label"), "neutral"),
+                    "score": float(sentiment_payload.get("score", 0.0)),
+                    "model_version": _text(sentiment_payload.get("model_version"), "user_or_model_specified"),
+                    "is_derived": bool(sentiment_payload.get("is_derived", True)),
+                }
+            elif platform_sentiment:
+                plat_label = str(platform_sentiment).strip().lower()
+                score = 1.0 if plat_label == "bullish" else (-1.0 if plat_label == "bearish" else 0.0)
+                sentiment = {
+                    "label": plat_label,
+                    "score": score,
+                    "model_version": "stocktwits_platform_sentiment.v1",
+                    "is_derived": False,
+                }
+            else:
+                sentiment = {
+                    "label": "neutral",
+                    "score": 0.0,
+                    "model_version": "unspecified",
+                    "is_derived": False,
+                }
 
         symbols = raw.get("symbols")
         symbol_list: list[str] = []
@@ -350,24 +387,39 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
         elif isinstance(symbols, str) and symbols.strip():
             symbol_list.append(symbols.strip().upper())
 
+        # Tombstone body & raw_row sanitation: never retain deleted body or raw user identities
+        if is_tombstone:
+            body = ""
+            raw_row = {
+                "post_id": post_id,
+                "is_tombstone": True,
+                "deleted": True,
+                "event_time": event_time_raw,
+                "available_time": available_time_raw,
+                "author_id_hash": author_id_hash,
+            }
+        else:
+            body = _text(raw.get("body") or raw.get("content") or raw.get("text"))
+            raw_row = dict(raw)
+
         return {
-            "platform": platform,
+            "platform": admitted_platform,
             "post_id": post_id,
             "thread_id": _text(raw.get("thread_id") or raw.get("parent_id")),
             "author_id_hash": author_id_hash,
-            "platform_policy_ref": _text(raw.get("platform_policy_ref"), "source-ingest://license/social-admitted-terms-v1"),
+            "platform_policy_ref": _text(raw.get("platform_policy_ref"), "source-ingest://license/stocktwits-terms-v1"),
             "trust_score": trust_score,
             "is_bot": bool(raw.get("is_bot", False)),
             "is_moderated": bool(raw.get("is_moderated", False)),
             "moderation_flags": list(raw.get("moderation_flags") or []),
-            "is_tombstone": bool(raw.get("is_tombstone", False) or raw.get("deleted", False)),
+            "is_tombstone": is_tombstone,
             "sentiment": sentiment,
             "symbols": symbol_list,
-            "body": _text(raw.get("body") or raw.get("content") or raw.get("text")),
+            "body": body,
             "event_time": event_time_raw,
             "available_time": available_time_raw,
             "ingest_time": _to_rfc3339(raw.get("ingest_time") or _utc_now()),
-            "raw_row": dict(raw),
+            "raw_row": raw_row,
         }
 
     def source_health_from_result(self, result: Any) -> SourceHealth:

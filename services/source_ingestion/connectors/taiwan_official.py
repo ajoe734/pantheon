@@ -1202,28 +1202,34 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
     def is_contract_roll_day(trade_date: str) -> bool:
         """Check if trade_date (YYYY-MM-DD) is the 3rd Wednesday of the month (TAIFEX settlement/roll day)."""
         from datetime import date
-        d = date.fromisoformat(trade_date)
-        if d.weekday() != 2:  # Wednesday is 2
+        try:
+            d = date.fromisoformat(trade_date)
+            if d.weekday() != 2:  # Wednesday is 2
+                return False
+            first_day = date(d.year, d.month, 1)
+            offset = (2 - first_day.weekday()) % 7
+            first_wednesday = 1 + offset
+            third_wednesday = first_wednesday + 14
+            return d.day == third_wednesday
+        except Exception:
             return False
-        first_day = date(d.year, d.month, 1)
-        offset = (2 - first_day.weekday()) % 7
-        first_wednesday = 1 + offset
-        third_wednesday = first_wednesday + 14
-        return d.day == third_wednesday
 
     @staticmethod
     def resolve_front_month_contract(trade_date: str, contract_prefix: str = "TX") -> str:
         """Resolve active front month contract code based on settlement calendar."""
         from datetime import date
-        d = date.fromisoformat(trade_date)
-        first_day = date(d.year, d.month, 1)
-        offset = (2 - first_day.weekday()) % 7
-        third_wednesday = 1 + offset + 14
-        if d.day <= third_wednesday:
-            return f"{contract_prefix}{d.year}{d.month:02d}"
-        next_month = 1 if d.month == 12 else d.month + 1
-        next_year = d.year + 1 if d.month == 12 else d.year
-        return f"{contract_prefix}{next_year}{next_month:02d}"
+        try:
+            d = date.fromisoformat(trade_date)
+            first_day = date(d.year, d.month, 1)
+            offset = (2 - first_day.weekday()) % 7
+            third_wednesday = 1 + offset + 14
+            if d.day <= third_wednesday:
+                return f"{contract_prefix}{d.year}{d.month:02d}"
+            next_month = 1 if d.month == 12 else d.month + 1
+            next_year = d.year + 1 if d.month == 12 else d.year
+            return f"{contract_prefix}{next_year}{next_month:02d}"
+        except Exception:
+            return f"{contract_prefix}FRONT"
 
     def records_from_payload(
         self,
@@ -1308,6 +1314,8 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         resolved_endpoint = api_endpoint or _taifex_endpoint(dataset)
         results: list[dict[str, Any]] = []
         for raw in rows:
+            if limit is not None and len(results) >= limit:
+                break
             date = _roc_date_to_iso(_first(raw, "Date", "日期", "date", "TradingDate") or trade_date)
             if not date:
                 continue
@@ -1373,7 +1381,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "contract_roll_day": roll_day,
                     "front_month_contract": front_month,
                     "source_dataset": source_dataset,
-                    "api_endpoint": api_endpoint,
+                    "api_endpoint": resolved_endpoint,
                     "available_time": available_time or f"{date}T16:30:00Z",
                     "raw_row": dict(raw),
                 })

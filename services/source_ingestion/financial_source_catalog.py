@@ -311,7 +311,7 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
         provider="StockTwits",
         source_class=DataSourceClass.SOCIAL,
         license_scope="community_admitted",
-        allowed_use=("research_data", "backtest_data", "feature_generation", "monitoring"),
+        allowed_use=("research_data", "feature_generation", "monitoring"),
         update_frequency="event_poll_10m_to_30m",
         connector_id="social-admitted-market-discussion",
         datasets=(
@@ -329,6 +329,10 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
             "preferred_role": "social_sentiment_research",
             "config_template_ids": ["template-social-admitted-market-discussion"],
             "connector_status": "implemented_supported_adapter",
+            "terms_ref": "source-ingest://license/stocktwits-terms-v1",
+            "retention_policy": "tombstone_purge_on_deletion_30d_cache",
+            "full_text_rights": "display_snippets_and_derived_features_only_no_raw_redistribution",
+            "community_scope": "public_streams_only",
         },
     ),
     _entry(
@@ -1035,9 +1039,9 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
         "source_type": "social",
         "provider": "StockTwits",
         "auth": {
-            "auth_type": "api_key",
+            "auth_type": "none",
             "secret_ref_id": "env://STOCKTWITS_API_KEY",
-            "credential_health_without_key": "credential_unavailable",
+            "credential_health_without_key": "not_required",
         },
         "fetch": {
             "mode": "provider_owned_adapter",
@@ -1048,6 +1052,12 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
             "cadence": "10m_to_30m",
             "universe_tiers": ["core_universe", "candidate_universe"],
             "archive_behavior": "skip",
+        },
+        "metadata": {
+            "terms_ref": "source-ingest://license/stocktwits-terms-v1",
+            "retention_policy": "tombstone_purge_on_deletion_30d_cache",
+            "full_text_rights": "display_snippets_and_derived_features_only_no_raw_redistribution",
+            "community_scope": "public_streams_only",
         },
         "lifecycle_state": "candidate",
     },

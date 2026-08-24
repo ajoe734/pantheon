@@ -195,7 +195,7 @@ def test_alpha_signal_record_schema_contract_conformance() -> None:
         "allowed_use": ["research", "experiment"],
         "entitlement_tags": ["alpha_db-research"],
         "provider_record_ref": "ref://composite/mom_qual/2330.TWSE/20260610",
-        "body_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "body_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
     }
     jsonschema.validate(instance=valid_record, schema=schema)
 
@@ -686,5 +686,144 @@ def test_tdcc_and_taifex_bounded_streaming_and_provenance_urls() -> None:
         dataset="taifex_options_chip",
     )
     assert opt_records[0].metadata["api_endpoint"] == "https://openapi.taifex.com.tw/v1/PutCallRatio"
+
+
+def test_social_platform_restriction_and_tombstone_sanitization() -> None:
+    """Validate social platform restriction to admitted StockTwits and tombstone privacy sanitization."""
+    adapter = AdmittedSocialMediaAdapter()
+
+    # 1. Unadmitted platform must fail closed
+    with pytest.raises(SourceEvidenceError, match="not an admitted social provider"):
+        adapter.records_from_payload([{"id": "1", "body": "test"}], platform="twitter")
+
+    with pytest.raises(SourceEvidenceError, match="not an admitted social provider"):
+        adapter.records_from_payload([{"id": "1", "body": "test"}], platform="reddit")
+
+    # 2. Tombstone record must never retain deleted body or raw user identity
+    tombstone_raw = [
+        {
+            "id": 998811,
+            "body": "This was a deleted post containing sensitive text that must be purged",
+            "deleted": True,
+            "created_at": "2026-08-24T12:00:00Z",
+            "user": {
+                "id": 445566,
+                "username": "secret_user",
+                "email": "user@example.com",
+            },
+        }
+    ]
+    tombstone_records = adapter.records_from_payload(tombstone_raw, platform="stocktwits")
+    assert len(tombstone_records) == 1
+    t_rec = tombstone_records[0]
+    assert t_rec.metadata["is_tombstone"] is True
+    assert t_rec.metadata["body"] == ""  # Purged body
+    assert t_rec.metadata["sentiment"]["model_version"] == "tombstone"
+    assert "body" not in t_rec.metadata["raw_row"] or t_rec.metadata["raw_row"].get("body") == ""
+    assert "user" not in t_rec.metadata["raw_row"]
+    assert "secret_user" not in str(t_rec.metadata["raw_row"])
+    assert t_rec.metadata["author_id_hash"] == hashlib.sha256(b"445566").hexdigest()[:16]
+
+
+def test_alpha_signal_calendar_validation_and_schema_pattern() -> None:
+    """Validate real RFC3339 calendar date checking and Draft-07 SHA-256 pattern conformance."""
+    schema = _load_schema("docs/contracts/alpha_signal_record.schema.json")
+
+    # 1. Non-existent calendar date (e.g. Feb 31) must fail validation
+    with pytest.raises(SourceEvidenceError, match="valid calendar date"):
+        AlphaSignalRecord(
+            alpha_vendor_id="fmp-alpha-factors",
+            signal_id="technical_rsi_14d",
+            signal_version="v1",
+            field_schema_version="v1",
+            universe=["US_EQUITY"],
+            entity_id="AAPL",
+            event_time="2026-02-31T00:00:00Z",  # Invalid calendar date
+            as_of_time="2026-08-24T16:00:00Z",
+            available_time="2026-08-24T16:05:00Z",
+            values={"rsi": 50.0},
+            units={"rsi": "index"},
+        )
+
+    # 2. Comma-separated universe string normalizes to multi-element tuple
+    rec = AlphaSignalRecord(
+        alpha_vendor_id="fmp-alpha-factors",
+        signal_id="technical_rsi_14d",
+        signal_version="v1",
+        field_schema_version="v1",
+        universe="US_EQUITY, TW_EQUITY",
+        entity_id="AAPL",
+        event_time="2026-08-24T16:00:00Z",
+        as_of_time="2026-08-24T16:00:00Z",
+        available_time="2026-08-24T16:05:00Z",
+        values={"rsi": 50.0},
+        units={"rsi": "index"},
+    )
+    assert rec.universe == ("US_EQUITY", "TW_EQUITY")
+    assert len(rec.body_hash) == 64
+
+    # 3. Conformance to JSON Schema Draft-07 with 64-char body_hash pattern
+    jsonschema.validate(instance=rec.to_dict(), schema=schema)
+
+
+def test_alpha_db_signal_id_resolution_and_unsupported_rejection() -> None:
+    """Validate FMP indicator resolution and rejection of unsupported signal_ids."""
+    from services.source_ingestion.connectors.alpha_db import _resolve_fmp_indicator
+
+    # Supported mappings
+    ind, period = _resolve_fmp_indicator("technical_sma_50d")
+    assert ind == "sma"
+    assert period == 50
+
+    ind, period = _resolve_fmp_indicator("technical_rsi_14d")
+    assert ind == "rsi"
+    assert period == 14
+
+    ind, period = _resolve_fmp_indicator("ema")
+    assert ind == "ema"
+    assert period == 20
+
+    # Unsupported signal_id must raise SourceEvidenceError
+    with pytest.raises(SourceEvidenceError, match="Unsupported signal_id"):
+        _resolve_fmp_indicator("unsupported_random_signal_xyz")
+
+    adapter = ExternalAlphaDbAdapter()
+    with pytest.raises(SourceEvidenceError, match="Unsupported signal_id|ALPHA_DB_API_KEY"):
+        adapter.fetch_payload(signal_id="unsupported_random_signal_xyz")
+
+
+def test_twse_10mb_limit_and_finmind_bulk_backfill_alias() -> None:
+    """Validate TWSE 10MB definition bound and FinMind broker bulk backfill alias resolution."""
+    # 1. TWSE definition default limit is 10MB (10485760 bytes)
+    twse_defn = get_connector_definition("tw-twse-tpex-official-market")
+    assert twse_defn is not None
+    assert twse_defn.default_limits["max_bytes"] == 10485760
+
+    # 2. FinMind broker bulk backfill alias resolves to tw-finmind-broker-bulk-parquet
+    finmind_alias_defn = get_connector_definition("tw-finmind-broker-bulk-backfill")
+    assert finmind_alias_defn is not None
+    assert finmind_alias_defn.definition_id == "tw-finmind-broker-bulk-parquet"
+
+
+def test_taifex_futures_normalization_bounds_and_roll_day() -> None:
+    """Validate TAIFEX normalization bounds and contract roll day calculation."""
+    adapter = TaifexDerivativesChipAdapter(max_records=2)
+
+    # 10 rows in payload, max_records=2 must bound normalized rows
+    payload = [
+        {"Date": "2026-08-24", "Contract": f"TX{i}", "ParticipantGroup": "foreign_investors", "LongVolume": 100}
+        for i in range(10)
+    ]
+    rows = adapter.normalized_rows_from_payload(payload, max_records=2)
+    assert len(rows) == 2
+
+    # 3rd Wednesday check
+    # 2026-08-19 is the 3rd Wednesday of August 2026
+    assert adapter.is_contract_roll_day("2026-08-19") is True
+    # 2026-08-20 (Thursday) is not
+    assert adapter.is_contract_roll_day("2026-08-20") is False
+    # Invalid date string returns False without raising
+    assert adapter.is_contract_roll_day("invalid-date") is False
+
 
 

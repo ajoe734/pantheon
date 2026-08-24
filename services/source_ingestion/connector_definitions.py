@@ -338,7 +338,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         },
         secret_fields=(),
         required_pit_fields=("event_time", "available_time", "ingest_time"),
-        default_limits={"max_records": 100, "max_bytes": 1048576, "timeout_seconds": 15, "max_rate_per_second": 5.0},
+        default_limits={"max_records": 100, "max_bytes": 10485760, "timeout_seconds": 15, "max_rate_per_second": 5.0},
         allowed_host_patterns=("openapi.twse.com.tw", "www.tpex.org.tw"),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/tw-twse-tpex-official-market",
@@ -925,6 +925,12 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         allowed_host_patterns=("api.stocktwits.com", "stocktwits.com"),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/social-admitted-market-discussion",
+        metadata={
+            "terms_ref": "source-ingest://license/stocktwits-terms-v1",
+            "retention_policy": "tombstone_purge_on_deletion_30d_cache",
+            "full_text_rights": "display_snippets_and_derived_features_only_no_raw_redistribution",
+            "community_scope": "public_streams_only",
+        },
     ),
     ConnectorDefinition(
         definition_id="alpha-db-vendor-signals",
@@ -961,6 +967,7 @@ DEPLOYED_CONNECTOR_DEFINITIONS: tuple[ConnectorDefinition, ...] = _CANONICAL_DEF
 
 _DEFINITION_ID_ALIASES: dict[str, str] = {
     "tw-finmind-dataset": "tw-finmind-datasets",
+    "tw-finmind-broker-bulk-backfill": "tw-finmind-broker-bulk-parquet",
     "tw-tej-research-backfill": "tw-tej-research-datasets",
     "tw-mops-official-disclosure": "tw-mops-official-disclosures",
     "us-sec-edgar-company-facts": "us-sec-edgar-filings",

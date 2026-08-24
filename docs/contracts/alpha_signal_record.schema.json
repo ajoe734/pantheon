@@ -150,7 +150,7 @@
     },
     "body_hash": {
       "type": "string",
-      "minLength": 1
+      "pattern": "^[0-9a-f]{64}$"
     }
   },
   "additionalProperties": false

@@ -76,8 +76,16 @@ def _to_rfc3339(val: Any) -> str:
 
 
 def _validate_rfc3339(val: str, name: str) -> None:
-    if not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", val):
+    s = _text(val)
+    if not s or not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", s):
         raise SourceEvidenceError(f"{name} must be a valid RFC3339 timestamp; got: {val!r}")
+    try:
+        iso_str = s.replace("Z", "+00:00")
+        datetime.fromisoformat(iso_str)
+    except Exception as err:
+        raise SourceEvidenceError(
+            f"{name} must be a valid RFC3339 timestamp with valid calendar date/time; got: {val!r}"
+        ) from err
 
 
 def _utc_now() -> str:
@@ -137,6 +145,13 @@ class AlphaSignalRecord:
         _require(self.event_time, "event_time")
         _require(self.as_of_time, "as_of_time")
         _require(self.available_time, "available_time")
+        if not self.provider_record_ref:
+            object.__setattr__(
+                self,
+                "provider_record_ref",
+                f"ref://{self.alpha_vendor_id}/{self.signal_id}/{self.entity_id}",
+            )
+        _require(self.provider_record_ref, "provider_record_ref")
 
         # Validate RFC3339 timestamps
         _validate_rfc3339(self.event_time, "event_time")
@@ -146,8 +161,8 @@ class AlphaSignalRecord:
 
         # Universe string vs sequence normalization
         if isinstance(self.universe, str):
-            object.__setattr__(self, "universe", (self.universe,))
-        elif isinstance(self.universe, Sequence):
+            object.__setattr__(self, "universe", tuple(u.strip() for u in self.universe.split(",") if u.strip()))
+        elif isinstance(self.universe, Sequence) and not isinstance(self.universe, (bytes, bytearray)):
             object.__setattr__(self, "universe", tuple(str(u).strip() for u in self.universe if str(u).strip()))
         else:
             object.__setattr__(self, "universe", tuple())
@@ -210,6 +225,38 @@ class AlphaSignalRecord:
             "provider_record_ref": self.provider_record_ref,
             "body_hash": self.body_hash,
         }
+
+
+SUPPORTED_FMP_INDICATORS: dict[str, int] = {
+    "rsi": 14,
+    "sma": 20,
+    "ema": 20,
+    "wma": 20,
+    "dema": 20,
+    "tema": 20,
+    "williams": 14,
+    "standarddeviation": 20,
+}
+
+
+def _resolve_fmp_indicator(signal_id: str) -> tuple[str, int]:
+    """Parse technical indicator type and period from signal_id or reject unsupported signals."""
+    s = _text(signal_id).lower().replace("-", "_")
+    m = re.match(r"^(?:technical_)?([a-z]+)_(\d+)(?:d)?$", s)
+    if m:
+        ind_type = m.group(1)
+        period = int(m.group(2))
+        if ind_type in SUPPORTED_FMP_INDICATORS:
+            return ind_type, period
+    if s in SUPPORTED_FMP_INDICATORS:
+        return s, SUPPORTED_FMP_INDICATORS[s]
+    for ind, default_period in SUPPORTED_FMP_INDICATORS.items():
+        if ind in s:
+            return ind, default_period
+    raise SourceEvidenceError(
+        f"Unsupported signal_id or indicator type for FMP alpha DB: {signal_id!r}; "
+        f"supported indicator types are: {sorted(SUPPORTED_FMP_INDICATORS.keys())}"
+    )
 
 
 @dataclass(frozen=True)
@@ -316,7 +363,8 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
             raise SourceEvidenceError(
                 "External Alpha DB (FMP) fetch requires secret_ref_id env://ALPHA_DB_API_KEY; none found in environment"
             )
-        url = f"{FMP_API_BASE_URL}/technical_indicator/daily/{entity_id}?type=rsi&period=14&apikey={urllib.parse.quote(api_key)}"
+        ind_type, period = _resolve_fmp_indicator(signal_id)
+        url = f"{FMP_API_BASE_URL}/technical_indicator/daily/{entity_id}?type={ind_type}&period={period}&apikey={urllib.parse.quote(api_key)}"
         request = urllib.request.Request(
             url,
             headers={
@@ -483,7 +531,12 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
         units = dict(raw_units) if isinstance(raw_units, Mapping) else {k: "score" for k in values}
 
         universe_raw = raw.get("universe") or ["US_EQUITY"]
-        universe = [str(u) for u in universe_raw] if isinstance(universe_raw, Sequence) else [str(universe_raw)]
+        if isinstance(universe_raw, str):
+            universe = [u.strip() for u in universe_raw.split(",") if u.strip()]
+        elif isinstance(universe_raw, Sequence) and not isinstance(universe_raw, (bytes, bytearray)):
+            universe = [str(u).strip() for u in universe_raw if str(u).strip()]
+        else:
+            universe = [str(universe_raw)]
 
         resolved_signal_id = _text(raw.get("signal_id"), signal_id)
         resolved_vendor_id = _text(raw.get("alpha_vendor_id"), alpha_vendor_id)
