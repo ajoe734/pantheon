@@ -1351,6 +1351,7 @@ jobs:
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: "false"
           PANTHEON_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
+          PANTHEON_DEV_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           PANTHEON_FAILED_BACKEND_SHA: ${{ steps.target.outputs.sha }}
           PANTHEON_FAILED_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
@@ -1387,11 +1388,13 @@ jobs:
           else
             echo "Dev deploy or smoke failed; rolling back BFF to baseline ${PANTHEON_ROLLBACK_BACKEND_SHA} (current=${current_bff:-unknown})"
             PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_ROLLBACK_BACKEND_SHA}" \
               "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
               bash "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh" \
                 --environment dev \
                 --component bff \
                 --sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
+                --rollback-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
                 --project-id "${GCP_DEPLOY_PROJECT_ID}" \
                 --deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"
           fi

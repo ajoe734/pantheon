@@ -1415,6 +1415,7 @@ REQUIRED_COMPENSATION_ENV_VARS = (
     "DEV_BFF_CORS_ORIGINS",
     "PANTHEON_ROLLBACK_BACKEND_SHA",
     "PANTHEON_ROLLBACK_FRONTEND_SHA",
+    "PANTHEON_DEV_ROLLBACK_BACKEND_SHA",
 )
 
 
@@ -1436,6 +1437,8 @@ def _validate_deploy_compensation_step(step: str) -> None:
     assert "export DEV_BFF_AUTH_STUB=true" in step
     assert "export DEV_BFF_AUTH_MODE=permissive" in step
     assert "--component bff" in step
+    assert '--rollback-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}"' in step
+    assert 'PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_ROLLBACK_BACKEND_SHA}"' in step
     assert 'current_bff="$(curl -fsS "${DEV_BFF_URL}/bff/version"' in step
     assert 'if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then' in step
     assert "skipping rollback deploy and verifying baseline pair" in step
@@ -1495,6 +1498,37 @@ def _setup_mock_compensation_environment(
             "  esac\n"
             "done\n"
             "exit 0\n"
+        )
+    elif deploy_behavior == "post_up_failure_with_rollback_binding":
+        deploy_body = (
+            f"echo \"$@\" >> '{invocations_log}'\n"
+            "deploy_sha=\"\"\n"
+            "rollback_sha=\"${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}\"\n"
+            "while [[ $# -gt 0 ]]; do\n"
+            "  case \"$1\" in\n"
+            "    --sha)\n"
+            "      deploy_sha=\"$2\"\n"
+            f"      echo \"$2\" > '{bff_sha_file}'\n"
+            "      shift 2\n"
+            "      ;;\n"
+            "    --rollback-sha)\n"
+            "      rollback_sha=\"$2\"\n"
+            "      shift 2\n"
+            "      ;;\n"
+            "    *)\n"
+            "      shift\n"
+            "      ;;\n"
+            "  esac\n"
+            "done\n"
+            "# Simulate post-up failure inside baseline compensation deploy:\n"
+            "# If rollback_sha is not bound to deploy_sha (e.g. captures failed candidate),\n"
+            "# a broken rollback restores the failed candidate.\n"
+            "# When properly bound to baseline, rollback_sha == deploy_sha so rollback is skipped\n"
+            "# and bff_sha_file remains at baseline deploy_sha.\n"
+            "if [[ -n \"${rollback_sha}\" && \"${rollback_sha}\" != \"${deploy_sha}\" ]]; then\n"
+            f"  echo \"${{rollback_sha}}\" > '{bff_sha_file}'\n"
+            "fi\n"
+            "exit 1\n"
         )
     elif deploy_behavior == "fail_command":
         deploy_body = f"echo \"$@\" >> '{invocations_log}'\nexit 1\n"
@@ -1639,6 +1673,46 @@ def test_dev_deploy_compensation_mutation_aware_fails_closed_on_rollback_failure
     assert invocations_log.exists()
 
 
+def test_dev_deploy_compensation_forces_post_up_failure_inside_compensation_and_proves_pair_remains_baseline(tmp_path: Path) -> None:
+    """Executable regression proving that when a post-up failure occurs inside the baseline compensation deploy,
+    nested compensation is strictly bound to the baseline SHA (never the failed candidate), deploy fails closed,
+    and the hosted BFF and FE remain at the baseline SHA pair without restoring the failed candidate."""
+    candidate_bff = "9" * 40
+    rollback_bff = "1" * 40
+    rollback_fe = "2" * 40
+    env, invocations_log, _ = _setup_mock_compensation_environment(
+        tmp_path,
+        initial_bff_sha=candidate_bff,
+        initial_fe_sha=rollback_fe,
+        rollback_bff_sha=rollback_bff,
+        rollback_fe_sha=rollback_fe,
+        deploy_behavior="post_up_failure_with_rollback_binding",
+    )
+    script = _extract_deploy_compensation_run_script()
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0, "Compensation script must fail closed when compensation deploy encounters post-up failure"
+    assert invocations_log.exists(), "deploy_nonprod_vm.sh MUST be invoked to attempt baseline compensation"
+    invocations = invocations_log.read_text(encoding="utf-8").strip().splitlines()
+    assert len(invocations) == 1
+    assert f"--sha {rollback_bff}" in invocations[0]
+    assert f"--rollback-sha {rollback_bff}" in invocations[0]
+    assert "--component bff" in invocations[0]
+
+    # Prove hosted pair remains baseline (BFF is rollback_bff, NOT candidate_bff; FE is rollback_fe)
+    actual_bff = (tmp_path / "mock_bff_sha.txt").read_text(encoding="utf-8").strip()
+    actual_fe = (tmp_path / "mock_fe_sha.txt").read_text(encoding="utf-8").strip()
+    assert actual_bff == rollback_bff, f"Hosted BFF must remain baseline {rollback_bff}, but was restored to {actual_bff}"
+    assert actual_fe == rollback_fe, f"Hosted FE must remain baseline {rollback_fe}, but was {actual_fe}"
+
+
 @pytest.mark.parametrize("missing_var", REQUIRED_COMPENSATION_ENV_VARS)
 def test_dev_deploy_compensation_fails_closed_when_credential_absent_negative(missing_var: str) -> None:
     """Negative test verifying that omitting any governed credential/config from deploy_compensation
@@ -1727,4 +1801,15 @@ def test_dev_inner_rollback_fails_closed_when_mapping_absent_negative(missing_ma
     assert missing_mapping not in tampered_func
     with pytest.raises(AssertionError, match="Missing required env mapping"):
         _validate_rollback_dev_bff_function(tampered_func)
+
+
+def test_dev_deploy_inner_rollback_skips_rollback_when_nested_compensation_matches_deploy_sha() -> None:
+    """Inner rollback in deploy_nonprod_vm.sh must skip rollback and exit 1 when
+    PANTHEON_DEV_ROLLBACK_BACKEND_SHA == PANTHEON_DEPLOY_SHA, preventing nested compensation
+    from mistakenly checking out and restoring a failed candidate."""
+    func_text = _extract_rollback_dev_bff_function()
+    assert 'local rollback_sha="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"' in func_text
+    assert '"${rollback_sha}" == "${PANTHEON_DEPLOY_SHA}"' in func_text
+    assert 'automatic BFF rollback skipped: no distinct valid baseline rollback SHA available' in func_text
+
 

@@ -639,7 +639,7 @@ def test_root_initial_readiness_uses_exact_waiter_before_residual_smoke() -> Non
     script = Path("scripts/deploy_nonprod_vm.sh").read_text()
     root = _component_block(script, "root", "bff")
     compose_up = (
-        "docker compose -p pantheon -f docker-compose.yml up -d --build"
+        "docker compose -p pantheon -f docker-compose.yml up -d"
     )
     helper_call = (
         "wait_for_exact_bff_lifecycle_readiness \\\n"
@@ -691,7 +691,7 @@ def test_bff_only_readiness_also_uses_exact_waiter() -> None:
     bff = _component_block(script, "bff", "exec")
     compose_up = (
         "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --build --force-recreate --no-deps "
+        "up -d --force-recreate --no-deps "
         "operator-bff loop-run-projector-scheduler"
     )
     helper_call = (
