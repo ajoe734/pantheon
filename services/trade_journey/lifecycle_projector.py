@@ -74,6 +74,7 @@ RELATIONAL_WRITER_BACKEND_ENV = "LIFECYCLE_PROJECTOR_WRITER_BACKEND"
 RELATIONAL_WRITER_DSN_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_DSN"
 RELATIONAL_WRITER_SCHEMA_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"
 RELATIONAL_WRITER_BACKEND_SHADOW = "shadow"
+RELATIONAL_WRITER_BACKEND_POSTGRES = "postgres"
 RELATIONAL_WRITER_DEFAULT_SCHEMA = "trade_journey_projection"
 RELATIONAL_CONTROLLER_ID = "canonical-lifecycle-projector"
 RELATIONAL_CONTROLLER_TENANT_SCOPE = "*"
@@ -1858,11 +1859,17 @@ class RelationalLifecycleProjector:
         mode: str,
         quarantined: int,
         error_message: str = "",
+        batch_checkpoint: int | None = None,
     ) -> BatchProjectionMutation:
         previous = self._controller()
+        effective_checkpoint = (
+            int(previous.checkpoint_seq)
+            if batch_checkpoint is None
+            else max(int(previous.checkpoint_seq), int(batch_checkpoint))
+        )
         optimistic_backlog = max(
             0,
-            int(source_high_watermark) - int(previous.checkpoint_seq),
+            int(source_high_watermark) - effective_checkpoint,
         )
         accepted_live = (
             mode == "live"
@@ -2049,10 +2056,15 @@ class RelationalLifecycleProjector:
             journey_events_fn=LifecycleProjector._journey_events,
         )
         duplicates += staged_duplicates
+        batch_checkpoint = max(
+            (r.ingested_seq for r in receipts),
+            default=int(self._controller().checkpoint_seq),
+        )
         mutation = self._controller_mutation(
             source_high_watermark=source_high,
             mode=mode,
             quarantined=quarantined,
+            batch_checkpoint=batch_checkpoint,
         )
         mutation.receipts = receipts
         mutation.quarantines = quarantines
@@ -2336,7 +2348,7 @@ def _relational_writer_backend() -> str:
 
 
 def _configured_relational_projector() -> RelationalLifecycleProjector | None:
-    """Build the disabled-by-default relational shadow writer.
+    """Build the disabled-by-default relational writer.
 
     No value silently enables a writer.  In particular, an invalid backend or
     missing projection DML DSN is a configuration error rather than a fallback
@@ -2346,15 +2358,16 @@ def _configured_relational_projector() -> RelationalLifecycleProjector | None:
     backend = _relational_writer_backend()
     if backend in {"", "disabled", "legacy_json", "json"}:
         return None
-    if backend != RELATIONAL_WRITER_BACKEND_SHADOW:
+    if backend not in {RELATIONAL_WRITER_BACKEND_SHADOW, RELATIONAL_WRITER_BACKEND_POSTGRES}:
         raise RuntimeError(
             f"{RELATIONAL_WRITER_BACKEND_ENV} must be disabled or "
-            f"{RELATIONAL_WRITER_BACKEND_SHADOW!r}; cutover is not authorized"
+            f"one of {('disabled', RELATIONAL_WRITER_BACKEND_POSTGRES, RELATIONAL_WRITER_BACKEND_SHADOW)!r}; "
+            f"unsupported backend {backend!r}"
         )
     dsn = os.getenv(RELATIONAL_WRITER_DSN_ENV, "").strip()
     if not dsn:
         raise RuntimeError(
-            f"{RELATIONAL_WRITER_DSN_ENV} is required for relational shadow writing"
+            f"{RELATIONAL_WRITER_DSN_ENV} is required for relational writing"
         )
     store = ProjectionStore(
         dsn,
@@ -2436,6 +2449,7 @@ async def run_worker() -> int:
 
 
 def healthcheck() -> int:
+    backend = _relational_writer_backend()
     relational_projector = _configured_relational_projector()
     if relational_projector is not None:
         controller = relational_projector.controller
@@ -2448,7 +2462,7 @@ def healthcheck() -> int:
         )
         payload = {
             "schema_version": "pantheon.lifecycle-projector-relational-health.v1",
-            "writer_backend": RELATIONAL_WRITER_BACKEND_SHADOW,
+            "writer_backend": backend,
             "ready": ready,
             "controller": controller,
         }
@@ -2480,6 +2494,19 @@ def _backfill(input_path: Path, *, mode: str) -> int:
     records = raw.get("records") if isinstance(raw, Mapping) else raw
     if not isinstance(records, list):
         raise ValueError("backfill input must be a list or {'records': [...]} object")
+    source_high = max(
+        (int(r.get("ingested_seq") or 0) for r in records if isinstance(r, Mapping)),
+        default=0,
+    )
+    relational_projector = _configured_relational_projector()
+    if relational_projector is not None:
+        result = relational_projector.project_records(
+            records,
+            mode=mode,
+            source_high_watermark=source_high,
+        )
+        print(_canonical_json(result.__dict__))
+        return 0
     root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
     projector = LifecycleProjector(
         state_path=os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json")),
@@ -2490,7 +2517,11 @@ def _backfill(input_path: Path, *, mode: str) -> int:
         bundle_root=root,
         deployment_sha=os.getenv("GIT_SHA", "unknown"),
     )
-    result = projector.project_records(records, mode=mode)
+    result = projector.project_records(
+        records,
+        mode=mode,
+        source_high_watermark=source_high,
+    )
     print(_canonical_json(result.__dict__))
     return 0
 

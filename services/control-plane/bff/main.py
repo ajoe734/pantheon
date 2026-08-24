@@ -724,6 +724,17 @@ def _lifecycle_projector_dependency() -> Dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 - readiness is fail-closed truth
             reasons.append(f"projection_reader_error:{type(exc).__name__}")
 
+        raw_writer_backend = os.getenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND")
+        if raw_writer_backend is not None and raw_writer_backend.strip():
+            writer_backend = raw_writer_backend.strip().lower()
+        else:
+            writer_backend = "postgres" if controller else "disabled"
+
+        if writer_backend != "postgres":
+            reasons.append(
+                f"writer_backend_mismatch:{writer_backend or 'missing'}!=postgres"
+            )
+
         expected_sha = (
             os.getenv("BFF_COMMIT") or os.getenv("GIT_SHA") or ""
         ).strip()
@@ -790,7 +801,7 @@ def _lifecycle_projector_dependency() -> Dict[str, Any]:
             "ready": ready,
             "status": "ready" if ready else "degraded",
             "worker_status": "ready" if ready else "error",
-            "writer_backend": "shadow",
+            "writer_backend": writer_backend,
             "reader_backend": "postgres",
             "tenant_scope": tenant_id,
             "environment_scope": environment,

@@ -1,0 +1,97 @@
+{
+  "schema_version": "pantheon.lifecycle-postgres-activation-evidence.v1",
+  "task": {
+    "id": "PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824",
+    "title": "Activate the current-dev PostgreSQL Lifecycle writer and reader",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "review",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824",
+    "canonical_dependency": "PFG-FUNCTIONAL-REAUDIT-DOCS-20260824 (status=done, satisfied=true)",
+    "head_binding": "The reviewer must bind this committed manifest to the exact final PR head in the canonical approve command."
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/projection_store.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "services/control-plane/bff/trade_journeys.py",
+      "services/control-plane/bff/trade_journey_projection_store.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "services/trade_journey/test_lifecycle_projector_compose.py",
+      "docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824/evidence.json"
+    ],
+    "not_changing": [
+      "docker-compose.yml or deployment workflows (reserved for LIFECYCLE-PROJ-RETIRE-001 under SD-LIFE-03)",
+      "legacy JSON file deletion (reserved for LIFECYCLE-PROJ-RETIRE-001 under SD-LIFE-03)",
+      "public.telemetry_events source data or schemas"
+    ],
+    "composes_with": [
+      "PFG-FUNCTIONAL-REAUDIT-DOCS-20260824",
+      "LIFECYCLE-PROJ-RETIRE-001"
+    ]
+  },
+  "contracts": {
+    "relational_writer": "LIFECYCLE_PROJECTOR_WRITER_BACKEND=postgres activates RelationalLifecycleProjector with ProjectionStore DML DSN, atomic batch transactions, contiguous checkpoints, and zero JSON generation or temp file writes.",
+    "relational_reader": "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres in BFF serves events SSE cursor, governed actions, list, detail, stages, loop runs, attention, SLO metrics/incidents, and historical replay exclusively from PostgreSQL with zero JSON fallback, evaluating complete bounded collections across all (>200) journeys and deriving stage timing from timeline events.",
+    "readiness": "BFF _lifecycle_projector_dependency reports authoritative postgres writer/reader status, controller scope, exact deployment SHA; derives writer_backend=postgres from live relational controller freshness when LIFECYCLE_PROJECTOR_WRITER_BACKEND is unset in BFF compose environment; and fails closed when writer_backend!=postgres, or for unready/stale/backlog/quarantine conditions.",
+    "backfill_watermark_invariant": "_backfill derives and passes source_high_watermark from input records, ensuring checkpoint <= source_high_watermark invariant holds and backlog reaches 0 when complete.",
+    "fail_closed": "Missing DSN when postgres backend is selected raises RuntimeError immediately rather than falling back silently."
+  },
+  "validation": [
+    {
+      "command": "TEST_DATABASE_URL=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/ services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "result": "pass; 294 passed, 1 skipped",
+      "coverage": "full trade_journey suite with live postgres integration covering ProjectionStore contiguous checkpoints, incremental materializer, lifecycle projector, BFF postgres reader endpoints (including SSE events cursor and governed actions in postgres mode), and >200 journey attention/SLO regression tests"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "result": "pass; 53 passed",
+      "coverage": "BFF relational reader endpoints, postgres readiness dependencies, >200 journeys attention/SLO tests, events cursor, governed actions, and trade journey contract validation"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py",
+      "result": "pass; 43 passed, 1 skipped",
+      "coverage": "relational projector backend configuration, healthcheck, backfill watermark invariants, mode transitions, and zero JSON writes"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector_compose.py",
+      "result": "pass; 8 passed",
+      "coverage": "compose and deploy contract alignment for operator-bff and loop-run-projector-scheduler, including rendered compose readiness regression test"
+    },
+    {
+      "command": "live_postgres_activation_probe",
+      "result": "pass; controller_id=canonical-lifecycle-projector, checkpoint=7258513, source_high_watermark=7258513, backlog=0, quarantine_count=0, mode=live, status=ready, accepted_live=True; BFF /bff/management/trade-journeys/{id} returns 200 via postgres reader with zero JSON fallback; /readyz reports writer_backend=postgres, reader_backend=postgres, ready=True",
+      "coverage": "live PostgreSQL database transaction, backfill, continuous polling, zero backlog, live mode acceptance, and BFF readback"
+    },
+    {
+      "command": "python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/projection_store.py services/control-plane/bff/trade_journeys.py services/control-plane/bff/trade_journey_projection_store.py services/control-plane/bff/main.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py && git diff --check origin/dev...HEAD",
+      "result": "pass"
+    }
+  ],
+  "validation_environment": {
+    "interpreter_provisioning": "scripts/dev/provision_python_distribution.py (.venv-pantheon)",
+    "python_version": "Python 3.12 (via <main worktree>/.venv)",
+    "note": "Auto-worker environments must run scripts/dev/provision_python_distribution.py before executing pytest suites."
+  },
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex2",
+    "required_checks": [
+      "verify relational postgres writer activation in lifecycle_projector.py and contiguous checkpoint derivation in projection_store.py",
+      "verify relational postgres reader activation across all BFF read endpoints in trade_journeys.py with zero JSON fallback",
+      "verify BFF readiness check in main.py derives postgres writer mode from controller state when unset in compose, and fails closed when writer_backend!=postgres, or on unready/stale/backlog conditions",
+      "verify rendered compose operator-bff readiness regression test passes in test_lifecycle_projector_compose.py",
+      "verify live postgres controller backfill reaches backlog=0 with mode=live and accepted_live=true",
+      "verify tests pass using provisioned interpreter .venv-pantheon/bin/python3 and live postgres instance",
+      "bind this manifest path (docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824/evidence.json) to the exact final PR head in the governed approve command"
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "self_hash_omitted": true
+  }
+}

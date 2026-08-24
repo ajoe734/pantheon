@@ -251,8 +251,84 @@ def test_bff_only_deploy_rebuilds_its_lifecycle_projector_only():
 
     compose_up = (
         "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --build --force-recreate --no-deps operator-bff loop-run-projector-scheduler"
+        "up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler"
     )
     assert bff_block.count(compose_up) == 1
     assert "runtime-manager" not in compose_up
     assert "paper-fleet" not in compose_up
+
+
+def test_rendered_compose_operator_bff_readiness_with_postgres_reader(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    projector_env = services["loop-run-projector-scheduler"]["environment"]
+    bff_env = services["operator-bff"]["environment"]
+
+    # loop-run-projector-scheduler defines LIFECYCLE_PROJECTOR_WRITER_BACKEND
+    assert "LIFECYCLE_PROJECTOR_WRITER_BACKEND" in projector_env
+    assert projector_env["LIFECYCLE_PROJECTOR_WRITER_BACKEND"] == (
+        "${LIFECYCLE_PROJECTOR_WRITER_BACKEND:-disabled}"
+    )
+
+    # operator-bff in docker-compose.yml does not define LIFECYCLE_PROJECTOR_WRITER_BACKEND
+    assert "LIFECYCLE_PROJECTOR_WRITER_BACKEND" not in bff_env
+    assert bff_env["PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND"] == (
+        "${PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND:-json}"
+    )
+
+    # Verify that in rendered compose with postgres reader and unset writer_backend in BFF,
+    # readiness derives postgres writer mode from live relational controller freshness
+    import sys
+    from datetime import datetime, timezone
+    from fastapi.testclient import TestClient
+
+    bff_dir = str(ROOT / "services" / "control-plane" / "bff")
+    if bff_dir not in sys.path:
+        sys.path.insert(0, bff_dir)
+    import main as bff_main  # noqa: E402
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime-manager:8081")
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance:8082")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", "http://deployment:8095")
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres")
+    monkeypatch.delenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_HEALTH_ENVIRONMENT", "paper")
+    monkeypatch.setenv("GIT_SHA", "rendered-sha")
+    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
+
+    controller = {
+        "controller_id": "canonical-lifecycle-projector",
+        "checkpoint": 100,
+        "source_high_watermark": 100,
+        "backlog": 0,
+        "generation": 1,
+        "deployment_sha": "rendered-sha",
+        "mode": "live",
+        "status": "ready",
+        "accepted_live": True,
+        "last_poll_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "last_error": None,
+        "quarantine_count": 0,
+    }
+
+    class Reader:
+        def controller_freshness(self, **kwargs):
+            return dict(controller)
+
+    monkeypatch.setattr(
+        bff_main.read_store,
+        "trade_journey_projection_reader",
+        lambda: Reader(),
+    )
+
+    client = TestClient(bff_main.app)
+    res = client.get("/readyz")
+    assert res.status_code == 200, res.text
+    dep = res.json()["dependencies"]["lifecycle_projector"]
+    assert dep["ready"] is True
+    assert dep["reader_backend"] == "postgres"
+    assert dep["writer_backend"] == "postgres"
+    assert dep["reasons"] == []
