@@ -828,6 +828,88 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
                 str(task["id"]), state["worker_worktrees"]["leases"]
             )
 
+    def test_external_worktree_inlines_missing_task_brief_without_dirtying_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon"
+            execute_root = root / "execute-plans"
+            status_root.mkdir()
+            execute_root.mkdir()
+            self._git(execute_root, "init", "-b", "dev")
+            self._git(execute_root, "config", "user.name", "Test")
+            self._git(execute_root, "config", "user.email", "test@example.com")
+            (execute_root / "README.md").write_text("execute plans\n", encoding="utf-8")
+            self._git(execute_root, "add", "README.md")
+            self._git(execute_root, "commit", "-m", "initial")
+            head = self._git(execute_root, "rev-parse", "HEAD")
+            self._git(execute_root, "remote", "add", "origin", "https://github.com/ajoe734/execute-plans.git")
+            self._git(execute_root, "update-ref", "refs/remotes/origin/dev", head)
+
+            config = config_fixture(status_root)
+            config.update(
+                {
+                    "worker_worktrees": {
+                        "enabled": True,
+                        "root": str(root / "worker-worktrees"),
+                        "base_ref": "origin/dev",
+                        "reuse_existing": True,
+                        "execution_reasons": [supervisor.REASON_OWNED_READY],
+                    },
+                    "coordination": {
+                        "repositories": {"execute_plans": {"local_path": str(execute_root)}}
+                    },
+                }
+            )
+            task = task_fixture("PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY")
+            task["artifacts"] = [
+                "execute-plans/support/sidecars/PFG-FE-CONSOLIDATE-20260820/caller-inventory-20260824.md"
+            ]
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message=(
+                    "wake\n\n請先閱讀這些 task-scoped context 檔案：\n"
+                    "- .orchestrator/task-briefs/PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY.md\n"
+                ),
+                task_id=str(task["id"]),
+                reason=supervisor.REASON_OWNED_READY,
+                context_files=[
+                    ".orchestrator/task-briefs/PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY.md"
+                ],
+                metadata={"task": task, "task_generation": 1},
+            )
+            state: dict[str, object] = {"worker_worktrees": {"leases": {}}}
+
+            with (
+                mock.patch.object(supervisor, "_fetch_worker_base_ref", return_value=(True, None)),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            ):
+                ok, error = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-sidecar-brief",
+                    target_agent="Codex",
+                )
+
+            self.assertTrue(ok, error)
+            workspace = Path(str(request.metadata["workspace_path"]))
+            self.assertIn("Generated task-scoped context (inline", request.message)
+            self.assertIn("PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY", request.message)
+            self.assertNotIn("- .orchestrator/task-briefs/PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY.md", request.message)
+            self.assertEqual(
+                request.metadata["inline_context_files"],
+                [
+                    ".orchestrator/task-briefs/PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY.md"
+                ],
+            )
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+            self.assertFalse(
+                (workspace / ".orchestrator/task-briefs/PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY.md").exists()
+            )
+
     def test_fe_sidecar_with_target_repo_prepares_execute_plans_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
