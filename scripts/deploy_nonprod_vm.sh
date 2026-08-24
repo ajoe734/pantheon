@@ -41,6 +41,7 @@ DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
 DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS="${DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS:-120}"
 DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS="${DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS:-2}"
 DEV_DEPLOY_DEADLINE_SECONDS="${DEV_DEPLOY_DEADLINE_SECONDS:-${DEV_DEPLOY_TIMEOUT_SECONDS:-1200}}"
+DEV_ROLLBACK_BACKEND_SHA="${DEV_ROLLBACK_BACKEND_SHA:-${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}}"
 DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"
 # Governed verifier/dev-login credentials for the strict auth cutover. These
 # must come from a secret source (GitHub Actions secrets in CI), never from
@@ -219,6 +220,9 @@ Options:
   --allow-example-env    Allow staging to use env/*.env.example if real env files
                          are absent. Intended for rehearsal only.
   --dry-run              Print the target plan without SSHing.
+  --rollback-sha <commit>
+                         Optional. Baseline BFF commit to restore if post-rollout
+                         gates fail.
   --deadline-seconds <seconds>
                          Deploy command deadline in seconds. Default: 1200.
   --deploy-timeout-seconds <seconds>
@@ -227,6 +231,7 @@ Options:
 
 Environment overrides:
   REMOTE_USER
+  DEV_ROLLBACK_BACKEND_SHA PANTHEON_DEV_ROLLBACK_BACKEND_SHA
   DEV_DEPLOY_DEADLINE_SECONDS DEV_DEPLOY_TIMEOUT_SECONDS
   PANTHEON_DEPLOY_WORKTREE_ROOT
   GITHUB_TOKEN
@@ -394,6 +399,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --deadline-seconds|--deploy-timeout-seconds)
       DEV_DEPLOY_DEADLINE_SECONDS="${2:-}"
+      shift 2
+      ;;
+    --rollback-sha)
+      DEV_ROLLBACK_BACKEND_SHA="${2:-}"
       shift 2
       ;;
     --dry-run)
@@ -592,6 +601,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
+  command_prefix+=" PANTHEON_DEV_ROLLBACK_BACKEND_SHA=$(shell_quote "${DEV_ROLLBACK_BACKEND_SHA:-}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
@@ -2124,6 +2134,47 @@ retire_legacy_static_paper_runtime() {
     docker compose -p pantheon -f docker-compose.yml rm -f -s pantheon-paper-runtime
 }
 
+retire_dormant_and_one_off_profile_containers() {
+  local active_profiles=",${PANTHEON_DEV_COMPOSE_PROFILES:-},"
+  if [[ "${active_profiles}" != *",dormant-smoke,"* ]]; then
+    info "retiring inactive dormant-smoke profile containers"
+    COMPOSE_PROFILES="dormant-smoke" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s \
+        mlflow-dormant-smoke \
+        finrl-dormant-smoke \
+        rllib-dormant-smoke \
+        ray-tune-dormant-smoke \
+        qlib-dormant-smoke \
+        trl-dormant-smoke \
+        experiments-dormant-smoke 2>/dev/null || true
+  fi
+  if [[ "${active_profiles}" != *",smoke,"* ]]; then
+    info "retiring inactive smoke profile containers"
+    COMPOSE_PROFILES="smoke" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s smoke-stack 2>/dev/null || true
+  fi
+  if [[ "${active_profiles}" != *",activation-ready-smoke,"* ]]; then
+    info "retiring inactive activation-ready-smoke profile containers"
+    COMPOSE_PROFILES="activation-ready-smoke" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s oss-activation-ready-smoke-matrix 2>/dev/null || true
+  fi
+  if [[ "${active_profiles}" != *",openclaw-activation-ready-e2e,"* ]]; then
+    info "retiring inactive openclaw-activation-ready-e2e profile containers"
+    COMPOSE_PROFILES="openclaw-activation-ready-e2e" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s openclaw-activation-ready-e2e 2>/dev/null || true
+  fi
+  if [[ "${active_profiles}" != *",source-search-bounded,"* ]]; then
+    info "retiring inactive source-search-bounded profile containers"
+    COMPOSE_PROFILES="source-search-bounded" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s source-search-bounded-smoke 2>/dev/null || true
+  fi
+  if [[ "${active_profiles}" != *",lifecycle-capacity-benchmark,"* ]]; then
+    info "retiring inactive lifecycle-capacity-benchmark profile containers"
+    COMPOSE_PROFILES="lifecycle-capacity-benchmark" \
+      docker compose -p pantheon -f docker-compose.yml rm -f -s lifecycle-projector-capacity-benchmark 2>/dev/null || true
+  fi
+}
+
 verify_dev_paper_fleet() {
   local attempt
   local status=""
@@ -2243,6 +2294,110 @@ prune_dev_docker_storage_for_build() {
   docker_storage_diagnostics "after prune"
 }
 
+rollback_dev_bff_on_failure() {
+  local failed_stage="$1"
+  local rollback_sha="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
+
+  dump_dev_root_failure_diagnostics
+
+  if [[ -z "${rollback_sha}" || ! "${rollback_sha}" =~ ^[0-9a-f]{40}$ || "${rollback_sha}" == "${PANTHEON_DEPLOY_SHA}" ]]; then
+    info "automatic BFF rollback skipped: no distinct valid baseline rollback SHA available (rollback_sha=${rollback_sha:-none})"
+    exit 1
+  fi
+
+  info "post-up failure at ${failed_stage}; automatically rolling back dev operator-bff and lifecycle projector to baseline ${rollback_sha}"
+
+  if git checkout --detach "${rollback_sha}" >/dev/null 2>&1; then
+    COMPOSE_BAKE=false \
+    COMPOSE_PROFILES="" \
+    GIT_SHA="${rollback_sha}" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    PANTHEON_ENV=dev \
+    LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
+    PANTHEON_CANARY_EXECUTION_ENABLED=false \
+    PANTHEON_LIVE_BROKER_ENABLED=false \
+    BROKER_PAPER_ENABLED=true \
+    AGORA_WORKSHOP_STORE_BACKEND=postgres \
+    AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_WORKSHOP_STORE_SCHEMA=agora \
+    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
+    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
+    AGORA_RESEARCH_STORE_BACKEND=postgres \
+    AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_RESEARCH_STORE_SCHEMA=agora_research \
+    AGORA_TRADING_ROOM_STORE_BACKEND=postgres \
+    AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
+    PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
+    PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="false" \
+    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
+    PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+    PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
+    PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
+    PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" \
+    PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
+    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
+    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
+    PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
+    PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}" \
+    PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}" \
+    PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED}" \
+    PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
+    PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
+    PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
+    PANTHEON_BFF_DEFAULT_ROLE="${PANTHEON_DEV_BFF_DEFAULT_ROLE}" \
+    PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
+    PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
+    PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
+    PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
+    PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
+    PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
+    PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
+    PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
+    PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
+    PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
+    MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
+    MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
+    MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
+    PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
+    PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
+      docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
+      || info "warning: docker compose up failed during rollback execution"
+
+    curl_with_retry http://127.0.0.1:18001/health 6 5 || true
+    actual_restored="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
+    if [[ "${actual_restored}" == "${rollback_sha}" ]]; then
+      info "automatic BFF rollback verified: operator-bff restored to baseline ${rollback_sha}"
+    else
+      info "warning: automatic BFF rollback unable to verify restored SHA: expected ${rollback_sha}, got ${actual_restored:-none}"
+    fi
+  else
+    info "warning: unable to checkout baseline rollback SHA ${rollback_sha}"
+  fi
+
+  exit 1
+}
+
 cd "${PANTHEON_REMOTE_DIR}"
 git rev-parse --is-inside-work-tree >/dev/null
 
@@ -2257,50 +2412,39 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # the compose default (`unknown`) and make the exact-SHA readiness gate
     # impossible to satisfy.
     export GIT_SHA="${PANTHEON_DEPLOY_SHA}"
-    # Dev deploys activate every default-safe compose profile. Each selected
-    # profile is either a long-running daemon, an init container, or a one-shot
-    # smoke whose Dockerfile + smoke script have been verified to build and pass
-    # locally with stub backends (no real-money / no real-broker side effects).
-    # The legacy static-paper-runtime profile is intentionally excluded because
-    # paper-fleet-reconciler owns binding-scoped workers in the root stack.
+    # Dev deploys activate the required persistent root compose profile: openclaw.
+    # Dormant smoke profiles (e.g. dormant-smoke for MLflow/FinRL/RLlib/Ray-Tune/Qlib/TRL/experiments),
+    # one-off smoke profiles (activation-ready-smoke, openclaw-activation-ready-e2e, smoke, source-search-bounded),
+    # and optional integrations are kept out of the default persistent root deploy to prevent
+    # deployment timeouts and host memory exhaustion.
     #
-    # Profile inventory (alphabetical):
-    #   activation-ready-smoke       oss-activation-ready-smoke-matrix
-    #   dormant-smoke                experiments/finrl/qlib/rllib/ray-tune/trl
-    #   openclaw                     openclaw-gateway + openclaw-data-init
-    #   openclaw-activation-ready-e2e  openclaw-activation-ready-e2e
-    #   smoke                        smoke-stack (depends on full service set)
-    #   source-ingest-scheduler      source-ingest-scheduler
-    #                                + source-ingest-agora-projector
-    #   source-search-bounded        source-search-bounded-smoke
+    # Required loop workers are default-on in docker-compose.yml, and validate_required_loop_workers
+    # enforces that the persistent stack contains all required twelve-loop workers.
     #
-    # Every remaining profile above is a smoke or an optional integration.
-    # Required loop workers are no longer profile-gated: they are default-on
-    # in docker-compose.yml so the manifest, not this profile list, is the
-    # single source of truth for which loops are running. That inversion is
-    # what validate_required_loop_workers below enforces.
-    #
-    # Operators can narrow scope via PANTHEON_DEV_COMPOSE_PROFILES.
-    #
-    # source-ingest-scheduler is the one required worker still gated, and it
-    # stays gated deliberately. It ticks every 60s against third-party
-    # providers (Yahoo, CoinGecko, TWSE/TPEx, MOPS, FinMind, SEC/FRED/FINRA,
-    # stooq); left always-on it is continuous crawling from one cloud egress
-    # IP. Add it explicitly for a bounded run. source-ingest-agora-projector
-    # shares that profile because it must project only after the bounded
-    # refresh completes.
-    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,smoke,source-search-bounded}"
+    # Operators can supply explicit profiles via PANTHEON_DEV_COMPOSE_PROFILES when running bounded verifications.
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}"
     validate_source_refresh_profile
     validate_required_loop_workers
     source_refresh_deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
     prune_dev_management_ai_telemetry_for_disk
+    retire_dormant_and_one_off_profile_containers
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     prune_dev_docker_storage_for_build
+    # Phase 2: Build candidate images before mutating the active runtime.
+    COMPOSE_BAKE=false \
+    COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
+    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      docker compose -p pantheon -f docker-compose.yml build \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
+    PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
+    # Phase 3: Rollout persistent root runtime.
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -2379,8 +2523,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
     PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
     PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      docker compose -p pantheon -f docker-compose.yml up -d \
+      || rollback_dev_bff_on_failure "docker_compose_up"
     # `up -d --build` only recreates a container Compose judges to need it.
     # The legacy lifecycle projector runs with `restart: no` (deliberate
     # anti-OOM containment: it can otherwise consume the host, so it is never
@@ -2390,18 +2534,21 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # publish. Force it every root deploy so a wedged projector cannot
     # silently survive across deploys.
     docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps loop-run-projector-scheduler \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "projector_recreate"
+    # Phase 4: Post-Deploy Bounded Verification
     verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}" \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "source_refresh_readback"
     PANTHEON_DEV_REPO="$(pwd)" \
       bash scripts/openclaw-configure-shared-model-pool.sh \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "shared_model_pool"
     retire_legacy_static_paper_runtime \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "retire_legacy_paper"
+    retire_dormant_and_one_off_profile_containers \
+      || rollback_dev_bff_on_failure "retire_dormant_profiles"
     verify_dev_paper_fleet \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "paper_fleet"
     curl_with_retry http://127.0.0.1:18001/health \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "bff_health"
     # Root deployment replaces the lifecycle projector and BFF together. The
     # BFF can become HTTP-ready while /readyz still reports the prior projector
     # identity, so use the same exact-deployment, bounded recovery gate as the
@@ -2409,23 +2556,23 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # only inside the ordinary base window and can never grant the extension.
     wait_for_exact_bff_lifecycle_readiness \
       http://127.0.0.1:18001/readyz \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "bff_lifecycle_readiness"
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "bff_source_sha"
     assert_bff_auth_gate http://127.0.0.1:18001 \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "bff_auth_gate"
     assert_ppl_alloc_009_dev_proof_gate \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "ppl_alloc_009_proof_gate"
     ensure_dev_caddy_ingress \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "caddy_ingress"
     verify_dev_evolution_daily_sweep \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "evolution_daily_sweep"
     # Prove the Trade Journey action ledger is genuinely durable on the dev
     # PostgreSQL instance and that clock-drift diagnostics survive the built
     # runtime image. This intentionally restarts operator-bff and verifies
     # receipt replay before the workflow's public smokes run.
     PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "trade_journey_residual"
     ;;
 
   bff)
@@ -2436,6 +2583,17 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # pressure that a full root-stack rebuild causes on the dev VM.
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
+    export GIT_SHA="${PANTHEON_DEPLOY_SHA}"
+    # Phase 2: Build candidate operator-bff and loop-run-projector-scheduler images.
+    COMPOSE_BAKE=false \
+    COMPOSE_PROFILES="" \
+    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
+    PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
+    # Phase 3: Recreate operator-bff and loop-run-projector-scheduler.
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
@@ -2509,21 +2667,22 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
     PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
     PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
+      || rollback_dev_bff_on_failure "bff_recreate"
+    # Phase 4: Post-Deploy Verification Gates
     curl_with_retry http://127.0.0.1:18001/health \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "bff_health"
     wait_for_exact_bff_lifecycle_readiness \
       http://127.0.0.1:18001/readyz \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "bff_lifecycle_readiness"
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "bff_source_sha"
     assert_bff_auth_gate http://127.0.0.1:18001 \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "bff_auth_gate"
     assert_ppl_alloc_009_dev_proof_gate \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "ppl_alloc_009_proof_gate"
     ensure_dev_caddy_ingress \
-      || { dump_dev_root_failure_diagnostics; exit 1; }
+      || rollback_dev_bff_on_failure "caddy_ingress"
     ;;
 
   exec)

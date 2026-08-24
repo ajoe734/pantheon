@@ -78,7 +78,7 @@ def test_nonprod_deploy_prunes_dev_docker_storage_before_root_build() -> None:
     assert "docker system df" in deploy
     assert (
         deploy.index("    prune_dev_docker_storage_for_build")
-        < deploy.index("docker compose -p pantheon -f docker-compose.yml up -d --build")
+        < deploy.index("docker compose -p pantheon -f docker-compose.yml build")
     )
 
 
@@ -91,5 +91,5 @@ def test_nonprod_deploy_prunes_dev_postgres_telemetry_before_root_build() -> Non
     assert "telemetry_events" in deploy
     assert (
         deploy.index("    prune_dev_management_ai_telemetry_for_disk")
-        < deploy.index("docker compose -p pantheon -f docker-compose.yml up -d --build")
+        < deploy.index("docker compose -p pantheon -f docker-compose.yml build")
     )
