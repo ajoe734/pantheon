@@ -13,7 +13,7 @@
     "evidence_cut_at": "2026-08-24"
   },
   "scope": {
-    "owned_layer": "OpenClaw Responses request routing, terminal SSE normalization, typed transport degradation, and hosted-smoke handoff.",
+    "owned_layer": "OpenClaw Responses request routing, oversized normal-invocation fallback, terminal SSE normalization, typed transport degradation, and strict-auth hosted-smoke handoff.",
     "not_changing": [
       "BFF main routing and Management AI business behavior.",
       "Compose, deployment workflow, frontend, and browser-direct provider behavior.",
@@ -22,6 +22,8 @@
     "changed_files": [
       "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
       "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+      "scripts/openclaw-assistant-openclaw-live-smoke.sh",
+      "scripts/test_openclaw_assistant_openclaw_live_smoke.py",
       "docs/deployment/evidence/product-functional-closure/PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824/README.md",
       "docs/deployment/evidence/product-functional-closure/PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824/evidence.json"
     ],
@@ -33,6 +35,7 @@
   "repair_contract": {
     "single_provider_path": "The BFF continues to use the existing adapter SSE route; no second endpoint or browser-direct provider call is introduced.",
     "upstream_request": "POST /v1/responses uses model=openclaw and X-OpenClaw-Agent-Id for explicit Gateway agent selection.",
+    "oversized_normal_invocation": "A normal Management AI prompt above the safe CLI argv budget is preserved and sent to the same selected agent through the existing body-based /v1/responses transport; it does not become an OPENCLAW_PROMPT_TOO_LARGE deterministic fallback.",
     "terminal_sse": "response.output_text.done is retained as the authoritative full text when response.output_text.delta events are absent before response.completed.",
     "typed_transport_failure": {
       "timeout": "OPENCLAW_RESPONSES_TIMEOUT with status_code=504",
@@ -44,11 +47,11 @@
     "commands": [
       {
         "command": "<provisioned-python> -m pytest -q services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
-        "result": "30 passed, 4 skipped"
+        "result": "31 passed, 4 skipped"
       },
       {
-        "command": "<provisioned-python> -m pytest -q services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py services/openclaw-gateway-adapter/test_main.py scripts/test_openclaw_assistant_openclaw_live_smoke.py",
-        "result": "153 passed, 4 skipped, 18 subtests passed (provider, adapter route, and smoke-script suites run as focused component checks)"
+        "command": "<provisioned-python> -m pytest -q scripts/test_openclaw_assistant_openclaw_live_smoke.py services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py services/openclaw-gateway-adapter/test_main.py",
+        "result": "155 passed, 4 skipped, 18 subtests passed (provider, adapter route, and strict-auth smoke-script suites run as focused component checks)"
       },
       {
         "command": "bash -n scripts/openclaw-assistant-openclaw-live-smoke.sh && docker compose --profile openclaw config --quiet",
@@ -62,8 +65,8 @@
   },
   "hosted_proof": {
     "status": "awaiting_reviewed_dev_merge_and_exact_deployment",
-    "required_command": "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash scripts/openclaw-assistant-openclaw-live-smoke.sh",
-    "required_result": "bounded readiness returns a real answer; one CLI agent turn and one OpenResponses SSE turn both return OPENCLAW_LIVE; the SSE done event is non-empty and transport=responses_http.",
+    "required_command": "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=<governed-token> OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash scripts/openclaw-assistant-openclaw-live-smoke.sh",
+    "required_result": "bounded readiness returns a real answer; the strict-auth header reaches every adapter request; one CLI agent turn and one OpenResponses SSE turn both return OPENCLAW_LIVE; the SSE done event is non-empty and transport=responses_http. A separate authenticated BFF POST /bff/management/nl/ask must persist a final provider_status of completed and used=true without deterministic fallback.",
     "truthful_limit": "No hosted success is claimed in this pre-merge manifest. The protected dev workflow owns the service credential and exact deployment lease."
   },
   "review": {
@@ -71,10 +74,16 @@
     "reviewer_instruction": "Review the exact PR head and this committed manifest. Bind this exact path in the governed approve command; do not treat local mocks or an unmerged task branch as hosted proof."
   },
   "delivery": {
-    "anchor_commit": {
-      "sha": "521ca5b18d466cca303446eae0498a5727a8e087",
-      "subject": "PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824: anchor SSE"
-    },
+    "anchor_commits": [
+      {
+        "sha": "56fc868304097fe463d33df0e4604d2a378d73f8",
+        "subject": "PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824: anchor resp"
+      },
+      {
+        "sha": "ca896fa4c496e732556b975a60d37a92fca980c2",
+        "subject": "PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824: anchor smoke auth"
+      }
+    ],
     "pull_request": "pending"
   }
 }
