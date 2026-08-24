@@ -14,6 +14,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from services.research.adapters.taiwan_market_client import MopsRouteSpec, TaiwanMarketClient, TejTableSpec
 
+from .connectors.alpha_db import ExternalAlphaDbAdapter
 from .connectors.base import SourceConnector, SourceEvidenceError, SourceRecord
 from .connectors.crypto_coingecko import CoinGeckoSpotMarketAdapter, _coin_ids_from_symbols
 from .connectors.finmind_taiwan import (
@@ -21,8 +22,13 @@ from .connectors.finmind_taiwan import (
     FinMindTaiwanBrokerDailyReportAdapter,
     FinMindTaiwanDatasetAdapter,
 )
+from .connectors.social import AdmittedSocialMediaAdapter
 from .connectors.taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
-from .connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+from .connectors.taiwan_official import (
+    TaifexDerivativesChipAdapter,
+    TaiwanOfficialMarketDatasetAdapter,
+    TdccShareholdingDistributionAdapter,
+)
 from .connectors.us_public import (
     FRED_API_URL,
     FinraShortSaleAdapter,
@@ -628,9 +634,118 @@ def _shioaji_readback(
     return adapter.records_from_readback_file(file_path, payload, trace_id=trace_id)
 
 
+def _tdcc(
+    adapter: TdccShareholdingDistributionAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    payload = request.get("payload") or request.get("rows") or request.get("data")
+    if payload in (None, ""):
+        payload = adapter.fetch_payload(
+            source_dataset=str(request.get("source_dataset") or "TDCC_OD_1-5"),
+            timeout_seconds=float(request.get("timeout_seconds") or 20.0),
+        )
+    return adapter.records_from_payload(
+        payload,
+        source_dataset=str(request.get("source_dataset") or "TDCC_OD_1-5"),
+        api_endpoint=request.get("api_endpoint"),
+        trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
+        available_time=request.get("available_time"),
+        universe_tier=str(request.get("universe_tier") or "core_universe"),
+        trace_id=trace_id,
+    )
+
+
+def _taifex(
+    adapter: TaifexDerivativesChipAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    dataset = str(request.get("dataset") or "taifex_futures_chip")
+    payload = request.get("payload") or request.get("rows") or request.get("data")
+    if payload in (None, ""):
+        payload = adapter.fetch_payload(
+            dataset=dataset,
+            timeout_seconds=float(request.get("timeout_seconds") or 20.0),
+        )
+    return adapter.records_from_payload(
+        payload,
+        dataset=dataset,
+        source_dataset=request.get("source_dataset"),
+        api_endpoint=request.get("api_endpoint"),
+        trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
+        available_time=request.get("available_time"),
+        universe_tier=str(request.get("universe_tier") or "core_universe"),
+        trace_id=trace_id,
+    )
+
+
+def _social(
+    adapter: AdmittedSocialMediaAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    payload = request.get("payload") or request.get("items") or request.get("posts") or request.get("messages")
+    if payload in (None, ""):
+        symbol = _single_symbol(request) or "AAPL"
+        payload = adapter.fetch_payload(
+            symbol=symbol,
+            timeout_seconds=float(request.get("timeout_seconds") or 15.0),
+        )
+    return adapter.records_from_payload(
+        payload,
+        platform=str(request.get("platform") or "stocktwits"),
+        trace_id=trace_id,
+    )
+
+
+def _alpha_db(
+    adapter: ExternalAlphaDbAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    payload = request.get("payload") or request.get("signals") or request.get("factors") or request.get("records")
+    if payload in (None, ""):
+        entity_id = _single_symbol(request) or str(request.get("entity_id") or "AAPL")
+        signal_id = str(request.get("signal_id") or "momentum_quality_v1")
+        payload = adapter.fetch_payload(
+            entity_id=entity_id,
+            signal_id=signal_id,
+            timeout_seconds=float(request.get("timeout_seconds") or 15.0),
+        )
+    return adapter.records_from_payload(
+        payload,
+        alpha_vendor_id=str(request.get("alpha_vendor_id") or "alpha-signals-vendor-1"),
+        signal_id=str(request.get("signal_id") or "momentum_quality_v1"),
+        signal_version=str(request.get("signal_version") or "v1"),
+        field_schema_version=str(request.get("field_schema_version") or "v1"),
+        trace_id=trace_id,
+    )
+
+
 PROVIDER_ADAPTER_ALIASES: dict[str, str] = {
     "TaiwanOfficialMarketDatasetAdapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
     "MopsSourceIngestAdapter": "MopsSourceIngestAdapter.records_from_payload",
+    "TejSourceIngestAdapter": "TejSourceIngestAdapter.records_from_rows",
+    "TdccShareholdingDistributionAdapter": "TdccShareholdingDistributionAdapter.records_from_payload",
+    "TaifexDerivativesChipAdapter": "TaifexDerivativesChipAdapter.records_from_payload",
+    "AdmittedSocialMediaAdapter": "AdmittedSocialMediaAdapter.records_from_payload",
+    "ExternalAlphaDbAdapter": "ExternalAlphaDbAdapter.records_from_payload",
+    "FinMindTaiwanDatasetAdapter": "FinMindTaiwanDatasetAdapter.records_from_data_payload",
+    "FinMindTaiwanBrokerDailyReportAdapter": "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
+    "FinMindTaiwanBrokerBulkBackfillAdapter": "FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
+    "YahooTaiwanBrokerTopAdapter": "YahooTaiwanBrokerTopAdapter.records_from_html",
+    "YahooTaiwanRssAdapter": "YahooTaiwanRssAdapter.records_from_rss",
+    "AnueTaiwanRssAdapter": "AnueTaiwanRssAdapter.records_from_rss",
+    "SecEdgarFilingAdapter": "SecEdgarFilingAdapter.records_from_payload",
+    "FredMacroSeriesAdapter": "FredMacroSeriesAdapter.records_from_observations_payload",
+    "FinraShortSaleAdapter": "FinraShortSaleAdapter.records_from_short_volume_text",
+    "StooqDailyOhlcvAdapter": "StooqDailyOhlcvAdapter.records_from_csv",
+    "CoinGeckoSpotMarketAdapter": "CoinGeckoSpotMarketAdapter.records_from_payload",
+    "PolygonUsEquityDailyAdapter": "PolygonUsEquityDailyAdapter.records_from_aggs_payload",
+    "AlphaVantageUsEquityDailyAdapter": "AlphaVantageUsEquityDailyAdapter.records_from_time_series_payload",
+    "IbkrBrokerReadbackAdapter": "IbkrBrokerReadbackAdapter.records_from_readback_file",
+    "ShioajiBrokerReadbackAdapter": "ShioajiBrokerReadbackAdapter.records_from_readback_file",
 }
 
 
@@ -639,6 +754,18 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         token="TaiwanOfficialMarketDatasetAdapter.records_from_payload",
         adapter_cls=TaiwanOfficialMarketDatasetAdapter,
         handler=_taiwan_official,
+        config_keys=("max_records",),
+    ),
+    "TdccShareholdingDistributionAdapter.records_from_payload": ProviderAdapterSpec(
+        token="TdccShareholdingDistributionAdapter.records_from_payload",
+        adapter_cls=TdccShareholdingDistributionAdapter,
+        handler=_tdcc,
+        config_keys=("max_records",),
+    ),
+    "TaifexDerivativesChipAdapter.records_from_payload": ProviderAdapterSpec(
+        token="TaifexDerivativesChipAdapter.records_from_payload",
+        adapter_cls=TaifexDerivativesChipAdapter,
+        handler=_taifex,
         config_keys=("max_records",),
     ),
     "FinMindTaiwanDatasetAdapter.records_from_data_payload": ProviderAdapterSpec(
@@ -742,5 +869,17 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=ShioajiBrokerReadbackAdapter,
         handler=_shioaji_readback,
         config_keys=("readback_file_env",),
+    ),
+    "AdmittedSocialMediaAdapter.records_from_payload": ProviderAdapterSpec(
+        token="AdmittedSocialMediaAdapter.records_from_payload",
+        adapter_cls=AdmittedSocialMediaAdapter,
+        handler=_social,
+        config_keys=("max_records",),
+    ),
+    "ExternalAlphaDbAdapter.records_from_payload": ProviderAdapterSpec(
+        token="ExternalAlphaDbAdapter.records_from_payload",
+        adapter_cls=ExternalAlphaDbAdapter,
+        handler=_alpha_db,
+        config_keys=("secret_ref_id", "max_records"),
     ),
 }
