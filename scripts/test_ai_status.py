@@ -5358,6 +5358,10 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
 
 
 class DeliveryMetadataValidationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+        self.addCleanup(_teardown_test_isolation, self)
+
     @staticmethod
     def _owner_reassignment_event(
         *,

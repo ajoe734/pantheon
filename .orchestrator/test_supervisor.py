@@ -913,6 +913,14 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
             lease = state["worker_worktrees"]["leases"][str(task["id"])]
             self.assertEqual(lease["repository_id"], "execute_plans")
             self.assertIn("Cross-repository delivery authority", request.message)
+            self.assertEqual(
+                request.metadata["workspace_target_files"],
+                ["support/sidecars/AG-FE-DB-002/evidence.json"],
+            )
+            self.assertIn(
+                "- support/sidecars/AG-FE-DB-002/evidence.json",
+                request.message,
+            )
 
     def test_conflicting_or_ambiguous_task_repo_fails_workspace_preparation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

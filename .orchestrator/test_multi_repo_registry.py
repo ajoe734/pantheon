@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import multi_repo_registry
 
@@ -96,6 +99,24 @@ class MultiRepoRegistryTests(unittest.TestCase):
         artifact = "services/control-plane:bff/main.py"
 
         self.assertEqual(multi_repo_registry.artifact_repository_id({}, artifact), "pantheon")
+
+    def test_artifact_repository_id_propagates_default_repo_when_unprefixed(self) -> None:
+        unprefixed = "support/sidecars/AG-FE-DB-002/evidence.json"
+        explicit_pantheon = "pantheon:services/bff/main.py"
+        explicit_execute = "execute-plans:src/App.tsx"
+
+        self.assertEqual(
+            multi_repo_registry.artifact_repository_id({}, unprefixed, "execute_plans"),
+            "execute_plans",
+        )
+        self.assertEqual(
+            multi_repo_registry.artifact_repository_id({}, explicit_pantheon, "execute_plans"),
+            "pantheon",
+        )
+        self.assertEqual(
+            multi_repo_registry.artifact_repository_id({}, explicit_execute, "pantheon"),
+            "execute_plans",
+        )
 
     def test_task_primary_repository_prefers_single_non_pantheon_artifact_repo(self) -> None:
         task = {

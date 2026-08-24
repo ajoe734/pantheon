@@ -2887,7 +2887,7 @@ def bind_external_worker_context(
     delivery_targets = [
         str(repository_relative_artifact_path(config, artifact, repository_id))
         for artifact in request.target_files
-        if artifact_repository_id(config, artifact) == repository_id
+        if artifact_repository_id(config, artifact, repository_id) == repository_id
     ]
     request.metadata["workspace_target_files"] = delivery_targets
     context_lines = "\n".join(f"- {path}" for path in request.context_files) or "- (none; use governed task show)"
