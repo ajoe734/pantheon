@@ -73,6 +73,34 @@ class HumanOpsStatusWrapperTests(unittest.TestCase):
         )
 
 
+class RetiredAgentAliasTests(unittest.TestCase):
+    def test_retired_gemini_names_normalize_to_current_antigravity_lanes(self) -> None:
+        state = deepcopy(ai_status.default_state())
+        task = state["tasks"][0]
+        task["owner"] = "Gemini"
+        task["reviewer"] = "Gemini2"
+        task["waiting_for"] = "Gemini"
+        state["agents"].append(
+            {
+                "name": "Gemini",
+                "capability_lane": [],
+                "status": "idle",
+                "current_task_ids": [],
+                "branch": "",
+                "next": "",
+                "last_update": None,
+            }
+        )
+
+        ai_status.normalize_state_agents(state)
+
+        self.assertEqual(task["owner"], "Antigravity")
+        self.assertEqual(task["reviewer"], "Antigravity2")
+        self.assertEqual(task["waiting_for"], "Antigravity")
+        self.assertEqual(state["agents"][-1]["name"], "Antigravity")
+        ai_status.validate_state(state)
+
+
 def _rotate_activity_log_for_test(log_path: Path) -> Path | None:
     with ai_status.activity_audit_lock_file(
         log_path,
