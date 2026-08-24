@@ -265,10 +265,17 @@ Pantheon implementation:
   and launches auto workers from that isolated cwd while routing
   `ai-status.sh` updates back to the supervisor root with
   `PANTHEON_STATUS_ROOT`
-- `worker_worktrees.source_root` may point at a writable git checkout
-  when the supervisor runs split-root: status/activity files remain in
-  the shared supervisor root, while `git worktree add` writes metadata
-  under the configured source checkout
+- the single `coordination.repositories.<id>.local_path` registry entry owns
+  each writable source checkout. Promotion renders the deployment's absolute
+  source roots there (`dev-root` for Pantheon and the canonical external
+  checkout for `execute_plans`); status/activity paths are never inferred as
+  git source roots
+- before each dispatch cycle, Worker Manager fetches each selected
+  repository's `origin/<default_branch>` once, resolves one exact SHA, and
+  records that SHA on every worker lease created in the cycle. A reused task
+  branch may only fast-forward to that pinned SHA; divergent work is preserved
+  with its base relation recorded, while dirty work blocks dispatch rather
+  than being merged or reset
 - `worker_tree_guard` may be enabled in warn or block mode to detect
   dirty high-fragility surfaces inside the task worktree before
   dispatch; it is disabled by default and does not auto-restore state

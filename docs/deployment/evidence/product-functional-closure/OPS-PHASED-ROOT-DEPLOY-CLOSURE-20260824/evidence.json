@@ -1,0 +1,74 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824",
+    "title": "Phase dev root deployment around persistent runtime closure",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824",
+    "review_file": "docs/deployment/evidence/product-functional-closure/OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Phased dev root deployment isolating persistent runtime from bounded verification, candidate image build before active runtime mutation, and deploy contract tests",
+    "not_changing": [
+      "No secondary scheduler, watchdog, or retry queues",
+      "Source Ingestion reconcile-only default posture with no continuous external provider pull",
+      "Release admission isolation: failed phase preserves unswitched public frontend and BFF pair"
+    ],
+    "changed_files": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_deploy_nonprod_bff_source_sha_contract.py",
+      "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+      "scripts/test_dev_environment_lease_deploy_contract.py",
+      "scripts/test_evolution_daily_sweep_deploy_contract.py",
+      "scripts/test_management_ai_postgres_bootstrap_contract.py",
+      "scripts/test_paper_runtime_topology_contract.py",
+      "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "scripts/test_wait_for_bff_lifecycle_readiness.py",
+      "docs/deployment/evidence/product-functional-closure/OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824/README.md",
+      "docs/deployment/evidence/product-functional-closure/OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824/evidence.json"
+    ],
+    "composes_with": [
+      "docker-compose.yml",
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/validate_loop_worker_manifest_matrix.py"
+    ]
+  },
+  "behavioral_proof": {
+    "persistent_runtime_profile_isolation": "Dev root deployment activates only openclaw compose profile for persistent runtime; retires inactive profile containers via retire_dormant_and_one_off_profile_containers, and keeps dormant smokes (experiments, finrl, qlib, rllib, ray-tune, trl under dormant-smoke) and one-off smokes (activation-ready-smoke, openclaw-activation-ready-e2e, smoke, source-search-bounded, lifecycle-capacity-benchmark) out of default root deploy",
+    "build_before_mutate": "Candidate images are built and validated (docker compose config and docker compose build) prior to container recreation/rollout (docker compose up -d)",
+    "source_ingest_reconcile_only": "Source ingestion controller defaults to reconcile_only mode with unless-stopped restart policy, no second scheduler, and no continuous external pull",
+    "phase_failure_preserves_release_pair": "Any phase failure stops deployment, causes bff_fe_pair_verified=false, and prevents coordinate-dev-release from admitting or switching frontend/BFF release pair",
+    "post_up_failure_rollback_and_compensation": "If any post-rollout verification gate fails after container recreation, the remote deploy script and nonprod-deploy workflow automatically roll back the dev operator-bff and lifecycle projector to the captured baseline commit under lease, preserving the prior exact public FE/BFF pair. Compensation is mutation-aware (skipping rollback deploy when the active BFF is already at the baseline rollback SHA, and restoring baseline when mutated), acquires its own dedicated rollback lease (--expected-backend-sha bound to baseline) with an identity-bound heartbeat loop running under TARGET_ENV=dev with process group isolation, binds nested rollback strictly to the baseline SHA (PANTHEON_DEV_ROLLBACK_BACKEND_SHA and --rollback-sha) so post-up failures during baseline compensation deploy skip rollback rather than restoring the failed candidate, forwards the complete governed BFF environment (JWT/OIDC, 5 dev login actor credentials, adapter token, MFA, role maps), inner rollback preserves all PANTHEON_DEV_BFF_* mappings to Compose PANTHEON_BFF_*, and contract tests enforce strict credential and config presence.",
+    "bounded_compensation_budget_and_contention_modeling": "Deploy-dev job timeout-minutes=120 (7200s) accommodates initial lease acquisition wait (1800s) + initial deploy deadline (1200s) + root paper bootstrap timeout (420s) + public smoke timeout (300s) + rollback lease acquisition wait (1800s) + rollback compensation deadline (1200s) = 6720s, leaving 480s headroom for preflights, image builds, and post-rollback verifications, proving rollback reachability before GitHub runner timeout. In deploy_compensation, the step deadline timeout-minutes=60 (3600s) accommodates configured rollback lease wait (1800s) + rollback deploy deadline (1200s) = 3000s, leaving 600s headroom for bounded predecessor heartbeat stop, identity verification, probes, and release cleanup. In deploy_compensation, stop_predecessor_heartbeat verifies predecessor heartbeat identity before sending SIGTERM, rechecks identity before SIGKILL escalation, and verifies process termination after KILL loop, failing closed (exit 75) if mismatched or un-stoppable. All hosted curls in public_smoke and deploy_compensation are bounded with --connect-timeout 10 --max-time 30 and enclosing step deadlines (5m and 60m). Active-lease contention against the quarantined predecessor lease is modeled and proven: rollback acquisition polls and takes over the expired lease, restoratively executes baseline deploy under TARGET_ENV=dev, and releases the lease upon success."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "result": "passed"
+      },
+      {
+        "command": "docker compose config --quiet",
+        "result": "passed"
+      },
+      {
+        "command": "pytest -v scripts/test_dev_environment_lease_deploy_contract.py",
+        "result": "206 passed"
+      },
+      {
+        "command": "pytest -v scripts/test_dev_deploy_worktree_isolation_contract.py scripts/test_dev_direct_ssh_workflow_contract.py scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_dev_environment_lease_guard.py scripts/test_dev_project_cutover_contract.py scripts/test_dev_vm_ssh.py scripts/test_deploy_nonprod_bff_source_sha_contract.py scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_deploy_nonprod_caddy_bootstrap_contract.py scripts/test_bootstrap_dev_paper_baseline.py scripts/test_check_shared_deploy_workflow_disabled.py",
+        "result": "303 passed, 19 subtests passed"
+      }
+    ]
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Codex REVIEW_FILE=docs/deployment/evidence/product-functional-closure/OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824/evidence.json through the governed approve command only after independently checking the exact PR head.",
+    "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
+  }
+}

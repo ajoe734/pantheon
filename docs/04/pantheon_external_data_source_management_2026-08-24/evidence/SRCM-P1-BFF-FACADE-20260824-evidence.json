@@ -1,0 +1,39 @@
+{
+  "task_id": "SRCM-P1-BFF-FACADE-20260824",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "target_branch": "dev",
+  "head_branch": "task/SRCM-P1-BFF-FACADE-20260824",
+  "task_type": "bff_facade_and_commands",
+  "specification": "docs/04/pantheon_external_data_source_management_2026-08-24/SD_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
+  "architecture": "docs/04/pantheon_external_data_source_management_2026-08-24/SA_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
+  "modules_implemented": [
+    "services/control-plane/bff/source_management_client.py",
+    "services/control-plane/bff/console_gap/contracts.py",
+    "services/control-plane/bff/console_gap/datasources.py",
+    "services/control-plane/bff/main.py",
+    "scripts/bff_route_manifest_backend.py"
+  ],
+  "contract_snapshots_updated": [
+    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json"
+  ],
+  "tests_implemented": [
+    "services/control-plane/bff/test_management_data_sources_v2.py"
+  ],
+  "contract_assertions": {
+    "every_sd_srcm_03_route_implemented": true,
+    "operator_source_ops_separate_from_management": true,
+    "service_token_forwarded_and_no_operator_auth_reuse": true,
+    "allowed_actions_rbac_confirmation_revision_idempotency_enforced": true,
+    "typed_404_409_412_503_error_mappings": true,
+    "authoritative_empty_unavailable_degraded_legacy_honesty": true,
+    "secret_redaction_and_inline_secret_rejection": true,
+    "no_fixture_success_on_downstream_failure": true
+  },
+  "validation": {
+    "data_sources_v2_suite_passing": 20,
+    "data_sources_contract_legacy_suite_passing": 5,
+    "backend_routes_manifest_check_passing": true
+  }
+}

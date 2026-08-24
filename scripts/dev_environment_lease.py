@@ -975,6 +975,8 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
 
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
     if args.identity_json_out:
         atomic_write_json(
             args.identity_json_out,
@@ -1001,7 +1003,7 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
             atomic_write_json(
                 args.state_file, public_state(state, content_sha=content_sha), 0o600
             )
-        except Exception as exc:  # fail closed across the owning shell
+        except (LeaseLost, LeaseConflict) as exc:
             failure = {
                 "schemaVersion": SCHEMA_VERSION,
                 "status": "lost",
@@ -1021,6 +1023,56 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
                 except ProcessLookupError:
                     pass
             return 75
+        except Exception as exc:
+            now = datetime.now(timezone.utc)
+            local_expired = True
+            try:
+                local = read_json_file(args.state_file, "lease state file")
+                expires_at = parse_utc_iso(local.get("expiresAt"), "lease state expiresAt")
+                if expires_at > now:
+                    local_expired = False
+            except Exception:
+                pass
+            if local_expired:
+                failure = {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "status": "lost",
+                    "resource": manager.resource,
+                    "repository": manager.repository,
+                    "branch": manager.branch,
+                    "path": manager.path,
+                    "detectedAt": utc_iso(now),
+                    "error": f"transient heartbeat error and local lease expired: {exc}",
+                }
+                if args.failure_json_out:
+                    atomic_write_json(args.failure_json_out, failure, 0o644)
+                print(json.dumps(failure, sort_keys=True), file=sys.stderr)
+                if args.parent_pid:
+                    try:
+                        os.kill(args.parent_pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                return 75
+            print(
+                json.dumps(
+                    {
+                        "schemaVersion": SCHEMA_VERSION,
+                        "status": "warning",
+                        "resource": manager.resource,
+                        "detectedAt": utc_iso(now),
+                        "warning": f"transient heartbeat failure (retrying): {exc}",
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            slept = 0.0
+            retry_interval = min(5.0, args.interval_seconds)
+            while not stop and slept < retry_interval:
+                step = min(0.5, retry_interval - slept)
+                time.sleep(step)
+                slept += step
+            continue
     stopped = {
         "schemaVersion": SCHEMA_VERSION,
         "status": "stopped",

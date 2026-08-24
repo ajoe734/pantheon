@@ -1134,7 +1134,10 @@ def test_unknown_or_future_source_time_is_never_reported_fresh(
     assert freshness["age_seconds"] is None
     ready = test_client.get("/readyz")
     assert ready.status_code == 200
-    assert ready.json()["dependencies"]["source_freshness"]["status"] == "stale"
+    # Readiness is a bounded controller-state probe.  Detailed source
+    # freshness remains available through the connector registry above rather
+    # than replaying journals from a health endpoint.
+    assert ready.json()["dependencies"]["source_freshness"]["status"] == "not_observed"
     assert ready.json()["dependencies"]["source_freshness"]["data_ready"] is False
 
 

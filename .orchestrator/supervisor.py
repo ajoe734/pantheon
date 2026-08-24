@@ -74,15 +74,16 @@ from dispatch_policy import (
     normalized_status_set,
     ready_dispatch_settings,
 )
-from github_bus import GitHubBusError, resolve_gh_binary, run_gh_process, sync_github_bus
 from multi_repo_registry import (
     artifact_repository_id,
     repository_configured_local_path,
     repository_local_path,
     repository_relative_artifact_path,
     repository_slug,
+    repositories,
     resolve_repository,
     task_primary_repository_id,
+    validate_task_repository_scope,
 )
 from provider_permissions import probe_provider_auth
 from rebase_helper import continue_or_skip_empty
@@ -527,6 +528,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
+    parser.add_argument(
+        "--request-delivery-health-refresh",
+        action="store_true",
+        help=(
+            "Record an explicit Human/Ops request that authorizes the next "
+            "cycle to probe delivery health even past a cached future "
+            "retry_at, then exit without starting the poll loop."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1496,6 +1506,250 @@ def evaluate_task_delivery_admission(
     )
 
 
+def idle_delivery_health_refresh_targets(
+    config: dict[str, Any],
+    state: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    """Return due probes for configured endpoints without task demand.
+
+    Admission demand is intentionally still preferred by the caller: it is the
+    closest proof needed to unblock a real queue intent.  It cannot, however,
+    be the only source of fresh delivery evidence.  A quiet fleet otherwise
+    leaves an expired auth or quota observation closed until an unrelated task
+    happens to target that lane.
+
+    This remains a pure projection over the runtime snapshot.  The slow probe
+    runs after delivery, and the resulting observation is committed only by
+    the existing reserved runtime-maintenance transaction.  Enumerating
+    ``delivery_lane_for_agent`` also means an orphaned physical-agent record
+    which is not a configured delivery endpoint never receives a probe.
+    """
+
+    health = runtime_delivery_health(state)
+    endpoint_health = _admission_health_records(health, "endpoints")
+    account_health = _admission_health_records(health, "accounts")
+    now = datetime.now(timezone.utc)
+    targets: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for logical_agent_id in dispatch_loop_agent_ids(config):
+        lane = delivery_lane_for_agent(config, logical_agent_id)
+        for endpoint in lane.endpoints:
+            endpoint_id = normalize_agent_id(endpoint.endpoint_id)
+            if (
+                not endpoint_id
+                or endpoint_id in seen
+                or not endpoint.enabled
+                or not endpoint.can_auto_deliver
+                or not endpoint.provider_id
+                or not endpoint.account_id
+            ):
+                continue
+            _reason, target = rewrite_dispatch_admission.health_gate_for_endpoint(
+                endpoint_id=endpoint_id,
+                account_id=endpoint.account_id,
+                endpoint_health=endpoint_health,
+                account_health=account_health,
+                now=now,
+            )
+            if target is None or target.scope is not rewrite_dispatch_admission.HealthScope.ENDPOINT:
+                continue
+            seen.add(endpoint_id)
+            targets.append({"scope": target.scope.value, "id": endpoint_id})
+    return targets
+
+
+def _configured_delivery_endpoints(
+    config: dict[str, Any],
+) -> list[rewrite_dispatch_admission.DeliveryEndpoint]:
+    """Return the exact deliverable endpoints, deduplicated by endpoint id.
+
+    Shared by the due-only scan above and the authorized bypass scan below so
+    the two never enumerate a different endpoint set.
+    """
+
+    endpoints: list[rewrite_dispatch_admission.DeliveryEndpoint] = []
+    seen: set[str] = set()
+    for logical_agent_id in dispatch_loop_agent_ids(config):
+        lane = delivery_lane_for_agent(config, logical_agent_id)
+        for endpoint in lane.endpoints:
+            endpoint_id = normalize_agent_id(endpoint.endpoint_id)
+            if (
+                not endpoint_id
+                or endpoint_id in seen
+                or not endpoint.enabled
+                or not endpoint.can_auto_deliver
+                or not endpoint.provider_id
+                or not endpoint.account_id
+            ):
+                continue
+            seen.add(endpoint_id)
+            endpoints.append(endpoint)
+    return endpoints
+
+
+def reconcile_delivery_health_topology(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Prune health rows that no longer belong to delivery topology.
+
+    Runtime delivery health is a projection of configured endpoints and the
+    capacity accounts those endpoints reference.  A provider declaration on
+    its own is not a delivery lane and therefore cannot retain an endpoint or
+    account row.  This reconciler deliberately keeps every configured row
+    byte-for-byte and leaves all non-health runtime state untouched.
+
+    The caller owns persistence.  Production calls this only from
+    ``apply_post_dispatch_maintenance``, inside the existing reserved runtime
+    phase and whole-state CAS transaction.
+    """
+
+    health = state.get("delivery_health")
+    if not isinstance(health, Mapping):
+        return False
+
+    endpoints = _configured_delivery_endpoints(config)
+    configured = {
+        "endpoints": {
+            normalize_agent_id(endpoint.endpoint_id) for endpoint in endpoints
+        },
+        "accounts": {
+            normalize_agent_id(endpoint.account_id) for endpoint in endpoints
+        },
+    }
+    updated: dict[str, Any] | None = None
+    for bucket, allowed in configured.items():
+        records = health.get(bucket)
+        if not isinstance(records, Mapping):
+            continue
+        orphaned = [identity for identity in records if str(identity) not in allowed]
+        if not orphaned:
+            continue
+        if updated is None:
+            updated = deepcopy(dict(health))
+        updated_records = dict(records)
+        for identity in orphaned:
+            updated_records.pop(identity, None)
+        updated[bucket] = updated_records
+
+    if updated is None:
+        return False
+    state["delivery_health"] = updated
+    return True
+
+
+def _delivery_health_topology_fingerprint(config: dict[str, Any]) -> str:
+    """Hash the exact endpoint/provider/account triples that gate delivery.
+
+    Used to detect a genuine config-topology change so the authorized bypass
+    below fires once per new topology instead of every cycle.
+    """
+
+    parts = sorted(
+        f"{endpoint.endpoint_id}:{endpoint.provider_id}:{endpoint.account_id}"
+        for endpoint in _configured_delivery_endpoints(config)
+    )
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def _delivery_health_refresh_authority(state: Mapping[str, Any]) -> dict[str, Any]:
+    supervisor_state = state.get("supervisor") if isinstance(state, Mapping) else None
+    authority = (
+        supervisor_state.get("delivery_health_refresh_authority")
+        if isinstance(supervisor_state, Mapping)
+        else None
+    )
+    return dict(authority) if isinstance(authority, Mapping) else {}
+
+
+def authorized_delivery_health_refresh_targets(
+    config: dict[str, Any],
+    state: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    """Return an exact, bounded refresh scan that may bypass a future retry_at.
+
+    ``idle_delivery_health_refresh_targets`` only proposes a target once its
+    own cached retry/refresh deadline has already arrived, which is correct
+    steady-state behaviour but leaves a lane closed until that deadline even
+    when a live probe would now succeed -- for example right after supervisor
+    startup, after the delivery topology itself changed, or when Human/Ops
+    has explicitly asked for a fresh read. This scan authorizes exactly those
+    three cases and nothing else: it returns targets only when the exact
+    delivery topology fingerprint differs from the last one this process
+    recorded, or an explicit Human/Ops refresh request is pending. Both
+    signals are consumed by
+    ``record_delivery_health_refresh_authority_consumed`` in the same cycle
+    that folds these targets into the probe demand, so an unchanged topology
+    never retriggers the bypass on a later cycle. It never returns a target
+    for a lane whose cached evidence is already healthy -- there is nothing
+    to repair, so bypassing its retry_at would only spend a probe for no
+    reason.
+    """
+
+    authority = _delivery_health_refresh_authority(state)
+    fingerprint = _delivery_health_topology_fingerprint(config)
+    topology_changed = str(authority.get("topology_fingerprint") or "") != fingerprint
+    human_ops_requested = bool(authority.get("human_ops_refresh_requested_at"))
+    if not topology_changed and not human_ops_requested:
+        return []
+
+    health = runtime_delivery_health(state)
+    healthy = rewrite_provider_health.DeliveryHealthState.HEALTHY.value
+    targets: list[dict[str, str]] = []
+    for endpoint in _configured_delivery_endpoints(config):
+        endpoint_entry = rewrite_provider_health.endpoint_health_entry(
+            health, endpoint.endpoint_id
+        )
+        account_entry = rewrite_provider_health.account_health_entry(
+            health, endpoint.account_id
+        )
+        if endpoint_entry.get("state") == healthy and account_entry.get("state") == healthy:
+            continue
+        targets.append(
+            {"scope": rewrite_dispatch_admission.HealthScope.ENDPOINT.value, "id": endpoint.endpoint_id}
+        )
+    return targets
+
+
+def record_delivery_health_refresh_authority_consumed(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Persist the topology fingerprint and clear a spent Human/Ops request.
+
+    Must run once per cycle, after ``authorized_delivery_health_refresh_targets``
+    has already been folded into that same cycle's probe demand, so the
+    bypass it authorized cannot fire again for an unchanged topology or a
+    request that was already honoured.
+    """
+
+    supervisor_state = state.setdefault("supervisor", {})
+    authority = supervisor_state.setdefault("delivery_health_refresh_authority", {})
+    fingerprint = _delivery_health_topology_fingerprint(config)
+    changed = False
+    if authority.get("topology_fingerprint") != fingerprint:
+        authority["topology_fingerprint"] = fingerprint
+        changed = True
+    if authority.get("human_ops_refresh_requested_at"):
+        authority["human_ops_refresh_requested_at"] = None
+        changed = True
+    return changed
+
+
+def request_delivery_health_refresh(state: dict[str, Any]) -> bool:
+    """Record an explicit Human/Ops request for the authorized bypass scan.
+
+    Callers must hold the runtime-state lock (``runtime_state_update``); this
+    function only mutates the given in-memory snapshot.
+    """
+
+    supervisor_state = state.setdefault("supervisor", {})
+    authority = supervisor_state.setdefault("delivery_health_refresh_authority", {})
+    authority["human_ops_refresh_requested_at"] = utc_now()
+    return True
+
+
 def probe_demanded_delivery_health(
     config: dict[str, Any],
     demands: Iterable[Mapping[str, Any]],
@@ -1722,25 +1976,11 @@ def request_from_snapshot(snapshot: dict[str, Any]) -> DeliveryRequest:
     )
 
 
-WORKER_WORKTREE_EXECUTION_REASONS = [
-    REASON_OWNED_READY,
-    REASON_OWNED_IN_PROGRESS,
-    REASON_OWNED_FINALIZE,
-    REASON_REVIEW_READY,
-]
-
-
 def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
     raw = config.get("worker_worktrees")
     settings = raw if isinstance(raw, dict) else {}
-    branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
     return {
-        "enabled": bool(settings.get("enabled", False)),
         "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
-        "source_root": str(settings.get("source_root") or settings.get("repo_root") or "").strip(),
-        "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
-        "reuse_existing": bool(settings.get("reuse_existing", True)),
-        "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
     }
 
 
@@ -1755,11 +1995,9 @@ def worktree_cleanup_settings(config: dict[str, Any]) -> dict[str, Any]:
         "archive_root": str(settings.get("archive_root") or "/tmp/pantheon-worker-worktree-archive"),
         "archive_max_file_bytes": int(settings.get("archive_max_file_bytes", 20 * 1024 * 1024) or 0),
         "max_removals_per_tick": int(settings.get("max_removals_per_tick", 25) or 0),
-        "base_branches": [
-            str(b).strip()
-            for b in (settings.get("base_branches") or ["dev", "master", "main"])
-            if str(b).strip()
-        ],
+        "orphan_prune_interval_seconds": int(
+            settings.get("orphan_prune_interval_seconds", 600) or 0
+        ),
     }
 
 
@@ -1785,35 +2023,23 @@ def _worker_worktree_base_root(config: dict[str, Any], settings: dict[str, Any])
 
 def worker_worktree_source_root(
     config: dict[str, Any],
-    settings: dict[str, Any] | None = None,
     *,
     repository_id: str = "pantheon",
 ) -> Path:
-    """Return the writable git checkout used to create worker worktrees.
+    """Return the registry-owned checkout used for this repository's worktrees.
 
-    The supervisor can run split-root: canonical status, activity, and queue
-    files live in the shared status root, while the command checkout that owns
-    ``.git/worktrees`` can be somewhere else.  Worktree creation must use the
-    writable git source root; context materialization and status writes must
-    continue to use the status root.
+    The repository registry is the sole source authority for both Pantheon and
+    cross-repository delivery.  A live split-root projection supplies absolute
+    paths (Pantheon staging for Pantheon; the canonical checkout for each
+    external repository); status paths never determine Git source ownership.
     """
 
-    active_settings = settings or worker_worktree_settings(config)
-    if repository_id != "pantheon":
-        repository_root = repository_local_path(config, repository_id)
-        if repository_root is None:
-            raise RuntimeError(
-                f"delivery repository {repository_id!r} has no registered local_path"
-            )
-        return repository_root.resolve()
-    status_root = config_path(config, "status_file").parents[0]
-    configured = str(active_settings.get("source_root") or "").strip()
-    if not configured:
-        return status_root.resolve()
-    source_root = Path(os.path.expanduser(configured))
-    if not source_root.is_absolute():
-        source_root = status_root / source_root
-    return source_root.resolve()
+    repository_root = repository_local_path(config, repository_id)
+    if repository_root is None:
+        raise RuntimeError(
+            f"delivery repository {repository_id!r} has no registered local_path"
+        )
+    return repository_root.resolve()
 
 
 def worker_task_worktree_path(
@@ -1824,12 +2050,9 @@ def worker_task_worktree_path(
     repository_id: str = "pantheon",
 ) -> Path:
     active_settings = settings or worker_worktree_settings(config)
-    if repository_id == "pantheon":
-        repository_name = config_path(config, "status_file").parents[0].name
-    else:
-        repository_name = str(
-            resolve_repository(config, repository_id).get("display_name") or repository_id
-        )
+    repository_name = str(
+        resolve_repository(config, repository_id).get("display_name") or repository_id
+    )
     repo_slug = re.sub(r"[^a-z0-9]+", "-", repository_name.lower()).strip("-") or "repo"
     return _worker_worktree_base_root(config, active_settings) / repo_slug / _task_id_slug(task_id)
 
@@ -1837,11 +2060,10 @@ def worker_task_worktree_path(
 def worker_request_repository_id(config: dict[str, Any], request: DeliveryRequest) -> str:
     task = request.metadata.get("task")
     task_payload = task if isinstance(task, dict) else {}
-    repository_id = task_primary_repository_id(config, task_payload)
-    if repository_id is None:
-        raise RuntimeError(
-            "task artifacts span multiple non-Pantheon delivery repositories"
-        )
+    try:
+        repository_id = validate_task_repository_scope(config, task_payload)
+    except (ValueError, RuntimeError) as exc:
+        raise RuntimeError(f"invalid delivery repository scope: {exc}") from exc
     declared = str(request.metadata.get("workspace_repository_id") or "").strip()
     if declared and declared != repository_id:
         raise RuntimeError(
@@ -1852,11 +2074,8 @@ def worker_request_repository_id(config: dict[str, Any], request: DeliveryReques
 
 def worker_repository_base_ref(
     config: dict[str, Any],
-    settings: dict[str, Any],
     repository_id: str,
 ) -> str:
-    if repository_id == "pantheon":
-        return str(settings.get("base_ref") or "origin/dev")
     default_branch = str(
         resolve_repository(config, repository_id).get("default_branch") or ""
     ).strip()
@@ -1873,18 +2092,6 @@ def validate_worker_repository_source(
     source_root: Path,
 ) -> None:
     configured_root = repository_configured_local_path(config, repository_id)
-    if repository_id == "pantheon":
-        source_setting = str(
-            worker_worktree_settings(config).get("source_root") or ""
-        ).strip()
-        if source_setting:
-            configured_root = Path(os.path.expanduser(source_setting))
-            if not configured_root.is_absolute():
-                configured_root = (
-                    config_path(config, "status_file").parents[0]
-                    / configured_root
-                )
-            configured_root = Path(os.path.abspath(configured_root))
     if configured_root is None:
         raise RuntimeError(
             f"delivery repository {repository_id!r} has no configured local_path"
@@ -1990,27 +2197,10 @@ def validate_worker_workspace_binding(
         )
 
 
-def worker_worktree_reason_enabled(reason: str | None, settings: dict[str, Any]) -> bool:
-    normalized_reason = str(reason or "")
-    for pattern in settings.get("execution_reasons", []):
-        if fnmatch.fnmatchcase(normalized_reason, str(pattern)):
-            return True
-    return False
-
-
 def worker_workspace_task_id(request: DeliveryRequest) -> str | None:
     metadata_task_id = str(request.metadata.get("workspace_task_id") or "").strip()
     task_id = metadata_task_id or str(request.task_id or "").strip()
     return task_id or None
-
-
-def worker_request_requires_isolated_worktree(request: DeliveryRequest) -> bool:
-    metadata = getattr(request, "metadata", {})
-    return bool(
-        metadata.get("require_isolated_worktree")
-        if isinstance(metadata, dict)
-        else False
-    )
 
 
 def _git_worktree_records(repo_root: Path) -> list[dict[str, str]]:
@@ -2126,28 +2316,76 @@ def _fetch_worker_base_ref(
     return False, details or "git fetch failed"
 
 
-def _worker_base_ref_precondition(
-    base_ref: str,
-    repo_root: Path | None = None,
-) -> tuple[bool, str | None]:
-    """Resolve or refresh a worker base during delivery preparation.
+def _git_resolve_commit(repo_root: Path, ref: str) -> tuple[str | None, str | None]:
+    """Resolve one ref to the immutable commit a worker can safely use."""
 
-    Delivery preparation runs outside canonical locks.  A missing remote ref is
-    fetched for this intent only; it never delays unrelated dispatch planning.
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    resolved = (proc.stdout or "").strip().lower()
+    if proc.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", resolved):
+        return resolved, None
+    detail = (proc.stderr or proc.stdout or "").strip()
+    return None, detail or f"base_ref_unresolved:{ref}"
+
+
+def resolve_worker_base_snapshot(
+    config: dict[str, Any],
+    repository_id: str,
+    snapshot_cache: dict[str, dict[str, str]],
+) -> tuple[dict[str, str] | None, str | None]:
+    """Fetch a delivery repository once per cycle and pin its base commit.
+
+    ``origin/<default_branch>`` is intentionally mutable.  A cycle shares one
+    resolved commit across every launch for the same repository, while the
+    durable worker lease records that exact SHA after a successful launch.
+    Git I/O occurs from the existing reserved delivery phase, outside runtime
+    admission locks; this cache is deliberately in-memory rather than a second
+    runtime-state authority.
     """
 
-    normalized = str(base_ref or "").strip()
-    if not normalized:
-        return False, "missing_base_ref"
-    if repo_root is None:
-        return False, f"missing_worker_source_root:{normalized}"
+    cached = snapshot_cache.get(repository_id)
+    if cached is not None:
+        error = cached.get("error")
+        return (None, error) if error else (cached, None)
 
-    if _git_ref_exists(repo_root, normalized):
-        return True, None
-    fetched, error = _fetch_worker_base_ref(repo_root, normalized, timeout_seconds=30)
-    if fetched and _git_ref_exists(repo_root, normalized):
-        return True, None
-    return False, error or f"base_ref_unresolved:{normalized}"
+    try:
+        source_root = worker_worktree_source_root(config, repository_id=repository_id)
+        base_ref = worker_repository_base_ref(config, repository_id)
+        validate_worker_repository_source(config, repository_id, source_root)
+    except RuntimeError as exc:
+        error = f"delivery_repository_invalid:{exc}"
+        snapshot_cache[repository_id] = {"error": error}
+        return None, error
+
+    fetched, fetch_error = _fetch_worker_base_ref(
+        source_root,
+        base_ref,
+        timeout_seconds=30,
+    )
+    if not fetched:
+        error = f"base_fetch_failed:{fetch_error or 'git fetch failed'}"
+        snapshot_cache[repository_id] = {"error": error}
+        return None, error
+    base_sha, resolve_error = _git_resolve_commit(source_root, base_ref)
+    if base_sha is None:
+        error = f"base_ref_unresolved:{resolve_error or base_ref}"
+        snapshot_cache[repository_id] = {"error": error}
+        return None, error
+
+    snapshot = {
+        "repository_id": repository_id,
+        "source_root": str(source_root),
+        "base_ref": base_ref,
+        "base_sha": base_sha,
+        "fetched_at": utc_now(),
+    }
+    snapshot_cache[repository_id] = snapshot
+    return snapshot, None
 
 
 def _quarantine_incomplete_worker_path(path: Path) -> Path | None:
@@ -2190,23 +2428,27 @@ def _quarantine_incomplete_worker_path(path: Path) -> Path | None:
     return quarantine_path
 
 
-def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: str) -> tuple[bool, str | None]:
+def _create_worker_worktree(
+    repo_root: Path,
+    path: Path,
+    branch: str,
+    base_sha: str,
+) -> tuple[bool, str | None, str | None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and (not path.is_dir() or any(path.iterdir())):
         if _quarantine_incomplete_worker_path(path) is None:
-            return False, f"Worker worktree path already exists and is not empty: {path}"
-
-    base_ready, base_error = _worker_base_ref_precondition(base_ref, repo_root)
-    if not base_ready:
-        return False, f"Failed to refresh worker base {base_ref}: {base_error}"
+            return False, f"Worker worktree path already exists and is not empty: {path}", None
 
     remote_ref = f"refs/remotes/origin/{branch}"
     if _git_ref_exists(repo_root, f"refs/heads/{branch}"):
         command = ["git", "worktree", "add", str(path), branch]
+        origin = "existing_local_branch"
     elif _git_ref_exists(repo_root, remote_ref):
         command = ["git", "worktree", "add", "-b", branch, str(path), f"origin/{branch}"]
+        origin = "existing_remote_branch"
     else:
-        command = ["git", "worktree", "add", "-b", branch, str(path), base_ref]
+        command = ["git", "worktree", "add", "-b", branch, str(path), base_sha]
+        origin = "base_snapshot"
 
     proc = subprocess.run(
         command,
@@ -2217,8 +2459,8 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     )
     if proc.returncode != 0:
         details = (proc.stderr or proc.stdout or "").strip()
-        return False, f"Failed to create worker worktree {path} for {branch}: {details}"
-    return True, None
+        return False, f"Failed to create worker worktree {path} for {branch}: {details}", None
+    return True, None, origin
 
 
 # Orchestrator-managed per-task scratch that a worker routinely dirties inside its
@@ -2342,14 +2584,13 @@ def _restore_reused_index_split(worktree_path: Path, paths: list[str]) -> bool:
 
 
 def _refresh_reused_worker_worktree(
-    repo_root: Path,
     worktree_path: Path,
-    base_ref: str,
+    base_sha: str,
     *,
     task_id: str | None = None,
     branch: str | None = None,
 ) -> tuple[bool, str]:
-    """Fast-forward a reused worker worktree to the current base ref tip.
+    """Fast-forward a reused worker worktree to the cycle's pinned base SHA.
 
     Reused worktrees may carry the worker's per-task branch from days ago,
     which means their copy of `scripts/ai_status.py` / supervisor / skills can
@@ -2357,17 +2598,12 @@ def _refresh_reused_worker_worktree(
     such as ORCH-CLOSEOUT-MERGE-GATE (require_merged_pr). Refresh on lease so
     the worker always sees current control-plane code.
 
-    Strategy: fetch the exact remote-tracking ref + `git merge --ff-only
-    origin/<base>`. Never auto-resolve a real merge — if the branch genuinely
+    Strategy: merge the already fetched, immutable cycle snapshot with
+    `git merge --ff-only <base-sha>`. Never auto-resolve a real merge — if the branch genuinely
     diverged, leave it for the worker to handle. Dirty reused worktrees are
     blocked before dispatch so workers cannot inherit unrelated staged or
     tracked changes.
     """
-    base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
-    base_ready, base_error = _worker_base_ref_precondition(base_ref, repo_root)
-    if not base_ready:
-        return False, f"fetch_failed: {base_error}"
-
     status_proc = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=no"],
         cwd=worktree_path,
@@ -2422,7 +2658,7 @@ def _refresh_reused_worker_worktree(
             scratch_restored = True
 
     merge_proc = subprocess.run(
-        ["git", "merge", "--ff-only", f"origin/{base}"],
+        ["git", "merge", "--ff-only", base_sha],
         cwd=worktree_path,
         capture_output=True,
         text=True,
@@ -2446,6 +2682,30 @@ def _refresh_reused_worker_worktree(
         return True, (f"ff_to_{head}{suffix}" if head else f"ff_ok{suffix}")
     details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()[0] if (merge_proc.stderr or merge_proc.stdout) else "unknown"
     return False, f"non_fast_forward: {details}"
+
+
+def worker_worktree_base_relation(worktree_path: Path, base_sha: str) -> str:
+    """Describe a task branch's relationship to one immutable base snapshot."""
+
+    head_contains_base = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base_sha, "HEAD"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if head_contains_base.returncode == 0:
+        return "contains_base"
+    head_is_base_ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", "HEAD", base_sha],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if head_is_base_ancestor.returncode == 0:
+        return "behind_base"
+    return "diverged"
 
 
 def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -> list[str]:
@@ -2595,6 +2855,8 @@ def bind_external_worker_context(
     status_root = config_path(config, "status_file").parents[0].resolve()
     command_root = THIS_DIR.parent.resolve()
     bound_context: list[str] = []
+    missing_context: list[str] = []
+    inline_task_briefs: list[tuple[str, str]] = []
     for raw_path in request.context_files:
         raw_value = str(raw_path or "").strip()
         if not raw_value:
@@ -2609,8 +2871,11 @@ def bind_external_worker_context(
                     continue
                 if resolved.is_file():
                     bound_context.append(str(resolved))
-                break
+                    break
+            if not resolved.is_file():
+                missing_context.append(raw_value)
             continue
+        found = False
         for root in (status_root, command_root):
             resolved = (root / candidate).resolve()
             try:
@@ -2619,7 +2884,15 @@ def bind_external_worker_context(
                 continue
             if resolved.is_file():
                 bound_context.append(str(resolved))
+                found = True
                 break
+        if found:
+            continue
+        missing_context.append(raw_value)
+        if ".orchestrator/task-briefs/" in raw_value and request.task_id:
+            inline_task_briefs.append(
+                (raw_value, _generated_worker_task_brief(config, request.task_id))
+            )
 
     # Keep the delivery checkout pristine.  A generated Pantheon task brief in
     # an execute-plans worktree is neither product source nor valid evidence.
@@ -2627,9 +2900,25 @@ def bind_external_worker_context(
     delivery_targets = [
         str(repository_relative_artifact_path(config, artifact, repository_id))
         for artifact in request.target_files
-        if artifact_repository_id(config, artifact) == repository_id
+        if artifact_repository_id(config, artifact, repository_id) == repository_id
     ]
     request.metadata["workspace_target_files"] = delivery_targets
+    if missing_context:
+        # The wake-up template already contains the relative context list. Do
+        # not leave paths that cannot be read in that list: models otherwise
+        # retry the missing read at the end of a productive run and turn it
+        # into a false worker failure. Task briefs remain available as inline
+        # generated context without adding untracked files to the delivery
+        # repository; other unavailable context is explicitly marked so the
+        # worker can use governed task state instead.
+        for missing in missing_context:
+            replacement = f"- (unavailable context; use governed task state): {missing}"
+            request.message = request.message.replace(f"- {missing}", replacement)
+    if inline_task_briefs:
+        request.metadata["inline_context_files"] = [path for path, _ in inline_task_briefs]
+        request.message += "\n\nGenerated task-scoped context (inline; not a repository artifact):\n"
+        for path, brief in inline_task_briefs:
+            request.message += f"\n### {path}\n{brief.rstrip()}\n"
     context_lines = "\n".join(f"- {path}" for path in request.context_files) or "- (none; use governed task show)"
     target_lines = "\n".join(f"- {path}" for path in delivery_targets) or "- (none)"
     request.message += (
@@ -2658,59 +2947,28 @@ def prepare_worker_workspace(
     *,
     queue_event_id: str | None,
     target_agent: str | None,
+    worker_base_snapshots: dict[str, dict[str, str]] | None = None,
 ) -> tuple[bool, str | None]:
+    """Lease one isolated task worktree from a cycle-pinned repository base."""
+
     settings = worker_worktree_settings(config)
-    requires_isolated = worker_request_requires_isolated_worktree(request)
-    if not settings.get("enabled"):
-        if requires_isolated:
-            message = (
-                f"Cannot dispatch explicit retry for {request.task_id or 'unknown task'}: "
-                "isolated worker worktrees are disabled. Refusing shared-checkout fallback."
-            )
-            write_activity_log(
-                config,
-                {
-                    "type": "dispatch_blocked_worktree_lease",
-                    "task_id": request.task_id,
-                    "target_agent": target_agent,
-                    "queue_event_id": queue_event_id,
-                    "message": message,
-                    "refresh_status": "isolated_worktrees_disabled",
-                },
-            )
-            return False, message
-        return True, None
-    if not requires_isolated and not worker_worktree_reason_enabled(request.reason, settings):
-        return True, None
     workspace_task_id = worker_workspace_task_id(request)
     if not workspace_task_id:
-        if requires_isolated:
-            message = (
-                "Cannot dispatch explicit retry without a task-scoped worktree identity. "
-                "Refusing shared-checkout fallback."
-            )
-            write_activity_log(
-                config,
-                {
-                    "type": "dispatch_blocked_worktree_lease",
-                    "task_id": request.task_id,
-                    "target_agent": target_agent,
-                    "queue_event_id": queue_event_id,
-                    "message": message,
-                    "refresh_status": "missing_workspace_task_id",
-                },
-            )
-            return False, message
-        return True, None
+        message = "Cannot dispatch without a task-scoped isolated worktree identity."
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_lease",
+                "task_id": request.task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "message": message,
+                "refresh_status": "missing_workspace_task_id",
+            },
+        )
+        return False, message
     try:
         repository_id = worker_request_repository_id(config, request)
-        source_root = worker_worktree_source_root(
-            config,
-            settings,
-            repository_id=repository_id,
-        )
-        base_ref = worker_repository_base_ref(config, settings, repository_id)
-        validate_worker_repository_source(config, repository_id, source_root)
     except RuntimeError as exc:
         message = (
             f"Cannot lease isolated worker worktree for {workspace_task_id}: {exc}."
@@ -2728,6 +2986,37 @@ def prepare_worker_workspace(
             },
         )
         return False, message
+
+    snapshot_cache = worker_base_snapshots if worker_base_snapshots is not None else {}
+    base_snapshot, snapshot_error = resolve_worker_base_snapshot(
+        config,
+        repository_id,
+        snapshot_cache,
+    )
+    if base_snapshot is None:
+        message = (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+            f"{snapshot_error or 'base snapshot unavailable'}."
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_lease",
+                "task_id": request.task_id,
+                "workspace_task_id": workspace_task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "message": message,
+                "workspace_repository_id": repository_id,
+                "refresh_status": "base_snapshot_unavailable",
+            },
+        )
+        return False, message
+
+    source_root = Path(base_snapshot["source_root"])
+    base_ref = base_snapshot["base_ref"]
+    base_sha = base_snapshot["base_sha"]
+    base_fetched_at = base_snapshot["fetched_at"]
     if request.metadata.get("workspace_path"):
         status_root = config_path(config, "status_file").parents[0].resolve()
         raw_workspace_path = Path(
@@ -2775,10 +3064,14 @@ def prepare_worker_workspace(
             return False, message
         request.metadata.update(
             {
+                "workspace_mode": "isolated_worktree",
                 "workspace_path": str(workspace_path),
                 "workspace_repository_id": repository_id,
                 "workspace_source_root": str(source_root),
                 "workspace_base_ref": base_ref,
+                "workspace_base_sha": base_sha,
+                "workspace_base_fetched_at": base_fetched_at,
+                "workspace_base_relation": worker_worktree_base_relation(workspace_path, base_sha),
             }
         )
         return True, None
@@ -2794,79 +3087,58 @@ def prepare_worker_workspace(
     )
     reused = False
 
-    if not repo_root.exists():
-        message = (
-            f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-            f"configured worker source root does not exist: {repo_root}."
+    existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
+    if existing:
+        worktree_path = existing
+        reused = True
+        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+            worktree_path,
+            base_sha,
+            task_id=workspace_task_id,
+            branch=branch,
         )
         write_activity_log(
             config,
             {
-                "type": "dispatch_blocked_worktree_lease",
+                "type": "worker_worktree_refreshed",
                 "task_id": request.task_id,
-                "workspace_task_id": workspace_task_id,
                 "target_agent": target_agent,
                 "queue_event_id": queue_event_id,
-                "message": message,
                 "workspace_branch": branch,
                 "workspace_path": str(worktree_path),
                 "status_root": str(status_root),
                 "workspace_source_root": str(repo_root),
-                "refresh_status": "source_root_missing",
+                "workspace_repository_id": repository_id,
+                "workspace_base_ref": base_ref,
+                "workspace_base_sha": base_sha,
+                "refresh_ok": refresh_ok,
+                "refresh_status": refresh_status,
             },
         )
-        return False, message
-
-    if settings.get("reuse_existing", True):
-        existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
-        if existing:
-            worktree_path = existing
-            reused = True
-            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                repo_root,
-                worktree_path,
-                base_ref,
-                task_id=workspace_task_id,
-                branch=branch,
+        if not refresh_ok and refresh_status == "skipped_dirty_worktree":
+            message = (
+                f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                f"reused worktree {worktree_path} has dirty tracked or staged changes. "
+                "Clean or remove that worktree before dispatch."
             )
             write_activity_log(
                 config,
                 {
-                    "type": "worker_worktree_refreshed",
+                    "type": "dispatch_blocked_worktree_lease",
                     "task_id": request.task_id,
+                    "workspace_task_id": workspace_task_id,
                     "target_agent": target_agent,
                     "queue_event_id": queue_event_id,
+                    "message": message,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
                     "status_root": str(status_root),
                     "workspace_source_root": str(repo_root),
-                    "refresh_ok": refresh_ok,
+                    "workspace_base_sha": base_sha,
                     "refresh_status": refresh_status,
                 },
             )
-            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
-                message = (
-                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                    f"reused worktree {worktree_path} has dirty tracked or staged changes. "
-                    "Clean or remove that worktree before dispatch."
-                )
-                write_activity_log(
-                    config,
-                    {
-                        "type": "dispatch_blocked_worktree_lease",
-                        "task_id": request.task_id,
-                        "workspace_task_id": workspace_task_id,
-                        "target_agent": target_agent,
-                        "queue_event_id": queue_event_id,
-                        "message": message,
-                        "workspace_branch": branch,
-                        "workspace_path": str(worktree_path),
-                        "status_root": str(status_root),
-                        "workspace_source_root": str(repo_root),
-                        "refresh_status": refresh_status,
-                    },
-                )
-                return False, message
+            return False, message
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
@@ -2891,11 +3163,11 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
-        created, error = _create_worker_worktree(
+        created, error, creation_origin = _create_worker_worktree(
             repo_root,
             worktree_path,
             branch,
-            base_ref,
+            base_sha,
         )
         if not created:
             message = error or f"Failed to create worker worktree for {workspace_task_id}."
@@ -2915,40 +3187,45 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
-        # A local task branch can outlive its old worktree.  Creating a new
-        # worktree from that branch without refreshing it resurrects stale
-        # product/control-plane bytes (the live Agora candidate branch pointed
-        # at an earlier Workshop merge).  Apply the same safe ff-only refresh
-        # used for an existing worktree before the lease is published.
-        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-            repo_root,
-            worktree_path,
-            base_ref,
-            task_id=workspace_task_id,
-            branch=branch,
-        )
-        write_activity_log(
-            config,
-            {
-                "type": "worker_worktree_refreshed",
-                "task_id": request.task_id,
-                "target_agent": target_agent,
-                "queue_event_id": queue_event_id,
-                "workspace_branch": branch,
-                "workspace_path": str(worktree_path),
-                "status_root": str(status_root),
-                "workspace_source_root": str(repo_root),
-                "workspace_repository_id": repository_id,
-                "refresh_ok": refresh_ok,
-                "refresh_status": refresh_status,
-            },
-        )
-        if not refresh_ok and refresh_status == "skipped_dirty_worktree":
-            message = (
-                f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                f"new worktree {worktree_path} could not be refreshed safely."
+        if creation_origin != "base_snapshot":
+            # A local or remote task branch can outlive its old worktree.  Do
+            # the same safe ff-only refresh used for an existing worktree,
+            # but never fetch a moving ref again in this cycle.
+            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                worktree_path,
+                base_sha,
+                task_id=workspace_task_id,
+                branch=branch,
             )
-            return False, message
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_worktree_refreshed",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "workspace_branch": branch,
+                    "workspace_path": str(worktree_path),
+                    "status_root": str(status_root),
+                    "workspace_source_root": str(repo_root),
+                    "workspace_repository_id": repository_id,
+                    "workspace_base_ref": base_ref,
+                    "workspace_base_sha": base_sha,
+                    "refresh_ok": refresh_ok,
+                    "refresh_status": refresh_status,
+                },
+            )
+            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
+                message = (
+                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                    f"new worktree {worktree_path} could not be refreshed safely."
+                )
+                return False, message
+
+    base_relation = (
+        "exact_base" if not reused and creation_origin == "base_snapshot"
+        else worker_worktree_base_relation(worktree_path, base_sha)
+    )
 
     request.metadata.update(
         {
@@ -2959,6 +3236,9 @@ def prepare_worker_workspace(
             "workspace_source_root": str(repo_root),
             "workspace_repository_id": repository_id,
             "workspace_base_ref": base_ref,
+            "workspace_base_sha": base_sha,
+            "workspace_base_fetched_at": base_fetched_at,
+            "workspace_base_relation": base_relation,
         }
     )
     if repository_id == "pantheon":
@@ -2979,6 +3259,9 @@ def prepare_worker_workspace(
         "source_root": str(repo_root),
         "repository_id": repository_id,
         "base_ref": base_ref,
+        "base_sha": base_sha,
+        "base_fetched_at": base_fetched_at,
+        "base_relation": base_relation,
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
@@ -2998,6 +3281,8 @@ def prepare_worker_workspace(
             "workspace_source_root": str(repo_root),
             "workspace_repository_id": repository_id,
             "workspace_base_ref": base_ref,
+            "workspace_base_sha": base_sha,
+            "workspace_base_relation": base_relation,
         },
     )
     return True, None
@@ -3202,11 +3487,16 @@ def check_worker_tree_clean(
     return mode != "block", message
 
 
+class StaleDispatchBeforeLaunch(RuntimeError):
+    """The canonical task assignment changed before adapter process spawn."""
+
+
 def start_worker_for_request(
     config: dict[str, Any],
     state: dict[str, Any],
     request: DeliveryRequest,
     *,
+    dispatch_event: Mapping[str, Any],
     queue_event_id: str | None,
     attempt_count: int,
     event_id_for_log: str | None,
@@ -3242,7 +3532,34 @@ def start_worker_for_request(
         activity_type=activity_type,
         activity_message=activity_message,
     )
-    result = adapter.deliver(request)
+    delivery_invoked = False
+    try:
+        # Keep the canonical assignment read lock through process creation.
+        # Human/Ops reassignment takes the exclusive side of this lock, so a
+        # committed owner, reviewer, or generation change can never race past
+        # this final read and still launch the stale queue snapshot.
+        with canonical_task_state_lock_file(
+            config_path(config, "status_file"),
+            shared=True,
+            nonblocking=False,
+        ):
+            latest_task_map = task_index_from_status(config, load_status(config))
+            stale_message = stale_dispatch_skip_message(
+                config,
+                dict(dispatch_event),
+                latest_task_map,
+            )
+            if stale_message:
+                raise StaleDispatchBeforeLaunch(stale_message)
+            delivery_invoked = True
+            result = adapter.deliver(request)
+    except BaseException:
+        if not delivery_invoked:
+            # No adapter process can exist yet. Remove the crash-recovery
+            # marker so a deliberate stale cancellation is not mistaken for
+            # an ambiguous in-flight launch on the next supervisor cycle.
+            _discard_unlaunched_runtime_phase_intent(config, state)
+        raise
     if not result.ok:
         failure_run_id = (
             f"{event_id_for_log or queue_event_id}-attempt-{max(1, int(attempt_count))}"
@@ -3334,6 +3651,11 @@ def start_worker_for_request(
         "work_progress_snapshot": initial_work_progress_snapshot,
         "last_commit_progress_at": None,
         "last_work_progress_at": None,
+        "provider_stream_last_event_key": None,
+        "provider_progress_event_type": None,
+        "provider_terminal_status": None,
+        "provider_error": None,
+        "provider_usage": None,
         "commit_progress_count": 0,
         "status_root": request.metadata.get("status_root"),
         "status_command_runtime": issued_command_runtime,
@@ -3423,12 +3745,62 @@ def start_worker_for_request(
     return True, worker_run_id, result.as_dict()
 
 
+def inspect_command_runtime_health(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the existing command-runtime admission result for this cycle."""
+
+    checked_at = utc_now()
+    try:
+        issued_env = status_command_runtime_env(config)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return {
+            "healthy": False,
+            "checked_at": checked_at,
+            "reason": "command_runtime_integrity_failed",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    return {
+        "healthy": True,
+        "checked_at": checked_at,
+        "reason": "healthy",
+        "error": None,
+        "runtime": status_command_runtime_record_from_env(issued_env),
+    }
+
+
+def record_command_runtime_health(
+    state: dict[str, Any],
+    health: Mapping[str, Any],
+) -> bool:
+    """Publish command-runtime health in the existing Supervisor state."""
+
+    normalized = deepcopy(dict(health))
+    supervisor_state = state.setdefault("supervisor", {})
+    if supervisor_state.get("command_runtime_health") == normalized:
+        return False
+    supervisor_state["command_runtime_health"] = normalized
+    return True
+
+
+def command_runtime_dispatch_block_reason(state: Mapping[str, Any]) -> str | None:
+    """Return a global dispatch hold only for an explicit failed health probe."""
+
+    supervisor_state = state.get("supervisor")
+    if not isinstance(supervisor_state, Mapping):
+        return None
+    health = supervisor_state.get("command_runtime_health")
+    if not isinstance(health, Mapping) or health.get("healthy") is not False:
+        return None
+    detail = str(health.get("error") or health.get("reason") or "unknown error").strip()
+    return f"Command runtime integrity is unhealthy: {detail}"
+
+
 def process_queue(
     config: dict[str, Any],
     state: dict[str, Any],
     *,
     delivery_outcome: dict[str, bool] | None = None,
     health_refresh_demand: list[dict[str, str]] | None = None,
+    worker_base_snapshots: dict[str, dict[str, str]] | None = None,
 ) -> bool:
     """Reconcile queued intents and launch at most one worker process.
 
@@ -3448,6 +3820,8 @@ def process_queue(
     if delivery_outcome is not None:
         delivery_outcome["launched"] = False
     if not bool(ready_dispatch_settings(config).get("enabled", False)):
+        return False
+    if command_runtime_dispatch_block_reason(state):
         return False
     changed = False
     task_map = task_index_from_status(config, load_status(config))
@@ -3629,6 +4003,7 @@ def process_queue(
             request,
             queue_event_id=str(event_id or ""),
             target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+            worker_base_snapshots=worker_base_snapshots,
         )
         if not workspace_ok:
             record["status"] = "pending"
@@ -3665,16 +4040,38 @@ def process_queue(
             record["error"] = late_skip_message
             changed = True
             continue
-        record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
+        attempt_count = int(record.get("attempt_count", 0)) + 1
+        try:
+            ok, worker_outcome, delivery = start_worker_for_request(
+                config,
+                state,
+                request,
+                dispatch_event=event,
+                queue_event_id=event_id,
+                attempt_count=attempt_count,
+                event_id_for_log=event_id,
+            )
+        except StaleDispatchBeforeLaunch as exc:
+            record["status"] = "completed"
+            record["processed_at"] = utc_now()
+            record["skip_reason"] = "task_generation_changed_before_launch"
+            record["error"] = str(exc)
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name")
+                    or event.get("target_agent"),
+                    "message": str(exc),
+                    "queue_event_id": event_id,
+                    "dispatch_reason": event.get("reason"),
+                },
+            )
+            changed = True
+            continue
+        record["attempt_count"] = attempt_count
         record["last_attempt_at"] = utc_now()
-        ok, worker_outcome, delivery = start_worker_for_request(
-            config,
-            state,
-            request,
-            queue_event_id=event_id,
-            attempt_count=record["attempt_count"],
-            event_id_for_log=event_id,
-        )
         if not ok:
             failure_run_id = (
                 f"{event_id}-attempt-{max(1, int(record.get('attempt_count', 0)))}"
@@ -4093,7 +4490,7 @@ def worker_process_generation_is_current(worker: Mapping[str, Any]) -> bool:
 def normalize_pr_url(config: dict[str, Any], url: str | None) -> str | None:
     if not url:
         return None
-    repo = (((config.get("github_bus") or {}).get("repo")) or "").strip()
+    repo = str(repository_slug(config, "pantheon") or "").strip()
     if not repo:
         return url
     expected = f"github.com/{repo}/"
@@ -4131,20 +4528,122 @@ def file_iso_mtime(path: Path) -> str | None:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
+def normalize_provider_stream_event(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Normalize provider-specific stream envelopes into the existing shape.
+
+    Antigravity's ``stream-json`` mode wraps its lifecycle records as
+    ``{"event": ..., "result": {...}}``/``{"event": ..., "step_update": {...}}``.
+    The supervisor already has one structured-provider path for Claude and
+    similar adapters; this keeps AGY on that path instead of introducing a
+    second parser or state machine.
+    """
+
+    if not isinstance(payload, Mapping):
+        return None
+    event = str(payload.get("event") or "").strip().lower()
+    if event == "init":
+        normalized = dict(payload)
+        normalized["type"] = "init"
+        normalized["provider_event"] = "init"
+        return normalized
+    if event == "step_update":
+        step = payload.get("step_update")
+        normalized = dict(payload)
+        normalized["type"] = "step_update"
+        normalized["provider_event"] = "step_update"
+        if isinstance(step, Mapping):
+            normalized["step_type"] = str(step.get("type") or step.get("step_type") or "").strip().lower()
+        return normalized
+    if event == "result":
+        result = payload.get("result")
+        normalized = dict(result) if isinstance(result, Mapping) else {}
+        normalized["type"] = "result"
+        normalized["provider_event"] = "result"
+        normalized["result"] = result
+        for key in ("conversation_id", "session_id", "session_url", "pr_url"):
+            if normalized.get(key) in (None, "") and payload.get(key) not in (None, ""):
+                normalized[key] = payload.get(key)
+        return normalized
+    if payload.get("type"):
+        return dict(payload)
+    return None
+
+
+def _provider_stream_session_id(payload: Mapping[str, Any]) -> str | None:
+    for key in ("session_id", "conversation_id", "session", "conversation"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for key in ("result", "step_update"):
+        nested = payload.get(key)
+        if isinstance(nested, Mapping):
+            value = _provider_stream_session_id(nested)
+            if value:
+                return value
+    return None
+
+
+def provider_stream_event_key(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def provider_stream_event_is_meaningful(payload: Mapping[str, Any]) -> bool:
+    event_type = str(payload.get("type") or "").strip().lower()
+    if event_type == "init":
+        return False
+    if event_type == "step_update":
+        step = payload.get("step_update")
+        if not isinstance(step, Mapping):
+            return False
+        step_type = str(step.get("type") or step.get("step_type") or "").strip().lower()
+        return step_type not in {"", "user_input", "checkpoint"}
+    if event_type == "user":
+        return False
+    return bool(event_type)
+
+
+def _provider_result_error(payload: Mapping[str, Any]) -> Any:
+    if payload.get("is_error") is True:
+        return payload.get("error") or payload.get("status") or "provider_result_error"
+    if payload.get("error") not in (None, "", {}, []):
+        return payload.get("error")
+    status = str(payload.get("status") or "").strip().lower()
+    subtype = str(payload.get("subtype") or "").strip().lower()
+    if status in PROVIDER_STREAM_FAILURE_STATUSES or subtype in PROVIDER_STREAM_FAILURE_SUBTYPES:
+        return payload.get("message") or payload.get("status") or payload.get("subtype")
+    return None
+
+
+def update_from_log(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Ingest provider output and advance progress only on a new meaningful event."""
     log_path_value = worker.get("log_path")
     if not log_path_value:
-        return
+        return False
     log_path = Path(log_path_value)
     if not log_path.exists():
-        return
+        return False
     mtime = file_iso_mtime(log_path)
     if mtime and (not worker.get("last_event_at") or mtime > worker.get("last_event_at", "")):
         worker["last_event_at"] = mtime
     try:
         content = log_path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
-        return
+        return False
+    meaningful_progress_advanced = False
+    latest_meaningful_key: str | None = None
+    latest_meaningful_type: str | None = None
     for line in content.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -4153,18 +4652,49 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
             payload = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not worker.get("session_id") and payload.get("session_id"):
-            worker["session_id"] = payload.get("session_id")
+        normalized = normalize_provider_stream_event(payload)
+        if normalized is None:
+            continue
+        session_id = _provider_stream_session_id(normalized) or _provider_stream_session_id(payload)
+        if not worker.get("session_id") and session_id:
+            worker["session_id"] = session_id
             worker.setdefault("resume_token", worker["session_id"])
-        if payload.get("type") == "result":
-            if payload.get("stop_reason") == "tool_deferred":
+        if normalized.get("type") == "result":
+            if normalized.get("stop_reason") == "tool_deferred":
                 worker["status"] = "waiting_approval"
-                worker["deferred_tool_use"] = payload.get("deferred_tool_use")
-            if payload.get("pr_url") and not worker.get("pr_url"):
-                worker["pr_url"] = normalize_pr_url(config, payload.get("pr_url"))
+                worker["deferred_tool_use"] = normalized.get("deferred_tool_use")
+            if normalized.get("pr_url") and not worker.get("pr_url"):
+                worker["pr_url"] = normalize_pr_url(config, normalized.get("pr_url"))
                 worker["pr_url_source"] = "result_payload"
-            if payload.get("session_url") and not worker.get("session_url"):
-                worker["session_url"] = payload.get("session_url")
+                worker["prepared_review_head"] = True
+            if normalized.get("session_url") and not worker.get("session_url"):
+                worker["session_url"] = normalized.get("session_url")
+            usage = normalized.get("usage")
+            if isinstance(usage, Mapping):
+                numeric_usage = {
+                    str(key): value
+                    for key, value in usage.items()
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                }
+                if numeric_usage:
+                    worker["provider_usage"] = numeric_usage
+            error = _provider_result_error(normalized)
+            if error is not None:
+                worker["provider_terminal_status"] = "error"
+                worker["provider_error"] = error
+            else:
+                status = str(normalized.get("status") or normalized.get("subtype") or "success").strip().lower()
+                worker["provider_terminal_status"] = status or "success"
+
+        if provider_stream_event_is_meaningful(normalized):
+            latest_meaningful_key = provider_stream_event_key(normalized)
+            latest_meaningful_type = str(normalized.get("type") or "")
+
+    if latest_meaningful_key and latest_meaningful_key != worker.get("provider_stream_last_event_key"):
+        worker["provider_stream_last_event_key"] = latest_meaningful_key
+        worker["provider_progress_event_type"] = latest_meaningful_type
+        worker["last_work_progress_at"] = _isoformat_utc(now or datetime.now(timezone.utc))
+        meaningful_progress_advanced = True
     if not worker.get("session_id"):
         for pattern in SESSION_ID_PATTERNS:
             match = pattern.search(content)
@@ -4184,6 +4714,7 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
             if "/agent" in url or "/sessions/" in url:
                 worker["session_url"] = url
                 break
+    return meaningful_progress_advanced
 
 
 def worker_was_terminated_by_sigterm(worker: dict[str, Any]) -> bool:
@@ -4246,6 +4777,7 @@ def is_authoritative_provider_failure_envelope(
 
     if not worker_uses_structured_provider_stream(worker):
         return False
+    payload = normalize_provider_stream_event(payload) or payload
     message = payload.get("message")
     role = message.get("role") if isinstance(message, dict) else None
     if payload.get("type") == "user" or role == "user":
@@ -4687,21 +5219,16 @@ def worker_lease_progress_is_fresh(
     # work-progress dimension is exempted.
     if str(worker.get("status") or "") in {"waiting_approval", "suspended_approval"}:
         return True
-    progress_candidates = [
-        dt
-        for dt in (
-            _parse_iso_utc(
-                str(
-                    worker.get("last_work_progress_at")
-                    or worker.get("last_process_activity_at")
-                    or ""
-                )
-            ),
-            _parse_iso_utc(str(worker.get("last_event_at") or "")),
+    # Lease renewal is tied to meaningful provider output or an observed
+    # commit/worktree change. Log mtime, heartbeat, CPU, and I/O are health
+    # signals only; none proves that the worker made task progress.
+    latest_progress = _parse_iso_utc(str(worker.get("last_work_progress_at") or ""))
+    if latest_progress is None:
+        latest_progress = _parse_iso_utc(
+            str(worker.get("lease_acquired_at") or worker.get("started_at") or "")
         )
-        if dt is not None
-    ]
-    latest_progress = max(progress_candidates, default=None)
+    if latest_progress is None:
+        return False
     return rewrite_worker_lifecycle.lease_progress_is_fresh(
         last_progress_epoch=(latest_progress.timestamp() if latest_progress else None),
         now_epoch=now_dt.timestamp(),
@@ -4892,6 +5419,71 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("owner_fallbacks", {})
     settings.setdefault("reviewer_fallbacks", {})
     return settings
+
+
+def load_balance_settings(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Read-only policy for saturated- or transiently-blocked-lane reassignment.
+
+    Off by default. Every other automatic owner reassignment in this file
+    fires only when the incumbent is durably unavailable (see
+    ``assignment_terminal_unavailability``); it never fires because the
+    incumbent's lane is simply full while healthy, or merely between health
+    probes. That leaves either a full, busy, perfectly healthy lane, or one
+    stuck on a stale/expired probe with zero active workers, owning
+    not-yet-started work while a less-loaded fallback sits idle -- see
+    ``assignment_saturated_recoverable`` and
+    ``assignment_transiently_blocked_recoverable``, which this settles.
+    ``min_saturated_seconds`` gates both signals identically: most transient
+    blocks self-heal within one probe cycle, so acting on either signal too
+    quickly would churn ownership for something that was about to recover.
+    """
+
+    raw = config.get("worker_reassignment")
+    raw = raw.get("load_balance") if isinstance(raw, Mapping) else None
+    raw = raw if isinstance(raw, Mapping) else {}
+
+    def non_negative(name: str, default: int) -> int:
+        try:
+            return max(0, int(raw.get(name, default)))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "min_saturated_seconds": non_negative("min_saturated_seconds", 900),
+    }
+
+
+def failure_loop_settings(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Read-only policy for the repeated-failure auto-governance loop.
+
+    Off by default. When a task fails ``max_failures_in_window`` times
+    within ``window_seconds`` under its current owner, it is auto-reassigned
+    to the next configured ``owner_fallbacks`` candidate -- same governed
+    pipeline as ``assignment_saturated_recoverable`` -- up to
+    ``max_auto_reassignments`` times. If it keeps failing at that rate even
+    after exhausting those attempts, it is put on an explicit Human/Ops hold
+    instead of being bounced between agents forever: auto-remediation gets a
+    bounded number of tries, then escalates rather than spinning silently.
+    See ``reconcile_failure_loops``.
+    """
+
+    raw = config.get("worker_reassignment")
+    raw = raw.get("failure_loop") if isinstance(raw, Mapping) else None
+    raw = raw if isinstance(raw, Mapping) else {}
+
+    def positive(name: str, default: int) -> int:
+        try:
+            return max(1, int(raw.get(name, default)))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "max_failures_in_window": positive("max_failures_in_window", 3),
+        "window_seconds": positive("window_seconds", 3600),
+        "max_auto_reassignments": positive("max_auto_reassignments", 1),
+    }
 
 
 def normalized_mapping_values(mapping: dict[str, Any], key: str) -> list[str]:
@@ -5901,6 +6493,48 @@ def _persist_runtime_phase_launch_intent(
     if scratch_reservation is None:
         raise RuntimeError("detached runtime phase lost its worker launch reservation")
     scratch_reservation["launch_intent"] = deepcopy(intent)
+
+
+def _discard_unlaunched_runtime_phase_intent(
+    config: dict[str, Any],
+    scratch: dict[str, Any],
+) -> None:
+    """Remove the exact launch intent after a pre-spawn canonical rejection."""
+
+    context = _RUNTIME_PHASE_CONTEXT.get()
+    if not isinstance(context, dict):
+        return
+    phase_name = str(context.get("phase_name") or "")
+    reservation_token = str(context.get("reservation_token") or "")
+    expected_digest = str(context.get("expected_digest") or "")
+    if not phase_name or not reservation_token or not expected_digest:
+        raise RuntimeError("reserved runtime phase launch context is incomplete")
+
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        reservation = _runtime_phase_reservation_record(
+            current,
+            phase_name,
+            reservation_token,
+        )
+        if reservation is None or _runtime_state_cas_digest(current) != expected_digest:
+            raise RuntimeError(
+                "runtime phase changed before stale launch intent cancellation"
+            )
+        if not isinstance(reservation.get("launch_intent"), Mapping):
+            raise RuntimeError("reserved runtime phase lost its worker launch intent")
+        reservation.pop("launch_intent", None)
+        save_runtime_state(config, current)
+        context["expected_digest"] = _runtime_state_cas_digest(current)
+
+    scratch_reservation = _runtime_phase_reservation_record(
+        scratch,
+        phase_name,
+        reservation_token,
+    )
+    if scratch_reservation is None:
+        raise RuntimeError("detached runtime phase lost its worker launch reservation")
+    scratch_reservation.pop("launch_intent", None)
 
 
 def _persist_runtime_phase_launch_receipt(
@@ -6967,19 +7601,6 @@ def _ai_status_activity_event_id_matches(event: Mapping[str, Any]) -> bool:
     return event_id == "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
 
 
-def _supervisor_reassignment_event_id_matches(event: Mapping[str, Any]) -> bool:
-    if event.get("agent") != "Orchestrator" or event.get("type") != "task_reassigned":
-        return False
-    payload = (
-        f"{event.get('task_id') or ''}\0{event.get('ts') or ''}\0"
-        f"{event.get('old_owner') or ''}\0{event.get('new_owner') or ''}\0"
-        f"{event.get('old_reviewer') or ''}\0{event.get('new_reviewer') or ''}\0"
-        f"{event.get('message') or ''}"
-    )
-    expected = "supervisor-reassign-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return str(event.get("event_id") or "") == expected
-
-
 def _governance_event_after_worker_start(
     worker: Mapping[str, Any],
     event: Mapping[str, Any],
@@ -7029,6 +7650,85 @@ def status_event_matches_worker_process(
     return isinstance(lease, Mapping) and dict(lease) == identity
 
 
+def canonical_worker_terminal_status(
+    config: dict[str, Any],
+    worker: Mapping[str, Any],
+    task: Mapping[str, Any] | None,
+    *,
+    activity_events: list[dict[str, Any]] | None,
+    required_role: str | None = None,
+) -> str | None:
+    """Return a terminal task status proven by this worker's exact event.
+
+    A current terminal task row is not enough to complete an arbitrary exited
+    process: the append-only lifecycle event must be bound to the worker's
+    exact PID generation and actor. This reuses the existing activity log and
+    status-command lease binding; it is not a second completion mechanism.
+    """
+
+    if not isinstance(task, Mapping):
+        return None
+    dispatch_reason = str((worker.get("request_snapshot") or {}).get("reason") or "").strip()
+    if dispatch_reason in {REASON_REVIEW_READY}:
+        expected_role = "reviewer"
+        expected_actor = str(task.get("reviewer") or "").strip()
+    elif dispatch_reason in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_OWNED_FINALIZE,
+    }:
+        expected_role = "owner"
+        expected_actor = str(task.get("owner") or "").strip()
+    else:
+        return None
+    if required_role and expected_role != required_role:
+        return None
+    worker_actor = canonical_agent_name(
+        config,
+        display_name_for(
+            config,
+            str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
+        ),
+    )
+    if not worker_actor or worker_actor.casefold() != canonical_agent_name(config, expected_actor).casefold():
+        return None
+
+    settings = ready_dispatch_settings(config)
+    review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
+    approved_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+    task_status = str(task.get("status") or "").strip().lower()
+    terminal_event_types = frozenset({"handoff", "review_approved", "done"})
+    latest_terminal = _latest_task_governance_event(
+        worker,
+        activity_events,
+        event_types=terminal_event_types,
+    )
+    if latest_terminal is None or not status_event_matches_worker_process(latest_terminal, worker):
+        return None
+    event_actor = str(
+        latest_terminal.get("agent")
+        or latest_terminal.get("actor")
+        or latest_terminal.get("author")
+        or ""
+    ).strip()
+    if event_actor and canonical_agent_name(config, event_actor).casefold() != worker_actor.casefold():
+        return None
+    event_type = str(latest_terminal.get("type") or "").strip().lower()
+    valid_statuses = {
+        "handoff": review_statuses,
+        "review_approved": approved_statuses,
+        "done": done_statuses,
+    }.get(event_type, frozenset())
+    if task_status not in valid_statuses:
+        return None
+    if event_type == "review_approved" and expected_role != "reviewer":
+        return None
+    if event_type in {"handoff", "done"} and expected_role != "owner":
+        return None
+    return task_status
+
+
 def active_worker_governance_lease_decision(
     config: dict[str, Any],
     worker: Mapping[str, Any],
@@ -7040,7 +7740,7 @@ def active_worker_governance_lease_decision(
 
     Absence, ambiguity, an ordinary ``assign``/``note``/review transition, or a
     concurrent task mutation all preserve the process. Only terminal lifecycle
-    truth or the latest exact supervisor ``task_reassigned`` event can authorize
+    truth or the latest exact canonical ``task_reassigned`` event can authorize
     responsibility transfer here.
     """
 
@@ -7108,7 +7808,10 @@ def active_worker_governance_lease_decision(
                 worker,
             ),
         }
-    if not _supervisor_reassignment_event_id_matches(latest_assignment):
+    validated_assignment = rewrite_task_machine.validate_assignment_activity_event(
+        latest_assignment
+    )
+    if validated_assignment is None:
         return {
             "action": "preserve",
             "reason_code": "invalid_reassignment_evidence",
@@ -7118,11 +7821,16 @@ def active_worker_governance_lease_decision(
 
     current_owner = canonical_agent_name(config, str(task.get("owner") or ""))
     current_reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
-    new_owner = canonical_agent_name(config, str(latest_assignment.get("new_owner") or ""))
-    new_reviewer = canonical_agent_name(config, str(latest_assignment.get("new_reviewer") or ""))
+    new_owner = canonical_agent_name(config, validated_assignment.new_owner)
+    new_reviewer = canonical_agent_name(config, validated_assignment.new_reviewer)
+    current_generation = task_generation(task)
     if (
         current_owner.casefold() != new_owner.casefold()
         or current_reviewer.casefold() != new_reviewer.casefold()
+        or (
+            validated_assignment.generation is not None
+            and current_generation != validated_assignment.generation
+        )
     ):
         return {
             "action": "preserve",
@@ -7147,14 +7855,14 @@ def active_worker_governance_lease_decision(
     if dispatch_reason == REASON_REVIEW_READY:
         old_actor = canonical_agent_name(
             config,
-            str(latest_assignment.get("old_reviewer") or ""),
+            validated_assignment.old_reviewer,
         )
         new_actor = new_reviewer
         role = "reviewer"
     else:
         old_actor = canonical_agent_name(
             config,
-            str(latest_assignment.get("old_owner") or ""),
+            validated_assignment.old_owner,
         )
         new_actor = new_owner
         role = "owner"
@@ -7281,6 +7989,8 @@ def owner_worker_canonical_handoff_status(
     config: dict[str, Any],
     worker: dict[str, Any],
     task: dict[str, Any] | None,
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """Return the canonical outcome reached by this exact owner worker.
 
@@ -7291,29 +8001,13 @@ def owner_worker_canonical_handoff_status(
     the reviewer.
     """
 
-    if not isinstance(task, dict):
-        return None
-    dispatch_reason = str(
-        (worker.get("request_snapshot") or {}).get("reason") or ""
-    ).strip()
-    if dispatch_reason not in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}:
-        return None
-    worker_actor = display_name_for(
+    return canonical_worker_terminal_status(
         config,
-        str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
-    ).strip()
-    owner = str(task.get("owner") or "").strip()
-    if not worker_actor or worker_actor != owner:
-        return None
-
-    settings = ready_dispatch_settings(config)
-    outcome_statuses = (
-        normalized_status_set(settings.get("review_statuses"), ["review"])
-        | normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
-        | normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+        worker,
+        task,
+        activity_events=activity_events,
+        required_role="owner",
     )
-    task_status = str(task.get("status") or "").strip().lower()
-    return task_status if task_status in outcome_statuses else None
 
 
 def _prepare_missing_handoff_blocker_locked(
@@ -7430,6 +8124,106 @@ def record_missing_handoff_blocker(config: dict[str, Any], worker: dict[str, Any
     return event
 
 
+def _prepare_failure_loop_blocker_locked(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    message: str,
+) -> dict[str, Any] | None:
+    """Record an actionable failure-loop hold for a task that keeps failing
+    even after ``reconcile_failure_loops`` already tried reassigning it.
+
+    Mirrors ``_prepare_missing_handoff_blocker_locked``'s shape: same
+    outbox-clear precondition, same BLOCK transition + ``waiting_for`` +
+    ``next`` fields, same open-blocker de-dup (by ``blocker_kind``) so a
+    repeat call is a no-op instead of stacking duplicate blockers.
+    """
+
+    if not config.get("paths", {}).get("status_file"):
+        return None
+
+    status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return None
+    task = task_index_from_status(config, status).get(task_id)
+    if not task:
+        return None
+    if str(task.get("waiting_for") or "").strip():
+        return None
+    if any(
+        str(blocker.get("task_id") or "") == task_id
+        and str(blocker.get("status") or "") == "open"
+        and str(blocker.get("blocker_kind") or "") == "failure_loop"
+        for blocker in (status.get("blockers") or [])
+    ):
+        return None
+
+    timestamp = utc_now()
+    try:
+        task["status"] = rewrite_task_machine.transition(
+            task.get("status"),
+            rewrite_task_machine.TaskAction.BLOCK,
+        ).value
+    except rewrite_task_machine.TransitionError:
+        return None
+    task["waiting_for"] = "Human/Ops"
+    task["last_update"] = timestamp
+    task["next"] = message
+
+    status.setdefault("blockers", []).append(
+        {
+            "task_id": task_id,
+            "owner": task.get("owner"),
+            "waiting_for": "Human/Ops",
+            "message": message,
+            "status": "open",
+            "created_at": timestamp,
+            "blocker_kind": "failure_loop",
+        }
+    )
+
+    event = {
+        "event_id": "supervisor-failure-loop-"
+        + hashlib.sha256(f"{task_id}\0{timestamp}".encode("utf-8")).hexdigest(),
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": "task_failure_loop_blocked",
+        "task_id": task_id,
+        "waiting_for": "Human/Ops",
+        "message": message,
+    }
+    status["status_activity_outbox"] = _status_activity_outbox([event])
+    write_status(config, status, source="supervisor-failure-loop")
+    return event
+
+
+def record_failure_loop_blocker(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    message: str,
+) -> dict[str, Any] | None:
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        event = _prepare_failure_loop_blocker_locked(
+            config, task_id=task_id, message=message
+        )
+    if event is None:
+        return None
+    sync_status_pipeline(config)
+    write_activity_log(
+        config,
+        {
+            "type": "task_failure_loop_blocked",
+            "task_id": event["task_id"],
+            "message": event["message"],
+        },
+    )
+    return event
 
 
 def ownerless_in_progress_settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -7617,19 +8411,15 @@ def merged_delivery_commits(
     if not re.fullmatch(r"[0-9a-f]{40,64}", head):
         return None
     try:
-        repo_root = config_path(config, "status_file").parent
-    except (KeyError, TypeError):
+        repo_root = worker_worktree_source_root(config, repository_id="pantheon")
+        base_ref = worker_repository_base_ref(config, "pantheon")
+    except (KeyError, RuntimeError, TypeError):
         return None
     limit = str(int(ownerless_in_progress_settings(config).get("merge_search_limit", 200) or 200))
 
-    bases: list[tuple[str, str]] = []
-    for base in worktree_cleanup_settings(config).get("base_branches", []):
-        for candidate in (f"origin/{base}", base):
-            if _git_ref_exists(repo_root, candidate):
-                bases.append((str(base), candidate))
-                break
-
-    for _base_name, candidate in bases:
+    if not _git_ref_exists(repo_root, base_ref):
+        return None
+    for candidate in (base_ref,):
         if not _git_commit_is_ancestor(repo_root, head, candidate):
             continue
         output = _git_capture(
@@ -7992,7 +8782,6 @@ def _persist_task_reassignment_locked(
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
     resolve_open_handoffs: bool = False,
-    activity_event_type: str = "task_reassigned",
     expected_owner: str | None = None,
     expected_reviewer: str | None = None,
     expected_status: str | None = None,
@@ -8087,14 +8876,12 @@ def _persist_task_reassignment_locked(
             }
         )
 
-    event = rewrite_task_machine.assignment_activity_event(
+    event = rewrite_task_machine.build_assignment_activity_event(
         task_id=task_id,
         timestamp=timestamp,
         assignment=assignment,
         old_generation=old_generation,
         new_generation=old_generation + 1,
-        message=message,
-        event_type=activity_event_type,
     )
     status["status_activity_outbox"] = _status_activity_outbox([event])
     write_status(config, status, source="supervisor-reassignment")
@@ -8113,7 +8900,6 @@ def persist_task_reassignment(
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
     resolve_open_handoffs: bool = False,
-    activity_event_type: str = "task_reassigned",
     expected_owner: str | None = None,
     expected_reviewer: str | None = None,
     expected_status: str | None = None,
@@ -8136,7 +8922,6 @@ def persist_task_reassignment(
             handoff_from=handoff_from,
             resolve_open_blockers=resolve_open_blockers,
             resolve_open_handoffs=resolve_open_handoffs,
-            activity_event_type=activity_event_type,
             expected_owner=expected_owner,
             expected_reviewer=expected_reviewer,
             expected_status=expected_status,
@@ -8203,6 +8988,78 @@ def assignment_terminal_unavailability(
         # endpoint is durably terminal.
         return None
     return terminal_reasons[0] if terminal_reasons else None
+
+
+LOAD_BALANCE_REASON = "sustained_lane_saturation"
+
+
+def assignment_saturated_recoverable(
+    config: dict[str, Any],
+    owner: str,
+    *,
+    agent_loads: Mapping[str, list[int]],
+    fallback_candidates: list[str],
+) -> str | None:
+    """Return the load-balance reason when a fully-healthy owner lane is
+    saturated and a configured fallback currently has spare capacity.
+
+    This is deliberately narrow and never overlaps
+    ``assignment_terminal_unavailability``: it only looks at current
+    occupancy vs. ``agents.<id>.max_parallel``, never at health/auth/quota,
+    and only returns non-None when a *configured* fallback (not an arbitrary
+    roster agent) is presently under its own capacity. Callers must also
+    hold this condition for a minimum duration before acting on it -- a
+    momentarily full lane is normal dispatch noise, not a load-balance
+    signal, and treating it as one would thrash ownership every cycle.
+    """
+
+    capacity = agent_dispatch_capacity(config, normalize_agent_id(owner))
+    if capacity <= 0:
+        return None
+    if len(agent_loads.get(owner, [])) < capacity:
+        return None
+    for candidate in fallback_candidates:
+        candidate_capacity = agent_dispatch_capacity(config, normalize_agent_id(candidate))
+        if candidate_capacity <= 0:
+            continue
+        if len(agent_loads.get(candidate, [])) < candidate_capacity:
+            return LOAD_BALANCE_REASON
+    return None
+
+
+LOAD_BALANCE_TRANSIENT_REASON = "owner_transiently_blocked"
+
+
+def assignment_transiently_blocked_recoverable(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    owner: str,
+    *,
+    state: dict[str, Any],
+    fallback_candidates: list[str],
+) -> str | None:
+    """Return the load-balance reason when the owner cannot take this task
+    right now for ANY reason -- stale/unknown health cache, a short
+    retry-after window, zero capacity -- while a configured fallback
+    currently can.
+
+    Unlike ``assignment_terminal_unavailability`` this does not require the
+    block to be durable: ``agent_can_take_task`` already fails closed on
+    anything short of a currently-healthy endpoint and account, which covers
+    transient states that normally clear on their own within one probe
+    cycle. Precisely because most of these self-heal quickly, callers MUST
+    hold this condition for the same minimum duration as
+    ``assignment_saturated_recoverable`` before acting -- reassigning away
+    from an owner that was about to recover on its own just churns
+    ownership for nothing.
+    """
+
+    if agent_can_take_task(config, owner, task, state=state):
+        return None
+    for candidate in fallback_candidates:
+        if agent_can_take_task(config, candidate, task, state=state):
+            return LOAD_BALANCE_TRANSIENT_REASON
+    return None
 
 
 def unavailable_assignment_fallback_refresh_targets(
@@ -8351,11 +9208,19 @@ def reconcile_unavailable_assignments(
     config: dict[str, Any],
     state: dict[str, Any],
 ) -> bool:
-    """Bounded recovery for assignments on durably unavailable lanes.
+    """Bounded recovery for assignments on durably unavailable lanes, plus
+    optional load-balance recovery for saturated or transiently-blocked
+    lanes.
 
-    This is the sole automatic assignment mutation path.  It does not infer
-    unavailability from a stale or missing probe, and it never launches work.
-    The normal planner consumes the committed assignment on a later pass.
+    This is the sole automatic assignment mutation path.  The durable branch
+    does not infer unavailability from a stale or missing probe.  The
+    load-balance branch (gated by ``load_balance_settings``, off by default)
+    is the only place occupancy vs. ``agents.<id>.max_parallel`` and a
+    non-durable dispatch block both feed an assignment decision -- see
+    ``assignment_saturated_recoverable`` and
+    ``assignment_transiently_blocked_recoverable``.  Neither branch launches
+    work; the normal planner consumes the committed assignment on a later
+    pass.
     """
 
     settings = worker_reassignment_settings(config)
@@ -8364,6 +9229,7 @@ def reconcile_unavailable_assignments(
     limit = max(0, int(settings.get("max_reassignments_per_cycle", 4) or 0))
     if limit == 0:
         return False
+    load_balance = load_balance_settings(config)
 
     status = load_status(config)
     tasks = [task for task in status.get("tasks", []) if isinstance(task, dict)]
@@ -8385,9 +9251,17 @@ def reconcile_unavailable_assignments(
             canonical_pending_agent or str(pending_agent).strip()
         )
     eligible_owner_statuses = {"todo", "in_progress", "review_approved", "blocked"}
+    # A load-balance move never touches a task that has already started under
+    # its incumbent (in_progress) or that is on an explicit recovery hold
+    # (blocked) -- only work that has not begun moves for capacity reasons.
+    load_balance_eligible_statuses = {"todo", "review_approved"}
     review_statuses = normalized_status_set(
         ready_dispatch_settings(config).get("review_statuses"), ["review"]
     )
+    agent_loads = agent_dispatch_loads(config, state, active_statuses, task_map=task_map)
+    load_balance_watch = state.setdefault("load_balance_watch", {})
+    for stale_task_id in [tid for tid in load_balance_watch if tid not in task_map]:
+        load_balance_watch.pop(stale_task_id, None)
     changed = False
     actions: list[dict[str, Any]] = []
 
@@ -8409,6 +9283,8 @@ def reconcile_unavailable_assignments(
         role = ""
         unavailable_actor = ""
         unavailable_reason: str | None = None
+        is_load_balance = False
+        load_balance_owner_candidates: list[str] = []
         if task_status in review_statuses and not reviewer_is_explicit_human_gate(reviewer):
             unavailable_reason = assignment_terminal_unavailability(
                 config, state, reviewer
@@ -8423,6 +9299,57 @@ def reconcile_unavailable_assignments(
             if unavailable_reason:
                 role = "owner"
                 unavailable_actor = owner
+            elif (
+                load_balance["enabled"]
+                and owner
+                and task_status in load_balance_eligible_statuses
+            ):
+                fallback_candidates = reassignment_candidate_order(
+                    config,
+                    settings.get("owner_fallbacks", {}) or {},
+                    roots=[owner],
+                    exclude={owner, reviewer},
+                )
+                saturation_reason = assignment_saturated_recoverable(
+                    config,
+                    owner,
+                    agent_loads=agent_loads,
+                    fallback_candidates=fallback_candidates,
+                ) or assignment_transiently_blocked_recoverable(
+                    config,
+                    task,
+                    owner,
+                    state=state,
+                    fallback_candidates=fallback_candidates,
+                )
+                if saturation_reason is None:
+                    load_balance_watch.pop(task_id, None)
+                else:
+                    watch_entry = load_balance_watch.get(task_id) or {}
+                    first_seen_at = _parse_iso_utc(str(watch_entry.get("first_seen_at") or ""))
+                    now_at = _parse_iso_utc(utc_now())
+                    if first_seen_at is None:
+                        load_balance_watch[task_id] = {
+                            "first_seen_at": utc_now(),
+                            "owner": owner,
+                        }
+                    elif (
+                        now_at is not None
+                        and (now_at - first_seen_at).total_seconds()
+                        >= load_balance["min_saturated_seconds"]
+                    ):
+                        role = "owner"
+                        unavailable_actor = owner
+                        unavailable_reason = saturation_reason
+                        is_load_balance = True
+                        fallback_candidates.sort(
+                            key=lambda name: (
+                                agent_dispatch_capacity(config, normalize_agent_id(name))
+                                - len(agent_loads.get(name, []))
+                            ),
+                            reverse=True,
+                        )
+                        load_balance_owner_candidates = fallback_candidates
         if not role or not unavailable_reason:
             continue
 
@@ -8460,11 +9387,15 @@ def reconcile_unavailable_assignments(
                 require_owner_ready=False,
             )
         else:
-            candidates = reassignment_candidate_order(
-                config,
-                settings.get("owner_fallbacks", {}) or {},
-                roots=[owner],
-                exclude={owner, reviewer},
+            candidates = (
+                load_balance_owner_candidates
+                if is_load_balance
+                else reassignment_candidate_order(
+                    config,
+                    settings.get("owner_fallbacks", {}) or {},
+                    roots=[owner],
+                    exclude={owner, reviewer},
+                )
             )
             pair = plan_task_assignment_pair(
                 config,
@@ -8476,10 +9407,21 @@ def reconcile_unavailable_assignments(
         if pair is None:
             continue
         new_owner, new_reviewer = pair
-        message = (
-            f"Recovery reassigned {role} from {unavailable_actor} after "
-            f"durable {unavailable_reason}; planner will redispatch normally."
-        )
+        if is_load_balance:
+            if unavailable_reason == LOAD_BALANCE_TRANSIENT_REASON:
+                condition = "was blocked from auto-dispatch (unhealthy/stale probe/retry-after)"
+            else:
+                condition = "was full"
+            message = (
+                f"Load-balanced owner from {unavailable_actor} to {new_owner}: "
+                f"lane {condition} for >= {load_balance['min_saturated_seconds']}s while "
+                f"{new_owner} had spare capacity; planner will redispatch normally."
+            )
+        else:
+            message = (
+                f"Recovery reassigned {role} from {unavailable_actor} after "
+                f"durable {unavailable_reason}; planner will redispatch normally."
+            )
         if not persist_task_reassignment(
             config,
             task_id=task_id,
@@ -8499,6 +9441,7 @@ def reconcile_unavailable_assignments(
             expected_generation=task_generation(task),
         ):
             continue
+        load_balance_watch.pop(task_id, None)
         task["owner"] = new_owner
         task["reviewer"] = new_reviewer
         actions.append(
@@ -8509,9 +9452,126 @@ def reconcile_unavailable_assignments(
                 "owner": new_owner,
                 "reviewer": new_reviewer,
                 "reason": unavailable_reason,
+                "trigger": "load_balance" if is_load_balance else "durable_unavailable",
             }
         )
         changed = True
+
+    return changed
+
+
+def reconcile_failure_loops(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Bounded auto-governance for a task that keeps failing under its owner.
+
+    Off by default (``worker_reassignment.failure_loop.enabled``).  Two-tier
+    response, both reusing existing governed write paths so this adds no new
+    mutation authority: the first ``max_auto_reassignments`` times a task
+    hits the failure threshold within the window, it is hand-checked to the
+    next configured ``owner_fallbacks`` candidate via the same
+    ``plan_task_assignment_pair``/``persist_task_reassignment`` pipeline the
+    load-balance mechanism uses -- on the theory the failure may be
+    agent-specific.  If it keeps failing at that rate under a fresh owner
+    too, further reassignment is unlikely to be the fix: the task is put on
+    an explicit Human/Ops hold (``record_failure_loop_blocker``) instead of
+    being bounced between agents forever, so it stops consuming capacity for
+    nothing and surfaces for investigation rather than spinning silently.
+
+    Never touches a task with a live active worker (that generation may yet
+    succeed) or one already on any explicit hold.
+    """
+
+    settings = failure_loop_settings(config)
+    if not settings["enabled"]:
+        return False
+    reassignment_settings = worker_reassignment_settings(config)
+    if not reassignment_settings.get("enabled", True):
+        return False
+
+    status = load_status(config)
+    tasks = [task for task in status.get("tasks", []) if isinstance(task, dict)]
+    task_map = {str(task.get("id") or ""): task for task in tasks}
+    active_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("active_worker_statuses"), []
+    )
+    _active_agents, active_pairs = active_worker_indexes(state, active_statuses)
+    active_task_ids = {task_id for task_id, _agent in active_pairs if task_id}
+    eligible_statuses = {"todo", "in_progress"}
+
+    watch = state.setdefault("failure_loop_watch", {})
+    for stale_task_id in [tid for tid in watch if tid not in task_map]:
+        watch.pop(stale_task_id, None)
+
+    failure_counts = recent_task_failure_counts(
+        config, window_seconds=settings["window_seconds"]
+    )
+    changed = False
+    for task_id, count in failure_counts.items():
+        if count < settings["max_failures_in_window"]:
+            continue
+        task = task_map.get(task_id)
+        if not task:
+            continue
+        task_status = str(task.get("status") or "").strip().lower()
+        if task_status not in eligible_statuses:
+            continue
+        if task_id in active_task_ids:
+            continue
+        if str(task.get("waiting_for") or "").strip():
+            continue
+
+        entry = watch.setdefault(task_id, {"auto_reassignments": 0})
+        owner = canonical_agent_name(config, str(task.get("owner") or ""))
+        reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+        attempts_used = int(entry.get("auto_reassignments", 0))
+
+        if attempts_used < settings["max_auto_reassignments"]:
+            candidates = reassignment_candidate_order(
+                config,
+                reassignment_settings.get("owner_fallbacks", {}) or {},
+                roots=[owner] if owner else [],
+                exclude={owner, reviewer},
+            )
+            pair = plan_task_assignment_pair(
+                config,
+                task,
+                state=state,
+                owner_candidates=candidates,
+                preferred_reviewers=[reviewer],
+            )
+            if pair is None:
+                continue
+            new_owner, new_reviewer = pair
+            message = (
+                f"Repeated failures ({count} in {settings['window_seconds']}s) under "
+                f"{owner}; auto-reassigning to {new_owner} "
+                f"(attempt {attempts_used + 1}/{settings['max_auto_reassignments']})."
+            )
+            if not persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=new_owner,
+                new_reviewer=new_reviewer,
+                message=message,
+                handoff_from=owner,
+                expected_owner=owner,
+                expected_reviewer=reviewer,
+                expected_status=str(task.get("status") or ""),
+                expected_generation=task_generation(task),
+            ):
+                continue
+            task["owner"] = new_owner
+            task["reviewer"] = new_reviewer
+            entry["auto_reassignments"] = attempts_used + 1
+            changed = True
+        else:
+            message = (
+                f"Repeated failures ({count} in {settings['window_seconds']}s) persisted "
+                f"under {owner} even after {attempts_used} auto-reassignment(s); "
+                f"holding for Human/Ops investigation."
+            )
+            if record_failure_loop_blocker(config, task_id=task_id, message=message) is not None:
+                watch.pop(task_id, None)
+                changed = True
 
     return changed
 
@@ -8679,7 +9739,8 @@ def poll_worker_observation_stage(
     if marker_changed:
         poll_counts["marker_updates"] += 1
         changed = True
-    update_from_log(config, worker)
+    meaningful_progress_advanced = update_from_log(config, worker, now=now)
+    commit_progress_advanced = False
     alive = pid_is_alive(worker.get("pid"))
     if (
         alive
@@ -8711,12 +9772,10 @@ def poll_worker_observation_stage(
             worker,
             now,
         )
-        if process_activity_advanced and heartbeat_fresh:
-            progress_at = _isoformat_utc(now)
-            worker["last_process_activity_at"] = progress_at
-            worker["last_work_progress_at"] = progress_at
-            changed = True
-        else:
+        # Process-tree activity is retained as diagnostic telemetry only. It
+        # must not renew a work lease or reset the meaningful-progress stall
+        # clock; otherwise a wedged AGY process can live forever on CPU/I/O.
+        if process_activity_advanced and not heartbeat_fresh:
             process_activity_advanced = False
 
     if (
@@ -8770,6 +9829,8 @@ def poll_worker_observation_stage(
     return {
         "changed": changed,
         "alive": alive,
+        "meaningful_progress_advanced": meaningful_progress_advanced,
+        "commit_progress_advanced": commit_progress_advanced,
         "process_activity_advanced": process_activity_advanced,
         "stop": stop,
     }
@@ -8923,17 +9984,16 @@ def poll_worker_stall_stage(
     worker: dict[str, Any],
     *,
     alive: bool,
-    last_event_advanced: bool,
-    process_activity_advanced: bool,
+    progress_advanced: bool,
     now: datetime,
     stall_after: float,
 ) -> dict[str, bool]:
-    """Handle recovery/stall transitions for a live worker as one stage."""
+    """Mark a stale worker; lease expiry remains the sole termination path."""
     if not alive:
         return {"changed": False, "stop": False}
 
     changed = False
-    if worker.get("status") == "stalled" and (last_event_advanced or process_activity_advanced):
+    if worker.get("status") == "stalled" and progress_advanced:
         worker["status"] = "running"
         worker["last_event_at"] = worker.get("last_event_at") or utc_now()
         write_activity_log(
@@ -8942,7 +10002,7 @@ def poll_worker_stall_stage(
                 "type": "worker_recovered",
                 "provider": worker.get("provider"),
                 "task_id": worker.get("task_id"),
-                "message": "Worker produced output or measurable process activity after being marked stalled; status restored to running.",
+                "message": "Worker produced meaningful provider or commit progress after being marked stalled; status restored to running.",
                 "worker_run_id": worker["run_id"],
             },
         )
@@ -8952,62 +10012,10 @@ def poll_worker_stall_stage(
         )
         return {"changed": True, "stop": True}
 
-    last_event_dt = _parse_iso_utc(str(worker.get("last_event_at") or ""))
-    last_work_progress_dt = _parse_iso_utc(
-        str(
-            worker.get("last_work_progress_at")
-            or worker.get("last_process_activity_at")
-            or ""
-        )
-    )
-    activity_timestamps = [
-        value
-        for value in (last_event_dt, last_work_progress_dt)
-        if value is not None
-    ]
-    if process_activity_advanced and last_event_dt and (now - last_event_dt).total_seconds() >= stall_after:
-        last_notice_dt = _parse_iso_utc(str(worker.get("last_stall_deferred_at") or ""))
-        if last_notice_dt is None or (now - last_notice_dt).total_seconds() >= stall_after:
-            worker["last_stall_deferred_at"] = _isoformat_utc(now)
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_stall_deferred",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": "No provider output, but fresh heartbeat and measurable process-tree activity were observed; stall action deferred.",
-                    "worker_run_id": worker["run_id"],
-                    "process_commands": (worker.get("process_activity_snapshot") or {}).get("commands", []),
-                },
-            )
-            changed = True
-    if activity_timestamps:
-        stalled_for_seconds = (now - max(activity_timestamps)).total_seconds()
-        if worker.get("status") == "stalled" and stalled_for_seconds >= stall_after * 2:
-            if not terminate_worker_pid(worker.get("pid")):
-                return {"changed": changed, "stop": True}
-            worker["status"] = "failed"
-            worker["last_event_at"] = utc_now()
-            worker["last_error"] = (
-                "Worker had no output or measurable process activity for "
-                f"{int(stalled_for_seconds)} seconds and was terminated for redispatch."
-            )
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_failed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": worker["last_error"],
-                    "worker_run_id": worker["run_id"],
-                },
-            )
-            finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-            console_log(
-                f"worker terminated after extended stall: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
-                quiet=SUPERVISOR_LOG_QUIET,
-            )
-            return {"changed": True, "stop": True}
+    last_work_progress_dt = _parse_iso_utc(str(worker.get("last_work_progress_at") or ""))
+    baseline = last_work_progress_dt or _parse_iso_utc(str(worker.get("lease_acquired_at") or ""))
+    if baseline is not None:
+        stalled_for_seconds = (now - baseline).total_seconds()
         if stalled_for_seconds >= stall_after and worker.get("status") != "stalled":
             worker["status"] = "stalled"
             write_activity_log(
@@ -9016,11 +10024,14 @@ def poll_worker_stall_stage(
                     "type": "worker_stalled",
                     "provider": worker.get("provider"),
                     "task_id": worker.get("task_id"),
-                    "message": f"Worker appears stalled after {int(stall_after)} seconds without output or measurable process-tree activity.",
+                    "message": f"Worker appears stalled after {int(stall_after)} seconds without meaningful provider or commit progress.",
                     "worker_run_id": worker["run_id"],
                 },
             )
             changed = True
+    # Preserve the existing stage short-circuit for live workers. The
+    # observation stage's lease expiry is the only code allowed to terminate
+    # this process; this stage only changes the diagnostic status.
     return {"changed": changed, "stop": True}
 
 
@@ -9046,7 +10057,9 @@ def poll_worker_failure_stage(
         "superseded",
     }:
         return {"changed": False, "stop": True}
-    failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
+    # Structured provider result errors remain authoritative even when the
+    # wrapper exits with code 0; AGY reports some terminal failures that way.
+    failure_reason = detect_worker_failure(worker)
     if not failure_reason:
         return {"changed": False, "stop": False}
 
@@ -9177,20 +10190,21 @@ def poll_worker_completion_stage(
     *,
     task_map: dict[str, dict[str, Any]],
     redispatch_statuses: set[str],
+    governance_activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, bool]:
     """Classify a cleanly exited worker and apply its terminal transition."""
     if worker.get("status") in {"completed", "failed", "waiting_approval", "suspended_approval"}:
         return {"changed": False, "stop": True}
 
-    task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
-    terminal_statuses = {
-        str(value).lower()
-        for value in ready_dispatch_settings(config).get(
-            "worker_terminal_statuses",
-            ["done", "review_approved"],
-        )
-    }
-    if task_status in terminal_statuses:
+    task = task_map.get(worker.get("task_id"))
+    task_status = str((task or {}).get("status") or "").lower()
+    canonical_terminal_status = canonical_worker_terminal_status(
+        config,
+        worker,
+        task,
+        activity_events=governance_activity_events,
+    )
+    if canonical_terminal_status is not None:
         worker["status"] = "completed"
         worker["last_event_at"] = utc_now()
         write_activity_log(
@@ -9339,7 +10353,12 @@ def poll_worker_assignment_stage(
     generation_fence_crossed = isinstance(
         task, Mapping
     ) and not worker_matches_current_task_generation(worker, task)
-    handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
+    handoff_status = canonical_worker_terminal_status(
+        config,
+        worker,
+        task,
+        activity_events=governance_activity_events,
+    )
     lease_guard_decision: dict[str, Any] | None = None
     if handoff_status is not None:
         if alive:
@@ -9553,7 +10572,9 @@ def poll_workers(
         if run_id:
             resolved_by_run.setdefault(run_id, []).append(item)
 
-    stall_after = float(config.get("supervisor", {}).get("stall_after_seconds", 300))
+    stall_after = float(
+        worker_runtime_settings(config).get("work_progress_stale_seconds", 360)
+    )
     now = datetime.now(timezone.utc)
     changed = retry_due_workers(config, state, now) or changed
     poll_counts = {
@@ -9563,8 +10584,11 @@ def poll_workers(
         "expired_lease_workers_failed": 0,
     }
     workers = state.setdefault("workers", {})
+    if workers and not activity_events:
+        activity_events = recent_governance_activity_events(config)
+    if workers and not governance_activity_events:
+        governance_activity_events = activity_events or recent_governance_activity_events(config)
     for run_id, worker in list(workers.items()):
-        previous_last_event_at = worker.get("last_event_at")
         orphan = poll_worker_orphan_stage(
             config,
             state,
@@ -9586,7 +10610,10 @@ def poll_workers(
         )
         changed = bool(observation["changed"]) or changed
         alive = bool(observation["alive"])
-        process_activity_advanced = bool(observation["process_activity_advanced"])
+        progress_advanced = bool(
+            observation.get("meaningful_progress_advanced")
+            or observation.get("commit_progress_advanced")
+        )
         if observation["stop"]:
             continue
         assignment = poll_worker_assignment_stage(
@@ -9603,11 +10630,6 @@ def poll_workers(
         changed = bool(assignment["changed"]) or changed
         if assignment["stop"]:
             continue
-        last_event_advanced = bool(
-            previous_last_event_at
-            and worker.get("last_event_at")
-            and worker.get("last_event_at") > previous_last_event_at
-        )
         approval = poll_worker_approval_stage(
             config,
             state,
@@ -9625,8 +10647,7 @@ def poll_workers(
             state,
             worker,
             alive=alive,
-            last_event_advanced=last_event_advanced,
-            process_activity_advanced=process_activity_advanced,
+            progress_advanced=progress_advanced,
             now=now,
             stall_after=stall_after,
         )
@@ -9649,6 +10670,7 @@ def poll_workers(
             worker,
             task_map=task_map,
             redispatch_statuses=redispatch_statuses,
+            governance_activity_events=governance_activity_events,
         )
         changed = bool(completion["changed"]) or changed
     changed = cleanup_inactive_worker_worktrees(config, state) or changed
@@ -9660,17 +10682,6 @@ def poll_workers(
         emit_activity=bool(poll_counts["expired_lease_workers_failed"]),
     )
     return changed
-
-
-def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, Any]:
-    raw = config.get("worker_worktree_housekeeping")
-    settings = raw if isinstance(raw, dict) else {}
-    return {
-        "enabled": bool(settings.get("enabled", True)),
-        "tick_interval_seconds": int(settings.get("tick_interval_seconds", 600) or 0),
-        "base_branches": [str(b).strip() for b in (settings.get("base_branches") or ["dev", "master", "main"]) if str(b).strip()],
-        "max_removals_per_tick": int(settings.get("max_removals_per_tick", 5)),
-    }
 
 
 def _path_is_within(path: Path, root: Path) -> bool:
@@ -9809,25 +10820,23 @@ def _archive_dirty_worktree(
     return archive_dir
 
 
-def _merged_task_branches(repo_root: Path, base_branches: list[str]) -> set[str]:
+def _merged_task_branches(repo_root: Path, base_ref: str) -> set[str]:
     merged_branches: set[str] = set()
-    for ref in base_branches:
-        for candidate in (f"origin/{ref}", ref):
-            if not _git_ref_exists(repo_root, candidate):
-                continue
-            proc = subprocess.run(
-                ["git", "branch", "--merged", candidate, "--list", "task/*"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if proc.returncode != 0:
-                continue
-            for line in proc.stdout.splitlines():
-                name = line.strip().lstrip("*").strip()
-                if name:
-                    merged_branches.add(name)
+    if not _git_ref_exists(repo_root, base_ref):
+        return merged_branches
+    proc = subprocess.run(
+        ["git", "branch", "--merged", base_ref, "--list", "task/*"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return merged_branches
+    for line in proc.stdout.splitlines():
+        name = line.strip().lstrip("*").strip()
+        if name:
+            merged_branches.add(name)
     return merged_branches
 
 
@@ -9857,8 +10866,6 @@ def _cleanup_registered_worker_worktrees(
     if not settings["enabled"]:
         return False
     worktree_settings = worker_worktree_settings(config)
-    if not worktree_settings.get("enabled", False):
-        return False
     base_root = _worker_worktree_base_root(config, worktree_settings)
     if not base_root.exists():
         return False
@@ -9873,27 +10880,58 @@ def _cleanup_registered_worker_worktrees(
     if not isinstance(leases, dict):
         return False
 
-    repository_roots: set[Path] = {
-        worker_worktree_source_root(config, worktree_settings)
-    }
-    for lease in leases.values():
-        if not isinstance(lease, dict) or not lease.get("source_root"):
+    repository_sources: dict[Path, tuple[str, str]] = {}
+
+    def add_repository_source(
+        repository_id: str,
+        source_root: Path,
+        base_ref: str,
+    ) -> None:
+        repository_sources.setdefault(source_root.resolve(), (repository_id, base_ref))
+
+    registered_repository_ids = (
+        list(repositories(config)) if include_unregistered else ["pantheon"]
+    )
+    for repository_id in registered_repository_ids:
+        try:
+            source_root = worker_worktree_source_root(
+                config,
+                repository_id=repository_id,
+            )
+            base_ref = worker_repository_base_ref(config, repository_id)
+        except RuntimeError:
             continue
-        repository_roots.add(Path(str(lease["source_root"])).expanduser().resolve())
-    if include_unregistered:
-        for repository_id in ("execute_plans", "runtime_platform", "lean_engine"):
-            repository_root = repository_local_path(config, repository_id)
-            if repository_root is not None and repository_root.is_dir():
-                repository_roots.add(repository_root.resolve())
+        if source_root.is_dir():
+            add_repository_source(repository_id, source_root, base_ref)
+
+    for lease in leases.values():
+        if not isinstance(lease, dict):
+            continue
+        repository_id = str(lease.get("repository_id") or "pantheon")
+        try:
+            source_root = Path(
+                str(
+                    lease.get("source_root")
+                    or worker_worktree_source_root(config, repository_id=repository_id)
+                )
+            ).expanduser().resolve()
+            base_ref = str(
+                lease.get("base_ref")
+                or worker_repository_base_ref(config, repository_id)
+            )
+        except RuntimeError:
+            continue
+        if source_root.is_dir():
+            add_repository_source(repository_id, source_root, base_ref)
 
     records_by_path: dict[Path, tuple[dict[str, str], Path]] = {}
     merged_by_root: dict[Path, set[str]] = {}
-    for repository_root in repository_roots:
+    for repository_root, (_repository_id, base_ref) in repository_sources.items():
         if not repository_root.is_dir():
             continue
         if require_merged:
             merged_by_root[repository_root] = _merged_task_branches(
-                repository_root, list(settings["base_branches"])
+                repository_root, base_ref
             )
         for record in _git_worktree_records(repository_root):
             wt_value = record.get("worktree")
@@ -9926,9 +10964,16 @@ def _cleanup_registered_worker_worktrees(
             continue
         record_binding = records_by_path.get(wt_path)
         record = record_binding[0] if record_binding is not None else {}
-        lease_source = Path(
-            str(lease.get("source_root") or worker_worktree_source_root(config, worktree_settings))
-        ).expanduser().resolve()
+        repository_id = str(lease.get("repository_id") or "pantheon")
+        try:
+            lease_source = Path(
+                str(
+                    lease.get("source_root")
+                    or worker_worktree_source_root(config, repository_id=repository_id)
+                )
+            ).expanduser().resolve()
+        except RuntimeError:
+            continue
         repository_root = record_binding[1] if record_binding is not None else lease_source
         branch = str(lease.get("branch") or _worktree_record_branch(record) or "")
         candidates.append(
@@ -9950,7 +10995,7 @@ def _cleanup_registered_worker_worktrees(
         "at": utc_now(),
         "source": source,
         "status_root": str(status_root.resolve()),
-        "workspace_source_roots": sorted(str(root) for root in repository_roots),
+        "workspace_source_roots": sorted(str(root) for root in repository_sources),
         "checked": 0,
         "removed": 0,
         "skipped": 0,
@@ -10096,23 +11141,20 @@ def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
 
 def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> bool:
     """Remove finished worker worktrees whose branches are merged."""
-    settings = worker_worktree_housekeeping_settings(config)
-    if not settings["enabled"]:
-        return False
-
-    interval = settings["tick_interval_seconds"]
-    bucket = state.setdefault("worker_worktree_housekeeping", {})
+    settings = worktree_cleanup_settings(config)
+    interval = settings["orphan_prune_interval_seconds"]
+    bucket = state.setdefault("worker_worktree_cleanup", {})
     if interval > 0:
-        last_at = bucket.get("last_run_at")
+        last_at = bucket.get("last_orphan_prune_at")
         last_dt = _parse_iso_utc(str(last_at or ""))
         now = datetime.now(timezone.utc)
         if last_dt is not None and (now - last_dt).total_seconds() < interval:
             return False
-    bucket["last_run_at"] = utc_now()
+    bucket["last_orphan_prune_at"] = utc_now()
     return _cleanup_registered_worker_worktrees(
         config,
         state,
-        source="worker_worktree_housekeeping",
+        source="worker_worktree_cleanup",
         require_merged=True,
         include_unregistered=True,
     )
@@ -10351,9 +11393,19 @@ def schedule_missing_process_retry(
     state: dict[str, Any],
     worker: dict[str, Any],
     reason: str,
+    *,
+    status: Mapping[str, Any] | None = None,
+    task: Mapping[str, Any] | None = None,
 ) -> bool:
     """Schedule a reconstructable missing-process retry within its total budget."""
 
+    if (
+        isinstance(status, Mapping)
+        and isinstance(task, Mapping)
+        and str(task.get("status") or "").strip().lower() == "blocked"
+        and task_has_explicit_recovery_hold(status, task)
+    ):
+        return False
     retry = worker_retry_settings(
         config,
         str(worker.get("provider") or worker.get("agent_id") or ""),
@@ -10589,9 +11641,12 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         "stale_queue_records_completed": 0,
     }
     try:
-        task_map = task_index_from_status(config, load_status(config))
+        status_snapshot = load_status(config)
+        task_map = task_index_from_status(config, status_snapshot)
     except KeyError:
+        status_snapshot = {}
         task_map = {}
+    governance_activity_events = recent_governance_activity_events(config)
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
@@ -10630,7 +11685,37 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             else "Worker process missing during supervisor boot reconciliation."
         )
         task = task_map.get(str(worker.get("task_id") or ""))
-        handoff_status = owner_worker_canonical_handoff_status(config, worker, task)
+        if (
+            isinstance(task, Mapping)
+            and str(task.get("status") or "").strip().lower() == "blocked"
+            and task_has_explicit_recovery_hold(status_snapshot, task)
+        ):
+            worker["status"] = "completed"
+            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
+            worker.pop("last_error", None)
+            finalize_queue_event_record(config, state, worker, "completed")
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_completed_on_explicit_task_hold",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": (
+                        "Worker process ended after the canonical task entered "
+                        "an explicit blocked hold; automatic retry suppressed."
+                    ),
+                    "worker_run_id": run_id,
+                    "waiting_for": task.get("waiting_for"),
+                },
+            )
+            changed = True
+            continue
+        handoff_status = canonical_worker_terminal_status(
+            config,
+            worker,
+            task,
+            activity_events=governance_activity_events,
+        )
         if handoff_status is not None:
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
@@ -10656,49 +11741,10 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
 
         runner_succeeded = worker_runner_succeeded(worker)
 
-        task_status = str((task or {}).get("status") or "").lower()
-        terminal_statuses = {
-            str(value).lower()
-            for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
-        }
-        dispatch_reason = str(
-            (worker.get("request_snapshot") or {}).get("reason") or ""
-        ).strip()
-        finalize_statuses = normalized_status_set(
-            ready_dispatch_settings(config).get("finalize_statuses"),
-            ["review_approved"],
-        )
-        finalize_still_open = (
-            dispatch_reason == REASON_OWNED_FINALIZE
-            and task_status in finalize_statuses
-        )
-        if (
-            runner_succeeded
-            and task_status in terminal_statuses
-            and not finalize_still_open
-        ):
-            worker["status"] = "completed"
-            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
-            finalize_queue_event_record(config, state, worker, "completed")
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_completed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": "Worker exited successfully during supervisor boot reconciliation.",
-                    "worker_run_id": run_id,
-                    "pr_url": worker.get("pr_url"),
-                    "session_url": worker.get("session_url"),
-                },
-            )
-            changed = True
-            continue
-
         if runner_succeeded:
             reason = GENERIC_WORKER_EXIT_REASON
 
-        detected_reason = None if runner_succeeded else detect_worker_failure(worker)
+        detected_reason = detect_worker_failure(worker)
         failure_kind = ""
         raw_ref: str | None = None
         if detected_reason:
@@ -10728,6 +11774,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     state,
                     worker,
                     retry_reason,
+                    status=status_snapshot,
+                    task=task,
                 ):
                     worker["last_error_raw_ref"] = raw_ref
                     write_activity_log(
@@ -10764,7 +11812,14 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             )
 
         if missing_process:
-            if schedule_missing_process_retry(config, state, worker, reason):
+            if schedule_missing_process_retry(
+                config,
+                state,
+                worker,
+                reason,
+                status=status_snapshot,
+                task=task,
+            ):
                 write_activity_log(
                     config,
                     {
@@ -11145,7 +12200,13 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
     return tasks
 
 
-def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
+def current_dispatch_event_key(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
+) -> str | None:
     reason = str(event.get("reason") or "")
     if not is_execution_dispatch_reason(reason):
         return None
@@ -11166,7 +12227,17 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     if candidate is None or candidate[0] != reason:
         return None
 
-    return str(build_dispatch_event(task, target_agent, reason, resolver).get("key") or "")
+    return str(
+        build_dispatch_event(
+            task,
+            target_agent,
+            reason,
+            resolver,
+            activity_events=activity_events,
+            config=config,
+        ).get("key")
+        or ""
+    )
 
 
 
@@ -11255,6 +12326,98 @@ def dispatch_event_is_in_unchanged_cooldown(
         return False
     elapsed_seconds = (current_at - seen_at).total_seconds()
     return 0 <= elapsed_seconds < cooldown_seconds
+
+
+def recent_task_failure_counts(
+    config: dict[str, Any],
+    *,
+    window_seconds: int,
+    tail_bytes: int = 524288,
+) -> dict[str, int]:
+    """Count ``worker_failed`` activity-log events per task within the last
+    ``window_seconds``, from a bounded read of the tail of the log.
+
+    The activity log is append-only, periodically rotated, and can grow into
+    the tens of MB -- nothing else in the supervisor reads it back, by
+    design.  This reads only the last ``tail_bytes`` (default 512KiB, tens of
+    thousands of events at typical entry sizes -- comfortably more than an
+    hour of fleet activity) rather than the whole file, and holds no
+    cross-cycle offset, so it is naturally correct across rotation: every
+    call re-reads fresh from the current end of file instead of trusting a
+    stored position that rotation could invalidate.
+    """
+
+    path_str = (config.get("paths") or {}).get("activity_log")
+    if not path_str:
+        return {}
+    path = Path(path_str)
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(0, size - tail_bytes))
+            raw = handle.read()
+    except OSError:
+        return {}
+    lines = raw.decode("utf-8", errors="ignore").splitlines()
+    if size > tail_bytes and lines:
+        lines = lines[1:]  # first line may have been cut mid-record
+
+    cutoff = _parse_iso_utc(utc_now())
+    counts: dict[str, int] = {}
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("type") != "worker_failed":
+            continue
+        task_id = str(entry.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        observed_at = _parse_iso_utc(str(entry.get("ts") or ""))
+        if cutoff is not None and observed_at is not None:
+            if (cutoff - observed_at).total_seconds() > window_seconds:
+                continue
+        counts[task_id] = counts.get(task_id, 0) + 1
+    return counts
+
+
+def recent_governance_activity_events(
+    config: dict[str, Any],
+    *,
+    tail_bytes: int = 2 * 1024 * 1024,
+) -> list[dict[str, Any]]:
+    """Read the bounded tail of the existing activity log for exact bindings."""
+
+    path_str = (config.get("paths") or {}).get("activity_log")
+    if not path_str:
+        return []
+    path = Path(path_str)
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(0, size - tail_bytes))
+            raw = handle.read()
+    except OSError:
+        return []
+    lines = raw.decode("utf-8", errors="ignore").splitlines()
+    if size > tail_bytes and lines:
+        lines = lines[1:]
+    events: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            event = json.loads(line.strip())
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(event, dict)
+            and str(event.get("type") or "") in GOVERNANCE_LIFECYCLE_EVENT_TYPES
+        ):
+            events.append(event)
+    return events
 
 
 def agent_dispatch_loads(
@@ -11363,12 +12526,20 @@ def worker_matches_current_task_generation(
     return len(bound_generations) == 1 and task_generation(task) in bound_generations
 
 
-def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
+def stale_dispatch_skip_message(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
+) -> str | None:
     reason = str(event.get("reason") or "")
     if not is_execution_dispatch_reason(reason):
         return None
 
-    expected_key = current_dispatch_event_key(config, event, task_map)
+    expected_key = current_dispatch_event_key(
+        config, event, task_map, activity_events=activity_events
+    )
     task_id = str(event.get("task_id") or "unknown task")
     current_task = task_map.get(task_id)
     if current_task is not None and int(event.get("task_generation") or 0) != task_generation(current_task):
@@ -11391,18 +12562,70 @@ def task_generation(task: Mapping[str, Any] | None) -> int:
     return generation if generation >= 1 else 0
 
 
-def ready_dispatch_signature(task: dict[str, Any], reason: str, task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:
+def task_review_reopen_revision(
+    task: Mapping[str, Any] | None,
+    activity_events: list[dict[str, Any]] | None = None,
+    *,
+    config: dict[str, Any] | None = None,
+) -> int:
+    """Return the bounded review-reopen revision for a task's dispatch identity.
+
+    A rejected review returns work to the unchanged owner. To prevent an
+    in-progress polling loop, the dispatch signature must distinguish a fresh
+    reopen from ordinary in-progress polling without mutating the assignment
+    generation.
+    """
+    raw_explicit: int | None = None
+    if isinstance(task, Mapping):
+        raw = task.get("review_reopen_revision")
+        if raw is None:
+            raw = task.get("reopen_revision")
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+            raw_explicit = raw
+        elif isinstance(raw, str) and raw.strip().isdigit():
+            raw_explicit = int(raw.strip())
+
+    counted = 0
+    if activity_events is None and config is not None:
+        activity_events = recent_governance_activity_events(config)
+    if isinstance(activity_events, (list, tuple)) and isinstance(task, Mapping):
+        task_id = str(task.get("id") or "").strip()
+        if task_id:
+            for event in activity_events:
+                if not isinstance(event, Mapping):
+                    continue
+                if str(event.get("task_id") or "").strip() != task_id:
+                    continue
+                if str(event.get("type") or "").strip().lower() == "reopen":
+                    counted += 1
+
+    if raw_explicit is not None:
+        return max(raw_explicit, counted)
+    return counted
+
+
+def ready_dispatch_signature(
+    task: dict[str, Any],
+    reason: str,
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
+    config: dict[str, Any] | None = None,
+) -> str:
     return json.dumps(
         {
-            "task_id": task.get("id"),
-            "task_generation": task_generation(task),
-            "status": task.get("status"),
-            "reason": reason,
-            "owner": task.get("owner"),
-            "reviewer": task.get("reviewer"),
-            "depends_on": list(task.get("depends_on", []) or []),
-            "dependency_signature": task_dependency_signature(task, task_lookup),
             "delivery_binding_digest": rewrite_task_machine.delivery_binding_digest(task),
+            "dependency_signature": task_dependency_signature(task, task_lookup),
+            "depends_on": list(task.get("depends_on", []) or []),
+            "owner": task.get("owner"),
+            "reason": reason,
+            "review_reopen_revision": task_review_reopen_revision(
+                task, activity_events=activity_events, config=config
+            ),
+            "reviewer": task.get("reviewer"),
+            "status": task.get("status"),
+            "task_generation": task_generation(task),
+            "task_id": task.get("id"),
         },
         sort_keys=True,
         ensure_ascii=True,
@@ -11414,7 +12637,19 @@ def build_dispatch_event(
     target_agent: str,
     reason: str,
     task_lookup: TaskResolver | dict[str, dict[str, Any]],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    resolver = _task_resolver(task_lookup)
+    dependencies = [
+        str(item or "").strip()
+        for item in (task.get("depends_on") or [])
+        if str(item or "").strip()
+    ]
+    reopen_revision = task_review_reopen_revision(
+        task, activity_events=activity_events, config=config
+    )
     task_payload = {
         "id": task.get("id"),
         "generation": task_generation(task),
@@ -11422,6 +12657,15 @@ def build_dispatch_event(
         "reviewer": task.get("reviewer"),
         "artifacts": list(task.get("artifacts", []) or []),
         "next": task.get("next"),
+        "depends_on": dependencies,
+        "dependency_truth": [
+            {
+                "task_id": dependency_id,
+                "status": resolver.dependency_status(dependency_id),
+                "satisfied": resolver.dependency_satisfied(dependency_id),
+            }
+            for dependency_id in dependencies
+        ],
     }
     for key in (
         "task_class",
@@ -11431,11 +12675,22 @@ def build_dispatch_event(
         "mutates_canonical",
         "auto_created_by",
         "delivery_binding",
+        "target_repo",
+        "target_repository",
+        "target_repo_id",
+        "repository_id",
+        "source_ref",
+        "metadata",
+        "external_delivery",
     ):
         if key in task:
             task_payload[key] = task.get(key)
-    signature = ready_dispatch_signature(task, reason, task_lookup)
-    return {
+    if reopen_revision > 0:
+        task_payload["review_reopen_revision"] = reopen_revision
+    signature = ready_dispatch_signature(
+        task, reason, task_lookup, activity_events=activity_events, config=config
+    )
+    event: dict[str, Any] = {
         "key": f"dispatcher:{target_agent}:{task.get('id')}:{reason}:{signature}",
         "task_id": task.get("id"),
         "task_generation": task_generation(task),
@@ -11443,6 +12698,9 @@ def build_dispatch_event(
         "reason": reason,
         "task": task_payload,
     }
+    if reopen_revision > 0:
+        event["review_reopen_revision"] = reopen_revision
+    return event
 
 
 def evaluate_dispatch_candidate(
@@ -11464,6 +12722,7 @@ def evaluate_dispatch_candidate(
     checked_at: str,
     cooldown_seconds: float,
     live_total: int | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Pure candidate decision shared by planning and late delivery.
 
@@ -11517,21 +12776,29 @@ def evaluate_dispatch_candidate(
     priority = admission.task_reason.value
     if task_is_sidecar(task):
         priority += SIDECAR_READY_PRIORITY_OFFSET
-    event = build_dispatch_event(task, target_agent, reason, task_resolver)
+    event = build_dispatch_event(
+        task,
+        target_agent,
+        reason,
+        task_resolver,
+        activity_events=activity_events,
+        config=config,
+    )
     event["delivery_endpoint_id"] = admission.endpoint_id
     event["provider"] = admission.provider_id
     if event["key"] in pending_event_keys:
         return reject("duplicate_event", "The exact delivery intent already exists")
 
-    if reason == REASON_REVIEW_READY and any(
-        str(record.get("event_key") or "") == event["key"]
-        for record in ((state.get("queue") or {}).get("events") or {}).values()
-        if isinstance(record, Mapping)
-    ):
-        return reject(
-            "review_binding_already_served",
-            "The current review binding already consumed its single delivery intent",
-        )
+    # A terminal (completed/failed) queue record with this exact key only
+    # proves a delivery attempt was made, not that the reviewer recorded a
+    # verdict: approve/reopen necessarily change task status and therefore
+    # the signature, so a genuinely-resolved binding can never recompute the
+    # same key again. Permanently rejecting on any past record (regardless
+    # of outcome) strands a review binding forever whenever the one attempt
+    # exits without acting (crash, timeout, silent no-op). In-flight
+    # duplicates are already covered by the pending_event_keys check above,
+    # so retry for a still-unresolved binding falls through to the same
+    # unchanged-cooldown gate every other dispatch reason uses.
     if dispatch_event_is_in_unchanged_cooldown(
         seen_event_keys,
         event["key"],
@@ -11620,12 +12887,16 @@ def dispatch_global_block_reason(
     config: dict[str, Any],
     settings: dict[str, Any],
     *,
+    state: Mapping[str, Any] | None = None,
     live_total: int,
     active_task_ids: set[str],
     pending_task_ids: set[str],
 ) -> str | None:
     if not settings.get("enabled", True):
         return "Dispatch planner is disabled"
+    runtime_block = command_runtime_dispatch_block_reason(state or {})
+    if runtime_block:
+        return runtime_block
     maximum = ready_dispatch_max_concurrent_workers(config)
     pending_only = len(pending_task_ids - active_task_ids)
     if maximum is not None and live_total + pending_only >= maximum:
@@ -11767,6 +13038,9 @@ def dispatch_ready_tasks(
         refresh_demands = []
         state["delivery_health_refresh_demands"] = refresh_demands
 
+    if activity_events is None:
+        activity_events = recent_governance_activity_events(config)
+
     for agent_id in agent_ids:
         if dispatches >= max_dispatches:
             break
@@ -11815,6 +13089,7 @@ def dispatch_ready_tasks(
                 checked_at=dispatch_started_at,
                 cooldown_seconds=unchanged_cooldown_seconds,
                 live_total=live_total,
+                activity_events=activity_events,
             )
             if not decision["eligible"]:
                 for target in decision.get("health_refresh_targets", []) or []:
@@ -11870,6 +13145,7 @@ def build_dispatch_plan(
     queue_snapshot: list[dict[str, Any]],
     *,
     live_total: int,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the sole planner without writing runtime or queue state."""
 
@@ -11888,11 +13164,26 @@ def build_dispatch_plan(
         queue_events_snapshot=queue_snapshot,
         live_total_snapshot=live_total,
         event_sink=capture,
+        activity_events=activity_events,
     )
     refresh_targets = list(scratch.get("delivery_health_refresh_demands") or [])
     for target in unavailable_assignment_fallback_refresh_targets(
         config, scratch, status_snapshot
     ):
+        if target not in refresh_targets:
+            refresh_targets.append(target)
+    # A startup or otherwise idle supervisor still needs to repair due
+    # evidence.  Keep these targets after task/fallback demand so bounded
+    # probing spends the current cycle on an immediately blocked task first.
+    for target in idle_delivery_health_refresh_targets(config, scratch):
+        if target not in refresh_targets:
+            refresh_targets.append(target)
+    # Startup, a config-topology change, or an explicit Human/Ops request may
+    # authorize probing a lane whose cached retry_at has not yet elapsed.
+    # This bypass is bounded to those exact triggers (see
+    # ``authorized_delivery_health_refresh_targets``); it is not a
+    # every-cycle probe path.
+    for target in authorized_delivery_health_refresh_targets(config, scratch):
         if target not in refresh_targets:
             refresh_targets.append(target)
     dispatcher_state = scratch.get("ready_dispatcher")
@@ -11914,6 +13205,8 @@ def reserve_dispatch_plan(
     config: dict[str, Any],
     state: dict[str, Any],
     plan: Mapping[str, Any],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     """CAS-like reservation of a precomputed plan under runtime admission.
 
@@ -11924,6 +13217,8 @@ def reserve_dispatch_plan(
 
     events = plan.get("events")
     if not isinstance(events, list) or not events:
+        return False
+    if command_runtime_dispatch_block_reason(state):
         return False
     settings = ready_dispatch_settings(config)
     active_statuses = normalized_status_set(settings.get("active_worker_statuses"), [])
@@ -11951,13 +13246,17 @@ def reserve_dispatch_plan(
     )
     live_total = max(active_worker_count, max(0, int(plan.get("live_total") or 0)))
     planned_at = str(plan.get("planned_at") or utc_now())
+    if activity_events is None:
+        activity_events = recent_governance_activity_events(config)
     changed = False
 
     for raw_event in events:
         if not isinstance(raw_event, dict):
             continue
         event = deepcopy(raw_event)
-        if stale_dispatch_skip_message(config, event, task_map):
+        if stale_dispatch_skip_message(
+            config, event, task_map, activity_events=activity_events
+        ):
             continue
         event_key = str(event.get("key") or "")
         task_id = str(event.get("task_id") or "")
@@ -12025,6 +13324,7 @@ def explain_dispatch_for_task(
     target_agent_filter: str | None = None,
     status: dict[str, Any] | None = None,
     live_total: int | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Serialize the same candidate decisions consumed by the scheduler."""
 
@@ -12060,6 +13360,8 @@ def explain_dispatch_for_task(
     checked_at = utc_now()
     if live_total is None:
         live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+    if activity_events is None:
+        activity_events = recent_governance_activity_events(config)
     result: dict[str, Any] = {
         "task_id": task_id,
         "task_status": task.get("status"),
@@ -12070,6 +13372,7 @@ def explain_dispatch_for_task(
     global_block = dispatch_global_block_reason(
         config,
         settings,
+        state=state,
         live_total=live_total,
         active_task_ids=active_task_ids,
         pending_task_ids=pending_task_ids,
@@ -12110,6 +13413,7 @@ def explain_dispatch_for_task(
             seen_event_keys=seen,
             checked_at=checked_at,
             cooldown_seconds=cooldown,
+            activity_events=activity_events,
         )
         trace = {
             "display_name": target_agent,
@@ -12225,7 +13529,16 @@ def apply_post_dispatch_maintenance(
             config, state, delivery_health_observations
         )
     ) or changed
+    # Apply observations first, then remove any row which is not owned by the
+    # current endpoint/account topology.  This order ensures even an obsolete
+    # in-flight observation cannot recreate a provider-only orphan projection.
+    changed = bool(reconcile_delivery_health_topology(config, state)) or changed
+    changed = (
+        bool(record_delivery_health_refresh_authority_consumed(config, state))
+        or changed
+    )
     changed = bool(reconcile_unavailable_assignments(config, state)) or changed
+    changed = bool(reconcile_failure_loops(config, state)) or changed
     if isinstance(assistant_dev_bridge_snapshot, dict):
         bridge_state = assistant_dev_bridge_snapshot.get("state")
         if isinstance(bridge_state, dict):
@@ -12309,6 +13622,36 @@ def run_once(
         )
         changed = pre_plan_poll_changed or changed
 
+        command_runtime_health = _safe_phase(
+            "inspect_command_runtime_health",
+            inspect_command_runtime_health,
+            config,
+            quiet=quiet,
+            critical=True,
+        )
+        if not isinstance(command_runtime_health, dict):
+            command_runtime_health = {
+                "healthy": False,
+                "checked_at": utc_now(),
+                "reason": "command_runtime_health_unavailable",
+                "error": "Supervisor could not produce a command-runtime health result",
+            }
+        runtime_health_changed = bool(
+            _safe_phase(
+                "record_command_runtime_health_reserved",
+                _run_reserved_runtime_phase,
+                config,
+                "command_runtime_health",
+                lambda state: record_command_runtime_health(
+                    state,
+                    command_runtime_health,
+                ),
+                quiet=quiet,
+                critical=True,
+            )
+        )
+        changed = runtime_health_changed or changed
+
         dispatch_status_snapshot = _safe_phase(
             "load_dispatch_status_snapshot", load_status, config, quiet=quiet,
             critical=True,
@@ -12334,16 +13677,28 @@ def run_once(
         if not isinstance(planning_runtime_snapshot, dict):
             planning_runtime_snapshot = {}
         dispatch_queue_snapshot = queue_events(planning_runtime_snapshot)
-        dispatch_plan = _safe_phase(
-            "build_dispatch_plan",
-            build_dispatch_plan,
-            config,
-            planning_runtime_snapshot,
-            dispatch_status_snapshot,
-            dispatch_queue_snapshot,
-            live_total=live_total_snapshot,
-            quiet=quiet,
-            critical=True,
+        dispatch_plan = (
+            _safe_phase(
+                "build_dispatch_plan",
+                build_dispatch_plan,
+                config,
+                planning_runtime_snapshot,
+                dispatch_status_snapshot,
+                dispatch_queue_snapshot,
+                live_total=live_total_snapshot,
+                quiet=quiet,
+                critical=True,
+            )
+            if command_runtime_health.get("healthy") is True
+            else {
+                "planned_at": utc_now(),
+                "events": [],
+                "live_total": live_total_snapshot,
+                "health_refresh_targets": [],
+                "global_block_reason": command_runtime_dispatch_block_reason(
+                    {"supervisor": {"command_runtime_health": command_runtime_health}}
+                ),
+            }
         )
         if not isinstance(dispatch_plan, dict):
             dispatch_plan = {"events": []}
@@ -12368,6 +13723,10 @@ def run_once(
             int(ready_dispatch_settings(config).get("max_dispatches_per_tick", 4) or 0),
         )
         queued_health_refresh_demand: list[dict[str, str]] = []
+        # This cache is intentionally scoped to one supervisor cycle.  It
+        # provides one exact remote base per repository without creating a
+        # second persisted source of truth alongside worker leases.
+        worker_base_snapshots: dict[str, dict[str, str]] = {}
         for _delivery_index in range(max_delivery_launches):
             delivery_outcome: dict[str, bool] = {}
             delivery_changed = bool(
@@ -12384,6 +13743,7 @@ def run_once(
                             state,
                             delivery_outcome=delivery_outcome,
                             health_refresh_demand=queued_health_refresh_demand,
+                            worker_base_snapshots=worker_base_snapshots,
                         )
                     ),
                     quiet=quiet,
@@ -12447,15 +13807,6 @@ def run_once(
             maintenance_runtime_snapshot,
             quiet=quiet,
         )
-        github_bus_changed = bool(
-            _safe_phase(
-                "sync_github_bus",
-                sync_github_bus,
-                config,
-                maintenance_runtime_snapshot,
-                quiet=quiet,
-            )
-        )
         maintenance_changed = bool(
             _safe_phase(
                 "apply_post_dispatch_maintenance",
@@ -12473,11 +13824,7 @@ def run_once(
                 quiet=quiet,
             )
         )
-        changed = (
-            maintenance_changed
-            or github_bus_changed
-            or changed
-        )
+        changed = maintenance_changed or changed
         prune_changed = bool(
             _safe_phase(
                 "prune_worktrees_reserved",
@@ -12994,6 +14341,15 @@ def main() -> int:
     config = load_config(args.config)
     validate_provider_accounts(config)
     check_status_root_consistency(config, allow_isolated=args.allow_isolated_status_root)
+    if args.request_delivery_health_refresh:
+        with runtime_state_update(config) as state:
+            request_delivery_health_refresh(state)
+        console_log(
+            "recorded an explicit delivery-health refresh request for the "
+            "next supervisor cycle",
+            quiet=args.quiet,
+        )
+        return 0
     if not acquire_singleton_lock(config):
         console_log(
             "another supervisor already holds the singleton lock; exiting without "

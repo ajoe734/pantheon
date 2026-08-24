@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import importlib
 import json
 import os
@@ -16,7 +17,14 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 from uuid import uuid4
 
-from .controller_state import ControllerState, ControllerStateError, ControllerStateStore, parse_utc, utc_now
+from .controller_state import (
+    ControllerState,
+    ControllerStateError,
+    ControllerStateStore,
+    parse_utc,
+    summarize_actual_readback,
+    utc_now,
+)
 from .controller_auth import load_controller_token
 from .scheduler_worker import run_tick as run_schedule_tick
 
@@ -794,10 +802,11 @@ class ControllerConfig:
 def config_from_env() -> ControllerConfig:
     interval = _env_int("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS", 60, minimum=1)
     alive = str(os.getenv("SOURCE_INGEST_CONTROLLER_ALIVE_PATH") or "").strip()
-    mode = str(os.getenv("SOURCE_INGEST_CONTROLLER_MODE") or RECONCILE_AND_PULL_MODE).strip()
+    mode = str(os.getenv("SOURCE_INGEST_CONTROLLER_MODE") or RECONCILE_ONLY_MODE).strip()
     if mode not in CONTROLLER_MODES:
         raise ValueError("SOURCE_INGEST_CONTROLLER_MODE is invalid")
-    truth_level = str(os.getenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL") or "reconciled_live_proof").strip()
+    default_truth = NON_TERMINAL_TRUTH_LEVEL if mode == RECONCILE_ONLY_MODE else "reconciled_live_proof"
+    truth_level = str(os.getenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL") or default_truth).strip()
     if truth_level not in {"scheduled_tick", "reconciled_live_proof"}:
         raise ValueError("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL is invalid")
     if mode == RECONCILE_ONLY_MODE and truth_level != NON_TERMINAL_TRUTH_LEVEL:
@@ -807,6 +816,8 @@ def config_from_env() -> ControllerConfig:
     exclusive_connector_ids = _env_csv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS")
     if mode == RECONCILE_AND_PULL_MODE and not 1 <= max_ticks <= 24:
         raise ValueError("reconcile_and_pull mode requires SOURCE_INGEST_CONTROLLER_MAX_TICKS between 1 and 24")
+    if mode == RECONCILE_AND_PULL_MODE and not exclusive_connector_ids:
+        raise ValueError("reconcile_and_pull mode requires explicitly selected connector IDs (exclusive_connector_ids)")
     if mode == RECONCILE_ONLY_MODE and (force_connector_ids or exclusive_connector_ids):
         raise ValueError("reconcile_only mode must not select provider connector execution")
     return ControllerConfig(
@@ -829,6 +840,182 @@ def config_from_env() -> ControllerConfig:
         force_connector_ids=force_connector_ids,
         exclusive_connector_ids=exclusive_connector_ids,
     )
+
+
+def compute_request_fingerprint(
+    *,
+    mode: str,
+    exclusive_connector_ids: Sequence[str] = (),
+    force_connector_ids: Sequence[str] = (),
+    api_url: str = "",
+    truth_level: str = "",
+    max_concurrency: int = 2,
+) -> str:
+    """Compute a canonical SHA256 digest of request parameters."""
+    payload = {
+        "api_url": str(api_url).rstrip("/"),
+        "exclusive_connector_ids": sorted(set(str(c).strip() for c in (exclusive_connector_ids or ()) if str(c).strip())),
+        "force_connector_ids": sorted(set(str(c).strip() for c in (force_connector_ids or ()) if str(c).strip())),
+        "max_concurrency": int(max_concurrency),
+        "mode": str(mode),
+        "truth_level": str(truth_level),
+    }
+    return _digest(payload)
+
+
+def run_controller_once(
+    *,
+    operation_key: str | None = None,
+    config: ControllerConfig | None = None,
+    mode: str = RECONCILE_AND_PULL_MODE,
+    exclusive_connector_ids: Sequence[str] | None = None,
+    force_connector_ids: Sequence[str] | None = None,
+    api_url: str | None = None,
+    state_path: Path | str | None = None,
+    controller_token: str | None = None,
+    database_url: str | None = None,
+    timeout_seconds: float = 30.0,
+    max_concurrency: int = 2,
+    truth_level: str | None = None,
+    writer: LoopControllerWriterLike | None = None,
+) -> dict[str, Any]:
+    """Execute exactly one bounded controller tick and return terminal readback summary."""
+    if config is None:
+        if mode not in CONTROLLER_MODES:
+            raise ValueError(f"invalid controller mode: {mode}")
+        resolved_truth = truth_level or (
+            NON_TERMINAL_TRUTH_LEVEL if mode == RECONCILE_ONLY_MODE else "reconciled_live_proof"
+        )
+        if resolved_truth not in {"scheduled_tick", "reconciled_live_proof"}:
+            raise ValueError("invalid truth_level")
+        if mode == RECONCILE_ONLY_MODE and resolved_truth != NON_TERMINAL_TRUTH_LEVEL:
+            raise ValueError("reconcile_only mode must use scheduled_tick truth")
+        exclusive_tuple = tuple(
+            dict.fromkeys(str(c).strip() for c in (exclusive_connector_ids or ()) if str(c).strip())
+        )
+        force_tuple = tuple(
+            dict.fromkeys(str(c).strip() for c in (force_connector_ids or ()) if str(c).strip())
+        )
+        if mode == RECONCILE_AND_PULL_MODE and not exclusive_tuple:
+            raise ValueError("reconcile_and_pull mode requires explicitly selected connector IDs (exclusive_connector_ids)")
+        if mode == RECONCILE_ONLY_MODE and (exclusive_tuple or force_tuple):
+            raise ValueError("reconcile_only mode must not select provider connector execution")
+        resolved_state_path = (
+            Path(state_path)
+            if state_path
+            else Path(
+                os.getenv("SOURCE_INGEST_CONTROLLER_STATE_PATH")
+                or "/tmp/pantheon/source-ingest/controller_state.json"
+            )
+        )
+        resolved_api_url = str(api_url or os.getenv("SOURCE_INGEST_API_URL") or "http://127.0.0.1:8097")
+        resolved_db_url = str(database_url if database_url is not None else (os.getenv("DATABASE_URL") or ""))
+        resolved_token = (
+            controller_token
+            if controller_token is not None
+            else load_controller_token(
+                token_path=os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE")
+                or "/data/source-ingest/controller_token",
+                create=False,
+            )
+        )
+        config = ControllerConfig(
+            api_url=resolved_api_url,
+            database_url=resolved_db_url,
+            interval_seconds=60,
+            max_concurrency=max(1, min(4, int(max_concurrency))),
+            max_ticks=1,
+            state_path=resolved_state_path,
+            alive_path=None,
+            timeout_seconds=float(timeout_seconds),
+            lease_seconds=120,
+            truth_level=resolved_truth,
+            controller_token=resolved_token,
+            mode=mode,
+            force_connector_ids=force_tuple,
+            exclusive_connector_ids=exclusive_tuple,
+        )
+    else:
+        if config.mode == RECONCILE_AND_PULL_MODE and not config.exclusive_connector_ids:
+            raise ValueError("reconcile_and_pull mode requires explicitly selected connector IDs (exclusive_connector_ids)")
+
+    lock_path = config.state_path.with_name(f"{config.state_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    request_fingerprint = compute_request_fingerprint(
+        mode=config.mode,
+        exclusive_connector_ids=config.exclusive_connector_ids,
+        force_connector_ids=config.force_connector_ids,
+        api_url=config.api_url,
+        truth_level=config.truth_level,
+        max_concurrency=config.max_concurrency,
+    )
+
+    with open(lock_path, "a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            store = ControllerStateStore(config.state_path)
+            loaded_state = store.load()
+            state = refresh_runtime_identity(loaded_state) if loaded_state is not None else _new_state()
+
+            resolved_op_key = (
+                str(operation_key).strip()
+                if operation_key is not None
+                else (str(os.getenv("SOURCE_INGEST_CONTROLLER_OPERATION_KEY") or "").strip() or None)
+            )
+
+            if resolved_op_key and resolved_op_key in state.recent_operations:
+                cached_op = dict(state.recent_operations[resolved_op_key])
+                cached_fingerprint = str(cached_op.get("request_fingerprint") or "")
+                if cached_fingerprint and cached_fingerprint != request_fingerprint:
+                    raise ControllerTickError(
+                        "operation_key_conflict",
+                        f"operation key '{resolved_op_key}' already executed with different request parameters "
+                        f"(cached fingerprint {cached_fingerprint} != current {request_fingerprint})",
+                        cached_fingerprint=cached_fingerprint,
+                        current_fingerprint=request_fingerprint,
+                    )
+                if not cached_fingerprint and cached_op.get("mode") and cached_op.get("mode") != config.mode:
+                    raise ControllerTickError(
+                        "operation_key_conflict",
+                        f"operation key '{resolved_op_key}' already executed with different mode "
+                        f"(cached mode {cached_op.get('mode')} != current {config.mode})",
+                    )
+                actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+                replayed_result = dict(cached_op.get("result") or {})
+                replayed_result["status"] = "ok"
+                replayed_result["controller_mode"] = config.mode
+                replayed_result["provider_egress_attempted"] = False
+                replayed_result["state_sequence_no"] = state.sequence_no
+                replayed_result["operation_key"] = resolved_op_key
+                replayed_result["request_fingerprint"] = request_fingerprint
+                replayed_result["replayed"] = True
+                replayed_result["deduplicated"] = True
+                replayed_result["actual_readback"] = summarize_actual_readback(actual)
+                return replayed_result
+
+            store.save(state)
+            active_writer = writer if writer is not None else build_loop_writer(dsn=config.database_url, state=state)
+            result = run_controller_tick(config=config, state=state, store=store, writer=active_writer)
+            result["replayed"] = False
+            result["deduplicated"] = False
+            if resolved_op_key:
+                result["operation_key"] = resolved_op_key
+                result["request_fingerprint"] = request_fingerprint
+                state.record_operation(
+                    resolved_op_key,
+                    {
+                        "executed_at": utc_now(),
+                        "sequence_no": state.sequence_no,
+                        "mode": config.mode,
+                        "request_fingerprint": request_fingerprint,
+                        "result": result,
+                    },
+                )
+                store.save(state)
+            return result
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 def _runtime_deployment() -> dict[str, Any]:
@@ -998,18 +1185,8 @@ def run_controller_tick(
                 and isinstance(item.get("latest_source_record"), Mapping)
             )
         ]
-        accepted_actual = {
-            "pre_captured_at": pre_actual.get("captured_at"),
-            "captured_at": actual.get("captured_at"),
-            "connector_count": actual.get("connector_count"),
-            "source_record_count": actual.get("source_record_count"),
-            "dlq_count": actual.get("dlq_count"),
-            "pending_dlq_count": actual.get("pending_dlq_count"),
-            "unresolved_dlq_count": actual.get("unresolved_dlq_count"),
-            "dlq_status_counts": actual.get("dlq_status_counts"),
-            "frontier_backlog": actual.get("frontier_backlog"),
-            "max_lag_seconds": actual.get("max_lag_seconds"),
-        }
+        accepted_actual = summarize_actual_readback(actual)
+        accepted_actual["pre_captured_at"] = pre_actual.get("captured_at")
         _async(
             writer.record_success(
                 LOOP_ID,
@@ -1045,7 +1222,11 @@ def run_controller_tick(
         state.record_success(
             desired_state=desired_meta,
             reconcile={"summary": reconcile.get("summary"), "connector_ids": sorted(wanted_connector_ids)},
-            schedule={"summary": schedule.get("summary")},
+            schedule={
+                "mode": config.mode,
+                "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
+                "summary": schedule.get("summary"),
+            },
             actual_readback=accepted_actual,
         )
         store.save(state)

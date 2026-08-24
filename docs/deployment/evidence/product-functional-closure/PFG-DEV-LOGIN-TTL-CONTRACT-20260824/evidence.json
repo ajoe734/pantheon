@@ -1,0 +1,60 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "PFG-DEV-LOGIN-TTL-CONTRACT-20260824",
+    "title": "Align dev BFF login-token TTL with bounded proof window",
+    "owner": "Antigravity",
+    "reviewer": "Antigravity2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-DEV-LOGIN-TTL-CONTRACT-20260824",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-DEV-LOGIN-TTL-CONTRACT-20260824/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Dev BFF dev-login issuer TTL default (1800s / 30m) and docker-compose contract alignment to strictly exceed 1200-second proof preflight window while keeping 300-3600 second bounds",
+    "not_changing": [
+      "Live capital action (remains fail-closed / disabled)",
+      "Source Ingestion polling (remains reconcile-only)",
+      "Frontend workflow source",
+      "Staging/prod strict OIDC IdP posture (remains strict and dev-login disabled)"
+    ],
+    "changed_files": [
+      "docker-compose.yml",
+      "docs/deployment/bff-oidc-staging-auth.md",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_bff_oidc_staging_env_contract.py",
+      "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+      "tests/integration/test_product_functional_compose_contract.py",
+      "docs/deployment/evidence/product-functional-closure/PFG-DEV-LOGIN-TTL-CONTRACT-20260824/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-DEV-LOGIN-TTL-CONTRACT-20260824/evidence.json"
+    ],
+    "composes_with": [
+      "Frontend browser journey functional proof runner",
+      "Dev BFF container compose and stack deployment"
+    ]
+  },
+  "behavioral_proof": {
+    "proof_window": "Dev-login JWT TTL defaults to 1800s (30 minutes), strictly exceeding the 1200-second proof preflight floor",
+    "bounded_limits": "Values below 300s clamp to 300s, values above 3600s clamp to 3600s, invalid values fall back to 1800s",
+    "compose_contract": "docker-compose.yml sets PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}",
+    "safe_defaults": "Live capital action disabled, source ingestion reconcile-only, dev login forbidden in production/staging-live"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "pytest -q services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/test_bff_oidc_staging_env_contract.py tests/integration/test_product_functional_compose_contract.py",
+        "result": "53 passed"
+      },
+      {
+        "command": "pytest -q services/control-plane/bff/test_bff_auth_facade.py services/control-plane/bff/tests/test_bff_auth_refresh.py",
+        "result": "86 passed"
+      }
+    ]
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Antigravity2 REVIEW_FILE=docs/deployment/evidence/product-functional-closure/PFG-DEV-LOGIN-TTL-CONTRACT-20260824/evidence.json through the governed approve command only after independently checking the exact PR head.",
+    "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
+  }
+}

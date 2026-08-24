@@ -1,12 +1,17 @@
-"""Deployed cross-loop proof for the current Pantheon twelve-loop system.
+"""Prebuilt-identity verifier retained for the Pantheon twelve-loop system.
 
 This suite never creates an in-process FastAPI application or a replacement
-store.  It consumes IDs emitted by the already-completed per-loop deployed
-runs and reads those IDs back from the real HTTP owners.  Its one write case
-uses Research's real idempotency boundary to prove that a concurrent replay
-does not create a second task or run.
+store. It consumes IDs emitted by already-completed per-loop deployed runs and
+reads those IDs back from the real HTTP owners. Its one write case uses
+Research's real idempotency boundary to prove that a concurrent replay does
+not create a second task or run.
 
-Set ``PANTHEON_L12_CROSS_LOOP_DEPLOYED_E2E=1`` and provide the service URLs,
+This remains useful as a readback verifier, but it is explicitly not the
+stimulus-driven closure gate: the supplied manifest can predate this run. The
+new closure gate lives in ``test_stimulus_cross_loop_deployed_e2e.py`` and
+must generate its domain identities during its own parent run.
+
+Set ``PANTHEON_L12_PREBUILT_IDENTITY_VERIFIER=1`` and provide the service URLs,
 an input manifest, and a temporary evidence output path documented by
 ``Settings.from_env``.  The governed owner copies the resulting evidence only
 after the deployed run passes; this test never rewrites checked-in evidence.
@@ -34,6 +39,7 @@ import pytest
 
 
 TASK_ID = "L12-CURRENT-CROSS-LOOP-E2E-20260814"
+VERIFIER_ROLE = "prebuilt_identity_verifier_not_closure_gate"
 INPUT_SCHEMA = "pantheon.l12.cross-loop-input.v1"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHECKED_IN_EVIDENCE_ROOT = (
@@ -46,9 +52,9 @@ CHECKED_IN_EVIDENCE_ROOT = (
 )
 
 pytestmark = pytest.mark.skipif(
-    os.getenv("PANTHEON_L12_CROSS_LOOP_DEPLOYED_E2E", "").strip().lower()
+    os.getenv("PANTHEON_L12_PREBUILT_IDENTITY_VERIFIER", "").strip().lower()
     not in {"1", "true", "yes"},
-    reason="set PANTHEON_L12_CROSS_LOOP_DEPLOYED_E2E=1 for deployed HTTP proof",
+    reason="set PANTHEON_L12_PREBUILT_IDENTITY_VERIFIER=1 for prebuilt-ID HTTP verification",
 )
 
 
@@ -322,6 +328,7 @@ class Evidence:
             "started_at": self.started_at,
             "status": self.status,
             "task_id": TASK_ID,
+            "verifier_role": VERIFIER_ROLE,
         }
         self.settings.evidence_output.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(

@@ -59,6 +59,7 @@ def default_state() -> dict[str, Any]:
         },
         "worker_worktree_cleanup": {
             "last_run": None,
+            "last_orphan_prune_at": None,
         },
         "auto_commit_archive": {
             "pending_token": None,
@@ -101,6 +102,7 @@ def default_state() -> dict[str, Any]:
             "last_loop_finished_at": None,
             "last_loop_duration_ms": None,
             "last_loop_error": None,
+            "command_runtime_health": {},
             "task_state_projection": {},
             "last_cycle_metrics": {},
             "cycle_elapsed_seconds": None,
@@ -119,11 +121,7 @@ def default_state() -> dict[str, Any]:
     }
 
 
-def normalize_v2_runtime_cache(
-    raw: Any,
-    *,
-    allow_legacy_queue_records: bool = False,
-) -> dict[str, Any]:
+def normalize_v2_runtime_cache(raw: Any) -> dict[str, Any]:
     """Load a structurally valid V2 cache.
 
     ``state.json`` is an ephemeral runtime cache, not canonical task
@@ -170,11 +168,10 @@ def normalize_v2_runtime_cache(
         record = deepcopy(raw_record)
         intent = record.get("intent")
         if intent is None:
-            if not allow_legacy_queue_records:
-                raise RuntimeStateSchemaError(
-                    "runtime cache contains legacy queue records without embedded intents; "
-                    "restore a valid V2 queue snapshot before starting the supervisor"
-                )
+            raise RuntimeStateSchemaError(
+                "runtime cache contains legacy queue records without embedded intents; "
+                "restore a valid V2 queue snapshot before starting the supervisor"
+            )
         elif not isinstance(intent, dict):
             raise RuntimeStateSchemaError(
                 f"runtime cache queue event {event_id} has a non-object intent"
@@ -210,6 +207,7 @@ def normalize_v2_runtime_cache(
     state["worker_worktrees"].setdefault("leases", {})
     state.setdefault("worker_worktree_cleanup", {})
     state["worker_worktree_cleanup"].setdefault("last_run", None)
+    state["worker_worktree_cleanup"].setdefault("last_orphan_prune_at", None)
     state.setdefault("auto_commit_archive", {})
     state["auto_commit_archive"].setdefault("pending_token", None)
     state["auto_commit_archive"].setdefault("pending_since", None)
@@ -253,6 +251,10 @@ def normalize_v2_runtime_cache(
     state["supervisor"].setdefault("last_loop_finished_at", None)
     state["supervisor"].setdefault("last_loop_duration_ms", None)
     state["supervisor"].setdefault("last_loop_error", None)
+    command_runtime_health = state["supervisor"].get("command_runtime_health")
+    state["supervisor"]["command_runtime_health"] = (
+        command_runtime_health if isinstance(command_runtime_health, dict) else {}
+    )
     last_cycle_metrics = state["supervisor"].get("last_cycle_metrics")
     if isinstance(last_cycle_metrics, dict):
         # Queue dwell was retired as a process-health signal.  Drop a stale

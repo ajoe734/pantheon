@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/source-desired-state/v1",
+  "title": "Pantheon SourceDesiredState",
+  "description": "Operator and controller intent for a data source instance.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_instance_id",
+    "revision",
+    "desired_lifecycle",
+    "definition_id",
+    "definition_deployment_sha",
+    "connector_config",
+    "schedule",
+    "limits",
+    "allowed_hosts",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "source_desired_state.v1"
+      ]
+    },
+    "source_instance_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "desired_lifecycle": {
+      "type": "string",
+      "enum": [
+        "configured_disabled",
+        "validated_disabled",
+        "canary_passed_disabled",
+        "enabled",
+        "disabled",
+        "degraded_disabled",
+        "retired"
+      ]
+    },
+    "definition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "definition_deployment_sha": {
+      "type": "string",
+      "minLength": 1
+    },
+    "connector_config": {
+      "type": "object",
+      "required": [
+        "public"
+      ],
+      "properties": {
+        "public": {
+          "type": "object"
+        },
+        "secret_ref_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "schedule": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "cadence"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "cadence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "jitter_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "universe_policy_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "max_records",
+        "max_bytes",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "max_records": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "allowed_hosts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "last_command_receipt_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_by": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

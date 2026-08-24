@@ -1,0 +1,48 @@
+{
+  "task_id": "SRCM-P1-SEARCH-ALPHA-20260824",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "repository": "ajoe734/pantheon",
+  "target_branch": "dev",
+  "head_branch": "task/SRCM-P1-SEARCH-ALPHA-20260824",
+  "task_type": "execution",
+  "specification": "docs/04/pantheon_external_data_source_management_2026-08-24/SD_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
+  "architecture": "docs/04/pantheon_external_data_source_management_2026-08-24/SA_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
+  "schemas_created": [
+    "docs/contracts/alpha_rule_query.schema.json"
+  ],
+  "schemas_updated": [
+    "docs/contracts/search_request.schema.json"
+  ],
+  "modules_implemented": [
+    "services/search/filters.py",
+    "services/search/gateway.py",
+    "services/search/retriever.py",
+    "services/search/hybrid_retriever.py",
+    "services/search/structured_alpha.py",
+    "services/search/index_store.py",
+    "services/search/main.py",
+    "services/search/__init__.py"
+  ],
+  "tests_implemented": [
+    "services/search/tests/test_governed_search_v2.py",
+    "services/search/tests/test_structured_alpha.py"
+  ],
+  "acceptance_assertions": {
+    "sd_srcm_06_requirements_implemented": true,
+    "time_window_translation_or_strict_rejection": true,
+    "pre_retrieval_multi_attribute_filtering": true,
+    "semantic_retrieval_candidate_isolation_no_leakage": true,
+    "honest_capability_reporting_all_modes": true,
+    "mode_unavailable_fail_closed_status": true,
+    "hybrid_rrf_scoring_and_component_breakdown": true,
+    "structured_alpha_ast_validation_depth_and_node_bounds": true,
+    "structured_alpha_point_in_time_no_future_lookahead": true,
+    "replayable_snapshots_with_fingerprints_receipts": true
+  },
+  "validation": {
+    "search_suite_passing": 110,
+    "search_suite_skipped": 1,
+    "search_suite_failing": 0
+  }
+}

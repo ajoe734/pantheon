@@ -163,6 +163,15 @@ def test_projection_store_atomic_batch_transaction(postgres_dsn: str) -> None:
     assert receipt is not None
     assert receipt.disposition == "applied"
     assert receipt.journey_id == "j-1"
+    receipts = store.get_receipts(["missing", "evt-1", "evt-1"])
+    assert set(receipts) == {"evt-1"}
+    assert receipts["evt-1"].fingerprint == "fp-1"
+
+    aggregate_events = store.load_journey_stage_events_bulk(
+        [("tenant-a", "paper", "j-1"), ("tenant-a", "paper", "missing")]
+    )
+    assert len(aggregate_events[("tenant-a", "paper", "j-1")]) == 1
+    assert aggregate_events[("tenant-a", "paper", "missing")] == []
 
     resolved_journey = store.resolve_identity("tenant-a", "paper", "signal_id", "t-100")
     assert resolved_journey == "j-1"
@@ -943,8 +952,8 @@ def test_projection_store_overlapping_controllers_commit_shared_event_once(
             )
             query_text = query if isinstance(query, str) else query.as_string(self)
             if (
-                "SELECT fingerprint FROM" in query_text
-                and ".event_receipts WHERE event_id=%s" in query_text
+                "SELECT event_id, fingerprint FROM" in query_text
+                and ".event_receipts WHERE event_id = ANY(%s)" in query_text
             ):
                 thread_id = threading.get_ident()
                 with barrier_threads_lock:
@@ -1355,3 +1364,19 @@ def test_projection_store_indexed_explain_paths(postgres_dsn: str) -> None:
         assert "idx_loop_runs_tenant_env_updated_loop" in plan5
 
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_projection_store_driver_missing_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "psycopg", None)
+    with pytest.raises(RuntimeError, match="psycopg is required for ProjectionStore"):
+        ProjectionStore("postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon", connect=None)
+
+
+def test_projection_store_default_connect_binds_psycopg() -> None:
+    import psycopg
+
+    store = ProjectionStore(
+        "postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon",
+        connect=None,
+    )
+    assert store._connect is psycopg.connect

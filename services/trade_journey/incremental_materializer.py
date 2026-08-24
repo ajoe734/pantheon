@@ -238,6 +238,101 @@ class IncrementalLifecycleMaterializer:
         self._rematerialize_aggregate(agg)
         self.aggregates[journey_id] = agg
 
+    def hydrate_aggregate(
+        self, journey_id: str, journey_events: Iterable[Mapping[str, Any]]
+    ) -> None:
+        """Hydrate one persisted aggregate from its relational stage slice.
+
+        The worker calls this only for journeys present in its current source
+        batch.  The input is the projection's bounded contract fields, not raw
+        telemetry, so restart recovery never restores a controller-wide JSON
+        event cache or reads unrelated aggregates.
+        """
+
+        if journey_id in self.aggregates:
+            return
+        events = [dict(event) for event in journey_events]
+        if not events:
+            return
+        events.sort(key=JourneyMaterializer._sort_key)
+        identity_source = events[0]
+        identity = {
+            key: str(identity_source[key])
+            for key in (
+                "tenant_id",
+                "environment",
+                "journey_id",
+                "run_id",
+                "loop_run_id",
+                "signal_id",
+                "strategy_id",
+                "runtime_id",
+                "binding_id",
+                "capital_pool_id",
+                "persona_id",
+                "persona_capital_binding_id",
+                "artifact_id",
+                "artifact_version",
+                "plan_id",
+                "trace_id",
+            )
+            if identity_source.get(key) not in (None, "")
+        }
+        if identity.get("journey_id") != journey_id:
+            raise ValueError("persisted aggregate journey identity mismatch")
+        agg = BoundedAggregateState(
+            journey_id=journey_id,
+            tenant_id=identity.get("tenant_id", ""),
+            environment=identity.get("environment", ""),
+            identity=identity,
+            journey_events=events,
+        )
+        seen_canonical_ids: set[str] = set()
+        for event in events:
+            canonical_event_id = str(
+                event.get("canonical_event_id") or event.get("event_id") or ""
+            )
+            if not canonical_event_id:
+                continue
+            agg.event_fingerprints.setdefault(
+                canonical_event_id, f"persisted:{canonical_event_id}"
+            )
+            agg.event_modes.setdefault(
+                canonical_event_id, str(event.get("source_mode") or "recovery")
+            )
+            agg.last_ingested_seq = max(
+                agg.last_ingested_seq, int(event.get("source_offset") or 0)
+            )
+            agg.last_sequence_no = max(
+                agg.last_sequence_no, int(event.get("source_sequence_no") or 0)
+            )
+            if canonical_event_id not in seen_canonical_ids:
+                seen_canonical_ids.add(canonical_event_id)
+                event_type = str(event.get("event_type") or "")
+                if event_type in FILL_EVENT_TYPES:
+                    agg.fill_event_count += 1
+                if "position_snapshot" in event_type:
+                    agg.position_event_count += 1
+                if event_type.startswith("reconciliation_"):
+                    agg.reconciliation_event_count += 1
+            if event.get("source_mode") == "live":
+                occurred_at = str(event.get("occurred_at") or "")
+                if occurred_at and (agg.last_live_event_at or "") < occurred_at:
+                    agg.last_live_event_at = occurred_at
+
+        latest = events[-1]
+        agg.last_canonical_event_id = str(
+            latest.get("canonical_event_id") or latest.get("event_id") or ""
+        ) or None
+        agg.last_source_offset = latest.get("source_offset")
+        agg.last_entry_key = [
+            int(latest.get("source_sequence_no") or 0),
+            str(latest.get("occurred_at") or ""),
+            str(latest.get("canonical_event_id") or latest.get("event_id") or ""),
+        ]
+        self._rematerialize_aggregate(agg)
+        self.aggregates[journey_id] = agg
+
     # ------------------------------------------------------------------
     # batch application
     # ------------------------------------------------------------------

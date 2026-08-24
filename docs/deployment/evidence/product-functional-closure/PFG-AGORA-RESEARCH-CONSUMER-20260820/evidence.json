@@ -1,0 +1,47 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "PFG-AGORA-RESEARCH-CONSUMER-20260820",
+    "title": "Drain Agora Research outbox with the existing ResearchDispatcher",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "status": "in_progress",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-AGORA-RESEARCH-CONSUMER-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-AGORA-RESEARCH-CONSUMER-20260820/evidence.json",
+    "evidence_cut_at": "2026-08-20T13:47:00Z"
+  },
+  "scope": {
+    "owned_layer": "Agora Research outbox consumer and ResearchDispatcher verification",
+    "not_changing": [
+      "No duplicate dispatcher or outbox created",
+      "No hardcoded fixture fallback introduced in production mode",
+      "Canonical architecture rules"
+    ],
+    "changed_files": [
+      "services/control-plane/bff/agora/research/dispatcher.py",
+      "services/control-plane/bff/agora/research/router.py",
+      "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
+      "docs/deployment/evidence/product-functional-closure/PFG-AGORA-RESEARCH-CONSUMER-20260820/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-AGORA-RESEARCH-CONSUMER-20260820/evidence.json",
+      "docs/deployment/evidence/product-functional-closure/PFG-AGORA-RESEARCH-CONSUMER-20260820/evidence.sha256"
+    ]
+  },
+  "verification": {
+    "commands": [
+      "python3 scripts/dev/provision_python_distribution.py",
+      ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_research_candidate_governed.py tests/agora_product_journey/"
+    ],
+    "results": [
+      "26 unit & integration tests passed cleanly",
+      "Outbox consumer lease acquisition guard, lease conflict blocking, duplicate delivery idempotency, partial failure status updates, restart/readback, two-tenant isolation, and complete product journey verified"
+    ]
+  },
+  "code_disposition": {
+    "single_dispatcher_verified": true,
+    "single_outbox_verified": true,
+    "facade_fallback_removed_or_fail_closed": true
+  }
+}
+

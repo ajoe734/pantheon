@@ -1,6 +1,6 @@
 # Current research-loop deployed E2E evidence
 
-Task: `L12-CURRENT-E2E-RESEARCH-20260814`
+Task: `L12-GAP-F07-E2E-RESEARCH-20260818`
 
 This directory holds bounded evidence for loops 1 through 4 over one running
 Compose project. The deployed suite is

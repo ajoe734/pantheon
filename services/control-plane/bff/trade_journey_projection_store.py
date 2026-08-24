@@ -171,14 +171,18 @@ class TradeJourneyProjectionStore:
         self._connect = connect
 
     @classmethod
-    def from_environment(cls) -> Optional["TradeJourneyProjectionStore"]:
-        backend = os.getenv(READER_BACKEND_ENV, "json").strip().lower()
-        if backend in {"", "json", "disabled"}:
-            return None
+    def from_environment(cls) -> "TradeJourneyProjectionStore":
+        backend = os.getenv(READER_BACKEND_ENV, "postgres").strip().lower()
         if backend != "postgres":
-            raise ProjectionReadUnavailable(f"{READER_BACKEND_ENV} must be json or postgres")
-        dsn = os.getenv(READER_DSN_ENV, "").strip()
-        secret = os.getenv(READER_TOKEN_SECRET_ENV, "")
+            raise ProjectionReadUnavailable(
+                f"Legacy JSON projection reader is retired; {READER_BACKEND_ENV} must be 'postgres' (got {backend!r})"
+            )
+        dsn = os.getenv(READER_DSN_ENV, "").strip() or os.getenv("TELEMETRY_DB_DSN", "").strip()
+        secret = os.getenv(READER_TOKEN_SECRET_ENV, "").strip() or os.getenv("PANTHEON_BFF_PAGE_TOKEN_SECRET", "default-page-token-secret-minimum-16-bytes")
+        if not dsn:
+            raise ProjectionReadUnavailable(
+                f"{READER_DSN_ENV} or TELEMETRY_DB_DSN is required for Postgres projection reader"
+            )
         return cls(dsn, schema=os.getenv(READER_SCHEMA_ENV, DEFAULT_SCHEMA), token_secret=secret)
 
 
@@ -250,8 +254,12 @@ class TradeJourneyProjectionStore:
                 clauses.append(f"EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_type=%s AND link.identifier_value=%s)")
                 params.extend((identifier_type, str(filters[key])))
         if filters.get("q"):
-            clauses.append(f"(journey_id ILIKE %s OR EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_value ILIKE %s))")
-            params.extend((f"%{filters['q']}%", f"%{filters['q']}%"))
+            if filters.get("q_journey_only"):
+                clauses.append("journey_id ILIKE %s")
+                params.append(f"%{filters['q']}%")
+            else:
+                clauses.append(f"(journey_id ILIKE %s OR EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_value ILIKE %s))")
+                params.extend((f"%{filters['q']}%", f"%{filters['q']}%"))
         return clauses, params
 
     def page_journeys(self, *, tenant_id: str, environment: str, filters: Optional[Mapping[str, Any]] = None, sort: str = "updated_at_desc", page_size: int = DEFAULT_PAGE_SIZE, page_token: Optional[str] = None) -> ProjectionPage:
@@ -422,8 +430,8 @@ class TradeJourneyProjectionStore:
         return {**payload, **summary, "id": str(row.get("loop_run_id") or ""), "loop_run_id": str(row.get("loop_run_id") or ""), "journey_id": row.get("journey_id") or None, "tenant_id": tenant_id, "environment": environment, "status": row.get("status"), "projection_revision": int(row.get("projection_revision") or 0), "created_at": _iso(row.get("created_at")), "updated_at": _iso(row.get("updated_at")), "freshness_lineage": freshness, "source": "postgres_lifecycle_projection"}
 
 
-def configured_projection_reader() -> Optional[TradeJourneyProjectionStore | UnavailableProjectionReader]:
-    """Resolve the feature flag without silently selecting the JSON fallback."""
+def configured_projection_reader() -> TradeJourneyProjectionStore | UnavailableProjectionReader:
+    """Resolve the Postgres projection reader without silently selecting any fallback."""
     try:
         return TradeJourneyProjectionStore.from_environment()
     except (ProjectionReadUnavailable, ValueError) as exc:

@@ -1,0 +1,50 @@
+{
+  "task_id": "SRCM-P1-MEMORY-WRITEBACK-20260824",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "repository": "ajoe734/pantheon",
+  "target_branch": "dev",
+  "head_branch": "task/SRCM-P1-MEMORY-WRITEBACK-20260824",
+  "task_type": "execution",
+  "specification": "docs/04/pantheon_external_data_source_management_2026-08-24/SD_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
+  "architecture": "docs/04/pantheon_external_data_source_management_2026-08-24/SA_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
+  "schemas_created": [],
+  "schemas_updated": [
+    "services/memory/institutional_memory_entry.schema.json",
+    "services/memory/persona_memory.schema.json"
+  ],
+  "modules_implemented": [
+    "services/memory/institutional_memory_store.py",
+    "services/memory/persona_memory_store.py",
+    "services/memory/learn_feedback_writeback.py",
+    "services/research/research_memory_outbox.py",
+    "services/research/memory_writeback_worker.py",
+    "services/research/retrieval_influence.py",
+    "services/research/main.py",
+    "services/control-plane/bff/main.py"
+  ],
+  "tests_implemented": [
+    "services/memory/test_research_finding_writeback.py",
+    "services/research/tests/test_reviewed_memory_writeback.py",
+    "services/control-plane/bff/test_ew04_inspiration_graph_contract.py"
+  ],
+  "acceptance_assertions": {
+    "sd_srcm_07_evidence_to_reviewed_memory_boundary": true,
+    "forbid_source_ingest_and_search_from_directly_writing_memory": true,
+    "emit_only_after_terminal_reviewed_research_quality_and_license_gates_pass": true,
+    "write_persona_strategy_lesson_and_institutional_research_finding_idempotently": true,
+    "propagate_evidence_dataset_license_allowed_use_supersession_contradiction_and_expiry": true,
+    "retry_failed_delivery_through_transactional_research_outbox": true,
+    "record_later_retrieval_counter_evidence_and_actual_influence_or_influence_unknown": true,
+    "never_synthesize_constant_influence_weight": true,
+    "replay_retry_rejection_retrieval_and_lineage_tests_passing": true
+  },
+  "validation": {
+    "memory_suite_passing": 75,
+    "memory_suite_failing": 0,
+    "research_suite_passing": 611,
+    "research_suite_failing": 0,
+    "bff_inspiration_contract_passing": 4,
+    "bff_inspiration_contract_failing": 0
+  }
+}

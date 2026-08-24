@@ -132,3 +132,99 @@ class DecisionEventProducer:
 
         # 5. Persist and return
         return self.store.save_event(record)
+
+    def project_to_trading_room(
+        self,
+        record: DecisionEventRecord,
+        *,
+        trading_room_store: Optional[Any] = None,
+        strategy_spec_registry_id: Optional[str] = None,
+        symbol: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Project a DecisionEventRecord into a canonical TradingDecisionEvent in TradingRoomStore."""
+        from ..trading_room.router import _get_store as _get_tr_store
+        tr_store = trading_room_store or _get_tr_store()
+
+        event_kind = {
+            "entry": "entry",
+            "add": "add",
+            "reduce": "reduce",
+            "exit": "exit",
+            "review": "review",
+        }.get(record.event_type, "entry" if record.status == "projected" else "review")
+
+        confidence_val = min(1.0, max(0.0, float(record.probability)))
+        event_dict: Dict[str, Any] = {
+            "spec_version": "1.0",
+            "decision_event_id": record.decision_event_id,
+            "dedupe_key": record.idempotency_key,
+            "event_kind": event_kind,
+            "origin": (
+                "strategy_signal"
+                if record.event_type.startswith("signal")
+                else "risk_rule"
+                if record.event_type.startswith("risk")
+                else "servant_analysis"
+            ),
+            "strategy_id": record.strategy_id,
+            "strategy_spec_registry_id": strategy_spec_registry_id or record.strategy_id,
+            "subject": {
+                "symbol": symbol or record.strategy_id,
+                "asset_class": "equity",
+                "venue": "default",
+            },
+            "state": (
+                "pending_review"
+                if record.status == "projected"
+                else "invalidated"
+                if record.status == "invalidated"
+                else "expired"
+                if record.status == "stale"
+                else "decided"
+            ),
+            "triggered_at": record.created_at,
+            "confidence": {
+                "value": confidence_val,
+                "basis": "model",
+                "calibration_state": "calibrated" if record.freshness.is_fresh else "uncalibrated",
+                "sample_size": 100,
+            },
+            "probability": {
+                "target_outcome": "positive_alpha",
+                "horizon": "20d",
+                "value": record.probability,
+            },
+            "expected_value": {
+                "horizon": "20d",
+                "unit": "pct_return",
+                "gross": record.expected_value,
+                "cost": 0.005,
+                "net": max(0.0, record.expected_value - 0.005),
+                "downside": 0.02,
+            },
+            "rationale": [
+                {
+                    "claim": f"Projected decision event for {record.strategy_id} from {record.event_type}",
+                    "confidence": confidence_val,
+                    "evidence_refs": [
+                        {"ref_type": ref.ref_type, "ref_id": ref.ref_id}
+                        for ref in record.evidence_refs
+                    ] or [{"ref_type": "decision_event_record", "ref_id": record.decision_event_id}],
+                }
+            ],
+            "invalidation": {
+                "conditions": record.invalidation_conditions or ["price_gap_breach"],
+                "current_state": "valid" if record.status == "projected" else "invalidated",
+                "last_checked_at": record.freshness.evaluated_at,
+            },
+            "suggested_action": "enter" if record.status == "projected" else "no_action",
+            "suggested_size": {
+                "size_hint": "small",
+                "portfolio_pct": 0.01,
+                "non_binding": True,
+            },
+            "no_order_route_proof": "agora_decision_support_only",
+        }
+        tr_store.upsert_decision_event(event_dict)
+        return event_dict
+

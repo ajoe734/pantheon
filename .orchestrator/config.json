@@ -6,7 +6,6 @@
     "dashboard": "docs-site/index.html",
     "state_file": ".orchestrator/state.json",
     "approval_queue": ".orchestrator/approval-queue.json",
-    "github_bus_state": ".orchestrator/github-bus-state.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
@@ -94,20 +93,13 @@
     "auto_restore_enabled": true
   },
   "worker_worktrees": {
-    "enabled": true,
-    "root": "/tmp/pantheon-worker-worktrees",
-    "source_root": "",
-    "base_ref": "origin/dev",
-    "reuse_existing": true,
-    "execution_reasons": [
-      "owned_ready_dispatch",
-      "owned_in_progress_dispatch",
-      "owned_finalize_dispatch",
-      "review_ready_dispatch"
-    ]
+    "root": "/tmp/pantheon-worker-worktrees"
   },
   "coordination": {
     "repositories": {
+      "pantheon": {
+        "repo": "ajoe734/pantheon"
+      },
       "execute_plans": {
         "local_path": "../code/execute-plans"
       }
@@ -121,11 +113,7 @@
     "archive_root": "/tmp/pantheon-worker-worktree-archive",
     "archive_max_file_bytes": 20971520,
     "max_removals_per_tick": 25,
-    "base_branches": [
-      "dev",
-      "master",
-      "main"
-    ]
+    "orphan_prune_interval_seconds": 600
   },
   "worker_retry": {
     "enabled": true,
@@ -248,31 +236,20 @@
         "Antigravity2"
       ]
     },
-    "max_reassignments_per_cycle": 4
+    "max_reassignments_per_cycle": 4,
+    "load_balance": {
+      "enabled": true,
+      "min_saturated_seconds": 900
+    },
+    "failure_loop": {
+      "enabled": true,
+      "max_failures_in_window": 3,
+      "window_seconds": 3600,
+      "max_auto_reassignments": 1
+    }
   },
   "approvals": {
     "stale_pending_seconds": 1800
-  },
-  "github_bus": {
-    "enabled": true,
-    "command_timeout_seconds": 8,
-    "poll_interval_seconds": 30,
-    "repo": "ajoe734/pantheon",
-    "offline_backoff_seconds": 300,
-    "reviewers": {
-      "Claude": [
-        "ajoe734"
-      ],
-      "Antigravity": [
-        "ajoe734"
-      ],
-      "Codex": [
-        "ajoe734"
-      ],
-      "Copilot": [
-        "ajoe734"
-      ]
-    }
   },
   "schema": {
     "tasks_path": "tasks",
@@ -289,14 +266,14 @@
     "claude": {
       "display_name": "Claude",
       "provider": "claude",
-      "max_parallel": 4,
+      "max_parallel": 3,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "claude2": {
       "display_name": "Claude2",
       "provider": "claude2",
-      "max_parallel": 4,
+      "max_parallel": 1,
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
@@ -415,7 +392,7 @@
   "providers": {
     "claude": {
       "delivery_mode": "claude_cli",
-      "account": "claude_account_shared_max_1",
+      "account": "claude1",
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -450,7 +427,7 @@
     },
     "claude2": {
       "delivery_mode": "claude_cli",
-      "account": "claude_account_shared_max_1",
+      "account": "claude2",
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -490,13 +467,14 @@
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
-        "model": "gemini-3.6-flash-low",
-        "print_timeout": "15m"
+        "model": "gemini-3.7-flash-high",
+        "output_format": "stream-json",
+        "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "gemini-3.6-flash-low",
-        "fallback": "Claude Sonnet 4.6 (Thinking)",
+        "primary": "gemini-3.7-flash-high",
+        "fallback": "claude-sonnet-4-6",
         "cooldown_seconds": 900
       },
       "approval": {
@@ -518,12 +496,14 @@
         "config_home": "/home/lupin/.gemini-agy2",
         "home": "/home/lupin/.gemini-agy2",
         "include_directories": true,
-        "print_timeout": "15m"
+        "model": "gemini-3.7-flash-high",
+        "output_format": "stream-json",
+        "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "",
-        "fallback": "Claude Sonnet 4.6 (Thinking)",
+        "primary": "gemini-3.7-flash-high",
+        "fallback": "claude-sonnet-4-6",
         "cooldown_seconds": 900
       },
       "approval": {
@@ -773,7 +753,8 @@
     "max_dispatches_per_tick": 10,
     "max_active_workers_per_task": 1,
     "max_concurrent_per_account": {
-      "claude_account_shared_max_1": 4,
+      "claude1": 3,
+      "claude2": 1,
       "antigravity": 4,
       "antigravity2": 4,
       "codex1": 2,

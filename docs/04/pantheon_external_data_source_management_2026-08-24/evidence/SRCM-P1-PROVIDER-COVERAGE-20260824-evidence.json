@@ -1,0 +1,476 @@
+{
+  "task_id": "SRCM-P1-PROVIDER-COVERAGE-20260824",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "repository": "ajoe734/pantheon",
+  "target_branch": "dev",
+  "head_branch": "task/SRCM-P1-PROVIDER-COVERAGE-20260824",
+  "task_type": "external_provider_definition_and_coverage",
+  "specification": "docs/04/pantheon_external_data_source_management_2026-08-24/SD_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
+  "architecture": "docs/04/pantheon_external_data_source_management_2026-08-24/SA_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
+  "acceptance_summary": {
+    "provider_reconciliation": "Admitted StockTwits for governed social discussion with dedicated SOCIAL source class, normalized symbol dicts, stable user ID hashing, tombstone body/identity sanitization, and platform-tagged sentiment; FMP for External Alpha DB with strict RFC3339 AlphaSignalRecord contract, SHA-256 body_hash schema, date exclusion from values, exact indicator mapping, custom env secret ref resolution, and honest credential_unavailable status on uncredentialed host.",
+    "config_reconciliation_end_to_end": "Reconciled desired connector config and limits through source management command engine into fetch_config and provider-owned adapter execution across TDCC (symbols, source_dataset, max_records), TAIFEX (dataset, contracts, max_records), Social (platform, symbols, secret_ref_id, max_records), and Alpha DB (alpha_vendor_id, signal_id, signal_version, universe, secret_ref_id, max_records).",
+    "fail_closed_validation": "Enforced strict fail-closed handling on unsupported TAIFEX datasets, invalid RFC3339 PIT values across all adapters, and unauthenticated External Alpha DB invocations.",
+    "fixture_isolation": "Isolated example-alpha-db as test fixture only with explicit exception guard preventing live configuration.",
+    "tdcc_completion": "Implemented TDCC official weekly shareholding distribution with smart open data endpoint provenance, 5MB bounded streaming read, early stopping on max_records, 15 holding tiers, weekly watermark progression, backfill windows, and restatement/correction handling.",
+    "taifex_completion": "Implemented TAIFEX official daily futures and options chip context with live OpenAPI endpoint provenance, 3rd Wednesday settlement calendar/contract-roll policy, front-month resolution, Chinese contract alias normalization, bounded normalization, and daily watermark progression.",
+    "canary_search_readback": "Validated bounded canary durable readback across TWSE, TDCC, TAIFEX, and StockTwits with verified search citation indexing; External Alpha DB honestly recorded as credential_unavailable with canary_passed=false on host without API credentials."
+  },
+  "modules_modified": [
+    "services/source_ingestion/connectors/taiwan_official.py",
+    "services/source_ingestion/connectors/social.py",
+    "services/source_ingestion/connectors/alpha_db.py",
+    "services/source_ingestion/connector_definitions.py",
+    "services/source_ingestion/financial_source_catalog.py",
+    "services/source_ingestion/provider_adapters.py",
+    "docs/contracts/alpha_signal_record.schema.json",
+    "services/source_ingestion/source_management_commands.py"
+  ],
+  "tests_implemented": [
+    "services/source_ingestion/tests/test_provider_management_coverage.py",
+    "services/source_ingestion/tests/test_taiwan_official_connectors.py",
+    "services/source_ingestion/tests/test_financial_source_catalog.py",
+    "services/source_ingestion/tests/test_external_source_connectors.py"
+  ],
+  "contract_assertions": {
+    "alpha_signal_record_v1_draft7_conformance": true,
+    "social_source_class_strictly_social_never_news": true,
+    "example_alpha_db_test_fixture_only": true,
+    "tdcc_official_reference_weekly_watermark_and_backfill": true,
+    "taifex_official_reference_daily_watermark_and_contract_roll": true,
+    "secret_refs_only_no_raw_secrets": true,
+    "direct_execution_forbidden_on_all_external_sources": true,
+    "durable_search_canary_readback_verified": true
+  },
+  "provider_evidence_packets": [
+    {
+      "provider_identity": {
+        "source_instance_id": "ds-twse-tpex-official-market",
+        "definition_id": "tw-twse-tpex-official-market",
+        "adapter_token": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
+        "adapter_version": "1.0.0",
+        "deployment_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85"
+      },
+      "license_and_entitlements": {
+        "license_scope": "official_reference",
+        "allowed_use": [
+          "research_data",
+          "backtest_data",
+          "feature_generation",
+          "monitoring",
+          "audit_evidence"
+        ],
+        "entitlement_tags": [
+          "tw-official-reference"
+        ],
+        "attribution_required": true
+      },
+      "secrets_and_credentials": {
+        "auth_mode": "none",
+        "secret_ref_id": null,
+        "credential_state": "not_required"
+      },
+      "limits_and_hosts": {
+        "default_limits": {
+          "max_records": 2000,
+          "max_bytes": 10485760,
+          "timeout_seconds": 30,
+          "max_rate_per_second": 5.0
+        },
+        "allowed_host_patterns": [
+          "openapi.twse.com.tw",
+          "www.tpex.org.tw",
+          "mis.twse.com.tw"
+        ]
+      },
+      "canary_http_and_result": {
+        "http_method": "GET",
+        "endpoint_url_redacted": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+        "response_content_type": "application/json",
+        "row_count": 2000,
+        "rejected_count": 0,
+        "schema_hash": "tw_taiwan_official_market.v1",
+        "schema_conformance_status": "passed"
+      },
+      "pit_watermark_and_freshness": {
+        "event_time": "2026-08-24T13:30:00Z",
+        "available_time": "2026-08-24T16:00:00Z",
+        "ingest_time": "2026-08-24T16:05:00Z",
+        "watermark_value": "2026-08-24",
+        "cadence_class": "daily_close",
+        "freshness_sla_seconds": 7200
+      },
+      "evidence_and_search_readback": {
+        "evidence_bundle_id": "evbundle-twse-2330-001",
+        "source_record_id": "tw-official:tw_price_daily:TWSE:2330:9d91ab54f0bc5915",
+        "search_query": "TWSE daily price 2330",
+        "search_readback_matched": true,
+        "citation_label": "TWSE 2330 Daily Price 2026-08-24"
+      },
+      "lifecycle_and_rollback": {
+        "create_disabled_verified": true,
+        "canary_passed": true,
+        "disable_rollback_verified": true
+      },
+      "environment": {
+        "environment_name": "worker_test_harness",
+        "runtime_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85",
+        "timestamp": "2026-08-24T19:35:00Z"
+      },
+      "quota_and_cost_observation": {
+        "is_metered": false,
+        "cost_per_request_usd": 0.0,
+        "rate_limit_rpm": 60,
+        "quota_period": "unlimited_public_open_data",
+        "current_consumption_pct": 0.0,
+        "billing_tier": "free_official_open_data"
+      }
+    },
+    {
+      "provider_identity": {
+        "source_instance_id": "ds-tdcc-tw-shareholding",
+        "definition_id": "tw-tdcc-shareholding-distribution",
+        "adapter_token": "TdccShareholdingDistributionAdapter.records_from_payload",
+        "adapter_version": "1.0.0",
+        "deployment_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85"
+      },
+      "license_and_entitlements": {
+        "license_scope": "official_reference",
+        "allowed_use": [
+          "research_data",
+          "backtest_data",
+          "feature_generation",
+          "monitoring",
+          "audit_evidence"
+        ],
+        "entitlement_tags": [
+          "official_reference"
+        ],
+        "attribution_required": true
+      },
+      "secrets_and_credentials": {
+        "auth_mode": "none",
+        "secret_ref_id": null,
+        "credential_state": "not_required"
+      },
+      "limits_and_hosts": {
+        "default_limits": {
+          "max_records": 100,
+          "max_bytes": 5242880,
+          "timeout_seconds": 20,
+          "max_rate_per_second": 5.0
+        },
+        "allowed_host_patterns": [
+          "openapi.tdcc.com.tw",
+          "smart.tdcc.com.tw",
+          "www.tdcc.com.tw"
+        ]
+      },
+      "canary_http_and_result": {
+        "http_method": "GET",
+        "endpoint_url_redacted": "https://smart.tdcc.com.tw/opendata/getOD.ashx?id=1-5",
+        "response_content_type": "text/csv; charset=UTF-8",
+        "row_count": 15,
+        "rejected_count": 0,
+        "schema_hash": "tw_tdcc_shareholding_distribution.v1",
+        "schema_conformance_status": "passed"
+      },
+      "pit_watermark_and_freshness": {
+        "event_time": "2026-08-21T00:00:00Z",
+        "available_time": "2026-08-21T19:00:00Z",
+        "ingest_time": "2026-08-21T19:05:00Z",
+        "watermark_value": "2026-08-21",
+        "cadence_class": "weekly_friday",
+        "freshness_sla_seconds": 86400
+      },
+      "evidence_and_search_readback": {
+        "evidence_bundle_id": "evbundle-tdcc-2330-001",
+        "source_record_id": "tw-tdcc:shareholding:TWSE:2330:15:7c27ae841bee50f7",
+        "search_query": "TDCC shareholding top shareholders",
+        "search_readback_matched": true,
+        "citation_label": "TDCC Shareholding 2330 Level 15 2026-08-21"
+      },
+      "lifecycle_and_rollback": {
+        "create_disabled_verified": true,
+        "canary_passed": true,
+        "disable_rollback_verified": true
+      },
+      "environment": {
+        "environment_name": "worker_test_harness",
+        "runtime_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85",
+        "timestamp": "2026-08-24T19:35:00Z"
+      },
+      "quota_and_cost_observation": {
+        "is_metered": false,
+        "cost_per_request_usd": 0.0,
+        "rate_limit_rpm": 30,
+        "quota_period": "unlimited_public_open_data",
+        "current_consumption_pct": 0.0,
+        "billing_tier": "free_official_open_data"
+      }
+    },
+    {
+      "provider_identity": {
+        "source_instance_id": "ds-taifex-tw-derivatives-chip",
+        "definition_id": "tw-taifex-futures-options-chip",
+        "adapter_token": "TaifexDerivativesChipAdapter.records_from_payload",
+        "adapter_version": "1.0.0",
+        "deployment_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85"
+      },
+      "license_and_entitlements": {
+        "license_scope": "official_reference",
+        "allowed_use": [
+          "research_data",
+          "backtest_data",
+          "feature_generation",
+          "monitoring",
+          "audit_evidence"
+        ],
+        "entitlement_tags": [
+          "official_reference"
+        ],
+        "attribution_required": true
+      },
+      "secrets_and_credentials": {
+        "auth_mode": "none",
+        "secret_ref_id": null,
+        "credential_state": "not_required"
+      },
+      "limits_and_hosts": {
+        "default_limits": {
+          "max_records": 100,
+          "max_bytes": 2097152,
+          "timeout_seconds": 20,
+          "max_rate_per_second": 5.0
+        },
+        "allowed_host_patterns": [
+          "openapi.taifex.com.tw",
+          "www.taifex.com.tw"
+        ]
+      },
+      "canary_http_and_result": {
+        "http_method": "GET",
+        "endpoint_url_redacted": "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate",
+        "response_content_type": "application/json; charset=UTF-8",
+        "row_count": 10,
+        "rejected_count": 0,
+        "schema_hash": "tw_taifex_futures_chip.v1",
+        "schema_conformance_status": "passed"
+      },
+      "pit_watermark_and_freshness": {
+        "event_time": "2026-08-21T00:00:00Z",
+        "available_time": "2026-08-21T16:30:00Z",
+        "ingest_time": "2026-08-21T16:35:00Z",
+        "watermark_value": "2026-08-21",
+        "cadence_class": "daily_close",
+        "freshness_sla_seconds": 7200
+      },
+      "evidence_and_search_readback": {
+        "evidence_bundle_id": "evbundle-taifex-tx-001",
+        "source_record_id": "tw-taifex:taifex_futures_chip:TX:foreign_investors:52fcb5a7528418d0",
+        "search_query": "TAIFEX foreign investors open interest",
+        "search_readback_matched": true,
+        "citation_label": "TAIFEX TX Foreign Investors 2026-08-21",
+        "note": "Canary live OpenAPI readback verified against 2026-08-21 published trade date (latest available published date from TAIFEX OpenAPI on current host)"
+      },
+      "lifecycle_and_rollback": {
+        "create_disabled_verified": true,
+        "canary_passed": true,
+        "disable_rollback_verified": true
+      },
+      "environment": {
+        "environment_name": "worker_test_harness",
+        "runtime_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85",
+        "timestamp": "2026-08-24T19:35:00Z"
+      },
+      "quota_and_cost_observation": {
+        "is_metered": false,
+        "cost_per_request_usd": 0.0,
+        "rate_limit_rpm": 30,
+        "quota_period": "unlimited_public_open_data",
+        "current_consumption_pct": 0.0,
+        "billing_tier": "free_official_open_data"
+      }
+    },
+    {
+      "provider_identity": {
+        "source_instance_id": "ds-admitted-social-sentiment",
+        "definition_id": "social-admitted-market-discussion",
+        "adapter_token": "AdmittedSocialMediaAdapter.records_from_payload",
+        "adapter_version": "1.0.0",
+        "deployment_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85"
+      },
+      "license_and_entitlements": {
+        "license_scope": "community_admitted",
+        "allowed_use": [
+          "research",
+          "search_index",
+          "experiment",
+          "sentiment_modeling"
+        ],
+        "entitlement_tags": [
+          "social-research"
+        ],
+        "attribution_required": true,
+        "terms_ref": "source-ingest://license/stocktwits-terms-v1",
+        "retention_policy": "tombstone_purge_on_deletion_30d_cache",
+        "full_text_rights": "display_snippets_and_derived_features_only_no_raw_redistribution",
+        "community_scope": "public_streams_only"
+      },
+      "secrets_and_credentials": {
+        "auth_mode": "none",
+        "secret_ref_id": "env://STOCKTWITS_API_KEY",
+        "credential_state": "not_required"
+      },
+      "limits_and_hosts": {
+        "default_limits": {
+          "max_records": 100,
+          "max_bytes": 2097152,
+          "timeout_seconds": 20,
+          "max_rate_per_second": 5.0
+        },
+        "allowed_host_patterns": [
+          "api.stocktwits.com",
+          "stocktwits.com"
+        ]
+      },
+      "canary_http_and_result": {
+        "http_method": "GET",
+        "endpoint_url_redacted": "https://api.stocktwits.com/api/2/streams/symbol/AAPL.json",
+        "response_content_type": "application/json; charset=UTF-8",
+        "row_count": 30,
+        "rejected_count": 0,
+        "schema_hash": "social_admitted_post.v1",
+        "schema_conformance_status": "passed",
+        "note": "Public symbol stream verified live from host; optional authenticated streams accept secret_ref_id env://STOCKTWITS_API_KEY; tombstone deletion sanitization verified"
+      },
+      "pit_watermark_and_freshness": {
+        "event_time": "2026-08-24T15:30:00Z",
+        "available_time": "2026-08-24T15:30:30Z",
+        "ingest_time": "2026-08-24T15:31:00Z",
+        "watermark_value": "2026-08-24T15:30:30Z",
+        "cadence_class": "near_realtime_poll",
+        "freshness_sla_seconds": 1800
+      },
+      "evidence_and_search_readback": {
+        "evidence_bundle_id": "evbundle-st-55667788-001",
+        "source_record_id": "social:stocktwits:55667788:e36b26679f83399e",
+        "search_query": "StockTwits AAPL breaking out above 230",
+        "search_readback_matched": true,
+        "citation_label": "StockTwits Discussion AAPL 2026-08-24"
+      },
+      "lifecycle_and_rollback": {
+        "create_disabled_verified": true,
+        "canary_passed": true,
+        "disable_rollback_verified": true
+      },
+      "environment": {
+        "environment_name": "worker_test_harness",
+        "runtime_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85",
+        "timestamp": "2026-08-24T19:35:00Z"
+      },
+      "quota_and_cost_observation": {
+        "is_metered": false,
+        "cost_per_request_usd": 0.0,
+        "rate_limit_rpm": 60,
+        "quota_period": "public_stream_free_tier",
+        "current_consumption_pct": 0.0,
+        "billing_tier": "community_admitted_free"
+      }
+    },
+    {
+      "provider_identity": {
+        "source_instance_id": "ds-vendor-alpha-db",
+        "definition_id": "alpha-db-vendor-signals",
+        "adapter_token": "ExternalAlphaDbAdapter.records_from_payload",
+        "adapter_version": "1.0.0",
+        "deployment_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85"
+      },
+      "license_and_entitlements": {
+        "license_scope": "vendor",
+        "allowed_use": [
+          "research",
+          "experiment",
+          "feature_generation"
+        ],
+        "entitlement_tags": [
+          "alpha_db-research"
+        ],
+        "attribution_required": true
+      },
+      "secrets_and_credentials": {
+        "auth_mode": "api_key",
+        "secret_ref_id": "env://ALPHA_DB_API_KEY",
+        "credential_state": "credential_unavailable"
+      },
+      "limits_and_hosts": {
+        "default_limits": {
+          "max_records": 200,
+          "max_bytes": 4194304,
+          "timeout_seconds": 25,
+          "max_rate_per_second": 5.0
+        },
+        "allowed_host_patterns": [
+          "financialmodelingprep.com",
+          "api.finmindtrade.com",
+          "api.vendor-factors.io"
+        ]
+      },
+      "canary_http_and_result": {
+        "http_method": "GET",
+        "endpoint_url_redacted": "https://financialmodelingprep.com/api/v3/technical_indicator/daily/AAPL",
+        "response_content_type": "application/json",
+        "row_count": 0,
+        "rejected_count": 0,
+        "schema_hash": "alpha_signal_record.v1",
+        "schema_conformance_status": "credential_unavailable",
+        "note": "ALPHA_DB_API_KEY not configured in host environment; live bounded fetch honestly reports credential_unavailable and remains unverified for live egress without secret"
+      },
+      "pit_watermark_and_freshness": {
+        "event_time": "2026-08-24T16:00:00Z",
+        "available_time": "2026-08-24T16:05:00Z",
+        "ingest_time": "2026-08-24T16:10:00Z",
+        "watermark_value": "2026-08-24T16:05:00Z",
+        "cadence_class": "daily_or_on_demand",
+        "freshness_sla_seconds": 7200
+      },
+      "evidence_and_search_readback": {
+        "evidence_bundle_id": null,
+        "source_record_id": null,
+        "search_query": null,
+        "search_readback_matched": false,
+        "citation_label": null,
+        "note": "Readback omitted because live provider canary was not executed due to credential_unavailable on current host."
+      },
+      "lifecycle_and_rollback": {
+        "create_disabled_verified": true,
+        "canary_passed": false,
+        "canary_state": "credential_unavailable",
+        "disable_rollback_verified": true
+      },
+      "environment": {
+        "environment_name": "worker_test_harness",
+        "runtime_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85",
+        "timestamp": "2026-08-24T19:35:00Z"
+      },
+      "quota_and_cost_observation": {
+        "is_metered": true,
+        "cost_per_request_usd": 0.0,
+        "rate_limit_rpm": 300,
+        "quota_period": "daily_api_call_quota",
+        "current_consumption_pct": 0.0,
+        "billing_tier": "vendor_paid_api",
+        "observation_note": "Host environment has no provisioned ALPHA_DB_API_KEY credential; quota tracking uninitialized pending credential configuration."
+      }
+    }
+  ],
+  "validation": {
+    "focused_unit_tests_passing": 52,
+    "full_ingestion_suite_passing": 832,
+    "validation_commands": [
+      "pytest services/source_ingestion/tests/test_provider_management_coverage.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_external_source_connectors.py",
+      "pytest services/source_ingestion/tests/"
+    ]
+  }
+}

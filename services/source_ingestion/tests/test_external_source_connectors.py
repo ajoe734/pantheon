@@ -584,3 +584,148 @@ def test_source_search_end_to_end_durable_readback(
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_admitted_social_media_adapter_and_tombstone_propagation() -> None:
+    from services.source_ingestion.connectors import (
+        SOCIAL_ADMITTED_CONNECTOR_ID,
+        SOCIAL_ADMITTED_SCHEMA_HASH,
+        AdmittedSocialMediaAdapter,
+        SourceEvidenceError,
+    )
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    adapter = AdmittedSocialMediaAdapter(max_records=10)
+    social_payload = [
+        {
+            "id": "post-1001",
+            "author": "trader_alice",
+            "body": "$2330 reported stellar monthly revenue; outlook positive",
+            "symbols": ["2330"],
+            "created_at": "2026-06-10T10:00:00Z",
+            "available_time": "2026-06-10T10:01:00Z",
+            "trust_score": 0.9,
+            "sentiment": {
+                "label": "positive",
+                "score": 0.85,
+                "model_version": "finbert-social-v2",
+            },
+        },
+        {
+            "id": "post-1002",
+            "author": "spam_bot_99",
+            "body": "Buy crypto now!",
+            "created_at": "2026-06-10T10:05:00Z",
+            "trust_score": 0.1,
+            "is_bot": True,
+            "is_tombstone": True,
+        },
+    ]
+
+    records = adapter.records_from_payload(social_payload, platform="stocktwits", trace_id="trace-social-1")
+    assert len(records) == 2
+    assert records[0].connector_id == SOCIAL_ADMITTED_CONNECTOR_ID
+    assert records[0].source_type.value == "social"
+    assert records[0].metadata["platform"] == "stocktwits"
+    assert records[0].metadata["trust_score"] == 0.9
+    assert records[0].metadata["sentiment"]["label"] == "positive"
+    assert records[0].metadata["sentiment"]["model_version"] == "finbert-social-v2"
+    assert records[0].metadata["sentiment"]["is_derived"] is True
+    assert records[0].metadata["is_tombstone"] is False
+    assert records[0].metadata["governance"]["direct_execution_allowed"] is False
+    assert records[0].metadata["schema_hash"] == SOCIAL_ADMITTED_SCHEMA_HASH
+
+    assert records[1].metadata["is_tombstone"] is True
+    assert records[1].metadata["is_bot"] is True
+
+    # Invalid trust score must fail
+    with pytest.raises(SourceEvidenceError, match="trust_score"):
+        adapter.records_from_payload([{"id": "bad", "trust_score": 1.5}])
+
+    # Test via execute_provider_owned_adapter
+    dispatched = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "adapter": "AdmittedSocialMediaAdapter.records_from_payload",
+            "request": {"payload": social_payload, "platform": "stocktwits"},
+        },
+        trace_id="trace-social-dispatch",
+    )
+    assert len(dispatched) == 2
+
+
+def test_external_alpha_db_adapter_and_alpha_signal_contract() -> None:
+    from services.source_ingestion.connectors import (
+        ALPHA_DB_VENDOR_CONNECTOR_ID,
+        ALPHA_SIGNAL_RECORD_SCHEMA_VERSION,
+        ALPHA_SIGNAL_SCHEMA_HASH,
+        AlphaSignalRecord,
+        ExternalAlphaDbAdapter,
+        SourceEvidenceError,
+    )
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    adapter = ExternalAlphaDbAdapter(max_records=10)
+    alpha_payload = [
+        {
+            "alpha_vendor_id": "alpha-signals-vendor-1",
+            "signal_id": "momentum_quality_v1",
+            "signal_version": "v1.2",
+            "field_schema_version": "v1",
+            "universe": ["TW_EQUITY", "US_EQUITY"],
+            "entity_id": "2330.TWSE",
+            "event_time": "2026-06-10T13:30:00Z",
+            "as_of_time": "2026-06-10T13:30:00Z",
+            "available_time": "2026-06-10T14:00:00Z",
+            "values": {"momentum_score": 1.82, "quality_score": 0.94},
+            "units": {"momentum_score": "z_score", "quality_score": "percentile"},
+            "corporate_action_policy": "provider_adjusted",
+            "survivorship_policy": "point_in_time",
+            "license_scope": "vendor",
+            "allowed_use": ["research", "experiment"],
+            "entitlement_tags": ["alpha_db-research"],
+            "provider_record_ref": "ref://vendor-1/mom_qual/2330.TWSE/20260610",
+        }
+    ]
+
+    records = adapter.records_from_payload(
+        alpha_payload,
+        alpha_vendor_id="alpha-signals-vendor-1",
+        signal_id="momentum_quality_v1",
+        trace_id="trace-alpha-1",
+    )
+
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.connector_id == ALPHA_DB_VENDOR_CONNECTOR_ID
+    assert rec.source_type.value == "alpha_db"
+    assert rec.metadata["alpha_vendor_id"] == "alpha-signals-vendor-1"
+    assert rec.metadata["signal_id"] == "momentum_quality_v1"
+    assert rec.metadata["values"]["momentum_score"] == 1.82
+    assert rec.metadata["corporate_action_policy"] == "provider_adjusted"
+    assert rec.metadata["survivorship_policy"] == "point_in_time"
+    assert rec.metadata["schema_hash"] == ALPHA_SIGNAL_SCHEMA_HASH
+    assert rec.metadata["signal_record"]["schema_version"] == ALPHA_SIGNAL_RECORD_SCHEMA_VERSION
+    assert rec.metadata["governance"]["direct_execution_allowed"] is False
+
+    # Guard: example-alpha-db cannot be used as live configured connector
+    with pytest.raises(SourceEvidenceError, match="example-alpha-db"):
+        ExternalAlphaDbAdapter(connector_id="example-alpha-db")
+
+    with pytest.raises(SourceEvidenceError, match="example-alpha-db"):
+        adapter.records_from_payload(alpha_payload, alpha_vendor_id="example-alpha-db")
+
+    # Test via execute_provider_owned_adapter
+    dispatched = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "adapter": "ExternalAlphaDbAdapter.records_from_payload",
+            "request": {
+                "payload": alpha_payload,
+                "alpha_vendor_id": "alpha-signals-vendor-1",
+                "signal_id": "momentum_quality_v1",
+            },
+        },
+        trace_id="trace-alpha-dispatch",
+    )
+    assert len(dispatched) == 1

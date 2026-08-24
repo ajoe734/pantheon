@@ -11,25 +11,24 @@ BFF_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BFF_DIR)
 
 import trade_journeys as tj  # noqa: E402
+from test_tj_e2e_005_trade_journeys_read_api import InMemoryPostgresProjectionReader  # noqa: E402
 from services.trade_journey.materializer import JourneyMaterializer  # noqa: E402
 
 
 def _client(dispatch=None, *, unrelated_events=0, action_ledger=None):
-    materializer = JourneyMaterializer()
-    materializer.rebuild([{
+    events = [{
         "event_id": "event-1", "journey_id": "tj-8", "tenant_id": "tenant-a",
         "environment": "paper", "occurred_at": "2026-07-12T00:00:00Z",
         "source": "test", "stage": "order_submission", "stage_status": "succeeded",
-    }])
+    }]
     for index in range(unrelated_events):
-        materializer.ingest({
+        events.append({
             "event_id": f"event-other-{index}", "journey_id": "tj-other",
             "tenant_id": "tenant-a", "environment": "paper",
             "occurred_at": f"2026-07-12T00:00:{index + 1:02d}Z",
             "source": "test", "stage": "order_submission", "stage_status": "succeeded",
         })
-    store = tj.TradeJourneyEventStore()
-    store.materializer = lambda: materializer
+    reader = InMemoryPostgresProjectionReader(events)
 
     def identity(auth):
         if not auth:
@@ -50,7 +49,7 @@ def _client(dispatch=None, *, unrelated_events=0, action_ledger=None):
         extract_identity=identity,
         require_read_role=read_role,
         require_operator_role=operator_role,
-        get_event_store=lambda: store,
+        get_projection_reader=lambda: reader,
         dispatch_action=dispatch or (lambda command: {
             "status": "succeeded", "receipt_id": "receipt-1",
             "readback": {"journey_id": command["journey_id"], "state": "paused"},
@@ -58,7 +57,7 @@ def _client(dispatch=None, *, unrelated_events=0, action_ledger=None):
         action_ledger=action_ledger or tj.JourneyActionLedger(),
         utc_now=lambda: "2026-07-12T01:00:00Z",
     ))
-    revision = materializer.get(
+    revision = reader.materializer.get(
         "tj-8", tenant_id="tenant-a", environment="paper",
     ).snapshot["revision"]
     return TestClient(app), revision

@@ -1,4 +1,4 @@
-"""Authenticated public-BFF readback for LOOP-PROD-TEL-002 hosted proof."""
+"""Authenticated public-BFF readback for lifecycle Postgres cutover proof."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from services.trade_journey.hosted_lifecycle_probe import (
 from services.trade_journey.lifecycle_projector import STABLE_IDENTITY_FIELDS
 
 
-SCHEMA_VERSION = "pantheon.loop-prod-tel-002-bff-readback.v1"
+SCHEMA_VERSION = "pantheon.lifecycle-proj-cutover-bff-readback.v1"
 CONTROLLER_FIELDS = (
     "deployment_sha",
     "generation",
@@ -34,6 +34,8 @@ CONTROLLER_FIELDS = (
     "truth_level",
     "status",
     "backlog",
+    "source_high_watermark",
+    "quarantine_count",
 )
 
 
@@ -182,7 +184,15 @@ def _read_surface_data(
 
 
 def _controller_summary(controller: Mapping[str, Any]) -> dict[str, Any]:
-    return {field: controller.get(field) for field in CONTROLLER_FIELDS}
+    summary = {field: controller.get(field) for field in CONTROLLER_FIELDS}
+    if summary.get("truth_level") in (None, ""):
+        summary["truth_level"] = (
+            "canonical_live"
+            if controller.get("mode") == "live"
+            and controller.get("accepted_live") is True
+            else "not_accepted_live"
+        )
+    return summary
 
 
 def _canonical_controller(
@@ -213,16 +223,67 @@ def _canonical_controller(
         "bff_generation_mismatch",
         "BFF controller generation mismatched its surface",
     )
-    _require(int(controller.get("checkpoint") or 0) >= checkpoint, "bff_checkpoint_mismatch", "BFF controller checkpoint lagged hosted proof")
+    controller_checkpoint = int(controller.get("checkpoint") or 0)
+    controller_high = int(controller.get("source_high_watermark") or 0)
+    _require(controller_checkpoint >= checkpoint, "bff_checkpoint_mismatch", "BFF controller checkpoint lagged hosted proof")
+    _require(controller_checkpoint == controller_high, "bff_checkpoint_mismatch", "BFF controller checkpoint did not equal its source high watermark")
     _require(controller.get("backlog") == 0, "bff_controller_not_live", "BFF controller backlog was nonzero")
+    _require(int(controller.get("quarantine_count") or 0) == 0, "bff_controller_not_live", "BFF controller quarantine count was nonzero")
     expected = {
         "mode": "live",
         "accepted_live": True,
-        "truth_level": "canonical_live",
         "status": "ready",
     }
     _require(all(controller.get(key) == value for key, value in expected.items()), "bff_controller_not_live", "BFF controller was not canonical live truth")
     return _controller_summary(controller)
+
+
+def _postgres_journey_surface_controller(
+    payload: Mapping[str, Any],
+    *,
+    expected_sha: str,
+    minimum_generation: Any,
+    checkpoint: int,
+    label: str,
+) -> tuple[dict[str, Any], int]:
+    meta = _object(
+        payload.get("meta"),
+        "bff_journey_surface_invalid",
+        f"{label} metadata was missing",
+    )
+    freshness = _object(
+        meta.get("freshness"),
+        "bff_journey_surface_invalid",
+        f"{label} freshness was missing",
+    )
+    _require(
+        meta.get("read_state") == "formal"
+        and freshness.get("rebuild_status") == "postgres_projection_reader"
+        and freshness.get("projector_owned") is True
+        and freshness.get("projection_schema_version")
+        == "pantheon.trade-journey-projection.v1"
+        and freshness.get("accepted_live") is True
+        and freshness.get("projection_mode") == "live"
+        and freshness.get("truth_level") == "canonical_live",
+        "bff_journey_surface_invalid",
+        f"{label} was not canonical Postgres live truth",
+    )
+    controller = _object(
+        freshness.get("controller"),
+        "bff_journey_surface_invalid",
+        f"{label} controller was missing",
+    )
+    generation = int(freshness.get("generation"))
+    return (
+        _canonical_controller(
+            controller,
+            expected_sha=expected_sha,
+            surface_generation=generation,
+            minimum_generation=minimum_generation,
+            checkpoint=checkpoint,
+        ),
+        generation,
+    )
 
 
 def _load_source(path: Path, expected_sha: str) -> tuple[dict[str, Any], str]:
@@ -239,6 +300,7 @@ def _load_source(path: Path, expected_sha: str) -> tuple[dict[str, Any], str]:
     proof = _object(source.get("proof"), "source_artifact_invalid", "hosted source proof was missing")
     projection = _object(proof.get("projection"), "source_artifact_invalid", "hosted projection proof was missing")
     _require(projection.get("deployment_sha") == expected_sha, "source_sha_mismatch", "hosted projection SHA mismatched")
+    _require(projection.get("backend") == "postgres", "source_artifact_invalid", "hosted projection proof did not use Postgres")
     return source, hashlib.sha256(raw).hexdigest()
 
 
@@ -277,6 +339,13 @@ def verify_readback(
     _require(version.get("source_commit_sha") == expected_sha and version.get("source_commit_known") is True, "bff_sha_mismatch", "public BFF source SHA mismatched")
     _require(version.get("environment") == "dev", "bff_environment_mismatch", "public BFF was not dev")
     _require(posture.get("auth_stub") is False and posture.get("auth_mode") == "strict" and posture.get("dev_login_enabled") is True, "bff_auth_posture_invalid", "public BFF auth posture was not strict")
+    _require(
+        posture.get("trade_journey_reader_backend") == "postgres"
+        and posture.get("trade_journey_projection_schema")
+        == "trade_journey_projection",
+        "bff_reader_posture_invalid",
+        "public BFF lifecycle reader posture was not the accepted Postgres configuration",
+    )
 
     login_result = client.request(
         "POST",
@@ -302,18 +371,61 @@ def verify_readback(
     loop_id = str(identity["loop_run_id"])
     journey_id = str(identity["journey_id"])
     tenant_id = str(identity["tenant_id"])
-    loop_url = f"{base}/bff/v5/loop-runs/{quote(loop_id, safe='')}"
     journey_query = urlencode({"tenant_id": tenant_id, "environment": "paper"})
+    loop_url = (
+        f"{base}/bff/v5/loop-runs/{quote(loop_id, safe='')}?{journey_query}"
+    )
+    list_url = (
+        f"{base}/bff/management/trade-journeys?"
+        f"{urlencode({'tenant_id': tenant_id, 'environment': 'paper', 'q': journey_id, 'page_size': 50})}"
+    )
     journey_url = f"{base}/bff/management/trade-journeys/{quote(journey_id, safe='')}?{journey_query}"
+    timeline_url = f"{base}/bff/management/trade-journeys/{quote(journey_id, safe='')}/timeline?{journey_query}"
+    graph_url = f"{base}/bff/management/trade-journeys/{quote(journey_id, safe='')}/graph?{journey_query}"
     evidence_url = f"{base}/bff/management/trade-journeys/{quote(journey_id, safe='')}/evidence?{journey_query}"
+    cross_tenant_url = (
+        f"{base}/bff/management/trade-journeys/{quote(journey_id, safe='')}?"
+        f"{urlencode({'tenant_id': f'{tenant_id}-outside', 'environment': 'paper'})}"
+    )
+    cross_environment_url = (
+        f"{base}/bff/management/trade-journeys/{quote(journey_id, safe='')}?"
+        f"{urlencode({'tenant_id': tenant_id, 'environment': 'live'})}"
+    )
+    stale_page_url = f"{list_url}&page_token=stale-cutover-token"
 
     negative_statuses = {
         "loop_unauthorized": client.request("GET", loop_url).status,
-        "loop_arbitrary_bearer": client.request("GET", loop_url, headers={"Authorization": "Bearer loop-prod-tel-002-fixed-invalid"}).status,
+        "loop_arbitrary_bearer": client.request("GET", loop_url, headers={"Authorization": "Bearer lifecycle-cutover-fixed-invalid"}).status,
+        "list_unauthorized": client.request("GET", list_url).status,
         "journey_unauthorized": client.request("GET", journey_url).status,
-        "journey_arbitrary_bearer": client.request("GET", journey_url, headers={"Authorization": "Bearer loop-prod-tel-002-fixed-invalid"}).status,
+        "journey_arbitrary_bearer": client.request("GET", journey_url, headers={"Authorization": "Bearer lifecycle-cutover-fixed-invalid"}).status,
+        "timeline_unauthorized": client.request("GET", timeline_url).status,
+        "graph_unauthorized": client.request("GET", graph_url).status,
     }
     _require(all(status == 401 for status in negative_statuses.values()), "bff_auth_negative_failed", "public BFF protected read accepted an invalid identity")
+    scope_negative_statuses = {
+        "cross_tenant_detail": client.request(
+            "GET", cross_tenant_url, headers=auth
+        ).status,
+        "cross_environment_live_sensitive_detail": client.request(
+            "GET", cross_environment_url, headers=auth
+        ).status,
+    }
+    _require(
+        all(status == 404 for status in scope_negative_statuses.values()),
+        "bff_scope_negative_failed",
+        "public BFF cross-scope detail did not use protected not-found semantics",
+    )
+    conflict_negative_statuses = {
+        "stale_or_scope_conflicting_page_token": client.request(
+            "GET", stale_page_url, headers=auth
+        ).status,
+    }
+    _require(
+        all(status == 400 for status in conflict_negative_statuses.values()),
+        "bff_conflict_negative_failed",
+        "public BFF accepted a stale or scope-conflicting page token",
+    )
 
     loop_read = _read_surface_data(
         client=client,
@@ -332,17 +444,19 @@ def verify_readback(
     loop_surface = _object(loop_surface.get("loop_run_detail"), "bff_loop_read_invalid", "loop-run detail surface was missing")
     _require(all(str(loop.get(field) or "") == str(identity[field]) for field in STABLE_IDENTITY_FIELDS), "bff_loop_identity_mismatch", "loop-run stable identity mismatched hosted proof")
     _require(loop.get("id") == loop_id and loop.get("loop_run_id") == loop_id and loop.get("journey_id") == journey_id, "bff_loop_identity_mismatch", "loop-run identifiers mismatched hosted proof")
-    _require(loop.get("source") == "canonical_telemetry_lifecycle_projector" and loop.get("accepted_live") is True and loop.get("projection_mode") == "live", "bff_loop_truth_invalid", "loop-run record was not canonical live truth")
-    _require(loop.get("status") == projection.get("loop_status") and loop.get("deployment_sha") == expected_sha, "bff_loop_truth_invalid", "loop-run terminal truth mismatched hosted proof")
-    _require(loop_surface.get("status") == "ok" and loop_surface.get("source") == "service_store" and loop_surface.get("truth_status") == "formal", "bff_loop_surface_invalid", "loop-run BFF surface was not formal service-store truth")
-    loop_generation = loop_surface.get("projection_generation")
+    _require(loop.get("source") == "postgres_lifecycle_projection", "bff_loop_truth_invalid", "loop-run record did not come from the Postgres projection")
+    loop_freshness = _object(loop.get("freshness_lineage"), "bff_loop_truth_invalid", "loop-run freshness lineage was missing")
+    _require(loop_freshness.get("accepted_live") is True and loop_freshness.get("mode") == "live", "bff_loop_truth_invalid", "loop-run record was not canonical live truth")
+    _require(loop.get("status") == projection.get("loop_status"), "bff_loop_truth_invalid", "loop-run terminal truth mismatched hosted proof")
+    _require(loop_surface.get("status") == "ok" and loop_surface.get("source") == "postgres_lifecycle_projection" and loop_surface.get("truth_status") == "formal", "bff_loop_surface_invalid", "loop-run BFF surface was not formal Postgres truth")
     _require(
         loop_surface.get("projection_schema_version")
-        == "pantheon.loop-run-projection.v1",
+        == "pantheon.trade-journey-projection.v1",
         "bff_loop_surface_invalid",
         "loop-run projection metadata mismatched",
     )
     loop_controller = _object(loop_surface.get("controller"), "bff_loop_surface_invalid", "loop-run controller was missing")
+    loop_generation = loop_controller.get("generation")
     loop_controller_summary = _canonical_controller(
         loop_controller,
         expected_sha=expected_sha,
@@ -371,7 +485,7 @@ def verify_readback(
     _require(journey.get("read_state") == "formal" and journey_meta.get("read_state") == "formal" and int(journey.get("event_count") or 0) >= len(proof.get("events") or []), "bff_journey_truth_invalid", "Trade Journey was not formal complete truth")
     journey_generation = freshness.get("generation")
     _require(freshness.get("projector_owned") is True and freshness.get("projection_schema_version") == "pantheon.trade-journey-projection.v1", "bff_journey_surface_invalid", "Trade Journey projection metadata mismatched")
-    _require(freshness.get("rebuild_status") == "complete" and freshness.get("accepted_live") is True and freshness.get("projection_mode") == "live" and freshness.get("truth_level") == "canonical_live", "bff_journey_surface_invalid", "Trade Journey surface was not canonical live truth")
+    _require(freshness.get("rebuild_status") == "postgres_projection_reader" and freshness.get("accepted_live") is True and freshness.get("projection_mode") == "live" and freshness.get("truth_level") == "canonical_live", "bff_journey_surface_invalid", "Trade Journey surface was not canonical Postgres live truth")
     journey_controller = _object(freshness.get("controller"), "bff_journey_surface_invalid", "Trade Journey controller was missing")
     journey_controller_summary = _canonical_controller(
         journey_controller,
@@ -380,8 +494,117 @@ def verify_readback(
         minimum_generation=generation,
         checkpoint=checkpoint,
     )
-    _require(loop_controller_summary == journey_controller_summary, "bff_cross_surface_mismatch", "BFF surfaces did not serve one atomic controller generation")
 
+    list_read = _read_surface_data(
+        client=client,
+        url=list_url,
+        headers=auth,
+        code="bff_list_read_invalid",
+        label="Trade Journey list",
+        max_attempts=surface_read_attempts,
+        poll_seconds=surface_read_poll_seconds,
+        sleep=sleep,
+    )
+    list_payload = _object(
+        list_read.result.payload,
+        "bff_list_read_invalid",
+        "Trade Journey list response was invalid",
+    )
+    list_items = list_read.data.get("items")
+    _require(
+        isinstance(list_items, list)
+        and any(
+            isinstance(item, Mapping) and item.get("journey_id") == journey_id
+            for item in list_items
+        ),
+        "bff_list_read_invalid",
+        "Trade Journey list did not contain the hosted lifecycle",
+    )
+    list_controller_summary, list_generation = _postgres_journey_surface_controller(
+        list_payload,
+        expected_sha=expected_sha,
+        minimum_generation=generation,
+        checkpoint=checkpoint,
+        label="Trade Journey list",
+    )
+
+    timeline_read = _read_surface_data(
+        client=client,
+        url=timeline_url,
+        headers=auth,
+        code="bff_timeline_read_invalid",
+        label="Trade Journey timeline",
+        max_attempts=surface_read_attempts,
+        poll_seconds=surface_read_poll_seconds,
+        sleep=sleep,
+    )
+    timeline_payload = _object(
+        timeline_read.result.payload,
+        "bff_timeline_read_invalid",
+        "Trade Journey timeline response was invalid",
+    )
+    timeline_items = timeline_read.data.get("items")
+    _require(
+        isinstance(timeline_items, list),
+        "bff_timeline_read_invalid",
+        "Trade Journey timeline items were missing",
+    )
+    expected_event_ids = {
+        str(event.get("event_id") or "") for event in proof.get("events") or []
+    }
+    timeline_event_ids = {
+        str(item.get("event_id") or "")
+        for item in timeline_items
+        if isinstance(item, Mapping)
+    }
+    _require(
+        expected_event_ids <= timeline_event_ids,
+        "bff_timeline_read_invalid",
+        "Trade Journey timeline did not contain every hosted event",
+    )
+    timeline_controller_summary, timeline_generation = (
+        _postgres_journey_surface_controller(
+            timeline_payload,
+            expected_sha=expected_sha,
+            minimum_generation=generation,
+            checkpoint=checkpoint,
+            label="Trade Journey timeline",
+        )
+    )
+
+    graph_read = _read_surface_data(
+        client=client,
+        url=graph_url,
+        headers=auth,
+        code="bff_graph_read_invalid",
+        label="Trade Journey graph",
+        max_attempts=surface_read_attempts,
+        poll_seconds=surface_read_poll_seconds,
+        sleep=sleep,
+    )
+    graph_payload = _object(
+        graph_read.result.payload,
+        "bff_graph_read_invalid",
+        "Trade Journey graph response was invalid",
+    )
+    graph_nodes = graph_read.data.get("nodes")
+    _require(
+        graph_read.data.get("journey_id") == journey_id
+        and isinstance(graph_nodes, list)
+        and any(
+            isinstance(node, Mapping) and node.get("id") == journey_id
+            for node in graph_nodes
+        ),
+        "bff_graph_read_invalid",
+        "Trade Journey graph did not contain the hosted journey",
+    )
+    graph_controller_summary, graph_generation = _postgres_journey_surface_controller(
+        graph_payload,
+        expected_sha=expected_sha,
+        minimum_generation=generation,
+        checkpoint=checkpoint,
+        label="Trade Journey graph",
+    )
     evidence_read = _read_surface_data(
         client=client,
         url=evidence_url,
@@ -401,10 +624,55 @@ def verify_readback(
         event = _object(event, "source_artifact_invalid", "hosted lifecycle event proof was malformed")
         stage = EXPECTED_STAGES.get(str(event.get("event_type") or ""))
         bucket = _object(by_stage.get(stage), "bff_evidence_mismatch", "Trade Journey stage evidence was missing")
-        expected_event_id = f"{event.get('event_id')}:{stage}"
+        expected_event_id = str(event.get("event_id") or "")
         _require(expected_event_id in (bucket.get("event_ids") or []), "bff_evidence_mismatch", "Trade Journey event ID correlation mismatched")
         correlated += 1
     _require(evidence_result.status == 200 and evidence.get("journey_id") == journey_id, "bff_evidence_invalid", "Trade Journey evidence request failed")
+    evidence_controller_summary, evidence_generation = (
+        _postgres_journey_surface_controller(
+            evidence_payload,
+            expected_sha=expected_sha,
+            minimum_generation=generation,
+            checkpoint=checkpoint,
+            label="Trade Journey evidence",
+        )
+    )
+
+    ordered_controllers = (
+        loop_controller_summary,
+        journey_controller_summary,
+        list_controller_summary,
+        timeline_controller_summary,
+        graph_controller_summary,
+        evidence_controller_summary,
+    )
+    ordered_generations = (
+        int(loop_generation),
+        int(journey_generation),
+        int(list_generation),
+        int(timeline_generation),
+        int(graph_generation),
+        int(evidence_generation),
+    )
+    controller_identity_fields = (
+        "deployment_sha",
+        "mode",
+        "accepted_live",
+        "truth_level",
+        "status",
+    )
+    _require(
+        all(
+            all(
+                controller.get(field) == ordered_controllers[0].get(field)
+                for field in controller_identity_fields
+            )
+            for controller in ordered_controllers[1:]
+        )
+        and list(ordered_generations) == sorted(ordered_generations),
+        "bff_cross_surface_mismatch",
+        "BFF surfaces did not preserve one deployment with monotonic controller generations",
+    )
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -423,6 +691,12 @@ def verify_readback(
                     "auth_stub": posture.get("auth_stub"),
                     "auth_mode": posture.get("auth_mode"),
                     "dev_login_enabled": posture.get("dev_login_enabled"),
+                    "trade_journey_reader_backend": posture.get(
+                        "trade_journey_reader_backend"
+                    ),
+                    "trade_journey_projection_schema": posture.get(
+                        "trade_journey_projection_schema"
+                    ),
                 },
             },
             "auth": {
@@ -430,6 +704,8 @@ def verify_readback(
                 "token_type": login.get("token_type"),
                 "expires_in": login.get("expires_in"),
                 "negative_statuses": negative_statuses,
+                "scope_negative_statuses": scope_negative_statuses,
+                "conflict_negative_statuses": conflict_negative_statuses,
             },
             "loop_run": {
                 "http_status": loop_result.status,
@@ -462,14 +738,28 @@ def verify_readback(
                 "source_projection_generation": generation,
                 "projection_generation": journey_generation,
                 "controller": journey_controller_summary,
+                "list_http_status": list_read.result.status,
+                "timeline_http_status": timeline_read.result.status,
+                "graph_http_status": graph_read.result.status,
+                "list_projection_generation": list_generation,
+                "timeline_projection_generation": timeline_generation,
+                "graph_projection_generation": graph_generation,
+                "evidence_projection_generation": evidence_generation,
             },
             "cross_surface": {
-                "same_generation": True,
-                "same_controller": True,
+                "same_deployment_identity": True,
+                "monotonic_controller_generations": True,
+                "ordered_generations": list(ordered_generations),
                 "exact_event_ids": True,
                 "generation_advanced_since_source_proof": (
-                    int(loop_generation) > int(generation)
+                    max(ordered_generations) > int(generation)
                 ),
+            },
+            "sensitive_field_posture": {
+                "response_payloads_persisted": False,
+                "access_token_persisted": False,
+                "credentials_persisted": False,
+                "paper_only": True,
             },
         },
         "redaction": {

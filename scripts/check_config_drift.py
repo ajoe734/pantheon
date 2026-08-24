@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,24 +33,36 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "ready_dispatcher.max_active_workers_per_task",
     "ready_dispatcher.max_concurrent_per_account",
     "ready_dispatcher.max_concurrent_workers",
-    "github_bus.enabled",
     "watchdog.enabled",
     "supervisor.observe_worker_commit_progress",
     "supervisor.lease_requires_work_progress",
     "worker_runtime.worker_lease_seconds",
     "worker_runtime.work_progress_stale_seconds",
     "task_state_store.mode",
+    # worker_reassignment governs who a task's owner/reviewer fails over to
+    # (see supervisor.py's plan_task_assignment_pair / persist_task_reassignment).
+    # Unlike agents.<id>.max_parallel below, it has no per-agent dynamic
+    # expansion, so a hand edit to enabled/limits/fallback graphs during
+    # incident mitigation would otherwise drift silently forever.
+    "worker_reassignment.enabled",
+    "worker_reassignment.max_reassignments_per_cycle",
+    "worker_reassignment.owner_fallbacks",
+    "worker_reassignment.reviewer_fallbacks",
+    # load_balance is the saturated-but-healthy-lane reassignment policy
+    # (see supervisor.py's assignment_saturated_recoverable); off by default,
+    # so a live-only enable/threshold edit is exactly the kind of change
+    # this allowlist exists to catch.
+    "worker_reassignment.load_balance",
+    # failure_loop is the repeated-failure auto-governance policy (see
+    # supervisor.py's reconcile_failure_loops) -- same reasoning as
+    # load_balance above: a live-only change to thresholds or the
+    # auto-reassignment budget must not drift silently from repo.
+    "worker_reassignment.failure_loop",
 )
 
 # Paths where live is ALLOWED to diverge from repo for legitimate
 # environment reasons. Reported as info, never counted as drift, never fixed.
-DEFAULT_INTENTIONAL_OVERRIDES: frozenset[str] = frozenset(
-    {
-        # GitHub event bus is intentionally off on hosts without the relay
-        # wired up.
-        "github_bus.enabled",
-    }
-)
+DEFAULT_INTENTIONAL_OVERRIDES: frozenset[str] = frozenset()
 
 _SENTINEL = object()
 
@@ -151,6 +165,60 @@ def _load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def parse_repository_source_roots(values: list[str] | None) -> dict[str, str]:
+    """Parse deployment topology without treating it as repo policy."""
+
+    roots: dict[str, str] = {}
+    for raw_value in values or []:
+        repository_id, separator, raw_path = str(raw_value).partition("=")
+        repository_id = repository_id.strip()
+        raw_path = raw_path.strip()
+        if (
+            not separator
+            or not re.fullmatch(r"[a-z][a-z0-9_]*", repository_id)
+            or not raw_path
+        ):
+            raise ValueError(
+                "repository source root must use repository_id=/absolute/git/root"
+            )
+        candidate = Path(os.path.expanduser(raw_path))
+        if not candidate.is_absolute():
+            raise ValueError(
+                f"repository source root for {repository_id} must be absolute: {raw_path}"
+            )
+        roots[repository_id] = str(candidate.resolve(strict=False))
+    return roots
+
+
+def find_repository_source_drift(
+    live_cfg: dict,
+    expected_roots: dict[str, str],
+) -> list[dict[str, str | None]]:
+    """Return host-topology mismatches which require a promotion to repair."""
+
+    repositories = ((live_cfg.get("coordination") or {}).get("repositories") or {})
+    if not isinstance(repositories, dict):
+        repositories = {}
+    drift: list[dict[str, str | None]] = []
+    for repository_id, expected in expected_roots.items():
+        entry = repositories.get(repository_id)
+        actual_raw = entry.get("local_path") if isinstance(entry, dict) else None
+        actual = (
+            str(Path(str(actual_raw)).expanduser().resolve(strict=False))
+            if isinstance(actual_raw, str) and actual_raw.strip()
+            else None
+        )
+        if actual != expected:
+            drift.append(
+                {
+                    "repository_id": repository_id,
+                    "expected_local_path": expected,
+                    "live_local_path": actual,
+                }
+            )
+    return drift
+
+
 def main(argv: list[str] | None = None) -> int:
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -164,6 +232,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="If set, fail when --dev-root is behind --ref by more than this.")
     parser.add_argument("--fix", action="store_true",
                         help="Align non-allowlisted drifted flags in the live config to the repo value.")
+    parser.add_argument(
+        "--repository-source-root",
+        action="append",
+        default=[],
+        metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
+        help="Fail when a live registry source root differs from deployment topology.",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -172,6 +247,10 @@ def main(argv: list[str] | None = None) -> int:
     live_cfg = _load(live_path)
 
     report = find_drift(repo_cfg, live_cfg)
+    repository_source_roots = parse_repository_source_roots(args.repository_source_root)
+    repository_source_drift = find_repository_source_drift(
+        live_cfg, repository_source_roots
+    )
     behind = None
     if args.dev_root:
         behind = git_commits_behind(Path(args.dev_root), args.ref)
@@ -187,11 +266,12 @@ def main(argv: list[str] | None = None) -> int:
     behind_fail = (args.max_behind is not None and behind is not None
                    and behind > args.max_behind)
     # After --fix, drift is resolved; only unresolved drift fails.
-    drift_fail = bool(report["drift"]) and not args.fix
+    drift_fail = (bool(report["drift"]) and not args.fix) or bool(repository_source_drift)
     exit_code = 1 if (drift_fail or behind_fail) else 0
 
     if args.json:
-        print(json.dumps({**report, "dev_root_behind": behind,
+        print(json.dumps({**report, "repository_source_drift": repository_source_drift,
+                          "dev_root_behind": behind,
                           "fixed": fixed, "exit_code": exit_code}, indent=2))
         return exit_code
 
@@ -203,10 +283,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[override] {d['path']}: repo={d['repo']!r} live={d['live']!r} (allowlisted env override)")
     for d in report["missing"]:
         print(f"[missing] {d['path']}: repo={d['repo']!r} live={d['live']!r}")
+    for item in repository_source_drift:
+        print(
+            "[SOURCE_ROOT_DRIFT] "
+            f"{item['repository_id']}: expected={item['expected_local_path']!r} "
+            f"live={item['live_local_path']!r}"
+        )
     if behind is not None:
         flag = " (STALE)" if behind_fail else ""
         print(f"[dev-root] {args.dev_root} is {behind} commit(s) behind {args.ref}{flag}")
-    if exit_code == 0 and not report["drift"]:
+    if exit_code == 0 and not report["drift"] and not repository_source_drift:
         print("OK: no actionable config drift.")
     return exit_code
 

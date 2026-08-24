@@ -75,6 +75,23 @@ class WakeupMessageRoleGuardrailTests(unittest.TestCase):
         self.assertIn("不得重新指派 owner/reviewer", message)
         self.assertIn("exact-head approval", message)
 
+    def test_wakeup_exposes_dependency_truth_and_blocker_contract(self) -> None:
+        self.event["reason"] = "owned_in_progress_dispatch"
+        self.event["task"]["depends_on"] = ["DEP-001"]
+        self.event["task"]["dependency_truth"] = [
+            {"task_id": "DEP-001", "status": "done", "satisfied": True}
+        ]
+
+        message = watch_events.render_wakeup_message(
+            self.config,
+            self.event,
+            "Antigravity",
+        )
+
+        self.assertIn("DEP-001: status=done, satisfied=true", message)
+        self.assertIn("task_dependency <TASK-ID>", message)
+        self.assertIn("最後加 `external`", message)
+
     def test_anchor_subject_is_bounded_for_long_task_id(self) -> None:
         long_id = (
             "SUP-WORKER-SUBJECT-GUARD-20260811-EXTREMELY-LONG-TASK-ID-"

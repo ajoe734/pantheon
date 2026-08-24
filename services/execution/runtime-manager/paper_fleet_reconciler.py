@@ -55,6 +55,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import fcntl
 
+from services.execution.market_snapshot_admission import (
+    SnapshotAdmissionDecision,
+    admit_market_snapshot,
+    parse_rfc3339 as _admission_parse_rfc3339,
+)
+
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parents[2]
 _DEFAULT_WORKER_SCRIPT = str(
@@ -104,6 +110,32 @@ def _binding_state_filename(binding_id: str) -> str:
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def validate_executable_binding(binding: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    """Validate if a paper RuntimeBinding has all required execution fields.
+    
+    Returns (is_valid, rejection_reason). If non-executable, rejection_reason
+    is a typed string describing the missing field.
+    """
+    if not isinstance(binding, dict):
+        return False, "invalid_binding_payload"
+    
+    required_fields = {
+        "binding_id": "missing_binding_id",
+        "runtime_id": "missing_runtime_id",
+        "artifact_id": "missing_artifact_id",
+        "artifact_version": "missing_artifact_version",
+        "capital_pool_id": "missing_capital_pool_id",
+        "plan_id": "missing_plan_id",
+    }
+    
+    for field, reason in required_fields.items():
+        val = binding.get(field)
+        if val is None or not str(val).strip():
+            return False, reason
+
+    return True, None
 
 
 def _binding_persona_id(binding: Dict[str, Any]) -> str:
@@ -484,8 +516,10 @@ class PaperFleetReconciler:
         leader_store: Optional[Any] = None,
         leader_lease_ttl_seconds: Optional[float] = None,
         reconciler_id: Optional[str] = None,
+        store: Optional[Any] = None,
         extra_env: Optional[Dict[str, str]] = None,
     ) -> None:
+        self._store = store
         self._url = (
             runtime_manager_url
             or os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "")
@@ -702,7 +736,8 @@ class PaperFleetReconciler:
         # fleet is None when the fetch failed — must not evict existing workers
         # in that case, since we have no reliable picture of desired state.
         bindings = fleet[0] if fleet is not None else None
-        excluded_ids = fleet[1] if fleet is not None else set()
+        excluded_ids = set(fleet[1]) if fleet is not None and len(fleet) > 1 else set()
+        raw_excluded = list(fleet[2]) if fleet is not None and len(fleet) > 2 else []
 
         runtime_summaries = (
             self._fetch_runtime_summaries()
@@ -738,6 +773,90 @@ class PaperFleetReconciler:
                     )
 
             if bindings is not None:
+                # 1. Admission defense on active bindings (SD-PAPER-01 §7.2)
+                for binding in list(bindings):
+                    binding_id = str(binding.get("binding_id") or "")
+                    decision = self._check_market_admission(binding)
+                    if decision is not None and not decision.admitted:
+                        log.warning(
+                            "pausing active binding %s due to market admission rejection (%s: %s)",
+                            binding_id,
+                            decision.reason_code,
+                            decision.detail,
+                        )
+                        metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+                        policy = binding.get("market_data_policy") or metadata.get("market_data_policy") or {}
+                        max_age = int(
+                            policy.get("max_age_seconds")
+                            or self._performance_mark_max_age_seconds
+                            or 86400
+                        )
+                        pause_cmd_ref = f"cmd-stale-pause-{binding_id}-{uuid.uuid4().hex[:8]}"
+                        stale_patch = {
+                            "session_admission": {
+                                "reason_code": decision.reason_code or "market_input_stale",
+                                "source_snapshot_id": decision.snapshot_id,
+                                "source_event_time": decision.event_time,
+                                "observed_at": _iso_now(),
+                                "max_age_seconds": max_age,
+                                "pause_command_ref": pause_cmd_ref,
+                                "resume_snapshot_id": None,
+                                "resumed_at": None,
+                            }
+                        }
+                        # active -> pending_pause -> paused
+                        self._transition_binding(binding_id, "pending_pause", metadata_patch=stale_patch)
+                        self._transition_binding(binding_id, "paused", metadata_patch=stale_patch)
+                        self._terminate_worker(binding_id, reason=f"paused due to {decision.reason_code}")
+                        bindings.remove(binding)
+                        excluded_ids.add(binding_id)
+                        binding["status"] = "paused"
+                        binding.setdefault("metadata", {})["session_admission"] = stale_patch["session_admission"]
+                        raw_excluded.append(binding)
+
+                # 2. Resume defense on paused bindings (SD-PAPER-01 §7.3)
+                for eb in list(raw_excluded):
+                    if isinstance(eb, dict) and eb.get("status") == "paused":
+                        binding_id = str(eb.get("binding_id") or "")
+                        metadata = eb.get("metadata") if isinstance(eb.get("metadata"), dict) else {}
+                        session_adm = metadata.get("session_admission")
+                        # Only auto-resume if paused due to stale input — never auto-resume operator pauses
+                        if (
+                            isinstance(session_adm, dict)
+                            and session_adm.get("reason_code") == "market_input_stale"
+                        ):
+                            paused_snap_id = session_adm.get("source_snapshot_id")
+                            paused_time_str = session_adm.get("source_event_time")
+                            decision = self._check_market_admission(eb)
+                            if decision is not None and decision.admitted:
+                                paused_dt, _ = _admission_parse_rfc3339(paused_time_str, field_name="paused_event_time")
+                                new_dt, _ = _admission_parse_rfc3339(decision.event_time, field_name="new_event_time")
+                                is_different_snap = (decision.snapshot_id != paused_snap_id) if (decision.snapshot_id and paused_snap_id) else True
+                                is_later_time = (new_dt > paused_dt) if (new_dt and paused_dt) else False
+
+                                if is_different_snap and is_later_time:
+                                    log.info(
+                                        "resuming paused binding %s: new admitted snapshot %s (event_time=%s > %s)",
+                                        binding_id,
+                                        decision.snapshot_id,
+                                        decision.event_time,
+                                        paused_time_str,
+                                    )
+                                    resume_patch = {
+                                        "session_admission": {
+                                            "resume_snapshot_id": decision.snapshot_id,
+                                            "resumed_at": _iso_now(),
+                                        }
+                                    }
+                                    # paused -> active
+                                    self._transition_binding(binding_id, "active", metadata_patch=resume_patch)
+                                    eb["status"] = "active"
+                                    eb.setdefault("metadata", {})["session_admission"].update(resume_patch["session_admission"])
+                                    if binding_id in excluded_ids:
+                                        excluded_ids.remove(binding_id)
+                                    bindings.append(eb)
+                                    raw_excluded.remove(eb)
+
                 desired: Dict[str, Dict[str, Any]] = {
                     b["binding_id"]: b for b in bindings
                 }
@@ -877,6 +996,12 @@ class PaperFleetReconciler:
         self, binding: Dict[str, Any], restart_count: int = 0
     ) -> bool:
         self._require_current_fence()
+        is_valid, reason = validate_executable_binding(binding)
+        if not is_valid:
+            b_id = str(binding.get("binding_id") or "<unknown>") if isinstance(binding, dict) else "<unknown>"
+            log.warning("cannot start worker for non-executable binding %s: %s", b_id, reason)
+            return True
+
         binding_id = binding["binding_id"]
         port = self._allocate_port()
         env = self._build_worker_env(binding)
@@ -1293,25 +1418,46 @@ class PaperFleetReconciler:
 
     def _fetch_fleet_state(
         self,
-    ) -> Optional[Tuple[List[Dict[str, Any]], Set[str]]]:
-        """Fetch the canonical fleet desired state from the runtime-manager.
+    ) -> Optional[Tuple[List[Dict[str, Any]], Set[str], List[Dict[str, Any]]]]:
+        """Fetch the canonical fleet desired state from the runtime-manager or store.
 
         Calls the LOOP-AUTO-RT-001 stable endpoint:
             GET /api/runtime-fleet/desired-state?stage=paper&include_excluded=true
 
         Returns
         -------
-        (desired_bindings, excluded_binding_ids) on success:
-            desired_bindings    — list of active paper RuntimeBinding dicts the
-                                  reconciler must run exactly one worker for
+        (desired_bindings, excluded_binding_ids, excluded_bindings) on success:
+            desired_bindings     — list of active paper RuntimeBinding dicts the
+                                   reconciler must run exactly one worker for
             excluded_binding_ids — set of binding_ids that must be stopped
-                                  (paused, retired, failed, or draining)
+                                   (paused, retired, failed, or draining)
+            excluded_bindings    — list of excluded RuntimeBinding dicts
         None when the runtime-manager is unreachable or returns an error —
         callers must treat None as "unknown desired state" and must not modify
         the running fleet (no starts, no stops).
         """
+        if self._store is not None:
+            all_bindings = [b.to_dict() for b in self._store.list_all()]
+            valid_bindings: List[Dict[str, Any]] = []
+            excluded_ids: Set[str] = set()
+            excluded: List[Dict[str, Any]] = []
+            for b in all_bindings:
+                if b.get("deployment_mode") != "paper":
+                    continue
+                if b.get("status") == "active":
+                    is_valid, _ = validate_executable_binding(b)
+                    if is_valid:
+                        valid_bindings.append(b)
+                    else:
+                        excluded_ids.add(str(b.get("binding_id")))
+                        excluded.append(b)
+                else:
+                    excluded_ids.add(str(b.get("binding_id")))
+                    excluded.append(b)
+            return (valid_bindings, excluded_ids, excluded)
+
         if not self._url:
-            return ([], set())
+            return ([], set(), [])
         try:
             import urllib.request
 
@@ -1326,14 +1472,31 @@ class PaperFleetReconciler:
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
-            bindings = payload.get("bindings", []) if isinstance(payload, dict) else []
+            bindings_raw = payload.get("bindings", []) if isinstance(payload, dict) else []
             excluded = payload.get("excluded", []) if isinstance(payload, dict) else []
             excluded_ids: Set[str] = {
                 str(e["binding_id"])
                 for e in excluded
                 if isinstance(e, dict) and e.get("binding_id")
             }
-            return (bindings, excluded_ids)
+            valid_bindings: List[Dict[str, Any]] = []
+            for b in bindings_raw:
+                if not isinstance(b, dict):
+                    continue
+                is_valid, reason = validate_executable_binding(b)
+                if is_valid:
+                    valid_bindings.append(b)
+                else:
+                    b_id = str(b.get("binding_id") or "<unknown>")
+                    log.warning(
+                        "rejecting non-executable paper fleet child binding %s: %s",
+                        b_id,
+                        reason,
+                    )
+                    if b.get("binding_id"):
+                        excluded_ids.add(str(b["binding_id"]))
+                        excluded.append(b)
+            return (valid_bindings, excluded_ids, excluded)
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 self._last_error = (
@@ -1343,6 +1506,137 @@ class PaperFleetReconciler:
                 "could not fetch fleet desired state from runtime-manager: %s", exc
             )
             return None
+
+    def _fetch_source_snapshot(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Fetch latest stored normalized snapshot from Source Ingest.
+
+        Zero recurring pull: only reads from the local Source Ingest read-only
+        snapshot endpoint; never pulls from an external provider.
+        """
+        if not self._source_ingest_url or not symbol:
+            return None
+        try:
+            import urllib.parse
+            import urllib.request
+
+            url = (
+                f"{self._source_ingest_url}/api/source-ingest/snapshots/latest"
+                f"?symbol={urllib.parse.quote(symbol, safe='')}"
+            )
+            req = urllib.request.Request(
+                url,
+                headers={"Accept": "application/json"},
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            return payload if isinstance(payload, dict) else None
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not fetch Source stored snapshot for %s: %s", symbol, exc)
+            return None
+
+    def _resolve_market_snapshot(self, binding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Resolve the latest market snapshot for a binding."""
+        raw = binding.get("market_input")
+        if not isinstance(raw, dict):
+            metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+            raw = metadata.get("market_input")
+        if isinstance(raw, dict):
+            return raw
+        symbol = _clean_text(binding.get("symbol") or (binding.get("metadata") or {}).get("symbol") or "")
+        if self._source_ingest_url and symbol:
+            return self._fetch_source_snapshot(symbol)
+        return None
+
+    def _check_market_admission(
+        self,
+        binding: Dict[str, Any],
+        *,
+        snapshot: Optional[Dict[str, Any]] = None,
+    ) -> Optional[SnapshotAdmissionDecision]:
+        """Evaluate snapshot admission for a paper runtime binding."""
+        metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+        policy = binding.get("market_data_policy") or metadata.get("market_data_policy")
+        has_market_requirement = bool(
+            policy
+            or binding.get("market_input")
+            or metadata.get("market_input")
+            or metadata.get("session_admission")
+        )
+        if not has_market_requirement:
+            return None
+
+        policy_dict = policy if isinstance(policy, dict) else {}
+        session_adm = metadata.get("session_admission") if isinstance(metadata.get("session_admission"), dict) else {}
+        max_age = int(
+            policy_dict.get("max_age_seconds")
+            or session_adm.get("max_age_seconds")
+            or self._performance_mark_max_age_seconds
+            or 86400
+        )
+        min_closes = int(policy_dict.get("minimum_closes") or 2)
+        symbol = _clean_text(binding.get("symbol") or metadata.get("symbol") or "")
+        binding_id = _clean_text(binding.get("binding_id") or "")
+
+        if snapshot is None:
+            snapshot = self._resolve_market_snapshot(binding)
+
+        return admit_market_snapshot(
+            snapshot,
+            expected_symbol=symbol or None,
+            max_age_seconds=max_age,
+            minimum_closes=min_closes,
+            now_iso=_iso_now(),
+            binding_id=binding_id,
+        )
+
+    def _transition_binding(
+        self,
+        binding_id: str,
+        new_status: str,
+        *,
+        metadata_patch: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Execute a binding status transition against the backing store or HTTP endpoint."""
+        if hasattr(self, "_store") and self._store is not None:
+            try:
+                self._store.transition_status(
+                    binding_id,
+                    new_status,
+                    metadata_patch=metadata_patch,
+                )
+                return True
+            except Exception as exc:  # noqa: BLE001
+                log.warning("failed store transition for binding %s -> %s: %s", binding_id, new_status, exc)
+                return False
+
+        if not self._url:
+            return True
+
+        try:
+            import urllib.request
+
+            headers: Dict[str, str] = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
+            if self._token:
+                headers["Authorization"] = f"Bearer {self._token}"
+            body_dict: Dict[str, Any] = {"new_status": new_status}
+            if metadata_patch:
+                body_dict["metadata_patch"] = metadata_patch
+            data = json.dumps(body_dict).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self._url}/api/runtime-bindings/{binding_id}/transition",
+                data=data,
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status in (200, 201)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("failed HTTP transition for binding %s -> %s: %s", binding_id, new_status, exc)
+            return False
 
     def _fetch_active_paper_bindings(self) -> Optional[List[Dict[str, Any]]]:
         """Return the active paper bindings, or None if the fetch failed.

@@ -23,11 +23,13 @@ __all__ = [
     "DEFAULT_SCHEMA",
     "StrategyReconstructionResult",
     "reconstruct_strategy_from_events",
+    "run_reconstruction_worker",
 ]
 
 from .reconstruction import (  # noqa: F401
     StrategyReconstructionResult,
     reconstruct_strategy_from_events,
 )
+from .runner import run_reconstruction_worker  # noqa: F401
 
 VERSION = "1.0"

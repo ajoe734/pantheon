@@ -1,0 +1,18 @@
+{
+  "task_id": "PFG-RUNTIME-BINDING-R2-20260820",
+  "title": "Complete the normal Registry to executable RuntimeBinding contract",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "review_approved",
+  "summary": "Verified that immutable registry artifact identity, version, checksum, and storage projection reach DeploymentPlan and RuntimeBinding through normal commands, and that paper fleet reconciler strictly validates executable binding parameters.",
+  "acceptance_verification": {
+    "normal_command_contract_integration": "PASSED - verified via services/deployment/test_l12_mfc_r4_deploy_001_contract.py and services/deployment/test_runtime_manager_dispatch_adapter.py",
+    "tamper_and_missing_field_rejection": "PASSED - verified via services/execution/runtime-manager/test_paper_fleet_reconciler.py and services/execution/runtime-manager/test_runtime_binding.py",
+    "restart_and_readback": "PASSED - verified via services/execution/test_artifact_loader.py and services/execution/runtime-manager/test_runtime_binding.py"
+  },
+  "verification_commands": [
+    "python3 scripts/dev/provision_python_distribution.py",
+    "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/execution/runtime-manager/test_paper_fleet_reconciler.py services/execution/runtime-manager/test_runtime_binding.py services/execution/test_artifact_loader.py services/deployment/test_runtime_manager_dispatch_adapter.py services/deployment/test_l12_mfc_r4_deploy_001_contract.py"
+  ],
+  "code_disposition": "Maintained existing RuntimeManager, StagePlanner, and ArtifactLoader contracts without metadata shortcuts. Enhanced paper fleet reconciler to fail closed on incomplete/non-executable bindings."
+}

@@ -47,6 +47,24 @@ def _seed_remote(tmp_path: Path) -> tuple[Path, Path]:
     return remote, seed
 
 
+def _add_fake_watchdog_installer(seed: Path) -> None:
+    installer = seed / "scripts" / "supervisor_watchdog_install.py"
+    installer.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "path = os.environ.get('SYNC_WATCHDOG_ARGS_FILE')\n"
+        "if path:\n"
+        "    with open(path, 'w', encoding='utf-8') as handle:\n"
+        "        handle.write('\\n'.join(sys.argv[1:]))\n"
+        "sys.exit(int(os.environ.get('SYNC_WATCHDOG_EXIT_CODE', '0')))\n",
+        encoding="utf-8",
+    )
+    installer.chmod(0o755)
+    _git(seed, "add", "scripts/supervisor_watchdog_install.py")
+    _git(seed, "commit", "-m", "add fake watchdog installer")
+    _git(seed, "push", "origin", "dev")
+
+
 def _advance(seed: Path) -> str:
     (seed / "version.txt").write_text("two\n", encoding="utf-8")
     _git(seed, "add", "version.txt")
@@ -81,11 +99,25 @@ def _run_sync(
     live_config: Path,
     coordination_root: Path,
     promotion_args: Path,
+    *,
+    authority_env_file: Path | None = None,
+    watchdog_args_file: Path | None = None,
+    watchdog_exit_code: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
+    # The fake Pantheon repository is enough to validate the wiring; the
+    # production script's default remains the canonical execute-plans checkout.
+    env["PANTHEON_EXECUTE_PLANS_SOURCE_ROOT"] = str(dev_root)
+    args = ["bash", str(script), str(dev_root), str(live_config), str(coordination_root)]
+    if authority_env_file is not None:
+        args.append(str(authority_env_file))
+    if watchdog_args_file is not None:
+        env["SYNC_WATCHDOG_ARGS_FILE"] = str(watchdog_args_file)
+    if watchdog_exit_code is not None:
+        env["SYNC_WATCHDOG_EXIT_CODE"] = str(watchdog_exit_code)
     return subprocess.run(
-        ["bash", str(script), str(dev_root), str(live_config), str(coordination_root)],
+        args,
         cwd=REPO_ROOT,
         env=env,
         check=False,
@@ -119,6 +151,10 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
         str(coordination),
         "--live-config",
         str(live_config),
+        "--repository-source-root",
+        f"pantheon={dev_root}",
+        "--repository-source-root",
+        f"execute_plans={dev_root}",
     ]
     source = SYNC_SCRIPT.read_text(encoding="utf-8")
     assert "PID_FILE=" not in source
@@ -178,3 +214,105 @@ def test_sync_is_a_noop_when_installed_config_already_names_exact_candidate(tmp_
     assert result.returncode == 0, result.stderr
     assert "promotion=no-op-current-runtime" in result.stdout
     assert not promotion_args.exists()
+
+
+def test_sync_repoints_the_watchdog_after_a_real_promotion(tmp_path: Path) -> None:
+    remote, seed = _seed_remote(tmp_path)
+    _add_fake_watchdog_installer(seed)
+    dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    target = _advance(seed)
+    runtime_parent = tmp_path / "command-runtimes"
+    script = _patched_sync_script(tmp_path, runtime_parent)
+    coordination = _coordination_root(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    promotion_args = tmp_path / "promotion-args.txt"
+    watchdog_args = tmp_path / "watchdog-args.txt"
+    authority_env_file = tmp_path / "authority.env"
+    authority_env_file.write_text("# test authority env\n", encoding="utf-8")
+    authority_env_file.chmod(0o600)
+
+    result = _run_sync(
+        script,
+        dev_root,
+        live_config,
+        coordination,
+        promotion_args,
+        authority_env_file=authority_env_file,
+        watchdog_args_file=watchdog_args,
+    )
+
+    candidate = runtime_parent / target
+    assert result.returncode == 0, result.stderr
+    assert "watchdog repointed" in result.stdout
+    assert watchdog_args.read_text(encoding="utf-8").splitlines() == [
+        "--repo",
+        str(candidate),
+        "--config",
+        str(live_config),
+        "--authority-env-file",
+        str(authority_env_file),
+        "--method",
+        "auto",
+        "--start-now",
+    ]
+
+
+def test_sync_skips_watchdog_repoint_without_failing_the_deploy(tmp_path: Path) -> None:
+    remote, seed = _seed_remote(tmp_path)
+    _add_fake_watchdog_installer(seed)
+    dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    _advance(seed)
+    runtime_parent = tmp_path / "command-runtimes"
+    script = _patched_sync_script(tmp_path, runtime_parent)
+    coordination = _coordination_root(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    promotion_args = tmp_path / "promotion-args.txt"
+    watchdog_args = tmp_path / "watchdog-args.txt"
+    missing_authority_env_file = tmp_path / "does-not-exist.env"
+
+    result = _run_sync(
+        script,
+        dev_root,
+        live_config,
+        coordination,
+        promotion_args,
+        authority_env_file=missing_authority_env_file,
+        watchdog_args_file=watchdog_args,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert promotion_args.exists()
+    assert "skipped watchdog repoint" in result.stdout
+    assert not watchdog_args.exists()
+
+
+def test_sync_survives_watchdog_repoint_failure(tmp_path: Path) -> None:
+    remote, seed = _seed_remote(tmp_path)
+    _add_fake_watchdog_installer(seed)
+    dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    _advance(seed)
+    runtime_parent = tmp_path / "command-runtimes"
+    script = _patched_sync_script(tmp_path, runtime_parent)
+    coordination = _coordination_root(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    promotion_args = tmp_path / "promotion-args.txt"
+    authority_env_file = tmp_path / "authority.env"
+    authority_env_file.write_text("# test authority env\n", encoding="utf-8")
+    authority_env_file.chmod(0o600)
+
+    result = _run_sync(
+        script,
+        dev_root,
+        live_config,
+        coordination,
+        promotion_args,
+        authority_env_file=authority_env_file,
+        watchdog_exit_code=1,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert promotion_args.exists()
+    assert "WARNING: watchdog repoint failed" in result.stdout
