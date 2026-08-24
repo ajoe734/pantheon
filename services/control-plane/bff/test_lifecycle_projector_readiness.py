@@ -150,7 +150,7 @@ def test_bff_readyz_uses_exact_relational_controller_after_reader_cutover(
 ) -> None:
     _configure_dependencies(monkeypatch, tmp_path)
     monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres")
-    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "postgres")
+    monkeypatch.delenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", raising=False)
     monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_HEALTH_ENVIRONMENT", "paper")
     monkeypatch.setenv("GIT_SHA", "deadbeef")
 
@@ -180,6 +180,7 @@ def test_bff_readyz_uses_exact_relational_controller_after_reader_cutover(
         lambda: Reader(),
     )
 
+    # 1. Unset LIFECYCLE_PROJECTOR_WRITER_BACKEND (current-dev compose default) derives postgres from live controller
     response = TestClient(bff_main.app).get("/readyz")
     assert response.status_code == 200, response.text
     dependency = response.json()["dependencies"]["lifecycle_projector"]
@@ -189,6 +190,12 @@ def test_bff_readyz_uses_exact_relational_controller_after_reader_cutover(
     assert dependency["checkpoint"] == dependency["source_high_watermark"] == 19
     assert dependency["legacy_recovery_stores"]["preserved"] is True
     assert dependency["legacy_recovery_stores"]["accepted_reader"] is False
+
+    # 2. Explicit LIFECYCLE_PROJECTOR_WRITER_BACKEND=postgres also succeeds
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "postgres")
+    response2 = TestClient(bff_main.app).get("/readyz")
+    assert response2.status_code == 200, response2.text
+    assert response2.json()["dependencies"]["lifecycle_projector"]["writer_backend"] == "postgres"
 
     controller["deployment_sha"] = "stale-sha"
     rejected = TestClient(bff_main.app).get("/readyz")
@@ -203,7 +210,7 @@ def test_bff_readyz_uses_exact_relational_controller_after_reader_cutover(
 def test_bff_readyz_relational_negative_conditions(tmp_path: Path, monkeypatch) -> None:
     _configure_dependencies(monkeypatch, tmp_path)
     monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres")
-    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "postgres")
+    monkeypatch.delenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", raising=False)
     monkeypatch.setenv("GIT_SHA", "current-sha")
 
     base_controller = {
@@ -234,11 +241,14 @@ def test_bff_readyz_relational_negative_conditions(tmp_path: Path, monkeypatch) 
     )
     client = TestClient(bff_main.app)
 
-    # 1. Controller missing
+    # 1. Controller missing with unset writer_backend
     controller_ref[0] = None
     res = client.get("/readyz")
     assert res.status_code == 503
-    assert "controller_missing" in res.json()["dependencies"]["lifecycle_projector"]["reasons"]
+    dep = res.json()["dependencies"]["lifecycle_projector"]
+    assert "controller_missing" in dep["reasons"]
+    assert "writer_backend_mismatch:disabled!=postgres" in dep["reasons"]
+    assert dep["writer_backend"] == "disabled"
 
     # 2. Controller status not ready
     c = dict(base_controller)
@@ -295,7 +305,7 @@ def test_bff_readyz_relational_negative_conditions(tmp_path: Path, monkeypatch) 
     assert res.status_code == 503
     assert any("projection_reader_unavailable" in r for r in res.json()["dependencies"]["lifecycle_projector"]["reasons"])
 
-    # 8. Writer backend disabled / not postgres
+    # 8. Writer backend explicitly disabled
     monkeypatch.setattr(
         bff_main.read_store,
         "trade_journey_projection_reader",
@@ -310,7 +320,7 @@ def test_bff_readyz_relational_negative_conditions(tmp_path: Path, monkeypatch) 
     assert dep["writer_backend"] == "disabled"
     assert "writer_backend_mismatch:disabled!=postgres" in dep["reasons"]
 
-    # 9. Writer backend shadow
+    # 9. Writer backend explicitly shadow
     monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "shadow")
     res = client.get("/readyz")
     assert res.status_code == 503
@@ -318,8 +328,17 @@ def test_bff_readyz_relational_negative_conditions(tmp_path: Path, monkeypatch) 
     assert dep["ready"] is False
     assert "writer_backend_mismatch:shadow!=postgres" in dep["reasons"]
 
-    # 10. Recover writer backend to postgres
+    # 10. Writer backend explicitly postgres
     monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "postgres")
+    res = client.get("/readyz")
+    assert res.status_code == 200
+    dep = res.json()["dependencies"]["lifecycle_projector"]
+    assert dep["ready"] is True
+    assert dep["writer_backend"] == "postgres"
+    assert dep["reasons"] == []
+
+    # 11. Writer backend unset with live controller succeeds (compose-safe default)
+    monkeypatch.delenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", raising=False)
     res = client.get("/readyz")
     assert res.status_code == 200
     dep = res.json()["dependencies"]["lifecycle_projector"]

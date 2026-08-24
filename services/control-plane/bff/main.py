@@ -700,22 +700,12 @@ def _lifecycle_projector_dependency() -> Dict[str, Any]:
         "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "json"
     ).strip().lower()
     if reader_backend == "postgres":
-        writer_backend = (
-            os.getenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "disabled")
-            .strip()
-            .lower()
-            or "disabled"
-        )
         reader = read_store.trade_journey_projection_reader()
         tenant_id = os.getenv("PANTHEON_BFF_HEALTH_TENANT_ID", "default").strip()
         environment = os.getenv(
             "PANTHEON_BFF_TRADE_JOURNEY_HEALTH_ENVIRONMENT", "paper"
         ).strip()
         reasons: List[str] = []
-        if writer_backend != "postgres":
-            reasons.append(
-                f"writer_backend_mismatch:{writer_backend or 'missing'}!=postgres"
-            )
         controller: Dict[str, Any] = {}
         try:
             if reader is None:
@@ -733,6 +723,17 @@ def _lifecycle_projector_dependency() -> Dict[str, Any]:
             reasons.append(f"projection_reader_unavailable:{exc}")
         except Exception as exc:  # noqa: BLE001 - readiness is fail-closed truth
             reasons.append(f"projection_reader_error:{type(exc).__name__}")
+
+        raw_writer_backend = os.getenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND")
+        if raw_writer_backend is not None and raw_writer_backend.strip():
+            writer_backend = raw_writer_backend.strip().lower()
+        else:
+            writer_backend = "postgres" if controller else "disabled"
+
+        if writer_backend != "postgres":
+            reasons.append(
+                f"writer_backend_mismatch:{writer_backend or 'missing'}!=postgres"
+            )
 
         expected_sha = (
             os.getenv("BFF_COMMIT") or os.getenv("GIT_SHA") or ""
