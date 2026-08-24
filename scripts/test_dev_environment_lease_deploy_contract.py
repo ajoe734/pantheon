@@ -734,4 +734,3 @@ def test_rollback_baseline_script_rejects_tampered_top_level_identities(
     mutate_fn(manifest)
     with pytest.raises(RuntimeError, match=expected_err_pattern):
         _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
-
