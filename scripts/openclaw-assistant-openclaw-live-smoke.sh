@@ -17,7 +17,16 @@ set -euo pipefail
 
 BASE_URL="${OPENCLAW_GATEWAY_ADAPTER_URL:-${OPENCLAW_ADAPTER_URL:-http://localhost:18104}}"
 OPERATOR_ID="${SMOKE_OPERATOR_ID:-openclaw-live-smoke}"
+SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"
 SENTINEL="OPENCLAW_LIVE"
+
+assistant_curl() {
+  if [ -n "${SERVICE_TOKEN}" ]; then
+    command curl -H "X-Pantheon-Service-Token: ${SERVICE_TOKEN}" "$@"
+    return
+  fi
+  command curl "$@"
+}
 
 # Gateway configuration changes recreate the service before its provider has
 # finished warming up.  A single long request made the deployment outcome race
@@ -92,7 +101,7 @@ readiness_probe_once() {
   local curl_status
 
   set +e
-  READINESS_RESPONSE=$(curl -sS --max-time "${request_timeout_seconds}" \
+  READINESS_RESPONSE=$(assistant_curl -sS --max-time "${request_timeout_seconds}" \
     -w $'\n%{http_code}' \
     "${BASE_URL}/api/openclaw-adapter/assistant/readiness/openclaw?auth_probe=true" 2>/dev/null)
   curl_status=$?
@@ -200,7 +209,7 @@ echo "=== 2/4 live agent turn (sentinel: ${SENTINEL}) ==="
 # This is deliberately a single request.  Retrying a completed agent turn can
 # duplicate an external side effect, so only the readiness endpoint converges.
 INVOKE_PAYLOAD=$(jq -nc --arg p "Reply with exactly: ${SENTINEL}" '{prompt: $p, mode: "user"}')
-RESPONSE=$(curl -sS -m 120 -w "\n%{http_code}" -X POST \
+RESPONSE=$(assistant_curl -sS -m 120 -w "\n%{http_code}" -X POST \
   "${BASE_URL}/api/openclaw-adapter/assistant/providers/openclaw/invoke" \
   -H "Content-Type: application/json" \
   -H "X-Operator-Id: ${OPERATOR_ID}" \
@@ -247,7 +256,7 @@ echo "=== 4/4 live OpenResponses stream (sentinel: ${SENTINEL}) ==="
 # Same rule as the invoke above: a stream is one live turn and never retried.
 STREAM_PAYLOAD=$(jq -nc --arg p "Reply with exactly: ${SENTINEL}" \
   '{prompt: $p, mode: "user", metadata: {session_user: "openclaw-responses-live-smoke"}}')
-STREAM_EVENTS=$(curl -fsS -N -m 120 -X POST \
+STREAM_EVENTS=$(assistant_curl -fsS -N -m 120 -X POST \
   "${BASE_URL}/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream" \
   -H "Content-Type: application/json" \
   -H "X-Operator-Id: ${OPERATOR_ID}" \
