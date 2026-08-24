@@ -3,6 +3,7 @@
 **Task ID:** `PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`  
 **Parent Task:** `PFG-FE-CONSOLIDATE-20260820` — Retire replacement-proven frontend mock, duplicate, and legacy production paths  
 **Target Repository:** `ajoe734/execute-plans`  
+**Pinned Source SHA:** `0eec7659c9503ba3799ed5666cfa00f2b031e7fa` (`tag: release/v2026.08.24.2`, `origin/dev`)  
 **Owner:** `Antigravity2`  
 **Reviewer:** `Codex2`  
 **Helper Kind:** `caller_inventory`  
@@ -16,7 +17,7 @@
 
 ## 1. Executive Summary & Inventory Principles
 
-This caller inventory provides a comprehensive audit of candidate frontend paths, components, adapter modules, and mock mechanisms across `execute-plans` (covering Agora, Management Console, `lib/bff`, `lib/bff-v1`, and test fixture libraries).
+This caller inventory provides a comprehensive audit of candidate frontend paths, components, adapter modules, and mock mechanisms across `ajoe734/execute-plans` (covering Agora, Management Console, `src/lib/bff`, `src/lib/bff-v1`, and test fixture libraries) pinned to commit `0eec7659c9503ba3799ed5666cfa00f2b031e7fa`.
 
 Every candidate is evaluated against strict caller-traceability rules defined in `SD_IMPLEMENTATION_DESIGN_2026-08-24.md` §9 and `02_CODE_DISPOSITION_AND_SIMPLIFICATION_2026-08-20.md`:
 
@@ -31,18 +32,18 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 
 | # | Candidate Path / Symbol | Subsystem | Current Behavior | Callers Count | Target Disposition | Replacement / Canonical Target |
 |---|---|---|---|---|---|---|
-| 1 | `src/agora/pages/trading-room/TradingRoomPage.tsx:CandidateReviewDrawer` | Agora Trading Room | Page-local inline drawer updating React state | 1 (page inline) | `replace_then_delete` | `src/agora/components/CandidateReviewDrawer.tsx` |
-| 2 | `src/agora/components/CandidateReviewDrawer.tsx` | Agora Review | Canonical BFF-wired A2 score decomposition drawer | 2 (unit test + target page) | `retain` | Canonical implementation |
-| 3 | `src/agora/pages/trading-room/TradingRoomPage.tsx:STRATEGY_LENSES` | Agora Trading Room | Fixed `lens-A..E` candidate pool identity & static counts | 6 internal call sites | `replace_then_delete` | Dynamic workspace/pool recipes (`workshops.ts`, `candidatePool.ts`) |
-| 4 | `src/lib/bff-v1/management.ts:safeAdapt` | Management BFF-v1 | Catches adapter errors on 200 responses and falls back to seed | 24 call sites in `management.ts` | `delete` | Typed error envelopes / `withStrictLiveOrMock` |
-| 5 | `src/management/pages/studios/FormulaStudio.tsx:triggerBacktest` | Management Studios | Synthetic in-memory job runner with 5s timeout & fake event | 1 button handler | `replace_then_delete` | Governed backtest runner API / `NonProductionActionButton` |
-| 6 | `src/management/components/detail/ActivityMonitor.tsx:seed` | Management Detail | Hardcoded synthetic events with fake pulsing "live" badge | 3 detail pages | `delete` | Canonical audit/SSE feed (`/bff/audit`, `/bff/sse/events`) |
-| 7 | `src/management/pages/phase2/PostmortemLibrary.tsx:SEED` | Management Oversight | Static 3-row mock postmortem array | 1 page route | `replace_then_delete` | Canonical BFF postmortem/incident adapter (`/bff/incidents`) |
-| 8 | `src/mocks/seed.ts` | Test / Mock Fixture | Domain mock data for 40+ entities | 14 test/mock callers | `retain` (fixture-only) | Tree-shaken from live bundle; retained for unit tests |
-| 9 | `src/lib/bff/` vs `src/lib/bff-v1/` Overlap | BFF Client Layer | Duplicate legacy client & mutation overlays coexisting with `bff-v1` | 50+ legacy imports | `replace_then_delete` | Canonical `src/lib/bff-v1/` adapters |
-| 10 | `src/lib/bff-v1/runActionSafe.ts` | Management Mutations | Toast-aware mutation wrapper with idempotency headers | 18 production call sites | `retain` | Canonical implementation |
-| 11 | `src/management/components/NonProductionActionButton.tsx` | UI Safety Guard | Honestly disabled action button with tooltip explanation | 61 production call sites | `retain` | Canonical implementation |
-| 12 | `src/management/components/agent/uiActionRegistry.ts` | Management AI | Allowlisted UI action registry with 7 contract types | Assistant NL drawer | `retain` | Canonical implementation |
+| 1 | `src/agora/pages/trading-room/TradingRoomPage.tsx:CandidateReviewDrawer` (inline) | Agora Trading Room | Page-local inline drawer updating React state | 0 active callers (verified deleted) | `replace_then_delete` | `src/agora/components/CandidateReviewDrawer.tsx` |
+| 2 | `src/agora/components/CandidateReviewDrawer.tsx` | Agora Review | Canonical BFF-wired A2 score decomposition drawer | 3 code files (1 prod page + 2 test files), 2 evidence docs | `retain` | Canonical implementation |
+| 3 | `src/agora/pages/trading-room/TradingRoomPage.tsx:STRATEGY_LENSES` | Agora Trading Room | Fixed `lens-A..E` candidate pool identity & static counts | 0 prod callers (verified replaced) | `replace_then_delete` | Dynamic workspace/pool recipes (`workshops.ts`, `candidatePool.ts`) |
+| 4 | `src/lib/bff-v1/management.ts:safeAdapt` | Management BFF-v1 | Catches adapter errors on 200 responses and falls back to seed (rethrows under strict-live) | 24 call sites in `management.ts`, 1 test suite, 8 audit/doc files | `delete` | Typed error envelopes / `withStrictLiveOrMock` |
+| 5 | `src/management/pages/studios/FormulaStudio.tsx:triggerBacktest` | Management Studios | Synthetic in-memory job runner with 5s timeout & fake event | 0 callers (verified retired) | `replace_then_delete` | Governed backtest runner API (`bff.jobs.list()`) / `NonProductionActionButton` |
+| 6 | `src/management/components/detail/ActivityMonitor.tsx:seed` | Management Detail | Hardcoded synthetic events with fake pulsing "live" badge | 3 prod detail pages + 1 test file (component callers, seed generator deleted) | `delete` | Canonical audit/SSE feed (`/bff/audit`, `/bff/sse/events`) |
+| 7 | `src/management/pages/phase2/PostmortemLibrary.tsx:SEED` | Management Oversight | Static 3-row mock postmortem array | 1 page component + 1 route re-export + 2 App.tsx routes + 2 nav manifests + 2 link helpers + 1 test + 3 i18n locales | `replace_then_delete` | Canonical BFF postmortem/incident adapter (`bff.incidents.list()`) |
+| 8 | `src/mocks/seed.ts` | Test / Mock Fixture | Domain mock data for 40+ entities | 15 import callers across 14 test/mock files | `retain` (fixture-only) | Tree-shaken from live bundle; retained for unit tests |
+| 9 | `src/lib/bff/` vs `src/lib/bff-v1/` Overlap | BFF Client Layer | Duplicate legacy client & mutation overlays coexisting with `bff-v1` | 87 import statements across 68 files | `replace_then_delete` | Canonical `src/lib/bff-v1/` adapters |
+| 10 | `src/lib/bff-v1/runActionSafe.ts` | Management Mutations | Toast-aware mutation wrapper with idempotency headers | 28 files (11 prod pages, 5 lib files, 5 tests, 2 scripts, 5 docs/evidence) | `retain` | Canonical implementation |
+| 11 | `src/management/components/NonProductionActionButton.tsx` | UI Safety Guard | Honestly disabled action button with tooltip explanation | 35 files (28 prod UI files with 61 button JSX call sites, 4 impl/tests, 1 script, 2 docs) | `retain` | Canonical implementation |
+| 12 | `src/management/components/agent/uiActionRegistry.ts` | Management AI | Allowlisted UI action registry with 7 contract types | 5 files (1 component, 3 test suites, 1 evidence doc) | `retain` | Canonical implementation |
 
 ---
 
@@ -53,21 +54,21 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 ```json
 {
   "path_or_symbol": "src/agora/pages/trading-room/TradingRoomPage.tsx:CandidateReviewDrawer",
-  "behavior": "Inline drawer component (lines 1169-1370) managing candidate review in component React state (onUpdateState) with symbol-matching heuristics for dummy strategy assignment, bypassing backend candidate pool APIs.",
+  "behavior": "Page-local inline drawer component (formerly lines 1169-1370) managing candidate review in component React state (onUpdateState) with symbol-matching heuristics for dummy strategy assignment, bypassing backend candidate pool APIs.",
   "callers": [
-    "src/agora/pages/trading-room/TradingRoomPage.tsx:2390",
-    "src/agora/pages/trading-room/TradingRoomPage.test.tsx"
+    "Formerly invoked within src/agora/pages/trading-room/TradingRoomPage.tsx",
+    "Active callers: 0 (verified retired and replaced by SharedCandidateReviewDrawer)"
   ],
   "runtime_or_deploy_refs": [
     "Route /trading-room candidate review drawer interaction"
   ],
   "replacement": "src/agora/components/CandidateReviewDrawer.tsx",
-  "replacement_proof": "src/agora/components/CandidateReviewDrawer.test.tsx (26 tests passing) verifies A2 score decomposition, top positive/penalty drivers, data quality badge, and review mutations via reviewCandidateMember with If-Match concurrency headers.",
+  "replacement_proof": "src/agora/components/CandidateReviewDrawer.test.tsx (26 tests passing) verifies A2 score decomposition, top positive/penalty drivers, data quality badge, and review decisions via reviewCandidateMember with If-Match concurrency headers. src/agora/pages/trading-room/TradingRoomPage.test.tsx (77 tests passing) verifies TradingRoomPage renders SharedCandidateReviewDrawer.",
   "disposition": "replace_then_delete",
   "validation": [
-    "npm test src/agora/components/CandidateReviewDrawer.test.tsx",
-    "npm test src/agora/pages/trading-room/TradingRoomPage.test.tsx",
-    "Agora browser journey E2E rerun"
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/agora/components/CandidateReviewDrawer.test.tsx",
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/agora/pages/trading-room/TradingRoomPage.test.tsx",
+    "Reproducible negative scan: git -C /home/lupin/code/execute-plans grep -n 'function CandidateReviewDrawer' origin/dev (returns only canonical src/agora/components/CandidateReviewDrawer.tsx:557; 0 occurrences in TradingRoomPage.tsx)"
   ]
 }
 ```
@@ -77,19 +78,24 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 ```json
 {
   "path_or_symbol": "src/agora/components/CandidateReviewDrawer.tsx:CandidateReviewDrawer",
-  "behavior": "Canonical BFF-wired candidate pool review drawer implementing A2 score decomposition (spec §10), component rows with weights/contributions, and review decisions via AG-BE-CP-001 endpoints.",
+  "behavior": "Canonical BFF-wired candidate pool review drawer implementing A2 score decomposition (spec §10), component rows with weights/contributions, data quality badge, and review decisions via AG-BE-CP-001 endpoints (reviewCandidateMember with If-Match concurrency headers).",
   "callers": [
-    "src/agora/components/CandidateReviewDrawer.test.tsx",
-    "Adoption target: src/agora/pages/trading-room/TradingRoomPage.tsx"
+    "src/agora/pages/trading-room/TradingRoomPage.tsx:23 (import { CandidateReviewDrawer as SharedCandidateReviewDrawer })",
+    "src/agora/pages/trading-room/TradingRoomPage.tsx:1107 (<SharedCandidateReviewDrawer poolId={selectedPoolId} open={candidateDrawerOpen} onClose={() => setCandidateDrawerOpen(false)} />)",
+    "src/agora/pages/trading-room/TradingRoomPage.test.tsx:29-30 (vi.mock('@/agora/components/CandidateReviewDrawer'))",
+    "src/agora/components/CandidateReviewDrawer.test.tsx:4, 105, 117, 128, 141, 157, 298, 308, 327, 366, 387, 422, 439, 485 (26 unit test cases)",
+    "docs/deployment/evidence/PFG-AGORA-FE-LIVE-20260820/evidence.json:11, 17, 26, 35",
+    "docs/deployment/evidence/PFG-AGORA-JOURNEY-E2E-20260820/evidence.json:88, 89"
   ],
   "runtime_or_deploy_refs": [
-    "Agora Candidate Pool review surface"
+    "Agora Candidate Pool review surface on route /trading-room"
   ],
   "replacement": "Canonical implementation",
-  "replacement_proof": "src/agora/components/CandidateReviewDrawer.test.tsx (26 tests passed), src/lib/bff-v1/agora/candidatePool.test.ts",
+  "replacement_proof": "src/agora/components/CandidateReviewDrawer.test.tsx (26 tests passed), src/lib/bff-v1/agora/candidatePool.test.ts, docs/deployment/evidence/PFG-AGORA-JOURNEY-E2E-20260820/evidence.json",
   "disposition": "retain",
   "validation": [
-    "npm test src/agora/components/CandidateReviewDrawer.test.tsx"
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/agora/components/CandidateReviewDrawer.test.tsx",
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/agora/pages/trading-room/TradingRoomPage.test.tsx"
   ]
 }
 ```
@@ -99,20 +105,22 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 ```json
 {
   "path_or_symbol": "src/agora/pages/trading-room/TradingRoomPage.tsx:STRATEGY_LENSES",
-  "behavior": "Static array of 5 lenses (lens-A through lens-E) with hardcoded candidate/held metrics and fixed candidate arrays used as synthetic candidate pool identities.",
+  "behavior": "Static array of 5 lenses (lens-A through lens-E) with hardcoded candidate/held metrics and fixed candidate arrays formerly used as synthetic candidate pool identities.",
   "callers": [
-    "src/agora/pages/trading-room/TradingRoomPage.tsx:122-208,695-915,2052-2056,2155-2225,2265-2300,2810",
-    "src/agora/pages/trading-room/TradingRoomPage.test.tsx"
+    "Formerly called across TradingRoomPage.tsx lens dashboard and card strips",
+    "Active production callers: 0 (replaced by dynamic candidate pool projections)",
+    "Test fixture references: src/agora/pages/trading-room/TradingRoomPage.test.tsx:199, 227, 244, 258 (source_ref fixtures)",
+    "Evidence doc: docs/deployment/evidence/PFG-AGORA-FE-LIVE-20260820/evidence.json:16"
   ],
   "runtime_or_deploy_refs": [
     "Trading Room lens strip and recipe dashboard cards"
   ],
   "replacement": "Dynamic candidate pool & workspace recipe projections from src/lib/bff-v1/agora/workshops.ts, candidatePool.ts, and workspaceChartSpec.ts",
-  "replacement_proof": "Backend Agora candidate pool routes (/bff/agora/candidate-pools/*) and tests in services/control-plane/bff/test_bff_agora_core_contract.py",
+  "replacement_proof": "Backend Agora candidate pool routes (/bff/agora/candidate-pools/*) and tests in services/control-plane/bff/test_bff_agora_core_contract.py; frontend workshop integration in src/agora/pages/trading-room/TradingRoomPage.tsx",
   "disposition": "replace_then_delete",
   "validation": [
-    "npm test src/agora/pages/trading-room/TradingRoomPage.test.tsx",
-    "Agora browser journey E2E rerun"
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/agora/pages/trading-room/TradingRoomPage.test.tsx",
+    "Reproducible negative scan: git -C /home/lupin/code/execute-plans grep -n 'STRATEGY_LENSES' origin/dev (returns 0 production occurrences; 0 references in TradingRoomPage.tsx)"
   ]
 }
 ```
@@ -122,19 +130,51 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 ```json
 {
   "path_or_symbol": "src/lib/bff-v1/management.ts:safeAdapt",
-  "behavior": "Catches runtime exceptions and nulls during live response adaptation and returns seedFn(), masking live backend contract mismatches in mock data.",
+  "behavior": "Catches runtime exceptions and nulls during live response adaptation and returns seedFn(), masking live backend contract mismatches in mock data when not in strict live mode. In strict live mode (isStrictLiveFallback()), it rethrows the adapter mismatch instead of returning seedFn(), allowing withLiveOrMock to return typed degradation/error envelopes.",
   "callers": [
-    "src/lib/bff-v1/management.ts:941-965 (wrapping adaptCockpit, adaptRankings, adaptTradingPulseOverview, adaptManagementEvidenceOverview, adaptManagementEvidenceDetail, adaptPersonaIntent, adaptReadiness, etc.)"
+    "src/lib/bff-v1/management.ts:3854 (adaptCockpit)",
+    "src/lib/bff-v1/management.ts:3933 (adaptRankings)",
+    "src/lib/bff-v1/management.ts:3942 (adaptTradingPulseOverview)",
+    "src/lib/bff-v1/management.ts:3988 (adaptArrayPassthrough<T>)",
+    "src/lib/bff-v1/management.ts:3997 (adaptArrayPassthrough<T>)",
+    "src/lib/bff-v1/management.ts:4005 (adaptManagementEvidenceOverview)",
+    "src/lib/bff-v1/management.ts:4019 (adaptManagementEvidenceDetail)",
+    "src/lib/bff-v1/management.ts:4033 (adaptPersonaIntent)",
+    "src/lib/bff-v1/management.ts:4049 (adaptReadiness)",
+    "src/lib/bff-v1/management.ts:4057 (adaptReadiness)",
+    "src/lib/bff-v1/management.ts:4065 (adaptReadiness)",
+    "src/lib/bff-v1/management.ts:4073 (adaptReadiness)",
+    "src/lib/bff-v1/management.ts:4081 (adaptReadiness)",
+    "src/lib/bff-v1/management.ts:4100 (raw inline adapter)",
+    "src/lib/bff-v1/management.ts:4114 (adaptArrayPassthrough<CapitalPoolSummaryRow>)",
+    "src/lib/bff-v1/management.ts:4125 (adaptArrayPassthrough<HoldingRow>)",
+    "src/lib/bff-v1/management.ts:4174 (adaptPortfolioHoldingsMonitor)",
+    "src/lib/bff-v1/management.ts:4188 (adaptArrayPassthrough<PersonaLeagueRow>)",
+    "src/lib/bff-v1/management.ts:4199 (adaptArrayPassthrough<PersonaLeagueRow>)",
+    "src/lib/bff-v1/management.ts:4205 (raw inline adapter)",
+    "src/lib/bff-v1/management.ts:4229 (adaptQuarterlyRankingRows)",
+    "src/lib/bff-v1/management.ts:4244 (raw inline adapter)",
+    "src/lib/bff-v1/management.ts:4257 (adaptQuarterlyRankingRows)",
+    "src/lib/bff-v1/management.ts:4314 (adaptArrayPassthrough<PerformanceAttributionRow>)",
+    "src/lib/bff-v1/__tests__/management.test.ts:1711, 1712 (safeAdapt strict-live contract mismatch unit tests)",
+    ".lovable/audits/bff-backend-gap-2026-05-23.md:23, 223",
+    ".lovable/audits/bff-backend-gap-2026-05-24-delta.md:120, 165",
+    ".lovable/audits/bff-backend-gap-2026-05-25-delta-v3.md:199",
+    ".lovable/audits/bff-backend-gap-2026-05-25-delta-v5.md:86",
+    ".lovable/audits/mgmt-revamp-2026-05-20-plan.md:78, 94",
+    "docs/deployment/evidence/PFG-FE-HONEST-LIVE-20260820/caller-inventory.md:31, 39, 90",
+    "docs/deployment/evidence/PFG-FE-HONEST-LIVE-20260820/evidence.json:13, 19, 43"
   ],
   "runtime_or_deploy_refs": [
-    "Management console live reads under VITE_BFF_MODE=live"
+    "Management console live reads under VITE_BFF_MODE=live with VITE_BFF_FALLBACK=strict"
   ],
   "replacement": "withStrictLiveOrMock with typed degradation envelopes, optionalAdapt, or explicit error boundaries",
-  "replacement_proof": "src/lib/bff-v1/__tests__/strictLiveReadOffline.test.ts, src/lib/bff-v1/__tests__/management.test.ts",
+  "replacement_proof": "src/lib/bff-v1/__tests__/strictLiveReadOffline.test.ts (2 tests passing), src/lib/bff-v1/__tests__/management.test.ts (34 tests passing)",
   "disposition": "delete",
   "validation": [
-    "npm test src/lib/bff-v1/__tests__/strictLiveReadOffline.test.ts",
-    "npm test src/lib/bff-v1/__tests__/management.test.ts"
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/lib/bff-v1/__tests__/strictLiveReadOffline.test.ts",
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/lib/bff-v1/__tests__/management.test.ts",
+    "Reproducible negative test scan: npm --prefix /home/lupin/code/execute-plans test -- --run src/lib/bff-v1/__tests__/management.test.ts -t 'safeAdapt strict-live contract mismatch' (verifies safeAdapt rethrows on 200 contract mismatch under strict-live fallback)"
   ]
 }
 ```
@@ -144,19 +184,21 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 ```json
 {
   "path_or_symbol": "src/management/pages/studios/FormulaStudio.tsx:triggerBacktest",
-  "behavior": "Dynamically imports @/mocks/seed, pushes an in-memory job to seedModule.jobs, uses a 5-second setTimeout to mark it success, and emits a synthetic v5.loop.execution event.",
+  "behavior": "Synthetic in-memory job runner that formerly dynamically imported @/mocks/seed, pushed an in-memory job to seedModule.jobs, used a 5-second setTimeout to mark it success, and emitted a synthetic v5.loop.execution event.",
   "callers": [
-    "src/management/pages/studios/FormulaStudio.tsx:47"
+    "Formerly invoked from FormulaStudio.tsx button onClick",
+    "Active callers: 0 (replaced by loadBacktestJobs via bff.jobs.list() at lines 35-46 and NonProductionActionButton at lines 152-154)"
   ],
   "runtime_or_deploy_refs": [
     "Formula Studio route /management/studios/formula"
   ],
-  "replacement": "Governed backend job runner (POST /bff/jobs / services/optimizer-svc) with terminal readback, or honest disabled state via NonProductionActionButton",
-  "replacement_proof": "NonProductionActionButton pattern across 61 management buttons; backend job runner contracts in services/control-plane/bff/",
+  "replacement": "Governed backend job runner (bff.jobs.list() / services/optimizer-svc) with terminal readback, and honest disabled state via NonProductionActionButton",
+  "replacement_proof": "NonProductionActionButton pattern in FormulaStudio.tsx:152-154; verified by src/management/components/NonProductionActionButton.test.tsx (1 test passing) and src/management/pages/capabilitiesProductionTruth.test.ts (3 tests passing)",
   "disposition": "replace_then_delete",
   "validation": [
-    "Formula Studio component tests",
-    "Management E2E browser journey"
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/components/NonProductionActionButton.test.tsx",
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/pages/capabilitiesProductionTruth.test.ts",
+    "Reproducible negative scan: git -C /home/lupin/code/execute-plans grep -n 'triggerBacktest' origin/dev (returns 0 matches across entire codebase)"
   ]
 }
 ```
@@ -166,21 +208,22 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 ```json
 {
   "path_or_symbol": "src/management/components/detail/ActivityMonitor.tsx:seed",
-  "behavior": "Generates 3 hardcoded static events (seed_${scope}_1..3) and renders a green pulsing live indicator when disconnected from real backend telemetry.",
+  "behavior": "Formerly generated 3 hardcoded static events (seed_${scope}_1..3) and rendered a green pulsing live indicator when disconnected from real backend telemetry. Replaced with canonical realtime and SSE subscriptions (realtime.on('job'|'data'|'sse:loop'|'sse:sentinel'|'sse:intervention')).",
   "callers": [
-    "src/management/pages/PersonaDetail.tsx",
-    "src/management/pages/McpDetail.tsx",
-    "src/management/pages/ToolDetail.tsx"
+    "src/management/pages/PersonaDetail.tsx:28 (import ActivityMonitor), line 348 (<ActivityMonitor scope='persona' />)",
+    "src/management/pages/McpDetail.tsx:16 (import ActivityMonitor), line 68 (<ActivityMonitor scope='mcp' />)",
+    "src/management/pages/ToolDetail.tsx:14 (import ActivityMonitor), line 108 (<ActivityMonitor scope='tool' />)",
+    "src/management/components/detail/__tests__/StrictLiveManagementSurfaces.test.tsx:5, 18, 29, 48, 60 (tests ActivityMonitor behavior under disconnected, connected, and SSE live streams)"
   ],
   "runtime_or_deploy_refs": [
-    "Detail page Activity tab"
+    "Detail page Activity tab on /management/personas/:id, /management/mcps/:id, /management/tools/:id"
   ],
-  "replacement": "Canonical audit & event telemetry feeds (GET /bff/audit, /bff/events/stream, or SSE /bff/sse/events)",
-  "replacement_proof": "Contract tests in services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
+  "replacement": "Canonical audit & event telemetry feeds (realtime.on(...) consuming /bff/audit, /bff/events/stream, /bff/sse/events)",
+  "replacement_proof": "Contract tests in services/control-plane/bff/test_pkt005_sse_substrate_contract.py and src/management/components/detail/__tests__/StrictLiveManagementSurfaces.test.tsx",
   "disposition": "delete",
   "validation": [
-    "PersonaDetail, McpDetail, ToolDetail component tests",
-    "SSE stream integration tests"
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/components/detail/__tests__/StrictLiveManagementSurfaces.test.tsx",
+    "Reproducible negative scan: git -C /home/lupin/code/execute-plans grep -n 'seed_' origin/dev:src/management/components/detail/ActivityMonitor.tsx (returns 0 matches; synthetic seed event generator eliminated)"
   ]
 }
 ```
@@ -190,19 +233,34 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 ```json
 {
   "path_or_symbol": "src/management/pages/phase2/PostmortemLibrary.tsx:SEED",
-  "behavior": "Static array of 3 hardcoded postmortem records (pm_001, pm_002, pm_003) used as the sole data source for the Postmortem Library page.",
+  "behavior": "Formerly used a static array of 3 hardcoded postmortem records (pm_001, pm_002, pm_003) as the sole data source for the Postmortem Library page. Replaced by live bff.incidents.list() adapter.",
   "callers": [
-    "src/management/pages/phase2/PostmortemLibrary.tsx:26-30",
-    "Route /management/postmortems in App.tsx and managementRouteManifest.ts"
+    "src/management/pages/phase2/PostmortemLibrary.tsx:28 (PostmortemLibraryPage component definition)",
+    "src/routes/management/phase2.tsx:4 (export { PostmortemLibraryPage as PostmortemLibraryRoute } from '@/management/pages/phase2/PostmortemLibrary')",
+    "src/App.tsx:135 (const PostmortemLibraryRoute = lazyNamedRoute(() => import('@/routes/management/phase2'), 'PostmortemLibraryRoute', 'Postmortems'))",
+    "src/App.tsx:291 (<Route path='postmortems' element={<PostmortemLibraryRoute />} />)",
+    "src/management/navigation/managementRouteManifest.ts:197 ({ id: 'postmortems', to: '/management/postmortems', labelKey: 'nav.postmortems', icon: FileText })",
+    "src/lib/v4/routeLabels.ts:75 ({ path: '/management/postmortems', i18nKey: 'nav.postmortems', parent: '/management' })",
+    "src/lib/v5/management/links.ts:126 (/management/postmortems?item=...)",
+    "src/lib/v5/management/__tests__/links.test.ts:22 (unit test for postmortem route link resolution)",
+    "src/management/components/detail/__tests__/StrictLiveManagementSurfaces.test.tsx:7, 79, 93, 104, 111 (tests PostmortemLibraryPage live rendering and degraded state)",
+    "src/i18n/locales/en-US.ts:121, 2673, 2679",
+    "src/i18n/locales/zh-TW.ts:116",
+    "src/lib/bff-v1/paths.ts:129 (agoraPostmortems)",
+    "src/lib/bff-v1/agora/types.ts:365, 841 (/bff/agora/postmortems)",
+    "scripts/probe-bff-write-paths.mjs:108 (/bff/agora/postmortems)",
+    "docs/deployment/evidence/PFG-MGMT-FE-REAL-20260820/evidence.json:11, 17"
   ],
   "runtime_or_deploy_refs": [
     "Postmortem Library route /management/postmortems"
   ],
-  "replacement": "Canonical Incident / Postmortem BFF read adapter (GET /bff/incidents or bff-v1 postmortem adapter)",
-  "replacement_proof": "INC-001-RB / services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py",
+  "replacement": "Canonical Incident / Postmortem BFF read adapter (bff.incidents.list() consuming /bff/incidents)",
+  "replacement_proof": "INC-001-RB / services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py and src/management/components/detail/__tests__/StrictLiveManagementSurfaces.test.tsx",
   "disposition": "replace_then_delete",
   "validation": [
-    "PostmortemLibrary and IncidentDetail tests"
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/components/detail/__tests__/StrictLiveManagementSurfaces.test.tsx",
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/lib/v5/management/__tests__/links.test.ts",
+    "Reproducible negative scan: git -C /home/lupin/code/execute-plans grep -n 'const SEED' origin/dev:src/management/pages/phase2/PostmortemLibrary.tsx (returns 0 matches; component consumes live bff.incidents.list() at line 36)"
   ]
 }
 ```
@@ -214,21 +272,31 @@ Every candidate is evaluated against strict caller-traceability rules defined in
   "path_or_symbol": "src/mocks/seed.ts",
   "behavior": "Comprehensive in-memory mock fixture dataset covering 40+ domain entities (personas, strategies, capital pools, runtimes, incidents, watchers, decision journals, performance series, etc.).",
   "callers": [
-    "src/test/e2e-scenarios.test.ts",
-    "src/lib/v5/__tests__/*",
-    "src/lib/bff/mutations.test.ts",
-    "src/lib/bff-v1/seed.ts (mock mode only)",
-    "src/lib/bff/client.ts"
+    "src/test/e2e-scenarios.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/decisionReviews.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/incidentDetail.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/incidents.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/links.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/mcpDetail.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/mcps.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/perfMetrics.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/personaDetail.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/personas.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/strategies.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/strategyDetail.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/v5/__tests__/tools.test.ts:4 (import { seed } from '@/mocks/seed')",
+    "src/lib/bff/mutations.test.ts:3 (import { seed } from '@/mocks/seed')",
+    "src/lib/bff-v1/seed.ts:16 (import { seed as mockSeed } from '@/mocks/seed')"
   ],
   "runtime_or_deploy_refs": [
-    "Demo mode (VITE_BFF_MODE=mock) and unit test mocks"
+    "Demo mode (VITE_BFF_MODE=mock) and unit test mocks; excluded from strict-live production build chunks"
   ],
   "replacement": "Retained as test/demo fixture library; excluded from strict-live production build chunks",
-  "replacement_proof": "Bundle budget checks (scripts/bundle-budget-check.mjs, contract-drift-check.mjs)",
+  "replacement_proof": "Bundle budget checks (scripts/bundle-budget-check.mjs, scripts/contract-drift-check.mjs)",
   "disposition": "retain",
   "validation": [
-    "npm run build",
-    "Bundle tree-shaking check proving seed is absent from strict-live production bundle"
+    "npm --prefix /home/lupin/code/execute-plans run build",
+    "node /home/lupin/code/execute-plans/scripts/bundle-budget-check.mjs"
   ]
 }
 ```
@@ -238,19 +306,105 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 ```json
 {
   "path_or_symbol": "src/lib/bff/",
-  "behavior": "Legacy client, in-memory mutation overlays, and simulation scenarios coexisting with canonical src/lib/bff-v1/ live REST/SSE adapters.",
+  "behavior": "Legacy client types, in-memory mutation overlays, and simulation scenarios in src/lib/bff/ coexisting with canonical src/lib/bff-v1/ live REST/SSE adapters.",
   "callers": [
-    "50+ management components importing types/mutations from src/lib/bff/"
+    "src/agora/components/CandidateDrawer.tsx:18",
+    "src/agora/components/CandidateScoreBadge.tsx:8",
+    "src/agora/pages/governance/AgoraGovernancePage.tsx:18",
+    "src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx:28",
+    "src/components/layout/AppSidebar.tsx:18",
+    "src/components/layout/Header.tsx:15",
+    "src/lib/bff/mutations.test.ts:4",
+    "src/lib/bff/mutations.ts:6",
+    "src/lib/bff-v1/legacy.ts:10",
+    "src/lib/bff-v1/management.ts:9",
+    "src/lib/bff-v1/types.ts:10",
+    "src/management/components/detail/ActivityMonitor.tsx:6",
+    "src/management/components/detail/EvolutionRunsPanel.tsx:5",
+    "src/management/components/detail/McpRegistryPanel.tsx:4",
+    "src/management/components/detail/McpSecretsPanel.tsx:5",
+    "src/management/components/detail/MemoryGovernanceQueue.tsx:5",
+    "src/management/components/detail/RiskBudgetPanel.tsx:5",
+    "src/management/components/detail/ToolSchemaPanel.tsx:5",
+    "src/management/components/detail/WorkflowStepper.tsx:3",
+    "src/management/components/detail/__tests__/StrictLiveManagementSurfaces.test.tsx:10",
+    "src/management/components/governance/PermissionMatrix.tsx:8",
+    "src/management/components/governance/PolicyVersionDiff.tsx:4",
+    "src/management/components/governance/RoutePolicyEditor.tsx:9",
+    "src/management/components/ooda/OodaPacketDrawer.test.tsx:7",
+    "src/management/components/ooda/OodaPacketDrawer.tsx:25",
+    "src/management/components/persona/PersonaReadinessCard.tsx:19",
+    "src/management/components/write/createEntity.test.ts:2",
+    "src/management/components/write/createEntity.ts:2",
+    "src/management/lib/personaReadiness.ts:11",
+    "src/management/pages/ArtifactDetail.tsx:8",
+    "src/management/pages/CapabilitiesLists.tsx:5",
+    "src/management/pages/CapitalPoolDetail.test.tsx:7",
+    "src/management/pages/CapitalPoolDetail.tsx:9",
+    "src/management/pages/ChannelDetail.tsx:5",
+    "src/management/pages/CommandCenter.tsx:16",
+    "src/management/pages/DeploymentDetail.tsx:13",
+    "src/management/pages/EvolutionDetail.tsx:11",
+    "src/management/pages/GovernanceReview.tsx:13, 15",
+    "src/management/pages/IncidentDetail.tsx:17, 18",
+    "src/management/pages/Lists.tsx:4",
+    "src/management/pages/McpDetail.tsx:4",
+    "src/management/pages/ObjectDetailLayout.tsx:7",
+    "src/management/pages/ObjectListPage.tsx:16, 17, 21",
+    "src/management/pages/Operations.tsx:9, 12",
+    "src/management/pages/PersonaDetail.test.ts:4",
+    "src/management/pages/PersonaDetail.tsx:13",
+    "src/management/pages/PersonaOnboarding.test.ts:2",
+    "src/management/pages/PersonaOnboarding.tsx:27",
+    "src/management/pages/RankingFormulaDetail.tsx:8",
+    "src/management/pages/RebalanceDetail.tsx:8",
+    "src/management/pages/ResearchDetail.test.tsx:7",
+    "src/management/pages/ResearchDetail.tsx:7",
+    "src/management/pages/RiskCenter.tsx:17",
+    "src/management/pages/SkillDetail.tsx:5",
+    "src/management/pages/StrategyDetail.tsx:18, 22, 40",
+    "src/management/pages/ToolDetail.tsx:4",
+    "src/management/pages/capitalPoolsFleetFallback.test.ts:4",
+    "src/management/pages/capitalPoolsFleetFallback.ts:2",
+    "src/management/pages/governance/ConsultRulesPage.tsx:10",
+    "src/management/pages/governance/MemoryGovernancePage.tsx:10",
+    "src/management/pages/governance/PermissionMatrixPage.tsx:7",
+    "src/management/pages/governance/RoutePoliciesList.tsx:10",
+    "src/management/pages/governance/RoutePolicyDetail.tsx:12",
+    "src/management/pages/oversight/_core.tsx:55",
+    "src/management/pages/personaDetailData.ts:1",
+    "src/management/pages/phase2/AlphaFactoryBoard.tsx:11",
+    "src/management/pages/phase2/GovernanceQueue.tsx:13, 15",
+    "src/management/pages/phase2/PostmortemLibrary.tsx:14",
+    "src/management/pages/phase2/alphaFactoryData.test.ts:3",
+    "src/management/pages/phase2/alphaFactoryData.ts:1",
+    "src/management/pages/studios/FormulaStudio.tsx:12",
+    "src/management/pages/studios/SkillSandboxStudio.tsx:11",
+    "src/management/pages/v5/LoopRunDrawer.tsx:20",
+    "src/mocks/seed.ts:12",
+    "src/platform/components/CommandPalette.tsx:7",
+    "src/platform/components/EntityHeader.tsx:12",
+    "src/platform/components/HighRiskConfirm.tsx:26",
+    "src/platform/components/JobProgressDrawer.tsx:9",
+    "src/platform/components/LineageGraph.tsx:4",
+    "src/platform/components/NotificationCenter.tsx:15, 19",
+    "src/platform/components/RealtimeStatusBadge.tsx:9",
+    "src/platform/components/RightDrawer.tsx:17",
+    "src/platform/components/RiskBadge.tsx:3",
+    "src/platform/components/ScenarioRunnerCard.tsx:9",
+    "src/platform/components/StageDecisionPanel.tsx:10",
+    "src/platform/pages/QAChecklist.tsx:8, 11",
+    "src/test/e2e-scenarios.test.ts:6, 9"
   ],
   "runtime_or_deploy_refs": [
     "Management console pages, Platform components, Agora components"
   ],
-  "replacement": "src/lib/bff-v1/ canonical endpoints and typed DTOs",
+  "replacement": "Canonical src/lib/bff-v1/ endpoints and typed DTOs",
   "replacement_proof": "src/lib/bff-v1/__tests__/* comprehensive test suites (lists, writes, sse, degradation, tradeJourneys, capitalPools, managementAi)",
   "disposition": "replace_then_delete",
   "validation": [
-    "npm test",
-    "npm run build"
+    "npm --prefix /home/lupin/code/execute-plans test",
+    "npm --prefix /home/lupin/code/execute-plans run build"
   ]
 }
 ```
@@ -262,26 +416,44 @@ Every candidate is evaluated against strict caller-traceability rules defined in
   "path_or_symbol": "src/lib/bff-v1/runActionSafe.ts:runActionSafe",
   "behavior": "Canonical UI-facing mutation wrapper that auto-injects correlation and idempotency headers and surfaces rejections via user-facing toasts while maintaining typed MutationResult.",
   "callers": [
-    "src/management/pages/CapitalPoolDetail.tsx",
-    "src/management/pages/EvolutionDetail.tsx",
-    "src/management/pages/RankingFormulaDetail.tsx",
-    "src/management/pages/Runtimes.tsx",
-    "src/management/pages/DeploymentDetail.tsx",
-    "src/management/pages/ResearchDetail.tsx",
-    "src/management/components/detail/StrategyParamsEditor.tsx",
-    "src/management/pages/ArtifactDetail.tsx",
-    "src/management/pages/Operations.tsx",
-    "src/management/pages/StrategyDetail.tsx",
-    "src/management/pages/RebalanceDetail.tsx"
+    "src/management/components/detail/StrategyParamsEditor.tsx:8, 27",
+    "src/management/pages/ArtifactDetail.tsx:6, 127",
+    "src/management/pages/CapitalPoolDetail.tsx:6, 352",
+    "src/management/pages/DeploymentDetail.tsx:11, 155, 166, 192, 223",
+    "src/management/pages/EvolutionDetail.tsx:9, 146, 214",
+    "src/management/pages/Operations.tsx:8, 168, 238",
+    "src/management/pages/RankingFormulaDetail.tsx:6, 127",
+    "src/management/pages/RebalanceDetail.tsx:6, 112, 235",
+    "src/management/pages/ResearchDetail.tsx:5, 199",
+    "src/management/pages/Runtimes.tsx:11, 139",
+    "src/management/pages/StrategyDetail.tsx:19, 485",
+    "src/lib/bff-v1/runActionSafe.ts:3, 29 (implementation)",
+    "src/lib/bff-v1/writes.ts:9",
+    "src/lib/bff-v1/legacy.ts:7, 19",
+    "src/lib/bff-v1/seed.ts:9",
+    "src/lib/bff-v1/seed-taxonomy.json:47",
+    "src/lib/bff-v1/__tests__/writes.test.ts:5, 127, 155, 380, 384 (19 unit test cases)",
+    "src/management/pages/CapitalPoolDetail.test.tsx:20, 43, 78",
+    "src/management/pages/ResearchDetail.test.tsx:15, 31, 105",
+    "src/management/pages/Runtimes.test.tsx:17, 25, 63, 175, 181, 218, 236, 270, 288, 343, 385",
+    "src/management/pages/capabilitiesProductionTruth.test.ts:40",
+    "scripts/accept-management-hosted-production.mjs:476",
+    "scripts/codemod-bff-v1.ts:30, 35, 48",
+    ".lovable/audits/batch-vii-migration.md:9, 66, 93, 98, 111, 126",
+    ".lovable/spec/management-2026-05-20/Pantheon_Management_Lovable_Spec_2026-05-20.md:1167",
+    "docs/deployment/evidence/PFG-FE-HONEST-LIVE-20260820/caller-inventory.md:7, 9, 11, 25, 26, 88",
+    "docs/deployment/evidence/PFG-FE-HONEST-LIVE-20260820/evidence.json:18, 22",
+    "docs/deployment/evidence/product-functional-closure/PFG-MGMT-FE-READONLY-RUNTIME-ACTIONS-20260823/evidence.json:38, 53, 63"
   ],
   "runtime_or_deploy_refs": [
     "All management console mutation button click handlers"
   ],
   "replacement": "Canonical implementation",
-  "replacement_proof": "src/lib/bff-v1/__tests__/writes.test.ts, src/management/pages/capabilitiesProductionTruth.test.ts",
+  "replacement_proof": "src/lib/bff-v1/__tests__/writes.test.ts (19 tests passed), src/management/pages/capabilitiesProductionTruth.test.ts (3 tests passed)",
   "disposition": "retain",
   "validation": [
-    "npm test src/lib/bff-v1/__tests__/writes.test.ts"
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/lib/bff-v1/__tests__/writes.test.ts",
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/pages/Runtimes.test.tsx"
   ]
 }
 ```
@@ -293,16 +465,51 @@ Every candidate is evaluated against strict caller-traceability rules defined in
   "path_or_symbol": "src/management/components/NonProductionActionButton.tsx:NonProductionActionButton",
   "behavior": "Honestly disabled button component with tooltip explanation preventing user clicks on unbacked backend mutations.",
   "callers": [
-    "61+ call sites across ChannelDetail, PersonaDetail, McpDetail, IncidentDetail, HookCronManager, KnowledgeInbox, Settings, WorkflowTemplates, MemoryGovernancePage, ConsultRulesPage, SkillDetail, ToolDetail, MutationRuleManager, FormulaStudio, etc."
+    "src/management/components/detail/AllocationSimulationPanel.tsx:10, 67 (1 button)",
+    "src/management/components/detail/EvolutionCandidatesTab.tsx:13, 67, 69, 70, 72, 120 (5 buttons)",
+    "src/management/components/detail/EvolutionRunsPanel.tsx:10, 69 (1 button)",
+    "src/management/components/detail/McpRegistryPanel.tsx:8, 49 (1 button)",
+    "src/management/components/detail/McpSecretsPanel.tsx:13, 46, 48 (2 buttons)",
+    "src/management/components/detail/MemoryGovernanceQueue.tsx:11, 53, 54 (2 buttons)",
+    "src/management/components/detail/MutationRuleManager.tsx:13, 23 (1 button)",
+    "src/management/components/detail/PersonaWorkspaceTab.tsx:7, 24, 26 (2 buttons)",
+    "src/management/components/detail/RiskBudgetPanel.tsx:9, 42 (1 button)",
+    "src/management/components/detail/SkillPromptEditor.tsx:9, 62, 64 (2 buttons)",
+    "src/management/components/detail/ToolSchemaPanel.tsx:9, 97 (1 button)",
+    "src/management/components/governance/PermissionMatrix.tsx:11, 70, 71 (2 buttons)",
+    "src/management/components/governance/RoutePolicyEditor.tsx:11, 69, 71, 72, 135, 137, 143, 145 (7 buttons)",
+    "src/management/pages/ChannelDetail.tsx:12, 33, 35 (2 buttons)",
+    "src/management/pages/IncidentDetail.tsx:25, 151, 153 (2 buttons)",
+    "src/management/pages/McpDetail.tsx:20, 50, 52, 53, 55, 57, 59, 61, 63, 65, 67, 196, 198 (12 buttons)",
+    "src/management/pages/PersonaDetail.tsx:22, 325, 327 (2 buttons)",
+    "src/management/pages/Runtimes.tsx:16 (import)",
+    "src/management/pages/SkillDetail.tsx:20, 59, 61, 63, 65 (4 buttons)",
+    "src/management/pages/StrategyDetail.tsx:20, 116, 118, 120, 126, 316, 318, 320, 322, 349, 351, 352, 354 (12 buttons)",
+    "src/management/pages/ToolDetail.tsx:16, 51, 53, 56, 58, 62, 64, 65, 67, 68, 70, 74, 76, 79, 81, 83, 85, 86, 88 (18 buttons)",
+    "src/management/pages/governance/ConsultRulesPage.tsx:13, 45, 46, 73, 75 (4 buttons)",
+    "src/management/pages/governance/MemoryGovernancePage.tsx:13, 94, 95, 119, 120, 126, 128 (6 buttons)",
+    "src/management/pages/phase2/HookCronManager.tsx:13, 25 (1 button)",
+    "src/management/pages/phase2/KnowledgeInbox.tsx:12, 59, 60, 61, 62 (4 buttons)",
+    "src/management/pages/phase2/Settings.tsx:18, 95, 100, 132, 166, 180, 183 (6 buttons)",
+    "src/management/pages/phase2/WorkflowTemplates.tsx:13, 32, 73, 74 (3 buttons)",
+    "src/management/pages/studios/FormulaStudio.tsx:17, 152, 154 (2 buttons)",
+    "src/management/components/NonProductionActionButton.tsx:8, 12, 16 (definition)",
+    "src/management/components/NonProductionActionButton.test.tsx:6, 7, 9, 11",
+    "src/management/components/detail/__tests__/StrictLiveManagementSurfaces.test.tsx:157",
+    "src/management/pages/capabilitiesProductionTruth.test.ts:39",
+    "scripts/accept-management-hosted-production.mjs:476",
+    "docs/deployment/evidence/PFG-MGMT-FE-REAL-20260820/evidence.json:15, 18",
+    "support/sidecars/PFG-FE-CONSOLIDATE-20260820/caller-inventory-20260824.md"
   ],
   "runtime_or_deploy_refs": [
-    "Management console non-production actions"
+    "Management console non-production actions (61 distinct button call sites across 28 production pages/panels)"
   ],
   "replacement": "Canonical implementation",
-  "replacement_proof": "src/management/components/NonProductionActionButton.test.tsx, src/management/pages/capabilitiesProductionTruth.test.ts",
+  "replacement_proof": "src/management/components/NonProductionActionButton.test.tsx (1 test passed), src/management/pages/capabilitiesProductionTruth.test.ts (3 tests passed)",
   "disposition": "retain",
   "validation": [
-    "npm test src/management/components/NonProductionActionButton.test.tsx"
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/components/NonProductionActionButton.test.tsx",
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/pages/capabilitiesProductionTruth.test.ts"
   ]
 }
 ```
@@ -312,19 +519,23 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 ```json
 {
   "path_or_symbol": "src/management/components/agent/uiActionRegistry.ts:AVAILABLE_UI_ACTIONS",
-  "behavior": "Allowlisted UI action registry for Management AI assistant with 7 contract kinds (navigate, openDrawer, selectEntity, setFilter, focusPanel, refreshCurrentView, runBffAction). 4 actions are actively wired; 3 return explicit safe refusal messages.",
+  "behavior": "Allowlisted UI action registry for Management AI assistant with 7 contract kinds (navigate, openDrawer, selectEntity, setFilter, focusPanel, refreshCurrentView, runBffAction). Validates incoming actions before high-risk confirmation or execution.",
   "callers": [
-    "src/management/components/nl/NlAssistantDrawer.tsx",
-    "Management AI NL chat handlers"
+    "src/management/components/agent/uiActionRegistry.ts:45, 60, 63, 130 (registry definition and helpers)",
+    "src/management/components/agent/AgentPanelBody.tsx:47, 53, 790 (imports and maps AVAILABLE_UI_ACTIONS for assistant NL execution)",
+    "src/management/components/agent/useAgentPanel.test.ts:3 (panel state normalization tests)",
+    "src/management/pages/capabilitiesProductionTruth.test.ts (production truth tests)",
+    "docs/deployment/evidence/PFG-MGMT-AI-FE-ACTIONS-20260820/evidence.json:11, 17, 36"
   ],
   "runtime_or_deploy_refs": [
-    "Management AI NL assistant drawer (/management/*)"
+    "Management AI NL assistant drawer on all /management/* routes"
   ],
-  "replacement": "Canonical implementation; retain and wire remaining actions during feature completion",
-  "replacement_proof": "src/lib/bff-v1/__tests__/managementAi.test.ts",
+  "replacement": "Canonical implementation; retain allowlisted registry",
+  "replacement_proof": "src/management/components/agent/useAgentPanel.test.ts, docs/deployment/evidence/PFG-MGMT-AI-FE-ACTIONS-20260820/evidence.json",
   "disposition": "retain",
   "validation": [
-    "Management AI journey tests"
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/components/agent/useAgentPanel.test.ts",
+    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/pages/capabilitiesProductionTruth.test.ts"
   ]
 }
 ```
@@ -340,9 +551,11 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 |  TradingRoomPage (inline CandidateReviewDrawer) --[replace_then_delete]-->       |
 |                                                    src/agora/components/          |
 |                                                    CandidateReviewDrawer.tsx      |
+|                                                    (Adoption verified)            |
 |                                                                                   |
 |  TradingRoomPage (fixed lens-A..E) -------------[replace_then_delete]-->       |
 |                                                    Dynamic Workshop/Pool Recipes  |
+|                                                    (Replaced in TradingRoomPage)  |
 +-----------------------------------------------------------------------------------+
 
 +-----------------------------------------------------------------------------------+
@@ -350,33 +563,38 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 |                                                                                   |
 |  safeAdapt (silent seed fallback) --------------[delete from live]---------->    |
 |                                                    withStrictLiveOrMock / Error   |
+|                                                    (Rethrows under strict-live)   |
 |                                                                                   |
 |  FormulaStudio (synthetic backtest runner) -----[replace_then_delete]-->       |
 |                                                    Governed Jobs API / Disabled   |
+|                                                    (NonProductionActionButton)    |
 |                                                                                   |
 |  ActivityMonitor (seed events + fake live) -----[delete fake live]----------->    |
 |                                                    Canonical Audit/SSE Feeds      |
+|                                                    (realtime.on subscriptions)    |
 |                                                                                   |
 |  PostmortemLibrary (static SEED array) ---------[replace_then_delete]-->       |
 |                                                    Canonical /bff/incidents       |
+|                                                    (bff.incidents.list())         |
 +-----------------------------------------------------------------------------------+
 
 +-----------------------------------------------------------------------------------+
 |                                BFF ADAPTER SUBSYSTEM                              |
 |                                                                                   |
-|  Legacy src/lib/bff/ ---------------------------[replace_then_delete]-->       |
+|  Legacy src/lib/bff/ (87 import sites) ---------[replace_then_delete]-->       |
 |                                                    Canonical src/lib/bff-v1/      |
 |                                                                                   |
-|  runActionSafe ---------------------------------[retain canonical]--------->     |
+|  runActionSafe (28 files, 81 refs) -------------[retain canonical]--------->     |
 |                                                    Production Mutations           |
 |                                                                                   |
-|  NonProductionActionButton ---------------------[retain safety guard]----->     |
+|  NonProductionActionButton (35 files, 146 refs)-[retain safety guard]----->     |
 |                                                    Honest Disabled Actions        |
 |                                                                                   |
-|  uiActionRegistry ------------------------------[retain allowlist]---------->     |
+|  uiActionRegistry (5 files, 17 refs) -----------[retain allowlist]---------->     |
 |                                                    Management AI Operations       |
+|                                                    (7 declared action kinds)      |
 |                                                                                   |
-|  src/mocks/seed.ts -----------------------------[retain fixture only]------->     |
+|  src/mocks/seed.ts (15 import sites) -----------[retain fixture only]------->     |
 |                                                    Unit / Mock Test Suites        |
 +-----------------------------------------------------------------------------------+
 ```
@@ -399,10 +617,13 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 
 ## 6. Verification Summary
 
-Focused validation performed in `execute-plans`:
+Focused validation performed in `execute-plans` pinned to `0eec7659c9503ba3799ed5666cfa00f2b031e7fa`:
 - `src/agora/components/CandidateReviewDrawer.test.tsx` (26 tests passed)
 - `src/agora/pages/trading-room/TradingRoomPage.test.tsx` (77 tests passed)
 - `src/management/components/NonProductionActionButton.test.tsx` (1 test passed)
+- `src/management/pages/capabilitiesProductionTruth.test.ts` (3 tests passed)
+- `src/management/components/agent/useAgentPanel.test.ts` (3 tests passed)
 - `src/lib/bff-v1/__tests__/writes.test.ts` (19 tests passed)
 - `src/lib/bff-v1/__tests__/strictLiveReadOffline.test.ts` (2 tests passed)
-- Total: **125 passed / 125 tests** across 5 test suites.
+- `src/lib/bff-v1/__tests__/management.test.ts` (34 tests passed)
+- Total: **165 passed / 165 tests** across 8 test suites.
