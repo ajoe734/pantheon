@@ -59,6 +59,7 @@ class PersonaSourceEventType(str, Enum):
     TRAINER_EPOCH_COMPLETE = "trainer_epoch_complete"
     OPERATOR_FEEDBACK = "operator_feedback"
     RESEARCH_TASK_COMPLETED = "research_task_completed"
+    RESEARCH_FINDING_PUBLISHED = "research_finding_published"
 
 
 class PersonaWriteAuthority(str, Enum):
@@ -108,6 +109,10 @@ _WRITEBACK_RULES: dict[str, set[tuple[str, str]]] = {
     PersonaWriteAuthority.RESEARCH_SVC.value: {
         (
             PersonaSourceEventType.RESEARCH_TASK_COMPLETED.value,
+            PersonaMemoryType.STRATEGY_LESSON.value,
+        ),
+        (
+            PersonaSourceEventType.RESEARCH_FINDING_PUBLISHED.value,
             PersonaMemoryType.STRATEGY_LESSON.value,
         ),
     },
@@ -522,3 +527,21 @@ def build_persona_memory_store(path: Path) -> PersonaMemoryStore:
     )
     table = os.getenv("PANTHEON_PERSONA_MEMORY_STORE_TABLE", "memory.persona_memory_entries")
     return PostgresPersonaMemoryStore(dsn=dsn, table=table, bootstrap=bootstrap)
+
+
+_default_store: Optional[PersonaMemoryStore] = None
+_store_lock = threading.Lock()
+
+
+def get_store() -> PersonaMemoryStore:
+    global _default_store
+    with _store_lock:
+        if _default_store is None:
+            _default_store = PersonaMemoryStore()
+        return _default_store
+
+
+def reset_store() -> None:
+    global _default_store
+    with _store_lock:
+        _default_store = None

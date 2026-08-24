@@ -26,6 +26,23 @@ from services.research.experiment_candidate_intake import (
     intake_imitation_candidate,
 )
 from services.research.store import ResearchOrchestratorStore, build_research_orchestrator_store
+from services.research.research_memory_outbox import (
+    ResearchMemoryEligibilityError,
+    ResearchMemoryOutboxRecord,
+    ResearchMemoryOutboxStore,
+    build_research_memory_outbox_store,
+    get_outbox_store,
+    validate_research_memory_writeback_eligibility,
+)
+from services.research.memory_writeback_worker import MemoryWritebackWorker
+from services.research.retrieval_influence import (
+    ResearchRetrievalInfluenceError,
+    ResearchRetrievalInfluenceRecord,
+    ResearchRetrievalInfluenceStore,
+    build_research_retrieval_influence_store,
+    get_influence_store,
+    project_lineage_inspiration_edge,
+)
 
 
 PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
@@ -276,6 +293,44 @@ class RegistryWritebackBody(BaseModel):
     actor_id: str = "operator"
     idempotency_key: Optional[str] = None
     created_at: Optional[str] = None
+
+
+class MemoryWritebackBody(BaseModel):
+    artifact_id: Optional[str] = None
+    sponsor_persona_id: str = "persona-tw-equity"
+    summary: Optional[str] = None
+    headline: Optional[str] = None
+    confidence: float = 1.0
+    evidence_refs: List[Any] = Field(default_factory=list)
+    dataset_refs: List[str] = Field(default_factory=list)
+    license_scope: Optional[str] = None
+    allowed_use: List[str] = Field(default_factory=list)
+    supersedes: List[str] = Field(default_factory=list)
+    contradicts: List[str] = Field(default_factory=list)
+    expires_at: Optional[str] = None
+    trace_id: Optional[str] = None
+    auto_deliver: bool = True
+    actor_id: str = "operator"
+    idempotency_key: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RetrievalInfluenceBody(BaseModel):
+    task_id: Optional[str] = None
+    persona_id: str = "persona-tw-equity"
+    query_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    selected_memory_refs: List[str] = Field(default_factory=list)
+    selected_evidence_refs: List[str] = Field(default_factory=list)
+    counter_evidence_query: Optional[str] = None
+    counter_evidence_results: List[Dict[str, Any]] = Field(default_factory=list)
+    influence_assessment: str = ""
+    influence_weight: Optional[float] = None
+    influence_state: str = "influence_unknown"
+    model_ranker_version: str = "v1.0"
+    resulting_seed_ref: Optional[str] = None
+    created_at: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 app = FastAPI(title="Pantheon Research Orchestrator Service", version="0.1.0")
@@ -1209,7 +1264,197 @@ def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str
     store.put_run(run)
     store.put_artifact(artifact)
     store.append_event(events[-1])
+
+    # Auto-enqueue to memory writeback outbox if eligible
+    try:
+        if entry["artifact_state"] in {"candidate", "reviewed", "published"}:
+            mem_eligibility = validate_research_memory_writeback_eligibility(
+                run,
+                artifact,
+                {
+                    "evidence_refs": writeback_quality.get("source_evidence_refs") or body.source_dataset_refs,
+                    "dataset_refs": writeback_quality.get("source_dataset_refs") or body.source_dataset_refs,
+                    "license_scope": body.metadata.get("license_scope"),
+                    "allowed_use": body.metadata.get("allowed_use"),
+                    "artifact_state": entry["artifact_state"],
+                },
+            )
+            outbox_store = get_outbox_store()
+            outbox_id = _next_id("mout", timestamp, {r.outbox_id for r in outbox_store.list_records()})
+            outbox_record = ResearchMemoryOutboxRecord(
+                outbox_id=outbox_id,
+                run_id=run_id,
+                task_id=run["task_id"],
+                artifact_id=artifact["artifact_id"],
+                source_event_type="research_finding_published",
+                source_event_id=run_id,
+                sponsor_persona_id=_first_text(body.metadata.get("sponsor_persona_id"), run.get("sponsor_persona_id"), "persona-tw-equity") or "persona-tw-equity",
+                summary=_first_text(artifact.get("title"), f"Reviewed research finding from {run_id}") or f"Reviewed research finding from {run_id}",
+                headline=_first_text(artifact.get("title"), f"Research Finding {artifact['artifact_id']}") or f"Research Finding {artifact['artifact_id']}",
+                confidence=float(body.metadata.get("confidence") or 1.0),
+                evidence_refs=mem_eligibility["evidence_refs"],
+                dataset_refs=mem_eligibility["dataset_refs"],
+                license_scope=mem_eligibility["license_scope"],
+                allowed_use=mem_eligibility["allowed_use"],
+                supersedes=body.metadata.get("supersedes") or [],
+                contradicts=body.metadata.get("contradicts") or [],
+                expires_at=body.metadata.get("expires_at"),
+                trace_id=_first_text(run.get("trace_id"), run_id) or run_id,
+                status="pending",
+                created_at=timestamp,
+                updated_at=timestamp,
+                metadata={
+                    "registry_id": entry["registry_id"],
+                    "actor_id": body.actor_id,
+                    "auto_enqueued": True,
+                },
+            )
+            outbox_store.create_record(outbox_record)
+    except Exception:
+        pass
+
     return writeback
+
+
+@app.post("/api/research-orchestrator/runs/{run_id}/memory-writeback", status_code=201)
+def writeback_run_memory(run_id: str, body: MemoryWritebackBody) -> Dict[str, Any]:
+    run = get_run(run_id)
+    if str(run.get("status") or "").lower() != "completed":
+        raise HTTPException(status_code=409, detail="only completed research runs can write findings to memory")
+
+    artifact = _resolve_writeback_artifact(run, body.artifact_id)
+    try:
+        eligibility = validate_research_memory_writeback_eligibility(
+            run,
+            artifact,
+            body.model_dump(),
+        )
+    except ResearchMemoryEligibilityError as exc:
+        raise HTTPException(status_code=400, detail={"reason": "memory_writeback_not_eligible", "detail": str(exc)})
+
+    outbox_store = get_outbox_store()
+    timestamp = body.created_at or utc_now()
+    existing = outbox_store.find_by_source_event("research_finding_published", run_id)
+    if existing:
+        if body.auto_deliver and existing.status in {"pending", "failed"}:
+            worker = MemoryWritebackWorker(outbox_store=outbox_store)
+            worker.deliver_record(existing.outbox_id)
+            existing = outbox_store.get_record(existing.outbox_id) or existing
+        return existing.to_dict()
+
+    outbox_id = _next_id("mout", timestamp, {r.outbox_id for r in outbox_store.list_records()})
+    record = ResearchMemoryOutboxRecord(
+        outbox_id=outbox_id,
+        run_id=run_id,
+        task_id=run["task_id"],
+        artifact_id=artifact.get("artifact_id"),
+        source_event_type="research_finding_published",
+        source_event_id=run_id,
+        sponsor_persona_id=body.sponsor_persona_id,
+        summary=body.summary or str(artifact.get("title") or f"Reviewed finding for {run_id}"),
+        headline=body.headline or str(artifact.get("title") or f"Finding {run_id}"),
+        confidence=body.confidence,
+        evidence_refs=eligibility["evidence_refs"],
+        dataset_refs=eligibility["dataset_refs"],
+        license_scope=eligibility["license_scope"],
+        allowed_use=eligibility["allowed_use"],
+        supersedes=body.supersedes,
+        contradicts=body.contradicts,
+        expires_at=body.expires_at,
+        trace_id=body.trace_id or str(run.get("trace_id") or run_id),
+        status="pending",
+        created_at=timestamp,
+        updated_at=timestamp,
+        metadata={
+            **body.metadata,
+            "actor_id": body.actor_id,
+            "idempotency_key": body.idempotency_key,
+        },
+    )
+    saved = outbox_store.create_record(record)
+    if body.auto_deliver:
+        worker = MemoryWritebackWorker(outbox_store=outbox_store)
+        worker.deliver_record(saved.outbox_id)
+        saved = outbox_store.get_record(saved.outbox_id) or saved
+
+    return saved.to_dict()
+
+
+@app.get("/api/research-orchestrator/outbox/memory")
+def list_memory_outbox(
+    status: Optional[str] = Query(default=None),
+    run_id: Optional[str] = Query(default=None),
+) -> List[Dict[str, Any]]:
+    outbox_store = get_outbox_store()
+    records = outbox_store.list_records(status=status, run_id=run_id)
+    return [r.to_dict() for r in records]
+
+
+@app.get("/api/research-orchestrator/outbox/memory/{outbox_id}")
+def get_memory_outbox_record(outbox_id: str) -> Dict[str, Any]:
+    outbox_store = get_outbox_store()
+    record = outbox_store.get_record(outbox_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="outbox record not found")
+    return record.to_dict()
+
+
+@app.post("/api/research-orchestrator/outbox/memory/{outbox_id}/retry")
+def retry_memory_outbox_record(outbox_id: str) -> Dict[str, Any]:
+    outbox_store = get_outbox_store()
+    worker = MemoryWritebackWorker(outbox_store=outbox_store)
+    res = worker.retry(outbox_id)
+    if res.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="outbox record not found")
+    return res
+
+
+@app.post("/api/research-orchestrator/outbox/memory/drain")
+def drain_memory_outbox(max_records: int = Query(default=50, ge=1, le=500)) -> Dict[str, Any]:
+    outbox_store = get_outbox_store()
+    worker = MemoryWritebackWorker(outbox_store=outbox_store)
+    return worker.drain(max_records=max_records)
+
+
+@app.post("/api/research-orchestrator/runs/{run_id}/retrieval-influence", status_code=201)
+def record_run_retrieval_influence(run_id: str, body: RetrievalInfluenceBody) -> Dict[str, Any]:
+    run = get_run(run_id)
+    timestamp = body.created_at or utc_now()
+    influence_store = get_influence_store()
+    retrieval_id = _next_id("mret", timestamp, {r.retrieval_id for r in influence_store.list_records()})
+
+    try:
+        record = ResearchRetrievalInfluenceRecord(
+            retrieval_id=retrieval_id,
+            task_id=body.task_id or run["task_id"],
+            run_id=run_id,
+            persona_id=body.persona_id,
+            query_snapshot=body.query_snapshot,
+            selected_memory_refs=body.selected_memory_refs,
+            selected_evidence_refs=body.selected_evidence_refs,
+            counter_evidence_query=body.counter_evidence_query,
+            counter_evidence_results=body.counter_evidence_results,
+            influence_assessment=body.influence_assessment,
+            influence_weight=body.influence_weight,
+            influence_state=body.influence_state,
+            model_ranker_version=body.model_ranker_version,
+            resulting_seed_ref=body.resulting_seed_ref,
+            created_at=timestamp,
+            metadata=body.metadata,
+        )
+    except ResearchRetrievalInfluenceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    saved = influence_store.create_record(record)
+    return saved.to_dict()
+
+
+@app.get("/api/research-orchestrator/runs/{run_id}/retrieval-influence")
+def list_run_retrieval_influence(run_id: str) -> List[Dict[str, Any]]:
+    get_run(run_id)
+    influence_store = get_influence_store()
+    records = influence_store.list_records(run_id=run_id)
+    return [r.to_dict() for r in records]
 
 
 @app.post("/api/research-orchestrator/runs/{run_id}/proposals", status_code=201)

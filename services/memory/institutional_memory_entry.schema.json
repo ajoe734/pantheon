@@ -65,6 +65,7 @@
         "postmortem_published",
         "evolution_decision_approved",
         "research_task_completed",
+        "research_finding_published",
         "governance_review_closed",
         "committee_resolution_published",
         "consultation_closed"
