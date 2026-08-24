@@ -205,11 +205,28 @@ REVIEW_BINDING_ENV_KEYS = (
     "REVIEW_HEAD_BRANCH",
 )
 
+ISOLATED_ENV_KEYS = (
+    *REVIEW_BINDING_ENV_KEYS,
+    "PANTHEON_STATUS_ROOT",
+    "PANTHEON_WORKTREE_ROOT",
+    "ORCH_WORKSPACE_PATH",
+    "PANTHEON_TASK_STATE_STORE_MODE",
+    "PANTHEON_TASK_STATE_EVENT_LOG",
+    "PANTHEON_TASK_STATE_SCHEMA_VERSION",
+    "TASK_STATE_STORE_MODE",
+    "TASK_STATE_EVENT_LOG",
+    "ORCH_RUN_ID",
+    "ORCH_TASK_ID",
+    "ORCH_AGENT_ID",
+    "ORCH_PROVIDER",
+    "ORCH_SESSION_ID",
+)
+
 
 def _setup_test_isolation(test_case):
-    test_case._inherited_review_binding_env = {
+    test_case._inherited_isolated_env = {
         key: os.environ.pop(key)
-        for key in REVIEW_BINDING_ENV_KEYS
+        for key in ISOLATED_ENV_KEYS
         if key in os.environ
     }
     test_case._test_temp_dir = tempfile.TemporaryDirectory(prefix="ai-status-test-")
@@ -243,9 +260,9 @@ def _setup_test_isolation(test_case):
 
 
 def _teardown_test_isolation(test_case):
-    for key in REVIEW_BINDING_ENV_KEYS:
+    for key in ISOLATED_ENV_KEYS:
         os.environ.pop(key, None)
-    os.environ.update(test_case._inherited_review_binding_env)
+    os.environ.update(test_case._inherited_isolated_env)
 
     paths = test_case._orig_paths
     ai_status.STATUS_ROOT = paths["STATUS_ROOT"]
@@ -400,7 +417,11 @@ class TaskStateAuthorityModeTests(unittest.TestCase):
         _teardown_test_isolation(self)
 
     def test_save_state_rejects_retired_shadow_mode(self) -> None:
-        journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        journal = (
+            self._test_root.parent
+            / f"{self._test_root.name}-runtime"
+            / "task-state-events.jsonl"
+        )
         state = {"sprint": "retired-mode", "tasks": [{"id": "STATE-001", "status": "todo"}]}
 
         with mock.patch.dict(
@@ -432,7 +453,11 @@ class TaskStateAuthorityModeTests(unittest.TestCase):
         self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), {})
 
     def test_authoritative_load_ignores_divergent_file_and_save_advances_journal(self) -> None:
-        journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        journal = (
+            self._test_root.parent
+            / f"{self._test_root.name}-runtime"
+            / "task-state-events.jsonl"
+        )
         first = {"sprint": "authoritative", "tasks": [{"id": "STATE-003", "status": "todo"}]}
         second = {
             "sprint": "authoritative",
@@ -449,6 +474,10 @@ class TaskStateAuthorityModeTests(unittest.TestCase):
             {
                 ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
                 ai_status.TASK_STATE_EVENT_LOG_ENV: str(journal),
+                common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(
+                    self._test_root,
+                    journal,
+                ),
                 "AI_NAME": "Human/Ops",
             },
             clear=False,
@@ -464,7 +493,11 @@ class TaskStateAuthorityModeTests(unittest.TestCase):
         self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), second)
 
     def test_authoritative_transaction_advances_each_save_from_one_stable_head(self) -> None:
-        journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        journal = (
+            self._test_root.parent
+            / f"{self._test_root.name}-runtime"
+            / "task-state-events.jsonl"
+        )
         first = {
             "sprint": "authoritative",
             "tasks": [{"id": "STATE-TX", "status": "todo"}],
@@ -476,6 +509,10 @@ class TaskStateAuthorityModeTests(unittest.TestCase):
             {
                 ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
                 ai_status.TASK_STATE_EVENT_LOG_ENV: str(journal),
+                common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(
+                    self._test_root,
+                    journal,
+                ),
                 "AI_NAME": "Codex",
             },
             clear=False,
@@ -1299,7 +1336,11 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
         self.addCleanup(_teardown_test_isolation, self)
-        self.journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        self.journal = (
+            self._test_root.parent
+            / f"{self._test_root.name}-runtime"
+            / "task-state-events.jsonl"
+        )
         self.bridge_private_key = Ed25519PrivateKey.from_private_bytes(
             hashlib.sha256(b"bridge-test-key-for-ai-status-p0-authority").digest()
         )
@@ -1312,6 +1353,10 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             {
                 ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
                 ai_status.TASK_STATE_EVENT_LOG_ENV: str(self.journal),
+                common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(
+                    self._test_root,
+                    self.journal,
+                ),
                 "AI_NAME": "Human/Ops",
                 "ORCH_RUN_ID": "",
                 "ORCH_TASK_ID": "",
@@ -4416,6 +4461,152 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(task["status"], "in_progress")
         self.assertEqual(task[ai_status.DELIVERY_BINDING_KEY], original_binding)
 
+    def test_fe_sidecar_task_resolves_execute_plans_pr_627_without_pantheon_lookup(self) -> None:
+        task = {
+            "id": "AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-24",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "target_repo": "execute-plans",
+            "artifacts": ["support/sidecars/AG-FE-DB-002/evidence.json"],
+        }
+        mock_bridge = mock.MagicMock()
+        mock_bridge.validate_review_binding.return_value = mock.MagicMock(
+            pr=627,
+            head_sha="a" * 40,
+            head_branch="task/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-24",
+            base="dev",
+        )
+        with mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge):
+            binding = ai_status.validate_handoff_pr_delivery_binding(
+                task, {}, {"pr": "627", "head_sha": "a" * 40}
+            )
+
+        mock_bridge.validate_review_binding.assert_called_once()
+        called_repo = mock_bridge.validate_review_binding.call_args[1]["repository"]
+        self.assertEqual(called_repo, "ajoe734/execute-plans")
+        self.assertNotEqual(called_repo, "ajoe734/pantheon")
+        self.assertEqual(binding["pr"], 627)
+
+    def test_validate_handoff_pr_delivery_binding_rejects_conflicting_or_ambiguous_repo(self) -> None:
+        conflicting_task = {
+            "id": "CONFLICT-TASK",
+            "target_repo": "pantheon",
+            "artifacts": ["execute-plans/src/App.tsx"],
+        }
+        with self.assertRaisesRegex(SystemExit, "conflicting repository scope"):
+            ai_status.validate_handoff_pr_delivery_binding(
+                conflicting_task, {}, {"pr": "627", "head_sha": "a" * 40}
+            )
+
+        ambiguous_task = {
+            "id": "AMBIGUOUS-TASK",
+            "target_repo": "pantheon+execute-plans",
+            "artifacts": ["src/App.tsx"],
+        }
+        with self.assertRaisesRegex(SystemExit, "ambiguous multi-repository target_repo"):
+            ai_status.validate_handoff_pr_delivery_binding(
+                ambiguous_task, {}, {"pr": "627", "head_sha": "a" * 40}
+            )
+
+    def test_validate_handoff_pr_delivery_binding_rejects_unrecognized_repo(self) -> None:
+        unknown_task = {
+            "id": "UNKNOWN-TASK",
+            "target_repo": "invalid_unknown_repo",
+            "artifacts": ["src/App.tsx"],
+        }
+        with self.assertRaisesRegex(SystemExit, "unrecognized target_repo"):
+            ai_status.validate_handoff_pr_delivery_binding(
+                unknown_task, {}, {"pr": "627", "head_sha": "a" * 40}
+            )
+
+    def test_resolve_handoff_delivery_binding_rejects_conflicting_ambiguous_and_unknown_target_repo(self) -> None:
+        conflicting_task = {
+            "id": "CONFLICT-TASK",
+            "target_repo": "pantheon",
+            "artifacts": ["execute-plans/src/App.tsx"],
+        }
+        with self.assertRaisesRegex(SystemExit, "conflicting repository scope"):
+            ai_status.resolve_handoff_delivery_binding(conflicting_task, {})
+
+        ambiguous_task = {
+            "id": "AMBIGUOUS-TASK",
+            "target_repo": "pantheon+execute-plans",
+            "artifacts": ["src/App.tsx"],
+        }
+        with self.assertRaisesRegex(SystemExit, "ambiguous multi-repository target_repo"):
+            ai_status.resolve_handoff_delivery_binding(ambiguous_task, {})
+
+        unknown_task = {
+            "id": "UNKNOWN-TASK",
+            "target_repo": "invalid_unknown_repo",
+            "artifacts": ["src/App.tsx"],
+        }
+        with self.assertRaisesRegex(SystemExit, "unrecognized target_repo"):
+            ai_status.resolve_handoff_delivery_binding(unknown_task, {})
+
+    def test_resolve_handoff_delivery_binding_artifact_contract_fallback_success(self) -> None:
+        pantheon_task = {
+            "id": "DOCS-001",
+            "artifacts": ["docs/review.md"],
+            "acceptance": ["Document updated"],
+        }
+        binding = ai_status.resolve_handoff_delivery_binding(pantheon_task, {})
+        self.assertEqual(binding["kind"], "artifact_contract")
+        self.assertEqual(binding["artifacts"], ["docs/review.md"])
+        self.assertEqual(binding["acceptance"], ["Document updated"])
+        self.assertIn("contract_sha256", binding)
+
+        fe_sidecar_task = {
+            "id": "FE-DOCS-001",
+            "target_repo": "execute-plans",
+            "artifacts": ["support/sidecars/evidence.json"],
+            "acceptance": ["Sidecar evidence verified"],
+        }
+        binding_fe = ai_status.resolve_handoff_delivery_binding(fe_sidecar_task, {})
+        self.assertEqual(binding_fe["kind"], "artifact_contract")
+        self.assertEqual(binding_fe["artifacts"], ["support/sidecars/evidence.json"])
+
+    def test_command_handoff_rejects_conflicting_ambiguous_and_unknown_target_repo(self) -> None:
+        self.state["tasks"][0]["status"] = "in_progress"
+        self.state["tasks"][0]["owner"] = "Codex"
+        self.state["tasks"][0]["reviewer"] = "Claude"
+
+        # Conflicting scope
+        self.state["tasks"][0]["target_repo"] = "pantheon"
+        self.state["tasks"][0]["artifacts"] = ["execute-plans/src/App.tsx"]
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "conflicting repository scope"),
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Conflicting repo handoff should fail"],
+            )
+
+        # Ambiguous scope
+        self.state["tasks"][0]["target_repo"] = "pantheon+execute-plans"
+        self.state["tasks"][0]["artifacts"] = ["src/App.tsx"]
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "ambiguous multi-repository target_repo"),
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Ambiguous repo handoff should fail"],
+            )
+
+        # Unknown scope
+        self.state["tasks"][0]["target_repo"] = "bogus_unknown_repo"
+        self.state["tasks"][0]["artifacts"] = ["src/App.tsx"]
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "unrecognized target_repo"),
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Unknown repo handoff should fail"],
+            )
+
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
         self.state["tasks"][0]["failure_streak"] = 2
@@ -5266,6 +5457,10 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
 
 
 class DeliveryMetadataValidationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+        self.addCleanup(_teardown_test_isolation, self)
+
     @staticmethod
     def _owner_reassignment_event(
         *,
