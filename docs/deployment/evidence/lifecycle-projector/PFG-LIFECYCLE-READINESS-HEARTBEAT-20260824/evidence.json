@@ -1,0 +1,75 @@
+{
+  "schema_version": "pantheon.lifecycle-readiness-heartbeat-evidence.v1",
+  "task": {
+    "id": "PFG-LIFECYCLE-READINESS-HEARTBEAT-20260824",
+    "title": "Fix relational projector readiness heartbeat after catch-up",
+    "owner": "Antigravity",
+    "reviewer": "Antigravity2",
+    "status": "review",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-LIFECYCLE-READINESS-HEARTBEAT-20260824",
+    "head_binding": "The reviewer must bind this committed manifest to the exact final PR head in the canonical approve command."
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-READINESS-HEARTBEAT-20260824/README.md",
+      "docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-READINESS-HEARTBEAT-20260824/evidence.json"
+    ],
+    "not_changing": [
+      "services/source_ingestion (maintained as reconcile-only)",
+      "ProjectionStore schema or database migrations"
+    ],
+    "composes_with": [
+      "PFG-LIFECYCLE-POSTGRES-DRIVER-20260824",
+      "PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824"
+    ]
+  },
+  "contracts": {
+    "record_poll_heartbeat": "_controller_mutation uses explicit backlog argument to calculate optimistic_backlog=0 and status=ready when live polling has caught up to the source watermark.",
+    "batch_project_readiness": "project_records calculates predicted checkpoint and backlog across the active batch, ensuring live batch processing does not transiently downgrade status to recovering.",
+    "readiness_healthcheck": "Healthcheck and /readyz report status=ready, mode=live, accepted_live=true, backlog=0, and HTTP 200 after catch-up."
+  },
+  "acceptance_evidence": {
+    "unit_regression_tests": {
+      "command": "PANTHEON_PY=\"/tmp/pantheon-worker-worktrees/pantheon/pfg-lifecycle-readiness-heartbeat-20260824/.venv-pantheon/bin/python3\" \"\" -m pytest -v services/trade_journey/test_lifecycle_projector.py",
+      "result": "pass; 22 passed, 1 skipped",
+      "tests": [
+        "test_record_poll_transitions_to_ready_when_live_and_backlog_zero",
+        "test_record_poll_preserves_recovering_when_backlog_positive_or_recovery_mode",
+        "test_project_records_sets_ready_status_when_live_and_batch_catches_up",
+        "test_run_worker_catchup_transitions_from_recovery_to_live_ready"
+      ]
+    },
+    "readiness_and_compose_tests": {
+      "command": "PANTHEON_PY=\"/tmp/pantheon-worker-worktrees/pantheon/pfg-lifecycle-readiness-heartbeat-20260824/.venv-pantheon/bin/python3\" \"\" -m pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py services/trade_journey/test_lifecycle_projector_compose.py",
+      "result": "pass; 12 passed"
+    }
+  },
+  "validation": [
+    {
+      "command": "PANTHEON_PY=\"/tmp/pantheon-worker-worktrees/pantheon/pfg-lifecycle-readiness-heartbeat-20260824/.venv-pantheon/bin/python3\" \"\" -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_lifecycle_projector_compose.py services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "result": "pass; 35 passed, 1 skipped"
+    },
+    {
+      "command": "python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/test_lifecycle_projector.py && git diff --check origin/dev",
+      "result": "pass; no syntax errors, zero trailing whitespace or formatting errors"
+    }
+  ],
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Antigravity2",
+    "required_checks": [
+      "verify _controller_mutation accepts optional backlog parameter",
+      "verify record_poll and project_records pass calculated/explicit backlog",
+      "verify unit regression tests in services/trade_journey/test_lifecycle_projector.py",
+      "verify git diff --check origin/dev is clean",
+      "bind this manifest path (docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-READINESS-HEARTBEAT-20260824/evidence.json) to the exact final PR head in the governed approve command"
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "self_hash_omitted": true
+  }
+}

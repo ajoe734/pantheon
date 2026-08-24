@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import signal
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import dev_environment_lease as lease
 
-
+REPO_ROOT = Path(__file__).resolve().parents[1]
 NOW = datetime(2026, 7, 13, 16, 30, tzinfo=timezone.utc)
 
 
@@ -591,6 +592,135 @@ class LeaseManagerTests(unittest.TestCase):
         result = manager(client).release(local)
         self.assertEqual(result["status"], "released")
         self.assertTrue(client.deleted)
+
+    def test_heartbeat_loop_retries_transient_errors_while_lease_unexpired(self) -> None:
+        import subprocess
+        import sys
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = root / "state.json"
+            failure_file = root / "failure.json"
+            shutdown_file = root / "shutdown.json"
+            identity_file = root / "identity.json"
+            flaky_marker = root / "flaky-count.txt"
+            flaky_marker.write_text("0\n", encoding="utf-8")
+
+            now = datetime.now(timezone.utc)
+            local_payload = lease.public_state(
+                state_for(heartbeat=now, expires=now + timedelta(minutes=5)), content_sha="blob-1"
+            )
+            lease.atomic_write_json(state_file, local_payload, 0o600)
+
+            # Test script that runs heartbeat-loop with a manager that fails on attempt 1, then succeeds
+            script = f"""
+import sys
+from pathlib import Path
+sys.path.insert(0, {str(REPO_ROOT / "scripts")!r})
+sys.path.insert(0, {str(REPO_ROOT)!r})
+import dev_environment_lease as lease
+from scripts.test_dev_environment_lease import FakeClient, state_for, manager
+from datetime import datetime, timedelta, timezone
+import argparse
+
+now = datetime.now(timezone.utc)
+client = FakeClient()
+client.now = now
+client.state = state_for(heartbeat=now, expires=now + timedelta(minutes=5))
+client.content_sha = "blob-1"
+mgr = manager(client)
+
+marker = Path({str(flaky_marker)!r})
+original_heartbeat = mgr.heartbeat
+
+def flaky_heartbeat(*args, **kwargs):
+    count = int(marker.read_text().strip() or "0") + 1
+    marker.write_text(f"{{count}}\\n")
+    if count == 1:
+        raise lease.GitHubApiError(500, "Simulated 500")
+    return original_heartbeat(*args, **kwargs)
+
+mgr.heartbeat = flaky_heartbeat
+
+args = argparse.Namespace(
+    command="heartbeat-loop",
+    interval_seconds=1,
+    ttl_seconds=300,
+    parent_pid=0,
+    state_file={str(state_file)!r},
+    failure_json_out={str(failure_file)!r},
+    shutdown_json_out={str(shutdown_file)!r},
+    identity_json_out={str(identity_file)!r},
+    token_stdin=False,
+)
+
+raise SystemExit(lease.heartbeat_loop(args, mgr))
+"""
+            sub = subprocess.Popen(
+                [sys.executable, "-c", script],
+                cwd=str(REPO_ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline:
+                    if int(flaky_marker.read_text().strip() or "0") >= 2:
+                        break
+                    time.sleep(0.1)
+                sub.send_signal(signal.SIGTERM)
+                _stdout, stderr = sub.communicate(timeout=5)
+            finally:
+                if sub.poll() is None:
+                    sub.kill()
+                    sub.communicate(timeout=3)
+
+            self.assertEqual(sub.returncode, 0, stderr)
+            self.assertFalse(failure_file.exists())
+            self.assertTrue(shutdown_file.exists())
+            self.assertGreaterEqual(int(flaky_marker.read_text().strip()), 2)
+
+    def test_heartbeat_loop_fails_immediately_on_lease_lost(self) -> None:
+        import argparse
+
+        client = FakeClient()
+        client.state = state_for()
+        client.content_sha = "blob-1"
+        mgr = manager(client)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "state.json"
+            failure_file = Path(tmp) / "failure.json"
+            shutdown_file = Path(tmp) / "shutdown.json"
+            identity_file = Path(tmp) / "identity.json"
+
+            local_payload = lease.public_state(client.state, content_sha="blob-1")
+            lease.atomic_write_json(state_file, local_payload, 0o600)
+
+            def lost_heartbeat(*args: Any, **kwargs: Any) -> tuple[dict[str, Any], str, datetime]:
+                raise lease.LeaseLost("lease expired or stolen")
+
+            mgr.heartbeat = lost_heartbeat  # type: ignore[assignment]
+
+            args = argparse.Namespace(
+                command="heartbeat-loop",
+                interval_seconds=1,
+                ttl_seconds=300,
+                parent_pid=0,
+                state_file=str(state_file),
+                failure_json_out=str(failure_file),
+                shutdown_json_out=str(shutdown_file),
+                identity_json_out=str(identity_file),
+                token_stdin=False,
+            )
+
+            ret = lease.heartbeat_loop(args, mgr)
+            self.assertEqual(ret, 75)
+            self.assertTrue(failure_file.exists())
+            failure = json.loads(failure_file.read_text(encoding="utf-8"))
+            self.assertEqual(failure["status"], "lost")
 
 
 if __name__ == "__main__":

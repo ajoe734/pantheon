@@ -604,11 +604,16 @@ class RelationalLifecycleProjector:
         mode: str,
         quarantined: int,
         error_message: str = "",
+        backlog: int | None = None,
     ) -> BatchProjectionMutation:
         previous = self._controller()
-        optimistic_backlog = max(
-            0,
-            int(source_high_watermark) - int(previous.checkpoint_seq),
+        optimistic_backlog = (
+            max(0, int(backlog))
+            if backlog is not None
+            else max(
+                0,
+                int(source_high_watermark) - int(previous.checkpoint_seq),
+            )
         )
         accepted_live = (
             mode == "live"
@@ -1005,10 +1010,16 @@ class RelationalLifecycleProjector:
             journey_events_fn=self._journey_events,
         )
         duplicates += staged_duplicates
+        predicted_checkpoint = max(
+            int(self._controller().checkpoint_seq),
+            max((int(row.get("ingested_seq") or 0) for row in ordered_records), default=0),
+        )
+        predicted_backlog = max(0, source_high - predicted_checkpoint)
         mutation = self._controller_mutation(
             source_high_watermark=source_high,
             mode=mode,
             quarantined=quarantined,
+            backlog=predicted_backlog,
         )
         mutation.receipts = receipts
         mutation.quarantines = quarantines
@@ -1056,8 +1067,8 @@ class RelationalLifecycleProjector:
             source_high_watermark=source_high_watermark,
             mode=mode,
             quarantined=0,
+            backlog=backlog,
         )
-        mutation.backlog_count = max(0, int(backlog))
         self._controller_state = self.store.execute_batch_transaction(
             self.controller_id,
             self.tenant_scope,
@@ -1072,9 +1083,8 @@ class RelationalLifecycleProjector:
             mode=str(previous.mode or "recovery"),
             quarantined=0,
             error_message=str(error),
+            backlog=backlog,
         )
-        if backlog is not None:
-            mutation.backlog_count = max(0, int(backlog))
         self._controller_state = self.store.execute_batch_transaction(
             self.controller_id,
             self.tenant_scope,

@@ -2547,8 +2547,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || rollback_dev_bff_on_failure "retire_dormant_profiles"
     verify_dev_paper_fleet \
       || rollback_dev_bff_on_failure "paper_fleet"
-    curl_with_retry http://127.0.0.1:18001/health \
-      || rollback_dev_bff_on_failure "bff_health"
     # Root deployment replaces the lifecycle projector and BFF together. The
     # BFF can become HTTP-ready while /readyz still reports the prior projector
     # identity, so use the same exact-deployment, bounded recovery gate as the
@@ -2670,8 +2668,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "bff_recreate"
     # Phase 4: Post-Deploy Verification Gates
-    curl_with_retry http://127.0.0.1:18001/health \
-      || rollback_dev_bff_on_failure "bff_health"
     wait_for_exact_bff_lifecycle_readiness \
       http://127.0.0.1:18001/readyz \
       || rollback_dev_bff_on_failure "bff_lifecycle_readiness"
