@@ -333,6 +333,8 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
             "type": "object",
             "properties": {
                 "symbols": {"type": "array", "items": {"type": "string"}},
+                "market": {"type": "string"},
+                "venues": {"type": "array", "items": {"type": "string"}},
                 "max_records": {"type": "integer", "minimum": 1},
             },
         },
@@ -861,6 +863,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
             "type": "object",
             "properties": {
                 "symbols": {"type": "array", "items": {"type": "string"}},
+                "source_dataset": {"type": "string"},
                 "max_records": {"type": "integer", "minimum": 1},
             },
         },
@@ -950,6 +953,8 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
                 "secret_ref_id": {"type": "string"},
                 "alpha_vendor_id": {"type": "string"},
                 "signal_id": {"type": "string"},
+                "signal_version": {"type": "string"},
+                "field_schema_version": {"type": "string"},
                 "universe": {"type": "array", "items": {"type": "string"}},
                 "max_records": {"type": "integer", "minimum": 1},
             },

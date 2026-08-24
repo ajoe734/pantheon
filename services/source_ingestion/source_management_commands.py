@@ -103,6 +103,31 @@ def _get_service_deployment_sha() -> str:
     return os.getenv("PANTHEON_DEPLOYMENT_SHA") or os.getenv("GIT_SHA") or "sha256-development"
 
 
+def _validate_connector_config_keys(definition: Any, connector_config: Mapping[str, Any]) -> None:
+    schema = definition.config_schema or {}
+    declared_props = set((schema.get("properties") or {}).keys())
+    if not declared_props:
+        return
+    # Check top-level keys excluding structural envelope keys
+    for key in connector_config:
+        if key in ("public", "secret_ref_id"):
+            continue
+        if key not in declared_props:
+            raise SourceManagementContractError(
+                f"Config key '{key}' is not declared in definition '{definition.definition_id}' config_schema "
+                f"(declared: {sorted(declared_props)})"
+            )
+    # Check keys inside 'public'
+    public_config = connector_config.get("public")
+    if isinstance(public_config, Mapping):
+        for key in public_config:
+            if key not in declared_props:
+                raise SourceManagementContractError(
+                    f"Config key '{key}' is not declared in definition '{definition.definition_id}' config_schema "
+                    f"(declared: {sorted(declared_props)})"
+                )
+
+
 class CommandPreconditionError(SourceManagementContractError):
     """Raised when a command precondition is not satisfied (e.g. enable without canary)."""
 
@@ -211,22 +236,82 @@ class SourceCommandEngine:
         source_instance_id = command.source_instance_id
         connector_id = str(params.get("connector_id") or source_instance_id).strip()
 
+        # Guard: example-alpha-db must be rejected at management creation
+        if (
+            definition_id == "example-alpha-db"
+            or source_instance_id == "example-alpha-db"
+            or connector_id == "example-alpha-db"
+            or params.get("alpha_vendor_id") == "example-alpha-db"
+            or (params.get("connector_config") or {}).get("alpha_vendor_id") == "example-alpha-db"
+            or (params.get("connector_config") or {}).get("public", {}).get("alpha_vendor_id") == "example-alpha-db"
+            or params.get("provider") == "example-alpha-db"
+        ):
+            raise SourceManagementContractError("example-alpha-db is a test fixture only and cannot be registered as a managed data source")
+
         # Check uniqueness
         if self.store.get_instance(source_instance_id) is not None:
             raise DuplicateInstanceError(f"Source instance already exists: {source_instance_id}")
         if self.store.get_instance_by_connector_id(connector_id) is not None:
             raise DuplicateInstanceError(f"Connector ID already registered: {connector_id}")
 
-        # Format datasets for DataSourceEntryV2
+        # 1. Reconcile source_class
+        requested_source_class = params.get("source_class")
+        if requested_source_class is not None:
+            requested_source_class = str(requested_source_class).strip()
+            if requested_source_class not in definition.source_classes:
+                raise SourceManagementContractError(
+                    f"Requested source_class '{requested_source_class}' is not supported by definition '{definition_id}' "
+                    f"(supported: {list(definition.source_classes)})"
+                )
+        effective_source_class = requested_source_class or (
+            definition.source_classes[0] if definition.source_classes else "market_daily"
+        )
+
+        # 2. Reconcile source_type
+        requested_source_type = params.get("source_type")
+        if requested_source_type is not None:
+            requested_source_type = str(requested_source_type).strip()
+            if requested_source_type not in definition.source_types:
+                raise SourceManagementContractError(
+                    f"Requested source_type '{requested_source_type}' is not supported by definition '{definition_id}' "
+                    f"(supported: {list(definition.source_types)})"
+                )
+
+        # 3. Reconcile source_kind
+        requested_source_kind = params.get("source_kind")
+        if requested_source_kind is not None:
+            requested_source_kind = str(requested_source_kind).strip()
+            if requested_source_kind not in definition.source_kinds:
+                raise SourceManagementContractError(
+                    f"Requested source_kind '{requested_source_kind}' is not supported by definition '{definition_id}' "
+                    f"(supported: {list(definition.source_kinds)})"
+                )
+
+        # 4. Format and reconcile datasets for DataSourceEntryV2
         raw_datasets = list(params.get("datasets") or definition.datasets)
         datasets: list[dict[str, Any]] = []
         for ds in raw_datasets:
             if isinstance(ds, dict):
-                datasets.append(ds)
+                ds_id = str(ds.get("dataset_id") or "").strip()
+                ds_class = str(ds.get("dataset_class") or effective_source_class).strip()
+                if ds_id and ds_id not in definition.datasets:
+                    raise SourceManagementContractError(
+                        f"Dataset '{ds_id}' is not supported by definition '{definition_id}' (supported: {list(definition.datasets)})"
+                    )
+                if ds_class and ds_class not in definition.source_classes:
+                    raise SourceManagementContractError(
+                        f"Dataset class '{ds_class}' is not supported by definition '{definition_id}' (supported: {list(definition.source_classes)})"
+                    )
+                datasets.append({"dataset_id": ds_id, "dataset_class": ds_class})
             else:
+                ds_id = str(ds).strip()
+                if ds_id not in definition.datasets:
+                    raise SourceManagementContractError(
+                        f"Dataset '{ds_id}' is not supported by definition '{definition_id}' (supported: {list(definition.datasets)})"
+                    )
                 datasets.append({
-                    "dataset_id": str(ds),
-                    "dataset_class": str(params.get("source_class") or (definition.source_classes[0] if definition.source_classes else "market_daily")),
+                    "dataset_id": ds_id,
+                    "dataset_class": effective_source_class,
                 })
 
         # Build DataSourceEntryV2
@@ -235,7 +320,7 @@ class SourceCommandEngine:
             definition_id=definition_id,
             connector_id=connector_id,
             provider=str(params.get("provider") or definition.provider),
-            source_class=str(params.get("source_class") or (definition.source_classes[0] if definition.source_classes else "market_daily")),
+            source_class=effective_source_class,
             datasets=datasets,
             markets=list(params.get("markets") or ["TW"]),
             license_scope=str(params.get("license_scope") or "official_reference"),
@@ -258,6 +343,7 @@ class SourceCommandEngine:
         # Build SourceDesiredState (always starts configured_disabled, schedule disabled)
         connector_config = dict(params.get("connector_config") or {"public": {}})
         assert_no_raw_secrets(connector_config)
+        _validate_connector_config_keys(definition, connector_config)
 
         schedule_dict = dict(params.get("schedule") or {"enabled": False, "cadence": "0 19 * * 1-5"})
         schedule_dict["enabled"] = False  # Mandatory invariant: created disabled
@@ -354,8 +440,14 @@ class SourceCommandEngine:
             validation_passed = False
             validation_error = f"definition {desired.definition_id} is not supported"
         else:
-            validation_passed = True
-            validation_error = None
+            try:
+                assert_no_raw_secrets(desired.connector_config)
+                _validate_connector_config_keys(definition, desired.connector_config)
+                validation_passed = True
+                validation_error = None
+            except SourceManagementContractError as exc:
+                validation_passed = False
+                validation_error = str(exc)
 
         receipt_id = f"srcrcp-{uuid.uuid4().hex[:12]}"
         receipt = SourceManagementReceipt(
@@ -1244,9 +1336,29 @@ class SourceCommandEngine:
         public_config = dict(desired.connector_config.get("public") or {})
         max_records = int(desired.limits.get("max_records") or public_config.get("max_records") or 100)
 
+        defn = get_connector_definition(desired.definition_id)
+        if defn and defn.source_types:
+            derived_source_type = defn.source_types[0]
+        elif instance.source_class in [s.value for s in SourceType]:
+            derived_source_type = instance.source_class
+        else:
+            derived_source_type = "market"
+
+        source_type_val = (
+            SourceType(derived_source_type).value
+            if derived_source_type in [s.value for s in SourceType]
+            else derived_source_type
+        )
+
+        entitlement_tags = (
+            list(instance.entitlement_tags)
+            if instance.entitlement_tags
+            else [f"{derived_source_type}-research"]
+        )
+
         connector = SourceConnector(
             connector_id=instance.connector_id,
-            source_type=SourceType(instance.source_kind if instance.source_kind in [s.value for s in SourceType] else "market").value,
+            source_type=source_type_val,
             provider=instance.provider,
             license_scope=instance.license_scope,
             auth_type=AuthType.NONE.value if not secret_ref else AuthType.API_KEY.value,
@@ -1257,10 +1369,12 @@ class SourceCommandEngine:
                 "source_instance_id": instance.data_source_id,
                 "definition_id": desired.definition_id,
                 "revision": desired.revision,
+                "source_class": instance.source_class,
+                "entitlement_tags": entitlement_tags,
+                "access_scope": ["research"],
             },
         )
 
-        defn = get_connector_definition(desired.definition_id)
         adapter_token = defn.adapter_token if defn else desired.definition_id
 
         adapter_config = {

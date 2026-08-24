@@ -466,8 +466,8 @@
     }
   ],
   "validation": {
-    "focused_unit_tests_passing": 48,
-    "full_ingestion_suite_passing": 828,
+    "focused_unit_tests_passing": 52,
+    "full_ingestion_suite_passing": 832,
     "validation_commands": [
       "pytest services/source_ingestion/tests/test_provider_management_coverage.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_external_source_connectors.py",
       "pytest services/source_ingestion/tests/"

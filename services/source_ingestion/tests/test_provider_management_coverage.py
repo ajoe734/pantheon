@@ -1493,3 +1493,281 @@ def test_management_materialization_config_reconciliation_end_to_end(tmp_path):
     assert records_alpha[0].metadata["universe"] == ["US_MEGA"]
 
 
+def test_create_fails_closed_on_unsupported_source_class_type_or_dataset(tmp_path):
+    """Verify that CREATE reconciles requested source_class/source_type/dataset against definition and fails closed."""
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+    from services.source_ingestion.source_management_store import JsonlSourceManagementStore
+    from services.source_ingestion.source_management_commands import SourceCommandEngine
+    from services.source_ingestion.source_management_models import (
+        SourceManagementCommand,
+        CommandType,
+        SourceManagementContractError,
+    )
+
+    mg_store = JsonlSourceManagementStore(tmp_path / "mgmt")
+    conn_store = JsonlConfiguredConnectorStore(tmp_path / "conn")
+    sched_store = JsonlConnectorScheduleStore(tmp_path / "sched")
+    engine = SourceCommandEngine(
+        store=mg_store,
+        connector_store=conn_store,
+        schedule_config_store=sched_store,
+    )
+
+    # 1. Negative test: social-admitted-market-discussion with source_class="news" must fail closed
+    cmd_bad_social_class = SourceManagementCommand(
+        command_id="cmd-bad-soc-class",
+        idempotency_key="idem-bad-soc-class",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="bad-soc-class-inst",
+        reason="Register with invalid source_class",
+        parameters={
+            "definition_id": "social-admitted-market-discussion",
+            "source_class": "news",  # Invalid! Definition only supports "social"
+        },
+    )
+    with pytest.raises(SourceManagementContractError, match="Requested source_class 'news' is not supported by definition 'social-admitted-market-discussion'"):
+        engine.execute_command(cmd_bad_social_class)
+
+    # 2. Negative test: twse market with source_type="social" must fail closed
+    cmd_bad_twse_type = SourceManagementCommand(
+        command_id="cmd-bad-twse-type",
+        idempotency_key="idem-bad-twse-type",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="bad-twse-type-inst",
+        reason="Register with invalid source_type",
+        parameters={
+            "definition_id": "tw-twse-tpex-official-market",
+            "source_type": "social",  # Invalid! Definition only supports "market"
+        },
+    )
+    with pytest.raises(SourceManagementContractError, match="Requested source_type 'social' is not supported by definition 'tw-twse-tpex-official-market'"):
+        engine.execute_command(cmd_bad_twse_type)
+
+    # 3. Negative test: twse market with invalid dataset must fail closed
+    cmd_bad_dataset = SourceManagementCommand(
+        command_id="cmd-bad-twse-ds",
+        idempotency_key="idem-bad-twse-ds",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="bad-twse-ds-inst",
+        reason="Register with invalid dataset",
+        parameters={
+            "definition_id": "tw-twse-tpex-official-market",
+            "datasets": ["unsupported_crypto_dataset"],
+        },
+    )
+    with pytest.raises(SourceManagementContractError, match="Dataset 'unsupported_crypto_dataset' is not supported"):
+        engine.execute_command(cmd_bad_dataset)
+
+
+def test_create_rejects_example_alpha_db_at_management_creation(tmp_path):
+    """Verify that example-alpha-db is rejected immediately at management CREATE."""
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+    from services.source_ingestion.source_management_store import JsonlSourceManagementStore
+    from services.source_ingestion.source_management_commands import SourceCommandEngine
+    from services.source_ingestion.source_management_models import (
+        SourceManagementCommand,
+        CommandType,
+        SourceManagementContractError,
+    )
+
+    mg_store = JsonlSourceManagementStore(tmp_path / "mgmt")
+    conn_store = JsonlConfiguredConnectorStore(tmp_path / "conn")
+    sched_store = JsonlConnectorScheduleStore(tmp_path / "sched")
+    engine = SourceCommandEngine(
+        store=mg_store,
+        connector_store=conn_store,
+        schedule_config_store=sched_store,
+    )
+
+    # 1. Reject source_instance_id="example-alpha-db"
+    cmd_id_rejection = SourceManagementCommand(
+        command_id="cmd-ex-alpha-1",
+        idempotency_key="idem-ex-alpha-1",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="example-alpha-db",
+        reason="Attempting to register example-alpha-db instance",
+        parameters={
+            "definition_id": "alpha-db-vendor-signals",
+            "connector_id": "valid-alpha-id",
+        },
+    )
+    with pytest.raises(SourceManagementContractError, match="example-alpha-db"):
+        engine.execute_command(cmd_id_rejection)
+
+    # 2. Reject connector_id="example-alpha-db"
+    cmd_conn_rejection = SourceManagementCommand(
+        command_id="cmd-ex-alpha-2",
+        idempotency_key="idem-ex-alpha-2",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="inst-alpha-2",
+        reason="Attempting to register connector with example-alpha-db id",
+        parameters={
+            "definition_id": "alpha-db-vendor-signals",
+            "connector_id": "example-alpha-db",
+        },
+    )
+    with pytest.raises(SourceManagementContractError, match="example-alpha-db"):
+        engine.execute_command(cmd_conn_rejection)
+
+    # 3. Reject alpha_vendor_id="example-alpha-db"
+    cmd_vendor_rejection = SourceManagementCommand(
+        command_id="cmd-ex-alpha-3",
+        idempotency_key="idem-ex-alpha-3",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="inst-alpha-3",
+        reason="Attempting to register with example-alpha-db vendor",
+        parameters={
+            "definition_id": "alpha-db-vendor-signals",
+            "alpha_vendor_id": "example-alpha-db",
+        },
+    )
+    with pytest.raises(SourceManagementContractError, match="example-alpha-db"):
+        engine.execute_command(cmd_vendor_rejection)
+
+
+def test_materialize_connector_runtime_derives_source_type_from_definition(tmp_path):
+    """Verify that _materialize_connector_runtime derives source_type from definition (e.g. social, alpha_db)."""
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+    from services.source_ingestion.source_management_store import JsonlSourceManagementStore
+    from services.source_ingestion.source_management_commands import SourceCommandEngine
+    from services.source_ingestion.source_management_models import (
+        SourceManagementCommand,
+        CommandType,
+    )
+
+    mg_store = JsonlSourceManagementStore(tmp_path / "mgmt")
+    conn_store = JsonlConfiguredConnectorStore(tmp_path / "conn")
+    sched_store = JsonlConnectorScheduleStore(tmp_path / "sched")
+    engine = SourceCommandEngine(
+        store=mg_store,
+        connector_store=conn_store,
+        schedule_config_store=sched_store,
+    )
+
+    # 1. Social connector materialization derives source_type="social"
+    cmd_social = SourceManagementCommand(
+        command_id="cmd-mat-soc",
+        idempotency_key="idem-mat-soc",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="mat-soc-inst",
+        reason="Create social source",
+        parameters={
+            "definition_id": "social-admitted-market-discussion",
+            "connector_id": "mat-soc-conn",
+            "connector_config": {
+                "public": {
+                    "platform": "stocktwits",
+                    "symbols": ["AAPL"],
+                }
+            },
+        },
+    )
+    engine.execute_command(cmd_social)
+    cfg_soc = conn_store.get_config("mat-soc-conn")
+    assert cfg_soc is not None
+    assert cfg_soc.connector.source_type.value == "social"
+
+    # 2. Alpha DB connector materialization derives source_type="alpha_db"
+    cmd_alpha = SourceManagementCommand(
+        command_id="cmd-mat-alpha",
+        idempotency_key="idem-mat-alpha",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="mat-alpha-inst",
+        reason="Create alpha DB source",
+        parameters={
+            "definition_id": "alpha-db-vendor-signals",
+            "connector_id": "mat-alpha-conn",
+            "connector_config": {
+                "secret_ref_id": "env://ALPHA_KEY",
+                "public": {
+                    "alpha_vendor_id": "fmp-alpha-factors",
+                    "signal_id": "technical_sma_20d",
+                }
+            },
+        },
+    )
+    engine.execute_command(cmd_alpha)
+    cfg_alpha = conn_store.get_config("mat-alpha-conn")
+    assert cfg_alpha is not None
+    assert cfg_alpha.connector.source_type.value == "alpha_db"
+
+
+def test_strict_config_key_reconciliation_and_declarations(tmp_path):
+    """Verify that all definition config schemas declare necessary adapter keys and reject undeclared keys."""
+    from services.source_ingestion.connector_definitions import (
+        DEPLOYED_CONNECTOR_DEFINITIONS,
+        get_connector_definition,
+    )
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+    from services.source_ingestion.source_management_store import JsonlSourceManagementStore
+    from services.source_ingestion.source_management_commands import SourceCommandEngine
+    from services.source_ingestion.source_management_models import (
+        SourceManagementCommand,
+        CommandType,
+        SourceManagementContractError,
+    )
+
+    # 1. Verify TDCC definition config_schema declares source_dataset
+    tdcc_defn = get_connector_definition("tw-tdcc-shareholding-distribution")
+    assert tdcc_defn is not None
+    assert "source_dataset" in tdcc_defn.config_schema.get("properties", {})
+
+    # 2. Verify Alpha DB definition config_schema declares signal_version and field_schema_version
+    alpha_defn = get_connector_definition("alpha-db-vendor-signals")
+    assert alpha_defn is not None
+    assert "signal_version" in alpha_defn.config_schema.get("properties", {})
+    assert "field_schema_version" in alpha_defn.config_schema.get("properties", {})
+
+    # 3. Verify all deployed definitions have clean property mappings
+    for defn in DEPLOYED_CONNECTOR_DEFINITIONS:
+        props = defn.config_schema.get("properties", {})
+        assert isinstance(props, dict)
+
+    mg_store = JsonlSourceManagementStore(tmp_path / "mgmt")
+    conn_store = JsonlConfiguredConnectorStore(tmp_path / "conn")
+    sched_store = JsonlConnectorScheduleStore(tmp_path / "sched")
+    engine = SourceCommandEngine(
+        store=mg_store,
+        connector_store=conn_store,
+        schedule_config_store=sched_store,
+    )
+
+    # 4. Negative test: Undeclared config key in connector_config must fail closed on CREATE
+    cmd_undeclared_key = SourceManagementCommand(
+        command_id="cmd-undec-1",
+        idempotency_key="idem-undec-1",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="undec-inst-1",
+        reason="Attempting to register undeclared config key",
+        parameters={
+            "definition_id": "tw-tdcc-shareholding-distribution",
+            "connector_config": {
+                "public": {
+                    "undeclared_malicious_key": "unsupported_value",
+                }
+            },
+        },
+    )
+    with pytest.raises(SourceManagementContractError, match="Config key 'undeclared_malicious_key' is not declared in definition"):
+        engine.execute_command(cmd_undeclared_key)
+
+
+
