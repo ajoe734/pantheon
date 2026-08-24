@@ -1,0 +1,70 @@
+{
+  "schema_version": "pantheon.lifecycle-postgres-driver-evidence.v1",
+  "task": {
+    "id": "PFG-LIFECYCLE-POSTGRES-DRIVER-20260824",
+    "title": "Add missing psycopg runtime dependency for relational lifecycle projector",
+    "owner": "Antigravity2",
+    "reviewer": "Codex2",
+    "status": "review",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-LIFECYCLE-POSTGRES-DRIVER-20260824",
+    "head_binding": "The reviewer must bind this committed manifest to the exact final PR head in the canonical approve command."
+  },
+  "scope": {
+    "owned": [
+      "services/telemetry/requirements.txt",
+      "services/trade_journey/projection_store.py",
+      "services/trade_journey/test_projection_store.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-POSTGRES-DRIVER-20260824/README.md",
+      "docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-POSTGRES-DRIVER-20260824/evidence.json"
+    ],
+    "not_changing": [
+      "docker-compose.yml or deployment workflows (services/telemetry/Dockerfile is already referenced and installs services/telemetry/requirements.txt)",
+      "BFF or lifecycle projection schema logic"
+    ],
+    "composes_with": [
+      "PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824"
+    ]
+  },
+  "contracts": {
+    "runtime_dependency": "services/telemetry/requirements.txt declares psycopg[binary]>=3.1,<4.0, ensuring the Docker image built for loop-run-projector-scheduler includes the required PostgreSQL driver.",
+    "fail_closed": "ProjectionStore and _configured_relational_projector fail closed with a clear RuntimeError if psycopg is unavailable at startup, preventing silent startup without the declared driver.",
+    "connect_binding": "Default ProjectionStore construction without an explicit connector binds psycopg.connect."
+  },
+  "validation": [
+    {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" TEST_DATABASE_URL=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon \"$PANTHEON_PY\" -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_projection_store.py",
+      "result": "pass; 40 passed, 1 skipped",
+      "coverage": "ProjectionStore fail-closed driver error, default connect binding, relational projector fail-closed driver error, requirements declaration assertion, run_worker immediate startup failure without psycopg, and full live PostgreSQL integration tests"
+    },
+    {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" TEST_DATABASE_URL=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon \"$PANTHEON_PY\" -m pytest -q services/trade_journey services/telemetry",
+      "result": "pass; 573 passed, 2 skipped, 35 subtests passed",
+      "coverage": "full services/trade_journey and services/telemetry test suites including all unit and integration tests"
+    },
+    {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py services/trade_journey/test_lifecycle_projector_compose.py",
+      "result": "pass; 47 passed",
+      "coverage": "BFF relational reader endpoints, postgres readiness dependencies, compose contract alignment, and trade journey read API"
+    },
+    {
+      "command": "python3 -m py_compile services/trade_journey/projection_store.py services/trade_journey/lifecycle_projector.py services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector.py && git diff --check origin/dev...HEAD",
+      "result": "pass"
+    }
+  ],
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex2",
+    "required_checks": [
+      "verify psycopg[binary]>=3.1,<4.0 in services/telemetry/requirements.txt",
+      "verify fail-closed import in services/trade_journey/projection_store.py",
+      "verify regression tests in services/trade_journey/test_projection_store.py and services/trade_journey/test_lifecycle_projector.py",
+      "bind this manifest path (docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-POSTGRES-DRIVER-20260824/evidence.json) to the exact final PR head in the governed approve command"
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "self_hash_omitted": true
+  }
+}
