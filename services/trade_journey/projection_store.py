@@ -228,7 +228,10 @@ class ProjectionStore:
         self.dsn = dsn
         self.schema = schema
         if connect is None:
-            import psycopg  # type: ignore[import]
+            try:
+                import psycopg  # type: ignore[import]
+            except ImportError as exc:
+                raise RuntimeError("psycopg is required for ProjectionStore") from exc
             connect = psycopg.connect
         self._connect = connect
         if bootstrap:

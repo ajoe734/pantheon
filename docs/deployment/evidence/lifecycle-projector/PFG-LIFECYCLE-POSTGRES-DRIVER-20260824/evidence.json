@@ -1,0 +1,96 @@
+{
+  "schema_version": "pantheon.lifecycle-postgres-driver-evidence.v1",
+  "task": {
+    "id": "PFG-LIFECYCLE-POSTGRES-DRIVER-20260824",
+    "title": "Add missing psycopg runtime dependency for relational lifecycle projector",
+    "owner": "Antigravity2",
+    "reviewer": "Codex2",
+    "status": "review",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-LIFECYCLE-POSTGRES-DRIVER-20260824",
+    "head_binding": "The reviewer must bind this committed manifest to the exact final PR head in the canonical approve command."
+  },
+  "scope": {
+    "owned": [
+      "services/telemetry/requirements.txt",
+      "services/trade_journey/projection_store.py",
+      "services/trade_journey/test_projection_store.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-POSTGRES-DRIVER-20260824/README.md",
+      "docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-POSTGRES-DRIVER-20260824/evidence.json"
+    ],
+    "not_changing": [
+      "docker-compose.yml or deployment workflows (services/telemetry/Dockerfile is already referenced and installs services/telemetry/requirements.txt)",
+      "BFF or lifecycle projection schema logic"
+    ],
+    "composes_with": [
+      "PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824"
+    ]
+  },
+  "contracts": {
+    "runtime_dependency": "services/telemetry/requirements.txt declares psycopg[binary]>=3.1,<4.0, ensuring the Docker image built for loop-run-projector-scheduler includes the required PostgreSQL driver.",
+    "fail_closed": "ProjectionStore and _configured_relational_projector fail closed with a clear RuntimeError if psycopg is unavailable at startup, preventing silent startup without the declared driver.",
+    "connect_binding": "Default ProjectionStore construction without an explicit connector binds psycopg.connect.",
+    "health_and_readiness": "Relational projector healthcheck and BFF /readyz evaluate live PostgreSQL controller state, publishing ready=true with zero backlog and HTTP 200 readiness without rollback."
+  },
+  "acceptance_evidence": {
+    "projector_image_installs_and_imports_psycopg": {
+      "build_command": "docker compose build loop-run-projector-scheduler",
+      "build_result": "pass; built docker.io/library/pfg-lifecycle-postgres-driver-20260824 with psycopg[binary]>=3.1,<4.0",
+      "runtime_import_command": "docker compose run --no-deps --rm loop-run-projector-scheduler python -c \"import psycopg; print('psycopg import OK:', psycopg.__version__)\"",
+      "runtime_import_result": "psycopg import OK: 3.3.4"
+    },
+    "driver_missing_fails_closed_regression": {
+      "unit_regression_command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" TEST_DATABASE_URL=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon \"$PANTHEON_PY\" -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_projection_store.py",
+      "unit_regression_result": "pass; 40 passed, 1 skipped",
+      "tests": [
+        "test_projector_runtime_requirements_declares_psycopg_driver",
+        "test_projection_store_default_connect_binds_psycopg",
+        "test_projection_store_driver_missing_fails_closed",
+        "test_relational_projector_fails_closed_without_psycopg_driver",
+        "test_run_worker_startup_fails_immediately_without_psycopg_driver"
+      ]
+    },
+    "compose_projector_healthcheck": {
+      "compose_contracts": "services/trade_journey/test_lifecycle_projector_compose.py (8 passed)",
+      "live_healthcheck_command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" LIFECYCLE_PROJECTOR_WRITER_BACKEND=postgres LIFECYCLE_PROJECTOR_PROJECTION_DSN=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon TELEMETRY_DB_DSN=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon \"$PANTHEON_PY\" -m services.trade_journey.lifecycle_projector healthcheck",
+      "live_healthcheck_result": "pass; exit 0; payload: {\"controller\":{\"accepted_live\":true,\"backlog\":0,\"checkpoint\":7267792,\"controller_id\":\"canonical-lifecycle-projector\",\"deployment_sha\":\"unknown\",\"generation\":50,\"last_error\":null,\"mode\":\"live\",\"quarantine_count\":0,\"source_high_watermark\":7267792,\"status\":\"ready\"},\"ready\":true,\"schema_version\":\"pantheon.lifecycle-projector-relational-health.v1\",\"writer_backend\":\"shadow\"}"
+    },
+    "dev_deployment_lifecycle_readiness_http_200": {
+      "readiness_tests_command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py services/trade_journey/test_lifecycle_projector_compose.py",
+      "readiness_tests_result": "pass; 12 passed",
+      "live_bff_readyz_probe_result": "pass; HTTP 200 OK; payload: {\"status\":\"ok\",\"service\":\"operator-bff\",\"live\":true,\"ready\":true,\"dependencies\":{\"runtime_manager\":{\"status\":\"ok\"},\"governance\":{\"status\":\"ok\"},\"deployment\":{\"status\":\"ok\"},\"lifecycle_projector\":{\"ready\":true,\"status\":\"ready\",\"worker_status\":\"ready\",\"writer_backend\":\"postgres\",\"reader_backend\":\"postgres\",\"checkpoint\":7267792,\"source_high_watermark\":7267792,\"backlog\":0,\"generation\":50,\"mode\":\"live\",\"accepted_live\":true,\"reasons\":[]}}}"
+    }
+  },
+  "validation": [
+    {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" TEST_DATABASE_URL=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon \"$PANTHEON_PY\" -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector_compose.py services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "result": "pass; 87 passed, 1 skipped",
+      "coverage": "ProjectionStore fail-closed driver error, default connect binding, relational projector fail-closed driver error, requirements declaration assertion, run_worker immediate startup failure without psycopg, compose contract alignment, BFF postgres readiness, and full live PostgreSQL integration tests"
+    },
+    {
+      "command": "docker compose run --no-deps --rm loop-run-projector-scheduler python -c \"import psycopg; print('psycopg import OK:', psycopg.__version__)\"",
+      "result": "pass; psycopg import OK: 3.3.4"
+    },
+    {
+      "command": "python3 -m py_compile services/trade_journey/projection_store.py services/trade_journey/lifecycle_projector.py services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector.py && git diff --check origin/dev",
+      "result": "pass; no syntax errors, zero trailing whitespace or EOF blank line errors"
+    }
+  ],
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex2",
+    "required_checks": [
+      "verify psycopg[binary]>=3.1,<4.0 in services/telemetry/requirements.txt",
+      "verify fail-closed import in services/trade_journey/projection_store.py",
+      "verify regression tests in services/trade_journey/test_projection_store.py and services/trade_journey/test_lifecycle_projector.py",
+      "verify exact acceptance evidence: container psycopg runtime import, driver missing fails closed, live healthcheck exit 0, and BFF HTTP 200 readiness",
+      "verify git diff --check origin/dev has no EOF blank line warnings",
+      "bind this manifest path (docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-POSTGRES-DRIVER-20260824/evidence.json) to the exact final PR head in the governed approve command"
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "self_hash_omitted": true
+  }
+}

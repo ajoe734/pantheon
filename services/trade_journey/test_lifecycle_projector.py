@@ -794,3 +794,25 @@ def test_relational_projector_accepts_postgres_datetime_created_at_with_z_payloa
     assert len(mutation.receipts) == 1
     assert mutation.receipts[0].disposition == "applied"
 
+
+def test_relational_projector_fails_closed_without_psycopg_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "shadow")
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon")
+    monkeypatch.setitem(sys.modules, "psycopg", None)
+    with pytest.raises(RuntimeError, match="psycopg is required for ProjectionStore"):
+        lifecycle_projector_module._configured_relational_projector()
+
+
+def test_projector_runtime_requirements_declares_psycopg_driver() -> None:
+    root = Path(__file__).resolve().parents[2]
+    req_path = root / "services" / "telemetry" / "requirements.txt"
+    content = req_path.read_text(encoding="utf-8")
+    lines = [line.strip() for line in content.splitlines() if line.strip() and not line.startswith("#")]
+    assert any("psycopg" in line for line in lines), f"psycopg missing from {req_path}:\n{content}"
+
+
+def test_run_worker_startup_fails_immediately_without_psycopg_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon")
+    monkeypatch.setitem(sys.modules, "psycopg", None)
+    with pytest.raises(RuntimeError, match="psycopg is required for ProjectionStore"):
+        asyncio.run(lifecycle_projector_module.run_worker())
