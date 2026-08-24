@@ -21,6 +21,7 @@
     "changed_files": [
       ".github/workflows/nonprod-deploy.yml",
       "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_deploy_nonprod_bff_source_sha_contract.py",
       "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
       "scripts/test_dev_environment_lease_deploy_contract.py",
       "scripts/test_evolution_daily_sweep_deploy_contract.py",
@@ -56,11 +57,11 @@
       },
       {
         "command": "pytest -v scripts/test_dev_environment_lease_deploy_contract.py",
-        "result": "196 passed"
+        "result": "198 passed"
       },
       {
         "command": "pytest -v scripts/test_*deploy*.py",
-        "result": "354 passed"
+        "result": "311 passed"
       }
     ]
   },
