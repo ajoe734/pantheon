@@ -91,7 +91,6 @@ jobs:
       previous_backend_sha: ${{ steps.rollback_baseline.outputs.sha }}
       previous_frontend_sha: ${{ steps.rollback_baseline.outputs.frontend_sha }}
       release_candidate_id: ${{ steps.release_admission.outputs.release_candidate_id }}
-      pair_id: ${{ steps.release_admission.outputs.pair_id }}
       compatibility_manifest_sha256: ${{ steps.release_admission.outputs.compatibility_manifest_sha256 }}
       admission_artifact_digest: ${{ steps.release_admission_upload.outputs.artifact-digest }}
       # Whether BFF/FE compatibility was itself verified -- deliberately narrower
@@ -242,7 +241,6 @@ jobs:
             --frontend-runtime-commit "${{ steps.frontend.outputs.sha }}" \
             --evidence-out "${ledger}"
           python3 - "${ledger}" "${evidence_dir}" >> "${GITHUB_OUTPUT}" <<'PY'
-          import hashlib
           import json
           import pathlib
           import sys
@@ -256,17 +254,6 @@ jobs:
               "compatibility_manifest_sha256="
               f"{candidate['compatibility_manifest']['sha256']}"
           )
-          backend_sha = candidate.get("backend", {}).get("commit")
-          frontend_sha = candidate.get("frontend", {}).get("commit")
-          pair_id = hashlib.sha256(
-              json.dumps(
-                  {"execute_plans_sha": frontend_sha, "pantheon_sha": backend_sha},
-                  ensure_ascii=False,
-                  separators=(",", ":"),
-                  sort_keys=True,
-              ).encode("utf-8") + b"\n"
-          ).hexdigest()
-          print(f"pair_id={pair_id}")
           print(f"evidence_dir={sys.argv[2]}")
           PY
 
@@ -1839,7 +1826,7 @@ jobs:
       backend_sha: ${{ needs.deploy-dev.outputs.backend_sha }}
       frontend_sha: ${{ needs.deploy-dev.outputs.frontend_sha }}
       release_candidate_id: ${{ needs.deploy-dev.outputs.release_candidate_id }}
-      pair_id: ${{ steps.frontend_release.outputs.pair_id || needs.deploy-dev.outputs.pair_id }}
+      pair_id: ${{ steps.frontend_release.outputs.pair_id }}
       candidate_id: ${{ steps.frontend_release.outputs.candidate_id || needs.deploy-dev.outputs.release_candidate_id }}
       profile: ${{ steps.frontend_release.outputs.profile }}
       source_mode: ${{ steps.frontend_release.outputs.source_mode }}
@@ -1877,7 +1864,6 @@ jobs:
           BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
           FRONTEND_SHA: ${{ needs.deploy-dev.outputs.frontend_sha }}
           RELEASE_CANDIDATE_ID: ${{ needs.deploy-dev.outputs.release_candidate_id }}
-          PAIR_ID: ${{ needs.deploy-dev.outputs.pair_id }}
           COMPATIBILITY_MANIFEST_SHA256: ${{ needs.deploy-dev.outputs.compatibility_manifest_sha256 }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -1891,7 +1877,6 @@ jobs:
             --bff-base-url "${DEV_BFF_URL}" \
             --fe-base-url "${DEV_FE_URL}" \
             --release-candidate-id "${RELEASE_CANDIDATE_ID}" \
-            --pair-id "${PAIR_ID}" \
             --compatibility-manifest-sha256 "${COMPATIBILITY_MANIFEST_SHA256}" \
             --controller-run-id "${GITHUB_RUN_ID}" \
             --evidence-out "${controller_evidence}" \

@@ -42,6 +42,7 @@ def _run(
     title: str,
     status: str = "completed",
     conclusion: str | None = "success",
+    head_sha: str = FRONTEND_SHA,
 ) -> dict[str, Any]:
     return {
         "id": run_id,
@@ -50,7 +51,7 @@ def _run(
         "repository": {"full_name": "ajoe734/execute-plans"},
         "event": "workflow_dispatch",
         "head_branch": "dev",
-        "head_sha": FRONTEND_SHA,
+        "head_sha": head_sha,
         "display_title": title,
         "status": status,
         "conclusion": conclusion,
@@ -80,17 +81,20 @@ class FakeClient:
         if self.timeout_workflow == workflow:
             return []
         inputs = dispatched[-1][1]
+        candidate_id = inputs.get("release_candidate_id", CANDIDATE_ID)
         title = (
-            f"Release candidate {inputs['release_candidate_id']}"
+            f"Release candidate {candidate_id}"
             if workflow == GATE_WORKFLOW
-            else f"Deploy release candidate {inputs['release_candidate_id']}"
+            else f"Deploy release candidate {candidate_id}"
         )
+        head_sha = inputs.get("fe_sha") or inputs.get("candidate_sha") or FRONTEND_SHA
         run = _run(
             101 if workflow == GATE_WORKFLOW else 202,
             workflow=workflow,
             title=title,
             status="in_progress",
             conclusion=None,
+            head_sha=head_sha,
         )
         if self.ambiguous:
             return [run, {**run, "id": run["id"] + 1}]
@@ -101,17 +105,27 @@ class FakeClient:
 
     def get_run(self, run_id: int) -> dict[str, Any]:
         if run_id == 101:
+            gate_dispatches = [item for item in self.dispatches if item[0] == GATE_WORKFLOW]
+            inputs = gate_dispatches[-1][1] if gate_dispatches else {}
+            candidate_id = inputs.get("release_candidate_id", CANDIDATE_ID)
+            head_sha = inputs.get("fe_sha", FRONTEND_SHA)
             return _run(
                 101,
                 workflow=GATE_WORKFLOW,
-                title=f"Release candidate {CANDIDATE_ID}",
+                title=f"Release candidate {candidate_id}",
                 conclusion=self.gate_conclusion,
+                head_sha=head_sha,
             )
+        deploy_dispatches = [item for item in self.dispatches if item[0] == DEPLOY_WORKFLOW]
+        inputs = deploy_dispatches[-1][1] if deploy_dispatches else {}
+        candidate_id = inputs.get("release_candidate_id", CANDIDATE_ID)
+        head_sha = inputs.get("candidate_sha", FRONTEND_SHA)
         return _run(
             202,
             workflow=DEPLOY_WORKFLOW,
-            title=f"Deploy release candidate {CANDIDATE_ID}",
+            title=f"Deploy release candidate {candidate_id}",
             conclusion=self.deploy_conclusion,
+            head_sha=head_sha,
         )
 
 
@@ -905,12 +919,234 @@ def test_nonprod_workflow_outputs_candidate_auto_binding_contract() -> None:
         NONPROD_WORKFLOW.index("  deploy-staging-live:")
     ]
 
-    assert "pair_id: ${{ steps.release_admission.outputs.pair_id }}" in deploy_dev
+    # SHA-only synthesis and pair_id output are removed from deploy-dev
+    assert "pair_id: ${{ steps.release_admission.outputs.pair_id }}" not in deploy_dev
+    assert "pair_id = hashlib.sha256(" not in deploy_dev
+
+    # coordinate-dev-release outputs pair_id bound from the controller and does not pass --pair-id
     assert "outputs:" in coordinate_job
     assert "candidate_id:" in coordinate_job
-    assert "pair_id:" in coordinate_job
+    assert "pair_id: ${{ steps.frontend_release.outputs.pair_id }}" in coordinate_job
     assert "profile:" in coordinate_job
     assert "source_mode:" in coordinate_job
     assert "expires_at:" in coordinate_job
+    assert "--pair-id" not in coordinate_job
+    assert "PAIR_ID:" not in coordinate_job
     assert "--candidate-out" in coordinate_job
     assert '--fe-base-url "${DEV_FE_URL}"' in coordinate_job
+
+
+REAL_BACKEND_SHA = "97945de7c5193baa9832f6c02674714d889577b9"
+REAL_FRONTEND_SHA = "693d8612218e5ec6620c80ab7a16d3429e842f6c"
+REAL_CANONICAL_PAIR_ID = "98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529"
+STALE_SYNTHESIZED_PAIR_ID = "0bbfd257a672dbeff45b693a65326915dd8bf92ef92c41e2b2826485fecbb408"
+
+
+def test_execution_path_real_execute_plans_pair_contract_auto_binding_success(tmp_path: Path) -> None:
+    """Execution-path contract test using real execute-plans pair contract and workflow path."""
+    client = FakeClient()
+    candidate_out = tmp_path / "candidate_real_path.json"
+
+    def real_fetch_fn(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": REAL_BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "schemaVersion": 1,
+                "app": "execute-plans",
+                "repository": "ajoe734/execute-plans",
+                "sourceBranch": "dev",
+                "commit": REAL_FRONTEND_SHA,
+                "frontendSha": REAL_FRONTEND_SHA,
+                "bffCommit": REAL_BACKEND_SHA,
+                "deploymentState": "accepted",
+                "pairId": REAL_CANONICAL_PAIR_ID,
+            }
+        return {}
+
+    evidence = _coordinate(
+        client,
+        frontend_sha=REAL_FRONTEND_SHA,
+        backend_sha=REAL_BACKEND_SHA,
+        fetch_fn=real_fetch_fn,
+        candidate_out=candidate_out,
+        pair_id=None,  # Workflow input path: no synthetic or stale pair passed
+    )
+
+    assert evidence["outcome"] == "accepted"
+    assert evidence["candidate"]["pair_id"] == REAL_CANONICAL_PAIR_ID
+    assert evidence["candidate"]["pantheon_sha"] == REAL_BACKEND_SHA
+    assert evidence["candidate"]["execute_plans_sha"] == REAL_FRONTEND_SHA
+    assert evidence["candidate"]["profile"] == "read-only"
+    assert evidence["candidate"]["source_mode"] == "reconcile-only"
+    assert evidence["served_verification"]["observed_pair_id"] == REAL_CANONICAL_PAIR_ID
+    assert evidence["proof_state"] == "READ_ONLY_RESTORED"
+
+    # Confirm candidate_out file reflects the auto-bound canonical pair
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["pair_id"] == REAL_CANONICAL_PAIR_ID
+    assert data["profile"] == "read-only"
+
+
+def test_execution_path_stale_synthesized_pair_override_rejected(tmp_path: Path) -> None:
+    """Test that well-formed stale supplied pair inputs (like the SHA-only synthesis) are rejected."""
+    client = FakeClient()
+    candidate_out = tmp_path / "candidate_stale_rejected.json"
+
+    def real_fetch_fn(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": REAL_BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "schemaVersion": 1,
+                "app": "execute-plans",
+                "repository": "ajoe734/execute-plans",
+                "sourceBranch": "dev",
+                "commit": REAL_FRONTEND_SHA,
+                "frontendSha": REAL_FRONTEND_SHA,
+                "bffCommit": REAL_BACKEND_SHA,
+                "deploymentState": "accepted",
+                "pairId": REAL_CANONICAL_PAIR_ID,
+            }
+        return {}
+
+    # Calling with the stale synthesized pair formula fails closed
+    with pytest.raises(
+        ControllerError,
+        match=f"served identity mismatch fails closed: served pair ID {REAL_CANONICAL_PAIR_ID} != candidate {STALE_SYNTHESIZED_PAIR_ID}",
+    ):
+        _coordinate(
+            client,
+            frontend_sha=REAL_FRONTEND_SHA,
+            backend_sha=REAL_BACKEND_SHA,
+            fetch_fn=real_fetch_fn,
+            candidate_out=candidate_out,
+            pair_id=STALE_SYNTHESIZED_PAIR_ID,
+            candidate_profile="write-proof",
+        )
+
+    # Read-only profile restored on failure
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
+
+
+def test_derive_pair_id_from_execute_plans_pair_artifact() -> None:
+    """derive_pair_id extracts pairId from real execute-plans pair artifact and returns None if no manifest."""
+    manifest = {
+        "schemaVersion": 1,
+        "app": "execute-plans",
+        "pairId": REAL_CANONICAL_PAIR_ID,
+        "releaseAdmission": {
+            "backend": {"commitSha": REAL_BACKEND_SHA},
+            "frontend": {"commitSha": REAL_FRONTEND_SHA},
+        },
+    }
+    assert derive_pair_id(manifest=manifest) == REAL_CANONICAL_PAIR_ID
+    # Without manifest, does NOT synthesize SHA256 of only SHAs
+    assert derive_pair_id(REAL_BACKEND_SHA, REAL_FRONTEND_SHA) is None
+
+
+def test_execution_path_cli_main_workflow_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """CLI main execution path matching nonprod-deploy.yml arguments (without --pair-id)."""
+    evidence_out = tmp_path / "controller-evidence.json"
+    candidate_out = tmp_path / "release-candidate.json"
+    github_output = tmp_path / "github_output.txt"
+
+    monkeypatch.setenv("CROSS_REPO_RELEASE_TOKEN", "fake-token")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
+
+    def fake_fetch(url: str, timeout_seconds: int = 30) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": REAL_BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "schemaVersion": 1,
+                "app": "execute-plans",
+                "frontendSha": REAL_FRONTEND_SHA,
+                "bffCommit": REAL_BACKEND_SHA,
+                "pairId": REAL_CANONICAL_PAIR_ID,
+            }
+        return {}
+
+    monkeypatch.setattr("scripts.cross_repo_release_controller.fetch_url_json", fake_fetch)
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(
+        "scripts.cross_repo_release_controller.GitHubClient",
+        lambda **kwargs: fake_client,
+    )
+
+    from scripts.cross_repo_release_controller import main
+
+    exit_code = main([
+        "--frontend-sha", REAL_FRONTEND_SHA,
+        "--backend-sha", REAL_BACKEND_SHA,
+        "--bff-base-url", "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+        "--fe-base-url", "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+        "--release-candidate-id", CANDIDATE_ID,
+        "--compatibility-manifest-sha256", MANIFEST_SHA,
+        "--controller-run-id", "99999",
+        "--evidence-out", str(evidence_out),
+        "--candidate-out", str(candidate_out),
+        "--poll-seconds", "0.01",
+    ])
+
+    assert exit_code == 0
+    evidence = json.loads(evidence_out.read_text(encoding="utf-8"))
+    assert evidence["outcome"] == "accepted"
+    assert evidence["candidate"]["pair_id"] == REAL_CANONICAL_PAIR_ID
+
+    # Verify $GITHUB_OUTPUT was written with pair_id
+    output_text = github_output.read_text(encoding="utf-8")
+    assert f"pair_id={REAL_CANONICAL_PAIR_ID}" in output_text
+    assert f"pantheon_sha={REAL_BACKEND_SHA}" in output_text
+    assert f"execute_plans_sha={REAL_FRONTEND_SHA}" in output_text
+    assert "profile=read-only" in output_text
+
+
+def test_execution_path_cli_main_stale_pair_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """CLI main execution path with stale supplied --pair-id fails closed with exit code 1."""
+    evidence_out = tmp_path / "controller-evidence-rejected.json"
+    candidate_out = tmp_path / "release-candidate-rejected.json"
+
+    monkeypatch.setenv("CROSS_REPO_RELEASE_TOKEN", "fake-token")
+
+    def fake_fetch(url: str, timeout_seconds: int = 30) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": REAL_BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "schemaVersion": 1,
+                "app": "execute-plans",
+                "frontendSha": REAL_FRONTEND_SHA,
+                "bffCommit": REAL_BACKEND_SHA,
+                "pairId": REAL_CANONICAL_PAIR_ID,
+            }
+        return {}
+
+    monkeypatch.setattr("scripts.cross_repo_release_controller.fetch_url_json", fake_fetch)
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(
+        "scripts.cross_repo_release_controller.GitHubClient",
+        lambda **kwargs: fake_client,
+    )
+
+    from scripts.cross_repo_release_controller import main
+
+    exit_code = main([
+        "--frontend-sha", REAL_FRONTEND_SHA,
+        "--backend-sha", REAL_BACKEND_SHA,
+        "--bff-base-url", "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+        "--fe-base-url", "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+        "--release-candidate-id", CANDIDATE_ID,
+        "--compatibility-manifest-sha256", MANIFEST_SHA,
+        "--controller-run-id", "99999",
+        "--pair-id", STALE_SYNTHESIZED_PAIR_ID,
+        "--evidence-out", str(evidence_out),
+        "--candidate-out", str(candidate_out),
+        "--poll-seconds", "0.01",
+    ])
+
+    assert exit_code == 1
+
