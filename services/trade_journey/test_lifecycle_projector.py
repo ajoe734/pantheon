@@ -499,6 +499,13 @@ def test_relational_projector_backfill_postgres_mode(tmp_path, monkeypatch, caps
     assert result["checkpoint"] == 3
     assert result["mode"] == "backfill"
 
+    # Watermark and backlog invariants
+    ctrl = projector.controller
+    assert ctrl["checkpoint"] == 3
+    assert ctrl["source_high_watermark"] == 3
+    assert ctrl["backlog"] == 0
+    assert ctrl["checkpoint"] <= ctrl["source_high_watermark"]
+
     # Zero JSON generation / temp files created under projection root
     assert not (tmp_path / "controller_state.json").exists()
     assert not (tmp_path / "health_state.json").exists()

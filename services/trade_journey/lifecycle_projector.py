@@ -2494,9 +2494,17 @@ def _backfill(input_path: Path, *, mode: str) -> int:
     records = raw.get("records") if isinstance(raw, Mapping) else raw
     if not isinstance(records, list):
         raise ValueError("backfill input must be a list or {'records': [...]} object")
+    source_high = max(
+        (int(r.get("ingested_seq") or 0) for r in records if isinstance(r, Mapping)),
+        default=0,
+    )
     relational_projector = _configured_relational_projector()
     if relational_projector is not None:
-        result = relational_projector.project_records(records, mode=mode)
+        result = relational_projector.project_records(
+            records,
+            mode=mode,
+            source_high_watermark=source_high,
+        )
         print(_canonical_json(result.__dict__))
         return 0
     root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
@@ -2509,7 +2517,11 @@ def _backfill(input_path: Path, *, mode: str) -> int:
         bundle_root=root,
         deployment_sha=os.getenv("GIT_SHA", "unknown"),
     )
-    result = projector.project_records(records, mode=mode)
+    result = projector.project_records(
+        records,
+        mode=mode,
+        source_high_watermark=source_high,
+    )
     print(_canonical_json(result.__dict__))
     return 0
 
