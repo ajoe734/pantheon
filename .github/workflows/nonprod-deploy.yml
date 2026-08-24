@@ -83,6 +83,7 @@ jobs:
     name: Deploy dev under shared environment lease
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: dev
     outputs:
       backend_sha: ${{ steps.target.outputs.sha }}
@@ -830,6 +831,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
+          DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '1200' }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -863,6 +865,7 @@ jobs:
             --component "${TARGET_COMPONENT}"
             --sha "${TARGET_SHA}"
             --project-id "${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}"
+            --deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"
           )
           [[ "${ALLOW_DIRTY}" == "true" ]] && args+=(--allow-dirty)
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
@@ -1420,6 +1423,7 @@ jobs:
             echo "- Lease: \`${{ steps.lease.outputs.lease_id }}\`"
             echo "- Controller: \`9e564718da8c39199a4c311f1a667b74226e3428\`"
             echo "- Target: \`dev/${TARGET_COMPONENT}\`"
+            echo "- Deploy deadline: \`${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '1200' }}s\`"
             echo "- PPL-ALLOC-009 dev proof enabled: \`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
