@@ -465,3 +465,271 @@ def test_taifex_derivatives_chip_adapter_and_pit() -> None:
         trace_id="trace-taifex-dispatch",
     )
     assert len(dispatched_fut) == 1
+
+
+def test_tdcc_correction_republication_and_backfill_windows(tmp_path) -> None:
+    """Validate TDCC weekly watermark progression, backfill windows, and restatement handling."""
+    from services.source_ingestion.connectors import (
+        TDCC_SHAREHOLDING_CONNECTOR_ID,
+        TdccShareholdingDistributionAdapter,
+    )
+
+    adapter = TdccShareholdingDistributionAdapter(max_records=50)
+
+    # 1. Backfill window generation
+    weeks = adapter.generate_backfill_weeks("2026-05-01", "2026-05-31")
+    assert len(weeks) == 5  # May 1, May 8, May 15, May 22, May 29 (all Fridays in May 2026)
+    assert weeks[0] == "2026-05-01"
+    assert weeks[-1] == "2026-05-29"
+
+    # 2. Multi-tier level distribution (1 to 15)
+    tiers_payload = [
+        {"Date": "2026-06-12", "Code": "2330", "HoldLevel": i, "PeopleCount": 100 * (16 - i), "Shares": 1000000 * i, "Percentage": float(i)}
+        for i in range(1, 16)
+    ]
+    records = adapter.records_from_payload(tiers_payload, available_time="2026-06-12T19:00:00Z")
+    assert len(records) == 15
+    assert records[0].metadata["normalized_row"]["holder_level"] == 1
+    assert records[14].metadata["normalized_row"]["holder_level"] == 15
+
+    # 3. Correction / restatement handling
+    corrected_payload = [
+        {"Date": "2026-06-12", "Code": "2330", "HoldLevel": 15, "PeopleCount": 1520, "Shares": 20100000000, "Percentage": 77.50, "is_correction": True}
+    ]
+    corr_records = adapter.records_from_payload(
+        corrected_payload,
+        is_correction=True,
+        correction_reason="TDCC official restatement",
+        available_time="2026-06-13T10:00:00Z",
+    )
+    assert len(corr_records) == 1
+    assert corr_records[0].metadata["is_correction"] is True
+    assert corr_records[0].metadata["correction_reason"] == "TDCC official restatement"
+    assert corr_records[0].metadata["available_time"] == "2026-06-13T10:00:00Z"
+
+    # 4. Scheduled ingestion watermark progression
+    manager = IngestManager()
+    manager.register_connector(adapter.connector())
+    store = JsonlIngestScheduleStore(tmp_path / "schedule.jsonl")
+    scheduler = IngestionScheduler(
+        manager=manager,
+        store=store,
+        dead_letter_queue=DeadLetterQueue(tmp_path / "dlq.jsonl"),
+    )
+    result = scheduler.run_once(
+        connector_id=TDCC_SHAREHOLDING_CONNECTOR_ID,
+        trace_id="trace-tdcc-watermark",
+        fetch_batch=lambda _watermark: IngestBatch(records=records, next_watermark="2026-06-12"),
+    )
+    assert result.watermark is not None
+    assert result.watermark.value == "2026-06-12"
+    assert store.get_watermark(TDCC_SHAREHOLDING_CONNECTOR_ID).value == "2026-06-12"
+
+
+def test_taifex_contract_roll_and_calendar_policy(tmp_path) -> None:
+    """Validate TAIFEX calendar settlement (3rd Wednesday roll) and daily watermark progression."""
+    from services.source_ingestion.connectors import (
+        TAIFEX_DERIVATIVES_CONNECTOR_ID,
+        TaifexDerivativesChipAdapter,
+    )
+
+    adapter = TaifexDerivativesChipAdapter(max_records=10)
+
+    # 1. 3rd Wednesday settlement detection for June 2026 (June 1 = Monday; Wednesdays: June 3 (1st), 10 (2nd), 17 (3rd), 24 (4th))
+    assert adapter.is_contract_roll_day("2026-06-17") is True
+    assert adapter.is_contract_roll_day("2026-06-10") is False
+    assert adapter.is_contract_roll_day("2026-06-24") is False
+    assert adapter.is_contract_roll_day("2026-06-18") is False
+
+    # 2. Front-month contract resolution
+    assert adapter.resolve_front_month_contract("2026-06-10", "TX") == "TX202606"
+    assert adapter.resolve_front_month_contract("2026-06-17", "TX") == "TX202606"
+    assert adapter.resolve_front_month_contract("2026-06-18", "TX") == "TX202607"
+
+    # 3. Payload normalization with contract roll flag
+    roll_payload = [
+        {"Date": "2026-06-17", "Contract": "TX", "ParticipantGroup": "dealers", "LongVolume": 5000, "ShortVolume": 4000, "LongOpenInterest": 10000, "ShortOpenInterest": 8000}
+    ]
+    roll_records = adapter.records_from_payload(roll_payload, available_time="2026-06-17T16:30:00Z")
+    assert len(roll_records) == 1
+    assert roll_records[0].metadata["contract_roll_day"] is True
+    assert roll_records[0].metadata["front_month_contract"] == "TX202606"
+
+    # 4. Scheduled ingestion daily watermark progression
+    manager = IngestManager()
+    manager.register_connector(adapter.connector())
+    store = JsonlIngestScheduleStore(tmp_path / "schedule.jsonl")
+    scheduler = IngestionScheduler(
+        manager=manager,
+        store=store,
+        dead_letter_queue=DeadLetterQueue(tmp_path / "dlq.jsonl"),
+    )
+    result = scheduler.run_once(
+        connector_id=TAIFEX_DERIVATIVES_CONNECTOR_ID,
+        trace_id="trace-taifex-watermark",
+        fetch_batch=lambda _watermark: IngestBatch(records=roll_records, next_watermark="2026-06-17"),
+    )
+    assert result.watermark is not None
+    assert result.watermark.value == "2026-06-17"
+    assert store.get_watermark(TAIFEX_DERIVATIVES_CONNECTOR_ID).value == "2026-06-17"
+
+
+def test_tdcc_and_taifex_evidence_and_search_canary_readback(tmp_path) -> None:
+    """Validate durable source->evidence->search canary readback for TDCC and TAIFEX."""
+    from pathlib import Path
+    from services.knowledge.evidence import (
+        EvidenceBundleBuilder,
+        EvidenceItem,
+        InMemoryEvidenceRepository,
+        JsonlEvidenceRepository,
+    )
+    from services.search.main import create_app as create_search_app
+    from services.source_ingestion.connectors import (
+        TaifexDerivativesChipAdapter,
+        TdccShareholdingDistributionAdapter,
+    )
+    from fastapi.testclient import TestClient
+
+    # 1. Generate normalized records
+    tdcc_adapter = TdccShareholdingDistributionAdapter()
+    taifex_adapter = TaifexDerivativesChipAdapter()
+
+    tdcc_records = tdcc_adapter.records_from_payload(
+        [{"Date": "2026-06-12", "Code": "2330", "HoldLevel": 15, "PeopleCount": 1500, "Shares": 20000000000, "Percentage": 77.12}],
+        available_time="2026-06-12T19:00:00Z",
+    )
+    taifex_records = taifex_adapter.records_from_payload(
+        [{"Date": "2026-06-10", "Contract": "TX", "ParticipantGroup": "foreign_investors", "LongVolume": 15000, "ShortVolume": 12000, "LongOpenInterest": 45000, "ShortOpenInterest": 50000}],
+        dataset="taifex_futures_chip",
+        available_time="2026-06-10T16:30:00Z",
+    )
+
+    # 2. Build Evidence Bundles and persist to durable evidence store
+    evidence_path = Path(tmp_path) / "source_evidence.jsonl"
+    repo = JsonlEvidenceRepository(evidence_path)
+    builder = EvidenceBundleBuilder(repo)
+
+    tdcc_item = EvidenceItem(
+        evidence_item_id="evi-tdcc-2330-w24",
+        source_id=tdcc_records[0].source_id,
+        item_type="shareholding_distribution",
+        content_ref=tdcc_records[0].content_ref,
+        citation_label="TDCC Shareholding 2330 Level 15 2026-06-12",
+        body="TDCC 2330 Level 15 top shareholders control 77.12% with 20000000000 shares.",
+        event_time="2026-06-12T00:00:00Z",
+        available_time="2026-06-12T19:00:00Z",
+        confidence=1.0,
+        access_scope=("research",),
+        metadata={"entitlement_tags": ["official_reference"]},
+    )
+    tdcc_bundle = builder.build_bundle(
+        source_records=[tdcc_records[0]],
+        evidence_items=[tdcc_item],
+        summary="TDCC official shareholding distribution for 2330",
+        created_by="source-ingest",
+        evidence_bundle_id="evbundle-tdcc-2330-001",
+    )
+    builder.build_knowledge_object(
+        knowledge_object_id="kobj-tdcc-2330-001",
+        source_record=tdcc_records[0],
+        evidence_item=tdcc_item,
+        evidence_bundle=tdcc_bundle,
+        title=tdcc_records[0].title,
+        text=tdcc_item.body,
+        source_type="market",
+        keywords=["TDCC", "2330", "shareholding", "top shareholders"],
+    )
+
+    taifex_item = EvidenceItem(
+        evidence_item_id="evi-taifex-tx-001",
+        source_id=taifex_records[0].source_id,
+        item_type="derivatives_chip_flow",
+        content_ref=taifex_records[0].content_ref,
+        citation_label="TAIFEX TX Foreign Investors 2026-06-10",
+        body="TAIFEX TX foreign investors net open interest -5000 contracts on 2026-06-10.",
+        event_time="2026-06-10T00:00:00Z",
+        available_time="2026-06-10T16:30:00Z",
+        confidence=1.0,
+        access_scope=("research",),
+        metadata={"entitlement_tags": ["official_reference"]},
+    )
+    taifex_bundle = builder.build_bundle(
+        source_records=[taifex_records[0]],
+        evidence_items=[taifex_item],
+        summary="TAIFEX official derivatives chip context for TX",
+        created_by="source-ingest",
+        evidence_bundle_id="evbundle-taifex-tx-001",
+    )
+    builder.build_knowledge_object(
+        knowledge_object_id="kobj-taifex-tx-001",
+        source_record=taifex_records[0],
+        evidence_item=taifex_item,
+        evidence_bundle=taifex_bundle,
+        title=taifex_records[0].title,
+        text=taifex_item.body,
+        source_type="market",
+        keywords=["TAIFEX", "TX", "foreign investors", "open interest"],
+    )
+
+    # 3. Trigger Search Index refresh and execute SearchGateway query
+    search_app = create_search_app(
+        index_store_path=Path(tmp_path) / "search-index.jsonl",
+        evidence_store_path=evidence_path,
+        materialize_store_path=Path(tmp_path) / "search-materialize.jsonl",
+        pipeline_store_path=Path(tmp_path) / "search-pipeline.jsonl",
+        freshness_sla_seconds=60,
+    )
+    search_client = TestClient(search_app)
+
+    refresh_resp = search_client.post("/api/search/index/refresh", json={"triggered_by": "canary_test"})
+    assert refresh_resp.status_code == 200
+
+    # Query TDCC
+    tdcc_query = search_client.post(
+        "/api/search/query",
+        json={
+            "request_id": "req-tdcc-canary",
+            "query": "TDCC shareholding top shareholders",
+            "persona_id": "operator-workbench",
+            "workspace_id": "research-workbench",
+            "source_types": ["market"],
+            "access_context": {
+                "persona_id": "operator-workbench",
+                "workspace_id": "research-workbench",
+                "environment": "paper",
+                "access_scopes": ["research"],
+                "license_scopes": ["official_reference"],
+            },
+            "top_k": 5,
+        },
+    )
+    assert tdcc_query.status_code == 200
+    tdcc_res = tdcc_query.json()
+    assert tdcc_res["index_adapter"]["adapter_state"] == "durable"
+    assert len(tdcc_res["results"]) >= 1
+    assert any("2330" in str(r.get("citations", [])) or "TDCC" in str(r.get("citations", [])) for r in tdcc_res["results"])
+
+    # Query TAIFEX
+    taifex_query = search_client.post(
+        "/api/search/query",
+        json={
+            "request_id": "req-taifex-canary",
+            "query": "TAIFEX foreign investors open interest",
+            "persona_id": "operator-workbench",
+            "workspace_id": "research-workbench",
+            "source_types": ["market"],
+            "access_context": {
+                "persona_id": "operator-workbench",
+                "workspace_id": "research-workbench",
+                "environment": "paper",
+                "access_scopes": ["research"],
+                "license_scopes": ["official_reference"],
+            },
+            "top_k": 5,
+        },
+    )
+    assert taifex_query.status_code == 200
+    taifex_res = taifex_query.json()
+    assert taifex_res["index_adapter"]["adapter_state"] == "durable"
+    assert len(taifex_res["results"]) >= 1
+    assert any("TAIFEX" in str(r.get("citations", [])) or "foreign" in str(r.get("citations", [])) for r in taifex_res["results"])

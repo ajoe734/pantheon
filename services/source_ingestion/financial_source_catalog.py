@@ -308,7 +308,7 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
     ),
     _entry(
         data_source_id="ds-admitted-social-sentiment",
-        provider="Admitted Social Discussion Feed",
+        provider="StockTwits",
         source_class=DataSourceClass.SOCIAL,
         license_scope="community_admitted",
         allowed_use=("research_data", "backtest_data", "feature_generation", "monitoring"),
@@ -333,7 +333,7 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
     ),
     _entry(
         data_source_id="ds-vendor-alpha-db",
-        provider="External Alpha Factor Provider",
+        provider="Financial Modeling Prep",
         source_class=DataSourceClass.VENDOR_BACKFILL,
         license_scope="vendor",
         allowed_use=("research_data", "backtest_data", "feature_generation"),
@@ -1033,8 +1033,12 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
         "data_source_id": "ds-admitted-social-sentiment",
         "connector_id": "social-admitted-market-discussion",
         "source_type": "social",
-        "provider": "Admitted Social Discussion Feed",
-        "auth": {"auth_type": "api_key", "secret_ref_id": "env://SOCIAL_API_KEY"},
+        "provider": "StockTwits",
+        "auth": {
+            "auth_type": "api_key",
+            "secret_ref_id": "env://STOCKTWITS_API_KEY",
+            "credential_health_without_key": "credential_unavailable",
+        },
         "fetch": {
             "mode": "provider_owned_adapter",
             "adapter": "AdmittedSocialMediaAdapter.records_from_payload",
@@ -1053,8 +1057,12 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
         "data_source_id": "ds-vendor-alpha-db",
         "connector_id": "alpha-db-vendor-signals",
         "source_type": "alpha_db",
-        "provider": "External Alpha Factor Provider",
-        "auth": {"auth_type": "api_key", "secret_ref_id": "env://ALPHA_DB_API_KEY"},
+        "provider": "Financial Modeling Prep",
+        "auth": {
+            "auth_type": "api_key",
+            "secret_ref_id": "env://ALPHA_DB_API_KEY",
+            "credential_health_without_key": "credential_unavailable",
+        },
         "fetch": {
             "mode": "provider_owned_adapter",
             "adapter": "ExternalAlphaDbAdapter.records_from_payload",

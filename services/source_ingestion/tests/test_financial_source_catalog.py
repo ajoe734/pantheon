@@ -32,7 +32,7 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
     # Yahoo Finance was removed: its terms forbid programmatic access.
     assert "Yahoo Finance" not in providers
     assert payload["summary"]["data_source_count"] == 18
-    assert {"Polygon", "Alpha Vantage", "IBKR", "Shioaji", "Admitted Social Discussion Feed", "External Alpha Factor Provider"} <= providers
+    assert {"Polygon", "Alpha Vantage", "IBKR", "Shioaji", "StockTwits", "Financial Modeling Prep"} <= providers
     assert all(entry.source_kind == "data_source" for entry in entries.values())
     assert all(entry.lifecycle_state.value == "candidate" for entry in entries.values())
     assert entries["ds-finmind-tw-data"].metadata["template_status"] == "candidate_not_live_ingestion_claim"

@@ -857,6 +857,43 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
             "max_records": self.max_records,
         }
 
+    def fetch_payload(
+        self,
+        *,
+        source_dataset: str = "TDCC_OD_1-5",
+        timeout_seconds: float = 20.0,
+    ) -> Any:
+        """Fetch live open data payload from TDCC OpenAPI endpoint."""
+        url = f"{TDCC_OPENAPI_BASE_URL}/opendata/{source_dataset}"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "pantheon-source-ingest/0.1",
+            },
+        )
+        with open_external_url(
+            request,
+            caller="source_ingest.tdcc_shareholding",
+            timeout=timeout_seconds,
+        ) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    @staticmethod
+    def generate_backfill_weeks(start_date: str, end_date: str) -> list[str]:
+        """Generate weekly publication date windows between start_date and end_date."""
+        from datetime import date, timedelta
+        d_start = date.fromisoformat(start_date)
+        d_end = date.fromisoformat(end_date)
+        weeks: list[str] = []
+        curr = d_start
+        while curr <= d_end:
+            # Friday is weekday 4
+            if curr.weekday() == 4:
+                weeks.append(curr.isoformat())
+            curr += timedelta(days=1)
+        return weeks
+
     def records_from_payload(
         self,
         payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
@@ -866,14 +903,18 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
         trade_date: str | None = None,
         available_time: str | None = None,
         universe_tier: str = "core_universe",
+        is_correction: bool = False,
+        correction_reason: str = "",
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
         normalized_rows = self.normalized_rows_from_payload(
             payload,
             source_dataset=source_dataset,
-            api_endpoint=api_endpoint or f"{TDCC_OPENAPI_BASE_URL}/opendata/TDCC_OD_1-5",
+            api_endpoint=api_endpoint or f"{TDCC_OPENAPI_BASE_URL}/opendata/{source_dataset}",
             trade_date=trade_date,
             available_time=available_time,
+            is_correction=is_correction,
+            correction_reason=correction_reason,
         )
         records: list[SourceRecord] = []
         for row in normalized_rows[: self.max_records]:
@@ -900,9 +941,11 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
                         "date": row.get("date"),
                         "event_time": row.get("date"),
                         "available_time": row.get("available_time") or available_time or _utc_now(),
-                        "api_endpoint": api_endpoint or f"{TDCC_OPENAPI_BASE_URL}/opendata/TDCC_OD_1-5",
+                        "api_endpoint": api_endpoint or f"{TDCC_OPENAPI_BASE_URL}/opendata/{source_dataset}",
                         "cadence": "weekly_after_tdcc_publication",
                         "universe_tier": _tier_name(universe_tier),
+                        "is_correction": row.get("is_correction", False),
+                        "correction_reason": row.get("correction_reason", ""),
                         "normalized_row": dict(row),
                         "raw_row": dict(row.get("raw_row") or {}),
                         "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
@@ -923,6 +966,8 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
         api_endpoint: str = "",
         trade_date: str | None = None,
         available_time: str | None = None,
+        is_correction: bool = False,
+        correction_reason: str = "",
     ) -> tuple[dict[str, Any], ...]:
         rows = _rows_from_payload(payload)
         results: list[dict[str, Any]] = []
@@ -938,6 +983,7 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
             shares = _int(_first(raw, "股數", "Shares", "shares", "NumberOfShares")) or 0
             percentage = _float(_first(raw, "占集保庫存數比例%", "Percentage", "percentage", "Ratio", "Percent")) or 0.0
             venue = _text(_first(raw, "venue", "Venue"), "TWSE")
+            row_is_correction = bool(is_correction or _first(raw, "is_correction", "is_restated", "更正註記"))
 
             results.append({
                 "dataset": "tdcc_shareholding_distribution",
@@ -954,6 +1000,8 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
                 "source_dataset": source_dataset,
                 "api_endpoint": api_endpoint,
                 "available_time": available_time or f"{date}T19:00:00Z",
+                "is_correction": row_is_correction,
+                "correction_reason": correction_reason or ("TDCC weekly correction" if row_is_correction else ""),
                 "raw_row": dict(raw),
             })
         return tuple(results)
@@ -1051,6 +1099,56 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             "max_records": self.max_records,
         }
 
+    def fetch_payload(
+        self,
+        dataset: str = "taifex_futures_chip",
+        *,
+        timeout_seconds: float = 20.0,
+    ) -> Any:
+        """Fetch live open data payload from TAIFEX OpenAPI endpoint."""
+        source_name = "Daily_Institutional_Trading_Options" if dataset == "taifex_options_chip" else "Daily_Institutional_Trading_Futures"
+        url = f"{TAIFEX_OPENAPI_BASE_URL}/{source_name}"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "pantheon-source-ingest/0.1",
+            },
+        )
+        with open_external_url(
+            request,
+            caller="source_ingest.taifex_derivatives",
+            timeout=timeout_seconds,
+        ) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    @staticmethod
+    def is_contract_roll_day(trade_date: str) -> bool:
+        """Check if trade_date (YYYY-MM-DD) is the 3rd Wednesday of the month (TAIFEX settlement/roll day)."""
+        from datetime import date
+        d = date.fromisoformat(trade_date)
+        if d.weekday() != 2:  # Wednesday is 2
+            return False
+        first_day = date(d.year, d.month, 1)
+        offset = (2 - first_day.weekday()) % 7
+        first_wednesday = 1 + offset
+        third_wednesday = first_wednesday + 14
+        return d.day == third_wednesday
+
+    @staticmethod
+    def resolve_front_month_contract(trade_date: str, contract_prefix: str = "TX") -> str:
+        """Resolve active front month contract code based on settlement calendar."""
+        from datetime import date
+        d = date.fromisoformat(trade_date)
+        first_day = date(d.year, d.month, 1)
+        offset = (2 - first_day.weekday()) % 7
+        third_wednesday = 1 + offset + 14
+        if d.day <= third_wednesday:
+            return f"{contract_prefix}{d.year}{d.month:02d}"
+        next_month = 1 if d.month == 12 else d.month + 1
+        next_year = d.year + 1 if d.month == 12 else d.year
+        return f"{contract_prefix}{next_year}{next_month:02d}"
+
     def records_from_payload(
         self,
         payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
@@ -1100,6 +1198,8 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                         "api_endpoint": api_endpoint or f"{TAIFEX_OPENAPI_BASE_URL}/{dataset}",
                         "cadence": "daily_after_taifex_publication",
                         "universe_tier": _tier_name(universe_tier),
+                        "contract_roll_day": row.get("contract_roll_day", False),
+                        "front_month_contract": row.get("front_month_contract"),
                         "normalized_row": dict(row),
                         "raw_row": dict(row.get("raw_row") or {}),
                         "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
@@ -1129,6 +1229,9 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             if not date:
                 continue
 
+            roll_day = self.is_contract_roll_day(date) if re.match(r"^\d{4}-\d{2}-\d{2}$", date) else False
+            front_month = self.resolve_front_month_contract(date) if re.match(r"^\d{4}-\d{2}-\d{2}$", date) else ""
+
             if dataset == "taifex_options_chip":
                 call_volume = _int(_first(raw, "買權成交量", "CallVolume", "call_volume")) or 0
                 put_volume = _int(_first(raw, "賣權成交量", "PutVolume", "put_volume")) or 0
@@ -1149,6 +1252,8 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "call_open_interest": call_oi,
                     "put_open_interest": put_oi,
                     "put_call_ratio": pc_ratio or 0.0,
+                    "contract_roll_day": roll_day,
+                    "front_month_contract": front_month,
                     "source_dataset": source_dataset,
                     "api_endpoint": api_endpoint,
                     "available_time": available_time or f"{date}T16:30:00Z",
@@ -1182,6 +1287,8 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "long_open_interest": long_oi,
                     "short_open_interest": short_oi,
                     "net_open_interest": net_oi,
+                    "contract_roll_day": roll_day,
+                    "front_month_contract": front_month,
                     "source_dataset": source_dataset,
                     "api_endpoint": api_endpoint,
                     "available_time": available_time or f"{date}T16:30:00Z",

@@ -269,3 +269,194 @@ def test_tdcc_and_taifex_publication_pit_watermark_and_canary_evidence() -> None
     assert len(taifex_records) == 1
     assert taifex_records[0].metadata["available_time"] == "2026-06-10T16:30:00Z"
     assert taifex_records[0].metadata["normalized_row"]["net_open_interest"] == -5000
+
+
+def test_stocktwits_and_alpha_db_evidence_and_search_canary_readback(tmp_path) -> None:
+    """Verify durable source->evidence->search canary readback for StockTwits and External Alpha DB."""
+    from services.knowledge.evidence import (
+        EvidenceBundleBuilder,
+        EvidenceItem,
+        JsonlEvidenceRepository,
+    )
+    from services.search.main import create_app as create_search_app
+    from fastapi.testclient import TestClient
+
+    # 1. Social Record (StockTwits)
+    social_adapter = AdmittedSocialMediaAdapter()
+    social_payload = [
+        {
+            "id": "st-msg-9901",
+            "user": {"id": 12345, "username": "alpha_trader", "official": True},
+            "body": "$2330 reported outstanding Q2 earnings and raised full year guidance.",
+            "symbols": ["2330", "TSM"],
+            "created_at": "2026-06-10T11:00:00Z",
+            "available_time": "2026-06-10T11:00:30Z",
+            "trust_score": 0.95,
+            "sentiment": {"label": "positive", "score": 0.88, "model_version": "fin-bert-sentiment.v1"},
+        }
+    ]
+    social_records = social_adapter.records_from_payload(social_payload, platform="stocktwits")
+    assert len(social_records) == 1
+    assert social_records[0].metadata["platform"] == "stocktwits"
+    assert social_records[0].metadata["trust_score"] == 0.95
+    assert social_records[0].metadata["author_id_hash"] != "alpha_trader"  # Hashed
+
+    # 2. Alpha DB Record (FMP / Factor signals)
+    alpha_adapter = ExternalAlphaDbAdapter()
+    alpha_payload = [
+        {
+            "alpha_vendor_id": "fmp-alpha-factors",
+            "signal_id": "momentum_factor_v1",
+            "signal_version": "v1.0",
+            "field_schema_version": "v1",
+            "universe": ["US_EQUITY", "TW_EQUITY"],
+            "entity_id": "2330.TWSE",
+            "event_time": "2026-06-10T13:30:00Z",
+            "as_of_time": "2026-06-10T13:30:00Z",
+            "available_time": "2026-06-10T14:00:00Z",
+            "values": {"momentum_score": 2.15, "volatility_score": 0.45},
+            "units": {"momentum_score": "z_score", "volatility_score": "standard_deviation"},
+            "corporate_action_policy": "provider_adjusted",
+            "survivorship_policy": "point_in_time",
+            "license_scope": "vendor",
+            "allowed_use": ["research", "experiment"],
+            "entitlement_tags": ["alpha_db-research"],
+            "provider_record_ref": "ref://fmp/mom/2330.TWSE/20260610",
+        }
+    ]
+    alpha_records = alpha_adapter.records_from_payload(
+        alpha_payload,
+        alpha_vendor_id="fmp-alpha-factors",
+        signal_id="momentum_factor_v1",
+    )
+    assert len(alpha_records) == 1
+    assert alpha_records[0].metadata["signal_id"] == "momentum_factor_v1"
+    assert alpha_records[0].metadata["governance"]["direct_execution_allowed"] is False
+
+    # 3. Build Evidence Bundles and persist to durable store
+    evidence_path = Path(tmp_path) / "source_evidence.jsonl"
+    repo = JsonlEvidenceRepository(evidence_path)
+    builder = EvidenceBundleBuilder(repo)
+
+    social_item = EvidenceItem(
+        evidence_item_id="evi-st-2330-001",
+        source_id=social_records[0].source_id,
+        item_type="social_post",
+        content_ref=social_records[0].content_ref,
+        citation_label="StockTwits Discussion 2330 2026-06-10",
+        body=str(social_records[0].metadata["body"]),
+        event_time="2026-06-10T11:00:00Z",
+        available_time="2026-06-10T11:00:30Z",
+        confidence=0.95,
+        access_scope=("research",),
+        metadata={"entitlement_tags": ["social-research"]},
+    )
+    social_bundle = builder.build_bundle(
+        source_records=[social_records[0]],
+        evidence_items=[social_item],
+        summary="StockTwits sentiment discussion for 2330",
+        created_by="source-ingest",
+        evidence_bundle_id="evbundle-st-2330-001",
+    )
+    builder.build_knowledge_object(
+        knowledge_object_id="kobj-st-2330-001",
+        source_record=social_records[0],
+        evidence_item=social_item,
+        evidence_bundle=social_bundle,
+        title=social_records[0].title,
+        text=social_item.body,
+        source_type="social",
+        keywords=["StockTwits", "2330", "TSM", "earnings", "guidance"],
+    )
+
+    alpha_item = EvidenceItem(
+        evidence_item_id="evi-fmp-mom-2330-001",
+        source_id=alpha_records[0].source_id,
+        item_type="alpha_signal",
+        content_ref=alpha_records[0].content_ref,
+        citation_label="FMP Momentum Signal 2330.TWSE 2026-06-10",
+        body="FMP factor signal momentum z-score 2.15 on 2026-06-10.",
+        event_time="2026-06-10T13:30:00Z",
+        available_time="2026-06-10T14:00:00Z",
+        confidence=1.0,
+        access_scope=("research",),
+        metadata={"entitlement_tags": ["alpha_db-research"]},
+    )
+    alpha_bundle = builder.build_bundle(
+        source_records=[alpha_records[0]],
+        evidence_items=[alpha_item],
+        summary="FMP momentum alpha signal for 2330.TWSE",
+        created_by="source-ingest",
+        evidence_bundle_id="evbundle-fmp-mom-2330-001",
+    )
+    builder.build_knowledge_object(
+        knowledge_object_id="kobj-fmp-mom-2330-001",
+        source_record=alpha_records[0],
+        evidence_item=alpha_item,
+        evidence_bundle=alpha_bundle,
+        title=alpha_records[0].title,
+        text=alpha_item.body,
+        source_type="alpha_db",
+        keywords=["FMP", "momentum", "alpha", "factor", "2330.TWSE"],
+    )
+
+    # 4. Refresh search index and query SearchGateway
+    search_app = create_search_app(
+        index_store_path=Path(tmp_path) / "search-index.jsonl",
+        evidence_store_path=evidence_path,
+        materialize_store_path=Path(tmp_path) / "search-materialize.jsonl",
+        pipeline_store_path=Path(tmp_path) / "search-pipeline.jsonl",
+        freshness_sla_seconds=60,
+    )
+    search_client = TestClient(search_app)
+
+    refresh_resp = search_client.post("/api/search/index/refresh", json={"triggered_by": "canary_test"})
+    assert refresh_resp.status_code == 200
+
+    # Query Social
+    st_query = search_client.post(
+        "/api/search/query",
+        json={
+            "request_id": "req-social-canary",
+            "query": "StockTwits outstanding earnings guidance",
+            "persona_id": "operator-workbench",
+            "workspace_id": "research-workbench",
+            "source_types": ["social"],
+            "access_context": {
+                "persona_id": "operator-workbench",
+                "workspace_id": "research-workbench",
+                "environment": "paper",
+                "access_scopes": ["research"],
+                "license_scopes": ["community_admitted"],
+            },
+            "top_k": 5,
+        },
+    )
+    assert st_query.status_code == 200
+    st_res = st_query.json()
+    assert st_res["index_adapter"]["adapter_state"] == "durable"
+    assert len(st_res["results"]) >= 1
+
+    # Query Alpha DB
+    alpha_query = search_client.post(
+        "/api/search/query",
+        json={
+            "request_id": "req-alpha-canary",
+            "query": "FMP momentum factor signal z-score",
+            "persona_id": "operator-workbench",
+            "workspace_id": "research-workbench",
+            "source_types": ["alpha_db"],
+            "access_context": {
+                "persona_id": "operator-workbench",
+                "workspace_id": "research-workbench",
+                "environment": "paper",
+                "access_scopes": ["research"],
+                "license_scopes": ["vendor"],
+            },
+            "top_k": 5,
+        },
+    )
+    assert alpha_query.status_code == 200
+    alpha_res = alpha_query.json()
+    assert alpha_res["index_adapter"]["adapter_state"] == "durable"
+    assert len(alpha_res["results"]) >= 1

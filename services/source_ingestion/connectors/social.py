@@ -15,7 +15,9 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from typing import Any, Mapping, Sequence
+import urllib.request
 
+from services.external_egress import open_external_url
 from services.source_ingestion.source_health import SourceHealth
 
 from .base import (
@@ -36,6 +38,7 @@ from ..external_sources import validate_external_source_record
 
 SOCIAL_ADMITTED_CONNECTOR_ID = "social-admitted-market-discussion"
 SOCIAL_ADMITTED_SCHEMA_HASH = "social_admitted_post.v1"
+STOCKTWITS_API_BASE_URL = "https://api.stocktwits.com/api/2"
 
 
 def _utc_now() -> str:
@@ -57,7 +60,7 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
     """Governed social market-discussion adapter with trust and tombstone policies."""
 
     connector_id: str = SOCIAL_ADMITTED_CONNECTOR_ID
-    secret_ref_id: str = "env://SOCIAL_API_KEY"
+    secret_ref_id: str = "env://STOCKTWITS_API_KEY"
     max_records: int = 100
     source_metadata: SourceMetadata | Mapping[str, Any] | None = None
     connector_metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -66,7 +69,7 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
         return SourceConnector(
             connector_id=self.connector_id,
             source_type=SourceType.SOCIAL,
-            provider="Admitted Social Discussion Feed",
+            provider="StockTwits",
             license_scope="community_admitted",
             auth_type=AuthType.API_KEY,
             supported_modes=(ConnectorMode.BATCH,),
@@ -76,22 +79,22 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
                 allowed_use=("research", "search_index", "experiment", "sentiment_modeling"),
                 attribution_required=True,
                 redistribution_allowed=False,
-                policy_ref="source-ingest://license/social-admitted-terms-v1",
+                policy_ref="source-ingest://license/stocktwits-terms-v1",
             ),
             rate_limit_policy=RateLimitPolicy(
                 requests_per_minute=60,
                 burst=5,
                 retry_after_seconds=30,
                 concurrency=2,
-                policy_ref="source-ingest://policy/social-rate-limit-v1",
+                policy_ref="source-ingest://policy/stocktwits-rate-limit-v1",
             ),
             source_metadata=self.source_metadata
             or SourceMetadata(
-                display_name="Admitted Financial Social Discussion Feed",
-                homepage_url="https://api.social-finance.example.com",
-                docs_url="https://api.social-finance.example.com/docs",
-                owner="Financial Social Discussion Feed Operator",
-                tags=("social", "market_discussion", "sentiment", "research_only"),
+                display_name="StockTwits market discussion stream",
+                homepage_url="https://stocktwits.com",
+                docs_url="https://api.stocktwits.com/developers/docs",
+                owner="StockTwits, Inc.",
+                tags=("social", "market_discussion", "stocktwits", "sentiment", "research_only"),
             ),
             metadata={
                 "source_class": "social",
@@ -99,6 +102,7 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
                 "dataset_schema_hash": SOCIAL_ADMITTED_SCHEMA_HASH,
                 "entitlement_tags": ["social-research"],
                 "access_scope": ["research", "search_index"],
+                "allowed_host_patterns": ["api.stocktwits.com", "stocktwits.com"],
                 "governance": {
                     "direct_execution_allowed": False,
                     "canonical_sink": "SourceRecord/EvidenceBundle",
@@ -121,6 +125,29 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
             "next_watermark": None,
             "max_records": self.max_records,
         }
+
+    def fetch_payload(
+        self,
+        symbol: str = "AAPL",
+        *,
+        timeout_seconds: float = 15.0,
+    ) -> Any:
+        """Fetch live public social market discussion stream from StockTwits OpenAPI."""
+        url = f"{STOCKTWITS_API_BASE_URL}/streams/symbol/{symbol}.json"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "pantheon-source-ingest/0.1",
+            },
+        )
+        with open_external_url(
+            request,
+            caller="source_ingest.stocktwits_discussion",
+            timeout=timeout_seconds,
+        ) as response:
+            return json.loads(response.read().decode("utf-8"))
+
 
     def records_from_payload(
         self,

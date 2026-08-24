@@ -15,7 +15,9 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from typing import Any, Mapping, Sequence
+import urllib.request
 
+from services.external_egress import open_external_url
 from services.source_ingestion.source_health import SourceHealth
 
 from .base import (
@@ -37,6 +39,7 @@ from ..external_sources import validate_external_source_record
 ALPHA_DB_VENDOR_CONNECTOR_ID = "alpha-db-vendor-signals"
 ALPHA_SIGNAL_RECORD_SCHEMA_VERSION = "alpha_signal_record.v1"
 ALPHA_SIGNAL_SCHEMA_HASH = "alpha_signal_record.v1"
+FMP_API_BASE_URL = "https://financialmodelingprep.com/api/v3"
 
 
 def _utc_now() -> str:
@@ -178,7 +181,7 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
         return SourceConnector(
             connector_id=self.connector_id,
             source_type=SourceType.ALPHA_DB,
-            provider="External Alpha Factor Provider",
+            provider="Financial Modeling Prep",
             license_scope="vendor",
             auth_type=AuthType.API_KEY,
             supported_modes=(ConnectorMode.BATCH,),
@@ -188,7 +191,7 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
                 allowed_use=("research", "experiment", "feature_generation"),
                 attribution_required=True,
                 redistribution_allowed=False,
-                policy_ref="source-ingest://license/alpha-db-vendor-v1",
+                policy_ref="source-ingest://license/fmp-alpha-db-terms-v1",
             ),
             rate_limit_policy=RateLimitPolicy(
                 requests_per_minute=30,
@@ -199,11 +202,11 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
             ),
             source_metadata=self.source_metadata
             or SourceMetadata(
-                display_name="External Alpha Signal and Factor Database",
-                homepage_url="https://api.alpha-signals.example.com",
-                docs_url="https://api.alpha-signals.example.com/docs",
-                owner="External Alpha Signal Vendor",
-                tags=("alpha_db", "signals", "factors", "research_only"),
+                display_name="Financial Modeling Prep Alpha & Factor Signals",
+                homepage_url="https://financialmodelingprep.com",
+                docs_url="https://site.financialmodelingprep.com/developer/docs",
+                owner="Financial Modeling Prep",
+                tags=("alpha_db", "signals", "factors", "fmp", "research_only"),
             ),
             metadata={
                 "source_class": "alpha_signal",
@@ -211,6 +214,11 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
                 "dataset_schema_hash": ALPHA_SIGNAL_SCHEMA_HASH,
                 "entitlement_tags": ["alpha_db-research"],
                 "access_scope": ["research"],
+                "allowed_host_patterns": [
+                    "financialmodelingprep.com",
+                    "api.finmindtrade.com",
+                    "api.vendor-factors.io",
+                ],
                 "governance": {
                     "direct_execution_allowed": False,
                     "canonical_sink": "SourceRecord/EvidenceBundle",
@@ -228,13 +236,38 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
                 "secret_ref_id": "env://ALPHA_DB_API_KEY",
             },
             "request": {
-                "alpha_vendor_id": "alpha-signals-vendor-1",
+                "alpha_vendor_id": "fmp-alpha-factors",
                 "signal_id": "momentum_quality_v1",
                 "universe": ["US_EQUITY", "TW_EQUITY"],
             },
             "next_watermark": None,
             "max_records": self.max_records,
         }
+
+    def fetch_payload(
+        self,
+        entity_id: str = "AAPL",
+        signal_id: str = "technical_indicator",
+        *,
+        api_key: str = "demo",
+        timeout_seconds: float = 15.0,
+    ) -> Any:
+        """Fetch live factor/signal payload from vendor OpenAPI endpoint."""
+        url = f"{FMP_API_BASE_URL}/technical_indicator/daily/{entity_id}?type=rsi&period=14&apikey={api_key}"
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "pantheon-source-ingest/0.1",
+            },
+        )
+        with open_external_url(
+            request,
+            caller="source_ingest.alpha_db_vendor",
+            timeout=timeout_seconds,
+        ) as response:
+            return json.loads(response.read().decode("utf-8"))
+
 
     def records_from_payload(
         self,
