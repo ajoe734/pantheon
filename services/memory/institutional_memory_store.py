@@ -62,6 +62,7 @@ class SourceEventType(str, Enum):
     POSTMORTEM_PUBLISHED = "postmortem_published"
     EVOLUTION_DECISION_APPROVED = "evolution_decision_approved"
     RESEARCH_TASK_COMPLETED = "research_task_completed"
+    RESEARCH_FINDING_PUBLISHED = "research_finding_published"
     GOVERNANCE_REVIEW_CLOSED = "governance_review_closed"
     COMMITTEE_RESOLUTION_PUBLISHED = "committee_resolution_published"
     CONSULTATION_CLOSED = "consultation_closed"

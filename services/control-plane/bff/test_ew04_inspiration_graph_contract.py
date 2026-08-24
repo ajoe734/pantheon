@@ -115,3 +115,30 @@ def test_ew04_inspiration_graph_returns_404_for_unknown_artifact_even_when_datas
         payload = response.json()
         assert payload["error"]["code"] == "RESOURCE_NOT_FOUND"
         assert payload["error"]["message"] == "Artifact not found"
+
+
+def test_ew04_inspiration_graph_fallback_from_lineage_edges_does_not_synthesize_constant_weight() -> None:
+    with _seeded_client() as client:
+        # Provide lineage edges without explicit influence weight
+        bff_main.read_store._data["lineage_edges"] = [
+            {
+                "id": "edge-001",
+                "from_artifact_id": "artifact-upstream",
+                "to_artifact_id": "artifact-fallback-01",
+                "edge_type": "inspired_by",
+                "strategy_id": "alpha-strategy",
+            }
+        ]
+        bff_main.read_store._save()
+
+        projection = bff_main._ew04_inspiration_projection_from_lineage_edges("artifact-fallback-01")
+        assert projection is not None
+        assert projection["artifact_id"] == "artifact-fallback-01"
+        assert len(projection["inspiration_edges"]) == 1
+        edge = projection["inspiration_edges"][0]
+        assert edge["source_artifact_id"] == "artifact-upstream"
+        assert edge["relationship_type"] == "inspired_by"
+        assert edge["influence_weight"] is None
+        assert edge["influence_state"] == "influence_unknown"
+        assert edge["influence_weight"] != 1.0  # Must not synthesize constant 1.0
+
