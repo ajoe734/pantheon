@@ -1,5 +1,10 @@
-"""Source connector models."""
-
+from .alpha_db import (
+    ALPHA_DB_VENDOR_CONNECTOR_ID,
+    ALPHA_SIGNAL_RECORD_SCHEMA_VERSION,
+    ALPHA_SIGNAL_SCHEMA_HASH,
+    AlphaSignalRecord,
+    ExternalAlphaDbAdapter,
+)
 from .base import (
     AuthPolicy,
     AuthType,
@@ -33,11 +38,23 @@ from .finmind_taiwan import (
 )
 from .paper import OpenAlexPaperIngestAdapter
 from .repo_allowlist import RepoAllowlistEntry, RepoAllowlistProvider
+from .social import (
+    SOCIAL_ADMITTED_CONNECTOR_ID,
+    SOCIAL_ADMITTED_SCHEMA_HASH,
+    AdmittedSocialMediaAdapter,
+)
 from .taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
 from .taiwan_official import (
+    TAIFEX_DERIVATIVES_CONNECTOR_ID,
+    TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
+    TAIFEX_OPTIONS_CHIP_SCHEMA_HASH,
     TAIWAN_OFFICIAL_ENDPOINTS,
+    TDCC_SHAREHOLDING_CONNECTOR_ID,
+    TDCC_SHAREHOLDING_SCHEMA_HASH,
     TW_OFFICIAL_CONNECTOR_ID,
+    TaifexDerivativesChipAdapter,
     TaiwanOfficialMarketDatasetAdapter,
+    TdccShareholdingDistributionAdapter,
 )
 from .us_paid_broker import (
     ALPHA_VANTAGE_US_DAILY_CONNECTOR_ID,
@@ -67,7 +84,12 @@ from .yahoo_taiwan import (
 )
 
 __all__ = [
+    "ALPHA_DB_VENDOR_CONNECTOR_ID",
+    "ALPHA_SIGNAL_RECORD_SCHEMA_VERSION",
+    "ALPHA_SIGNAL_SCHEMA_HASH",
     "ALPHA_VANTAGE_US_DAILY_CONNECTOR_ID",
+    "AdmittedSocialMediaAdapter",
+    "AlphaSignalRecord",
     "AlphaVantageUsEquityDailyAdapter",
     "AuthPolicy",
     "AuthType",
@@ -78,12 +100,15 @@ __all__ = [
     "COINGECKO_SPOT_OHLC_SCHEMA_HASH",
     "COINGECKO_SPOT_PRICE_SCHEMA_HASH",
     "CoinGeckoSpotMarketAdapter",
+    "ExternalAlphaDbAdapter",
     "IngestEvent",
     "IngestRun",
     "IngestRunStatus",
     "LicensePolicy",
     "RateLimitPolicy",
     "SecretRef",
+    "SOCIAL_ADMITTED_CONNECTOR_ID",
+    "SOCIAL_ADMITTED_SCHEMA_HASH",
     "SourceConnector",
     "SourceConnectorProvider",
     "SourceEvidenceError",
@@ -113,10 +138,17 @@ __all__ = [
     "ShioajiBrokerReadbackAdapter",
     "StaticRecordsProviderExample",
     "StooqDailyOhlcvAdapter",
+    "TAIFEX_DERIVATIVES_CONNECTOR_ID",
+    "TAIFEX_FUTURES_CHIP_SCHEMA_HASH",
+    "TAIFEX_OPTIONS_CHIP_SCHEMA_HASH",
     "TAIWAN_OFFICIAL_ENDPOINTS",
+    "TDCC_SHAREHOLDING_CONNECTOR_ID",
+    "TDCC_SHAREHOLDING_SCHEMA_HASH",
     "TW_OFFICIAL_CONNECTOR_ID",
-    "MopsSourceIngestAdapter",
+    "TaifexDerivativesChipAdapter",
     "TaiwanOfficialMarketDatasetAdapter",
+    "TdccShareholdingDistributionAdapter",
+    "MopsSourceIngestAdapter",
     "TejSourceIngestAdapter",
     "YahooTaiwanBrokerTopAdapter",
     "YahooTaiwanRssAdapter",

@@ -14,6 +14,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from services.research.adapters.taiwan_market_client import MopsRouteSpec, TaiwanMarketClient, TejTableSpec
 
+from .connectors.alpha_db import ExternalAlphaDbAdapter
 from .connectors.base import SourceConnector, SourceEvidenceError, SourceRecord
 from .connectors.crypto_coingecko import CoinGeckoSpotMarketAdapter, _coin_ids_from_symbols
 from .connectors.finmind_taiwan import (
@@ -21,8 +22,13 @@ from .connectors.finmind_taiwan import (
     FinMindTaiwanBrokerDailyReportAdapter,
     FinMindTaiwanDatasetAdapter,
 )
+from .connectors.social import AdmittedSocialMediaAdapter
 from .connectors.taiwan_market import MopsSourceIngestAdapter, TejSourceIngestAdapter
-from .connectors.taiwan_official import TaiwanOfficialMarketDatasetAdapter
+from .connectors.taiwan_official import (
+    TaifexDerivativesChipAdapter,
+    TaiwanOfficialMarketDatasetAdapter,
+    TdccShareholdingDistributionAdapter,
+)
 from .connectors.us_public import (
     FRED_API_URL,
     FinraShortSaleAdapter,
@@ -52,6 +58,8 @@ class ProviderAdapterSpec:
     def build(self, connector: SourceConnector, adapter_config: Mapping[str, Any]) -> Any:
         kwargs = {key: adapter_config[key] for key in self.config_keys if key in adapter_config}
         kwargs["connector_id"] = connector.connector_id
+        if "secret_ref_id" in self.config_keys and "secret_ref_id" not in kwargs and connector.secret_ref_id:
+            kwargs["secret_ref_id"] = connector.secret_ref_id
         return self.adapter_cls(**kwargs)
 
 
@@ -89,11 +97,12 @@ def execute_provider_owned_adapter(
     adapter_config = _mapping(fetch.get("adapter_config"))
     adapter = spec.build(connector, adapter_config)
     request = {
+        **_mapping(fetch.get("adapter_config")),
         **_mapping(fetch.get("request")),
         **_mapping(job_parameters),
     }
     records = spec.handler(adapter, request, trace_id)
-    max_records = int(fetch.get("max_records") or 100)
+    max_records = int(fetch.get("max_records") or request.get("max_records") or 100)
     if max_records < 1:
         raise SourceEvidenceError("fetch.max_records must be > 0 for provider_owned_adapter")
     return tuple(_attach_run_metadata(record, token=token, request=request) for record in records[:max_records])
@@ -628,9 +637,155 @@ def _shioaji_readback(
     return adapter.records_from_readback_file(file_path, payload, trace_id=trace_id)
 
 
+def _tdcc(
+    adapter: TdccShareholdingDistributionAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    payload = request.get("payload") or request.get("rows") or request.get("data")
+    symbols = request.get("symbols") or ([request.get("symbol")] if request.get("symbol") else None) or getattr(adapter, "symbols", None)
+    if isinstance(symbols, str):
+        symbols = [s.strip() for s in symbols.split(",") if s.strip()]
+    source_dataset = str(request.get("source_dataset") or getattr(adapter, "source_dataset", "TDCC_OD_1-5"))
+    max_records = request.get("max_records") or getattr(adapter, "max_records", 100)
+    timeout_seconds = float(request.get("timeout_seconds") or 45.0)
+    if payload in (None, ""):
+        payload = adapter.fetch_payload(
+            source_dataset=source_dataset,
+            symbols=symbols,
+            max_records=max_records,
+            timeout_seconds=timeout_seconds,
+        )
+    return adapter.records_from_payload(
+        payload,
+        source_dataset=source_dataset,
+        api_endpoint=request.get("api_endpoint"),
+        trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
+        available_time=request.get("available_time"),
+        universe_tier=str(request.get("universe_tier") or "core_universe"),
+        symbols=symbols,
+        max_records=max_records,
+        trace_id=trace_id,
+    )
+
+
+def _taifex(
+    adapter: TaifexDerivativesChipAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    dataset = str(request.get("dataset") or getattr(adapter, "dataset", "taifex_futures_chip"))
+    contracts = request.get("contracts") or ([request.get("contract")] if request.get("contract") else None) or getattr(adapter, "contracts", None)
+    if isinstance(contracts, str):
+        contracts = [c.strip() for c in contracts.split(",") if c.strip()]
+    source_dataset = str(request.get("source_dataset") or dataset)
+    payload = request.get("payload") or request.get("rows") or request.get("data")
+    max_records = request.get("max_records") or getattr(adapter, "max_records", 100)
+    timeout_seconds = float(request.get("timeout_seconds") or 20.0)
+    if payload in (None, ""):
+        payload = adapter.fetch_payload(
+            dataset=dataset,
+            max_records=max_records,
+            timeout_seconds=timeout_seconds,
+        )
+    return adapter.records_from_payload(
+        payload,
+        dataset=dataset,
+        source_dataset=source_dataset,
+        api_endpoint=request.get("api_endpoint"),
+        trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
+        available_time=request.get("available_time"),
+        universe_tier=str(request.get("universe_tier") or "core_universe"),
+        contracts=contracts,
+        max_records=max_records,
+        trace_id=trace_id,
+    )
+
+
+def _social(
+    adapter: AdmittedSocialMediaAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    payload = request.get("payload") or request.get("items") or request.get("posts") or request.get("messages")
+    platform = str(request.get("platform") or getattr(adapter, "platform", "stocktwits"))
+    symbols = request.get("symbols") or ([request.get("symbol")] if request.get("symbol") else None) or getattr(adapter, "symbols", None)
+    if isinstance(symbols, str):
+        symbols = [s.strip() for s in symbols.split(",") if s.strip()]
+    max_records = request.get("max_records") or getattr(adapter, "max_records", 100)
+    timeout_seconds = float(request.get("timeout_seconds") or 15.0)
+    if payload in (None, ""):
+        symbol = _single_symbol(request) or (symbols[0] if symbols else "AAPL")
+        payload = adapter.fetch_payload(
+            symbol=symbol,
+            timeout_seconds=timeout_seconds,
+        )
+    return adapter.records_from_payload(
+        payload,
+        platform=platform,
+        symbols=symbols,
+        max_records=max_records,
+        trace_id=trace_id,
+    )
+
+
+def _alpha_db(
+    adapter: ExternalAlphaDbAdapter,
+    request: Mapping[str, Any],
+    trace_id: str,
+) -> tuple[SourceRecord, ...]:
+    payload = request.get("payload") or request.get("signals") or request.get("factors") or request.get("records")
+    signal_id = str(request.get("signal_id") or getattr(adapter, "signal_id", "technical_rsi_14d"))
+    alpha_vendor_id = str(request.get("alpha_vendor_id") or getattr(adapter, "alpha_vendor_id", "fmp-alpha-factors"))
+    signal_version = str(request.get("signal_version") or getattr(adapter, "signal_version", "v1"))
+    field_schema_version = str(request.get("field_schema_version") or getattr(adapter, "field_schema_version", "v1"))
+    universe = request.get("universe") or getattr(adapter, "universe", None) or ["US_EQUITY"]
+    if isinstance(universe, str):
+        universe = [u.strip() for u in universe.split(",") if u.strip()]
+    max_records = request.get("max_records") or getattr(adapter, "max_records", 100)
+    timeout_seconds = float(request.get("timeout_seconds") or 15.0)
+    if payload in (None, ""):
+        entity_id = _single_symbol(request) or str(request.get("entity_id") or (universe[0] if universe and universe[0] not in ("US_EQUITY", "TW_EQUITY") else "AAPL"))
+        payload = adapter.fetch_payload(
+            entity_id=entity_id,
+            signal_id=signal_id,
+            timeout_seconds=timeout_seconds,
+        )
+    return adapter.records_from_payload(
+        payload,
+        alpha_vendor_id=alpha_vendor_id,
+        signal_id=signal_id,
+        signal_version=signal_version,
+        field_schema_version=field_schema_version,
+        universe=universe,
+        max_records=max_records,
+        trace_id=trace_id,
+    )
+
+
 PROVIDER_ADAPTER_ALIASES: dict[str, str] = {
     "TaiwanOfficialMarketDatasetAdapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
     "MopsSourceIngestAdapter": "MopsSourceIngestAdapter.records_from_payload",
+    "TejSourceIngestAdapter": "TejSourceIngestAdapter.records_from_rows",
+    "TdccShareholdingDistributionAdapter": "TdccShareholdingDistributionAdapter.records_from_payload",
+    "TaifexDerivativesChipAdapter": "TaifexDerivativesChipAdapter.records_from_payload",
+    "AdmittedSocialMediaAdapter": "AdmittedSocialMediaAdapter.records_from_payload",
+    "ExternalAlphaDbAdapter": "ExternalAlphaDbAdapter.records_from_payload",
+    "FinMindTaiwanDatasetAdapter": "FinMindTaiwanDatasetAdapter.records_from_data_payload",
+    "FinMindTaiwanBrokerDailyReportAdapter": "FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
+    "FinMindTaiwanBrokerBulkBackfillAdapter": "FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
+    "YahooTaiwanBrokerTopAdapter": "YahooTaiwanBrokerTopAdapter.records_from_html",
+    "YahooTaiwanRssAdapter": "YahooTaiwanRssAdapter.records_from_rss",
+    "AnueTaiwanRssAdapter": "AnueTaiwanRssAdapter.records_from_rss",
+    "SecEdgarFilingAdapter": "SecEdgarFilingAdapter.records_from_payload",
+    "FredMacroSeriesAdapter": "FredMacroSeriesAdapter.records_from_observations_payload",
+    "FinraShortSaleAdapter": "FinraShortSaleAdapter.records_from_short_volume_text",
+    "StooqDailyOhlcvAdapter": "StooqDailyOhlcvAdapter.records_from_csv",
+    "CoinGeckoSpotMarketAdapter": "CoinGeckoSpotMarketAdapter.records_from_payload",
+    "PolygonUsEquityDailyAdapter": "PolygonUsEquityDailyAdapter.records_from_aggs_payload",
+    "AlphaVantageUsEquityDailyAdapter": "AlphaVantageUsEquityDailyAdapter.records_from_time_series_payload",
+    "IbkrBrokerReadbackAdapter": "IbkrBrokerReadbackAdapter.records_from_readback_file",
+    "ShioajiBrokerReadbackAdapter": "ShioajiBrokerReadbackAdapter.records_from_readback_file",
 }
 
 
@@ -640,6 +795,18 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=TaiwanOfficialMarketDatasetAdapter,
         handler=_taiwan_official,
         config_keys=("max_records",),
+    ),
+    "TdccShareholdingDistributionAdapter.records_from_payload": ProviderAdapterSpec(
+        token="TdccShareholdingDistributionAdapter.records_from_payload",
+        adapter_cls=TdccShareholdingDistributionAdapter,
+        handler=_tdcc,
+        config_keys=("max_records", "symbols", "source_dataset"),
+    ),
+    "TaifexDerivativesChipAdapter.records_from_payload": ProviderAdapterSpec(
+        token="TaifexDerivativesChipAdapter.records_from_payload",
+        adapter_cls=TaifexDerivativesChipAdapter,
+        handler=_taifex,
+        config_keys=("max_records", "dataset", "contracts"),
     ),
     "FinMindTaiwanDatasetAdapter.records_from_data_payload": ProviderAdapterSpec(
         token="FinMindTaiwanDatasetAdapter.records_from_data_payload",
@@ -742,5 +909,17 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=ShioajiBrokerReadbackAdapter,
         handler=_shioaji_readback,
         config_keys=("readback_file_env",),
+    ),
+    "AdmittedSocialMediaAdapter.records_from_payload": ProviderAdapterSpec(
+        token="AdmittedSocialMediaAdapter.records_from_payload",
+        adapter_cls=AdmittedSocialMediaAdapter,
+        handler=_social,
+        config_keys=("max_records", "platform", "symbols", "secret_ref_id"),
+    ),
+    "ExternalAlphaDbAdapter.records_from_payload": ProviderAdapterSpec(
+        token="ExternalAlphaDbAdapter.records_from_payload",
+        adapter_cls=ExternalAlphaDbAdapter,
+        handler=_alpha_db,
+        config_keys=("secret_ref_id", "max_records", "alpha_vendor_id", "signal_id", "signal_version", "field_schema_version", "universe"),
     ),
 }
