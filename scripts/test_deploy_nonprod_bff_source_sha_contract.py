@@ -18,11 +18,28 @@ def _root_force_recreate_inherits_exact_sha(script: str) -> bool:
     )
 
 
+def _bff_prebuild_and_recreate_inherits_exact_sha(script: str) -> bool:
+    bff_case = script.split("  bff)\n", 1)[1].split("  exec)\n", 1)[0]
+    export = 'export GIT_SHA="${PANTHEON_DEPLOY_SHA}"'
+    build = (
+        "docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler"
+    )
+    up = (
+        "docker compose -p pantheon -f docker-compose.yml up -d "
+        "--force-recreate --no-deps operator-bff loop-run-projector-scheduler"
+    )
+    return (
+        bff_case.count(export) == 1
+        and bff_case.find(export) < bff_case.find(build) < bff_case.find(up)
+    )
+
+
 def test_nonprod_bff_builds_receive_and_verify_requested_source_sha() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
     assert script.count('GIT_SHA="${PANTHEON_DEPLOY_SHA}"') >= 4
     assert _root_force_recreate_inherits_exact_sha(script)
+    assert _bff_prebuild_and_recreate_inherits_exact_sha(script)
     assert "assert_bff_source_sha()" in script
     assert (
         script.count(

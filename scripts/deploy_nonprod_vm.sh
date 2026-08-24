@@ -2396,6 +2396,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # Phase 2: Build candidate images before mutating the active runtime.
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
+    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       docker compose -p pantheon -f docker-compose.yml build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -2538,9 +2539,11 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # pressure that a full root-stack rebuild causes on the dev VM.
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
+    export GIT_SHA="${PANTHEON_DEPLOY_SHA}"
     # Phase 2: Build candidate operator-bff and loop-run-projector-scheduler images.
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
+    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler \
       || { dump_dev_root_failure_diagnostics; exit 1; }

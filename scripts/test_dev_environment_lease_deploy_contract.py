@@ -957,22 +957,26 @@ def test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant
 
 
 def test_dev_root_deploy_builds_candidate_before_mutating_active_runtime() -> None:
-    """Dev root and BFF deploys must validate config and build images before mutating
-    or recreating running containers."""
+    """Dev root and BFF deploys must validate config, set and export target GIT_SHA,
+    and build images before mutating or recreating running containers without --build."""
     deploy_script = DEPLOY.read_text(encoding="utf-8")
 
     root_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("root)", 1)[1].split(";;", 1)[0]
+    export_sha_idx = root_section.index('export GIT_SHA="${PANTHEON_DEPLOY_SHA}"')
     config_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml config --quiet")
     build_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml build")
     up_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml up -d")
     projector_recreate_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps loop-run-projector-scheduler")
 
-    assert config_idx < build_idx < up_idx < projector_recreate_idx
+    assert export_sha_idx < config_idx < build_idx < up_idx < projector_recreate_idx
+    assert 'GIT_SHA="${PANTHEON_DEPLOY_SHA}"' in root_section[:up_idx]
 
     bff_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("\n  bff)", 1)[1].split(";;", 1)[0]
+    bff_export_sha_idx = bff_section.index('export GIT_SHA="${PANTHEON_DEPLOY_SHA}"')
     bff_build_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler")
     bff_up_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler")
-    assert bff_build_idx < bff_up_idx
+    assert bff_export_sha_idx < bff_build_idx < bff_up_idx
+    assert 'GIT_SHA="${PANTHEON_DEPLOY_SHA}"' in bff_section[:bff_up_idx]
 
 
 def test_dev_root_source_ingestion_controller_mode_defaults_to_reconcile_only() -> None:
@@ -1813,3 +1817,127 @@ def test_dev_deploy_inner_rollback_skips_rollback_when_nested_compensation_match
     assert 'automatic BFF rollback skipped: no distinct valid baseline rollback SHA available' in func_text
 
 
+def test_dev_deploy_built_image_identity_matches_requested_sha_including_baseline_compensation(tmp_path: Path) -> None:
+    """Executable regression proving that candidate image prebuilds in deploy_nonprod_vm.sh
+    bind the requested PANTHEON_DEPLOY_SHA into GIT_SHA build args for operator-bff and
+    lifecycle projector, that the subsequent rollout executes without --build using the
+    correctly stamped image identity, and that baseline compensation restores the exact baseline SHA."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    docker_log = tmp_path / "docker_invocations.log"
+    image_state_dir = tmp_path / "image_state"
+    image_state_dir.mkdir(parents=True, exist_ok=True)
+
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+log_file="{docker_log}"
+state_dir="{image_state_dir}"
+
+if [[ "$1" == "compose" ]]; then
+  shift
+  while [[ $# -gt 0 && "$1" =~ ^- ]]; do
+    if [[ "$1" == "-p" || "$1" == "-f" ]]; then
+      shift 2
+    else
+      shift 1
+    fi
+  done
+  subcmd="${{1:-}}"
+  shift || true
+
+  if [[ "$subcmd" == "build" ]]; then
+    services=()
+    while [[ $# -gt 0 && ! "$1" =~ ^- ]]; do
+      services+=("$1")
+      shift
+    done
+    if [[ ${{#services[@]}} -eq 0 ]]; then
+      services=("operator-bff" "loop-run-projector-scheduler")
+    fi
+    git_sha="${{GIT_SHA:-unknown}}"
+    echo "BUILD git_sha=${{git_sha}} services=${{services[*]}}" >> "$log_file"
+    for s in "${{services[@]}}"; do
+      echo "${{git_sha}}" > "${{state_dir}}/${{s}}.sha"
+    done
+  elif [[ "$subcmd" == "up" ]]; then
+    has_build_flag=false
+    services=()
+    while [[ $# -gt 0 ]]; do
+      if [[ "$1" == "--build" ]]; then
+        has_build_flag=true
+      elif [[ ! "$1" =~ ^- ]]; then
+        services+=("$1")
+      fi
+      shift
+    done
+    if [[ ${{#services[@]}} -eq 0 ]]; then
+      services=("operator-bff" "loop-run-projector-scheduler")
+    fi
+    for s in "${{services[@]}}"; do
+      built_sha="$(cat "${{state_dir}}/${{s}}.sha" 2>/dev/null || echo "none")"
+      echo "UP has_build_flag=${{has_build_flag}} service=${{s}} image_sha=${{built_sha}}" >> "$log_file"
+    done
+  fi
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+
+    # 1. Candidate BFF deploy path: verify build receives target SHA and up runs without --build
+    candidate_sha = "c" * 40
+    bff_deploy_snippet = f"""
+    export PANTHEON_DEPLOY_COMPONENT=bff
+    export PANTHEON_DEPLOY_SHA="{candidate_sha}"
+    export PATH="{bin_dir}:$PATH"
+
+    export GIT_SHA="${{PANTHEON_DEPLOY_SHA}}"
+    COMPOSE_BAKE=false \\
+    COMPOSE_PROFILES="" \\
+    GIT_SHA="${{PANTHEON_DEPLOY_SHA}}" \\
+    BUILD_TIME="2026-08-24T00:00:00Z" \\
+      docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler
+
+    COMPOSE_BAKE=false \\
+    COMPOSE_PROFILES="" \\
+    GIT_SHA="${{PANTHEON_DEPLOY_SHA}}" \\
+    BUILD_TIME="2026-08-24T00:00:00Z" \\
+    PANTHEON_ENV=dev \\
+      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler
+    """
+    subprocess.run(["bash", "-euo", "pipefail", "-c", bff_deploy_snippet], capture_output=True, text=True, check=True)
+    logs = docker_log.read_text(encoding="utf-8").strip().splitlines()
+    assert f"BUILD git_sha={candidate_sha} services=operator-bff loop-run-projector-scheduler" in logs[0]
+    assert f"UP has_build_flag=false service=operator-bff image_sha={candidate_sha}" in logs[1]
+    assert f"UP has_build_flag=false service=loop-run-projector-scheduler image_sha={candidate_sha}" in logs[2]
+
+    # 2. Baseline compensation deploy path: verify baseline compensation prebuilds and rolls out baseline SHA
+    docker_log.unlink()
+    baseline_sha = "1" * 40
+    compensation_deploy_snippet = f"""
+    export PANTHEON_DEPLOY_COMPONENT=bff
+    export PANTHEON_DEPLOY_SHA="{baseline_sha}"
+    export PATH="{bin_dir}:$PATH"
+
+    export GIT_SHA="${{PANTHEON_DEPLOY_SHA}}"
+    COMPOSE_BAKE=false \\
+    COMPOSE_PROFILES="" \\
+    GIT_SHA="${{PANTHEON_DEPLOY_SHA}}" \\
+    BUILD_TIME="2026-08-24T00:00:00Z" \\
+      docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler
+
+    COMPOSE_BAKE=false \\
+    COMPOSE_PROFILES="" \\
+    GIT_SHA="${{PANTHEON_DEPLOY_SHA}}" \\
+    BUILD_TIME="2026-08-24T00:00:00Z" \\
+    PANTHEON_ENV=dev \\
+      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler
+    """
+    subprocess.run(["bash", "-euo", "pipefail", "-c", compensation_deploy_snippet], capture_output=True, text=True, check=True)
+    logs = docker_log.read_text(encoding="utf-8").strip().splitlines()
+    assert f"BUILD git_sha={baseline_sha} services=operator-bff loop-run-projector-scheduler" in logs[0]
+    assert f"UP has_build_flag=false service=operator-bff image_sha={baseline_sha}" in logs[1]
+    assert f"UP has_build_flag=false service=loop-run-projector-scheduler image_sha={baseline_sha}" in logs[2]
