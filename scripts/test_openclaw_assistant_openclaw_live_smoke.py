@@ -28,6 +28,9 @@ def _fake_curl_script(readiness_steps: list[str]) -> str:
             http://*|https://*) url="$arg" ;;
           esac
         done
+        if [[ -n "${{FAKE_CURL_ARGS_FILE:-}}" ]]; then
+          printf '%s\\n' "$*" >> "$FAKE_CURL_ARGS_FILE"
+        fi
         printf '%s\\n' "$url" >> "$calls_file"
         if [[ "$url" == *"/readiness/openclaw?auth_probe=true" ]]; then
           count=0
@@ -59,7 +62,13 @@ def _fake_curl_script(readiness_steps: list[str]) -> str:
     )
 
 
-def _run_smoke(tmp_path: Path, steps: list[str], *, budget: int = 3) -> subprocess.CompletedProcess[str]:
+def _run_smoke(
+    tmp_path: Path,
+    steps: list[str],
+    *,
+    budget: int = 3,
+    service_token: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_curl = fake_bin / "curl"
@@ -68,6 +77,7 @@ def _run_smoke(tmp_path: Path, steps: list[str], *, budget: int = 3) -> subproce
     state_file = tmp_path / "readiness-count"
     steps_file = tmp_path / "readiness-steps"
     calls_file = tmp_path / "curl-calls"
+    args_file = tmp_path / "curl-args"
     steps_file.write_text("\n".join(steps) + "\n", encoding="utf-8")
     env = {
         **os.environ,
@@ -75,10 +85,13 @@ def _run_smoke(tmp_path: Path, steps: list[str], *, budget: int = 3) -> subproce
         "FAKE_CURL_STATE_FILE": str(state_file),
         "FAKE_CURL_STEPS_FILE": str(steps_file),
         "FAKE_CURL_CALLS_FILE": str(calls_file),
+        "FAKE_CURL_ARGS_FILE": str(args_file),
         "OPENCLAW_READINESS_TOTAL_BUDGET_SECONDS": str(budget),
         "OPENCLAW_READINESS_ATTEMPT_TIMEOUT_SECONDS": "1",
         "OPENCLAW_READINESS_RETRY_DELAY_SECONDS": "1",
     }
+    if service_token is not None:
+        env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"] = service_token
     result = subprocess.run(
         ["bash", str(SCRIPT)],
         cwd=ROOT,
@@ -90,6 +103,7 @@ def _run_smoke(tmp_path: Path, steps: list[str], *, budget: int = 3) -> subproce
     )
     result.readiness_attempts = int(state_file.read_text(encoding="utf-8"))  # type: ignore[attr-defined]
     result.calls = calls_file.read_text(encoding="utf-8").splitlines()  # type: ignore[attr-defined]
+    result.curl_args = args_file.read_text(encoding="utf-8").splitlines()  # type: ignore[attr-defined]
     return result
 
 
@@ -145,3 +159,11 @@ def test_live_turns_remain_single_attempts(tmp_path: Path) -> None:
     assert sum("/readiness/openclaw" in call for call in result.calls) == 1  # type: ignore[attr-defined]
     assert sum(call.endswith("/invoke") for call in result.calls) == 1  # type: ignore[attr-defined]
     assert sum(call.endswith("/invoke/stream") for call in result.calls) == 1  # type: ignore[attr-defined]
+
+
+def test_service_token_is_forwarded_to_every_adapter_request(tmp_path: Path) -> None:
+    result = _run_smoke(tmp_path, ["ready"], service_token="strict-service-token")
+
+    assert result.returncode == 0, result.stderr
+    captured_args = "\n".join(result.curl_args)  # type: ignore[attr-defined]
+    assert captured_args.count("X-Pantheon-Service-Token: strict-service-token") == 3
