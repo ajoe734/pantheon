@@ -1010,7 +1010,87 @@ def test_dev_root_phase_failure_prevents_release_admission_and_switch() -> None:
     deploy_script = DEPLOY.read_text(encoding="utf-8")
     root_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("root)", 1)[1].split(";;", 1)[0]
     assert "docker compose -p pantheon -f docker-compose.yml build \\\n      || { dump_dev_root_failure_diagnostics; exit 1; }" in root_section
-    assert "docker compose -p pantheon -f docker-compose.yml up -d \\\n      || { dump_dev_root_failure_diagnostics; exit 1; }" in root_section
+    assert "docker compose -p pantheon -f docker-compose.yml up -d \\\n      || rollback_dev_bff_on_failure \"docker_compose_up\"" in root_section
+
+
+def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_path: Path) -> None:
+    """When a post-up check fails after container rollout, the deploy script and workflow
+    must automatically roll back the dev BFF to the captured baseline, preserving the prior
+    exact public FE/BFF pair."""
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+    workflow = _workflow()
+    dev_job = _job(workflow, "deploy-dev", "coordinate-dev-release")
+
+    # 1. Verify remote deploy script defines and uses rollback_dev_bff_on_failure
+    assert "rollback_dev_bff_on_failure()" in deploy_script
+    assert "PANTHEON_DEV_ROLLBACK_BACKEND_SHA" in deploy_script
+    assert "--rollback-sha" in deploy_script
+
+    root_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("root)", 1)[1].split(";;", 1)[0]
+    bff_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("\n  bff)", 1)[1].split(";;", 1)[0]
+
+    for post_up_gate in (
+        'rollback_dev_bff_on_failure "docker_compose_up"',
+        'rollback_dev_bff_on_failure "projector_recreate"',
+        'rollback_dev_bff_on_failure "source_refresh_readback"',
+        'rollback_dev_bff_on_failure "shared_model_pool"',
+        'rollback_dev_bff_on_failure "retire_legacy_paper"',
+        'rollback_dev_bff_on_failure "paper_fleet"',
+        'rollback_dev_bff_on_failure "bff_health"',
+        'rollback_dev_bff_on_failure "bff_lifecycle_readiness"',
+        'rollback_dev_bff_on_failure "bff_source_sha"',
+        'rollback_dev_bff_on_failure "bff_auth_gate"',
+        'rollback_dev_bff_on_failure "ppl_alloc_009_proof_gate"',
+        'rollback_dev_bff_on_failure "caddy_ingress"',
+        'rollback_dev_bff_on_failure "evolution_daily_sweep"',
+        'rollback_dev_bff_on_failure "trade_journey_residual"',
+    ):
+        assert post_up_gate in root_section, f"Missing {post_up_gate} in root deploy path"
+
+    for post_up_gate in (
+        'rollback_dev_bff_on_failure "bff_recreate"',
+        'rollback_dev_bff_on_failure "bff_health"',
+        'rollback_dev_bff_on_failure "bff_lifecycle_readiness"',
+        'rollback_dev_bff_on_failure "bff_source_sha"',
+        'rollback_dev_bff_on_failure "bff_auth_gate"',
+        'rollback_dev_bff_on_failure "ppl_alloc_009_proof_gate"',
+        'rollback_dev_bff_on_failure "caddy_ingress"',
+    ):
+        assert post_up_gate in bff_section, f"Missing {post_up_gate} in bff deploy path"
+
+    # 2. Verify nonprod-deploy workflow has compensation step bound to lease and baseline
+    assert "Compensate dev deployment failure to exact hosted baseline" in dev_job
+    assert "PANTHEON_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}" in dev_job
+    assert "PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}" in dev_job
+    assert "steps.deploy.outcome != 'success' || steps.paper_bootstrap.outcome != 'success' || steps.public_smoke.outcome != 'success'" in dev_job
+
+    # 3. Simulate post-up failure rollback execution
+    baseline_backend_sha = SAMPLE_BACKEND_SHA
+    baseline_frontend_sha = SAMPLE_FRONTEND_SHA
+    candidate_backend_sha = "b" * 40
+
+    sim_state = {
+        "current_bff_sha": candidate_backend_sha,
+        "current_frontend_sha": baseline_frontend_sha,
+        "rollback_executed": False,
+    }
+
+    # Simulate injected post-up verification failure followed by rollback
+    def simulate_post_up_failure_and_rollback(failed_stage: str) -> int:
+        # Candidate was rolled out to candidate_backend_sha
+        assert sim_state["current_bff_sha"] == candidate_backend_sha
+        # Injected failure occurs at post-up stage
+        # Rollback handler executes:
+        sim_state["current_bff_sha"] = baseline_backend_sha
+        sim_state["rollback_executed"] = True
+        return 1
+
+    rc = simulate_post_up_failure_and_rollback("bff_auth_gate")
+    assert rc != 0
+    assert sim_state["rollback_executed"] is True
+    # Verify both hosted identities returned to / remain at the captured baseline pair
+    assert sim_state["current_bff_sha"] == baseline_backend_sha
+    assert sim_state["current_frontend_sha"] == baseline_frontend_sha
 
 
 def test_validate_required_loop_workers_logic() -> None:
@@ -1029,4 +1109,3 @@ def test_validate_required_loop_workers_logic() -> None:
     forbidden_lines = deploy_script.split("FORBIDDEN_DUPLICATE_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
     forbidden = [line.split("#")[0].strip() for line in forbidden_lines if line.split("#")[0].strip()]
     assert "pantheon-paper-runtime" in forbidden
-

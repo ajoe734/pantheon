@@ -832,6 +832,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
           DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '1200' }}
+          PANTHEON_DEV_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -866,6 +867,7 @@ jobs:
             --sha "${TARGET_SHA}"
             --project-id "${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}"
             --deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"
+            --rollback-sha "${{ steps.rollback_baseline.outputs.sha }}"
           )
           [[ "${ALLOW_DIRTY}" == "true" ]] && args+=(--allow-dirty)
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
@@ -1259,6 +1261,71 @@ jobs:
                 "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}"
               echo "Workshop ${workshop_id} and proposal proposal-${workshop_id} survived operator-bff restart with exactly-once replay and pending outbox recovery." >> "$GITHUB_STEP_SUMMARY"
             '
+
+      - name: Compensate dev deployment failure to exact hosted baseline
+        id: deploy_compensation
+        if: ${{ always() && steps.lease.outcome == 'success' && steps.rollback_baseline.outputs.sha != '' && (steps.deploy.outcome != 'success' || steps.paper_bootstrap.outcome != 'success' || steps.public_smoke.outcome != 'success') }}
+        continue-on-error: true
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+          PANTHEON_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
+          PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
+          PANTHEON_FAILED_BACKEND_SHA: ${{ steps.target.outputs.sha }}
+          PANTHEON_FAILED_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
+          DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '1200' }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
+          printf '%s  %s\n' \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+          echo "Dev deploy or smoke failed; rolling back BFF to baseline ${PANTHEON_ROLLBACK_BACKEND_SHA}"
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+            bash "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh" \
+              --environment dev \
+              --component bff \
+              --sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
+              --project-id "${GCP_DEPLOY_PROJECT_ID}" \
+              --deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"
+          actual_bff="$(curl -fsS "${DEV_BFF_URL}/bff/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")')"
+          [[ "${actual_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]
+          actual_fe="$(curl -fsS "${DEV_FE_URL}/deployment.json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("frontendSha") or d.get("commit") or "")')"
+          [[ "${actual_fe}" == "${PANTHEON_ROLLBACK_FRONTEND_SHA}" ]]
+          echo "Restored exact hosted dev baseline pair: BFF=${actual_bff} FE=${actual_fe}" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Stop heartbeat and release only after complete success
         id: lease_cleanup
