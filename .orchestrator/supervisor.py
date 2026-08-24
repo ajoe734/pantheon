@@ -3458,11 +3458,16 @@ def check_worker_tree_clean(
     return mode != "block", message
 
 
+class StaleDispatchBeforeLaunch(RuntimeError):
+    """The canonical task assignment changed before adapter process spawn."""
+
+
 def start_worker_for_request(
     config: dict[str, Any],
     state: dict[str, Any],
     request: DeliveryRequest,
     *,
+    dispatch_event: Mapping[str, Any],
     queue_event_id: str | None,
     attempt_count: int,
     event_id_for_log: str | None,
@@ -3498,7 +3503,34 @@ def start_worker_for_request(
         activity_type=activity_type,
         activity_message=activity_message,
     )
-    result = adapter.deliver(request)
+    delivery_invoked = False
+    try:
+        # Keep the canonical assignment read lock through process creation.
+        # Human/Ops reassignment takes the exclusive side of this lock, so a
+        # committed owner, reviewer, or generation change can never race past
+        # this final read and still launch the stale queue snapshot.
+        with canonical_task_state_lock_file(
+            config_path(config, "status_file"),
+            shared=True,
+            nonblocking=False,
+        ):
+            latest_task_map = task_index_from_status(config, load_status(config))
+            stale_message = stale_dispatch_skip_message(
+                config,
+                dict(dispatch_event),
+                latest_task_map,
+            )
+            if stale_message:
+                raise StaleDispatchBeforeLaunch(stale_message)
+            delivery_invoked = True
+            result = adapter.deliver(request)
+    except BaseException:
+        if not delivery_invoked:
+            # No adapter process can exist yet. Remove the crash-recovery
+            # marker so a deliberate stale cancellation is not mistaken for
+            # an ambiguous in-flight launch on the next supervisor cycle.
+            _discard_unlaunched_runtime_phase_intent(config, state)
+        raise
     if not result.ok:
         failure_run_id = (
             f"{event_id_for_log or queue_event_id}-attempt-{max(1, int(attempt_count))}"
@@ -3979,16 +4011,38 @@ def process_queue(
             record["error"] = late_skip_message
             changed = True
             continue
-        record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
+        attempt_count = int(record.get("attempt_count", 0)) + 1
+        try:
+            ok, worker_outcome, delivery = start_worker_for_request(
+                config,
+                state,
+                request,
+                dispatch_event=event,
+                queue_event_id=event_id,
+                attempt_count=attempt_count,
+                event_id_for_log=event_id,
+            )
+        except StaleDispatchBeforeLaunch as exc:
+            record["status"] = "completed"
+            record["processed_at"] = utc_now()
+            record["skip_reason"] = "task_generation_changed_before_launch"
+            record["error"] = str(exc)
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name")
+                    or event.get("target_agent"),
+                    "message": str(exc),
+                    "queue_event_id": event_id,
+                    "dispatch_reason": event.get("reason"),
+                },
+            )
+            changed = True
+            continue
+        record["attempt_count"] = attempt_count
         record["last_attempt_at"] = utc_now()
-        ok, worker_outcome, delivery = start_worker_for_request(
-            config,
-            state,
-            request,
-            queue_event_id=event_id,
-            attempt_count=record["attempt_count"],
-            event_id_for_log=event_id,
-        )
         if not ok:
             failure_run_id = (
                 f"{event_id}-attempt-{max(1, int(record.get('attempt_count', 0)))}"
@@ -6410,6 +6464,48 @@ def _persist_runtime_phase_launch_intent(
     if scratch_reservation is None:
         raise RuntimeError("detached runtime phase lost its worker launch reservation")
     scratch_reservation["launch_intent"] = deepcopy(intent)
+
+
+def _discard_unlaunched_runtime_phase_intent(
+    config: dict[str, Any],
+    scratch: dict[str, Any],
+) -> None:
+    """Remove the exact launch intent after a pre-spawn canonical rejection."""
+
+    context = _RUNTIME_PHASE_CONTEXT.get()
+    if not isinstance(context, dict):
+        return
+    phase_name = str(context.get("phase_name") or "")
+    reservation_token = str(context.get("reservation_token") or "")
+    expected_digest = str(context.get("expected_digest") or "")
+    if not phase_name or not reservation_token or not expected_digest:
+        raise RuntimeError("reserved runtime phase launch context is incomplete")
+
+    with _measured_runtime_state_lock(config):
+        current = load_runtime_state(config)
+        reservation = _runtime_phase_reservation_record(
+            current,
+            phase_name,
+            reservation_token,
+        )
+        if reservation is None or _runtime_state_cas_digest(current) != expected_digest:
+            raise RuntimeError(
+                "runtime phase changed before stale launch intent cancellation"
+            )
+        if not isinstance(reservation.get("launch_intent"), Mapping):
+            raise RuntimeError("reserved runtime phase lost its worker launch intent")
+        reservation.pop("launch_intent", None)
+        save_runtime_state(config, current)
+        context["expected_digest"] = _runtime_state_cas_digest(current)
+
+    scratch_reservation = _runtime_phase_reservation_record(
+        scratch,
+        phase_name,
+        reservation_token,
+    )
+    if scratch_reservation is None:
+        raise RuntimeError("detached runtime phase lost its worker launch reservation")
+    scratch_reservation.pop("launch_intent", None)
 
 
 def _persist_runtime_phase_launch_receipt(
