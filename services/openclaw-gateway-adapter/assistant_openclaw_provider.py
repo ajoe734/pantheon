@@ -340,16 +340,19 @@ class AssistantOpenClawProvider:
             )
 
         # The CLI only reads the prompt from `-m/--message <text>` (argv); it has
-        # no stdin mode. Guard the argv byte budget so an oversized prompt fails
-        # with a clear error instead of "[Errno 7] Argument list too long".
+        # no stdin mode.  Management AI context packs can exceed the safe argv
+        # budget, even when the user's question is small.  Those requests keep
+        # the same OpenClaw provider and agent, but use its body-based
+        # OpenResponses transport instead of silently truncating context or
+        # falling back to a synthetic BFF answer.
         prompt_bytes = len(prompt.encode("utf-8"))
         if prompt_bytes > _MAX_ARGV_PROMPT_BYTES:
-            raise OpenClawProviderError(
-                f"prompt is {prompt_bytes} bytes, exceeding the {_MAX_ARGV_PROMPT_BYTES}-byte "
-                "argv limit for `openclaw agent --message`. Trim the context pack or route "
-                "this turn through the gateway HTTP /v1/responses endpoint.",
-                status_code=413,
-                error_code="OPENCLAW_PROMPT_TOO_LARGE",
+            return self._invoke_oversized_prompt_via_openresponses(
+                prompt,
+                mode=mode,
+                operator_id=operator_id,
+                session_id=session_id,
+                metadata=metadata,
             )
 
         request_id = str(uuid.uuid4())
@@ -441,6 +444,69 @@ class AssistantOpenClawProvider:
             agent_id=selected_agent_id,
         )
 
+        return OpenClawProviderResult(
+            provider=OPENCLAW_PROVIDER,
+            mode=mode,
+            status="completed",
+            output=output,
+            redaction={"provider_invocation": {"redacted_fields": 0}},
+        )
+
+    def _invoke_oversized_prompt_via_openresponses(
+        self,
+        prompt: str,
+        *,
+        mode: str,
+        operator_id: Optional[str],
+        session_id: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+    ) -> OpenClawProviderResult:
+        """Run a large normal invocation through the existing Responses transport.
+
+        ``openclaw agent --message`` is argv-only, while ``POST /v1/responses``
+        accepts the same prompt in a request body.  Collapsing the normalized
+        terminal stream back into the standard invoke result keeps the BFF's
+        existing adapter contract intact and preserves typed Responses failures.
+        """
+
+        metadata_session = str((metadata or {}).get("session_id") or "").strip()
+        session_user = str(session_id or metadata_session or operator_id or "").strip() or None
+        events = list(
+            self.stream(
+                prompt,
+                mode=mode,
+                operator_id=operator_id,
+                session_user=session_user,
+            )
+        )
+        error = next((event for event in events if event.get("type") == "error"), None)
+        if error is not None:
+            status_code = error.get("status_code")
+            try:
+                normalized_status = int(status_code) if status_code is not None else 502
+            except (TypeError, ValueError):
+                normalized_status = 502
+            raise OpenClawProviderError(
+                str(error.get("message") or "OpenResponses invocation failed."),
+                status_code=normalized_status,
+                error_code=str(error.get("error_code") or "OPENCLAW_RESPONSES_FAILED"),
+            )
+        done = next((event for event in reversed(events) if event.get("type") == "done"), None)
+        if done is None or not str(done.get("text") or "").strip():
+            raise OpenClawProviderError(
+                "Gateway completed /v1/responses without assistant text.",
+                status_code=502,
+                error_code="OPENCLAW_RESPONSES_EMPTY",
+            )
+        output = self._build_output(
+            text=str(done["text"]),
+            request_id=str(uuid.uuid4()),
+            elapsed_ms=max(0, int(done.get("elapsed_ms") or 0)),
+            stderr="",
+            agent_id=self._agent_id,
+        )
+        output["transport"] = "responses_http"
+        output["transport_reason"] = "argv_prompt_exceeds_safe_limit"
         return OpenClawProviderResult(
             provider=OPENCLAW_PROVIDER,
             mode=mode,

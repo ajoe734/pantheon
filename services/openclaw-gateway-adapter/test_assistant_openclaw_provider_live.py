@@ -451,10 +451,15 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(env.get("OPENCLAW_STATE_DIR"), "/home/node/.openclaw")
         self.assertEqual(env.get("HOME"), "/home/node")
 
-    def test_invoke_oversized_prompt_fails_loudly(self) -> None:
-        """A prompt beyond the argv byte budget raises OPENCLAW_PROMPT_TOO_LARGE
-        instead of silently overflowing MAX_ARG_STRLEN or dropping the prompt."""
+    def test_invoke_oversized_prompt_uses_responses_http_transport(self) -> None:
+        """Large Management AI context uses the body-based Responses transport.
+
+        The complete prompt must be preserved; the CLI cannot safely accept it
+        as one argv value.  This prevents a BFF deterministic fallback caused
+        solely by the adapter's argv transport limit.
+        """
         calls: list = []
+        captured: dict = {}
 
         def fake_run(cmd, **kw):
             calls.append(cmd)
@@ -464,12 +469,58 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
                 stderr = ""
             return R()
 
+        class FakeResp:
+            def __iter__(self):
+                return iter([
+                    b'data: {"type":"response.output_text.done","text":"large provider answer"}\n',
+                    b'data: {"type":"response.completed"}\n',
+                    b"data: [DONE]\n",
+                ])
+
+            def close(self):
+                pass
+
+        def fake_urlopen(req, timeout=None):
+            captured["url"] = req.full_url
+            captured["body"] = req.data
+            return FakeResp()
+
         big_prompt = "x" * (96 * 1024 + 1)
         provider = self._make_provider(run_func=fake_run)
-        with self.assertRaises(OpenClawProviderError) as ctx:
-            provider.invoke(big_prompt, operator_id="op-1")
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_PROMPT_TOO_LARGE")
-        self.assertFalse(calls, "subprocess must not run for an oversized prompt")
+        with patch("urllib.request.urlopen", fake_urlopen):
+            result = provider.invoke(
+                big_prompt,
+                operator_id="op-1",
+                session_id="session-large-prompt",
+            )
+
+        self.assertFalse(calls, "CLI must not receive an oversized argv prompt")
+        self.assertEqual(captured["url"], "http://openclaw-gateway:18789/v1/responses")
+        body = json.loads(captured["body"].decode("utf-8"))
+        self.assertEqual(body["input"], big_prompt)
+        self.assertTrue(body["stream"])
+        self.assertEqual(body["user"], "session-large-prompt")
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.output["transport"], "responses_http")
+        self.assertEqual(result.output["transport_reason"], "argv_prompt_exceeds_safe_limit")
+        self.assertEqual(
+            result.output["json_events"][0]["item"]["text"],
+            "large provider answer",
+        )
+
+    def test_oversized_prompt_unreachable_responses_is_typed(self) -> None:
+        """The normal invoke fallback keeps the Responses unreachable contract."""
+        import urllib.error
+
+        provider = self._make_provider(run_func=lambda *_args, **_kwargs: None)
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError(ConnectionRefusedError("refused")),
+        ), self.assertRaises(OpenClawProviderError) as ctx:
+            provider.invoke("x" * (96 * 1024 + 1), operator_id="op-1")
+
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_RESPONSES_UNREACHABLE")
+        self.assertEqual(ctx.exception.status_code, 503)
 
     def test_invoke_non_zero_exit_raises(self) -> None:
         def fake_run(cmd, **_kw):
