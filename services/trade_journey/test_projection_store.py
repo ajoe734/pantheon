@@ -1364,3 +1364,19 @@ def test_projection_store_indexed_explain_paths(postgres_dsn: str) -> None:
         assert "idx_loop_runs_tenant_env_updated_loop" in plan5
 
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_projection_store_driver_missing_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "psycopg", None)
+    with pytest.raises(RuntimeError, match="psycopg is required for ProjectionStore"):
+        ProjectionStore("postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon", connect=None)
+
+
+def test_projection_store_default_connect_binds_psycopg() -> None:
+    import psycopg
+
+    store = ProjectionStore(
+        "postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon",
+        connect=None,
+    )
+    assert store._connect is psycopg.connect
