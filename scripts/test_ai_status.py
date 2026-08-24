@@ -5642,6 +5642,43 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     commit_timestamp="2026-07-31T16:20:00+00:00",
                 )
 
+    def test_prior_owner_reassignment_ignores_pre_delivery_cycle(self) -> None:
+        """Only the audited chain after the delivered commit is relevant.
+
+        A task can be reassigned away and back before its final delivery.  The
+        post-delivery handoff must be walked from the commit owner without
+        letting that earlier cycle poison the closeout chain.
+        """
+        pre_cycle_one = self._owner_reassignment_event(
+            old_owner="Codex", new_owner="Codex2", reviewer="Claude",
+            timestamp="2026-08-24T15:29:43Z",
+        )
+        pre_cycle_two = self._owner_reassignment_event(
+            old_owner="Codex2", new_owner="Codex", reviewer="Claude",
+            timestamp="2026-08-24T15:37:14Z",
+        )
+        post_delivery = self._owner_reassignment_event(
+            old_owner="Codex", new_owner="Antigravity", reviewer="Claude",
+            new_reviewer="Antigravity2", timestamp="2026-08-24T22:44:05Z",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(
+                "\n".join(json.dumps(event) for event in (pre_cycle_one, pre_cycle_two, post_delivery))
+                + "\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(ai_status, "LOG_FILE", log_file):
+                result = ai_status._verified_done_owner_reassignment(
+                    {"id": "REG-002", "owner": "Antigravity", "reviewer": "Antigravity2"},
+                    commit_owner="Codex",
+                    current_owner="Antigravity",
+                    commit_timestamp="2026-08-24T15:46:58+00:00",
+                )
+
+        self.assertEqual(result["event_id"], post_delivery["event_id"])
+        self.assertEqual(result["hops"], 1)
+
     def test_prior_owner_reassignment_rejects_stale_matching_event(self) -> None:
         stale = self._owner_reassignment_event()
         latest = self._owner_reassignment_event(
@@ -5903,6 +5940,40 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     current_reviewer="Codex2",
                     commit_timestamp="2026-07-20T00:00:00+00:00",
                 )
+
+    def test_done_reviewer_reassignment_ignores_pre_delivery_cycle(self) -> None:
+        pre_cycle_one = audited_reassignment_event(
+            task_id="REG-002", old_owner="Antigravity", new_owner="Antigravity",
+            old_reviewer="Claude", new_reviewer="Codex2",
+            timestamp="2026-08-24T15:29:43Z",
+        )
+        pre_cycle_two = audited_reassignment_event(
+            task_id="REG-002", old_owner="Antigravity", new_owner="Antigravity",
+            old_reviewer="Codex2", new_reviewer="Claude",
+            timestamp="2026-08-24T15:37:14Z",
+        )
+        post_delivery = audited_reassignment_event(
+            task_id="REG-002", old_owner="Antigravity", new_owner="Antigravity",
+            old_reviewer="Claude", new_reviewer="Antigravity2",
+            timestamp="2026-08-24T22:44:05Z",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(
+                "\n".join(json.dumps(event) for event in (pre_cycle_one, pre_cycle_two, post_delivery))
+                + "\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(ai_status, "LOG_FILE", log_file):
+                result = ai_status._verified_done_reviewer_reassignment(
+                    {"id": "REG-002", "owner": "Antigravity", "reviewer": "Antigravity2"},
+                    commit_reviewer="Claude",
+                    current_reviewer="Antigravity2",
+                    commit_timestamp="2026-08-24T15:46:58+00:00",
+                )
+
+        self.assertEqual(result["event_id"], post_delivery["event_id"])
+        self.assertEqual(result["hops"], 1)
 
     @staticmethod
     def _first_assignment_event(
