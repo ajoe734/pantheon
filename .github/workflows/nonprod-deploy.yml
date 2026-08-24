@@ -1264,7 +1264,7 @@ jobs:
 
       - name: Compensate dev deployment failure to exact hosted baseline
         id: deploy_compensation
-        if: ${{ always() && steps.lease.outcome == 'success' && steps.rollback_baseline.outputs.sha != '' && (steps.deploy.outcome != 'success' || steps.paper_bootstrap.outcome != 'success' || steps.public_smoke.outcome != 'success') }}
+        if: ${{ always() && steps.lease.outcome == 'success' && steps.rollback_baseline.outputs.sha != '' && (steps.deploy.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success') }}
         continue-on-error: true
         env:
           PATH: ${{ steps.runtime.outputs.safe_path }}

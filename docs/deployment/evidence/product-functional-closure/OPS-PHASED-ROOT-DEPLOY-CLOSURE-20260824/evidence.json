@@ -38,7 +38,7 @@
     "build_before_mutate": "Candidate images are built and validated (docker compose config and docker compose build) prior to container recreation/rollout (docker compose up -d)",
     "source_ingest_reconcile_only": "Source ingestion controller defaults to reconcile_only mode with unless-stopped restart policy, no second scheduler, and no continuous external pull",
     "phase_failure_preserves_release_pair": "Any phase failure stops deployment, causes bff_fe_pair_verified=false, and prevents coordinate-dev-release from admitting or switching frontend/BFF release pair",
-    "post_up_failure_rollback_and_compensation": "If any post-rollout verification gate fails after container recreation, the remote deploy script and nonprod-deploy workflow automatically roll back the dev operator-bff and lifecycle projector to the captured baseline commit under lease, preserving the prior exact public FE/BFF pair."
+    "post_up_failure_rollback_and_compensation": "If any post-rollout verification gate fails after container recreation, the remote deploy script and nonprod-deploy workflow automatically roll back the dev operator-bff and lifecycle projector to the captured baseline commit under lease, preserving the prior exact public FE/BFF pair. Deploy compensation is component-aware so that bff deployments with skipped paper bootstrap do not trigger false rollback compensation, while root/auto paper bootstrap failures properly trigger compensation."
   },
   "validation": {
     "commands": [
@@ -52,15 +52,15 @@
       },
       {
         "command": "pytest -v scripts/test_dev_environment_lease_deploy_contract.py",
-        "result": "81 passed"
+        "result": "96 passed"
       },
       {
         "command": "pytest -v scripts/test_deploy_nonprod_*.py scripts/test_evolution_daily_sweep_deploy_contract.py scripts/test_ppl_alloc_009_deploy_proof_gate.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_check_shared_deploy_workflow_disabled.py scripts/test_validate_loop_worker_manifest_matrix.py",
-        "result": "90 passed"
+        "result": "95 passed"
       },
       {
         "command": "pytest -v scripts/test_dev_environment_lease_deploy_contract.py scripts/test_dev_deploy_worktree_isolation_contract.py scripts/test_deploy_nonprod_*.py scripts/test_evolution_daily_sweep_deploy_contract.py scripts/test_ppl_alloc_009_deploy_proof_gate.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_check_shared_deploy_workflow_disabled.py scripts/test_validate_loop_worker_manifest_matrix.py",
-        "result": "176 passed"
+        "result": "191 passed"
       }
     ]
   },

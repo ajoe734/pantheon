@@ -1062,7 +1062,7 @@ def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_p
     assert "Compensate dev deployment failure to exact hosted baseline" in dev_job
     assert "PANTHEON_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}" in dev_job
     assert "PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}" in dev_job
-    assert "steps.deploy.outcome != 'success' || steps.paper_bootstrap.outcome != 'success' || steps.public_smoke.outcome != 'success'" in dev_job
+    assert "((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')" in dev_job
 
     # 3. Simulate post-up failure rollback execution
     baseline_backend_sha = SAMPLE_BACKEND_SHA
@@ -1109,3 +1109,258 @@ def test_validate_required_loop_workers_logic() -> None:
     forbidden_lines = deploy_script.split("FORBIDDEN_DUPLICATE_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
     forbidden = [line.split("#")[0].strip() for line in forbidden_lines if line.split("#")[0].strip()]
     assert "pantheon-paper-runtime" in forbidden
+
+
+def _evaluate_github_actions_condition(condition_expr: str, context: dict) -> bool:
+    """Evaluates a GitHub Actions 'if' expression against a mock runtime context."""
+    expr = condition_expr.strip()
+    if expr.startswith("${{") and expr.endswith("}}"):
+        expr = expr[3:-2].strip()
+
+    def _resolve(ctx: dict, path: str):
+        curr = ctx
+        for part in path.split("."):
+            if isinstance(curr, dict):
+                curr = curr.get(part, "")
+            else:
+                return ""
+        return curr
+
+    # Transform GHA expression syntax to Python expression syntax
+    expr = re.sub(r"\balways\(\)", "True", expr)
+    expr = re.sub(r"\bsuccess\(\)", "True", expr)
+    expr = re.sub(r"\bfailure\(\)", "False", expr)
+    expr = re.sub(r"\bcancelled\(\)", "False", expr)
+
+    expr = expr.replace("&&", " and ").replace("||", " or ")
+
+    def _replace_lookup(match: re.Match) -> str:
+        path = match.group(0)
+        return f'_resolve(ctx, "{path}")'
+
+    expr = re.sub(r"\b(?:steps|env|needs|inputs|vars|github)\.[a-zA-Z0-9_\.]+\b", _replace_lookup, expr)
+
+    return bool(eval(expr, {"_resolve": _resolve, "ctx": context, "True": True, "False": False}))
+
+
+def _extract_deploy_compensation_condition() -> str:
+    workflow = _workflow()
+    dev_job = _job(workflow, "deploy-dev", "coordinate-dev-release")
+    start = dev_job.index("      - name: Compensate dev deployment failure to exact hosted baseline")
+    end = dev_job.find("\n      - name:", start + 1)
+    step_block = dev_job[start:] if end == -1 else dev_job[start:end]
+    match = re.search(r"if:\s*(\$\{\{.+?\}\})", step_block)
+    assert match is not None, "deploy_compensation step must have an if: condition"
+    return match.group(1)
+
+
+@pytest.mark.parametrize(
+    (
+        "target_component",
+        "lease_outcome",
+        "rollback_sha",
+        "deploy_outcome",
+        "paper_bootstrap_outcome",
+        "public_smoke_outcome",
+        "expected_compensation",
+        "case_description",
+    ),
+    [
+        # BFF cases: skipped paper_bootstrap must not compensate on success
+        (
+            "bff",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "success",
+            "skipped",
+            "success",
+            False,
+            "BFF success with skipped paper bootstrap must NOT trigger rollback compensation",
+        ),
+        (
+            "bff",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "failure",
+            "skipped",
+            "skipped",
+            True,
+            "BFF deploy failure must trigger rollback compensation",
+        ),
+        (
+            "bff",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "success",
+            "skipped",
+            "failure",
+            True,
+            "BFF public smoke failure must trigger rollback compensation",
+        ),
+        (
+            "bff",
+            "failure",
+            SAMPLE_BACKEND_SHA,
+            "failure",
+            "skipped",
+            "skipped",
+            False,
+            "BFF failure without acquired lease must NOT compensate",
+        ),
+        (
+            "bff",
+            "success",
+            "",
+            "failure",
+            "skipped",
+            "skipped",
+            False,
+            "BFF failure without rollback baseline SHA must NOT compensate",
+        ),
+        # Root cases: paper_bootstrap failure must compensate
+        (
+            "root",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "success",
+            "success",
+            "success",
+            False,
+            "Root full success must NOT trigger rollback compensation",
+        ),
+        (
+            "root",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "success",
+            "failure",
+            "skipped",
+            True,
+            "Root paper bootstrap failure must trigger rollback compensation",
+        ),
+        (
+            "root",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "failure",
+            "skipped",
+            "skipped",
+            True,
+            "Root deploy failure must trigger rollback compensation",
+        ),
+        (
+            "root",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "success",
+            "success",
+            "failure",
+            True,
+            "Root public smoke failure must trigger rollback compensation",
+        ),
+        (
+            "root",
+            "failure",
+            SAMPLE_BACKEND_SHA,
+            "failure",
+            "failure",
+            "failure",
+            False,
+            "Root failure without acquired lease must NOT compensate",
+        ),
+        (
+            "root",
+            "success",
+            "",
+            "failure",
+            "failure",
+            "failure",
+            False,
+            "Root failure without rollback baseline SHA must NOT compensate",
+        ),
+        # Auto cases: paper_bootstrap failure must compensate
+        (
+            "auto",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "success",
+            "success",
+            "success",
+            False,
+            "Auto full success must NOT trigger rollback compensation",
+        ),
+        (
+            "auto",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "success",
+            "failure",
+            "skipped",
+            True,
+            "Auto paper bootstrap failure must trigger rollback compensation",
+        ),
+        (
+            "auto",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "failure",
+            "skipped",
+            "skipped",
+            True,
+            "Auto deploy failure must trigger rollback compensation",
+        ),
+        (
+            "auto",
+            "success",
+            SAMPLE_BACKEND_SHA,
+            "success",
+            "success",
+            "failure",
+            True,
+            "Auto public smoke failure must trigger rollback compensation",
+        ),
+    ],
+)
+def test_dev_deploy_compensation_condition_truth_table(
+    target_component: str,
+    lease_outcome: str,
+    rollback_sha: str,
+    deploy_outcome: str,
+    paper_bootstrap_outcome: str,
+    public_smoke_outcome: str,
+    expected_compensation: bool,
+    case_description: str,
+) -> None:
+    """Executable truth-table regression test validating that deploy_compensation is component-aware:
+    BFF deployments with skipped paper_bootstrap do not compensate on success, while root/auto
+    paper_bootstrap failures properly trigger rollback compensation."""
+    condition_expr = _extract_deploy_compensation_condition()
+    context = {
+        "env": {
+            "TARGET_COMPONENT": target_component,
+        },
+        "steps": {
+            "lease": {
+                "outcome": lease_outcome,
+            },
+            "rollback_baseline": {
+                "outputs": {
+                    "sha": rollback_sha,
+                },
+            },
+            "deploy": {
+                "outcome": deploy_outcome,
+            },
+            "paper_bootstrap": {
+                "outcome": paper_bootstrap_outcome,
+            },
+            "public_smoke": {
+                "outcome": public_smoke_outcome,
+            },
+        },
+    }
+
+    result = _evaluate_github_actions_condition(condition_expr, context)
+    assert result is expected_compensation, (
+        f"Failed for case: {case_description} (expected {expected_compensation}, got {result})"
+    )

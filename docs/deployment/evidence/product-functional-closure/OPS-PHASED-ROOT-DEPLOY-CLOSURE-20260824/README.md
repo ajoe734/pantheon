@@ -24,13 +24,13 @@ This task phases dev VM root deployment around the persistent twelve-loop runtim
 4. **Release Admission Failure Isolation and Automatic Exact-BFF Rollback**:
    - Any failure in preflight or image build occurs before active container mutation and exits non-zero without touching running services.
    - Any failure in post-up verification gates triggers `rollback_dev_bff_on_failure` on the VM, automatically restoring `operator-bff` and `loop-run-projector-scheduler` to the captured rollback baseline SHA.
-   - In `.github/workflows/nonprod-deploy.yml`, `Compensate dev deployment failure to exact hosted baseline` executes under lease if deploy or public smoke fails, restoring the baseline BFF and verifying that both hosted endpoints (`/bff/version` and `/deployment.json`) match the captured baseline pair.
+   - In `.github/workflows/nonprod-deploy.yml`, `Compensate dev deployment failure to exact hosted baseline` executes under lease if deploy, paper bootstrap (for root/auto), or public smoke fails. The compensation condition is component-aware so that component=bff deployments with skipped paper bootstrap do not trigger false rollback compensation, while root/auto paper bootstrap failures properly trigger compensation. It restores the baseline BFF and verifies that both hosted endpoints (`/bff/version` and `/deployment.json`) match the captured baseline pair.
    - `coordinate-dev-release` requires `bff_fe_pair_verified == 'true'`. A failed deploy suppresses candidate admission and switch, guaranteeing the prior exact public FE/BFF pair remains intact.
 
 ## Verification
 
 - `bash -n scripts/deploy_nonprod_vm.sh` (passed)
 - `docker compose config --quiet` (passed)
-- `pytest -v scripts/test_dev_environment_lease_deploy_contract.py` (81 passed)
-- `pytest -v scripts/test_deploy_nonprod_*.py scripts/test_evolution_daily_sweep_deploy_contract.py scripts/test_ppl_alloc_009_deploy_proof_gate.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_check_shared_deploy_workflow_disabled.py scripts/test_validate_loop_worker_manifest_matrix.py` (90 passed)
-- `pytest -v scripts/test_dev_environment_lease_deploy_contract.py scripts/test_dev_deploy_worktree_isolation_contract.py scripts/test_deploy_nonprod_*.py scripts/test_evolution_daily_sweep_deploy_contract.py scripts/test_ppl_alloc_009_deploy_proof_gate.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_check_shared_deploy_workflow_disabled.py scripts/test_validate_loop_worker_manifest_matrix.py` (176 passed)
+- `pytest -v scripts/test_dev_environment_lease_deploy_contract.py` (96 passed, including executable truth-table regression tests for component-aware compensation)
+- `pytest -v scripts/test_deploy_nonprod_*.py scripts/test_evolution_daily_sweep_deploy_contract.py scripts/test_ppl_alloc_009_deploy_proof_gate.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_check_shared_deploy_workflow_disabled.py scripts/test_validate_loop_worker_manifest_matrix.py` (95 passed)
+- `pytest -v scripts/test_dev_environment_lease_deploy_contract.py scripts/test_dev_deploy_worktree_isolation_contract.py scripts/test_deploy_nonprod_*.py scripts/test_evolution_daily_sweep_deploy_contract.py scripts/test_ppl_alloc_009_deploy_proof_gate.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_check_shared_deploy_workflow_disabled.py scripts/test_validate_loop_worker_manifest_matrix.py` (191 passed)
