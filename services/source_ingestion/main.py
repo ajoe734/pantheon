@@ -12,6 +12,7 @@ from __future__ import annotations
 import fcntl
 import json
 import hmac
+import uuid
 import os
 import re
 import threading
@@ -110,6 +111,32 @@ from .source_health import (
 from .retirement_engine import RecommendationType, RetirementRecommendation, compute_recommendations
 from .connector_coverage_matrix import build_coverage_matrix, build_source_alerts
 from .gap_report import generate_market_data_gap_report, render_gap_report_markdown
+from .connector_definitions import (
+    DEPLOYED_CONNECTOR_DEFINITIONS,
+    get_connector_definition,
+    list_connector_definitions,
+)
+from .source_management_models import (
+    SourceManagementCommand,
+    SourceManagementReceipt,
+    SourceCanaryResult,
+    CommandType,
+    ReceiptStatus,
+)
+from .source_management_store import (
+    SourceManagementStore,
+    build_source_management_store,
+    SourceInstanceNotFoundError,
+    StaleRevisionError,
+    IdempotencyConflictError,
+    DuplicateInstanceError,
+)
+from .source_management_commands import (
+    SourceCommandEngine,
+    CommandPreconditionError,
+    AdapterNotSupportedError,
+)
+
 
 
 def _resolve_data_dir() -> Path:
@@ -208,6 +235,13 @@ market_data_storage_writer = MarketDataStorageWriter(MARKET_DATA_STORAGE_ROOT)
 # admitting a normalized SourceRecord commit here lets the controller's run_pending
 # pick it up immediately instead of waiting for its next catch_up poll.
 distillation_job_queue = DistillationJobQueue(DISTILLATION_JOB_QUEUE_PATH)
+source_management_store = build_source_management_store(DATA_DIR)
+source_command_engine = SourceCommandEngine(
+    store=source_management_store,
+    connector_store=connector_store,
+    schedule_config_store=schedule_config_store,
+    evidence_builder=evidence_builder,
+)
 register_fastapi_health_routes(
     app,
     "pantheon-source-ingest",
@@ -3888,3 +3922,206 @@ def generate_gap_report(request: GapReportRequest) -> dict[str, Any]:
         return payload
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Source Management Command & Query Routes (SD-SRCM-01, SD-SRCM-02)
+# ---------------------------------------------------------------------------
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class SourceCommandActorBody(StrictBaseModel):
+    actor_type: str = "operator"
+    actor_id: str
+    roles: list[str] = Field(default_factory=lambda: ["operator"])
+
+
+class SourceCommandRequestBody(StrictBaseModel):
+    command_id: str | None = None
+    idempotency_key: str
+    command_type: str
+    source_instance_id: str
+    expected_revision: int | None = None
+    actor: SourceCommandActorBody
+    reason: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    trace_id: str | None = None
+    requested_at: str | None = None
+
+
+def _require_service_authorization(authorization: str | None, *, operation: str) -> None:
+    scheme, _, presented = str(authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not presented:
+        raise HTTPException(
+            status_code=401,
+            detail=f"service authorization is required for {operation}",
+        )
+    current_controller_token = load_controller_token(token_path=CONTROLLER_TOKEN_PATH, create=True)
+    service_token = os.getenv("SOURCE_INGEST_SERVICE_TOKEN", current_controller_token)
+    if not (
+        hmac.compare_digest(presented, current_controller_token)
+        or hmac.compare_digest(presented, service_token)
+        or hmac.compare_digest(presented, controller_token)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"service authorization is invalid for {operation}",
+        )
+
+
+@app.get("/api/source-ingest/management/connector-definitions")
+def list_management_connector_definitions() -> dict[str, Any]:
+    definitions = list_connector_definitions()
+    return {
+        "definitions": [d.to_dict() for d in definitions],
+        "count": len(definitions),
+    }
+
+
+@app.get("/api/source-ingest/management/connector-definitions/{definition_id}")
+def get_management_connector_definition(definition_id: str) -> dict[str, Any]:
+    definition = get_connector_definition(definition_id)
+    if definition is None:
+        raise HTTPException(status_code=404, detail=f"connector definition not found: {definition_id}")
+    return {"definition": definition.to_dict()}
+
+
+@app.post("/api/source-ingest/management/commands", status_code=202)
+def execute_source_management_command(
+    request: SourceCommandRequestBody,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_service_authorization(authorization, operation="source management command")
+
+    cmd = SourceManagementCommand(
+        command_id=request.command_id or f"srcmd-{uuid.uuid4().hex[:12]}",
+        idempotency_key=request.idempotency_key,
+        command_type=request.command_type,
+        source_instance_id=request.source_instance_id,
+        expected_revision=request.expected_revision,
+        actor=request.actor.model_dump(),
+        reason=request.reason,
+        parameters=request.parameters,
+        trace_id=request.trace_id,
+        requested_at=request.requested_at or _utc_now(),
+    )
+
+    try:
+        receipt = source_command_engine.execute_command(cmd)
+        return {"receipt": receipt.to_dict()}
+    except AdapterNotSupportedError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "adapter_not_supported",
+                "message": str(exc),
+                "development_need": exc.development_need,
+            },
+        ) from exc
+    except StaleRevisionError as exc:
+        raise HTTPException(status_code=409, detail=f"STALE_REVISION: {exc}") from exc
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=f"RESOURCE_CONFLICT: {exc}") from exc
+    except DuplicateInstanceError as exc:
+        raise HTTPException(status_code=409, detail=f"RESOURCE_CONFLICT: {exc}") from exc
+    except SourceInstanceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"RESOURCE_NOT_FOUND: {exc}") from exc
+    except CommandPreconditionError as exc:
+        raise HTTPException(status_code=412, detail=f"PRECONDITION_FAILED: {exc}") from exc
+    except SourceManagementContractError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-ingest/management/commands/{receipt_id}")
+def get_source_management_command_receipt(receipt_id: str) -> dict[str, Any]:
+    receipt = source_management_store.get_receipt(receipt_id)
+    if receipt is None:
+        raise HTTPException(status_code=404, detail=f"command receipt not found: {receipt_id}")
+    return {"receipt": receipt.to_dict()}
+
+
+@app.get("/api/source-ingest/management/sources")
+def list_management_sources(
+    source_kind: str | None = None,
+    lifecycle_state: str | None = None,
+) -> dict[str, Any]:
+    instances = source_management_store.list_instances(
+        source_kind=source_kind,
+        lifecycle_state=lifecycle_state,
+    )
+    return {
+        "sources": [inst.to_dict() for inst in instances],
+        "count": len(instances),
+    }
+
+
+@app.get("/api/source-ingest/management/sources/{source_instance_id}")
+def get_management_source(source_instance_id: str) -> dict[str, Any]:
+    instance = source_management_store.get_instance(source_instance_id)
+    if instance is None:
+        raise HTTPException(status_code=404, detail=f"source instance not found: {source_instance_id}")
+    desired = source_management_store.get_desired_state(source_instance_id)
+    observed = source_management_store.get_latest_observed_snapshot(source_instance_id)
+    return {
+        "source": instance.to_dict(),
+        "desired": desired.to_dict() if desired else None,
+        "observed": observed.to_dict() if observed else None,
+    }
+
+
+@app.get("/api/source-ingest/management/sources/{source_instance_id}/observations")
+def list_management_source_observations(
+    source_instance_id: str,
+    limit: int = 100,
+) -> dict[str, Any]:
+    instance = source_management_store.get_instance(source_instance_id)
+    if instance is None:
+        raise HTTPException(status_code=404, detail=f"source instance not found: {source_instance_id}")
+    observations = source_management_store.list_observed_snapshots(source_instance_id, limit=limit)
+    return {
+        "observations": [obs.to_dict() for obs in observations],
+        "count": len(observations),
+    }
+
+
+@app.get("/api/source-ingest/management/sources/{source_instance_id}/canaries")
+def list_management_source_canaries(
+    source_instance_id: str,
+    limit: int = 100,
+) -> dict[str, Any]:
+    instance = source_management_store.get_instance(source_instance_id)
+    if instance is None:
+        raise HTTPException(status_code=404, detail=f"source instance not found: {source_instance_id}")
+    canaries = source_management_store.list_canary_results(source_instance_id, limit=limit)
+    return {
+        "canaries": [can.to_dict() for can in canaries],
+        "count": len(canaries),
+    }
+
+
+@app.get("/api/source-ingest/management/sources/{source_instance_id}/canaries/{canary_id}")
+def get_management_source_canary(
+    source_instance_id: str,
+    canary_id: str,
+) -> dict[str, Any]:
+    canary = source_management_store.get_canary_result(canary_id)
+    if canary is None or canary.source_instance_id != source_instance_id:
+        raise HTTPException(status_code=404, detail=f"canary result not found: {canary_id}")
+    return {"canary": canary.to_dict()}
+
+
+@app.get("/api/source-ingest/management/sources/{source_instance_id}/receipts")
+def list_management_source_receipts(
+    source_instance_id: str,
+    limit: int = 100,
+) -> dict[str, Any]:
+    instance = source_management_store.get_instance(source_instance_id)
+    if instance is None:
+        raise HTTPException(status_code=404, detail=f"source instance not found: {source_instance_id}")
+    receipts = source_management_store.list_receipts(source_instance_id, limit=limit)
+    return {
+        "receipts": [rcp.to_dict() for rcp in receipts],
+        "count": len(receipts),
+    }

@@ -141,6 +141,103 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_loop_controller_records_updated_at
         ON loop_controller_records (updated_at DESC);
     """,
+    # Source Ingestion source management tables (SD-SRCM-01, SD-SRCM-02)
+    """
+    CREATE SCHEMA IF NOT EXISTS source_ingest;
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS source_ingest.data_source_instances (
+        source_instance_id TEXT PRIMARY KEY,
+        source_kind        TEXT NOT NULL,
+        definition_id      TEXT NOT NULL,
+        connector_id       TEXT NOT NULL UNIQUE,
+        current_revision   INTEGER NOT NULL DEFAULT 1,
+        lifecycle_state    TEXT NOT NULL,
+        payload            JSONB NOT NULL,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        updated_at         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_data_source_instances_definition
+        ON source_ingest.data_source_instances (definition_id);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_data_source_instances_lifecycle
+        ON source_ingest.data_source_instances (lifecycle_state);
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS source_ingest.source_desired_states (
+        source_instance_id        TEXT NOT NULL,
+        revision                  INTEGER NOT NULL,
+        desired_lifecycle         TEXT NOT NULL,
+        definition_id             TEXT NOT NULL,
+        definition_deployment_sha TEXT NOT NULL,
+        connector_config          JSONB NOT NULL,
+        schedule                  JSONB NOT NULL,
+        limits                    JSONB NOT NULL,
+        allowed_hosts             JSONB NOT NULL,
+        last_command_receipt_id   TEXT,
+        payload                   JSONB NOT NULL,
+        created_at                TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (source_instance_id, revision)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_source_desired_states_def
+        ON source_ingest.source_desired_states (definition_id);
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS source_ingest.source_command_receipts (
+        receipt_id             TEXT PRIMARY KEY,
+        command_id             TEXT NOT NULL UNIQUE,
+        idempotency_key_hash   TEXT NOT NULL UNIQUE,
+        source_instance_id     TEXT NOT NULL,
+        command_type           TEXT NOT NULL,
+        status                 TEXT NOT NULL,
+        before_revision        INTEGER NOT NULL,
+        after_revision         INTEGER NOT NULL,
+        payload                JSONB NOT NULL,
+        created_at             TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        completed_at           TIMESTAMPTZ
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_source_command_receipts_instance
+        ON source_ingest.source_command_receipts (source_instance_id, created_at DESC);
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS source_ingest.source_canary_results (
+        canary_id          TEXT PRIMARY KEY,
+        source_instance_id TEXT NOT NULL,
+        definition_id      TEXT NOT NULL,
+        status             TEXT NOT NULL,
+        payload            JSONB NOT NULL,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        completed_at       TIMESTAMPTZ
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_source_canary_results_instance
+        ON source_ingest.source_canary_results (source_instance_id, created_at DESC);
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS source_ingest.source_observed_snapshots (
+        source_instance_id    TEXT NOT NULL,
+        observed_revision     INTEGER NOT NULL,
+        desired_revision      INTEGER NOT NULL,
+        reconciliation_status TEXT NOT NULL,
+        effective_lifecycle   TEXT NOT NULL,
+        payload               JSONB NOT NULL,
+        observed_at           TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (source_instance_id, observed_revision)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_source_observed_snapshots_instance
+        ON source_ingest.source_observed_snapshots (source_instance_id, observed_at DESC);
+    """,
+
 ]
 
 async def run():

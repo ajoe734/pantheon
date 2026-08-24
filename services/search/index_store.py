@@ -1,9 +1,9 @@
-"""Replayable search reference store for governed evidence search."""
+"""Replayable search reference store for governed evidence and structured alpha search."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -17,15 +17,21 @@ class SearchIndexSnapshot:
     filters_applied: Mapping[str, Any]
     result_refs: list[dict[str, Any]]
     created_at: str
-    schema_version: str = "governed_search_refs.v1"
+    schema_version: str = "governed_search_refs.v2"
+    retrieval_mode: str = "keyword"
+    rejected_items_count: int = 0
+    rejected_by_reason: Mapping[str, int] = field(default_factory=dict)
+    fingerprints: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not str(self.request_id).strip():
             raise EvidenceValidationError("search snapshot request_id is required")
         if not str(self.trace_id).strip():
             raise EvidenceValidationError("search snapshot trace_id is required")
-        object.__setattr__(self, "filters_applied", dict(self.filters_applied))
-        object.__setattr__(self, "result_refs", [dict(ref) for ref in self.result_refs])
+        object.__setattr__(self, "filters_applied", dict(self.filters_applied or {}))
+        object.__setattr__(self, "result_refs", [dict(ref) for ref in (self.result_refs or ())])
+        object.__setattr__(self, "rejected_by_reason", dict(self.rejected_by_reason or {}))
+        object.__setattr__(self, "fingerprints", dict(self.fingerprints or {}))
         for ref in self.result_refs:
             for field_name in ("result_id", "evidence_bundle_id", "citations", "matched_items"):
                 if field_name not in ref:
@@ -38,8 +44,12 @@ class SearchIndexSnapshot:
             "schema_version": self.schema_version,
             "request_id": self.request_id,
             "trace_id": self.trace_id,
+            "retrieval_mode": self.retrieval_mode,
             "filters_applied": dict(self.filters_applied),
             "result_refs": [dict(ref) for ref in self.result_refs],
+            "rejected_items_count": self.rejected_items_count,
+            "rejected_by_reason": dict(self.rejected_by_reason),
+            "fingerprints": dict(self.fingerprints),
             "created_at": self.created_at,
         }
 
@@ -48,6 +58,7 @@ class SearchIndexSnapshot:
         return cls(
             request_id=response.request_id,
             trace_id=response.trace_id,
+            retrieval_mode=getattr(response, "retrieval_mode", "keyword"),
             filters_applied=dict(response.filters_applied),
             result_refs=[
                 {
@@ -59,6 +70,9 @@ class SearchIndexSnapshot:
                 }
                 for result in response.results
             ],
+            rejected_items_count=getattr(response, "rejected_items_count", 0),
+            rejected_by_reason=dict(getattr(response, "rejected_by_reason", {})),
+            fingerprints=dict(getattr(response, "fingerprints", {})),
             created_at=response.created_at,
         )
 
@@ -70,7 +84,11 @@ class SearchIndexSnapshot:
             filters_applied=dict(data.get("filters_applied", {})),
             result_refs=[dict(ref) for ref in data.get("result_refs", [])],
             created_at=str(data["created_at"]),
-            schema_version=str(data.get("schema_version", "governed_search_refs.v1")),
+            schema_version=str(data.get("schema_version", "governed_search_refs.v2")),
+            retrieval_mode=str(data.get("retrieval_mode", "keyword")),
+            rejected_items_count=int(data.get("rejected_items_count", 0)),
+            rejected_by_reason=dict(data.get("rejected_by_reason", {})),
+            fingerprints=dict(data.get("fingerprints", {})),
         )
 
 

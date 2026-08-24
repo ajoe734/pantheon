@@ -12,17 +12,97 @@
     "trace_id"
   ],
   "properties": {
-    "request_id": {"type": "string", "minLength": 1},
-    "query": {"type": "string", "minLength": 1},
-    "persona_id": {"type": ["string", "null"]},
-    "workspace_id": {"type": ["string", "null"]},
-    "source_types": {"type": "array", "items": {"type": "string"}},
-    "time_window": {"type": "object"},
-    "environment": {"type": "string", "enum": ["dev", "sandbox", "paper", "canary", "live"]},
-    "top_k": {"type": "integer", "minimum": 1, "maximum": 100},
-    "require_citations": {"type": "boolean"},
-    "trace_id": {"type": "string", "minLength": 1},
-    "filters_applied": {"type": "object"}
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1
+    },
+    "persona_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "workspace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "time_window": {
+      "type": "object"
+    },
+    "environment": {
+      "type": "string",
+      "enum": [
+        "dev",
+        "sandbox",
+        "paper",
+        "canary",
+        "live"
+      ]
+    },
+    "top_k": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "require_citations": {
+      "type": "boolean"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "filters_applied": {
+      "type": "object"
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "retrieval_mode": {
+      "type": "string",
+      "enum": [
+        "keyword",
+        "full_text",
+        "semantic",
+        "hybrid",
+        "structured_alpha"
+      ]
+    },
+    "actor_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "filters": {
+      "type": "object"
+    },
+    "structured_alpha": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
   },
   "additionalProperties": false
 }
