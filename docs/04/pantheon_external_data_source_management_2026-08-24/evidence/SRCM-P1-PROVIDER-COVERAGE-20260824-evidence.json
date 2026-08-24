@@ -9,10 +9,12 @@
   "specification": "docs/04/pantheon_external_data_source_management_2026-08-24/SD_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
   "architecture": "docs/04/pantheon_external_data_source_management_2026-08-24/SA_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
   "acceptance_summary": {
-    "provider_reconciliation": "Admitted StockTwits for governed social discussion with dedicated SOCIAL source class, normalized symbol dicts, stable user ID hashing, tombstone body/identity sanitization, and platform-tagged sentiment; FMP for External Alpha DB with strict RFC3339 AlphaSignalRecord contract, SHA-256 body_hash schema, date exclusion from values, exact indicator mapping, and honest credential_unavailable status on uncredentialed host.",
+    "provider_reconciliation": "Admitted StockTwits for governed social discussion with dedicated SOCIAL source class, normalized symbol dicts, stable user ID hashing, tombstone body/identity sanitization, and platform-tagged sentiment; FMP for External Alpha DB with strict RFC3339 AlphaSignalRecord contract, SHA-256 body_hash schema, date exclusion from values, exact indicator mapping, custom env secret ref resolution, and honest credential_unavailable status on uncredentialed host.",
+    "config_reconciliation_end_to_end": "Reconciled desired connector config and limits through source management command engine into fetch_config and provider-owned adapter execution across TDCC (symbols, source_dataset, max_records), TAIFEX (dataset, contracts, max_records), Social (platform, symbols, secret_ref_id, max_records), and Alpha DB (alpha_vendor_id, signal_id, signal_version, universe, secret_ref_id, max_records).",
+    "fail_closed_validation": "Enforced strict fail-closed handling on unsupported TAIFEX datasets, invalid RFC3339 PIT values across all adapters, and unauthenticated External Alpha DB invocations.",
     "fixture_isolation": "Isolated example-alpha-db as test fixture only with explicit exception guard preventing live configuration.",
     "tdcc_completion": "Implemented TDCC official weekly shareholding distribution with smart open data endpoint provenance, 5MB bounded streaming read, early stopping on max_records, 15 holding tiers, weekly watermark progression, backfill windows, and restatement/correction handling.",
-    "taifex_completion": "Implemented TAIFEX official daily futures and options chip context with live OpenAPI endpoint provenance, 3rd Wednesday settlement calendar/contract-roll policy, front-month resolution, bounded normalization, and daily watermark progression.",
+    "taifex_completion": "Implemented TAIFEX official daily futures and options chip context with live OpenAPI endpoint provenance, 3rd Wednesday settlement calendar/contract-roll policy, front-month resolution, Chinese contract alias normalization, bounded normalization, and daily watermark progression.",
     "canary_search_readback": "Validated bounded canary durable readback across TWSE, TDCC, TAIFEX, and StockTwits with verified search citation indexing; External Alpha DB honestly recorded as credential_unavailable with canary_passed=false on host without API credentials."
   },
   "modules_modified": [
@@ -22,7 +24,8 @@
     "services/source_ingestion/connector_definitions.py",
     "services/source_ingestion/financial_source_catalog.py",
     "services/source_ingestion/provider_adapters.py",
-    "docs/contracts/alpha_signal_record.schema.json"
+    "docs/contracts/alpha_signal_record.schema.json",
+    "services/source_ingestion/source_management_commands.py"
   ],
   "tests_implemented": [
     "services/source_ingestion/tests/test_provider_management_coverage.py",
@@ -47,7 +50,7 @@
         "definition_id": "tw-twse-tpex-official-market",
         "adapter_token": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "a8104671790320ac645e887c0527d8ce7c013ca9"
+        "deployment_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -112,8 +115,16 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "a8104671790320ac645e887c0527d8ce7c013ca9",
-        "timestamp": "2026-08-24T18:00:00Z"
+        "runtime_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167",
+        "timestamp": "2026-08-24T19:35:00Z"
+      },
+      "quota_and_cost_observation": {
+        "is_metered": false,
+        "cost_per_request_usd": 0.0,
+        "rate_limit_rpm": 60,
+        "quota_period": "unlimited_public_open_data",
+        "current_consumption_pct": 0.0,
+        "billing_tier": "free_official_open_data"
       }
     },
     {
@@ -122,7 +133,7 @@
         "definition_id": "tw-tdcc-shareholding-distribution",
         "adapter_token": "TdccShareholdingDistributionAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "a8104671790320ac645e887c0527d8ce7c013ca9"
+        "deployment_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -187,8 +198,16 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "a8104671790320ac645e887c0527d8ce7c013ca9",
-        "timestamp": "2026-08-24T18:00:00Z"
+        "runtime_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167",
+        "timestamp": "2026-08-24T19:35:00Z"
+      },
+      "quota_and_cost_observation": {
+        "is_metered": false,
+        "cost_per_request_usd": 0.0,
+        "rate_limit_rpm": 30,
+        "quota_period": "unlimited_public_open_data",
+        "current_consumption_pct": 0.0,
+        "billing_tier": "free_official_open_data"
       }
     },
     {
@@ -197,7 +216,7 @@
         "definition_id": "tw-taifex-futures-options-chip",
         "adapter_token": "TaifexDerivativesChipAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "a8104671790320ac645e887c0527d8ce7c013ca9"
+        "deployment_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -262,8 +281,16 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "a8104671790320ac645e887c0527d8ce7c013ca9",
-        "timestamp": "2026-08-24T18:00:00Z"
+        "runtime_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167",
+        "timestamp": "2026-08-24T19:35:00Z"
+      },
+      "quota_and_cost_observation": {
+        "is_metered": false,
+        "cost_per_request_usd": 0.0,
+        "rate_limit_rpm": 30,
+        "quota_period": "unlimited_public_open_data",
+        "current_consumption_pct": 0.0,
+        "billing_tier": "free_official_open_data"
       }
     },
     {
@@ -272,7 +299,7 @@
         "definition_id": "social-admitted-market-discussion",
         "adapter_token": "AdmittedSocialMediaAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "a8104671790320ac645e887c0527d8ce7c013ca9"
+        "deployment_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167"
       },
       "license_and_entitlements": {
         "license_scope": "community_admitted",
@@ -340,8 +367,16 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "a8104671790320ac645e887c0527d8ce7c013ca9",
-        "timestamp": "2026-08-24T18:00:00Z"
+        "runtime_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167",
+        "timestamp": "2026-08-24T19:35:00Z"
+      },
+      "quota_and_cost_observation": {
+        "is_metered": false,
+        "cost_per_request_usd": 0.0,
+        "rate_limit_rpm": 60,
+        "quota_period": "public_stream_free_tier",
+        "current_consumption_pct": 0.0,
+        "billing_tier": "community_admitted_free"
       }
     },
     {
@@ -350,7 +385,7 @@
         "definition_id": "alpha-db-vendor-signals",
         "adapter_token": "ExternalAlphaDbAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "a8104671790320ac645e887c0527d8ce7c013ca9"
+        "deployment_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167"
       },
       "license_and_entitlements": {
         "license_scope": "vendor",
@@ -416,14 +451,23 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "a8104671790320ac645e887c0527d8ce7c013ca9",
-        "timestamp": "2026-08-24T18:25:00Z"
+        "runtime_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167",
+        "timestamp": "2026-08-24T19:35:00Z"
+      },
+      "quota_and_cost_observation": {
+        "is_metered": true,
+        "cost_per_request_usd": 0.0,
+        "rate_limit_rpm": 300,
+        "quota_period": "daily_api_call_quota",
+        "current_consumption_pct": 0.0,
+        "billing_tier": "vendor_paid_api",
+        "observation_note": "Host environment has no provisioned ALPHA_DB_API_KEY credential; quota tracking uninitialized pending credential configuration."
       }
     }
   ],
   "validation": {
-    "focused_unit_tests_passing": 44,
-    "full_ingestion_suite_passing": 824,
+    "focused_unit_tests_passing": 48,
+    "full_ingestion_suite_passing": 828,
     "validation_commands": [
       "pytest services/source_ingestion/tests/test_provider_management_coverage.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_external_source_connectors.py",
       "pytest services/source_ingestion/tests/"
