@@ -52,11 +52,16 @@ deployed identity, runtime state, and user-visible readback agree.
 | Hosted BFF readiness | `/readyz` | overall ready, but Lifecycle dependency reads JSON health and JSON stores |
 | Lifecycle database | `trade_journey_projection` | schema present; controller, receipts, links, stages, journeys, loop runs, and quarantine all contain zero rows |
 | Lifecycle filesystem | `/data/bff/lifecycle-projection` | approximately 21 GiB and actively used |
-| Canonical work state | supervisor/V2 TaskStore | supervisor healthy; seven nonterminal product tasks |
+| Canonical work state | supervisor/V2 TaskStore | supervisor healthy; seven pre-existing nonterminal product tasks at audit capture |
 
 The hosted manifest is internally consistent, but the hosted FE and BFF are both
 older than their current source `dev` tips. Therefore it proves what is served, not
 that the latest functional work is deployed.
+
+An independent task-graph audit subsequently materialized five additional execution
+nodes. They correct how the work composes without rewriting the immutable specs of
+the seven pre-existing tasks. Section 12 records both sets and is the task-routing
+baseline for this document set.
 
 ## 3. Classification rules
 
@@ -162,9 +167,13 @@ PostgreSQL BFF reads, and PostgreSQL readiness. It must not be merged as-is beca
 - its evidence says hosted PostgreSQL-only restart/readback passed, while the current
   hosted runtime uses JSON and the projection tables are empty.
 
-The correct disposition is to keep task identity `LIFECYCLE-PROJ-RETIRE-001`, rebuild
-the minimal functional change from current `dev`, and use a replacement PR. Do not
-mark the canonical task superseded and do not create a duplicate Lifecycle task.
+The correct disposition is to keep task identity `LIFECYCLE-PROJ-RETIRE-001` and its
+immutable history, while implementing the current-dev PostgreSQL core under the
+separate corrective root `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824`. The old task
+remains the later deployment-switch and exact-cleanup owner after that root lands and
+an audited operator correction clears its stale status blockers. PR #5147 remains
+non-mergeable as a bundle. The new root is a compositional prerequisite, not a
+replacement or superseding identity.
 
 ## 7. G24-03 — Exact identity is necessary; repeated manual authorization is not
 
@@ -224,9 +233,17 @@ task.
 
 ## 10. G24-06 — Consolidation must remove proven duplication, not working paths
 
-The backend and frontend consolidation tasks remain open. Their audit phase can run
-in parallel with Lifecycle and journey repair because it is read-only. Actual
-deletion must wait until the replacement path passes the relevant hosted journey.
+The backend and frontend consolidation tasks remain open, but their immutable
+declared dependencies prevent the parent tasks from starting early. Two read-only
+sidecars therefore run the inventory phase in parallel with Lifecycle and journey
+repair:
+
+- `PFG-BE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`; and
+- `PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`.
+
+Each sidecar owns only its caller-inventory artifact and makes no product, deployment,
+deletion, or parent-task change. Actual deletion authority stays with the existing
+parent after its declared dependencies and replacement proof pass.
 
 Every candidate must have one disposition:
 
@@ -257,18 +274,39 @@ The accepted final state is:
 
 ## 12. Canonical remaining work and corrected disposition
 
-Seven nonterminal tasks were observed. The plan reuses them; it does not supersede
-their history or create duplicate task identities.
+### 12.1 Immutable pre-existing tasks
 
-| Task | Observed state | Correct next action |
+The seven tasks observed at audit capture retain their exact identities, specs, and
+history. The audit does not mutate their `depends_on`, artifacts, or acceptance, does
+not call the new roots replacements, and does not supersede these tasks.
+
+| Task | Observed state | Corrected composition |
 |---|---|---|
-| `LIFECYCLE-PROJ-RETIRE-001` | blocked | remove soak/HMAC ceremony from critical path; implement minimal current-dev cutover and immediate post-readback cleanup |
-| `PFG-BOUNDED-FUNCTIONAL-CLOSURE-PROOF-20260824` | blocked | derive pair automatically from candidate; run bounded paper proof; restore read-only |
-| `PFG-MGMT-JOURNEY-E2E-20260820` | blocked | repair provider connectivity and execute full Management/AI journey |
-| `PFG-AGORA-JOURNEY-E2E-20260820` | blocked | execute full hosted write journey on the bounded paper profile |
-| `PFG-BE-CONSOLIDATE-20260820` | todo | run caller audit now; delete only after replacement proof |
-| `PFG-FE-CONSOLIDATE-20260820` | todo | run caller audit now; delete only after replacement proof |
-| `PFG-HOSTED-ACCEPT-20260820` | todo | accept the final exact candidate after all dependencies pass |
+| `LIFECYCLE-PROJ-RETIRE-001` | blocked | remain blocked until the PostgreSQL activation root lands; then use an audited operator correction to clear the stale seven-day/HMAC status blockers and perform deployment switch, restart/readback, and exact cleanup |
+| `PFG-BOUNDED-FUNCTIONAL-CLOSURE-PROOF-20260824` | blocked | remain blocked until candidate auto-binding lands; then use an audited operator correction to clear the stale old-pair/per-pair authorization status blockers and run bounded proof/restoration |
+| `PFG-MGMT-JOURNEY-E2E-20260820` | blocked | consume hosted OpenClaw repair and auto-bound candidate evidence, then execute the unchanged full Management/AI journey |
+| `PFG-AGORA-JOURNEY-E2E-20260820` | blocked | execute the unchanged full hosted write journey on the auto-bound bounded paper profile |
+| `PFG-BE-CONSOLIDATE-20260820` | todo | consume the reviewed BE inventory sidecar after declared dependencies pass; retain all implementation and deletion authority |
+| `PFG-FE-CONSOLIDATE-20260820` | todo | consume the reviewed FE inventory sidecar after declared dependencies pass; retain all implementation and deletion authority |
+| `PFG-HOSTED-ACCEPT-20260820` | todo | consume all corrective-root and existing-task evidence and accept the final exact candidate last |
+
+An audited operator correction is a governed lifecycle/status action recorded beside
+the immutable original row. It does not rewrite the old task payload or erase its
+history.
+
+### 12.2 Materialized corrective roots and sidecars
+
+All five nodes depend on `PFG-FUNCTIONAL-REAUDIT-DOCS-20260824` and own exclusive
+artifacts. They add missing executable work; they do not replace the seven tasks
+above.
+
+| Task | Exclusive owned result | Must not change |
+|---|---|---|
+| `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824` | PostgreSQL projector/store and BFF relational reader/readiness core | Compose/deploy workflow or legacy-file deletion |
+| `PFG-CANDIDATE-AUTO-BINDING-20260824` | Pantheon release-controller candidate derivation and `nonprod-deploy` output contract | `execute-plans` product or proof workflows |
+| `PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824` | existing OpenClaw provider/adapter repair and hosted smoke evidence | BFF main, Compose/deploy, or frontend code |
+| `PFG-BE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY` | `support/sidecars/PFG-BE-CONSOLIDATE-20260820/caller-inventory-20260824.md` | product runtime, deployment, deletion, or parent-task state |
+| `PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY` | `execute-plans` `support/sidecars/PFG-FE-CONSOLIDATE-20260820/caller-inventory-20260824.md` | product code, deployment, deletion, or parent-task state |
 
 Supervisor health proves that development tooling can dispatch work; it does not
 close any of these product tasks.
@@ -308,8 +346,8 @@ capital-affecting action.
 
 ## 16. Product completion definition
 
-Pantheon is functionally closed for this program only when all seven nonterminal
-tasks above are terminal with evidence, the relational Lifecycle path survives a
-restart and the legacy JSON directory is gone without regrowth, both complete hosted
-journeys pass, consolidation has caller-backed dispositions, and the final exact pair
-is served read-only with Source reconcile-only.
+Pantheon is functionally closed for this program only when all five corrective nodes
+and all seven pre-existing tasks above are terminal with evidence, the relational
+Lifecycle path survives a restart and the legacy JSON directory is gone without
+regrowth, both complete hosted journeys pass, consolidation has caller-backed
+dispositions, and the final exact pair is served read-only with Source reconcile-only.

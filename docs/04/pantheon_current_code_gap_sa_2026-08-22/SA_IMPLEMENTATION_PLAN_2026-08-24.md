@@ -80,9 +80,12 @@ after that gate, its exact legacy directory is deleted immediately.
 
 ### AD24-08 — Existing task identities and history are preserved
 
-The seven current nonterminal task IDs remain canonical. Corrected contracts are
-attached to them; they are not marked superseded and not re-created under new IDs.
-Pantheon PR #5147 is replaced as a delivery vehicle, not as a task identity.
+The seven pre-existing nonterminal task IDs retain their immutable specs and history;
+their `depends_on`, artifacts, and acceptance are not edited, and they are not marked
+superseded. The independent task-graph audit materialized three corrective roots and
+two read-only inventory sidecars for work the old contracts cannot safely absorb.
+These nodes compose with the seven tasks and are not replacements. Pantheon PR #5147
+remains non-mergeable as a bundle.
 
 ### AD24-09 — Dev external effects stay bounded
 
@@ -176,69 +179,56 @@ materializes credentials into task JSON, evidence, logs, or artifacts.
 
 ## 4. Work packages mapped to canonical tasks
 
-### WP-01 — Minimal relational Lifecycle completion
+### WP-01 — PostgreSQL Lifecycle activation, then retirement
 
-Canonical task: `LIFECYCLE-PROJ-RETIRE-001`
+Corrective root: `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824`.
 
-Delivery rule: clean branch from current `dev`; do not merge Pantheon PR #5147 as-is.
+This task owns only the PostgreSQL projector/store and BFF relational reader/readiness
+core on a clean current-`dev` branch. It reuses the existing schema,
+`ProjectionStore`, controller, receipts, and reader surface. Its acceptance is:
 
-Retain from current code/PR direction:
+- bounded transactional backfill reaches backlog zero with the exact controller SHA;
+- BFF accepted mode reads PostgreSQL only and has no JSON fallback;
+- restart/idempotency preserves the same journey and loop identities; and
+- PostgreSQL mode writes no Lifecycle JSON generation or temporary files.
 
-- existing relational schema and `ProjectionStore`;
-- transactional event receipts and controller semantics;
-- existing BFF PostgreSQL read surface and readiness checks; and
-- the existing Compose service key and deployment integration.
+It does not edit Compose, deployment workflows, or legacy files. After it lands,
+`LIFECYCLE-PROJ-RETIRE-001` remains the deployment-switch, restart/readback, and
+exact-cleanup owner. The old task stays blocked until the root is present; a governed
+audited operator correction then clears the stale seven-day/HMAC status blockers
+without rewriting its immutable task payload. PR #5147 is not merged as-is.
 
-Remove from the delivery:
+### WP-02 — Candidate auto-binding, then bounded functional proof
 
-- HMAC retirement-command framework;
-- seven-day soak/approval state machine;
-- claims based on hand-authored or stale hosted evidence; and
-- normal-operation full-state JSON writes/generations.
+Corrective root: `PFG-CANDIDATE-AUTO-BINDING-20260824`.
 
-Acceptance:
+This task owns `scripts/cross_repo_release_controller.py`, its focused test, and the
+Pantheon `.github/workflows/nonprod-deploy.yml` candidate-output contract. It derives
+the immutable FE SHA, BFF SHA, and pair ID from the current candidate and served
+manifest; rejects stale overrides; and preserves mismatch failure plus read-only
+restoration. It does not edit `execute-plans` product or proof workflows.
 
-- real telemetry backfill populates all applicable relational tables;
-- controller is `ready`, `live`, `accepted_live=true`, exact-SHA, caught up, with zero
-  backlog and zero unresolved quarantine;
-- BFF reads/readiness are PostgreSQL-only;
-- projector and BFF restart, and the same sampled IDs are readable;
-- exact `/data/bff/lifecycle-projection` legacy content is deleted;
-- approximately 21 GiB is released and the directory does not regrow.
+After it lands, `PFG-BOUNDED-FUNCTIONAL-CLOSURE-PROOF-20260824` consumes the generated
+candidate in its existing `execute-plans` workflows and performs the bounded proof.
+The old task stays blocked until the root is present; a governed audited operator
+correction then clears the stale old-pair/per-pair authorization status blockers
+without changing its immutable task payload. Source remains reconcile-only and no
+live-capital action is available.
 
-### WP-02 — Candidate-bound bounded functional proof
+### WP-03 — Hosted OpenClaw repair, then Management/AI journey
 
-Canonical task: `PFG-BOUNDED-FUNCTIONAL-CLOSURE-PROOF-20260824`.
+Corrective root: `PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824`.
 
-Change the release workflow so the parent candidate is the sole source of FE/BFF
-identity. It passes generated immutable values to child workflows, verifies the
-served manifest/version, opens a time-bounded paper write profile, runs journeys, and
-restores read-only in both success and failure paths.
+This task owns only the existing OpenClaw provider/adapter implementation and hosted
+smoke path. It must produce a bounded real provider answer, preserve typed failures
+when unreachable, and prove restart connectivity. It does not modify BFF main,
+Compose/deployment, or frontend code and does not add a second provider endpoint.
 
-Acceptance:
-
-- no task packet or operator prompt contains a stale hard-coded pair prerequisite;
-- a mismatch between candidate and served identity still fails closed;
-- a timeout/failure still invokes read-only restoration; and
-- Source remains reconcile-only and no live-capital action is available.
-
-### WP-03 — Management/Management AI functional closure
-
-Canonical task: `PFG-MGMT-JOURNEY-E2E-20260820`.
-
-Repair the actual OpenClaw provider path, then run the complete hosted journey. Reuse
-merged `execute-plans` PR #601 behavior and only compatible parts of open
-`execute-plans` PR #613. Do not accept an `OPENCLAW_RESPONSES_UNREACHABLE` error as
-the provider-answer step.
-
-Acceptance:
-
-- real Formula, Activity, Paper Telemetry, and Postmortem reads or truthful typed
-  unavailable states;
-- an actual Management AI provider answer with network provenance;
-- one confirmed supported paper-domain action exactly once;
-- terminal receipt/readback and reload persistence; and
-- zero fixtures, seed imports, or prebuilt domain IDs.
+`PFG-MGMT-JOURNEY-E2E-20260820` keeps ownership of the complete `execute-plans`
+Management/AI journey. It consumes the provider repair and auto-bound proof window,
+then proves real Formula, Activity, Paper Telemetry, and Postmortem reads; one actual
+provider answer; one exactly-once paper-domain action; terminal readback; and reload
+persistence with no fixture, seed, or prebuilt-ID shortcut.
 
 ### WP-04 — Agora functional closure
 
@@ -257,12 +247,20 @@ Acceptance:
 
 ### WP-05 — Caller-backed consolidation
 
-Canonical tasks: `PFG-BE-CONSOLIDATE-20260820` and
-`PFG-FE-CONSOLIDATE-20260820`.
+Read-only sidecars:
 
-The inventory phase runs read-only in parallel. It enumerates imports, routes,
-workflows, deployment references, tests, docs, and runtime callers. Actual changes
-follow `retain`, `replace_then_delete`, `delete`, or `defer` dispositions.
+- `PFG-BE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`; and
+- `PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`.
+
+Each owns only its one `support/sidecars/.../caller-inventory-20260824.md` artifact and
+enumerates imports, routes, workflows, deployment references, tests, docs, and runtime
+callers. It classifies `retain`, `replace_then_delete`, `delete`, or `defer` without
+changing product code, deployment, deletion, or canonical parent-task state.
+
+Parent tasks `PFG-BE-CONSOLIDATE-20260820` and
+`PFG-FE-CONSOLIDATE-20260820` keep all implementation and deletion authority. They
+start only after their immutable declared dependencies are terminal, consume the
+reviewed sidecars, and perform only replacement-proven changes.
 
 Acceptance:
 
@@ -277,7 +275,8 @@ Acceptance:
 Canonical task: `PFG-HOSTED-ACCEPT-20260820`.
 
 This is the integration closure task, not an implementation bucket. It records the
-served exact pair after WP-01 through WP-05 pass.
+served exact pair after the corrective roots/sidecars and their seven pre-existing
+consumer tasks have produced the required evidence.
 
 Acceptance:
 
@@ -290,64 +289,79 @@ Acceptance:
 
 ## 5. Dependency graph and maximum parallelism
 
-### Wave A — four independent lanes
+Canonical `depends_on` is immutable. All five newly materialized nodes declare only
+`PFG-FUNCTIONAL-REAUDIT-DOCS-20260824`. The seven pre-existing rows retain their
+original declared edges. The waves below are audited execution prerequisites and
+handoff order; they do not pretend to rewrite those rows.
 
-1. Lifecycle worker/reader current-dev implementation (`WP-01`).
-2. Candidate auto-binding and proof-window workflow (`WP-02`).
-3. Management AI/OpenClaw provider connectivity repair (`WP-03`, provider portion).
-4. Backend and frontend caller inventories (`WP-05`, audit-only sublanes).
+### Wave 0 — contract publication
 
-These lanes own different files and may proceed simultaneously. The BE and FE audits
-may themselves run in separate repositories/worktrees, but destructive cleanup is
-not part of Wave A.
+Merge this four-document contract through
+`PFG-FUNCTIONAL-REAUDIT-DOCS-20260824`.
 
-### Wave B — deploy and exercise
+### Wave A — five independent corrective lanes
 
-- deploy WP-01, run real backfill/catch-up, switch reader/readiness, and perform
-  restart/readback;
-- run Management/AI and Agora full journeys in parallel on the same immutable bounded
-  candidate after WP-02 is ready.
+1. `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824`.
+2. `PFG-CANDIDATE-AUTO-BINDING-20260824`.
+3. `PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824`.
+4. `PFG-BE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`.
+5. `PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`.
 
-Only one candidate may own the dev write-proof lease. Parallel browser journeys may
-share that candidate when their test data namespaces are unique.
+Their artifacts do not overlap. The two sidecars are read-only and may not delete or
+modify product code.
 
-### Wave C — immediate retirement and proven cleanup
+### Wave B — governed correction, deploy, and exercise
 
-- delete exact Lifecycle legacy JSON after WP-01's restart/readback succeeds;
-- execute backend and frontend `replace_then_delete`/`delete` dispositions in
-  parallel after their respective replacement journey passes.
+- after the Lifecycle root lands, apply the audited operator correction to the old
+  retirement row, then let `LIFECYCLE-PROJ-RETIRE-001` own Compose/deploy switch,
+  restart/readback, and exact JSON cleanup;
+- after candidate auto-binding lands, apply the audited operator correction to the
+  old bounded-proof row, then run its paper-only proof and watchdog restoration; and
+- after the OpenClaw root and auto-bound candidate are ready, run the unchanged
+  Management/AI and Agora journeys in parallel on the single leased candidate.
+
+### Wave C — parent consolidation
+
+After each parent task's declared dependencies are terminal, hand in its reviewed
+sidecar and execute backend/frontend `replace_then_delete` or `delete` dispositions
+in parallel. The parent, not the sidecar, owns every product change.
 
 ### Wave D — integration closure
 
 - deploy the consolidated exact pair;
 - rerun bounded acceptance where code identity changed;
-- restore read-only and complete `PFG-HOSTED-ACCEPT-20260820`.
+- restore read-only; and
+- complete `PFG-HOSTED-ACCEPT-20260820` last.
 
 ```text
-WP-01 Lifecycle ---------------------> restart/readback -> JSON delete ---+
-WP-02 candidate binding ----+                                           |
-WP-03 provider repair ------+--> Management/AI journey -----------------+
-                            +--> Agora journey -------------------------+
-WP-05 caller audits ----------------> proven BE/FE cleanup -------------+
-                                                                         v
-                                                          WP-06 hosted acceptance
+docs contract
+  +--> Lifecycle activation root --> old Lifecycle deploy/retire task ----+
+  +--> candidate auto-binding root --> old bounded-proof task ------------+-->
+  |                                  +--> Management/AI + Agora journeys --+   hosted
+  +--> hosted OpenClaw repair -------+                                        accept
+  +--> BE inventory sidecar --> existing BE consolidation ----------------+
+  +--> FE inventory sidecar --> existing FE consolidation ----------------+
 ```
 
 ## 6. File ownership and conflict boundaries
 
-| Lane | Primary Pantheon paths | `execute-plans` paths | Exclusions |
-|---|---|---|---|
-| Lifecycle | `services/trade_journey/`, BFF Lifecycle reader/readiness, related Compose/deploy tests | none | no workflow authorization code |
-| Proof binding | `scripts/cross_repo_release_controller.py`, Pantheon integration/deploy workflow contracts | dev deploy/integration workflows and helpers | no product-domain implementation |
-| Management AI | OpenClaw adapter/provider and Management BFF integration | Management journey/spec helpers | no Lifecycle paths |
-| Agora | Agora BFF fixes exposed by journey | Agora journey/spec helpers | no parallel Agora implementation |
-| BE consolidation | inventoried backend candidates only | none | no unproven deletion |
-| FE consolidation | none | inventoried frontend candidates only | never copy FE into Pantheon repo |
-| Hosted acceptance | manifest/evidence/runbook only | manifest/evidence only | no feature implementation |
+| Task/lane | Exclusive owned artifacts | Exclusions |
+|---|---|---|
+| Lifecycle activation root | `services/trade_journey/lifecycle_projector.py`, `projection_store.py`, migrations/tests; BFF `trade_journey_projection_store.py`, `trade_journeys.py`, `main.py` | no Compose/deploy or file deletion |
+| Existing Lifecycle retirement, later wave | `docker-compose.yml`, retirement/deploy integration, runbook/evidence; serial post-root cleanup of legacy branches in overlapping Lifecycle files | no concurrent edits with the activation root |
+| Candidate auto-binding root | `scripts/cross_repo_release_controller.py`, `scripts/test_cross_repo_release_controller.py`, `.github/workflows/nonprod-deploy.yml` | no `execute-plans` code/workflows |
+| Existing bounded proof | its three declared `execute-plans` proof workflows and evidence directory | no Pantheon controller ownership |
+| Hosted OpenClaw repair root | `assistant_openclaw_provider.py`, adapter `main.py`, their two tests, and `scripts/openclaw-assistant-openclaw-live-smoke.sh` | no BFF main, Compose/deploy, or frontend |
+| Existing Management journey | its two `execute-plans` E2E specs and evidence directory | no OpenClaw provider implementation |
+| Existing Agora journey | existing Agora source/E2E/evidence surfaces | no parallel Agora implementation |
+| BE inventory sidecar | Pantheon `support/sidecars/PFG-BE-CONSOLIDATE-20260820/caller-inventory-20260824.md` only | no product/deploy/delete/state change |
+| FE inventory sidecar | `execute-plans` `support/sidecars/PFG-FE-CONSOLIDATE-20260820/caller-inventory-20260824.md` only | no product/deploy/delete/state change |
+| Existing BE/FE consolidation parents | their already-declared product artifacts, after sidecar handoff and dependencies | no sidecar rewrite to hide product changes |
+| Hosted acceptance | manifest/version verifier, runbook, and evidence only | no missing-feature implementation |
 
-One file has one active owner per wave. Cross-lane edits to shared workflows or BFF
-startup are integrated by the release lane after feature branches are current with
-their respective `dev` branches.
+One file has one active owner per wave. The only intentional overlap is between the
+Lifecycle root and later retirement task; it is serialized, with the retirement task
+composing only after the root merges.
 
 ## 7. Validation strategy
 
@@ -396,7 +410,8 @@ capital is never enabled.
 
 The SA program is complete only when:
 
-- all seven canonical nonterminal tasks are terminal without duplicate task IDs;
+- all five corrective nodes and all seven pre-existing tasks are terminal with their
+  identities and immutable history preserved;
 - the hosted Lifecycle authority is relational and survives restart/readback;
 - the exact legacy Lifecycle directory is removed and remains bounded;
 - Management AI returns a real provider answer and Management/Agora write journeys

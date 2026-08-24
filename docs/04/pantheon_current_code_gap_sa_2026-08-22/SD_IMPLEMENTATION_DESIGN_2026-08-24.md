@@ -5,8 +5,10 @@ Status: worker-ready detailed design
 Source: [`CURRENT_GAP_2026-08-24.md`](CURRENT_GAP_2026-08-24.md) and
 [`SA_IMPLEMENTATION_PLAN_2026-08-24.md`](SA_IMPLEMENTATION_PLAN_2026-08-24.md)
 
-Implementation rule: reuse current task IDs and current code; do not merge stale
-Pantheon PR #5147 as-is and do not create parallel replacements.
+Implementation rule: preserve the seven pre-existing immutable task specs, compose
+them with the five materialized corrective roots/sidecars, and reuse current code.
+Do not merge stale Pantheon PR #5147 as-is, call a corrective root a replacement, or
+supersede task history.
 
 ## 1. Baseline invariants
 
@@ -29,16 +31,26 @@ These invariants apply to every change in this design:
 
 | Design unit | Canonical task | Primary implementation surfaces |
 |---|---|---|
-| SD-LIFE-01 relational worker | `LIFECYCLE-PROJ-RETIRE-001` | `services/trade_journey/lifecycle_projector.py`, `projection_store.py`, migration/tests |
-| SD-LIFE-02 BFF/readiness cutover | same task | `services/control-plane/bff/main.py`, `trade_journeys.py`, read-store/config tests |
-| SD-LIFE-03 deploy/restart/cleanup | same task | `docker-compose.yml`, `scripts/deploy_nonprod_vm.sh`, Lifecycle wait/probe scripts |
-| SD-PROOF-01 automatic candidate binding | `PFG-BOUNDED-FUNCTIONAL-CLOSURE-PROOF-20260824` | `scripts/cross_repo_release_controller.py`, Pantheon and `execute-plans` deployment workflows |
-| SD-MGMT-01 Management/AI journey | `PFG-MGMT-JOURNEY-E2E-20260820` | OpenClaw adapter/BFF plus `execute-plans` Management hosted journey |
+| SD-LIFE-01 relational worker | `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824` | `services/trade_journey/lifecycle_projector.py`, `projection_store.py`, migration/tests |
+| SD-LIFE-02 BFF relational reader/readiness | `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824` | BFF `trade_journey_projection_store.py`, `trade_journeys.py`, `main.py` |
+| SD-LIFE-03 deploy/restart/cleanup | `LIFECYCLE-PROJ-RETIRE-001` after root handoff | Compose, retirement/deploy integration, runbook/evidence; serialized cleanup in overlapping source |
+| SD-PROOF-01 automatic candidate binding | `PFG-CANDIDATE-AUTO-BINDING-20260824` | `cross_repo_release_controller.py`, its test, Pantheon `nonprod-deploy.yml` |
+| SD-PROOF-02 bounded proof execution | `PFG-BOUNDED-FUNCTIONAL-CLOSURE-PROOF-20260824` | its three declared `execute-plans` proof workflows and evidence |
+| SD-MGMT-01 hosted OpenClaw repair | `PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824` | existing adapter/provider, focused tests, hosted smoke script |
+| SD-MGMT-02 Management/AI journey | `PFG-MGMT-JOURNEY-E2E-20260820` | declared `execute-plans` Management hosted specs/evidence |
 | SD-AGORA-01 Agora journey | `PFG-AGORA-JOURNEY-E2E-20260820` | existing Agora BFF and `execute-plans` Agora hosted specs |
-| SD-CLEAN-01 caller-backed cleanup | BE/FE consolidation tasks | inventoried candidates and disposition ledgers |
+| SD-CLEAN-00 read-only inventories | two exact `*-SIDECAR-CALLER-INVENTORY` tasks | one `support/sidecars/.../caller-inventory-20260824.md` per repo |
+| SD-CLEAN-01 caller-backed cleanup | existing BE/FE consolidation parents | declared product candidates and disposition ledgers |
 | SD-REL-01 final hosted acceptance | `PFG-HOSTED-ACCEPT-20260820` | deployment manifest/version/evidence only |
 
+All five new nodes declare `PFG-FUNCTIONAL-REAUDIT-DOCS-20260824` as their only
+canonical dependency. The seven older rows keep their original `depends_on` values.
+Root-to-consumer ordering below is a governed handoff/coordination hold, not a
+retroactive edit of immutable task fields.
+
 ## 3. SD-LIFE-01 — PostgreSQL transactional projector
+
+Owner: `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824`.
 
 ### 3.1 Reuse boundary
 
@@ -58,7 +70,8 @@ relational writer.
 
 ### 3.2 Runtime configuration
 
-Target dev values:
+The root implements and tests these target values but does not edit Compose or deploy
+workflows; SD-LIFE-03 activates them after the root merges:
 
 | Variable | Target value/contract |
 |---|---|
@@ -155,6 +168,9 @@ Extend focused tests under `services/trade_journey/`:
 
 ## 4. SD-LIFE-02 — BFF relational reader and readiness
 
+Owner: `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824`. This unit may edit only the
+task's declared BFF source/tests and may not switch deployment or delete legacy data.
+
 ### 4.1 Reader behavior
 
 When `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres`:
@@ -198,6 +214,11 @@ For the same relational fixture rows, verify:
 - all readiness-negative conditions produce an actionable reason.
 
 ## 5. SD-LIFE-03 — Deployment, restart/readback, and immediate retirement
+
+Owner: the pre-existing `LIFECYCLE-PROJ-RETIRE-001`, only after the activation root
+merges and an audited operator correction clears the stale seven-day/HMAC status
+blockers. The correction is recorded through governed task state and does not rewrite
+the old task's immutable spec.
 
 ### 5.1 Gate-before-switch sequence
 
@@ -263,7 +284,14 @@ Positive tests cover backfill, switch, restart, cleanup, disk release, and no re
 Negative tests cover failed backfill, mismatched SHA, stale controller, failed
 readback, and cleanup never running before acceptance.
 
-## 6. SD-PROOF-01 — Automatic exact candidate binding
+## 6. SD-PROOF-01 and SD-PROOF-02 — Candidate binding and bounded proof
+
+SD-PROOF-01 owner: `PFG-CANDIDATE-AUTO-BINDING-20260824`.
+
+SD-PROOF-02 owner: the pre-existing
+`PFG-BOUNDED-FUNCTIONAL-CLOSURE-PROOF-20260824`, after the root merges and an audited
+operator correction clears the stale old-pair/per-pair authorization status
+blockers. Neither action changes the old task's immutable spec.
 
 ### 6.1 Source of truth
 
@@ -285,12 +313,22 @@ The pair ID uses the repository's current canonical derivation. Child workflows
 receive these values as generated outputs. Canonical task descriptions may identify
 the candidate ID, but must not hard-code a previous FE/BFF pair as a prerequisite.
 
-### 6.2 Workflow changes
+### 6.2 Exclusive workflow ownership
 
-Pantheon controller and `execute-plans` workflows
-`.github/workflows/pantheon-dev-fe-deploy.yml`,
+SD-PROOF-01 edits only:
+
+- `scripts/cross_repo_release_controller.py`;
+- `scripts/test_cross_repo_release_controller.py`; and
+- Pantheon `.github/workflows/nonprod-deploy.yml`.
+
+It publishes immutable candidate outputs and prevents stale task/child inputs from
+overriding them. It does not edit `execute-plans` product or proof workflows.
+
+After root handoff, SD-PROOF-02 owns the pre-existing task's declared
+`execute-plans` workflows `.github/workflows/pantheon-dev-fe-deploy.yml`,
 `.github/workflows/pantheon-integration-gate.yml`, and
-`.github/workflows/pantheon-proof-watchdog.yml` retain:
+`.github/workflows/pantheon-proof-watchdog.yml`. They consume the parent outputs and
+retain:
 
 - immutable read-only/operator/write-proof build profiles;
 - exact manifest and `/bff/version` verification;
@@ -298,9 +336,10 @@ Pantheon controller and `execute-plans` workflows
 - bounded proof expiry/watchdog; and
 - test-account secrets loaded only in the job environment.
 
-They remove the normal dependency on a manually supplied `proof_window_ack`, an
-authorized-operator name, or a stale exact-pair input. The parent controller opening
-the paper-only candidate is the authorization event for this development workflow.
+The combined contract removes the normal dependency on a manually supplied
+`proof_window_ack`, authorized-operator name, or stale exact-pair input. The parent
+controller opening the paper-only candidate is the authorization event for this
+development workflow.
 
 ### 6.3 Proof state machine
 
@@ -325,9 +364,17 @@ Any exception, cancellation, or expiry transitions through
 - failure, cancellation, and watchdog expiry restore read-only; and
 - no credential or secret appears in artifacts/logs.
 
-## 7. SD-MGMT-01 — Management and Management AI hosted journey
+## 7. SD-MGMT-01 and SD-MGMT-02 — OpenClaw repair and hosted journey
 
 ### 7.1 Provider repair boundary
+
+Owner: `PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824`.
+
+Its exclusive files are
+`services/openclaw-gateway-adapter/assistant_openclaw_provider.py`, adapter `main.py`,
+`test_assistant_openclaw_provider_live.py`, `test_main.py`, and
+`scripts/openclaw-assistant-openclaw-live-smoke.sh`. It must not modify BFF main,
+Compose/deployment, or frontend code.
 
 Trace `POST /bff/management/nl/ask` through the BFF to
 `services/openclaw-gateway-adapter/assistant_openclaw_provider.py`. Correct the
@@ -340,7 +387,9 @@ response or catching the error and displaying success is prohibited.
 
 ### 7.2 Journey steps
 
-The `execute-plans` hosted test uses a unique run namespace and:
+Owner: the pre-existing `PFG-MGMT-JOURNEY-E2E-20260820`. It consumes the hosted
+provider repair but owns only its declared `execute-plans` specs/evidence. The hosted
+test uses a unique run namespace and:
 
 1. verifies candidate manifest, BFF version, write-proof profile, and paper mode;
 2. opens Management and reads Formula, Activity, Paper Telemetry, and Postmortem
@@ -401,9 +450,21 @@ Negative controls reject prebuilt IDs, seed/fixture endpoints, memory-only state
 cross-tenant leakage, duplicate commands, and a decision/performance result missing
 after reload.
 
-## 9. SD-CLEAN-01 — Duplicate and dead-code simplification
+## 9. SD-CLEAN-00 and SD-CLEAN-01 — Inventory and simplification
 
-### 9.1 Inventory record
+### 9.1 Read-only sidecar ownership
+
+`PFG-BE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY` owns only Pantheon
+`support/sidecars/PFG-BE-CONSOLIDATE-20260820/caller-inventory-20260824.md`.
+
+`PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY` owns only `execute-plans`
+`support/sidecars/PFG-FE-CONSOLIDATE-20260820/caller-inventory-20260824.md`.
+
+Both sidecars are read-only audits: no product source, deployment, deletion, or
+canonical parent-task state may change. Existing parent tasks retain all product and
+deletion authority and start only after their declared dependencies are terminal.
+
+### 9.2 Inventory record
 
 Each backend/frontend candidate receives:
 
@@ -424,7 +485,7 @@ Caller scans include imports, lazy/dynamic imports, route manifests, OpenAPI cli
 workflows, Docker/Compose/deploy scripts, tests, and docs used as operational
 contracts. Generated outputs are traced to their generator before deletion.
 
-### 9.2 Change rules
+### 9.3 Parent change rules
 
 - `retain`: name the canonical implementation and remove no code.
 - `replace_then_delete`: migrate every caller, pass the replacement journey, then
@@ -436,7 +497,7 @@ Do not mark an old task superseded because a new plan exists. Do not add a compa
 copy to reduce merge conflict. Frontend changes remain in `ajoe734/execute-plans`, not
 inside the Pantheon checkout.
 
-### 9.3 Validation
+### 9.4 Validation
 
 Backend and frontend focused unit/contract tests must pass, followed by the relevant
 Management or Agora hosted journey if a product path changed. A source scan alone is
@@ -481,17 +542,28 @@ dev stub writes false.
 
 ## 11. Task update and completion rules
 
-Update the seven existing canonical tasks with the design-unit references and
-corrected dependencies. Specifically:
+Do not update the seven existing task specs or dependencies. Preserve their immutable
+payloads and history. Execute the correction through the five already materialized
+nodes:
 
-- remove seven-day/HMAC/manual-retirement approval as blockers from
-  `LIFECYCLE-PROJ-RETIRE-001`;
-- remove stale exact-pair/operator reauthorization as a blocker from
-  `PFG-BOUNDED-FUNCTIONAL-CLOSURE-PROOF-20260824`;
-- retain full write-journey acceptance on the Agora and Management tasks;
-- allow BE/FE caller audits to start before journey completion, while keeping deletion
-  dependent on replacement proof; and
-- keep hosted acceptance last.
+1. `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824` owns the core before the old
+   Lifecycle deployment/retirement task resumes.
+2. `PFG-CANDIDATE-AUTO-BINDING-20260824` owns candidate derivation before the old
+   bounded-proof task resumes.
+3. `PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824` owns provider repair before the
+   unchanged Management journey runs.
+4. `PFG-BE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY` supplies only the BE
+   inventory to its existing parent.
+5. `PFG-FE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY` supplies only the FE
+   inventory to its existing parent.
+
+The old Lifecycle retirement and bounded-proof tasks remain blocked until their
+roots land. Then record the audited operator correction through the governed
+lifecycle/status path to clear their stale status blockers. This preserves the old
+seven-day/HMAC, old-pair, and per-pair authorization text as history; it does not
+silently mutate those immutable fields. The Agora and Management tasks retain full
+write-journey acceptance, the consolidation parents retain deletion authority, and
+hosted acceptance remains last.
 
 Task status changes must use the V2 TaskStore/supervisor path. Do not hand-edit
 canonical queue JSON. A task is complete only with its required runtime artifact, not
@@ -509,7 +581,7 @@ For every repository change:
 6. merge the exact validated head;
 7. promote through the fixed dev VM SSH path;
 8. verify served manifest/version and the design-unit runtime acceptance; and
-9. attach evidence to the existing canonical task.
+9. attach evidence to the exact owning root, sidecar, or pre-existing consumer task.
 
 Pantheon PR #5147 is not step 1 of this sequence. Its valid relational ideas are
 re-applied to a clean current-dev branch with the reduced scope defined here.
@@ -517,7 +589,8 @@ re-applied to a clean current-dev branch with the reduced scope defined here.
 ## 13. Definition of done
 
 Implementation is complete when all design-unit tests pass, the current hosted
-candidate satisfies SD-REL-01, the seven canonical tasks are terminal, and there is
-no unresolved functional blocker. Security hardening or additional governance may be
-planned separately but cannot be used to represent this functional program as
-unfinished or to substitute for missing product journeys.
+candidate satisfies SD-REL-01, all five corrective nodes and all seven pre-existing
+tasks are terminal with evidence, and there is no unresolved functional blocker.
+Security hardening or additional governance may be planned separately but cannot be
+used to represent this functional program as unfinished or to substitute for missing
+product journeys.
