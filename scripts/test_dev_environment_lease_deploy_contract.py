@@ -442,6 +442,202 @@ def test_staging_dry_run_does_not_require_dev_lease() -> None:
     assert "environment=staging-live" in result.stdout
 
 
+def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
+    workflow = _workflow()
+    dev = _job(workflow, "deploy-dev", "coordinate-dev-release")
+
+    match = re.search(r"timeout-minutes:\s*(\d+)", dev)
+    assert match is not None, "deploy-dev job must define timeout-minutes"
+    job_timeout_minutes = int(match.group(1))
+    job_timeout_seconds = job_timeout_minutes * 60
+
+    assert "DEV_DEPLOY_DEADLINE_SECONDS:" in dev
+    assert '--deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"' in dev
+
+    deadline_match = re.search(
+        r"DEV_DEPLOY_DEADLINE_SECONDS:\s*\${{\s*vars\.DEV_DEPLOY_DEADLINE_SECONDS\s*\|\|\s*'(\d+)'\s*}}",
+        dev,
+    )
+    assert deadline_match is not None, "DEV_DEPLOY_DEADLINE_SECONDS default must be explicit"
+    default_deadline_seconds = int(deadline_match.group(1))
+
+    assert default_deadline_seconds < job_timeout_seconds, (
+        f"Deploy command deadline ({default_deadline_seconds}s) must stay strictly below "
+        f"job timeout ({job_timeout_seconds}s)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "extra_env", "expected_deadline"),
+    [
+        (["--deadline-seconds", "900"], {}, "900"),
+        (["--deploy-timeout-seconds", "750"], {}, "750"),
+        ([], {"DEV_DEPLOY_DEADLINE_SECONDS": "600"}, "600"),
+        ([], {"DEV_DEPLOY_TIMEOUT_SECONDS": "450"}, "450"),
+        ([], {}, "1200"),
+    ],
+)
+def test_dev_deploy_validates_deadline_configuration_positive(
+    args: list[str],
+    extra_env: dict[str, str],
+    expected_deadline: str,
+) -> None:
+    env = {
+        **os.environ,
+        **extra_env,
+    }
+    result = subprocess.run(
+        [
+            "bash",
+            str(DEPLOY),
+            "--environment",
+            "staging-live",
+            "--component",
+            "exec",
+            "--sha",
+            "a" * 40,
+            "--dry-run",
+            *args,
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"dev_deploy_deadline_seconds={expected_deadline}" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("args", "extra_env"),
+    [
+        (["--deadline-seconds", "0"], {}),
+        (["--deadline-seconds", "-10"], {}),
+        (["--deadline-seconds", "abc"], {}),
+        (["--deploy-timeout-seconds", "invalid"], {}),
+        ([], {"DEV_DEPLOY_DEADLINE_SECONDS": "0"}),
+        ([], {"DEV_DEPLOY_DEADLINE_SECONDS": "-5"}),
+        ([], {"DEV_DEPLOY_DEADLINE_SECONDS": "not_a_number"}),
+    ],
+)
+def test_dev_deploy_validates_deadline_configuration_negative(
+    args: list[str],
+    extra_env: dict[str, str],
+) -> None:
+    env = {
+        **os.environ,
+        **extra_env,
+    }
+    result = subprocess.run(
+        [
+            "bash",
+            str(DEPLOY),
+            "--environment",
+            "staging-live",
+            "--component",
+            "exec",
+            "--sha",
+            "a" * 40,
+            "--dry-run",
+            *args,
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "DEV_DEPLOY_DEADLINE_SECONDS must be a positive integer" in result.stderr
+
+
+def test_dev_deploy_ssh_command_terminates_process_group_on_deadline(
+    tmp_path: Path,
+) -> None:
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir()
+    pid_file = tmp_path / "mock_ssh.pid"
+
+    mock_ssh = mock_bin / "ssh"
+    mock_ssh.write_text(
+        f"#!/usr/bin/env bash\n"
+        f"echo $$ > '{pid_file}'\n"
+        f"sleep 30\n",
+        encoding="utf-8",
+    )
+    mock_ssh.chmod(0o755)
+
+    key_file = tmp_path / "deploy_key"
+    known_hosts = tmp_path / "known_hosts"
+    key_file.write_text("dummy-key\n", encoding="utf-8")
+    key_file.chmod(0o600)
+    known_hosts.write_text(
+        "35.201.204.12 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGdummy\n",
+        encoding="utf-8",
+    )
+    known_hosts.chmod(0o600)
+
+    lease_state = tmp_path / "lease_state.json"
+    _lease_state(
+        lease_state,
+        lease_id="11111111-1111-4111-8111-111111111111",
+        expected_sha="a" * 40,
+    )
+
+    cur_path = os.environ.get("PATH", "")
+    env = {
+        **os.environ,
+        "PATH": f"{mock_bin}:{cur_path}",
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(lease_state),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": "11111111-1111-4111-8111-111111111111",
+        "DEV_DEPLOY_SSH_KEY_FILE": str(key_file),
+        "DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE": str(known_hosts),
+        "DEV_BFF_AUTH_STUB": "true",
+        "DEV_BFF_AUTH_MODE": "permissive",
+        "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED": "false",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(DEPLOY),
+            "--environment",
+            "dev",
+            "--component",
+            "bff",
+            "--sha",
+            "a" * 40,
+            "--deadline-seconds",
+            "1",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 75
+    assert (
+        "deploy command exceeded deadline of 1s; direct SSH process group terminated"
+        in result.stderr
+    )
+    assert pid_file.exists()
+    spawned_pid = int(pid_file.read_text(encoding="utf-8").strip())
+    # Verify the child process was terminated by process group kill
+    import time
+    time.sleep(0.5)
+    try:
+        os.kill(spawned_pid, 0)
+        is_alive = True
+    except ProcessLookupError:
+        is_alive = False
+    assert not is_alive, f"Spawned process {spawned_pid} should have been terminated"
+
+
 SAMPLE_BACKEND_SHA = "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"
 SAMPLE_FRONTEND_SHA = "cc4007f7f78a31c73548ce85457af17a45a4c4b9"
 SAMPLE_BFF_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"

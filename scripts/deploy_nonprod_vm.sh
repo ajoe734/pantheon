@@ -40,6 +40,7 @@ DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
 DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
 DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS="${DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS:-120}"
 DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS="${DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS:-2}"
+DEV_DEPLOY_DEADLINE_SECONDS="${DEV_DEPLOY_DEADLINE_SECONDS:-${DEV_DEPLOY_TIMEOUT_SECONDS:-1200}}"
 DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"
 # Governed verifier/dev-login credentials for the strict auth cutover. These
 # must come from a secret source (GitHub Actions secrets in CI), never from
@@ -218,10 +219,15 @@ Options:
   --allow-example-env    Allow staging to use env/*.env.example if real env files
                          are absent. Intended for rehearsal only.
   --dry-run              Print the target plan without SSHing.
+  --deadline-seconds <seconds>
+                         Deploy command deadline in seconds. Default: 1200.
+  --deploy-timeout-seconds <seconds>
+                         Alias for --deadline-seconds.
   --help                 Show this message.
 
 Environment overrides:
   REMOTE_USER
+  DEV_DEPLOY_DEADLINE_SECONDS DEV_DEPLOY_TIMEOUT_SECONDS
   PANTHEON_DEPLOY_WORKTREE_ROOT
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
@@ -386,6 +392,10 @@ while [[ $# -gt 0 ]]; do
       ALLOW_EXAMPLE_ENV=true
       shift
       ;;
+    --deadline-seconds|--deploy-timeout-seconds)
+      DEV_DEPLOY_DEADLINE_SECONDS="${2:-}"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=true
       shift
@@ -399,6 +409,9 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+[[ "$DEV_DEPLOY_DEADLINE_SECONDS" =~ ^[0-9]+$ && "$DEV_DEPLOY_DEADLINE_SECONDS" -ge 1 ]] \
+  || error "DEV_DEPLOY_DEADLINE_SECONDS must be a positive integer"
 
 [[ -n "$DEPLOY_ENV" ]] || error "--environment is required"
 [[ -n "$DEPLOY_SHA" ]] || error "--sha is required unless GITHUB_SHA is set"
@@ -449,6 +462,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "sha=${DEPLOY_SHA}"
   info "allow_dirty=${ALLOW_DIRTY}"
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
+  info "dev_deploy_deadline_seconds=${DEV_DEPLOY_DEADLINE_SECONDS}"
   info "dev_bff_cors_origins=${DEV_BFF_CORS_ORIGINS}"
   info "dev_bff_public_host=${DEV_BFF_PUBLIC_HOST}"
   info "dev_fe_public_host=${DEV_FE_PUBLIC_HOST}"
@@ -661,12 +675,13 @@ ssh_bash() {
   command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "$STAGING_BFF_CORS_ORIGINS")"
   command_prefix+=" bash -s"
 
+  local deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-1200}"
   local -a remote_command
   if [[ "$DEPLOY_ENV" == "dev" ]]; then
-    info "direct ssh ${REMOTE_USER}@${DEV_DEPLOY_SSH_HOST} component=${remote_component} sha=${DEPLOY_SHA}"
+    info "direct ssh ${REMOTE_USER}@${DEV_DEPLOY_SSH_HOST} component=${remote_component} sha=${DEPLOY_SHA} (deadline=${deadline_seconds}s)"
     remote_command=("$SCRIPT_DIR/dev_vm_ssh.sh" exec "$command_prefix")
   else
-    info "gcloud ssh ${vm} (${zone}) component=${remote_component} sha=${DEPLOY_SHA}"
+    info "gcloud ssh ${vm} (${zone}) component=${remote_component} sha=${DEPLOY_SHA} (deadline=${deadline_seconds}s)"
     remote_command=(
       gcloud compute ssh "${REMOTE_USER}@${vm}"
       --project="${PROJECT_ID}"
@@ -675,7 +690,71 @@ ssh_bash() {
       --command="${command_prefix}"
     )
   fi
-  "${remote_command[@]}" <<'REMOTE'
+
+  python3 -c '
+import os
+import signal
+import subprocess
+import sys
+import time
+
+deadline_seconds = float(sys.argv[1])
+cmd = sys.argv[2:]
+stdin_data = sys.stdin.buffer.read()
+
+def terminate_pg(pgid):
+    try:
+        os.killpg(pgid, signal.SIGSTOP)
+        os.killpg(pgid, signal.SIGTERM)
+        os.killpg(pgid, signal.SIGCONT)
+    except ProcessLookupError:
+        return
+    for _ in range(20):
+        time.sleep(0.25)
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+proc = subprocess.Popen(
+    cmd,
+    stdin=subprocess.PIPE,
+    start_new_session=True,
+)
+pgid = proc.pid
+
+def handle_sig(sig, frame):
+    terminate_pg(pgid)
+    sys.exit(128 + sig)
+
+signal.signal(signal.SIGINT, handle_sig)
+signal.signal(signal.SIGTERM, handle_sig)
+
+try:
+    proc.communicate(input=stdin_data, timeout=deadline_seconds)
+    exit_code = proc.returncode
+except subprocess.TimeoutExpired:
+    terminate_pg(pgid)
+    try:
+        proc.kill()
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+    print(
+        f"[nonprod-deploy] ERROR: deploy command exceeded deadline of {int(deadline_seconds)}s; direct SSH process group terminated",
+        file=sys.stderr,
+    )
+    sys.exit(75)
+except Exception:
+    terminate_pg(pgid)
+    raise
+
+sys.exit(exit_code)
+' "${deadline_seconds}" "${remote_command[@]}" <<'REMOTE'
 set -euo pipefail
 
 info() {
