@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import sys
 import types
@@ -11,6 +12,7 @@ import pytest
 
 from services.trade_journey import hosted_lifecycle_probe as probe
 from services.trade_journey.lifecycle_projector import LifecycleProjector, _fingerprint
+from services.trade_journey.materializer import JourneyMaterializer
 from services.trade_journey.test_lifecycle_projector import lifecycle_rows
 
 
@@ -222,15 +224,104 @@ def _natural_lifecycle_rows() -> list[dict]:
     return selected
 
 
-def _publish(tmp_path: Path, *, sha: str = "deployed-sha", mode: str = "live") -> tuple[Path, list[dict]]:
+def _publish(
+    tmp_path: Path,
+    *,
+    sha: str = "deployed-sha",
+    mode: str = "live",
+    rows: list[dict] | None = None,
+    source_high_watermark: int | None = None,
+    generation: int = 1,
+) -> tuple[Path, list[dict]]:
     root = tmp_path / "projection"
-    rows = _natural_lifecycle_rows()
-    projector = LifecycleProjector(
-        state_path=root / "controller_state.json",
-        bundle_root=root,
-        deployment_sha=sha,
+    generations_dir = root / "generations"
+    gen_dir = generations_dir / f"gen-{generation:06d}"
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    if rows is None:
+        rows = _natural_lifecycle_rows()
+
+    hw = source_high_watermark if source_high_watermark is not None else (len(rows) if rows else 0)
+    last_seq = rows[-1].get("ingested_seq", hw) if rows else hw
+    last_event_id = rows[-1].get("event_id", "event-001") if rows else "event-001"
+    last_ts = rows[-1].get("ingested_at") or (rows[-1].get("payload", {}).get("created_at")) or "2026-08-22T00:00:00Z"
+
+    ctrl_dict = {
+        "controller_id": "canonical-lifecycle-projector",
+        "status": "ready",
+        "deployment_sha": sha,
+        "mode": mode,
+        "accepted_live": mode == "live",
+        "truth_level": "canonical_live" if mode == "live" else "not_accepted_live",
+        "checkpoint": hw,
+        "source_high_watermark": hw,
+        "backlog": 0,
+        "last_processed_ingested_seq": last_seq,
+        "last_processed_event_id": last_event_id,
+        "last_processed_timestamp": last_ts,
+        "quarantine_count": 0,
+        "generation": generation,
+    }
+
+    events_list = []
+    for row in rows:
+        evt = LifecycleProjector._source_event(row)
+        identity = LifecycleProjector._identity(evt)
+        seq = int(row.get("ingested_seq") or 0)
+        event_type = str(evt.get("event_type") or "")
+        stage_name = probe.EXPECTED_STAGES.get(event_type, "research_rationale")
+        events_list.append({
+            **identity,
+            "canonical_event_id": str(evt.get("event_id") or ""),
+            "stage": stage_name,
+            "stage_status": "completed",
+            "source_mode": mode,
+            "accepted_live": mode == "live",
+            "source_offset": seq,
+        })
+
+    candidate_identity = (
+        LifecycleProjector._identity(LifecycleProjector._source_event(rows[0]))
+        if rows
+        else {}
     )
-    projector.project_records(rows, mode=mode, source_high_watermark=len(rows))
+    loop_run_id = candidate_identity.get("loop_run_id") or "loop-paper-001"
+
+    journeys = {
+        "schema_version": probe.JOURNEY_STORE_SCHEMA,
+        "generation": generation,
+        "controller": ctrl_dict,
+        "events": events_list,
+    }
+    loops = {
+        "schema_version": probe.LOOP_STORE_SCHEMA,
+        "generation": generation,
+        "controller": ctrl_dict,
+        "records": {
+            loop_run_id: {
+                **candidate_identity,
+                "status": "completed",
+                "accepted_live": mode == "live",
+                "projection_mode": mode,
+                "projection_revision": generation,
+            }
+        },
+    }
+    manifest = {
+        "schema_version": "pantheon.lifecycle-projection-bundle.v1",
+        "generation": generation,
+        "journey_sha256": _fingerprint(journeys),
+        "loop_runs_sha256": _fingerprint(loops),
+    }
+
+    (gen_dir / "trade_journey_events.json").write_text(json.dumps(journeys), encoding="utf-8")
+    (gen_dir / "loop_runs.json").write_text(json.dumps(loops), encoding="utf-8")
+    (gen_dir / "controller_state.json").write_text(json.dumps(ctrl_dict), encoding="utf-8")
+    (gen_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    current_symlink = root / "current"
+    if current_symlink.exists() or current_symlink.is_symlink():
+        current_symlink.unlink()
+    os.symlink(gen_dir, current_symlink)
     return root, rows
 
 
@@ -447,15 +538,10 @@ def test_probe_retries_projection_integrity_until_bundle_is_valid(tmp_path):
 
 
 def test_probe_reads_only_rows_after_baseline_for_incremental_source(tmp_path):
-    root = tmp_path / "projection"
     shifted_rows = _natural_lifecycle_rows()
     for row in shifted_rows:
         row["ingested_seq"] += 100
-    LifecycleProjector(
-        state_path=root / "controller_state.json",
-        bundle_root=root,
-        deployment_sha="deployed-sha",
-    ).project_records(shifted_rows, mode="live", source_high_watermark=108)
+    root, _ = _publish(tmp_path, rows=shifted_rows, source_high_watermark=108)
     source = IncrementalSource(baseline=100, high=108, rows=shifted_rows)
 
     code, artifact = asyncio.run(
@@ -479,15 +565,10 @@ def test_probe_reads_only_rows_after_baseline_for_incremental_source(tmp_path):
 
 
 def test_probe_uses_explicit_baseline_without_initial_high_watermark(tmp_path):
-    root = tmp_path / "projection"
     shifted_rows = _natural_lifecycle_rows()
     for row in shifted_rows:
         row["ingested_seq"] += 200
-    LifecycleProjector(
-        state_path=root / "controller_state.json",
-        bundle_root=root,
-        deployment_sha="deployed-sha",
-    ).project_records(shifted_rows, mode="live", source_high_watermark=208)
+    root, _ = _publish(tmp_path, rows=shifted_rows, source_high_watermark=208)
     source = IncrementalSource(baseline=999, high=208, rows=shifted_rows)
 
     code, artifact = asyncio.run(
@@ -572,12 +653,27 @@ def test_probe_rejects_manual_projection_truth(tmp_path, mode):
 
 def test_probe_rejects_degraded_controller(tmp_path):
     root, rows = _publish(tmp_path)
-    projector = LifecycleProjector(
-        state_path=root / "controller_state.json",
-        bundle_root=root,
-        deployment_sha="deployed-sha",
-    )
-    projector.record_source_failure("secret-postgres-dsn-would-not-be-exported")
+    ctrl_path = (root / "current" / "controller_state.json").resolve()
+    ctrl = json.loads(ctrl_path.read_text(encoding="utf-8"))
+    ctrl["status"] = "degraded"
+    ctrl["error"] = "secret-postgres-dsn-would-not-be-exported"
+    ctrl_path.write_text(json.dumps(ctrl), encoding="utf-8")
+
+    journeys_path = (root / "current" / "trade_journey_events.json").resolve()
+    journeys = json.loads(journeys_path.read_text(encoding="utf-8"))
+    journeys["controller"] = ctrl
+    journeys_path.write_text(json.dumps(journeys), encoding="utf-8")
+
+    loops_path = (root / "current" / "loop_runs.json").resolve()
+    loops = json.loads(loops_path.read_text(encoding="utf-8"))
+    loops["controller"] = ctrl
+    loops_path.write_text(json.dumps(loops), encoding="utf-8")
+
+    manifest_path = (root / "current" / "manifest.json").resolve()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["journey_sha256"] = _fingerprint(journeys)
+    manifest["loop_runs_sha256"] = _fingerprint(loops)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     code, artifact = _execute(tmp_path, root=root, rows=rows)
 
@@ -603,11 +699,7 @@ def test_probe_rejects_old_lifecycle_inherited_by_expected_deployment(tmp_path):
     root, rows = _publish(tmp_path, sha="old-sha")
     unrelated = json.loads(json.dumps(lifecycle_rows()[2]))
     unrelated["ingested_seq"] = 9
-    LifecycleProjector(
-        state_path=root / "controller_state.json",
-        bundle_root=root,
-        deployment_sha="new-sha",
-    ).project_records([unrelated], mode="live", source_high_watermark=9)
+    _publish(tmp_path, sha="new-sha", rows=[unrelated], source_high_watermark=9, generation=2)
 
     output = tmp_path / "old-lifecycle.json"
     code, artifact = asyncio.run(

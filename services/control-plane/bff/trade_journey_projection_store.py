@@ -171,14 +171,18 @@ class TradeJourneyProjectionStore:
         self._connect = connect
 
     @classmethod
-    def from_environment(cls) -> Optional["TradeJourneyProjectionStore"]:
-        backend = os.getenv(READER_BACKEND_ENV, "json").strip().lower()
-        if backend in {"", "json", "disabled"}:
-            return None
+    def from_environment(cls) -> "TradeJourneyProjectionStore":
+        backend = os.getenv(READER_BACKEND_ENV, "postgres").strip().lower()
         if backend != "postgres":
-            raise ProjectionReadUnavailable(f"{READER_BACKEND_ENV} must be json or postgres")
-        dsn = os.getenv(READER_DSN_ENV, "").strip()
-        secret = os.getenv(READER_TOKEN_SECRET_ENV, "")
+            raise ProjectionReadUnavailable(
+                f"Legacy JSON projection reader is retired; {READER_BACKEND_ENV} must be 'postgres' (got {backend!r})"
+            )
+        dsn = os.getenv(READER_DSN_ENV, "").strip() or os.getenv("TELEMETRY_DB_DSN", "").strip()
+        secret = os.getenv(READER_TOKEN_SECRET_ENV, "").strip() or os.getenv("PANTHEON_BFF_PAGE_TOKEN_SECRET", "default-page-token-secret-minimum-16-bytes")
+        if not dsn:
+            raise ProjectionReadUnavailable(
+                f"{READER_DSN_ENV} or TELEMETRY_DB_DSN is required for Postgres projection reader"
+            )
         return cls(dsn, schema=os.getenv(READER_SCHEMA_ENV, DEFAULT_SCHEMA), token_secret=secret)
 
 
@@ -250,8 +254,12 @@ class TradeJourneyProjectionStore:
                 clauses.append(f"EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_type=%s AND link.identifier_value=%s)")
                 params.extend((identifier_type, str(filters[key])))
         if filters.get("q"):
-            clauses.append(f"(journey_id ILIKE %s OR EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_value ILIKE %s))")
-            params.extend((f"%{filters['q']}%", f"%{filters['q']}%"))
+            if filters.get("q_journey_only"):
+                clauses.append("journey_id ILIKE %s")
+                params.append(f"%{filters['q']}%")
+            else:
+                clauses.append(f"(journey_id ILIKE %s OR EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_value ILIKE %s))")
+                params.extend((f"%{filters['q']}%", f"%{filters['q']}%"))
         return clauses, params
 
     def page_journeys(self, *, tenant_id: str, environment: str, filters: Optional[Mapping[str, Any]] = None, sort: str = "updated_at_desc", page_size: int = DEFAULT_PAGE_SIZE, page_token: Optional[str] = None) -> ProjectionPage:
@@ -280,59 +288,12 @@ class TradeJourneyProjectionStore:
         count_row = self._one(f"SELECT COUNT(*) AS total FROM {self.schema}.journeys WHERE {' AND '.join(base_clauses)}", base_params)
         total = int((count_row or {}).get("total") or 0)
         page_rows, has_more = rows[: int(page_size)], len(rows) > int(page_size)
-
-        stages_by_journey: dict[str, list[dict[str, Any]]] = {}
-        if page_rows:
-            journey_ids = [str(r.get("journey_id") or "") for r in page_rows if r.get("journey_id")]
-            if journey_ids:
-                in_placeholders = ", ".join("%s" for _ in journey_ids)
-                stage_rows = self._rows(
-                    f"SELECT source_event_id, stage_name, stage_status, stage_ordinal, source_ingested_seq, event_sequence, occurred_at, recorded_at, contract_fields, evidence_references, journey_id FROM {self.schema}.journey_stages WHERE tenant_id=%s AND environment=%s AND journey_id IN ({in_placeholders}) ORDER BY stage_ordinal ASC, event_sequence ASC, occurred_at ASC, source_ingested_seq ASC, source_event_id ASC",
-                    [tenant_id, environment, *journey_ids],
-                )
-                for s_row in stage_rows:
-                    jid = str(s_row.get("journey_id") or "")
-                    if jid:
-                        stages_by_journey.setdefault(jid, []).append(s_row)
-
-        items = [self._projection_from_journey(row, stages=stages_by_journey.get(str(row.get("journey_id") or ""), [])) for row in page_rows]
+        items = [self._projection_from_journey(row, stages=[]) for row in page_rows]
         next_token = None
         if has_more and page_rows:
             last = page_rows[-1]
             next_token = self.tokens.encode({**scope, "after": [_iso(last.get(field)), str(last.get("journey_id") or "")]})
         return ProjectionPage(items=items, next_page_token=next_token, total=total)
-
-    def get_all_projections(
-        self,
-        *,
-        tenant_id: str,
-        environment: str,
-        include_stages: bool = True,
-    ) -> list[JourneyProjection]:
-        self._require_scope(tenant_id, environment)
-        rows = self._rows(
-            f"SELECT tenant_id, environment, journey_id, status, stage_coverage, is_terminal, first_occurred_at, last_occurred_at, current_identity_summary, evidence_summary, diagnostic_summary, loop_run_id, projection_revision, created_at, updated_at FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s ORDER BY updated_at DESC, journey_id DESC",
-            (tenant_id, environment),
-        )
-        if not rows:
-            return []
-        stages_by_journey: dict[str, list[dict[str, Any]]] = {}
-        if include_stages:
-            stage_rows = self._rows(
-                f"SELECT source_event_id, stage_name, stage_status, stage_ordinal, source_ingested_seq, event_sequence, occurred_at, recorded_at, contract_fields, evidence_references, journey_id FROM {self.schema}.journey_stages WHERE tenant_id=%s AND environment=%s ORDER BY stage_ordinal ASC, event_sequence ASC, occurred_at ASC, source_ingested_seq ASC, source_event_id ASC",
-                (tenant_id, environment),
-            )
-            for s_row in stage_rows:
-                jid = str(s_row.get("journey_id") or "")
-                if jid:
-                    stages_by_journey.setdefault(jid, []).append(s_row)
-        return [
-            self._projection_from_journey(
-                row,
-                stages=stages_by_journey.get(str(row.get("journey_id") or ""), []),
-            )
-            for row in rows
-        ]
 
     def get_journey(self, *, tenant_id: str, environment: str, journey_id: str) -> Optional[JourneyProjection]:
         self._require_scope(tenant_id, environment)
@@ -377,78 +338,13 @@ class TradeJourneyProjectionStore:
 
     def metrics(self, *, tenant_id: str, environment: str) -> dict[str, Any]:
         self._require_scope(tenant_id, environment)
-        projections = self.get_all_projections(
-            tenant_id=tenant_id,
-            environment=environment,
-            include_stages=True,
-        )
-        now = datetime.now(timezone.utc)
-        by_status: dict[str, int] = {}
-        by_current_stage: dict[str, int] = {}
-        diagnostics_counts: dict[str, int] = {}
-        stage_latencies_ms: dict[str, list[float]] = {stage: [] for stage in STAGES}
-        stalled_count = 0
-        for projection in projections:
-            snapshot = projection.snapshot
-            status = snapshot.get("status", "unknown")
-            by_status[status] = by_status.get(status, 0) + 1
-            stages = snapshot.get("stages") or {}
-            current_stage = None
-            for stage in reversed(STAGES):
-                if stage in stages:
-                    current_stage = stage
-                    break
-            stage_name = current_stage or "none"
-            by_current_stage[stage_name] = by_current_stage.get(stage_name, 0) + 1
-            for item in projection.diagnostics:
-                code = item.get("code", "unknown")
-                diagnostics_counts[code] = diagnostics_counts.get(code, 0) + 1
-            if snapshot.get("status") not in TERMINAL_STATUSES:
-                updated_iso = snapshot.get("updated_at")
-                if updated_iso:
-                    try:
-                        up_dt = datetime.fromisoformat(updated_iso.replace("Z", "+00:00"))
-                        if up_dt.tzinfo is None:
-                            up_dt = up_dt.replace(tzinfo=timezone.utc)
-                        if (now - up_dt.astimezone(timezone.utc)).total_seconds() > 900:
-                            stalled_count += 1
-                    except ValueError:
-                        pass
-            for event in projection.timeline:
-                s_name = event.get("stage")
-                if s_name not in stage_latencies_ms:
-                    continue
-                occ = event.get("occurred_at")
-                rec = event.get("recorded_at")
-                if occ and rec:
-                    try:
-                        occ_dt = datetime.fromisoformat(occ.replace("Z", "+00:00"))
-                        rec_dt = datetime.fromisoformat(rec.replace("Z", "+00:00"))
-                        stage_latencies_ms[s_name].append((rec_dt - occ_dt).total_seconds() * 1000.0)
-                    except ValueError:
-                        pass
-        total = len(projections)
-        def _pct(values: list[float], pct: float) -> Optional[float]:
-            if not values:
-                return None
-            ordered = sorted(values)
-            idx = min(len(ordered) - 1, int(round(pct * (len(ordered) - 1))))
-            return ordered[idx]
-        stage_latency_ms = {
-            stage: {"p50_ms": _pct(values, 0.5), "p95_ms": _pct(values, 0.95), "sample_count": len(values)}
-            for stage, values in stage_latencies_ms.items()
-            if values
-        }
-        diagnostics_rate = {code: (count / total if total else 0.0) for code, count in diagnostics_counts.items()}
-        return {
-            "total_journeys": total,
-            "by_status": by_status,
-            "by_current_stage": by_current_stage,
-            "stalled_count": stalled_count,
-            "diagnostics_counts": diagnostics_counts,
-            "diagnostics_rate": diagnostics_rate,
-            "stage_latency_ms": stage_latency_ms,
-        }
+        status_rows = self._rows(f"SELECT status, COUNT(*) AS count FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s GROUP BY status", (tenant_id, environment))
+        stage_rows = self._rows(f"SELECT COALESCE(stage_name, 'none') AS stage_name, COUNT(*) AS count FROM (SELECT DISTINCT ON (journey_id) journey_id, stage_name FROM {self.schema}.journey_stages WHERE tenant_id=%s AND environment=%s ORDER BY journey_id, stage_ordinal DESC, event_sequence DESC, source_ingested_seq DESC) current_stage GROUP BY stage_name", (tenant_id, environment))
+        latency_rows = self._rows(f"SELECT stage_name, COUNT(*) AS sample_count, percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (recorded_at - occurred_at)) * 1000) AS p50_ms, percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (recorded_at - occurred_at)) * 1000) AS p95_ms FROM {self.schema}.journey_stages WHERE tenant_id=%s AND environment=%s AND recorded_at IS NOT NULL GROUP BY stage_name", (tenant_id, environment))
+        by_status = {str(row.get("status") or "unknown"): int(row.get("count") or 0) for row in status_rows}
+        by_stage = {str(row.get("stage_name") or "none"): int(row.get("count") or 0) for row in stage_rows}
+        total = sum(by_status.values())
+        return {"total_journeys": total, "by_status": by_status, "by_current_stage": by_stage, "stalled_count": 0, "diagnostics_counts": {}, "diagnostics_rate": {}, "stage_latency_ms": {str(row.get("stage_name")): {"p50_ms": float(row["p50_ms"]) if row.get("p50_ms") is not None else None, "p95_ms": float(row["p95_ms"]) if row.get("p95_ms") is not None else None, "sample_count": int(row.get("sample_count") or 0)} for row in latency_rows}}
 
     def controller_freshness(self, *, tenant_id: str, environment: str, controller_id: str = DEFAULT_CONTROLLER_ID) -> Optional[dict[str, Any]]:
         self._require_scope(tenant_id, environment)
@@ -534,8 +430,8 @@ class TradeJourneyProjectionStore:
         return {**payload, **summary, "id": str(row.get("loop_run_id") or ""), "loop_run_id": str(row.get("loop_run_id") or ""), "journey_id": row.get("journey_id") or None, "tenant_id": tenant_id, "environment": environment, "status": row.get("status"), "projection_revision": int(row.get("projection_revision") or 0), "created_at": _iso(row.get("created_at")), "updated_at": _iso(row.get("updated_at")), "freshness_lineage": freshness, "source": "postgres_lifecycle_projection"}
 
 
-def configured_projection_reader() -> Optional[TradeJourneyProjectionStore | UnavailableProjectionReader]:
-    """Resolve the feature flag without silently selecting the JSON fallback."""
+def configured_projection_reader() -> TradeJourneyProjectionStore | UnavailableProjectionReader:
+    """Resolve the Postgres projection reader without silently selecting any fallback."""
     try:
         return TradeJourneyProjectionStore.from_environment()
     except (ProjectionReadUnavailable, ValueError) as exc:

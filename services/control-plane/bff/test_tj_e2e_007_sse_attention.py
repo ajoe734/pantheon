@@ -12,6 +12,7 @@ BFF_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BFF_DIR)
 
 import trade_journeys as tj  # noqa: E402
+from test_tj_e2e_005_trade_journeys_read_api import InMemoryPostgresProjectionReader  # noqa: E402
 from services.trade_journey.materializer import JourneyMaterializer  # noqa: E402
 
 
@@ -22,10 +23,7 @@ def _event(event_id: str, journey_id: str, minute: int, stage: str = "broker_ack
 
 
 def _client(events):
-    materializer = JourneyMaterializer()
-    materializer.rebuild(events)
-    store = tj.TradeJourneyEventStore()
-    store.materializer = lambda: materializer
+    reader = InMemoryPostgresProjectionReader(events)
 
     def identity(auth):
         if not auth:
@@ -35,8 +33,9 @@ def _client(events):
     app = FastAPI()
     app.include_router(tj.create_trade_journeys_router(
         extract_identity=identity, require_read_role=lambda _: None,
-        get_event_store=lambda: store, utc_now=lambda: "2026-07-12T00:20:00Z"))
-    return TestClient(app), materializer
+        get_projection_reader=lambda: reader,
+        utc_now=lambda: "2026-07-12T00:20:00Z"))
+    return TestClient(app), reader.materializer
 
 
 def test_sse_emits_revisioned_invalidation_and_reconnect_gap_refetch():

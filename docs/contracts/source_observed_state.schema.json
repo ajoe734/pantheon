@@ -1,0 +1,293 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/source-observed-state/v1",
+  "title": "Pantheon SourceObservedState",
+  "description": "Source runtime and controller observed state snapshot.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_instance_id",
+    "desired_revision",
+    "observed_revision",
+    "reconciliation_status",
+    "effective_lifecycle",
+    "definition",
+    "credential_state",
+    "validation_state",
+    "canary_state",
+    "health_state",
+    "freshness",
+    "last_run",
+    "dlq_unresolved_count",
+    "observed_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "source_observed_state.v1"
+      ]
+    },
+    "source_instance_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "desired_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "observed_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "reconciliation_status": {
+      "type": "string",
+      "enum": [
+        "converged",
+        "reconciling",
+        "drifted",
+        "failed",
+        "stale"
+      ]
+    },
+    "effective_lifecycle": {
+      "type": "string",
+      "enum": [
+        "configured_disabled",
+        "validated_disabled",
+        "canary_passed_disabled",
+        "enabled",
+        "degraded",
+        "disabled",
+        "degraded_disabled",
+        "retired"
+      ]
+    },
+    "definition": {
+      "type": "object",
+      "required": [
+        "definition_id",
+        "deployment_sha",
+        "state"
+      ],
+      "properties": {
+        "definition_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deployment_sha": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "supported",
+            "disabled_by_build",
+            "experimental"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "credential_state": {
+      "type": "string",
+      "enum": [
+        "not_required",
+        "ready",
+        "credential_unavailable",
+        "invalid",
+        "expired"
+      ]
+    },
+    "validation_state": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "passed",
+        "failed",
+        "stale"
+      ]
+    },
+    "canary_state": {
+      "type": "string",
+      "enum": [
+        "not_run",
+        "running",
+        "passed",
+        "failed",
+        "expired"
+      ]
+    },
+    "health_state": {
+      "type": "string",
+      "enum": [
+        "healthy",
+        "fresh",
+        "degraded",
+        "stale",
+        "failing",
+        "unknown"
+      ]
+    },
+    "freshness": {
+      "type": "object",
+      "properties": {
+        "last_success_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "watermark": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "age_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sla_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "last_run": {
+      "type": "object",
+      "properties": {
+        "ingest_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "row_count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "rejected_count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "evidence_bundle_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "search_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "completed_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "dlq_unresolved_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "quota": {
+      "type": "object",
+      "properties": {
+        "quota_limit": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "quota_used": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "reset_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quota_tier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "total_runs": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "total_records": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "total_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "estimated_cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "dependent_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "observed_at": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}
