@@ -251,7 +251,7 @@ def test_bff_only_deploy_rebuilds_its_lifecycle_projector_only():
 
     compose_up = (
         "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --build --force-recreate --no-deps operator-bff loop-run-projector-scheduler"
+        "up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler"
     )
     assert bff_block.count(compose_up) == 1
     assert "runtime-manager" not in compose_up

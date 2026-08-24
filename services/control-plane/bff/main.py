@@ -790,7 +790,7 @@ def _lifecycle_projector_dependency() -> Dict[str, Any]:
             "ready": ready,
             "status": "ready" if ready else "degraded",
             "worker_status": "ready" if ready else "error",
-            "writer_backend": "shadow",
+            "writer_backend": os.getenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "postgres").strip().lower() or "postgres",
             "reader_backend": "postgres",
             "tenant_scope": tenant_id,
             "environment_scope": environment,

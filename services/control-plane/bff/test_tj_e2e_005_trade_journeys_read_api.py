@@ -205,12 +205,20 @@ def test_tj_e2e_005_meta_schema_requires_read_state_enum() -> None:
 # --------------------------------------------------------------------------- #
 
 def test_tj_e2e_005_static_siblings_are_registered_before_journey_id_param_route() -> None:
-    from starlette.routing import Route
+    def _extract_paths(routes):
+        paths = []
+        for r in routes:
+            if hasattr(r, "path"):
+                paths.append(r.path)
+            elif hasattr(r, "original_router") and hasattr(r.original_router, "routes"):
+                paths.extend(_extract_paths(r.original_router.routes))
+            elif hasattr(r, "routes"):
+                paths.extend(_extract_paths(r.routes))
+        return paths
 
     paths_in_order = [
-        route.path
-        for route in bff_main.app.routes
-        if isinstance(route, Route) and route.path.startswith("/bff/management/trade-journeys")
+        path for path in _extract_paths(bff_main.app.routes)
+        if path.startswith("/bff/management/trade-journeys")
     ]
     resolve_idx = paths_in_order.index("/bff/management/trade-journeys/resolve")
     metrics_idx = paths_in_order.index("/bff/management/trade-journeys/metrics")
