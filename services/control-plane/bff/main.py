@@ -69249,8 +69249,10 @@ app.include_router(
 
 _include_assistant_routes()
 
-# BFFGAP-DATASOURCES: data-source registry endpoint via isolated module
+# BFFGAP-DATASOURCES: data-source registry and management endpoints (SD-SRCM-03)
+from source_management_client import SourceManagementClient  # noqa: E402
 from console_gap.datasources import create_datasources_router  # noqa: E402
+source_management_client = SourceManagementClient()
 app.include_router(
     create_datasources_router(
         get_read_store=lambda: read_store,
@@ -69259,6 +69261,9 @@ app.include_router(
         snapshot_meta=_snapshot_meta,
         utc_now=utc_now,
         read_source_connector_registry=_read_management_source_connector_registry,
+        get_source_management_client=lambda: source_management_client,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
     )
 )
 
