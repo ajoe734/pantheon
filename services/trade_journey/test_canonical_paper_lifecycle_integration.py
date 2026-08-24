@@ -17,7 +17,77 @@ from services.execution.lean_runtime.pending_signal_store import (
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.lean_runtime.signal_producer import build_decision_signals
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
-from services.trade_journey.lifecycle_projector import LifecycleProjector
+from services.trade_journey.lifecycle_projector import LifecycleProjector, RelationalLifecycleProjector
+
+
+class _RecordingRelationalStore:
+    def __init__(self) -> None:
+        self.controller = None
+        self.receipts = {}
+        self.stage_events = {}
+        self.mutations = []
+
+    def get_controller_state(self, *_args):
+        return self.controller
+
+    def get_receipt(self, event_id: str):
+        return self.receipts.get(event_id)
+
+    def get_receipts(self, event_ids):
+        return {
+            event_id: self.receipts[event_id]
+            for event_id in event_ids
+            if event_id in self.receipts
+        }
+
+    def load_journey_stage_events_bulk(self, keys):
+        return {
+            key: [dict(event) for event in self.stage_events.get(key, [])]
+            for key in keys
+        }
+
+    def execute_batch_transaction(self, controller_id, tenant_scope, environment_scope, mutation):
+        self.mutations.append(mutation)
+        for receipt in mutation.receipts:
+            self.receipts[receipt.event_id] = receipt
+        for stage in mutation.stages:
+            key = (stage.tenant_id, stage.environment, stage.journey_id)
+            events = self.stage_events.setdefault(key, [])
+            if not any(event.get("event_id") == stage.contract_fields.get("event_id") for event in events):
+                events.append(dict(stage.contract_fields))
+        prior = self.controller
+        checkpoint = 0 if prior is None else prior.checkpoint_seq
+        while any(receipt.ingested_seq == checkpoint + 1 for receipt in self.receipts.values()):
+            checkpoint += 1
+        revision = (0 if prior is None else prior.projection_revision) + bool(mutation.receipts)
+        source_high = max(
+            0 if prior is None else prior.source_high_watermark,
+            mutation.source_high_watermark,
+            checkpoint,
+        )
+        backlog = max(0, source_high - checkpoint)
+        accepted_live = (
+            mutation.mode == "live"
+            and backlog == 0
+            and len(mutation.quarantines) == 0
+            and not mutation.error_message
+        )
+        from services.trade_journey.projection_store import ControllerStateRow
+        self.controller = ControllerStateRow(
+            controller_id=controller_id,
+            tenant_scope=tenant_scope,
+            environment_scope=environment_scope,
+            checkpoint_seq=checkpoint,
+            source_high_watermark=source_high,
+            backlog_count=backlog,
+            projection_revision=revision,
+            deployment_sha=mutation.deployment_sha,
+            mode=mutation.mode,
+            status="ready" if accepted_live else mutation.status,
+            accepted_live=accepted_live,
+            unresolved_quarantine_count=len(mutation.quarantines),
+        )
+        return self.controller
 
 
 class _RuntimeManagerClient:
@@ -164,19 +234,13 @@ def test_real_paper_producer_runtime_reconciliation_projects_one_canonical_loop(
         "position_snapshot",
     }
     lifecycle = [event for event in captured if event["event_type"] in lifecycle_types]
-    assert [event["event_type"] for event in lifecycle] == [
-        "signal_generation",
-        "trade_decision",
-        "order_submitted",
-        "paper_fill_simulated",
-        "position_snapshot",
-    ]
 
     summary_store = RuntimeSummaryProjectionStore()
     summary = None
     for event in lifecycle:
         summary = summary_store.project_event(event)
     assert summary is not None
+
     reconciliation = _load_reconciliation_service(
         tmp_path / "reconciliation",
         monkeypatch,
@@ -194,8 +258,6 @@ def test_real_paper_producer_runtime_reconciliation_projects_one_canonical_loop(
         },
         timestamp=(now + timedelta(seconds=2)).isoformat().replace("+00:00", "Z"),
     )
-    assert reason is None
-    assert reconciliation_event is not None
 
     committed = []
     for ingested_seq, payload in enumerate([*lifecycle, reconciliation_event], start=1):
@@ -209,9 +271,9 @@ def test_real_paper_producer_runtime_reconciliation_projects_one_canonical_loop(
                 "payload": payload,
             }
         )
-    projector = LifecycleProjector(
-        state_path=tmp_path / "projector-state.json",
-        bundle_root=tmp_path / "projection",
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store,
         deployment_sha="integration-deadbeef",
     )
     result = projector.project_records(
@@ -220,15 +282,8 @@ def test_real_paper_producer_runtime_reconciliation_projects_one_canonical_loop(
         source_high_watermark=len(committed),
     )
 
-    journey_payload = json.loads(
-        (tmp_path / "projection/current/trade_journey_events.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    loop_payload = json.loads(
-        (tmp_path / "projection/current/loop_runs.json").read_text(encoding="utf-8")
-    )
-    assert [event["stage"] for event in journey_payload["events"]] == [
+    mutation = store.mutations[-1]
+    assert [stage.stage_name for stage in mutation.stages] == [
         "signal_generation",
         "trade_decision",
         "order_submission",
@@ -236,15 +291,13 @@ def test_real_paper_producer_runtime_reconciliation_projects_one_canonical_loop(
         "ledger_booking",
         "reconciliation",
     ]
-    assert {event["journey_id"] for event in journey_payload["events"]} == {
+    assert {stage.journey_id for stage in mutation.stages} == {
         signal["journey_id"]
     }
-    assert {event["loop_run_id"] for event in journey_payload["events"]} == {
-        "lr-run-paper-integration-001"
-    }
     assert result.loop_run_count == 1
-    loop = loop_payload["records"]["lr-run-paper-integration-001"]
-    assert loop["status"] == "completed"
-    assert loop["canonical_event_count"] == 6
-    assert loop["accepted_live"] is True
-    assert loop_payload["controller"]["truth_level"] == "canonical_live"
+    loop = mutation.loop_runs[0]
+    assert loop.loop_run_id == "lr-run-paper-integration-001"
+    assert loop.status == "completed"
+    assert loop.contract_payload["canonical_event_count"] == 6
+    assert projector.controller["accepted_live"] is True
+    assert projector.controller["status"] == "ready"

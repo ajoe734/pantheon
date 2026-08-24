@@ -1,11 +1,16 @@
-# Lifecycle projector target-dev cutover runbook
+# Lifecycle projector target-dev cutover & retirement runbook
 
-Task: `LIFECYCLE-PROJ-CUTOVER-001`
+Task: `LIFECYCLE-PROJ-RETIRE-001` (predecessor: `LIFECYCLE-PROJ-CUTOVER-001`)
 
 Target: `pantheon-lupin-dev` in `pantheon-lupin-dev-20260719`
 
-Reader rollback boundary: `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND`
+Reader backend: `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres` (sole canonical reader)
 Last updated: 2026-08-22
+
+> [!NOTE]
+> **Operational Status & Phasing**:
+> - **Retirement Scope (`LIFECYCLE-PROJ-RETIRE-001`)**: Decommissions legacy JSON readers and writers from application/BFF code, enforces fail-closed rejection of `reader=json`, and provides the dry-run and HMAC-SHA256-signed retirement tool (`scripts/lifecycle_projector_legacy_retire.py`) for legacy JSON file pruning following the required 7-day post-cutover target-dev soak period.
+> - **Historical Cutover Reference (Sections 1–7)**: Sections 1–7 document the one-time baseline import and shadow cutover executed during `LIFECYCLE-PROJ-CUTOVER-001` on 2026-08-22 when the reader was transitioned from `json` to `postgres`.
 
 This is a paper-only target-dev procedure. It does not authorize production,
 live capital, broker actions, legacy data retirement, or a destructive schema
@@ -22,25 +27,26 @@ captured. Do not infer a later gate from an earlier pass.
   session.
 - Build and deploy with `PANTHEON_CANARY_EXECUTION_ENABLED=false`,
   `PANTHEON_LIVE_BROKER_ENABLED=false`, and `BROKER_PAPER_ENABLED=true`.
-- Keep the compose defaults `LIFECYCLE_PROJECTOR_WRITER_BACKEND=disabled` and
-  `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=json`. Activation is explicit.
-- The service key `loop-run-projector-scheduler` becomes the bounded relational
-  worker when its backend is `shadow`; it is not a second writer. The stopped
-  JSON implementation is not restarted alongside it.
-- Preserve the `bff-data` volume and its final JSON generation. JSON is a
-  recovery reader only after cutover and must report stale truth honestly.
+- Compose defaults are `LIFECYCLE_PROJECTOR_WRITER_BACKEND=shadow` and
+  `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres`. Legacy JSON writers and
+  readers are retired and fail closed.
+- The service key `loop-run-projector-scheduler` runs the bounded relational
+  worker writing to PostgreSQL (`trade_journey_projections`,
+  `trade_journey_controller_state`, etc.).
+- Legacy JSON bundle files are retired and quarantined/pruned under `LIFECYCLE-PROJ-RETIRE-001`
+  following completion of the 7-day target-dev soak. PostgreSQL is the sole canonical storage and reader backend.
 - `telemetry_events` remains the normal backfill authority. Before an exact
   root deploy, prove that the selected deploy path will not prune or truncate
   it. Capture lifecycle-row count and retained high watermark before and after
   deployment.
-- This task has one reviewed target-dev recovery exception. Human/Ops
-  determined on 2026-08-22 that the reader never left JSON, the relational
-  writer stayed disabled, the relational projection remained empty, no source
-  backup or snapshot exists, and the three-file legacy JSON bundle is intact.
-  The accepted disposition is to import that exact folded baseline, not to
-  restore the unrecoverable truncated source rows. The exception is bound to
-  the checksums in section 3 and does not apply to another environment, bundle,
-  task, or future truncation.
+- Historical target-dev cutover recovery context: Human/Ops determined on 2026-08-22
+  during predecessor cutover (`LIFECYCLE-PROJ-CUTOVER-001`) that the reader had never
+  left JSON, the relational writer had stayed disabled, the relational projection was empty,
+  no source backup or snapshot existed, and the three-file legacy JSON bundle was intact.
+  The cutover imported that exact folded baseline to establish PostgreSQL-only operation.
+  Post-cutover, a full 7-day soak on target-dev with zero freshness/capacity/parity/security
+  violations and explicit Human/Ops approval are required before operational file deletion
+  under `LIFECYCLE-PROJ-RETIRE-001`.
 - Never record a DSN, credential, access token, raw payload, or page-token
   secret in evidence. Record only allowlisted controller/config fields and
   checksums.
@@ -80,12 +86,13 @@ batch and one database transaction; receipts/stages/journey/loop/controller do
 not receive duplicate-owned mutations; checkpoint equals source high watermark;
 backlog and unexplained mismatch are zero.
 
-## 2. Merge and exact default-safe deployment
+## 2. Merge and exact default-safe deployment (Historical Cutover Phase)
+
+*Note: During historical cutover (`LIFECYCLE-PROJ-CUTOVER-001`), the pre-cutover deployment verified initial `json` baseline before shadow migration. In the current post-retirement state (`LIFECYCLE-PROJ-RETIRE-001`), all deployments run exclusively with `postgres` reader and `shadow` writer.*
 
 Independent review must approve the exact PR head. Merge the PR to `dev`, then
 deploy that merge SHA through the existing nonprod workflow under the shared
-lease. The initial deployment deliberately retains the JSON reader and disabled
-relational writer.
+lease.
 
 Before activation, capture these identities:
 
@@ -99,15 +106,16 @@ sha256sum docker-compose.yml
 curl -fsS http://127.0.0.1:18001/bff/version
 ```
 
-Required: hosted BFF source SHA equals the merged SHA; both container image IDs
-are recorded; the migration and compose checksums are recorded; the reader is
-still `json`; no canary claim has been made.
+Required (during historical cutover): hosted BFF source SHA equals the merged SHA; both container image IDs
+are recorded; the migration and compose checksums are recorded; reader backend posture matches the active cutover stage.
 
-## 3. Additive migration and reviewed fresh legacy baseline
+## 3. Additive migration and reviewed fresh legacy baseline (Historical Cutover Phase)
+
+*Note: Historical baseline migration was executed once to populate PostgreSQL from the intact JSON bundle before retiring JSON readers.*
 
 Apply only the additive migration. Do not run a down migration or truncate the
-canonical source or projection schema. Before importing, prove the BFF reader
-is `json`, the relational writer is `disabled`, all relational projection tables
+canonical source or projection schema. During initial cutover, before importing,
+prove the relational writer is `disabled`, all relational projection tables
 and controllers are empty, and size/mtime remain unchanged across the checksum
 pass.
 
@@ -194,7 +202,9 @@ Required:
 - migration/runtime credentials are identified separately and no source
   `UPDATE`/`DELETE` authority is granted to the runtime worker.
 
-## 5. Shadow activation with reader unchanged
+## 5. Shadow activation with reader unchanged (Historical Cutover Phase)
+
+*Note: During historical cutover, shadow writer was activated while the reader remained on JSON until parity verification passed.*
 
 Supply the projection DSN from the governed secret source. Recreate only the
 single lifecycle worker; do not start a legacy JSON writer.
@@ -222,10 +232,9 @@ last_error_message=''
 ```
 
 Also verify the worker image ID is the recorded exact image and the JSON files
-and `bff-data` volume still exist. At this point BFF posture must still report
-`trade_journey_reader_backend=json`.
+and `bff-data` volume still exist. (During initial cutover, BFF posture temporarily reported `trade_journey_reader_backend=json` before Section 6 switch; post-retirement, BFF requires `trade_journey_reader_backend=postgres`.)
 
-## 6. Authorized paper canary and all-dev read switch
+## 6. Authorized paper canary and all-dev read switch (Historical Cutover Phase)
 
 Inject a random secret of at least 16 bytes from the governed secret source.
 Do not print it. Recreate only BFF with the single reader backend set to
@@ -280,27 +289,30 @@ and paper-to-live detail `404`, and stale/scope-conflicting page token `400`.
 The evidence artifact persists no response payloads, token, credentials, DSN,
 or raw lifecycle payload.
 
-## 8. BFF-only rollback and forward recovery
+## 8. Postgres-only deployment rollback and forward recovery
 
-Record the relational controller and receipt counts before rollback. Roll back
-only the reader and recreate only BFF:
+Because legacy JSON readers and writers are fully retired, rollback is performed
+at the image and code deployment level (rolling back to the prior stable container
+image or git SHA) rather than switching back to retired JSON files:
 
 ```bash
-PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=json \
+# Recreate container services with the previous validated image / commit SHA
 docker compose -p pantheon -f docker-compose.yml up -d \
-  --force-recreate --no-deps operator-bff
+  --force-recreate --no-deps operator-bff loop-run-projector-scheduler
 ```
 
-Required: the relational worker remains stopped only if diagnosis requires it;
-no source/projection rows are deleted; the preserved JSON bundle is readable;
-if its controller is old, `/readyz` and response metadata label it stale rather
-than manufacturing freshness.
+Required:
+- No database migration or data destruction is performed during service recreate.
+- PostgreSQL projection tables and controller states remain intact.
+- Upon restart, the relational worker verifies schema, connects, and resumes from
+  the recorded checkpoint sequence.
+- BFF `/readyz` validates `dependencies.lifecycle_projector.reader_backend=postgres`
+  and reports healthy status when backlog is 0.
 
-Forward recovery reuses the same schema and controller, waits for backlog zero,
-then recreates only BFF with `postgres` and the same governed DSN/schema/secret.
-Re-run the authenticated hosted readback. Receipt count, maximum ingested
-sequence, and the canary journey/loop must be unchanged or monotonically
-advanced—never lower or duplicated.
+Forward recovery re-deploys the validated target SHA, verifies backlog zero,
+and confirms `/readyz` health and authenticated hosted readbacks. Receipt count,
+maximum ingested sequence, and canary journey/loop records must be unchanged
+or monotonically advanced—never lower or duplicated.
 
 ## 9. Actual 24-hour observation
 
@@ -322,10 +334,74 @@ the observation as failed and triggers the BFF-only rollback. After 24 actual
 hours, checksum all redacted samples and publish start/end/duration plus zero
 violation counts in `evidence.json`.
 
-## Closeout
+## 10. Post-soak legacy JSON retirement (`LIFECYCLE-PROJ-RETIRE-001`)
 
-The task remains `in_progress` until the exact merged deployment, shadow gate,
-authorized canary, all-dev switch, real lifecycle, negatives, rollback/forward,
-and actual 24-hour observation have all executed. Independent review must bind
-to the exact evidence checksums. Legacy retirement is a later task and must not
-be performed here.
+Following completion of the 7-day target-dev soak with zero parity, capacity,
+freshness, or security violations, legacy JSON files are retired and pruned
+through an allow-listed, checksummed process.
+
+### Operational invariants:
+- **Default compose configuration**: `operator-bff` uses `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres` and `loop-run-projector-scheduler` uses `LIFECYCLE_PROJECTOR_WRITER_BACKEND=shadow`. Legacy JSON generator and retention environment variables are removed.
+- **Fail-closed readiness**: If any component attempts to select a legacy JSON reader or writer, readiness fails closed immediately with `legacy_reader_retired:json` or an explicit configuration exception.
+- **Dry-run inventory first**: Run `scripts/lifecycle_projector_legacy_retire.py --dry-run` to inventory all candidate files and verify SHA-256 checksums before any file mutation.
+- **Governed Human/Ops approval record required**: Execution requires `--execute`, `--dry-run-manifest <PATH>`, and `--approval-record <PATH>` pointing to an authoritative Human/Ops approval record located within the immutable governed status root (`$PANTHEON_STATUS_ROOT` / canonical task state identity root). The record binds the exact dry-run inventory digest, root, action, recovery posture, quarantine destination, and an authoritative cryptographic HMAC-SHA256 signature generated by Human/Ops. Caller-controlled directory redirects or forgeable unkeyed hashes cannot bypass governed approval.
+- **Production CLI root and key governance**: The production CLI strictly targets `/data/bff/lifecycle-projection`. Custom root overrides, test-mode bypasses, and caller-selected CLI verification keys are strictly prohibited; signature verification keys are resolved strictly from verified authoritative supervisor protected key files (`human-ops-signing.key` or `authority-signing.env`), and caller-controlled environment variable fallback (including unverified task state identities or attacker keys when authoritative supervisor config is absent) fails closed.
+- **Quarantine over raw deletion**: In default retirement mode (`--action archive` or `--action quarantine`), obsolete generation directories and root files are moved into a quarantine folder (`/data/bff/lifecycle-projection/quarantine`), preserving recovery capability if needed.
+
+### Step 1: Execute dry-run scan
+```bash
+python3 scripts/lifecycle_projector_legacy_retire.py \
+  --root /data/bff/lifecycle-projection \
+  --dry-run \
+  --output /var/tmp/pantheon-evidence/LIFECYCLE-PROJ-RETIRE-001/dry-run-manifest.json
+```
+
+### Step 2: Human/Ops review & approval record generation
+Human/Ops reviews the dry-run manifest and generates an authoritative signed approval record `approval-record.json` inside the governed status root (`$PANTHEON_STATUS_ROOT/docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RETIRE-001/`):
+```json
+{
+  "schema_version": "pantheon.lifecycle-projector-retirement-approval.v1",
+  "task_id": "LIFECYCLE-PROJ-RETIRE-001",
+  "actor": "Human/Ops",
+  "approved": true,
+  "approved_at_utc": "2026-08-22T18:30:00Z",
+  "action": "quarantine",
+  "recovery_possible": true,
+  "root_path": "/data/bff/lifecycle-projection",
+  "quarantine_path": "/data/bff/lifecycle-projection/quarantine",
+  "inventory_sha256": "<dry-run-inventory-sha256>",
+  "signature_sha256": "<human-ops-hmac-sha256-signature>",
+  "notes": "Approved by Human/Ops after reviewing exact dry-run inventory digest."
+}
+```
+
+### Step 3: Governed retirement execution
+```bash
+python3 scripts/lifecycle_projector_legacy_retire.py \
+  --root /data/bff/lifecycle-projection \
+  --action quarantine \
+  --execute \
+  --dry-run-manifest /var/tmp/pantheon-evidence/LIFECYCLE-PROJ-RETIRE-001/dry-run-manifest.json \
+  --approval-record "${PANTHEON_STATUS_ROOT}/docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-RETIRE-001/approval-record.json" \
+  --output /var/tmp/pantheon-evidence/LIFECYCLE-PROJ-RETIRE-001/retirement-receipt.json
+```
+
+### Step 4: Postgres-only health validation
+```bash
+curl -fsS http://127.0.0.1:18001/readyz
+curl -fsS http://127.0.0.1:18001/bff/version
+```
+
+Verify that `dependencies.lifecycle_projector.reader_backend` is `postgres`, `status` is `ready`, `backlog` is `0`, and all public BFF endpoints respond normally without legacy JSON fallback.
+
+---
+
+## Residual Risk Register (Post-Retirement)
+
+| Risk Item | Likelihood | Impact | Mitigation & Safeguards |
+| :--- | :--- | :--- | :--- |
+| **Postgres connection exhaustion / saturation** | Low | Medium | Dedicated connection pooling via `ProjectionStore`; bounded batching (`LIFECYCLE_PROJECTOR_BATCH_SIZE=500`); fail-closed `/readyz` alerts immediately if latency or connection drop occurs. |
+| **Telemetry ingestion backlog spike** | Low | Low | Incremental relational projector processes batches with cursor checkpointing; high-watermark delta is continuously monitored in `/readyz` (`backlog == 0` invariant). |
+| **Corrupted projection row / quarantine event** | Very Low | Medium | Strict validation on every lifecycle event; anomalous events are recorded in `quarantine` table without blocking subsequent events; `/readyz` flags non-zero quarantine count. |
+| **Recovery after node or pod restart** | Low | Low | State is durable in PostgreSQL tables (`trade_journey_projections`, `trade_journey_controller_state`); worker restarts automatically reconnect and resume from checkpoint sequence. |
+| **Accidental invocation of legacy reader** | Very Low | Low | Legacy JSON reader paths removed from code and compose; configuring `json` fails closed with 503 degraded status. |

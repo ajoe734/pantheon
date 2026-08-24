@@ -27,38 +27,21 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
         "${TELEMETRY_DB_DSN:-postgresql://"
     )
     assert environment["LIFECYCLE_PROJECTOR_WRITER_BACKEND"] == (
-        "${LIFECYCLE_PROJECTOR_WRITER_BACKEND:-disabled}"
+        "${LIFECYCLE_PROJECTOR_WRITER_BACKEND:-shadow}"
     )
     assert environment["LIFECYCLE_PROJECTOR_PROJECTION_DSN"] == (
-        "${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-}"
+        "${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"
     )
     assert environment["LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"] == (
         "${LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA:-trade_journey_projection}"
     )
-    assert environment["LIFECYCLE_PROJECTION_ROOT"] == "/data/bff/lifecycle-projection"
-    assert (
-        environment["LIFECYCLE_PROJECTOR_STATE_PATH"]
-        == "/data/bff/lifecycle-projection/controller_state.json"
-    )
-    assert environment["LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH"] == (
-        "/data/bff/lifecycle-projection/health_state.json"
-    )
     assert environment["LIFECYCLE_PROJECTOR_POLL_SECONDS"] == "${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}"
-    assert environment["LIFECYCLE_PROJECTOR_GENERATION_RETENTION"] == (
-        "${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-4}"
-    )
-    assert environment["LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS"] == (
-        "${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}"
-    )
+    assert environment["LIFECYCLE_PROJECTOR_BATCH_SIZE"] == "${LIFECYCLE_PROJECTOR_BATCH_SIZE:-500}"
     assert environment["LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"] == (
         "${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}"
     )
-    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES"] == (
-        "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}"
-    )
-    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT"] == (
-        "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}"
-    )
+    assert "LIFECYCLE_PROJECTION_ROOT" not in environment
+    assert "LIFECYCLE_PROJECTOR_GENERATION_RETENTION" not in environment
     assert environment["GIT_SHA"] == "${GIT_SHA:-unknown}"
     assert "bff-data:/data/bff" in projector["volumes"]
     assert projector["depends_on"]["postgres"]["condition"] == "service_healthy"
@@ -75,14 +58,11 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
 
     bff = services["operator-bff"]
     bff_environment = bff["environment"]
-    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"] == (
-        "/data/bff/lifecycle-projection/current/trade_journey_events.json"
-    )
     assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND"] == (
-        "${PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND:-json}"
+        "${PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND:-postgres}"
     )
     assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN"] == (
-        "${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN:-}"
+        "${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"
     )
     assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA"] == (
         "${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA:-trade_journey_projection}"
@@ -90,15 +70,9 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_PAGE_TOKEN_SECRET"] == (
         "${PANTHEON_BFF_TRADE_JOURNEY_PAGE_TOKEN_SECRET:-}"
     )
-    assert bff_environment["PANTHEON_BFF_LOOP_RUN_STORE"] == (
-        "/data/bff/lifecycle-projection/current/loop_runs.json"
-    )
-    assert bff_environment["LIFECYCLE_PROJECTOR_STATE_PATH"] == (
-        "/data/bff/lifecycle-projection/controller_state.json"
-    )
-    assert bff_environment["LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH"] == (
-        "/data/bff/lifecycle-projection/health_state.json"
-    )
+    assert "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE" not in bff_environment
+    assert "PANTHEON_BFF_LOOP_RUN_STORE" not in bff_environment
+    assert "LIFECYCLE_PROJECTION_ROOT" not in bff_environment
     assert bff_environment["LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"] == (
         "${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}"
     )
@@ -270,17 +244,14 @@ def test_rendered_compose_operator_bff_readiness_with_postgres_reader(
     # loop-run-projector-scheduler defines LIFECYCLE_PROJECTOR_WRITER_BACKEND
     assert "LIFECYCLE_PROJECTOR_WRITER_BACKEND" in projector_env
     assert projector_env["LIFECYCLE_PROJECTOR_WRITER_BACKEND"] == (
-        "${LIFECYCLE_PROJECTOR_WRITER_BACKEND:-disabled}"
+        "${LIFECYCLE_PROJECTOR_WRITER_BACKEND:-shadow}"
     )
 
-    # operator-bff in docker-compose.yml does not define LIFECYCLE_PROJECTOR_WRITER_BACKEND
-    assert "LIFECYCLE_PROJECTOR_WRITER_BACKEND" not in bff_env
+    # operator-bff in docker-compose.yml post-cutover default is postgres
     assert bff_env["PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND"] == (
-        "${PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND:-json}"
+        "${PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND:-postgres}"
     )
 
-    # Verify that in rendered compose with postgres reader and unset writer_backend in BFF,
-    # readiness derives postgres writer mode from live relational controller freshness
     import sys
     from datetime import datetime, timezone
     from fastapi.testclient import TestClient

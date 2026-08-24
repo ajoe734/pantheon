@@ -38,9 +38,13 @@ class StrategySeedSourceRegistryError(ValueError):
 
 class StrategySeedSourceLifecycleState(str, Enum):
     CANDIDATE = "candidate"
+    CONFIGURED_DISABLED = "configured_disabled"
+    VALIDATED_DISABLED = "validated_disabled"
+    CANARY_PASSED_DISABLED = "canary_passed_disabled"
     ENABLED = "enabled"
     DEGRADED = "degraded"
     DISABLED = "disabled"
+    DEGRADED_DISABLED = "degraded_disabled"
     RETIRED = "retired"
 
 
@@ -109,14 +113,16 @@ class StrategySeedSourceEntry:
         object.__setattr__(self, "license_scope", _require(self.license_scope, "license_scope"))
 
         try:
-            sc = StrategySeedSourceClass(str(self.source_class))
+            sc_val = self.source_class.value if isinstance(self.source_class, Enum) else str(self.source_class)
+            sc = StrategySeedSourceClass(sc_val)
         except ValueError:
             allowed = ", ".join(c.value for c in StrategySeedSourceClass)
             raise StrategySeedSourceRegistryError(f"source_class must be one of: {allowed}")
         object.__setattr__(self, "source_class", sc)
 
         try:
-            ss = StrategySeedSourceScope(str(self.source_scope))
+            ss_val = self.source_scope.value if isinstance(self.source_scope, Enum) else str(self.source_scope)
+            ss = StrategySeedSourceScope(ss_val)
         except ValueError:
             allowed = ", ".join(s.value for s in StrategySeedSourceScope)
             raise StrategySeedSourceRegistryError(f"source_scope must be one of: {allowed}")
@@ -141,7 +147,8 @@ class StrategySeedSourceEntry:
         object.__setattr__(self, "expected_outputs", expected_outputs)
 
         try:
-            ls = StrategySeedSourceLifecycleState(str(self.lifecycle_state))
+            ls_val = self.lifecycle_state.value if isinstance(self.lifecycle_state, Enum) else str(self.lifecycle_state)
+            ls = StrategySeedSourceLifecycleState(ls_val)
         except ValueError:
             allowed = ", ".join(s.value for s in StrategySeedSourceLifecycleState)
             raise StrategySeedSourceRegistryError(f"lifecycle_state must be one of: {allowed}")
@@ -175,7 +182,8 @@ class StrategySeedSourceEntry:
     ) -> "StrategySeedSourceEntry":
         """Return a new entry with an updated lifecycle state."""
         try:
-            ls = StrategySeedSourceLifecycleState(str(new_state))
+            ls_val = new_state.value if isinstance(new_state, Enum) else str(new_state)
+            ls = StrategySeedSourceLifecycleState(ls_val)
         except ValueError:
             allowed = ", ".join(s.value for s in StrategySeedSourceLifecycleState)
             raise StrategySeedSourceRegistryError(f"lifecycle_state must be one of: {allowed}")

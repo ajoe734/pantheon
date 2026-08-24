@@ -1043,6 +1043,14 @@ KNOWN_AGENTS = {
 AGENT_ALIASES = {
     "claude2": "Claude2",
     "claude 2": "Claude2",
+    # Gemini/Gemini2 were retired as standalone worker identities in
+    # OPS-RETIRE-GHOST-AGENT-IDENTITIES.  Canonical task history can still
+    # contain those display names (and older materializers can replay them),
+    # so normalize them to the current Antigravity lanes without restoring
+    # retired capacity or adding them to KNOWN_AGENTS.
+    "gemini": "Antigravity",
+    "gemini2": "Antigravity2",
+    "gemini 2": "Antigravity2",
     "antigravity": "Antigravity",
     "antigravity2": "Antigravity2",
     "agy": "Antigravity",
