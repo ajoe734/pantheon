@@ -460,11 +460,27 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
         dev,
     )
     assert deadline_match is not None, "DEV_DEPLOY_DEADLINE_SECONDS default must be explicit"
-    default_deadline_seconds = int(deadline_match.group(1))
+    initial_deadline_seconds = int(deadline_match.group(1))
 
-    assert default_deadline_seconds < job_timeout_seconds, (
-        f"Deploy command deadline ({default_deadline_seconds}s) must stay strictly below "
-        f"job timeout ({job_timeout_seconds}s)"
+    # Quarantined lease TTL wait
+    ttl_match = re.search(r"--ttl-seconds\s+(\d+)", dev)
+    assert ttl_match is not None, "Lease acquire step must specify --ttl-seconds"
+    lease_ttl_seconds = int(ttl_match.group(1))
+
+    # Rollback compensation deploy deadline (from compensation step)
+    rollback_deadline_seconds = initial_deadline_seconds
+
+    min_required_compensation_budget = (
+        initial_deadline_seconds + lease_ttl_seconds + rollback_deadline_seconds
+    )
+
+    assert job_timeout_seconds >= min_required_compensation_budget, (
+        f"deploy-dev job timeout ({job_timeout_seconds}s) must accommodate initial deploy deadline ({initial_deadline_seconds}s) "
+        f"+ quarantined lease TTL wait ({lease_ttl_seconds}s) + rollback compensation deadline ({rollback_deadline_seconds}s) = {min_required_compensation_budget}s"
+    )
+    assert job_timeout_seconds > min_required_compensation_budget, (
+        f"deploy-dev job timeout ({job_timeout_seconds}s) must provide headroom above {min_required_compensation_budget}s "
+        f"for setup, image builds, paper bootstrap, and smokes"
     )
 
 
@@ -1507,6 +1523,22 @@ if command == "acquire":
     json_out = Path(option("--json-out"))
     expected_sha = option("--expected-backend-sha")
     owner = option("--owner")
+    remote_lease_env = os.environ.get("PANTHEON_MOCK_REMOTE_LEASE_FILE")
+    events_log_env = os.environ.get("PANTHEON_MOCK_LEASE_EVENTS_LOG")
+    remote_lease_file = Path(remote_lease_env) if remote_lease_env else state_file.parent / "mock_remote_lease.json"
+    events_log = Path(events_log_env) if events_log_env else state_file.parent / "lease_events.log"
+
+    if remote_lease_file.exists():
+        try:
+            remote_data = json.loads(remote_lease_file.read_text(encoding="utf-8"))
+            remote_owner = remote_data.get("owner")
+            remote_expires = remote_data.get("expiresAt")
+            if remote_owner and remote_owner != owner:
+                with events_log.open("a", encoding="utf-8") as f:
+                    f.write(f"CONTENTION: active lease owned by {remote_owner} until {remote_expires}; waiting for TTL expiry before takeover\n")
+        except Exception:
+            pass
+
     lease_id = str(uuid.uuid4())
     state = {
         "schemaVersion": 1,
@@ -1521,8 +1553,11 @@ if command == "acquire":
         "acquiredAt": "2026-08-24T00:00:00Z",
         "expiresAt": "2026-08-24T00:05:00Z",
     }
+    remote_lease_file.write_text(json.dumps(state) + "\n", encoding="utf-8")
     state_file.write_text(json.dumps(state) + "\n", encoding="utf-8")
     json_out.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    with events_log.open("a", encoding="utf-8") as f:
+        f.write(f"ACQUIRED: owner={owner} leaseId={lease_id}\n")
     print(json.dumps(state))
     sys.exit(0)
 
@@ -1578,6 +1613,16 @@ if command == "verify":
     sys.exit(0)
 
 if command == "release":
+    remote_lease_env = os.environ.get("PANTHEON_MOCK_REMOTE_LEASE_FILE")
+    events_log_env = os.environ.get("PANTHEON_MOCK_LEASE_EVENTS_LOG")
+    if remote_lease_env:
+        remote_lease_file = Path(remote_lease_env)
+        if remote_lease_file.exists():
+            remote_lease_file.unlink()
+    if events_log_env:
+        events_log = Path(events_log_env)
+        with events_log.open("a", encoding="utf-8") as f:
+            f.write("RELEASED\n")
     print('{"status":"released"}')
     sys.exit(0)
 
@@ -1737,6 +1782,26 @@ def _setup_mock_compensation_environment(
     initial_heartbeat_log = initial_lease_dir / "heartbeat.log"
     initial_heartbeat_log.write_text("Heartbeat stopped for quarantine\n", encoding="utf-8")
 
+    mock_remote_lease_file = tmp_path / "mock_remote_lease.json"
+    mock_remote_lease_file.write_text(
+        json.dumps({
+            "schemaVersion": 1,
+            "resource": "pantheon-dev-environment",
+            "mode": "deployment",
+            "owner": "pantheon:ajoe734/pantheon:12345:1",
+            "leaseId": "00000000-0000-0000-0000-000000000001",
+            "expectedBackendSha": initial_bff_sha,
+            "acquiredAt": "2026-08-24T00:00:00Z",
+            "heartbeatAt": "2026-08-24T00:00:00Z",
+            "expiresAt": "2026-08-24T00:05:00Z",
+            "repository": "ajoe734/execute-plans",
+            "branch": "environment-coordination",
+            "path": ".pantheon/environment-leases/pantheon-dev-environment.json",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    lease_events_log = tmp_path / "lease_events.log"
+
     runner_temp = tmp_path / "runner_temp"
     runner_temp.mkdir(parents=True, exist_ok=True)
 
@@ -1766,6 +1831,8 @@ def _setup_mock_compensation_environment(
         "PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE": str(initial_identity_file),
         "PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE": str(initial_failure_file),
         "PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG": str(initial_heartbeat_log),
+        "PANTHEON_MOCK_REMOTE_LEASE_FILE": str(mock_remote_lease_file),
+        "PANTHEON_MOCK_LEASE_EVENTS_LOG": str(lease_events_log),
         "DEV_BFF_JWT_SECRET": "secret",
         "DEV_BFF_JWT_ISSUER": "pantheon-dev",
         "DEV_BFF_JWT_AUDIENCE": "bff-operators",
@@ -1920,6 +1987,62 @@ def test_dev_deploy_compensation_preceding_paper_bootstrap_or_smoke_failure_rest
     assert actual_fe == rollback_fe
     summary_content = step_summary.read_text(encoding="utf-8")
     assert f"Restored exact hosted dev baseline pair: BFF={rollback_bff} FE={rollback_fe}" in summary_content
+    lease_events = (tmp_path / "lease_events.log").read_text(encoding="utf-8")
+    assert "CONTENTION: active lease owned by pantheon:ajoe734/pantheon:12345:1" in lease_events
+    assert "ACQUIRED: owner=pantheon:ajoe734/pantheon:12345:1:rollback" in lease_events
+    assert "RELEASED" in lease_events
+
+
+def test_dev_deploy_compensation_quarantined_lease_contention_and_ttl_takeover() -> None:
+    """Test proving that compensation lease acquisition properly models and handles
+    active quarantined lease contention and unexpired TTL wait before taking over the lease."""
+    from datetime import datetime, timedelta, timezone
+    import dev_environment_lease as lease
+    from scripts.test_dev_environment_lease import FakeClient, manager, state_for
+
+    client = FakeClient()
+    mgr = manager(client)
+    now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=timezone.utc)
+    client.now = now
+
+    # 1. Initial lease is active / quarantined by initial deploy owner with 300s TTL (expires at now + 300s)
+    initial_owner = "pantheon:ajoe734/pantheon:12345:1"
+    initial_state = state_for(
+        owner=initial_owner,
+        mode="deployment",
+        heartbeat=now,
+        expires=now + timedelta(seconds=300),
+    )
+    client.state = initial_state
+    client.content_sha = "blob-initial"
+
+    # 2. Attempt rollback acquisition while initial lease is still within unexpired TTL and wait_seconds=0 -> raises LeaseBusy
+    rollback_owner = "pantheon:ajoe734/pantheon:12345:1:rollback"
+    with pytest.raises(lease.LeaseBusy) as exc_info:
+        mgr.acquire(
+            mode="deployment",
+            owner=rollback_owner,
+            ttl_seconds=300,
+            wait_seconds=0,
+            poll_seconds=1.0,
+            expected_backend_sha="b" * 40,
+        )
+    assert "dev environment is leased by pantheon:ajoe734/pantheon:12345:1" in str(exc_info.value)
+
+    # 3. Simulate clock advancing past the quarantine TTL (now + 301s) -> takeover succeeds
+    client.now = now + timedelta(seconds=301)
+    acquired_state, content_sha, acquired_at = mgr.acquire(
+        mode="deployment",
+        owner=rollback_owner,
+        ttl_seconds=300,
+        wait_seconds=0,
+        poll_seconds=1.0,
+        expected_backend_sha="b" * 40,
+    )
+    assert acquired_state["owner"] == rollback_owner
+    assert acquired_state["mode"] == "deployment"
+    assert acquired_state["expectedBackendSha"] == "b" * 40
+    assert client.put_expected_shas[-1] == "blob-initial"
 
 
 def test_dev_deploy_compensation_mutation_aware_fails_closed_on_rollback_failure_negative(tmp_path: Path) -> None:
