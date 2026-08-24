@@ -1822,6 +1822,16 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    outputs:
+      backend_sha: ${{ needs.deploy-dev.outputs.backend_sha }}
+      frontend_sha: ${{ needs.deploy-dev.outputs.frontend_sha }}
+      release_candidate_id: ${{ needs.deploy-dev.outputs.release_candidate_id }}
+      pair_id: ${{ steps.frontend_release.outputs.pair_id }}
+      candidate_id: ${{ steps.frontend_release.outputs.candidate_id || needs.deploy-dev.outputs.release_candidate_id }}
+      profile: ${{ steps.frontend_release.outputs.profile }}
+      source_mode: ${{ steps.frontend_release.outputs.source_mode }}
+      expires_at: ${{ steps.frontend_release.outputs.expires_at }}
+      evidence_dir: ${{ steps.frontend_release.outputs.evidence_dir }}
     env:
       TARGET_ENV: dev
       RELEASE_EVIDENCE_DIR: ${{ github.workspace }}/.pantheon-cross-repo-release-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1865,10 +1875,12 @@ jobs:
             --frontend-sha "${FRONTEND_SHA}" \
             --backend-sha "${BACKEND_SHA}" \
             --bff-base-url "${DEV_BFF_URL}" \
+            --fe-base-url "${DEV_FE_URL}" \
             --release-candidate-id "${RELEASE_CANDIDATE_ID}" \
             --compatibility-manifest-sha256 "${COMPATIBILITY_MANIFEST_SHA256}" \
             --controller-run-id "${GITHUB_RUN_ID}" \
             --evidence-out "${controller_evidence}" \
+            --candidate-out "${RELEASE_EVIDENCE_DIR}/release-candidate.json" \
             >"${controller_log}" 2>&1
           controller_status=$?
           set -e

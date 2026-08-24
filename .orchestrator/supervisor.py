@@ -83,6 +83,7 @@ from multi_repo_registry import (
     repositories,
     resolve_repository,
     task_primary_repository_id,
+    validate_task_repository_scope,
 )
 from provider_permissions import probe_provider_auth
 from rebase_helper import continue_or_skip_empty
@@ -2059,11 +2060,10 @@ def worker_task_worktree_path(
 def worker_request_repository_id(config: dict[str, Any], request: DeliveryRequest) -> str:
     task = request.metadata.get("task")
     task_payload = task if isinstance(task, dict) else {}
-    repository_id = task_primary_repository_id(config, task_payload)
-    if repository_id is None:
-        raise RuntimeError(
-            "task artifacts span multiple non-Pantheon delivery repositories"
-        )
+    try:
+        repository_id = validate_task_repository_scope(config, task_payload)
+    except (ValueError, RuntimeError) as exc:
+        raise RuntimeError(f"invalid delivery repository scope: {exc}") from exc
     declared = str(request.metadata.get("workspace_repository_id") or "").strip()
     if declared and declared != repository_id:
         raise RuntimeError(
@@ -2887,7 +2887,7 @@ def bind_external_worker_context(
     delivery_targets = [
         str(repository_relative_artifact_path(config, artifact, repository_id))
         for artifact in request.target_files
-        if artifact_repository_id(config, artifact) == repository_id
+        if artifact_repository_id(config, artifact, repository_id) == repository_id
     ]
     request.metadata["workspace_target_files"] = delivery_targets
     context_lines = "\n".join(f"- {path}" for path in request.context_files) or "- (none; use governed task show)"
@@ -12646,6 +12646,13 @@ def build_dispatch_event(
         "mutates_canonical",
         "auto_created_by",
         "delivery_binding",
+        "target_repo",
+        "target_repository",
+        "target_repo_id",
+        "repository_id",
+        "source_ref",
+        "metadata",
+        "external_delivery",
     ):
         if key in task:
             task_payload[key] = task.get(key)
