@@ -12171,7 +12171,13 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
     return tasks
 
 
-def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
+def current_dispatch_event_key(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
+) -> str | None:
     reason = str(event.get("reason") or "")
     if not is_execution_dispatch_reason(reason):
         return None
@@ -12192,7 +12198,17 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
     if candidate is None or candidate[0] != reason:
         return None
 
-    return str(build_dispatch_event(task, target_agent, reason, resolver).get("key") or "")
+    return str(
+        build_dispatch_event(
+            task,
+            target_agent,
+            reason,
+            resolver,
+            activity_events=activity_events,
+            config=config,
+        ).get("key")
+        or ""
+    )
 
 
 
@@ -12481,12 +12497,20 @@ def worker_matches_current_task_generation(
     return len(bound_generations) == 1 and task_generation(task) in bound_generations
 
 
-def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
+def stale_dispatch_skip_message(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
+) -> str | None:
     reason = str(event.get("reason") or "")
     if not is_execution_dispatch_reason(reason):
         return None
 
-    expected_key = current_dispatch_event_key(config, event, task_map)
+    expected_key = current_dispatch_event_key(
+        config, event, task_map, activity_events=activity_events
+    )
     task_id = str(event.get("task_id") or "unknown task")
     current_task = task_map.get(task_id)
     if current_task is not None and int(event.get("task_generation") or 0) != task_generation(current_task):
@@ -12509,18 +12533,70 @@ def task_generation(task: Mapping[str, Any] | None) -> int:
     return generation if generation >= 1 else 0
 
 
-def ready_dispatch_signature(task: dict[str, Any], reason: str, task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:
+def task_review_reopen_revision(
+    task: Mapping[str, Any] | None,
+    activity_events: list[dict[str, Any]] | None = None,
+    *,
+    config: dict[str, Any] | None = None,
+) -> int:
+    """Return the bounded review-reopen revision for a task's dispatch identity.
+
+    A rejected review returns work to the unchanged owner. To prevent an
+    in-progress polling loop, the dispatch signature must distinguish a fresh
+    reopen from ordinary in-progress polling without mutating the assignment
+    generation.
+    """
+    raw_explicit: int | None = None
+    if isinstance(task, Mapping):
+        raw = task.get("review_reopen_revision")
+        if raw is None:
+            raw = task.get("reopen_revision")
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+            raw_explicit = raw
+        elif isinstance(raw, str) and raw.strip().isdigit():
+            raw_explicit = int(raw.strip())
+
+    counted = 0
+    if activity_events is None and config is not None:
+        activity_events = recent_governance_activity_events(config)
+    if isinstance(activity_events, (list, tuple)) and isinstance(task, Mapping):
+        task_id = str(task.get("id") or "").strip()
+        if task_id:
+            for event in activity_events:
+                if not isinstance(event, Mapping):
+                    continue
+                if str(event.get("task_id") or "").strip() != task_id:
+                    continue
+                if str(event.get("type") or "").strip().lower() == "reopen":
+                    counted += 1
+
+    if raw_explicit is not None:
+        return max(raw_explicit, counted)
+    return counted
+
+
+def ready_dispatch_signature(
+    task: dict[str, Any],
+    reason: str,
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
+    config: dict[str, Any] | None = None,
+) -> str:
     return json.dumps(
         {
-            "task_id": task.get("id"),
-            "task_generation": task_generation(task),
-            "status": task.get("status"),
-            "reason": reason,
-            "owner": task.get("owner"),
-            "reviewer": task.get("reviewer"),
-            "depends_on": list(task.get("depends_on", []) or []),
-            "dependency_signature": task_dependency_signature(task, task_lookup),
             "delivery_binding_digest": rewrite_task_machine.delivery_binding_digest(task),
+            "dependency_signature": task_dependency_signature(task, task_lookup),
+            "depends_on": list(task.get("depends_on", []) or []),
+            "owner": task.get("owner"),
+            "reason": reason,
+            "review_reopen_revision": task_review_reopen_revision(
+                task, activity_events=activity_events, config=config
+            ),
+            "reviewer": task.get("reviewer"),
+            "status": task.get("status"),
+            "task_generation": task_generation(task),
+            "task_id": task.get("id"),
         },
         sort_keys=True,
         ensure_ascii=True,
@@ -12532,6 +12608,9 @@ def build_dispatch_event(
     target_agent: str,
     reason: str,
     task_lookup: TaskResolver | dict[str, dict[str, Any]],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolver = _task_resolver(task_lookup)
     dependencies = [
@@ -12539,6 +12618,9 @@ def build_dispatch_event(
         for item in (task.get("depends_on") or [])
         if str(item or "").strip()
     ]
+    reopen_revision = task_review_reopen_revision(
+        task, activity_events=activity_events, config=config
+    )
     task_payload = {
         "id": task.get("id"),
         "generation": task_generation(task),
@@ -12567,8 +12649,12 @@ def build_dispatch_event(
     ):
         if key in task:
             task_payload[key] = task.get(key)
-    signature = ready_dispatch_signature(task, reason, task_lookup)
-    return {
+    if reopen_revision > 0:
+        task_payload["review_reopen_revision"] = reopen_revision
+    signature = ready_dispatch_signature(
+        task, reason, task_lookup, activity_events=activity_events, config=config
+    )
+    event: dict[str, Any] = {
         "key": f"dispatcher:{target_agent}:{task.get('id')}:{reason}:{signature}",
         "task_id": task.get("id"),
         "task_generation": task_generation(task),
@@ -12576,6 +12662,9 @@ def build_dispatch_event(
         "reason": reason,
         "task": task_payload,
     }
+    if reopen_revision > 0:
+        event["review_reopen_revision"] = reopen_revision
+    return event
 
 
 def evaluate_dispatch_candidate(
@@ -12597,6 +12686,7 @@ def evaluate_dispatch_candidate(
     checked_at: str,
     cooldown_seconds: float,
     live_total: int | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Pure candidate decision shared by planning and late delivery.
 
@@ -12650,7 +12740,14 @@ def evaluate_dispatch_candidate(
     priority = admission.task_reason.value
     if task_is_sidecar(task):
         priority += SIDECAR_READY_PRIORITY_OFFSET
-    event = build_dispatch_event(task, target_agent, reason, task_resolver)
+    event = build_dispatch_event(
+        task,
+        target_agent,
+        reason,
+        task_resolver,
+        activity_events=activity_events,
+        config=config,
+    )
     event["delivery_endpoint_id"] = admission.endpoint_id
     event["provider"] = admission.provider_id
     if event["key"] in pending_event_keys:
@@ -12905,6 +13002,9 @@ def dispatch_ready_tasks(
         refresh_demands = []
         state["delivery_health_refresh_demands"] = refresh_demands
 
+    if activity_events is None:
+        activity_events = recent_governance_activity_events(config)
+
     for agent_id in agent_ids:
         if dispatches >= max_dispatches:
             break
@@ -12953,6 +13053,7 @@ def dispatch_ready_tasks(
                 checked_at=dispatch_started_at,
                 cooldown_seconds=unchanged_cooldown_seconds,
                 live_total=live_total,
+                activity_events=activity_events,
             )
             if not decision["eligible"]:
                 for target in decision.get("health_refresh_targets", []) or []:
@@ -13008,6 +13109,7 @@ def build_dispatch_plan(
     queue_snapshot: list[dict[str, Any]],
     *,
     live_total: int,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run the sole planner without writing runtime or queue state."""
 
@@ -13026,6 +13128,7 @@ def build_dispatch_plan(
         queue_events_snapshot=queue_snapshot,
         live_total_snapshot=live_total,
         event_sink=capture,
+        activity_events=activity_events,
     )
     refresh_targets = list(scratch.get("delivery_health_refresh_demands") or [])
     for target in unavailable_assignment_fallback_refresh_targets(
@@ -13066,6 +13169,8 @@ def reserve_dispatch_plan(
     config: dict[str, Any],
     state: dict[str, Any],
     plan: Mapping[str, Any],
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     """CAS-like reservation of a precomputed plan under runtime admission.
 
@@ -13105,13 +13210,17 @@ def reserve_dispatch_plan(
     )
     live_total = max(active_worker_count, max(0, int(plan.get("live_total") or 0)))
     planned_at = str(plan.get("planned_at") or utc_now())
+    if activity_events is None:
+        activity_events = recent_governance_activity_events(config)
     changed = False
 
     for raw_event in events:
         if not isinstance(raw_event, dict):
             continue
         event = deepcopy(raw_event)
-        if stale_dispatch_skip_message(config, event, task_map):
+        if stale_dispatch_skip_message(
+            config, event, task_map, activity_events=activity_events
+        ):
             continue
         event_key = str(event.get("key") or "")
         task_id = str(event.get("task_id") or "")
@@ -13179,6 +13288,7 @@ def explain_dispatch_for_task(
     target_agent_filter: str | None = None,
     status: dict[str, Any] | None = None,
     live_total: int | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Serialize the same candidate decisions consumed by the scheduler."""
 
@@ -13214,6 +13324,8 @@ def explain_dispatch_for_task(
     checked_at = utc_now()
     if live_total is None:
         live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
+    if activity_events is None:
+        activity_events = recent_governance_activity_events(config)
     result: dict[str, Any] = {
         "task_id": task_id,
         "task_status": task.get("status"),
@@ -13265,6 +13377,7 @@ def explain_dispatch_for_task(
             seen_event_keys=seen,
             checked_at=checked_at,
             cooldown_seconds=cooldown,
+            activity_events=activity_events,
         )
         trace = {
             "display_name": target_agent,

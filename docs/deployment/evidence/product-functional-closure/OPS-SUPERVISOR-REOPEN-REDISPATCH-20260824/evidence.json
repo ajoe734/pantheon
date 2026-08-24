@@ -1,0 +1,56 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "OPS-SUPERVISOR-REOPEN-REDISPATCH-20260824",
+    "title": "Redispatch owner once after reviewer reopen",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-SUPERVISOR-REOPEN-REDISPATCH-20260824",
+    "review_file": "docs/deployment/evidence/product-functional-closure/OPS-SUPERVISOR-REOPEN-REDISPATCH-20260824/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Supervisor dispatch identity and deduplication key bounded review-reopen revision for rejected review redispatch without in-progress polling loops",
+    "not_changing": [
+      "Assignment generation semantics and increment behavior",
+      "Product runtime deployment and Source Ingestion",
+      "Task machine lifecycle transition definitions"
+    ],
+    "changed_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/product-functional-closure/OPS-SUPERVISOR-REOPEN-REDISPATCH-20260824/README.md",
+      "docs/deployment/evidence/product-functional-closure/OPS-SUPERVISOR-REOPEN-REDISPATCH-20260824/evidence.json"
+    ],
+    "composes_with": [
+      ".orchestrator/rewrite/task_machine.py",
+      ".orchestrator/dispatch_policy.py",
+      "scripts/ai_status.py"
+    ]
+  },
+  "behavioral_proof": {
+    "review_reopen_single_redispatch": "A reviewer rejection/reopen advances the bounded review_reopen_revision in ready_dispatch_signature, creating a fresh dispatch identity key that admits exactly one owner redispatch.",
+    "polling_loop_suppression": "Subsequent supervisor ticks while task is in_progress produce the identical signature and key, which matches seen_event_keys and is suppressed under unchanged_cooldown.",
+    "assignment_generation_preserved": "Task assignment generation is not mutated or bumped, eliminating the need for artificial reassignment workarounds.",
+    "no_retry_loop_or_task_mutation": "No queue retry loop, watchdog bypass, or direct task mutation was added; deduplication operates purely over immutable activity events and task properties."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "PYTHONPATH=.orchestrator:. python3 -m unittest discover -s .orchestrator -p test_supervisor.py",
+        "result": "121 passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator:. python3 -m unittest discover -s .orchestrator -p test_explain_dispatch.py",
+        "result": "7 passed"
+      }
+    ]
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Codex2 REVIEW_FILE=docs/deployment/evidence/product-functional-closure/OPS-SUPERVISOR-REOPEN-REDISPATCH-20260824/evidence.json through the governed approve command only after independently checking the exact PR head.",
+    "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
+  }
+}
