@@ -1,0 +1,256 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/connector-definition/v1",
+  "title": "Pantheon ConnectorDefinition",
+  "description": "Code-owned build projection of deployed adapter capability and metadata.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "definition_id",
+    "adapter_token",
+    "adapter_version",
+    "provider",
+    "source_kinds",
+    "source_types",
+    "source_classes",
+    "datasets",
+    "auth_modes",
+    "fetch_modes",
+    "config_schema",
+    "secret_fields",
+    "required_pit_fields",
+    "default_limits",
+    "allowed_host_patterns",
+    "definition_state",
+    "disabled_reason",
+    "deployment_sha",
+    "fingerprint"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "connector_definition.v1"
+      ]
+    },
+    "definition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "adapter_token": {
+      "type": "string",
+      "minLength": 1
+    },
+    "adapter_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_kinds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "data_source",
+          "strategy_seed_source"
+        ]
+      }
+    },
+    "source_types": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "market",
+          "filing",
+          "news",
+          "social",
+          "macro",
+          "paper",
+          "repo",
+          "internal_note",
+          "telemetry",
+          "alpha_db"
+        ]
+      }
+    },
+    "source_classes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "datasets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "auth_modes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "none",
+          "api_key",
+          "bearer_token",
+          "basic",
+          "oauth2",
+          "broker_ref",
+          "custom_signed"
+        ]
+      }
+    },
+    "fetch_modes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "provider_owned_adapter",
+          "http_json",
+          "http_rss",
+          "http_csv",
+          "custom_crawler",
+          "file_readback"
+        ]
+      }
+    },
+    "cursor_modes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "time_watermark",
+          "id_watermark",
+          "offset",
+          "none"
+        ]
+      }
+    },
+    "config_schema": {
+      "type": "object",
+      "description": "JSON schema describing the connector public configuration."
+    },
+    "secret_fields": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required_pit_fields": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "event_time",
+          "available_time",
+          "ingest_time"
+        ]
+      }
+    },
+    "output_schema_versions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "default_limits": {
+      "type": "object",
+      "required": [
+        "max_records",
+        "max_bytes",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "max_records": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_rate_per_second": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "allowed_host_patterns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "rate_limit_capability": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "requests_per_minute": {
+          "type": "integer"
+        },
+        "burst": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": true
+    },
+    "definition_state": {
+      "type": "string",
+      "enum": [
+        "supported",
+        "disabled_by_build",
+        "experimental"
+      ]
+    },
+    "disabled_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "deployment_sha": {
+      "type": "string",
+      "minLength": 1
+    },
+    "test_manifest_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fingerprint": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Deterministic SHA-256 fingerprint of the canonical definition payload."
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}
