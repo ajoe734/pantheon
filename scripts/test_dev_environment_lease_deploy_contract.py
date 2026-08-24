@@ -1364,3 +1364,173 @@ def test_dev_deploy_compensation_condition_truth_table(
     assert result is expected_compensation, (
         f"Failed for case: {case_description} (expected {expected_compensation}, got {result})"
     )
+
+
+REQUIRED_COMPENSATION_ENV_VARS = (
+    "DEV_BFF_JWT_SECRET",
+    "DEV_BFF_JWT_ISSUER",
+    "DEV_BFF_JWT_AUDIENCE",
+    "DEV_BFF_JWKS_URI",
+    "DEV_BFF_OIDC_DISCOVERY_URL",
+    "DEV_BFF_OIDC_ISSUER",
+    "DEV_BFF_OIDC_AUDIENCE",
+    "DEV_BFF_OIDC_CLIENT_ID",
+    "DEV_BFF_OIDC_CLIENT_SECRET",
+    "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID",
+    "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET",
+    "DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID",
+    "DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET",
+    "DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID",
+    "DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET",
+    "DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID",
+    "DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET",
+    "DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID",
+    "DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET",
+    "DEV_BFF_MFA_REQUIRED",
+    "DEV_BFF_MFA_CLAIMS",
+    "DEV_BFF_MFA_VALUES",
+    "DEV_BFF_REQUIRE_EMAIL_VERIFIED",
+    "DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED",
+    "DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED",
+    "DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED",
+    "DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED",
+    "DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED",
+    "DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED",
+    "DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH",
+    "DEV_BFF_ROLE_CLAIMS",
+    "DEV_BFF_ROLE_MAP",
+    "DEV_BFF_ROLE_MAP_MODE",
+    "DEV_BFF_DEFAULT_ROLE",
+    "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN",
+    "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED",
+    "DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN",
+    "DEV_MANAGEMENT_AI_STORE_BACKEND",
+    "DEV_MANAGEMENT_AI_STORE_SCHEMA",
+    "DEV_MANAGEMENT_AI_DB_USER",
+    "DEV_MANAGEMENT_AI_DB_PASSWORD",
+    "DEV_MANAGEMENT_AI_DATABASE_URL",
+    "DEV_MANAGEMENT_AI_ATTACH_BUCKET",
+    "DEV_MANAGEMENT_AI_ATTACH_LOCATION",
+    "DEV_BFF_CANONICAL_CORS_ORIGIN",
+    "DEV_BFF_CORS_ORIGINS",
+    "PANTHEON_ROLLBACK_BACKEND_SHA",
+    "PANTHEON_ROLLBACK_FRONTEND_SHA",
+)
+
+
+def _extract_deploy_compensation_step() -> str:
+    workflow = _workflow()
+    dev_job = _job(workflow, "deploy-dev", "coordinate-dev-release")
+    start = dev_job.index("      - name: Compensate dev deployment failure to exact hosted baseline")
+    end = dev_job.find("\n      - name:", start + 1)
+    return dev_job[start:] if end == -1 else dev_job[start:end]
+
+
+def _validate_deploy_compensation_step(step: str) -> None:
+    for var_name in REQUIRED_COMPENSATION_ENV_VARS:
+        assert f"{var_name}:" in step, f"Missing required env var {var_name} in deploy_compensation step"
+
+    assert 'case "${DEV_AUTH_PROFILE}" in' in step
+    assert "export DEV_BFF_AUTH_STUB=false" in step
+    assert "export DEV_BFF_AUTH_MODE=strict" in step
+    assert "export DEV_BFF_AUTH_STUB=true" in step
+    assert "export DEV_BFF_AUTH_MODE=permissive" in step
+    assert "--component bff" in step
+
+
+def test_dev_deploy_compensation_exports_full_governed_bff_environment() -> None:
+    """The deploy_compensation step must export all governed BFF credentials and configuration
+    so deploy_nonprod_vm.sh --component bff satisfies strict preflight checks during rollback."""
+    step = _extract_deploy_compensation_step()
+    _validate_deploy_compensation_step(step)
+
+
+@pytest.mark.parametrize("missing_var", REQUIRED_COMPENSATION_ENV_VARS)
+def test_dev_deploy_compensation_fails_closed_when_credential_absent_negative(missing_var: str) -> None:
+    """Negative test verifying that omitting any governed credential/config from deploy_compensation
+    is rejected by the contract check."""
+    step = _extract_deploy_compensation_step()
+    tampered_step = re.sub(rf"\b{re.escape(missing_var)}:[^\n]*\n", "", step)
+    assert f"{missing_var}:" not in tampered_step
+    with pytest.raises(AssertionError, match=f"Missing required env var {missing_var}"):
+        _validate_deploy_compensation_step(tampered_step)
+
+
+REQUIRED_INNER_ROLLBACK_MAPPINGS = (
+    'PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}"',
+    'PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}"',
+    'PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}"',
+    'PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}"',
+    'PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}"',
+    'PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}"',
+    'PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}"',
+    'PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}"',
+    'PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}"',
+    'PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}"',
+    'PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}"',
+    'PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}"',
+    'PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}"',
+    'PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}"',
+    'PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}"',
+    'PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}"',
+    'PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}"',
+    'PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}"',
+    'PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}"',
+    'PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}"',
+    'PANTHEON_BFF_MFA_CLAIMS="${PANTHEON_DEV_BFF_MFA_CLAIMS}"',
+    'PANTHEON_BFF_MFA_VALUES="${PANTHEON_DEV_BFF_MFA_VALUES}"',
+    'PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED="${PANTHEON_DEV_BFF_REQUIRE_EMAIL_VERIFIED}"',
+    'PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}"',
+    'PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}"',
+    'PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}"',
+    'PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED}"',
+    'PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED}"',
+    'PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED}"',
+    'PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}"',
+    'PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}"',
+    'PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}"',
+    'PANTHEON_BFF_DEFAULT_ROLE="${PANTHEON_DEV_BFF_DEFAULT_ROLE}"',
+    'PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}"',
+    'PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}"',
+    'PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}"',
+    'PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}"',
+    'PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}"',
+    'AGORA_WORKSHOP_STORE_BACKEND=postgres',
+    'AGORA_GOVERNANCE_STORE_BACKEND=postgres',
+    'AGORA_RESEARCH_STORE_BACKEND=postgres',
+    'AGORA_TRADING_ROOM_STORE_BACKEND=postgres',
+    'MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}"',
+    'MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}"',
+    'MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}"',
+)
+
+
+def _extract_rollback_dev_bff_function() -> str:
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+    start = deploy_script.index("rollback_dev_bff_on_failure() {")
+    end = deploy_script.index("\ncd \"${PANTHEON_REMOTE_DIR}\"", start)
+    return deploy_script[start:end]
+
+
+def _validate_rollback_dev_bff_function(func_text: str) -> None:
+    for mapping in REQUIRED_INNER_ROLLBACK_MAPPINGS:
+        assert mapping in func_text, f"Missing required env mapping '{mapping}' in rollback_dev_bff_on_failure"
+
+
+def test_dev_inner_rollback_preserves_full_governed_bff_environment() -> None:
+    """rollback_dev_bff_on_failure in deploy_nonprod_vm.sh must pass all governed BFF credentials,
+    role maps, Agora configuration, and adapter variables to Compose so the restored baseline remains usable."""
+    func_text = _extract_rollback_dev_bff_function()
+    _validate_rollback_dev_bff_function(func_text)
+
+
+@pytest.mark.parametrize("missing_mapping", REQUIRED_INNER_ROLLBACK_MAPPINGS)
+def test_dev_inner_rollback_fails_closed_when_mapping_absent_negative(missing_mapping: str) -> None:
+    """Negative test verifying that omitting any environment mapping from rollback_dev_bff_on_failure
+    is rejected by the contract check."""
+    func_text = _extract_rollback_dev_bff_function()
+    tampered_func = func_text.replace(missing_mapping, "# OMITTED")
+    assert missing_mapping not in tampered_func
+    with pytest.raises(AssertionError, match="Missing required env mapping"):
+        _validate_rollback_dev_bff_function(tampered_func)
+

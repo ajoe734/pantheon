@@ -1293,7 +1293,62 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS: "120"
+          PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
+          GITHUB_TOKEN: ${{ github.token }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees' }}
+          DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+          DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
+          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-lupin-dev-20260719' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-lupin-dev-20260719' }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID || 'pantheon-dev-approver-v1' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID || 'pantheon-dev-risk-owner-v1' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
+          DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'true' }}
+          DEV_BFF_MFA_CLAIMS: ${{ vars.DEV_BFF_MFA_CLAIMS || 'amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor' }}
+          DEV_BFF_MFA_VALUES: ${{ vars.DEV_BFF_MFA_VALUES || 'true,1,yes,mfa,otp,totp,webauthn' }}
+          DEV_BFF_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED || 'false' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED || 'true' }}
+          DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}
+          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,role' }}
+          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin' }}
+          DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
+          DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
+          DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
+          DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
+          DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
+          DEV_MANAGEMENT_AI_DB_PASSWORD: ${{ secrets.DEV_MANAGEMENT_AI_DB_PASSWORD }}
+          DEV_MANAGEMENT_AI_DATABASE_URL: ${{ secrets.DEV_MANAGEMENT_AI_DATABASE_URL }}
+          DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
+          DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
+          DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: "false"
           PANTHEON_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
           PANTHEON_FAILED_BACKEND_SHA: ${{ steps.target.outputs.sha }}
@@ -1312,6 +1367,20 @@ jobs:
             52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
+          case "${DEV_AUTH_PROFILE}" in
+            strict)
+              export DEV_BFF_AUTH_STUB=false
+              export DEV_BFF_AUTH_MODE=strict
+              ;;
+            permissive-stub)
+              export DEV_BFF_AUTH_STUB=true
+              export DEV_BFF_AUTH_MODE=permissive
+              ;;
+            *)
+              echo "Unknown dev auth profile: ${DEV_AUTH_PROFILE}" >&2
+              exit 1
+              ;;
+          esac
           echo "Dev deploy or smoke failed; rolling back BFF to baseline ${PANTHEON_ROLLBACK_BACKEND_SHA}"
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
