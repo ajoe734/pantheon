@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import time
 import urllib.error
@@ -40,6 +41,7 @@ from assistant_provider_usage import provider_usage_snapshot
 OPENCLAW_PROVIDER = "openclaw"
 OPENCLAW_PROVIDER_ID = "openclaw"
 PROVIDER_RUNTIME = "openclaw_gateway_agent_cli"
+OPENRESPONSES_MODEL = "openclaw"
 DEFAULT_AGENT_ID = "main"
 DEFAULT_TIMEOUT_SECONDS = 90
 DEFAULT_READINESS_ANSWER_TIMEOUT_SECONDS = 20
@@ -681,8 +683,12 @@ class AssistantOpenClawProvider:
             return
 
         url = f"{self._http_base()}/v1/responses"
+        # OpenClaw's canonical OpenResponses transport selects the Gateway agent
+        # with this header.  Keeping the model as the provider alias avoids
+        # treating an agent id as a model override while still making the target
+        # agent explicit (and stable across a gateway restart).
         payload: Dict[str, Any] = {
-            "model": f"{OPENCLAW_PROVIDER}/{self._agent_id}",
+            "model": OPENRESPONSES_MODEL,
             "input": prompt,
             "stream": True,
         }
@@ -698,11 +704,13 @@ class AssistantOpenClawProvider:
                 "Authorization": f"Bearer {self._token}",
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream",
+                "X-OpenClaw-Agent-Id": self._agent_id,
             },
         )
 
         started_at = time.monotonic()
         chunks: List[str] = []
+        terminal_text = ""
         emitted_done = False
         try:
             resp = urllib.request.urlopen(req, timeout=self._timeout)
@@ -713,12 +721,37 @@ class AssistantOpenClawProvider:
             except Exception:  # noqa: BLE001
                 pass
             code = "OPENCLAW_RESPONSES_DISABLED" if exc.code == 404 else "OPENCLAW_RESPONSES_HTTP_ERROR"
-            yield {"type": "error", "error_code": code,
+            yield {"type": "error", "error_code": code, "status_code": exc.code,
                    "message": f"/v1/responses HTTP {exc.code}: {body}"}
             return
+        except urllib.error.URLError as exc:
+            reason = exc.reason
+            if isinstance(reason, (TimeoutError, socket.timeout)):
+                yield {
+                    "type": "error",
+                    "error_code": "OPENCLAW_RESPONSES_TIMEOUT",
+                    "status_code": 504,
+                    "message": "/v1/responses request timed out.",
+                }
+            else:
+                yield {
+                    "type": "error",
+                    "error_code": "OPENCLAW_RESPONSES_UNREACHABLE",
+                    "status_code": 503,
+                    "message": "/v1/responses endpoint could not be reached.",
+                }
+            return
+        except (TimeoutError, socket.timeout):
+            yield {
+                "type": "error",
+                "error_code": "OPENCLAW_RESPONSES_TIMEOUT",
+                "status_code": 504,
+                "message": "/v1/responses request timed out.",
+            }
+            return
         except Exception as exc:  # noqa: BLE001
-            yield {"type": "error", "error_code": "OPENCLAW_RESPONSES_UNREACHABLE",
-                   "message": f"/v1/responses request failed: {exc}"}
+            yield {"type": "error", "error_code": "OPENCLAW_RESPONSES_UNREACHABLE", "status_code": 503,
+                   "message": "/v1/responses endpoint could not be reached."}
             return
 
         try:
@@ -739,8 +772,17 @@ class AssistantOpenClawProvider:
                     if delta:
                         chunks.append(delta)
                         yield {"type": "delta", "text": delta}
+                elif etype == "response.output_text.done":
+                    # OpenClaw emits this authoritative full-text snapshot before
+                    # response.completed.  Some valid runs have no deltas (for
+                    # example when the upstream adapter only produces a final
+                    # message), so do not turn that real answer into an empty
+                    # response merely because incremental events were absent.
+                    text = evt.get("text")
+                    if isinstance(text, str) and text.strip():
+                        terminal_text = text
                 elif etype == "response.completed":
-                    reply = "".join(chunks)
+                    reply = terminal_text or "".join(chunks)
                     if not reply:
                         yield {
                             "type": "error",
@@ -771,7 +813,7 @@ class AssistantOpenClawProvider:
 
         if not emitted_done:
             # Stream ended (e.g. [DONE]) without an explicit completed event.
-            reply = "".join(chunks)
+            reply = terminal_text or "".join(chunks)
             if not reply:
                 yield {
                     "type": "error",

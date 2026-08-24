@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import shutil
 import subprocess
 import sys
@@ -565,6 +566,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
             captured["url"] = req.full_url
             captured["body"] = req.data
             captured["auth"] = req.headers.get("Authorization")
+            captured["agent_id"] = dict(req.header_items()).get("X-openclaw-agent-id")
             return FakeResp()
 
         provider = self._provider()
@@ -575,9 +577,10 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
         self.assertEqual(captured["url"], "http://openclaw-gateway:18789/v1/responses")
         self.assertEqual(captured["auth"], "Bearer test-token")
         body = json.loads(captured["body"].decode("utf-8"))
-        self.assertEqual(body["model"], "openclaw/main")
+        self.assertEqual(body["model"], "openclaw")
         self.assertTrue(body["stream"])
         self.assertEqual(body["user"], "sess-1")
+        self.assertEqual(captured["agent_id"], "main")
 
         deltas = [e["text"] for e in events if e["type"] == "delta"]
         done = [e for e in events if e["type"] == "done"]
@@ -615,6 +618,59 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
 
         self.assertEqual(events[-1]["type"], "error")
         self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_EMPTY")
+
+    def test_stream_uses_output_text_done_when_no_deltas_arrive(self) -> None:
+        from unittest import mock
+
+        class FakeResp:
+            def __iter__(self):
+                return iter([
+                    b'data: {"type":"response.output_text.done","text":"provider answer"}\n',
+                    b'data: {"type":"response.completed"}\n',
+                    b"data: [DONE]\n",
+                ])
+
+            def close(self):
+                pass
+
+        provider = self._provider()
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        done = [event for event in events if event["type"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["text"], "provider answer")
+        self.assertEqual(done[0]["transport"], "responses_http")
+
+    def test_stream_unreachable_transport_has_typed_failure(self) -> None:
+        import urllib.error
+        from unittest import mock
+
+        provider = self._provider()
+        with mock.patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError(ConnectionRefusedError("refused")),
+        ):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_UNREACHABLE")
+        self.assertEqual(events[-1]["status_code"], 503)
+
+    def test_stream_timeout_transport_has_typed_failure(self) -> None:
+        import urllib.error
+        from unittest import mock
+
+        provider = self._provider()
+        with mock.patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError(socket.timeout("timed out")),
+        ):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_TIMEOUT")
+        self.assertEqual(events[-1]["status_code"], 504)
 
     def test_stream_done_marker_without_text_reports_empty_response(self) -> None:
         from unittest import mock
