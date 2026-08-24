@@ -1889,6 +1889,7 @@ jobs:
             --frontend-sha "${FRONTEND_SHA}" \
             --backend-sha "${BACKEND_SHA}" \
             --bff-base-url "${DEV_BFF_URL}" \
+            --fe-base-url "${DEV_FE_URL}" \
             --release-candidate-id "${RELEASE_CANDIDATE_ID}" \
             --pair-id "${PAIR_ID}" \
             --compatibility-manifest-sha256 "${COMPATIBILITY_MANIFEST_SHA256}" \

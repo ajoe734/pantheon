@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -58,14 +59,25 @@ def _run(
 
 
 class FakeClient:
-    def __init__(self, *, gate_conclusion: str = "success", ambiguous: bool = False):
+    def __init__(
+        self,
+        *,
+        gate_conclusion: str = "success",
+        deploy_conclusion: str = "success",
+        ambiguous: bool = False,
+        timeout_workflow: str | None = None,
+    ):
         self.dispatches: list[tuple[str, dict[str, str]]] = []
         self.gate_conclusion = gate_conclusion
+        self.deploy_conclusion = deploy_conclusion
         self.ambiguous = ambiguous
+        self.timeout_workflow = timeout_workflow
 
     def list_runs(self, workflow: str) -> list[dict[str, Any]]:
         dispatched = [item for item in self.dispatches if item[0] == workflow]
         if not dispatched:
+            return []
+        if self.timeout_workflow == workflow:
             return []
         inputs = dispatched[-1][1]
         title = (
@@ -99,6 +111,7 @@ class FakeClient:
             202,
             workflow=DEPLOY_WORKFLOW,
             title=f"Deploy release candidate {CANDIDATE_ID}",
+            conclusion=self.deploy_conclusion,
         )
 
 
@@ -108,6 +121,7 @@ def _default_fetch_fn(url: str) -> dict[str, Any]:
     if "deployment.json" in url:
         return {
             "frontendSha": FRONTEND_SHA,
+            "bffCommit": BACKEND_SHA,
             "pairId": derive_pair_id(BACKEND_SHA, FRONTEND_SHA),
         }
     return {}
@@ -123,6 +137,7 @@ def _coordinate(
         "frontend_sha": FRONTEND_SHA,
         "backend_sha": BACKEND_SHA,
         "bff_base_url": "https://bff.test",
+        "fe_base_url": "https://fe.test",
         "release_candidate_id": CANDIDATE_ID,
         "compatibility_manifest_sha256": MANIFEST_SHA,
         "controller_run_id": CONTROLLER_RUN_ID,
@@ -170,10 +185,13 @@ def test_coordinates_exact_gate_then_exact_deploy_on_dev() -> None:
     assert evidence["integration_gate"]["run_id"] == "101"
     assert evidence["frontend_deploy"]["run_id"] == "202"
     assert evidence["outcome"] == "accepted"
-    assert evidence["proof_state"] == "COMPLETE"
+    assert evidence["proof_state"] == "READ_ONLY_RESTORED"
     assert evidence["candidate"]["profile"] == "read-only"
     assert evidence["candidate"]["pair_id"] == derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
     assert evidence["served_verification"]["status"] == "verified"
+    assert evidence["served_verification"]["observed_bff_sha"] == BACKEND_SHA
+    assert evidence["served_verification"]["observed_fe_sha"] == FRONTEND_SHA
+    assert evidence["served_verification"]["observed_pair_id"] == derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
 
 
 def test_gate_failure_stops_before_frontend_deploy(tmp_path: Path) -> None:
@@ -250,43 +268,191 @@ def test_stale_override_rejection_in_coordinate_release_execution_path() -> None
     assert client.dispatches == []
 
 
-def test_served_mismatch_before_child_dispatch_in_coordinate_release() -> None:
+def test_served_bff_mismatch_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
     client = FakeClient()
+    candidate_out = tmp_path / "candidate_bff_mismatch.json"
 
-    # BFF mismatch fails closed before dispatch
     def fake_bff_mismatch(url: str) -> dict[str, Any]:
         if "version" in url:
             return {"source_commit_sha": "9" * 40}
+        if "deployment.json" in url:
+            return {
+                "frontendSha": FRONTEND_SHA,
+                "pairId": derive_pair_id(BACKEND_SHA, FRONTEND_SHA),
+            }
         return {}
 
-    with pytest.raises(ControllerError, match="served identity mismatch fails closed"):
-        _coordinate(client, fetch_fn=fake_bff_mismatch)
+    with pytest.raises(ControllerError, match="served identity mismatch fails closed: BFF served"):
+        _coordinate(
+            client,
+            fetch_fn=fake_bff_mismatch,
+            candidate_out=candidate_out,
+            candidate_profile="write-proof",
+        )
     assert client.dispatches == []
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
 
-    # Network / transport error fails closed before dispatch
+
+def test_served_fe_mismatch_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
+    client = FakeClient()
+    candidate_out = tmp_path / "candidate_fe_mismatch.json"
+
+    def fake_fe_mismatch(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "frontendSha": "9" * 40,
+                "pairId": derive_pair_id(BACKEND_SHA, FRONTEND_SHA),
+            }
+        return {}
+
+    with pytest.raises(ControllerError, match="served identity mismatch fails closed: FE served"):
+        _coordinate(
+            client,
+            fetch_fn=fake_fe_mismatch,
+            candidate_out=candidate_out,
+            candidate_profile="write-proof",
+        )
+    assert client.dispatches == []
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
+
+
+def test_served_pair_mismatch_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
+    client = FakeClient()
+    candidate_out = tmp_path / "candidate_pair_mismatch.json"
+
+    def fake_pair_mismatch(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "frontendSha": FRONTEND_SHA,
+                "pairId": "9" * 64,
+            }
+        return {}
+
+    with pytest.raises(ControllerError, match="served identity mismatch fails closed: served pair ID"):
+        _coordinate(
+            client,
+            fetch_fn=fake_pair_mismatch,
+            candidate_out=candidate_out,
+            candidate_profile="write-proof",
+        )
+    assert client.dispatches == []
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
+
+
+def test_served_missing_pair_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
+    client = FakeClient()
+    candidate_out = tmp_path / "candidate_missing_pair.json"
+
+    def fake_missing_pair(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "frontendSha": FRONTEND_SHA,
+                # Missing pairId and pair_id
+            }
+        return {}
+
+    with pytest.raises(ControllerError, match="served pair ID must be one exact lowercase SHA-256 digest"):
+        _coordinate(
+            client,
+            fetch_fn=fake_missing_pair,
+            candidate_out=candidate_out,
+            candidate_profile="write-proof",
+        )
+    assert client.dispatches == []
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
+
+
+def test_served_missing_fe_sha_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
+    client = FakeClient()
+    candidate_out = tmp_path / "candidate_missing_fe.json"
+
+    def fake_missing_fe(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "pairId": derive_pair_id(BACKEND_SHA, FRONTEND_SHA),
+                # Missing frontendSha
+            }
+        return {}
+
+    with pytest.raises(ControllerError, match="served frontend commit SHA must be one exact lowercase 40-character SHA"):
+        _coordinate(
+            client,
+            fetch_fn=fake_missing_fe,
+            candidate_out=candidate_out,
+            candidate_profile="write-proof",
+        )
+    assert client.dispatches == []
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
+
+
+def test_served_verification_transport_exception_restores_read_only(tmp_path: Path) -> None:
+    client = FakeClient()
+    candidate_out = tmp_path / "candidate_transport_error.json"
+
     def fake_transport_error(url: str) -> dict[str, Any]:
         raise RuntimeError("connection refused")
 
     with pytest.raises(ControllerError, match="served identity verification failed reaching BFF"):
-        _coordinate(client, fetch_fn=fake_transport_error)
+        _coordinate(
+            client,
+            fetch_fn=fake_transport_error,
+            candidate_out=candidate_out,
+            candidate_profile="write-proof",
+        )
     assert client.dispatches == []
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
 
 
-def test_adversarial_monkeypatch_served_verification_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_deploy_failure_restores_read_only(tmp_path: Path) -> None:
+    client = FakeClient(deploy_conclusion="failure")
+    candidate_out = tmp_path / "candidate_deploy_fail.json"
+
+    with pytest.raises(ControllerError, match="concluded failure"):
+        _coordinate(client, candidate_out=candidate_out, candidate_profile="write-proof")
+
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW, DEPLOY_WORKFLOW]
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
+
+
+def test_gate_timeout_restores_read_only(tmp_path: Path) -> None:
+    client = FakeClient(timeout_workflow=GATE_WORKFLOW)
+    candidate_out = tmp_path / "candidate_timeout.json"
+
+    with pytest.raises(ControllerError, match="timed out discovering"):
+        _coordinate(
+            client,
+            candidate_out=candidate_out,
+            candidate_profile="write-proof",
+            gate_timeout_seconds=1,
+        )
+
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
+
+
+def test_adversarial_monkeypatch_served_verification_raises() -> None:
     client = FakeClient()
 
     def raise_probe(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("adversarial probe served verification failed")
 
-    monkeypatch.setattr(
-        "scripts.cross_repo_release_controller.verify_served_identity",
-        raise_probe,
-    )
-
     with pytest.raises(RuntimeError, match="adversarial probe served verification failed"):
-        _coordinate(client)
+        _coordinate(client, fetch_fn=raise_probe)
     assert client.dispatches == []
 
 
@@ -308,8 +474,6 @@ def test_adversarial_monkeypatch_restoration_raises(
 
 
 def test_read_only_restoration_on_all_terminal_outcomes(tmp_path: Path) -> None:
-    import json
-
     # 1. Success outcome
     client_success = FakeClient()
     candidate_out_success = tmp_path / "candidate_success.json"
@@ -591,17 +755,35 @@ def test_read_only_restored_on_success_failure_cancellation_expiry() -> None:
     served_manifest = {
         "frontendSha": FRONTEND_SHA,
         "bffCommit": BACKEND_SHA,
+        "pairId": canonical_pair,
     }
     restored_verified = restore_read_only_profile(candidate, served_manifest=served_manifest)
     assert restored_verified["profile"] == "read-only"
 
-    # Mismatched served manifest raises error
-    bad_manifest = {
+    # Mismatched FE SHA raises error
+    bad_fe_manifest = {
         "frontendSha": "9" * 40,
         "bffCommit": BACKEND_SHA,
     }
-    with pytest.raises(ControllerError, match="read-only restoration verification mismatch"):
-        restore_read_only_profile(candidate, served_manifest=bad_manifest)
+    with pytest.raises(ControllerError, match="read-only restoration verification mismatch: served FE="):
+        restore_read_only_profile(candidate, served_manifest=bad_fe_manifest)
+
+    # Mismatched BFF SHA raises error
+    bad_bff_manifest = {
+        "frontendSha": FRONTEND_SHA,
+        "bffCommit": "9" * 40,
+    }
+    with pytest.raises(ControllerError, match="read-only restoration verification mismatch: served BFF="):
+        restore_read_only_profile(candidate, served_manifest=bad_bff_manifest)
+
+    # Mismatched pair ID raises error
+    bad_pair_manifest = {
+        "frontendSha": FRONTEND_SHA,
+        "bffCommit": BACKEND_SHA,
+        "pairId": "9" * 64,
+    }
+    with pytest.raises(ControllerError, match="read-only restoration verification mismatch: served pair ID"):
+        restore_read_only_profile(candidate, served_manifest=bad_pair_manifest)
 
 
 def test_source_stays_reconcile_only_and_prohibits_live_capital() -> None:
@@ -661,3 +843,4 @@ def test_nonprod_workflow_outputs_candidate_auto_binding_contract() -> None:
     assert "source_mode:" in coordinate_job
     assert "expires_at:" in coordinate_job
     assert "--candidate-out" in coordinate_job
+    assert '--fe-base-url "${DEV_FE_URL}"' in coordinate_job

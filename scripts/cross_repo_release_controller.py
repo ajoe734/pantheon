@@ -97,7 +97,7 @@ def create_candidate_record(
     execute_plans_sha: str,
     candidate_id: str | None = None,
     pair_id: str | None = None,
-    profile: str = "write-proof",
+    profile: str = "read-only",
     expires_at: str | None = None,
     source_mode: str = "reconcile-only",
     ttl_seconds: int = 1800,
@@ -229,6 +229,7 @@ def verify_served_identity(
 
     observed_fe_sha = None
     observed_pair_id = None
+    served_manifest = None
     if fe_base_url:
         if not (fe_base_url.startswith("https://") or fe_base_url.startswith("http://")):
             raise ControllerError("FE base URL must use HTTPS or HTTP")
@@ -238,27 +239,28 @@ def verify_served_identity(
         except Exception as exc:
             raise ControllerError(f"served identity verification failed reaching frontend: {exc}") from exc
 
+        served_manifest = fe_data
         observed_fe_sha = exact_sha(
-            fe_data.get("frontendSha") or fe_data.get("commit") or "",
+            fe_data.get("frontendSha") or fe_data.get("commit") or (fe_data.get("frontend") or {}).get("commitSha") or "",
             "served frontend commit SHA",
         )
         if observed_fe_sha != expected_candidate["execute_plans_sha"]:
             raise ControllerError(
                 f"served identity mismatch fails closed: FE served {observed_fe_sha} != candidate {expected_candidate['execute_plans_sha']}"
             )
-        observed_pair_id = fe_data.get("pairId") or fe_data.get("pair_id")
-        if observed_pair_id:
-            observed_pair_id = exact_digest(observed_pair_id, "served pair ID")
-            if observed_pair_id != expected_candidate["pair_id"]:
-                raise ControllerError(
-                    f"served identity mismatch fails closed: served pair ID {observed_pair_id} != candidate {expected_candidate['pair_id']}"
-                )
+        raw_pair_id = fe_data.get("pairId") or fe_data.get("pair_id") or ""
+        observed_pair_id = exact_digest(raw_pair_id, "served pair ID")
+        if observed_pair_id != expected_candidate["pair_id"]:
+            raise ControllerError(
+                f"served identity mismatch fails closed: served pair ID {observed_pair_id} != candidate {expected_candidate['pair_id']}"
+            )
 
     return {
         "status": "verified",
         "observed_bff_sha": observed_bff_sha,
         "observed_fe_sha": observed_fe_sha,
         "observed_pair_id": observed_pair_id,
+        "served_manifest": served_manifest,
         "verified_at": utc_now(),
     }
 
@@ -273,18 +275,39 @@ def restore_read_only_profile(
     if "restored_at" not in restored:
         restored["restored_at"] = utc_now()
     if served_manifest:
-        fe_sha = exact_sha(
-            served_manifest.get("frontendSha") or served_manifest.get("commit") or "",
-            "served FE SHA",
+        fe_sha_raw = (
+            served_manifest.get("frontendSha")
+            or served_manifest.get("commit")
+            or (served_manifest.get("frontend") or {}).get("commitSha")
         )
-        bff_sha = exact_sha(
-            served_manifest.get("bffCommit") or served_manifest.get("bffSourceCommitSha") or "",
-            "served BFF SHA",
-        )
-        if fe_sha != restored["execute_plans_sha"] or bff_sha != restored["pantheon_sha"]:
+        fe_sha = exact_sha(fe_sha_raw or "", "served FE SHA")
+        if fe_sha != restored["execute_plans_sha"]:
             raise ControllerError(
-                f"read-only restoration verification mismatch: served FE={fe_sha}/BFF={bff_sha} != candidate FE={restored['execute_plans_sha']}/BFF={restored['pantheon_sha']}"
+                f"read-only restoration verification mismatch: served FE={fe_sha} != candidate {restored['execute_plans_sha']}"
             )
+
+        bff_sha_raw = (
+            served_manifest.get("bffCommit")
+            or served_manifest.get("bffSourceCommitSha")
+            or (served_manifest.get("bff") or {}).get("sourceCommitSha")
+        )
+        if bff_sha_raw:
+            bff_sha = exact_sha(bff_sha_raw, "served BFF SHA")
+            if bff_sha != restored["pantheon_sha"]:
+                raise ControllerError(
+                    f"read-only restoration verification mismatch: served BFF={bff_sha} != candidate {restored['pantheon_sha']}"
+                )
+
+        raw_pair_id = (
+            served_manifest.get("pairId")
+            or served_manifest.get("pair_id")
+        )
+        if raw_pair_id:
+            pair_id = exact_digest(raw_pair_id, "served pair ID")
+            if pair_id != restored["pair_id"]:
+                raise ControllerError(
+                    f"read-only restoration verification mismatch: served pair ID {pair_id} != candidate {restored['pair_id']}"
+                )
     return restored
 
 
@@ -501,7 +524,7 @@ def coordinate_release(
     deploy_timeout_seconds: int,
     poll_seconds: float,
     pair_id: str | None = None,
-    candidate_profile: str = "write-proof",
+    candidate_profile: str = "read-only",
     candidate_out: str | Path | None = None,
     fe_base_url: str | None = None,
     fetch_fn: Callable[[str], dict[str, Any]] | None = None,
@@ -541,30 +564,29 @@ def coordinate_release(
         },
     )
 
-    if candidate_out:
-        cand_path = Path(candidate_out)
-        cand_path.parent.mkdir(parents=True, exist_ok=True)
-        cand_path.write_text(json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-    emit_github_outputs(candidate)
-
-    # 1. Identity verification BEFORE any child dispatch
-    state_machine.transition("IDENTITY_VERIFIED")
-    served_verification = verify_served_identity(
-        bff_base_url=bff_base_url,
-        expected_candidate=candidate,
-        fe_base_url=fe_base_url,
-        fetch_fn=fetch_fn,
-    )
-
-    # 2. Write-proof active during proof / dispatch window
-    state_machine.transition("WRITE_PROOF_ACTIVE")
-    state_machine.transition("JOURNEYS_RUNNING")
-
+    served_verification: dict[str, Any] | None = None
+    served_manifest: dict[str, Any] | None = None
     started_at = utc_now()
-    gate_title = f"Release candidate {release_candidate_id}"
-
     try:
+        if candidate_out:
+            cand_path = Path(candidate_out)
+            cand_path.parent.mkdir(parents=True, exist_ok=True)
+            cand_path.write_text(json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        emit_github_outputs(candidate)
+
+        # 1. Identity verification BEFORE any child dispatch, inside restoration protection
+        served_verification = verify_served_identity(
+            bff_base_url=bff_base_url,
+            expected_candidate=candidate,
+            fe_base_url=fe_base_url,
+            fetch_fn=fetch_fn,
+        )
+        state_machine.transition("IDENTITY_VERIFIED")
+        served_manifest = served_verification.get("served_manifest")
+
+        gate_title = f"Release candidate {release_candidate_id}"
+
         gate = dispatch_and_wait(
             client,
             expected=ExpectedRun(
@@ -615,17 +637,15 @@ def coordinate_release(
             poll_seconds=poll_seconds,
             sleep=sleep,
         )
-        state_machine.transition("PROOF_CAPTURED")
     finally:
-        # Restore read-only profile across success, failure, cancellation, expiry
-        candidate = restore_read_only_profile(candidate)
+        # Restore read-only profile across success, failure, cancellation, expiry, probe error
+        candidate = restore_read_only_profile(candidate, served_manifest=served_manifest)
         state_machine.transition("READ_ONLY_RESTORED")
         if candidate_out:
             cand_path = Path(candidate_out)
+            cand_path.parent.mkdir(parents=True, exist_ok=True)
             cand_path.write_text(json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         emit_github_outputs(candidate)
-
-    state_machine.transition("COMPLETE")
 
     return {
         "schema_version": "pantheon.cross-repo-release-controller-evidence.v1",
@@ -679,7 +699,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--evidence-out", required=True)
     parser.add_argument("--candidate-out", default=None)
     parser.add_argument("--pair-id", default=None)
-    parser.add_argument("--candidate-profile", default="write-proof")
+    parser.add_argument("--candidate-profile", default="read-only")
     parser.add_argument("--api-url", default=os.environ.get("GITHUB_API_URL", "https://api.github.com"))
     parser.add_argument("--gate-timeout-seconds", type=int, default=10_800)
     parser.add_argument("--deploy-timeout-seconds", type=int, default=5_400)
