@@ -78,12 +78,17 @@ from task_archive import (
     recent_terminal_summaries,
 )
 from multi_repo_registry import (
+    artifact_explicit_repository_id,
+    artifact_repository_id,
     repository_configured_local_path,
     repository_local_path,
+    repository_relative_artifact_path,
     repository_slug,
     resolve_repository,
     task_artifact_repository_ids,
     task_primary_repository_id,
+    task_target_repository_id,
+    validate_task_repository_scope,
 )
 from runtime_state import (
     activity_audit_lock_file,
@@ -3184,13 +3189,10 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
     config = load_config()
-    repository_id = task_primary_repository_id(config, task)
-    if repository_id is None:
-        repo_ids = [repo_id for repo_id in task_artifact_repository_ids(config, task) if repo_id != "pantheon"]
-        raise SystemExit(
-            "Cannot finalize task: task artifacts span multiple non-Pantheon repositories; "
-            f"split closeout or set a single artifact prefix. Repositories: {', '.join(repo_ids)}."
-        )
+    try:
+        repository_id = validate_task_repository_scope(config, task)
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(f"Cannot finalize task: {exc}") from exc
     repository_root, repository_path_metadata = _done_delivery_repository_root(
         config, task, repository_id
     )
@@ -5347,6 +5349,11 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "reviewer": reviewer,
             "title": title,
         }
+        config = load_config()
+        try:
+            validate_task_repository_scope(config, candidate)
+        except (ValueError, RuntimeError) as exc:
+            raise SystemExit(f"Cannot assign task {task_id}: {exc}") from exc
         enforce_artifact_conflict_admission(state, candidate)
     elif bridge is not None:
         # Existing bridge rows have their own exact packet/digest/spec replay
@@ -6459,9 +6466,12 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
         )
 
     config = load_config()
-    repository_id = task_primary_repository_id(config, task)
+    try:
+        repository_id = validate_task_repository_scope(config, task)
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(f"Cannot reconcile task: {exc}") from exc
     repository_slug_value = repository_slug(config, repository_id)
-    if repository_id is None or not repository_slug_value:
+    if not repository_slug_value:
         raise SystemExit("Cannot reconcile task: a single delivery repository is required.")
     requested_slug = normalize_github_repo_slug(
         _required_reconcile_env("RECONCILE_DELIVERY_REPOSITORY")
@@ -6727,9 +6737,15 @@ def validate_handoff_pr_delivery_binding(
 
     task_id = str(task.get("id") or "").strip()
     normalized = _validated_pr_binding(binding, task_id)
-    repository_id = task_primary_repository_id(config, dict(task))
+    try:
+        repository_id = validate_task_repository_scope(config, dict(task))
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(
+            f"PR handoff requires one delivery repository with a configured "
+            f"GitHub slug for {task_id or '?'}: {exc}"
+        ) from exc
     repository_slug_value = repository_slug(config, repository_id)
-    if repository_id is None or not repository_slug_value:
+    if not repository_slug_value:
         raise SystemExit(
             "PR handoff requires one delivery repository with a configured "
             f"GitHub slug for {task_id or '?'}"
@@ -7055,9 +7071,14 @@ def bridge_github_review_decision(
     github_review_bridge = _github_review_bridge_module()
 
     config = load_config()
-    repository_id = task_primary_repository_id(config, task)
+    try:
+        repository_id = validate_task_repository_scope(config, task)
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(
+            f"GitHub review bridge rejected {decision} for {task.get('id') or '?'}: {exc}"
+        ) from exc
     repository_slug_value = repository_slug(config, repository_id)
-    if repository_id is None or not repository_slug_value:
+    if not repository_slug_value:
         raise SystemExit(
             "GitHub review bridge requires one delivery repository with a "
             f"configured GitHub slug for {task.get('id') or '?'}."
@@ -7182,7 +7203,10 @@ def prepare_external_mutation_preflight(
         review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
         review_file = os.environ.get("REVIEW_FILE", "").strip()
         config = load_config()
-        repository_id = task_primary_repository_id(config, task)
+        try:
+            repository_id = validate_task_repository_scope(config, task)
+        except (ValueError, RuntimeError) as exc:
+            raise SystemExit(f"Cannot approve task {task_id}: {exc}") from exc
         repository_slug_value = repository_slug(config, repository_id)
         binding = resolve_approval_binding(task)
         validate_delivery_binding_for_approval(task, binding)
@@ -7320,7 +7344,10 @@ def prepare_external_mutation_preflight(
         ).strip()
         if approved_head_sha:
             config = load_config()
-            repository_id = task_primary_repository_id(config, candidate)
+            try:
+                repository_id = validate_task_repository_scope(config, candidate)
+            except (ValueError, RuntimeError) as exc:
+                raise SystemExit(f"Cannot finalize task {task_id}: {exc}") from exc
             repository_slug_value = repository_slug(config, repository_id)
             if not repository_slug_value or not review_evidence_file_committed(
                 repository=repository_slug_value,

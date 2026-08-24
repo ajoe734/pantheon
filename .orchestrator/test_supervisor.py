@@ -343,6 +343,23 @@ class V2StartupCacheTests(unittest.TestCase):
             [{"task_id": "DEP", "status": "done", "satisfied": True}],
         )
 
+    def test_build_dispatch_event_preserves_target_repo_and_metadata(self) -> None:
+        task = task_fixture(task_id="FE-TASK-001")
+        task["target_repo"] = "execute-plans"
+        task["metadata"] = {"feature_flag": "enabled"}
+        task["source_ref"] = {"branch": "dev"}
+
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_READY,
+            {"FE-TASK-001": task},
+        )
+
+        self.assertEqual(event["task"]["target_repo"], "execute-plans")
+        self.assertEqual(event["task"]["metadata"], {"feature_flag": "enabled"})
+        self.assertEqual(event["task"]["source_ref"], {"branch": "dev"})
+
     def test_reserved_phase_can_publish_launch_intent_after_state_reload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -810,6 +827,152 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
             self.assertNotIn(
                 str(task["id"]), state["worker_worktrees"]["leases"]
             )
+
+    def test_fe_sidecar_with_target_repo_prepares_execute_plans_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon"
+            execute_root = root / "execute-plans"
+            status_root.mkdir()
+            execute_root.mkdir()
+            self._git(execute_root, "init", "-b", "dev")
+            self._git(execute_root, "config", "user.name", "Test")
+            self._git(execute_root, "config", "user.email", "test@example.com")
+            (execute_root / "README.md").write_text("execute plans\n", encoding="utf-8")
+            self._git(execute_root, "add", "README.md")
+            self._git(execute_root, "commit", "-m", "initial")
+            self._git(
+                execute_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/execute-plans.git",
+            )
+            head = self._git(execute_root, "rev-parse", "HEAD")
+            self._git(execute_root, "update-ref", "refs/remotes/origin/dev", head)
+            self._git(
+                execute_root,
+                "branch",
+                "task/AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-24",
+                head,
+            )
+
+            config = config_fixture(status_root)
+            config.update(
+                {
+                    "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                    "worker_worktrees": {
+                        "root": str(root / "worker-worktrees"),
+                    },
+                    "coordination": {
+                        "repositories": {
+                            "pantheon": {"repo": "ajoe734/pantheon"},
+                            "execute_plans": {"local_path": str(execute_root)},
+                        }
+                    },
+                }
+            )
+            task = task_fixture("AG-FE-DB-002-SIDECAR-ACCEPTANCE-FOLLOWUP-24")
+            task["target_repo"] = "execute-plans"
+            task["artifacts"] = [
+                "support/sidecars/AG-FE-DB-002/evidence.json"
+            ]
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=str(task["id"]),
+                reason=supervisor.REASON_OWNED_READY,
+                context_files=["AI_COLLABORATION_GUIDE.md"],
+                target_files=list(task["artifacts"]),
+                metadata={"task": task, "task_generation": 1},
+            )
+            state: dict[str, object] = {"worker_worktrees": {"leases": {}}}
+            worker_base_snapshots: dict[str, dict[str, str]] = {}
+
+            with (
+                mock.patch.object(
+                    supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+                ),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, error = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-sidecar",
+                    target_agent="Codex",
+                    worker_base_snapshots=worker_base_snapshots,
+                )
+
+            self.assertTrue(ok, error)
+            workspace = Path(str(request.metadata["workspace_path"]))
+            self.assertEqual(workspace.parent.name, "execute-plans")
+            self.assertEqual(request.metadata["workspace_repository_id"], "execute_plans")
+            lease = state["worker_worktrees"]["leases"][str(task["id"])]
+            self.assertEqual(lease["repository_id"], "execute_plans")
+            self.assertIn("Cross-repository delivery authority", request.message)
+
+    def test_conflicting_or_ambiguous_task_repo_fails_workspace_preparation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon"
+            status_root.mkdir()
+            config = config_fixture(status_root)
+
+            # Conflicting target_repo vs explicit artifact prefix
+            conflicting_task = task_fixture("CONFLICT-TASK")
+            conflicting_task["target_repo"] = "pantheon"
+            conflicting_task["artifacts"] = ["execute-plans/src/App.tsx"]
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=str(conflicting_task["id"]),
+                reason=supervisor.REASON_OWNED_READY,
+                context_files=[],
+                target_files=list(conflicting_task["artifacts"]),
+                metadata={"task": conflicting_task, "task_generation": 1},
+            )
+            state: dict[str, object] = {"worker_worktrees": {"leases": {}}}
+            ok, error = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id="evt-conflict",
+                target_agent="Codex",
+                worker_base_snapshots={},
+            )
+            self.assertFalse(ok)
+            self.assertIn("conflicting repository scope", str(error))
+
+            # Ambiguous multi-repo target_repo
+            ambiguous_task = task_fixture("AMBIGUOUS-TASK")
+            ambiguous_task["target_repo"] = "pantheon+execute-plans"
+            ambiguous_task["artifacts"] = ["src/App.tsx"]
+            ambiguous_request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=str(ambiguous_task["id"]),
+                reason=supervisor.REASON_OWNED_READY,
+                context_files=[],
+                target_files=list(ambiguous_task["artifacts"]),
+                metadata={"task": ambiguous_task, "task_generation": 1},
+            )
+            ok, error = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                ambiguous_request,
+                queue_event_id="evt-ambiguous",
+                target_agent="Codex",
+                worker_base_snapshots={},
+            )
+            self.assertFalse(ok)
+            self.assertIn("ambiguous multi-repository target_repo", str(error))
 
 
 class RuntimeConfigurationContractTests(unittest.TestCase):
