@@ -50,7 +50,7 @@
         "definition_id": "tw-twse-tpex-official-market",
         "adapter_token": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167"
+        "deployment_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -115,7 +115,7 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167",
+        "runtime_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85",
         "timestamp": "2026-08-24T19:35:00Z"
       },
       "quota_and_cost_observation": {
@@ -133,7 +133,7 @@
         "definition_id": "tw-tdcc-shareholding-distribution",
         "adapter_token": "TdccShareholdingDistributionAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167"
+        "deployment_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -198,7 +198,7 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167",
+        "runtime_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85",
         "timestamp": "2026-08-24T19:35:00Z"
       },
       "quota_and_cost_observation": {
@@ -216,7 +216,7 @@
         "definition_id": "tw-taifex-futures-options-chip",
         "adapter_token": "TaifexDerivativesChipAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167"
+        "deployment_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -281,7 +281,7 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167",
+        "runtime_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85",
         "timestamp": "2026-08-24T19:35:00Z"
       },
       "quota_and_cost_observation": {
@@ -299,7 +299,7 @@
         "definition_id": "social-admitted-market-discussion",
         "adapter_token": "AdmittedSocialMediaAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167"
+        "deployment_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85"
       },
       "license_and_entitlements": {
         "license_scope": "community_admitted",
@@ -367,7 +367,7 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167",
+        "runtime_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85",
         "timestamp": "2026-08-24T19:35:00Z"
       },
       "quota_and_cost_observation": {
@@ -385,7 +385,7 @@
         "definition_id": "alpha-db-vendor-signals",
         "adapter_token": "ExternalAlphaDbAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167"
+        "deployment_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85"
       },
       "license_and_entitlements": {
         "license_scope": "vendor",
@@ -451,7 +451,7 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "ceb87b90c97f6d6a63ec6d66c0a67fe418f23167",
+        "runtime_sha": "be4b1c07e961c1744c3952cefac3a3c1d6f2bd85",
         "timestamp": "2026-08-24T19:35:00Z"
       },
       "quota_and_cost_observation": {
