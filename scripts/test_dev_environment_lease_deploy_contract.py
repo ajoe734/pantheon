@@ -1436,6 +1436,9 @@ def _validate_deploy_compensation_step(step: str) -> None:
     assert "export DEV_BFF_AUTH_STUB=true" in step
     assert "export DEV_BFF_AUTH_MODE=permissive" in step
     assert "--component bff" in step
+    assert 'current_bff="$(curl -fsS "${DEV_BFF_URL}/bff/version"' in step
+    assert 'if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then' in step
+    assert "skipping rollback deploy and verifying baseline pair" in step
 
 
 def test_dev_deploy_compensation_exports_full_governed_bff_environment() -> None:
@@ -1443,6 +1446,197 @@ def test_dev_deploy_compensation_exports_full_governed_bff_environment() -> None
     so deploy_nonprod_vm.sh --component bff satisfies strict preflight checks during rollback."""
     step = _extract_deploy_compensation_step()
     _validate_deploy_compensation_step(step)
+
+
+def _extract_deploy_compensation_run_script() -> str:
+    step = _extract_deploy_compensation_step()
+    run_marker = "\n        run: |\n"
+    start = step.index(run_marker) + len(run_marker)
+    return step[start:]
+
+
+def _setup_mock_compensation_environment(
+    tmp_path: Path,
+    initial_bff_sha: str,
+    initial_fe_sha: str,
+    rollback_bff_sha: str,
+    rollback_fe_sha: str,
+    deploy_behavior: str = "success",
+) -> tuple[dict[str, str], Path, Path]:
+    import shutil
+
+    controller_scripts = tmp_path / ".lease-controller" / "scripts"
+    controller_scripts.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "scripts" / "dev_environment_lease.py", controller_scripts / "dev_environment_lease.py")
+    shutil.copy2(ROOT / "scripts" / "run_with_dev_environment_lease.sh", controller_scripts / "run_with_dev_environment_lease.sh")
+
+    agora_scripts = tmp_path / ".agora-gate-controller" / "scripts"
+    agora_scripts.mkdir(parents=True, exist_ok=True)
+    mock_deploy = agora_scripts / "deploy_nonprod_vm.sh"
+    invocations_log = tmp_path / "deploy_invocations.log"
+    bff_sha_file = tmp_path / "mock_bff_sha.txt"
+    fe_sha_file = tmp_path / "mock_fe_sha.txt"
+
+    bff_sha_file.write_text(initial_bff_sha, encoding="utf-8")
+    fe_sha_file.write_text(initial_fe_sha, encoding="utf-8")
+
+    if deploy_behavior == "success":
+        deploy_body = (
+            f"echo \"$@\" >> '{invocations_log}'\n"
+            "while [[ $# -gt 0 ]]; do\n"
+            "  case \"$1\" in\n"
+            "    --sha)\n"
+            f"      echo \"$2\" > '{bff_sha_file}'\n"
+            "      shift 2\n"
+            "      ;;\n"
+            "    *)\n"
+            "      shift\n"
+            "      ;;\n"
+            "  esac\n"
+            "done\n"
+            "exit 0\n"
+        )
+    elif deploy_behavior == "fail_command":
+        deploy_body = f"echo \"$@\" >> '{invocations_log}'\nexit 1\n"
+    else:
+        deploy_body = f"echo \"$@\" >> '{invocations_log}'\nexit 0\n"
+
+    mock_deploy.write_text(f"#!/usr/bin/env bash\nset -euo pipefail\n{deploy_body}", encoding="utf-8")
+    mock_deploy.chmod(0o755)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_curl = bin_dir / "curl"
+    mock_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "url=\"${@: -1}\"\n"
+        "if [[ \"${url}\" == *\"/bff/version\"* ]]; then\n"
+        f"  sha=\"$(cat '{bff_sha_file}')\"\n"
+        "  echo \"{\\\"source_commit_sha\\\":\\\"${sha}\\\"}\"\n"
+        "elif [[ \"${url}\" == *\"/deployment.json\"* ]]; then\n"
+        f"  sha=\"$(cat '{fe_sha_file}')\"\n"
+        "  echo \"{\\\"frontendSha\\\":\\\"${sha}\\\"}\"\n"
+        "else\n"
+        "  echo \"{}\"\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    mock_curl.chmod(0o755)
+
+    step_summary = tmp_path / "step_summary.md"
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "GITHUB_WORKSPACE": str(tmp_path),
+        "GITHUB_STEP_SUMMARY": str(step_summary),
+        "DEV_AUTH_PROFILE": "strict",
+        "DEV_BFF_URL": "https://pantheon-lupin-dev-bff.mock",
+        "DEV_FE_URL": "https://pantheon-lupin-dev-fe.mock",
+        "PANTHEON_ROLLBACK_BACKEND_SHA": rollback_bff_sha,
+        "PANTHEON_ROLLBACK_FRONTEND_SHA": rollback_fe_sha,
+        "GCP_DEPLOY_PROJECT_ID": "pantheon-lupin-dev-20260719",
+        "DEV_DEPLOY_DEADLINE_SECONDS": "1200",
+        "PANTHEON_ENVIRONMENT_LEASE_TOKEN": "mock-token",
+    }
+    return env, invocations_log, step_summary
+
+
+def test_dev_deploy_compensation_mutation_aware_skips_deploy_when_already_at_baseline_negative(tmp_path: Path) -> None:
+    """Executable negative regression proving that when preflight/build fails while the active BFF
+    is already at the rollback baseline SHA, deploy_compensation makes NO deploy_nonprod_vm.sh invocation
+    and preserves the running services untouched."""
+    rollback_bff = "1" * 40
+    rollback_fe = "2" * 40
+    env, invocations_log, step_summary = _setup_mock_compensation_environment(
+        tmp_path,
+        initial_bff_sha=rollback_bff,
+        initial_fe_sha=rollback_fe,
+        rollback_bff_sha=rollback_bff,
+        rollback_fe_sha=rollback_fe,
+    )
+    script = _extract_deploy_compensation_run_script()
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"Compensation script failed: {result.stderr}"
+    assert "skipping rollback deploy and verifying baseline pair" in result.stdout
+    assert not invocations_log.exists() or invocations_log.read_text(encoding="utf-8").strip() == "", (
+        "deploy_nonprod_vm.sh must NOT be invoked when hosted BFF is already at baseline"
+    )
+    assert step_summary.exists()
+    summary_content = step_summary.read_text(encoding="utf-8")
+    assert f"Preserved exact hosted dev baseline pair without deploy mutation: BFF={rollback_bff} FE={rollback_fe}" in summary_content
+
+
+def test_dev_deploy_compensation_mutation_aware_executes_deploy_when_not_at_baseline_positive(tmp_path: Path) -> None:
+    """Positive test proving that when post-rollout/paper/public-smoke fails while the active BFF
+    is on a candidate (non-baseline) SHA, deploy_compensation invokes deploy_nonprod_vm.sh to restore baseline."""
+    candidate_bff = "9" * 40
+    rollback_bff = "1" * 40
+    rollback_fe = "2" * 40
+    env, invocations_log, step_summary = _setup_mock_compensation_environment(
+        tmp_path,
+        initial_bff_sha=candidate_bff,
+        initial_fe_sha=rollback_fe,
+        rollback_bff_sha=rollback_bff,
+        rollback_fe_sha=rollback_fe,
+        deploy_behavior="success",
+    )
+    script = _extract_deploy_compensation_run_script()
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"Compensation script failed: {result.stderr}"
+    assert f"rolling back BFF to baseline {rollback_bff}" in result.stdout
+    assert invocations_log.exists(), "deploy_nonprod_vm.sh MUST be invoked when hosted BFF is not at baseline"
+    invocations = invocations_log.read_text(encoding="utf-8").strip().splitlines()
+    assert len(invocations) == 1
+    assert f"--sha {rollback_bff}" in invocations[0]
+    assert "--component bff" in invocations[0]
+    assert step_summary.exists()
+    summary_content = step_summary.read_text(encoding="utf-8")
+    assert f"Restored exact hosted dev baseline pair: BFF={rollback_bff} FE={rollback_fe}" in summary_content
+
+
+def test_dev_deploy_compensation_mutation_aware_fails_closed_on_rollback_failure_negative(tmp_path: Path) -> None:
+    """Negative test proving that if deploy rollback fails to restore the baseline SHA,
+    deploy_compensation exits non-zero (fails closed)."""
+    candidate_bff = "9" * 40
+    rollback_bff = "1" * 40
+    rollback_fe = "2" * 40
+    env, invocations_log, _ = _setup_mock_compensation_environment(
+        tmp_path,
+        initial_bff_sha=candidate_bff,
+        initial_fe_sha=rollback_fe,
+        rollback_bff_sha=rollback_bff,
+        rollback_fe_sha=rollback_fe,
+        deploy_behavior="fail_command",
+    )
+    script = _extract_deploy_compensation_run_script()
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert invocations_log.exists()
 
 
 @pytest.mark.parametrize("missing_var", REQUIRED_COMPENSATION_ENV_VARS)

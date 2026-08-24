@@ -1381,20 +1381,29 @@ jobs:
               exit 1
               ;;
           esac
-          echo "Dev deploy or smoke failed; rolling back BFF to baseline ${PANTHEON_ROLLBACK_BACKEND_SHA}"
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
-            bash "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh" \
-              --environment dev \
-              --component bff \
-              --sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
-              --project-id "${GCP_DEPLOY_PROJECT_ID}" \
-              --deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"
+          current_bff="$(curl -fsS "${DEV_BFF_URL}/bff/version" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
+          if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then
+            echo "Hosted BFF is already at baseline ${current_bff}; skipping rollback deploy and verifying baseline pair"
+          else
+            echo "Dev deploy or smoke failed; rolling back BFF to baseline ${PANTHEON_ROLLBACK_BACKEND_SHA} (current=${current_bff:-unknown})"
+            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+              bash "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh" \
+                --environment dev \
+                --component bff \
+                --sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
+                --project-id "${GCP_DEPLOY_PROJECT_ID}" \
+                --deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"
+          fi
           actual_bff="$(curl -fsS "${DEV_BFF_URL}/bff/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")')"
           [[ "${actual_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]
           actual_fe="$(curl -fsS "${DEV_FE_URL}/deployment.json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("frontendSha") or d.get("commit") or "")')"
           [[ "${actual_fe}" == "${PANTHEON_ROLLBACK_FRONTEND_SHA}" ]]
-          echo "Restored exact hosted dev baseline pair: BFF=${actual_bff} FE=${actual_fe}" >> "${GITHUB_STEP_SUMMARY}"
+          if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then
+            echo "Preserved exact hosted dev baseline pair without deploy mutation: BFF=${actual_bff} FE=${actual_fe}" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "Restored exact hosted dev baseline pair: BFF=${actual_bff} FE=${actual_fe}" >> "${GITHUB_STEP_SUMMARY}"
+          fi
 
       - name: Stop heartbeat and release only after complete success
         id: lease_cleanup
