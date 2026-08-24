@@ -38,10 +38,17 @@ TW_INSTITUTIONAL_FLOW_SCHEMA_HASH = "tw_institutional_flow.v1"
 TW_MARGIN_SHORT_BALANCE_SCHEMA_HASH = "tw_margin_short_balance.v1"
 TW_SECURITIES_LENDING_SCHEMA_HASH = "tw_securities_lending.v1"
 TW_DAY_TRADING_SCHEMA_HASH = "tw_day_trading.v1"
+TDCC_SHAREHOLDING_CONNECTOR_ID = "tw-tdcc-shareholding-distribution"
+TDCC_SHAREHOLDING_SCHEMA_HASH = "tw_tdcc_shareholding_distribution.v1"
+TAIFEX_DERIVATIVES_CONNECTOR_ID = "tw-taifex-futures-options-chip"
+TAIFEX_FUTURES_CHIP_SCHEMA_HASH = "tw_taifex_futures_chip.v1"
+TAIFEX_OPTIONS_CHIP_SCHEMA_HASH = "tw_taifex_options_chip.v1"
 
 TWSE_OPENAPI_BASE_URL = "https://openapi.twse.com.tw/v1"
 TWSE_LEGACY_BASE_URL = "https://www.twse.com.tw/rwd/zh"
 TPEX_OPENAPI_BASE_URL = "https://www.tpex.org.tw/openapi/v1"
+TDCC_OPENAPI_BASE_URL = "https://openapi.tdcc.com.tw/v1"
+TAIFEX_OPENAPI_BASE_URL = "https://openapi.taifex.com.tw/v1"
 
 _DATASET_SCHEMA_HASHES = {
     "tw_price_daily": TW_PRICE_DAILY_SCHEMA_HASH,
@@ -49,6 +56,9 @@ _DATASET_SCHEMA_HASHES = {
     "tw_margin_short_balance": TW_MARGIN_SHORT_BALANCE_SCHEMA_HASH,
     "tw_securities_lending": TW_SECURITIES_LENDING_SCHEMA_HASH,
     "tw_day_trading": TW_DAY_TRADING_SCHEMA_HASH,
+    "tdcc_shareholding_distribution": TDCC_SHAREHOLDING_SCHEMA_HASH,
+    "taifex_futures_chip": TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
+    "taifex_options_chip": TAIFEX_OPTIONS_CHIP_SCHEMA_HASH,
 }
 
 
@@ -156,19 +166,32 @@ TAIWAN_OFFICIAL_ENDPOINTS: tuple[dict[str, Any], ...] = (
     {
         "dataset": "tdcc_shareholding_distribution",
         "venue": "TDCC",
-        "cadence": "weekly",
+        "source_dataset": "TDCC_OD_1-5",
+        "endpoint": f"{TDCC_OPENAPI_BASE_URL}/opendata/TDCC_OD_1-5",
+        "transport": "tdcc_openapi",
+        "cadence": "weekly_after_tdcc_publication",
         "tier_scope": ["core_universe", "candidate_universe"],
-        "status": "excluded_followup",
-        "followup_task": "DATASTRAT-MARKETDATA-TW-REMAINING-007",
+        "status": "implemented",
     },
     {
         "dataset": "taifex_futures_chip",
         "venue": "TAIFEX",
-        "endpoint": "https://openapi.taifex.com.tw/swagger.json",
+        "source_dataset": "Daily_Institutional_Trading_Futures",
+        "endpoint": f"{TAIFEX_OPENAPI_BASE_URL}/Daily_Institutional_Trading_Futures",
+        "transport": "taifex_openapi",
         "cadence": "daily_after_close",
         "tier_scope": ["core_universe", "candidate_universe"],
-        "status": "excluded_followup",
-        "followup_task": "DATASTRAT-MARKETDATA-TW-REMAINING-007",
+        "status": "implemented",
+    },
+    {
+        "dataset": "taifex_options_chip",
+        "venue": "TAIFEX",
+        "source_dataset": "Daily_Institutional_Trading_Options",
+        "endpoint": f"{TAIFEX_OPENAPI_BASE_URL}/Daily_Institutional_Trading_Options",
+        "transport": "taifex_openapi",
+        "cadence": "daily_after_close",
+        "tier_scope": ["core_universe", "candidate_universe"],
+        "status": "implemented",
     },
 )
 
@@ -248,12 +271,24 @@ def _canonical_venue(venue: str) -> str:
         return "TPEx"
     if normalized in {"TWSE", "TSE", "TW"}:
         return "TWSE"
+    if normalized == "TDCC":
+        return "TDCC"
+    if normalized == "TAIFEX":
+        return "TAIFEX"
     raise ValueError(f"unsupported Taiwan venue: {venue}")
 
 
 def _symbol_canonical(symbol: str, venue: str) -> str:
-    suffix = "TWSE" if _canonical_venue(venue) == "TWSE" else "TPEX"
-    return f"{symbol}.{suffix}"
+    v = _canonical_venue(venue)
+    if v == "TWSE":
+        return f"{symbol}.TWSE"
+    if v == "TPEx":
+        return f"{symbol}.TPEX"
+    if v == "TDCC":
+        return f"{symbol}.TW"
+    if v == "TAIFEX":
+        return f"{symbol}.TX"
+    return f"{symbol}.{v}"
 
 
 def _rows_from_payload(payload: Mapping[str, Any] | Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], ...]:
@@ -752,3 +787,428 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             "available_time": available_time or date or _utc_now(),
             "raw_row": dict(row),
         }
+
+
+@dataclass(frozen=True)
+class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
+    """TDCC official weekly shareholding distribution adapter (SD-SRCM-05 §7.2)."""
+
+    connector_id: str = TDCC_SHAREHOLDING_CONNECTOR_ID
+    max_records: int = 100
+    source_metadata: SourceMetadata | Mapping[str, Any] | None = None
+    connector_metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def connector(self) -> SourceConnector:
+        return SourceConnector(
+            connector_id=self.connector_id,
+            source_type="market",
+            provider="TDCC",
+            license_scope="official_reference",
+            auth_type=AuthType.NONE,
+            supported_modes=(ConnectorMode.BATCH,),
+            auth_policy=AuthPolicy(auth_type=AuthType.NONE),
+            license_policy=LicensePolicy(
+                license_scope="official_reference",
+                allowed_use=("research_data", "backtest_data", "feature_generation", "monitoring", "audit_evidence"),
+                attribution_required=True,
+                redistribution_allowed=False,
+                policy_ref="source-ingest://license/tdcc-official-reference",
+            ),
+            rate_limit_policy=RateLimitPolicy(
+                requests_per_minute=20,
+                burst=2,
+                retry_after_seconds=60,
+                concurrency=1,
+                policy_ref="source-ingest://policy/tdcc-official-low-rate",
+            ),
+            source_metadata=self.source_metadata
+            or SourceMetadata(
+                display_name="TDCC official weekly shareholding distribution",
+                homepage_url="https://www.tdcc.com.tw/",
+                docs_url="https://openapi.tdcc.com.tw/",
+                owner="Taiwan Depository & Clearing Corporation (TDCC)",
+                tags=("taiwan", "tdcc", "official_reference", "shareholding", "chip"),
+            ),
+            metadata={
+                "source_class": "taiwan_chip",
+                "official_reference_truth": True,
+                "dataset_schema_hash": TDCC_SHAREHOLDING_SCHEMA_HASH,
+                "normalized_datasets": ["tdcc_shareholding_distribution"],
+                "tier_policy": {
+                    "core_universe": ["tdcc_shareholding_distribution"],
+                    "candidate_universe": ["tdcc_shareholding_distribution"],
+                },
+                **dict(self.connector_metadata),
+            },
+        )
+
+    def fetch_config(self) -> Mapping[str, Any]:
+        return {
+            "mode": "provider_owned_adapter",
+            "adapter": "TdccShareholdingDistributionAdapter.records_from_payload",
+            "adapter_config": {
+                "max_records": self.max_records,
+            },
+            "request": {
+                "dataset": "tdcc_shareholding_distribution",
+                "symbols": ["2330"],
+            },
+            "next_watermark": None,
+            "max_records": self.max_records,
+        }
+
+    def records_from_payload(
+        self,
+        payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        source_dataset: str = "TDCC_OD_1-5",
+        api_endpoint: str | None = None,
+        trade_date: str | None = None,
+        available_time: str | None = None,
+        universe_tier: str = "core_universe",
+        trace_id: str = "",
+    ) -> tuple[SourceRecord, ...]:
+        normalized_rows = self.normalized_rows_from_payload(
+            payload,
+            source_dataset=source_dataset,
+            api_endpoint=api_endpoint or f"{TDCC_OPENAPI_BASE_URL}/opendata/TDCC_OD_1-5",
+            trade_date=trade_date,
+            available_time=available_time,
+        )
+        records: list[SourceRecord] = []
+        for row in normalized_rows[: self.max_records]:
+            row_hash = _stable_hash({"dataset": "tdcc_shareholding_distribution", "row": row})
+            symbol = _text(row.get("symbol"), "market")
+            as_of_date = _text(row.get("date"), row_hash)
+            level = str(row.get("holder_level", "0"))
+            content_ref = f"tw-tdcc://shareholding/{row['venue']}/{symbol}/{as_of_date}/{level}/{row_hash}"
+            records.append(
+                SourceRecord(
+                    source_id=f"tw-tdcc:shareholding:{row['venue']}:{symbol}:{level}:{row_hash}",
+                    connector_id=self.connector_id,
+                    source_type="market",
+                    title=f"TDCC shareholding {row['venue']} {symbol} level {level} {as_of_date}".strip(),
+                    content_ref=content_ref,
+                    metadata={
+                        "source_class": "taiwan_chip",
+                        "provider": "TDCC",
+                        "dataset": "tdcc_shareholding_distribution",
+                        "source_dataset": source_dataset,
+                        "venue": row["venue"],
+                        "symbol": row.get("symbol"),
+                        "symbol_canonical": row.get("symbol_canonical"),
+                        "date": row.get("date"),
+                        "event_time": row.get("date"),
+                        "available_time": row.get("available_time") or available_time or _utc_now(),
+                        "api_endpoint": api_endpoint or f"{TDCC_OPENAPI_BASE_URL}/opendata/TDCC_OD_1-5",
+                        "cadence": "weekly_after_tdcc_publication",
+                        "universe_tier": _tier_name(universe_tier),
+                        "normalized_row": dict(row),
+                        "raw_row": dict(row.get("raw_row") or {}),
+                        "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
+                        "access_scope": ["public", "research"],
+                        "license_scope": "official_reference",
+                        "schema_hash": TDCC_SHAREHOLDING_SCHEMA_HASH,
+                    },
+                    trace_id=trace_id,
+                )
+            )
+        return tuple(records)
+
+    def normalized_rows_from_payload(
+        self,
+        payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        source_dataset: str = "TDCC_OD_1-5",
+        api_endpoint: str = "",
+        trade_date: str | None = None,
+        available_time: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        rows = _rows_from_payload(payload)
+        results: list[dict[str, Any]] = []
+        for raw in rows:
+            symbol = _text(_first(raw, "證券代號", "Code", "SecuritiesCompanyCode", "Symbol", "股票代號")).upper()
+            date = _roc_date_to_iso(_first(raw, "資料日期", "Date", "date", "PublicationDate") or trade_date)
+            if not symbol or not date:
+                continue
+
+            level = _int(_first(raw, "持股分級", "HoldLevel", "level", "HolderLevel")) or 0
+            holding_range = _text(_first(raw, "持股分級說明", "HoldingRange", "range", "LevelDescription"))
+            people_count = _int(_first(raw, "人數", "PeopleCount", "people_count", "NumberOfHolders")) or 0
+            shares = _int(_first(raw, "股數", "Shares", "shares", "NumberOfShares")) or 0
+            percentage = _float(_first(raw, "占集保庫存數比例%", "Percentage", "percentage", "Ratio", "Percent")) or 0.0
+            venue = _text(_first(raw, "venue", "Venue"), "TWSE")
+
+            results.append({
+                "dataset": "tdcc_shareholding_distribution",
+                "date": date,
+                "symbol": symbol,
+                "symbol_canonical": _symbol_canonical(symbol, venue),
+                "market": "TW",
+                "venue": venue,
+                "holder_level": level,
+                "holding_range": holding_range,
+                "people_count": people_count,
+                "shares": shares,
+                "percentage": percentage,
+                "source_dataset": source_dataset,
+                "api_endpoint": api_endpoint,
+                "available_time": available_time or f"{date}T19:00:00Z",
+                "raw_row": dict(raw),
+            })
+        return tuple(results)
+
+    def source_health_from_result(self, result: Any) -> SourceHealth:
+        watermark = getattr(result, "watermark", None)
+        run = getattr(result, "run", None)
+        status = getattr(run, "status", "failed")
+        run_status = status.value if hasattr(status, "value") else str(status)
+        finished_at = getattr(run, "finished_at", None)
+        finished = finished_at.isoformat().replace("+00:00", "Z") if hasattr(finished_at, "isoformat") else finished_at
+        return SourceHealth(
+            source_id=self.connector_id,
+            source_kind="data_source",
+            status="ok" if run_status == "completed" else "failed",
+            last_success_at=finished if run_status == "completed" else None,
+            last_failure_at=finished if run_status != "completed" else None,
+            latest_watermark=getattr(watermark, "value", None),
+            row_count_last_run=int(getattr(run, "normalized_count", 0) or 0),
+            rejected_count_last_run=int(getattr(run, "rejected_count", 0) or 0),
+            schema_hash=TDCC_SHAREHOLDING_SCHEMA_HASH,
+            metadata={
+                "connector_id": self.connector_id,
+                "ingest_run_id": getattr(run, "ingest_run_id", None),
+                "source_type": "market",
+            },
+        )
+
+
+@dataclass(frozen=True)
+class TaifexDerivativesChipAdapter(SourceConnectorProvider):
+    """TAIFEX official daily futures and options chip-context adapter (SD-SRCM-05 §7.3)."""
+
+    connector_id: str = TAIFEX_DERIVATIVES_CONNECTOR_ID
+    max_records: int = 100
+    source_metadata: SourceMetadata | Mapping[str, Any] | None = None
+    connector_metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def connector(self) -> SourceConnector:
+        return SourceConnector(
+            connector_id=self.connector_id,
+            source_type="market",
+            provider="TAIFEX",
+            license_scope="official_reference",
+            auth_type=AuthType.NONE,
+            supported_modes=(ConnectorMode.BATCH,),
+            auth_policy=AuthPolicy(auth_type=AuthType.NONE),
+            license_policy=LicensePolicy(
+                license_scope="official_reference",
+                allowed_use=("research_data", "backtest_data", "feature_generation", "monitoring", "audit_evidence"),
+                attribution_required=True,
+                redistribution_allowed=False,
+                policy_ref="source-ingest://license/taifex-official-reference",
+            ),
+            rate_limit_policy=RateLimitPolicy(
+                requests_per_minute=30,
+                burst=3,
+                retry_after_seconds=60,
+                concurrency=1,
+                policy_ref="source-ingest://policy/taifex-official-low-rate",
+            ),
+            source_metadata=self.source_metadata
+            or SourceMetadata(
+                display_name="TAIFEX official futures and options chip context",
+                homepage_url="https://www.taifex.com.tw/",
+                docs_url="https://openapi.taifex.com.tw/",
+                owner="Taiwan Futures Exchange (TAIFEX)",
+                tags=("taiwan", "taifex", "official_reference", "derivatives", "futures", "options", "chip"),
+            ),
+            metadata={
+                "source_class": "taiwan_chip",
+                "official_reference_truth": True,
+                "dataset_schema_hash": TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
+                "normalized_datasets": ["taifex_futures_chip", "taifex_options_chip"],
+                "tier_policy": {
+                    "core_universe": ["taifex_futures_chip", "taifex_options_chip"],
+                    "candidate_universe": ["taifex_futures_chip", "taifex_options_chip"],
+                },
+                **dict(self.connector_metadata),
+            },
+        )
+
+    def fetch_config(self) -> Mapping[str, Any]:
+        return {
+            "mode": "provider_owned_adapter",
+            "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
+            "adapter_config": {
+                "max_records": self.max_records,
+            },
+            "request": {
+                "dataset": "taifex_futures_chip",
+                "contracts": ["TX", "MTX"],
+            },
+            "next_watermark": None,
+            "max_records": self.max_records,
+        }
+
+    def records_from_payload(
+        self,
+        payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        dataset: str = "taifex_futures_chip",
+        source_dataset: str | None = None,
+        api_endpoint: str | None = None,
+        trade_date: str | None = None,
+        available_time: str | None = None,
+        universe_tier: str = "core_universe",
+        trace_id: str = "",
+    ) -> tuple[SourceRecord, ...]:
+        normalized_rows = self.normalized_rows_from_payload(
+            payload,
+            dataset=dataset,
+            source_dataset=source_dataset or dataset,
+            api_endpoint=api_endpoint or f"{TAIFEX_OPENAPI_BASE_URL}/{dataset}",
+            trade_date=trade_date,
+            available_time=available_time,
+        )
+        records: list[SourceRecord] = []
+        schema_hash = TAIFEX_OPTIONS_CHIP_SCHEMA_HASH if dataset == "taifex_options_chip" else TAIFEX_FUTURES_CHIP_SCHEMA_HASH
+        for row in normalized_rows[: self.max_records]:
+            row_hash = _stable_hash({"dataset": dataset, "row": row})
+            contract = _text(row.get("contract"), "MARKET")
+            group = _text(row.get("participant_group"), "ALL")
+            as_of_date = _text(row.get("date"), row_hash)
+            content_ref = f"tw-taifex://{dataset}/{contract}/{as_of_date}/{group}/{row_hash}"
+            records.append(
+                SourceRecord(
+                    source_id=f"tw-taifex:{dataset}:{contract}:{group}:{row_hash}",
+                    connector_id=self.connector_id,
+                    source_type="market",
+                    title=f"TAIFEX {dataset} {contract} {group} {as_of_date}".strip(),
+                    content_ref=content_ref,
+                    metadata={
+                        "source_class": "taiwan_chip",
+                        "provider": "TAIFEX",
+                        "dataset": dataset,
+                        "source_dataset": source_dataset or dataset,
+                        "venue": "TAIFEX",
+                        "contract": contract,
+                        "participant_group": group,
+                        "date": row.get("date"),
+                        "event_time": row.get("date"),
+                        "available_time": row.get("available_time") or available_time or _utc_now(),
+                        "api_endpoint": api_endpoint or f"{TAIFEX_OPENAPI_BASE_URL}/{dataset}",
+                        "cadence": "daily_after_taifex_publication",
+                        "universe_tier": _tier_name(universe_tier),
+                        "normalized_row": dict(row),
+                        "raw_row": dict(row.get("raw_row") or {}),
+                        "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
+                        "access_scope": ["public", "research"],
+                        "license_scope": "official_reference",
+                        "schema_hash": schema_hash,
+                    },
+                    trace_id=trace_id,
+                )
+            )
+        return tuple(records)
+
+    def normalized_rows_from_payload(
+        self,
+        payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        dataset: str = "taifex_futures_chip",
+        source_dataset: str = "taifex_futures_chip",
+        api_endpoint: str = "",
+        trade_date: str | None = None,
+        available_time: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        rows = _rows_from_payload(payload)
+        results: list[dict[str, Any]] = []
+        for raw in rows:
+            date = _roc_date_to_iso(_first(raw, "Date", "日期", "date", "TradingDate") or trade_date)
+            if not date:
+                continue
+
+            if dataset == "taifex_options_chip":
+                call_volume = _int(_first(raw, "買權成交量", "CallVolume", "call_volume")) or 0
+                put_volume = _int(_first(raw, "賣權成交量", "PutVolume", "put_volume")) or 0
+                call_oi = _int(_first(raw, "買權未平倉量", "CallOpenInterest", "call_open_interest")) or 0
+                put_oi = _int(_first(raw, "賣權未平倉量", "PutOpenInterest", "put_open_interest")) or 0
+                pc_ratio = _float(_first(raw, "買賣權未平倉量比率%", "PutCallRatio", "put_call_ratio", "Ratio"))
+                if pc_ratio is None and call_oi > 0:
+                    pc_ratio = round((put_oi / call_oi) * 100.0, 2)
+
+                results.append({
+                    "dataset": "taifex_options_chip",
+                    "date": date,
+                    "contract": _text(_first(raw, "Contract", "契約名稱", "商品代號"), "TXO"),
+                    "market": "TW",
+                    "venue": "TAIFEX",
+                    "call_volume": call_volume,
+                    "put_volume": put_volume,
+                    "call_open_interest": call_oi,
+                    "put_open_interest": put_oi,
+                    "put_call_ratio": pc_ratio or 0.0,
+                    "source_dataset": source_dataset,
+                    "api_endpoint": api_endpoint,
+                    "available_time": available_time or f"{date}T16:30:00Z",
+                    "raw_row": dict(raw),
+                })
+            else:
+                contract = _text(_first(raw, "Contract", "契約名稱", "商品代號", "contract"), "TX")
+                participant = _text(_first(raw, "身分別", "身份別", "ParticipantGroup", "participant_group", "Identity"), "foreign_investors")
+                long_vol = _int(_first(raw, "多方交易口數", "LongVolume", "buy_volume", "買進口數")) or 0
+                short_vol = _int(_first(raw, "空方交易口數", "ShortVolume", "sell_volume", "賣出口數")) or 0
+                net_vol = _int(_first(raw, "多空交易口數淨額", "NetVolume", "net_volume", "買賣超口數"))
+                if net_vol is None:
+                    net_vol = long_vol - short_vol
+
+                long_oi = _int(_first(raw, "多方未平倉口數", "LongOpenInterest", "long_oi")) or 0
+                short_oi = _int(_first(raw, "空方未平倉口數", "ShortOpenInterest", "short_oi")) or 0
+                net_oi = _int(_first(raw, "多空未平倉口數淨額", "NetOpenInterest", "net_oi"))
+                if net_oi is None:
+                    net_oi = long_oi - short_oi
+
+                results.append({
+                    "dataset": "taifex_futures_chip",
+                    "date": date,
+                    "contract": contract,
+                    "market": "TW",
+                    "venue": "TAIFEX",
+                    "participant_group": participant,
+                    "long_volume": long_vol,
+                    "short_volume": short_vol,
+                    "net_volume": net_vol,
+                    "long_open_interest": long_oi,
+                    "short_open_interest": short_oi,
+                    "net_open_interest": net_oi,
+                    "source_dataset": source_dataset,
+                    "api_endpoint": api_endpoint,
+                    "available_time": available_time or f"{date}T16:30:00Z",
+                    "raw_row": dict(raw),
+                })
+        return tuple(results)
+
+    def source_health_from_result(self, result: Any) -> SourceHealth:
+        watermark = getattr(result, "watermark", None)
+        run = getattr(result, "run", None)
+        status = getattr(run, "status", "failed")
+        run_status = status.value if hasattr(status, "value") else str(status)
+        finished_at = getattr(run, "finished_at", None)
+        finished = finished_at.isoformat().replace("+00:00", "Z") if hasattr(finished_at, "isoformat") else finished_at
+        return SourceHealth(
+            source_id=self.connector_id,
+            source_kind="data_source",
+            status="ok" if run_status == "completed" else "failed",
+            last_success_at=finished if run_status == "completed" else None,
+            last_failure_at=finished if run_status != "completed" else None,
+            latest_watermark=getattr(watermark, "value", None),
+            row_count_last_run=int(getattr(run, "normalized_count", 0) or 0),
+            rejected_count_last_run=int(getattr(run, "rejected_count", 0) or 0),
+            schema_hash=TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
+            metadata={
+                "connector_id": self.connector_id,
+                "ingest_run_id": getattr(run, "ingest_run_id", None),
+                "source_type": "market",
+            },
+        )

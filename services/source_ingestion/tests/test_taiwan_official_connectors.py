@@ -157,8 +157,8 @@ def test_taiwan_official_connector_catalog_tier_policy_and_auth() -> None:
         connector.metadata["normalized_datasets"]
     )
     assert connector.metadata["tier_policy"]["archive_universe"] == ["tw_price_daily"]
-    assert any(endpoint["dataset"] == "tdcc_shareholding_distribution" for endpoint in TAIWAN_OFFICIAL_ENDPOINTS)
-    assert connector.metadata["excluded_followups"][0]["followup_task"] == "DATASTRAT-MARKETDATA-TW-REMAINING-007"
+    assert any(endpoint["dataset"] == "tdcc_shareholding_distribution" and endpoint["status"] == "implemented" for endpoint in TAIWAN_OFFICIAL_ENDPOINTS)
+    assert any(endpoint["dataset"] == "taifex_futures_chip" and endpoint["status"] == "implemented" for endpoint in TAIWAN_OFFICIAL_ENDPOINTS)
 
 
 def test_taiwan_official_adapter_emits_twse_and_tpex_daily_price_records() -> None:
@@ -318,3 +318,150 @@ def test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol() -> 
 
     assert any(record.metadata["normalized_row"]["symbol"] == "2330" for record in twse_records)
     assert any(record.metadata["normalized_row"]["symbol"] == "3105" for record in tpex_records)
+
+
+def test_tdcc_shareholding_distribution_adapter_and_pit() -> None:
+    from services.source_ingestion.connectors import (
+        TDCC_SHAREHOLDING_CONNECTOR_ID,
+        TDCC_SHAREHOLDING_SCHEMA_HASH,
+        TdccShareholdingDistributionAdapter,
+    )
+
+    tdcc_payload = [
+        {
+            "資料日期": "2026-06-12",
+            "證券代號": "2330",
+            "持股分級": 15,
+            "持股分級說明": "1,000,001以上",
+            "人數": "1500",
+            "股數": "20000000000",
+            "占集保庫存數比例%": "77.12",
+        },
+        {
+            "Date": "1150612",
+            "Code": "2330",
+            "HoldLevel": 1,
+            "LevelDescription": "1-999",
+            "PeopleCount": "800000",
+            "Shares": "150000000",
+            "Percentage": "0.58",
+        },
+    ]
+
+    adapter = TdccShareholdingDistributionAdapter(max_records=10)
+    records = adapter.records_from_payload(
+        tdcc_payload,
+        available_time="2026-06-12T19:00:00Z",
+        trace_id="trace-tdcc-test",
+    )
+
+    assert len(records) == 2
+    assert records[0].connector_id == TDCC_SHAREHOLDING_CONNECTOR_ID
+    assert records[0].source_type == "market"
+    assert records[0].metadata["source_class"] == "taiwan_chip"
+    assert records[0].metadata["dataset"] == "tdcc_shareholding_distribution"
+    assert records[0].metadata["schema_hash"] == TDCC_SHAREHOLDING_SCHEMA_HASH
+    assert records[0].metadata["license_scope"] == "official_reference"
+    assert records[0].metadata["available_time"] == "2026-06-12T19:00:00Z"
+
+    row0 = records[0].metadata["normalized_row"]
+    assert row0["symbol"] == "2330"
+    assert row0["symbol_canonical"] == "2330.TWSE"
+    assert row0["holder_level"] == 15
+    assert row0["people_count"] == 1500
+    assert row0["shares"] == 20000000000
+    assert row0["percentage"] == 77.12
+
+    row1 = records[1].metadata["normalized_row"]
+    assert row1["date"] == "2026-06-12"
+    assert row1["holder_level"] == 1
+    assert row1["people_count"] == 800000
+
+    # Test via execute_provider_owned_adapter
+    dispatched = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "adapter": "TdccShareholdingDistributionAdapter.records_from_payload",
+            "request": {"payload": tdcc_payload, "trade_date": "2026-06-12"},
+        },
+        trace_id="trace-tdcc-dispatch",
+    )
+    assert len(dispatched) == 2
+
+
+def test_taifex_derivatives_chip_adapter_and_pit() -> None:
+    from services.source_ingestion.connectors import (
+        TAIFEX_DERIVATIVES_CONNECTOR_ID,
+        TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
+        TAIFEX_OPTIONS_CHIP_SCHEMA_HASH,
+        TaifexDerivativesChipAdapter,
+    )
+
+    futures_payload = [
+        {
+            "日期": "2026-06-10",
+            "契約名稱": "TX",
+            "身份別": "foreign_investors",
+            "多方交易口數": "15000",
+            "空方交易口數": "12000",
+            "多空交易口數淨額": "3000",
+            "多方未平倉口數": "45000",
+            "空方未平倉口數": "50000",
+            "多空未平倉口數淨額": "-5000",
+        }
+    ]
+    options_payload = [
+        {
+            "Date": "1150610",
+            "Contract": "TXO",
+            "買權成交量": "100000",
+            "賣權成交量": "110000",
+            "買權未平倉量": "150000",
+            "賣權未平倉量": "180000",
+            "買賣權未平倉量比率%": "120.00",
+        }
+    ]
+
+    adapter = TaifexDerivativesChipAdapter(max_records=10)
+    futures_records = adapter.records_from_payload(
+        futures_payload,
+        dataset="taifex_futures_chip",
+        available_time="2026-06-10T16:30:00Z",
+        trace_id="trace-taifex-fut",
+    )
+    options_records = adapter.records_from_payload(
+        options_payload,
+        dataset="taifex_options_chip",
+        available_time="2026-06-10T16:30:00Z",
+        trace_id="trace-taifex-opt",
+    )
+
+    assert len(futures_records) == 1
+    assert futures_records[0].connector_id == TAIFEX_DERIVATIVES_CONNECTOR_ID
+    assert futures_records[0].metadata["dataset"] == "taifex_futures_chip"
+    assert futures_records[0].metadata["schema_hash"] == TAIFEX_FUTURES_CHIP_SCHEMA_HASH
+    fut_row = futures_records[0].metadata["normalized_row"]
+    assert fut_row["contract"] == "TX"
+    assert fut_row["participant_group"] == "foreign_investors"
+    assert fut_row["net_volume"] == 3000
+    assert fut_row["net_open_interest"] == -5000
+
+    assert len(options_records) == 1
+    assert options_records[0].metadata["dataset"] == "taifex_options_chip"
+    assert options_records[0].metadata["schema_hash"] == TAIFEX_OPTIONS_CHIP_SCHEMA_HASH
+    opt_row = options_records[0].metadata["normalized_row"]
+    assert opt_row["date"] == "2026-06-10"
+    assert opt_row["put_call_ratio"] == 120.00
+    assert opt_row["call_volume"] == 100000
+    assert opt_row["put_volume"] == 110000
+
+    # Test via execute_provider_owned_adapter
+    dispatched_fut = execute_provider_owned_adapter(
+        connector=adapter.connector(),
+        fetch={
+            "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
+            "request": {"payload": futures_payload, "dataset": "taifex_futures_chip"},
+        },
+        trace_id="trace-taifex-dispatch",
+    )
+    assert len(dispatched_fut) == 1

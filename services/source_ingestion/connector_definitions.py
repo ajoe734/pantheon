@@ -344,7 +344,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         test_manifest_ref="evidence://connector-definition/tw-twse-tpex-official-market",
     ),
     ConnectorDefinition(
-        definition_id="tw-finmind-dataset",
+        definition_id="tw-finmind-datasets",
         adapter_token="FinMindTaiwanDatasetAdapter.records_from_data_payload",
         adapter_version="1.0.0",
         provider="FinMind",
@@ -374,7 +374,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         default_limits={"max_records": 500, "max_bytes": 4194304, "timeout_seconds": 20, "max_rate_per_second": 10.0},
         allowed_host_patterns=("api.finmindtrade.com",),
         definition_state=DefinitionState.SUPPORTED,
-        test_manifest_ref="evidence://connector-definition/tw-finmind-dataset",
+        test_manifest_ref="evidence://connector-definition/tw-finmind-datasets",
     ),
     ConnectorDefinition(
         definition_id="tw-finmind-broker-daily-report",
@@ -404,7 +404,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         test_manifest_ref="evidence://connector-definition/tw-finmind-broker-daily-report",
     ),
     ConnectorDefinition(
-        definition_id="tw-finmind-broker-bulk-backfill",
+        definition_id="tw-finmind-broker-bulk-parquet",
         adapter_token="FinMindTaiwanBrokerBulkBackfillAdapter.records_from_storage_objects_payload",
         adapter_version="1.0.0",
         provider="FinMind",
@@ -426,7 +426,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         default_limits={"max_records": 1000, "max_bytes": 10485760, "timeout_seconds": 30, "max_rate_per_second": 2.0},
         allowed_host_patterns=("api.finmindtrade.com", "storage.googleapis.com"),
         definition_state=DefinitionState.SUPPORTED,
-        test_manifest_ref="evidence://connector-definition/tw-finmind-broker-bulk-backfill",
+        test_manifest_ref="evidence://connector-definition/tw-finmind-broker-bulk-parquet",
     ),
     ConnectorDefinition(
         definition_id="tw-yahoo-broker-top15",
@@ -506,32 +506,33 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         test_manifest_ref="evidence://connector-definition/tw-anue-news-rss",
     ),
     ConnectorDefinition(
-        definition_id="tw-mops-official-disclosure",
+        definition_id="tw-mops-official-disclosures",
         adapter_token="MopsSourceIngestAdapter.records_from_payload",
         adapter_version="1.0.0",
         provider="MOPS",
         source_kinds=("data_source",),
         source_types=("filing",),
-        source_classes=("filing_event",),
-        datasets=("tw_material_information", "tw_mops_disclosures"),
+        source_classes=("official_reference", "corporate_action", "financial_fundamental"),
+        datasets=("tw_material_event", "tw_monthly_revenue", "tw_financial_statement", "tw_company_master", "tw_corporate_action"),
         auth_modes=("none",),
         fetch_modes=("provider_owned_adapter",),
         cursor_modes=("time_watermark",),
         config_schema={
             "type": "object",
             "properties": {
+                "route_id": {"type": "string"},
                 "max_records": {"type": "integer", "minimum": 1},
             },
         },
         secret_fields=(),
         required_pit_fields=("event_time", "available_time", "ingest_time"),
-        default_limits={"max_records": 100, "max_bytes": 2097152, "timeout_seconds": 15, "max_rate_per_second": 2.0},
+        default_limits={"max_records": 100, "max_bytes": 2097152, "timeout_seconds": 15, "max_rate_per_second": 3.0},
         allowed_host_patterns=("mops.twse.com.tw",),
         definition_state=DefinitionState.SUPPORTED,
-        test_manifest_ref="evidence://connector-definition/tw-mops-official-disclosure",
+        test_manifest_ref="evidence://connector-definition/tw-mops-official-disclosures",
     ),
     ConnectorDefinition(
-        definition_id="tw-tej-research-backfill",
+        definition_id="tw-tej-research-datasets",
         adapter_token="TejSourceIngestAdapter.records_from_rows",
         adapter_version="1.0.0",
         provider="TEJ",
@@ -554,10 +555,10 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         default_limits={"max_records": 500, "max_bytes": 4194304, "timeout_seconds": 25, "max_rate_per_second": 5.0},
         allowed_host_patterns=("api.tej.com.tw",),
         definition_state=DefinitionState.SUPPORTED,
-        test_manifest_ref="evidence://connector-definition/tw-tej-research-backfill",
+        test_manifest_ref="evidence://connector-definition/tw-tej-research-datasets",
     ),
     ConnectorDefinition(
-        definition_id="us-sec-edgar-company-facts",
+        definition_id="us-sec-edgar-filings",
         adapter_token="SecEdgarFilingAdapter.records_from_payload",
         adapter_version="1.0.0",
         provider="SEC EDGAR",
@@ -581,10 +582,10 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         default_limits={"max_records": 100, "max_bytes": 5242880, "timeout_seconds": 20, "max_rate_per_second": 10.0},
         allowed_host_patterns=("data.sec.gov", "www.sec.gov"),
         definition_state=DefinitionState.SUPPORTED,
-        test_manifest_ref="evidence://connector-definition/us-sec-edgar-company-facts",
+        test_manifest_ref="evidence://connector-definition/us-sec-edgar-filings",
     ),
     ConnectorDefinition(
-        definition_id="us-fred-macro-series",
+        definition_id="us-fred-macro",
         adapter_token="FredMacroSeriesAdapter.records_from_observations_payload",
         adapter_version="1.0.0",
         provider="FRED",
@@ -607,10 +608,10 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         default_limits={"max_records": 200, "max_bytes": 2097152, "timeout_seconds": 15, "max_rate_per_second": 5.0},
         allowed_host_patterns=("api.stlouisfed.org",),
         definition_state=DefinitionState.SUPPORTED,
-        test_manifest_ref="evidence://connector-definition/us-fred-macro-series",
+        test_manifest_ref="evidence://connector-definition/us-fred-macro",
     ),
     ConnectorDefinition(
-        definition_id="us-finra-short-volume",
+        definition_id="us-finra-short-sale",
         adapter_token="FinraShortSaleAdapter.records_from_short_volume_text",
         adapter_version="1.0.0",
         provider="FINRA",
@@ -633,7 +634,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         default_limits={"max_records": 500, "max_bytes": 4194304, "timeout_seconds": 20, "max_rate_per_second": 2.0},
         allowed_host_patterns=("cdn.finra.org", "regsho.finra.org"),
         definition_state=DefinitionState.SUPPORTED,
-        test_manifest_ref="evidence://connector-definition/us-finra-short-volume",
+        test_manifest_ref="evidence://connector-definition/us-finra-short-sale",
     ),
     ConnectorDefinition(
         definition_id="us-stooq-daily-ohlcv",
@@ -662,7 +663,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         test_manifest_ref="evidence://connector-definition/us-stooq-daily-ohlcv",
     ),
     ConnectorDefinition(
-        definition_id="crypto-coingecko-spot-market",
+        definition_id="crypto-coingecko-spot",
         adapter_token="CoinGeckoSpotMarketAdapter.records_from_payload",
         adapter_version="1.0.0",
         provider="CoinGecko",
@@ -687,7 +688,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         default_limits={"max_records": 100, "max_bytes": 1048576, "timeout_seconds": 15, "max_rate_per_second": 5.0},
         allowed_host_patterns=("api.coingecko.com",),
         definition_state=DefinitionState.SUPPORTED,
-        test_manifest_ref="evidence://connector-definition/crypto-coingecko-spot-market",
+        test_manifest_ref="evidence://connector-definition/crypto-coingecko-spot",
     ),
     ConnectorDefinition(
         definition_id="us-polygon-daily-ohlcv",
@@ -844,7 +845,127 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/strategy-seed-allowlisted-repo",
     ),
+    ConnectorDefinition(
+        definition_id="tw-tdcc-shareholding-distribution",
+        adapter_token="TdccShareholdingDistributionAdapter.records_from_payload",
+        adapter_version="1.0.0",
+        provider="TDCC",
+        source_kinds=("data_source",),
+        source_types=("market",),
+        source_classes=("taiwan_chip",),
+        datasets=("tdcc_shareholding_distribution",),
+        auth_modes=("none",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("time_watermark",),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "max_records": {"type": "integer", "minimum": 1},
+            },
+        },
+        secret_fields=(),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 100, "max_bytes": 2097152, "timeout_seconds": 20, "max_rate_per_second": 5.0},
+        allowed_host_patterns=("openapi.tdcc.com.tw", "www.tdcc.com.tw"),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref="evidence://connector-definition/tw-tdcc-shareholding-distribution",
+    ),
+    ConnectorDefinition(
+        definition_id="tw-taifex-futures-options-chip",
+        adapter_token="TaifexDerivativesChipAdapter.records_from_payload",
+        adapter_version="1.0.0",
+        provider="TAIFEX",
+        source_kinds=("data_source",),
+        source_types=("market",),
+        source_classes=("taiwan_chip",),
+        datasets=("taifex_futures_chip", "taifex_options_chip"),
+        auth_modes=("none",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("time_watermark",),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "contracts": {"type": "array", "items": {"type": "string"}},
+                "dataset": {"type": "string"},
+                "max_records": {"type": "integer", "minimum": 1},
+            },
+        },
+        secret_fields=(),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 100, "max_bytes": 2097152, "timeout_seconds": 20, "max_rate_per_second": 5.0},
+        allowed_host_patterns=("openapi.taifex.com.tw", "www.taifex.com.tw"),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref="evidence://connector-definition/tw-taifex-futures-options-chip",
+    ),
+    ConnectorDefinition(
+        definition_id="social-admitted-market-discussion",
+        adapter_token="AdmittedSocialMediaAdapter.records_from_payload",
+        adapter_version="1.0.0",
+        provider="Admitted Social Discussion Feed",
+        source_kinds=("data_source",),
+        source_types=("social",),
+        source_classes=("social",),
+        datasets=("social_admitted_post",),
+        auth_modes=("api_key",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("time_watermark",),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "secret_ref_id": {"type": "string"},
+                "platform": {"type": "string"},
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "max_records": {"type": "integer", "minimum": 1},
+            },
+        },
+        secret_fields=("secret_ref_id",),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 100, "max_bytes": 2097152, "timeout_seconds": 20, "max_rate_per_second": 5.0},
+        allowed_host_patterns=("api.social-finance.example.com", "api.stocktwits.com"),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref="evidence://connector-definition/social-admitted-market-discussion",
+    ),
+    ConnectorDefinition(
+        definition_id="alpha-db-vendor-signals",
+        adapter_token="ExternalAlphaDbAdapter.records_from_payload",
+        adapter_version="1.0.0",
+        provider="External Alpha Factor Provider",
+        source_kinds=("data_source",),
+        source_types=("alpha_db",),
+        source_classes=("alpha_signal", "vendor_backfill"),
+        datasets=("alpha_signal_record",),
+        auth_modes=("api_key",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("time_watermark",),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "secret_ref_id": {"type": "string"},
+                "alpha_vendor_id": {"type": "string"},
+                "signal_id": {"type": "string"},
+                "universe": {"type": "array", "items": {"type": "string"}},
+                "max_records": {"type": "integer", "minimum": 1},
+            },
+        },
+        secret_fields=("secret_ref_id",),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 200, "max_bytes": 4194304, "timeout_seconds": 25, "max_rate_per_second": 5.0},
+        allowed_host_patterns=("api.alpha-signals.example.com", "api.vendor-factors.io"),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref="evidence://connector-definition/alpha-db-vendor-signals",
+    ),
 )
+
+_DEFINITION_ID_ALIASES: dict[str, str] = {
+    "tw-finmind-dataset": "tw-finmind-datasets",
+    "tw-tej-research-backfill": "tw-tej-research-datasets",
+    "tw-mops-official-disclosure": "tw-mops-official-disclosures",
+    "us-sec-edgar-company-facts": "us-sec-edgar-filings",
+    "us-fred-macro-series": "us-fred-macro",
+    "us-finra-short-volume": "us-finra-short-sale",
+    "crypto-coingecko-spot-market": "crypto-coingecko-spot",
+}
 
 _DEFINITIONS_BY_ID: dict[str, ConnectorDefinition] = {
     defn.definition_id: defn for defn in _CANONICAL_DEFINITIONS
@@ -871,7 +992,9 @@ def deployed_connector_definitions() -> dict[str, ConnectorDefinition]:
 
 def get_connector_definition(definition_id: str) -> ConnectorDefinition | None:
     """Lookup a deployed ConnectorDefinition by definition_id."""
-    return _DEFINITIONS_BY_ID.get(str(definition_id).strip())
+    clean_id = str(definition_id).strip()
+    canonical_id = _DEFINITION_ID_ALIASES.get(clean_id, clean_id)
+    return _DEFINITIONS_BY_ID.get(canonical_id)
 
 
 def get_connector_definition_by_adapter(adapter_token: str) -> ConnectorDefinition | None:

@@ -31,15 +31,17 @@ def test_initial_financial_catalog_covers_required_sources_as_data_sources() -> 
     } <= providers
     # Yahoo Finance was removed: its terms forbid programmatic access.
     assert "Yahoo Finance" not in providers
-    assert payload["summary"]["data_source_count"] == 16
-    assert {"Polygon", "Alpha Vantage", "IBKR", "Shioaji"} <= providers
+    assert payload["summary"]["data_source_count"] == 18
+    assert {"Polygon", "Alpha Vantage", "IBKR", "Shioaji", "Admitted Social Discussion Feed", "External Alpha Factor Provider"} <= providers
     assert all(entry.source_kind == "data_source" for entry in entries.values())
     assert all(entry.lifecycle_state.value == "candidate" for entry in entries.values())
     assert entries["ds-finmind-tw-data"].metadata["template_status"] == "candidate_not_live_ingestion_claim"
     assert entries["ds-tdcc-tw-shareholding"].source_class.value == "taiwan_chip"
-    assert entries["ds-tdcc-tw-shareholding"].metadata["not_live_ingestion_claim"] is True
+    assert entries["ds-tdcc-tw-shareholding"].metadata["connector_status"] == "implemented_supported_adapter"
     assert entries["ds-taifex-tw-derivatives-chip"].source_class.value == "taiwan_chip"
-    assert entries["ds-taifex-tw-derivatives-chip"].metadata["connector_status"] == "pending_adapter_implementation"
+    assert entries["ds-taifex-tw-derivatives-chip"].metadata["connector_status"] == "implemented_supported_adapter"
+    assert entries["ds-admitted-social-sentiment"].source_class.value == "social"
+    assert entries["ds-vendor-alpha-db"].source_class.value == "vendor_backfill"
     assert entries["ds-tej-tw-research-backfill"].source_class.value == "vendor_backfill"
     assert entries["ds-tej-tw-research-backfill"].metadata["purchased_table_allowlist_required"] is True
     assert entries["ds-yahoo-tw-news-broker"].metadata["not_official_reference_truth"] is True
@@ -57,6 +59,8 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert "template-tw-twse-tpex-official-market" in templates
     assert "template-tw-tdcc-shareholding-distribution" in templates
     assert "template-tw-taifex-futures-options-chip" in templates
+    assert "template-social-admitted-market-discussion" in templates
+    assert "template-alpha-db-vendor-signals" in templates
     assert "template-tw-mops-official-disclosures" in templates
     assert "template-tw-yahoo-broker-top15" in templates
     assert "template-tw-anue-news-rss" in templates
@@ -105,12 +109,13 @@ def test_catalog_config_templates_are_secret_ref_only_and_cover_active_universe_
     assert coingecko_template["fetch"]["order_placement_forbidden"] is True
     assert coingecko_template["schedule"]["archive_behavior"] == "daily_price_baseline"
     tdcc_template = templates["template-tw-tdcc-shareholding-distribution"]
-    assert tdcc_template["lifecycle_state"] == "disabled"
-    assert tdcc_template["fetch"]["adapter_status"] == "pending_implementation"
+    assert tdcc_template["lifecycle_state"] == "candidate"
+    assert tdcc_template["fetch"]["adapter"] == "TdccShareholdingDistributionAdapter.records_from_payload"
     assert tdcc_template["schedule"]["cadence_class"] == "weekly"
     assert tdcc_template["storage"]["raw_storage_policy"]["compression"] == "gzip"
     taifex_template = templates["template-tw-taifex-futures-options-chip"]
-    assert taifex_template["lifecycle_state"] == "disabled"
+    assert taifex_template["lifecycle_state"] == "candidate"
+    assert taifex_template["fetch"]["adapter"] == "TaifexDerivativesChipAdapter.records_from_payload"
     assert taifex_template["fetch"]["symbol_scope"] == "market_context_no_symbol_filter"
     assert taifex_template["schedule"]["archive_behavior"] == "skip_symbol_archive_detail"
     assert taifex_template["storage"]["raw_storage_policy"]["retention_days"] == 2555
