@@ -1,0 +1,78 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "PFG-DEV-BFF-TTL-PROMOTION-20260824",
+    "title": "Promote dev BFF TTL contract and verify hosted readback",
+    "owner": "Antigravity",
+    "reviewer": "Antigravity2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-DEV-BFF-TTL-PROMOTION-20260824",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-DEV-BFF-TTL-PROMOTION-20260824/evidence.json",
+    "evidence_cut_at": "2026-08-24"
+  },
+  "scope": {
+    "owned_layer": "Governed deployment promotion of dev BFF login-token TTL (1800s default) with strict auth profile to dev VM under shared environment lease, followed by hosted readback verification of exact deployed SHA, dev login TTL runtime configuration, and safe reconcile-only / zero live capital posture.",
+    "not_changing": [
+      "Live capital action (remains fail-closed / disabled)",
+      "Source Ingestion polling (remains reconcile-only / manual-pull only)",
+      "Frontend workflow source (execute-plans paired release SHA 5447d2a09b5c83a4f9ee2d405f57c642913e0055 remains active and unchanged)",
+      "Staging/production strict auth posture (remains strict with dev-login disabled)"
+    ],
+    "changed_files": [
+      "docs/deployment/evidence/product-functional-closure/PFG-DEV-BFF-TTL-PROMOTION-20260824/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-DEV-BFF-TTL-PROMOTION-20260824/evidence.json"
+    ],
+    "composes_with": [
+      "PFG-DEV-LOGIN-TTL-CONTRACT-20260824 (merged dev BFF login TTL contract)",
+      "Pantheon Nonprod Deploy CI/CD workflow (.github/workflows/nonprod-deploy.yml)",
+      "Hosted execute-plans dev frontend and Agora compatibility gate"
+    ]
+  },
+  "deployment": {
+    "environment": "dev",
+    "component": "bff",
+    "auth_profile": "strict",
+    "workflow": "Pantheon Nonprod Deploy",
+    "workflow_file": ".github/workflows/nonprod-deploy.yml",
+    "workflow_run_id": "32678402206",
+    "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/32678402206",
+    "deployed_backend_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+    "paired_frontend_sha": "5447d2a09b5c83a4f9ee2d405f57c642913e0055",
+    "proof_flags": {
+      "ppl_alloc_009_dev_proof_enabled": false,
+      "run_evolution_dispatch_probe": false,
+      "run_loop_prod_tel_002_probe": false
+    },
+    "lease": {
+      "resource": "pantheon-dev-environment",
+      "mode": "deployment"
+    }
+  },
+  "hosted_readback": {
+    "status": "pending_deployment_completion",
+    "bff_health_endpoint": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/healthz",
+    "bff_version_endpoint": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
+    "frontend_deployment_endpoint": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+    "expected_backend_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+    "expected_frontend_sha": "5447d2a09b5c83a4f9ee2d405f57c642913e0055",
+    "expected_login_ttl_seconds": 1800,
+    "source_ingestion_posture": "reconcile_only (MAX_TICKS=0)",
+    "live_capital_posture": "fail-closed / disabled"
+  },
+  "validation": {
+    "environment": "checkout-scoped .venv-pantheon; nonprod deployment executed under shared lease",
+    "commands": [
+      {
+        "command": "gh workflow run nonprod-deploy.yml --ref dev -f environment=dev -f component=bff -f ref=40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0 -f frontend_sha=5447d2a09b5c83a4f9ee2d405f57c642913e0055 -f dev_auth_profile=strict -f ppl_alloc_009_dev_proof_enabled=false -f run_evolution_dispatch_probe=false -f run_loop_prod_tel_002_probe=false",
+        "result": "Dispatched workflow run 32678402206"
+      }
+    ]
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Antigravity2 REVIEW_FILE=docs/deployment/evidence/product-functional-closure/PFG-DEV-BFF-TTL-PROMOTION-20260824/evidence.json through the governed approve command only after independently verifying the exact PR head and deployed hosted readbacks.",
+    "owner_claim": "Owner evidence is ready for independent review; this file makes no approval claim."
+  }
+}
