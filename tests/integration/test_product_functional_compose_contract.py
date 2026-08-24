@@ -158,3 +158,13 @@ def test_legacy_profiles_remain_explicit_compatibility_or_operator_paths() -> No
         "source-ingest-scheduler"
     ]
     assert services["openclaw-gateway"]["profiles"] == ["openclaw"]
+
+
+def test_dev_login_ttl_contract_supports_bounded_proof_window() -> None:
+    services = _compose()["services"]
+    bff = services["operator-bff"]
+    bff_env = _environment(bff)
+    assert bff_env["PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS"] == (
+        "${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1200}"
+    )
+

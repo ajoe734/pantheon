@@ -105,6 +105,11 @@ def test_dev_compose_forwards_bff_auth_env_with_dev_stub_default() -> None:
     assert "PANTHEON_BFF_DEFAULT_ROLE: ${PANTHEON_BFF_DEFAULT_ROLE:-operator}" in block
     assert "PANTHEON_STATUS_ROOT:" not in block
 
+    assert (
+        "PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: "
+        "${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1200}"
+    ) in block
+
     for key in (
         "PANTHEON_BFF_JWKS_URI",
         "PANTHEON_BFF_OIDC_DISCOVERY_URL",
@@ -134,3 +139,11 @@ def test_dev_compose_forwards_bff_auth_env_with_dev_stub_default() -> None:
     ):
         assert f"{key}: ${{{key}:-" in block
     assert "PANTHEON_STATUS_ROOT_HOST" not in block
+
+
+def test_dev_compose_login_ttl_contract_matches_proof_window_floor() -> None:
+    block = _operator_bff_block(DEV_COMPOSE)
+    assert (
+        "PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1200}"
+    ) in block
+

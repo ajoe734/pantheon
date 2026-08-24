@@ -1361,11 +1361,11 @@ def _dev_login_forbidden_environment() -> bool:
 
 
 def _dev_login_ttl_seconds() -> int:
-    raw = os.getenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", "900").strip()
+    raw = os.getenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", "1200").strip()
     try:
         ttl = int(raw)
     except ValueError:
-        ttl = 900
+        ttl = 1200
     return max(300, min(ttl, 3600))
 
 

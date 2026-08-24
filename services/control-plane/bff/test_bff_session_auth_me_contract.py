@@ -840,3 +840,89 @@ def test_bff_me_strict_auth_allows_viewer_read_role(monkeypatch) -> None:
     data = response.json()["data"]
     assert data["roles"] == ["viewer"]
     assert data["tenant"]["id"] == "tenant-alpha"
+
+
+def test_bff_dev_login_default_ttl_meets_proof_floor(monkeypatch) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-secret")
+    monkeypatch.delenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", raising=False)
+
+    client = TestClient(bff_main.app)
+    login = client.post(
+        "/bff/auth/dev-login",
+        json={
+            "grant_type": "client_credentials",
+            "client_id": "ci-client",
+            "client_secret": "ci-secret",
+        },
+    )
+
+    assert login.status_code == 200, login.text
+    payload = login.json()
+    assert payload["token_type"] == "bearer"
+    assert payload["expires_in"] == 1200
+    assert payload["meta"]["contract"] == "FE-INT-GATE-OIDC-DEV-LOGIN"
+    assert payload["meta"]["ttl_seconds"] == 1200
+    assert payload["meta"]["identity"] == "operator"
+
+    payload_b64 = payload["access_token"].split(".")[1]
+    padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(padded))
+    assert claims["exp"] - claims["iat"] == 1200
+
+    me = client.get("/bff/me", headers={"Authorization": f"Bearer {payload['access_token']}"})
+    assert me.status_code == 200, me.text
+    data = me.json()["data"]
+    assert data["currentUser"]["id"] == "pantheon-dev-operator"
+    assert set(data["roles"]) == {"operator"}
+
+
+@pytest.mark.parametrize(
+    "raw_ttl,expected_ttl",
+    [
+        ("200", 300),          # below 300 floor clamped to 300
+        ("300", 300),          # minimum bound
+        ("600", 600),          # intermediate valid
+        ("1200", 1200),        # proof floor
+        ("1800", 1800),        # 30-minute session
+        ("3600", 3600),        # maximum bound
+        ("7200", 3600),        # above 3600 cap clamped to 3600
+        ("invalid", 1200),     # unparseable falls back to default 1200
+        ("", 1200),            # empty falls back to default 1200
+        ("-500", 300),         # negative clamped to 300
+    ],
+)
+def test_bff_dev_login_ttl_bounds_and_invalid_fallback(monkeypatch, raw_ttl: str, expected_ttl: int) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_ID", "ci-client")
+    monkeypatch.setenv("PANTHEON_BFF_OIDC_CLIENT_SECRET", "ci-secret")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", raw_ttl)
+
+    client = TestClient(bff_main.app)
+    login = client.post(
+        "/bff/auth/dev-login",
+        json={
+            "grant_type": "client_credentials",
+            "client_id": "ci-client",
+            "client_secret": "ci-secret",
+        },
+    )
+
+    assert login.status_code == 200, login.text
+    payload = login.json()
+    assert payload["expires_in"] == expected_ttl
+    assert payload["meta"]["ttl_seconds"] == expected_ttl
+
+    payload_b64 = payload["access_token"].split(".")[1]
+    padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(padded))
+    assert claims["exp"] - claims["iat"] == expected_ttl
+
+    me = client.get("/bff/me", headers={"Authorization": f"Bearer {payload['access_token']}"})
+    assert me.status_code == 200, me.text
+
