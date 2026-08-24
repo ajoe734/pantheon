@@ -5942,6 +5942,7 @@ def _walk_audited_role_chain(
     start: str,
     end: str,
     failure_message: str,
+    not_before: datetime | None = None,
 ) -> list[tuple[datetime, dict[str, Any]]]:
     """Return the audited hops that carry `role` from `start` to `end`.
 
@@ -5952,6 +5953,10 @@ def _walk_audited_role_chain(
     `start`, every later audited hop for this role must continue it. An audited
     hop that starts somewhere else means the audit no longer explains the
     canonical row, and the caller must fail closed rather than guess.
+
+    ``not_before`` is used by delivered-task closeout to exclude reassignment
+    cycles that predate the commit being finalized; post-delivery continuity
+    remains fully audited and fail-closed.
     """
 
     old_key = f"old_{role}"
@@ -5959,6 +5964,7 @@ def _walk_audited_role_chain(
     changes = [
         item
         for item in audited
+        if not_before is None or item[0] >= not_before
         if canonical_agent_name(item[1].get(old_key))
         != canonical_agent_name(item[1].get(new_key))
     ]
@@ -6083,6 +6089,12 @@ def _verified_done_owner_reassignment(
 
     task_id = str(task.get("id") or "").strip()
     reviewer = canonical_agent_name(task.get("reviewer"))
+    delivered_at = _parse_utc_timestamp(commit_timestamp)
+    if delivered_at is None:
+        raise SystemExit(
+            "Cannot finalize task: delivered commit timestamp is unavailable for "
+            "owner reassignment ordering."
+        )
     audited = _audited_reassignment_events(
         task_id,
         source="canonical done owner reassignment evidence",
@@ -6091,14 +6103,25 @@ def _verified_done_owner_reassignment(
             "canonical audited task_reassigned event, but the activity audit is unavailable."
         ),
     )
-    if not any(
-        canonical_agent_name(event.get("old_owner"))
+    owner_changes = [
+        (event_timestamp, event)
+        for event_timestamp, event in audited
+        if canonical_agent_name(event.get("old_owner"))
         != canonical_agent_name(event.get("new_owner"))
-        for _, event in audited
-    ):
+    ]
+    if not owner_changes:
         raise SystemExit(
             "Cannot finalize task: prior-owner LLM-Agent trailer requires an exact "
             "canonical audited task_reassigned event."
+        )
+    if not any(
+        canonical_agent_name(event.get("old_owner"))
+        != canonical_agent_name(event.get("new_owner"))
+        for event_timestamp, event in audited
+        if event_timestamp >= delivered_at
+    ):
+        raise SystemExit(
+            "Cannot finalize task: audited owner reassignment must follow the delivered commit."
         )
 
     chain = _walk_audited_role_chain(
@@ -6110,18 +6133,8 @@ def _verified_done_owner_reassignment(
             "Cannot finalize task: the latest audited owner reassignment chain does "
             "not bind the commit owner to the current owner."
         ),
+        not_before=delivered_at,
     )
-
-    delivered_at = _parse_utc_timestamp(commit_timestamp)
-    if delivered_at is None:
-        raise SystemExit(
-            "Cannot finalize task: delivered commit timestamp is unavailable for "
-            "owner reassignment ordering."
-        )
-    if chain[0][0] < delivered_at:
-        raise SystemExit(
-            "Cannot finalize task: audited owner reassignment must follow the delivered commit."
-        )
 
     # The supervisor picks a new owner/reviewer pair in one event, so the
     # reviewer in force when the owner chain opened must still reach the
@@ -6141,6 +6154,7 @@ def _verified_done_owner_reassignment(
             start=reviewer_at_chain_start,
             end=reviewer,
             failure_message=reviewer_continuity_failure,
+            not_before=chain_opened_at,
         )
     elif any(
         canonical_agent_name(event.get("old_reviewer"))
@@ -6327,6 +6341,18 @@ def _verified_done_reviewer_reassignment(
             "canonical audited task_reassigned event, but the activity audit is unavailable."
         ),
     )
+    reviewer_changes = [
+        (event_timestamp, event)
+        for event_timestamp, event in audited
+        if canonical_agent_name(event.get("old_reviewer"))
+        != canonical_agent_name(event.get("new_reviewer"))
+    ]
+    if reviewer_changes and not any(
+        event_timestamp >= delivered_at for event_timestamp, _ in reviewer_changes
+    ):
+        raise SystemExit(
+            "Cannot finalize task: audited reviewer reassignment must follow the delivered commit."
+        )
     chain = _walk_audited_role_chain(
         audited,
         role="reviewer",
@@ -6336,12 +6362,8 @@ def _verified_done_reviewer_reassignment(
             "Cannot finalize task: the audited reviewer reassignment chain does not "
             "bind the commit reviewer to the current reviewer."
         ),
+        not_before=delivered_at,
     )
-
-    if chain[0][0] < delivered_at:
-        raise SystemExit(
-            "Cannot finalize task: audited reviewer reassignment must follow the delivered commit."
-        )
 
     last_event = chain[-1][1]
     return {
