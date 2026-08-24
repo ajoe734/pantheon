@@ -170,8 +170,8 @@ TAIWAN_OFFICIAL_ENDPOINTS: tuple[dict[str, Any], ...] = (
         "dataset": "tdcc_shareholding_distribution",
         "venue": "TDCC",
         "source_dataset": "TDCC_OD_1-5",
-        "endpoint": f"{TDCC_OPENAPI_BASE_URL}/opendata/TDCC_OD_1-5",
-        "transport": "tdcc_openapi",
+        "endpoint": f"{TDCC_SMART_BASE_URL}/getOD.ashx?id=1-5",
+        "transport": "tdcc_smart_opendata",
         "cadence": "weekly_after_tdcc_publication",
         "tier_scope": ["core_universe", "candidate_universe"],
         "status": "implemented",
@@ -180,7 +180,7 @@ TAIWAN_OFFICIAL_ENDPOINTS: tuple[dict[str, Any], ...] = (
         "dataset": "taifex_futures_chip",
         "venue": "TAIFEX",
         "source_dataset": "Daily_Institutional_Trading_Futures",
-        "endpoint": f"{TAIFEX_OPENAPI_BASE_URL}/Daily_Institutional_Trading_Futures",
+        "endpoint": f"{TAIFEX_OPENAPI_BASE_URL}/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate",
         "transport": "taifex_openapi",
         "cadence": "daily_after_close",
         "tier_scope": ["core_universe", "candidate_universe"],
@@ -190,13 +190,35 @@ TAIWAN_OFFICIAL_ENDPOINTS: tuple[dict[str, Any], ...] = (
         "dataset": "taifex_options_chip",
         "venue": "TAIFEX",
         "source_dataset": "Daily_Institutional_Trading_Options",
-        "endpoint": f"{TAIFEX_OPENAPI_BASE_URL}/Daily_Institutional_Trading_Options",
+        "endpoint": f"{TAIFEX_OPENAPI_BASE_URL}/PutCallRatio",
         "transport": "taifex_openapi",
         "cadence": "daily_after_close",
         "tier_scope": ["core_universe", "candidate_universe"],
         "status": "implemented",
     },
 )
+
+
+def _read_bounded_response(response: Any, max_bytes: int = 10485760, chunk_size: int = 65536) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = response.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise SourceEvidenceError(f"Payload exceeded max byte limit ({max_bytes} bytes)")
+        chunks.append(chunk)
+        if len(chunk) < chunk_size:
+            break
+    return b"".join(chunks)
+
+
+def _taifex_endpoint(dataset: str) -> str:
+    if dataset == "taifex_options_chip":
+        return f"{TAIFEX_OPENAPI_BASE_URL}/PutCallRatio"
+    return f"{TAIFEX_OPENAPI_BASE_URL}/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
 
 
 def _utc_now() -> str:
@@ -447,7 +469,8 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             caller="source_ingest.taiwan_official",
             timeout=timeout_seconds,
         ) as response:
-            return json.loads(response.read().decode("utf-8"))
+            raw_bytes = _read_bounded_response(response, max_bytes=10485760)
+            return json.loads(raw_bytes.decode("utf-8"))
 
     def records_from_payload(
         self,
@@ -874,6 +897,8 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
         self,
         *,
         source_dataset: str = "TDCC_OD_1-5",
+        symbols: Sequence[str] | None = None,
+        max_records: int | None = None,
         timeout_seconds: float = 20.0,
     ) -> Any:
         """Fetch live open data payload from TDCC open data endpoint."""
@@ -891,12 +916,22 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
             caller="source_ingest.tdcc_shareholding",
             timeout=timeout_seconds,
         ) as response:
-            raw_bytes = response.read()
-            if len(raw_bytes) > 10485760:
-                raise SourceEvidenceError("TDCC payload exceeded byte limit")
+            raw_bytes = _read_bounded_response(response, max_bytes=5242880)
             text = raw_bytes.decode("utf-8-sig")
             reader = csv.DictReader(io.StringIO(text))
-            return [dict(r) for r in reader]
+            target_symbols = {str(s).strip().upper() for s in (symbols or ())} if symbols else None
+            limit = max_records or self.max_records
+            rows: list[dict[str, Any]] = []
+            for r in reader:
+                row_dict = dict(r)
+                if target_symbols:
+                    sym = _text(_first(row_dict, "證券代號", "Code", "SecuritiesCompanyCode", "Symbol", "股票代號")).upper()
+                    if sym not in target_symbols:
+                        continue
+                rows.append(row_dict)
+                if limit and len(rows) >= limit:
+                    break
+            return rows
 
     @staticmethod
     def generate_backfill_weeks(start_date: str, end_date: str) -> list[str]:
@@ -922,21 +957,28 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
         trade_date: str | None = None,
         available_time: str | None = None,
         universe_tier: str = "core_universe",
+        symbols: Sequence[str] | None = None,
+        max_records: int | None = None,
         is_correction: bool = False,
         correction_reason: str = "",
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
+        clean_id = source_dataset.replace("TDCC_OD_", "")
+        resolved_endpoint = api_endpoint or f"{TDCC_SMART_BASE_URL}/getOD.ashx?id={clean_id}"
         normalized_rows = self.normalized_rows_from_payload(
             payload,
             source_dataset=source_dataset,
-            api_endpoint=api_endpoint or f"{TDCC_OPENAPI_BASE_URL}/opendata/{source_dataset}",
+            api_endpoint=resolved_endpoint,
             trade_date=trade_date,
             available_time=available_time,
+            symbols=symbols,
+            max_records=max_records or self.max_records,
             is_correction=is_correction,
             correction_reason=correction_reason,
         )
         records: list[SourceRecord] = []
-        for row in normalized_rows[: self.max_records]:
+        limit = max_records or self.max_records
+        for row in normalized_rows[:limit]:
             row_hash = _stable_hash({"dataset": "tdcc_shareholding_distribution", "row": row})
             symbol = _text(row.get("symbol"), "market")
             as_of_date = _text(row.get("date"), row_hash)
@@ -960,7 +1002,7 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
                         "date": row.get("date"),
                         "event_time": row.get("date"),
                         "available_time": row.get("available_time") or available_time or _utc_now(),
-                        "api_endpoint": api_endpoint or f"{TDCC_OPENAPI_BASE_URL}/opendata/{source_dataset}",
+                        "api_endpoint": resolved_endpoint,
                         "cadence": "weekly_after_tdcc_publication",
                         "universe_tier": _tier_name(universe_tier),
                         "is_correction": row.get("is_correction", False),
@@ -985,13 +1027,21 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
         api_endpoint: str = "",
         trade_date: str | None = None,
         available_time: str | None = None,
+        symbols: Sequence[str] | None = None,
+        max_records: int | None = None,
         is_correction: bool = False,
         correction_reason: str = "",
     ) -> tuple[dict[str, Any], ...]:
         rows = _rows_from_payload(payload)
+        target_symbols = {str(s).strip().upper() for s in (symbols or ())} if symbols else None
+        limit = max_records or self.max_records
+        clean_id = source_dataset.replace("TDCC_OD_", "")
+        resolved_endpoint = api_endpoint or f"{TDCC_SMART_BASE_URL}/getOD.ashx?id={clean_id}"
         results: list[dict[str, Any]] = []
         for raw in rows:
             symbol = _text(_first(raw, "證券代號", "Code", "SecuritiesCompanyCode", "Symbol", "股票代號")).upper()
+            if target_symbols and symbol not in target_symbols:
+                continue
             date = _roc_date_to_iso(_first(raw, "資料日期", "Date", "date", "PublicationDate") or trade_date)
             if not symbol or not date:
                 continue
@@ -1017,12 +1067,14 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
                 "shares": shares,
                 "percentage": percentage,
                 "source_dataset": source_dataset,
-                "api_endpoint": api_endpoint,
+                "api_endpoint": resolved_endpoint,
                 "available_time": available_time or f"{date}T19:00:00Z",
                 "is_correction": row_is_correction,
                 "correction_reason": correction_reason or ("TDCC weekly correction" if row_is_correction else ""),
                 "raw_row": dict(raw),
             })
+            if limit and len(results) >= limit:
+                break
         return tuple(results)
 
     def source_health_from_result(self, result: Any) -> SourceHealth:
@@ -1122,15 +1174,11 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         self,
         dataset: str = "taifex_futures_chip",
         *,
+        max_records: int | None = None,
         timeout_seconds: float = 20.0,
     ) -> Any:
         """Fetch live open data payload from TAIFEX OpenAPI endpoint."""
-        source_name = (
-            "PutCallRatio"
-            if dataset == "taifex_options_chip"
-            else "MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
-        )
-        url = f"{TAIFEX_OPENAPI_BASE_URL}/{source_name}"
+        url = _taifex_endpoint(dataset)
         request = urllib.request.Request(
             url,
             headers={
@@ -1143,10 +1191,12 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             caller="source_ingest.taifex_derivatives",
             timeout=timeout_seconds,
         ) as response:
-            raw_bytes = response.read()
-            if len(raw_bytes) > 10485760:
-                raise SourceEvidenceError("TAIFEX payload exceeded byte limit")
-            return json.loads(raw_bytes.decode("utf-8-sig"))
+            raw_bytes = _read_bounded_response(response, max_bytes=2097152)
+            parsed = json.loads(raw_bytes.decode("utf-8-sig"))
+            if isinstance(parsed, list) and (max_records or self.max_records):
+                limit = max_records or self.max_records
+                return parsed[:limit]
+            return parsed
 
     @staticmethod
     def is_contract_roll_day(trade_date: str) -> bool:
@@ -1185,19 +1235,23 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         trade_date: str | None = None,
         available_time: str | None = None,
         universe_tier: str = "core_universe",
+        max_records: int | None = None,
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
+        resolved_endpoint = api_endpoint or _taifex_endpoint(dataset)
         normalized_rows = self.normalized_rows_from_payload(
             payload,
             dataset=dataset,
             source_dataset=source_dataset or dataset,
-            api_endpoint=api_endpoint or f"{TAIFEX_OPENAPI_BASE_URL}/{dataset}",
+            api_endpoint=resolved_endpoint,
             trade_date=trade_date,
             available_time=available_time,
+            max_records=max_records or self.max_records,
         )
         records: list[SourceRecord] = []
+        limit = max_records or self.max_records
         schema_hash = TAIFEX_OPTIONS_CHIP_SCHEMA_HASH if dataset == "taifex_options_chip" else TAIFEX_FUTURES_CHIP_SCHEMA_HASH
-        for row in normalized_rows[: self.max_records]:
+        for row in normalized_rows[:limit]:
             row_hash = _stable_hash({"dataset": dataset, "row": row})
             contract = _text(row.get("contract"), "MARKET")
             group = _text(row.get("participant_group"), "ALL")
@@ -1221,7 +1275,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                         "date": row.get("date"),
                         "event_time": row.get("date"),
                         "available_time": row.get("available_time") or available_time or _utc_now(),
-                        "api_endpoint": api_endpoint or f"{TAIFEX_OPENAPI_BASE_URL}/{dataset}",
+                        "api_endpoint": resolved_endpoint,
                         "cadence": "daily_after_taifex_publication",
                         "universe_tier": _tier_name(universe_tier),
                         "contract_roll_day": row.get("contract_roll_day", False),
@@ -1247,8 +1301,11 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         api_endpoint: str = "",
         trade_date: str | None = None,
         available_time: str | None = None,
+        max_records: int | None = None,
     ) -> tuple[dict[str, Any], ...]:
         rows = _rows_from_payload(payload)
+        limit = max_records or self.max_records
+        resolved_endpoint = api_endpoint or _taifex_endpoint(dataset)
         results: list[dict[str, Any]] = []
         for raw in rows:
             date = _roc_date_to_iso(_first(raw, "Date", "日期", "date", "TradingDate") or trade_date)
@@ -1281,7 +1338,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "contract_roll_day": roll_day,
                     "front_month_contract": front_month,
                     "source_dataset": source_dataset,
-                    "api_endpoint": api_endpoint,
+                    "api_endpoint": resolved_endpoint,
                     "available_time": available_time or f"{date}T16:30:00Z",
                     "raw_row": dict(raw),
                 })

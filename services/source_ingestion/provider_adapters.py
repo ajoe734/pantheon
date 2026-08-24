@@ -640,9 +640,13 @@ def _tdcc(
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
     payload = request.get("payload") or request.get("rows") or request.get("data")
+    symbols = request.get("symbols") or ([request.get("symbol")] if request.get("symbol") else None)
+    max_records = request.get("max_records")
     if payload in (None, ""):
         payload = adapter.fetch_payload(
             source_dataset=str(request.get("source_dataset") or "TDCC_OD_1-5"),
+            symbols=symbols,
+            max_records=max_records,
             timeout_seconds=float(request.get("timeout_seconds") or 20.0),
         )
     return adapter.records_from_payload(
@@ -652,6 +656,8 @@ def _tdcc(
         trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
         available_time=request.get("available_time"),
         universe_tier=str(request.get("universe_tier") or "core_universe"),
+        symbols=symbols,
+        max_records=max_records,
         trace_id=trace_id,
     )
 
@@ -663,9 +669,11 @@ def _taifex(
 ) -> tuple[SourceRecord, ...]:
     dataset = str(request.get("dataset") or "taifex_futures_chip")
     payload = request.get("payload") or request.get("rows") or request.get("data")
+    max_records = request.get("max_records")
     if payload in (None, ""):
         payload = adapter.fetch_payload(
             dataset=dataset,
+            max_records=max_records,
             timeout_seconds=float(request.get("timeout_seconds") or 20.0),
         )
     return adapter.records_from_payload(
@@ -676,6 +684,7 @@ def _taifex(
         trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
         available_time=request.get("available_time"),
         universe_tier=str(request.get("universe_tier") or "core_universe"),
+        max_records=max_records,
         trace_id=trace_id,
     )
 
@@ -705,9 +714,10 @@ def _alpha_db(
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
     payload = request.get("payload") or request.get("signals") or request.get("factors") or request.get("records")
+    signal_id = str(request.get("signal_id") or "technical_rsi_14d")
+    alpha_vendor_id = str(request.get("alpha_vendor_id") or "fmp-alpha-factors")
     if payload in (None, ""):
         entity_id = _single_symbol(request) or str(request.get("entity_id") or "AAPL")
-        signal_id = str(request.get("signal_id") or "momentum_quality_v1")
         payload = adapter.fetch_payload(
             entity_id=entity_id,
             signal_id=signal_id,
@@ -715,8 +725,8 @@ def _alpha_db(
         )
     return adapter.records_from_payload(
         payload,
-        alpha_vendor_id=str(request.get("alpha_vendor_id") or "alpha-signals-vendor-1"),
-        signal_id=str(request.get("signal_id") or "momentum_quality_v1"),
+        alpha_vendor_id=alpha_vendor_id,
+        signal_id=signal_id,
         signal_version=str(request.get("signal_version") or "v1"),
         field_schema_version=str(request.get("field_schema_version") or "v1"),
         trace_id=trace_id,

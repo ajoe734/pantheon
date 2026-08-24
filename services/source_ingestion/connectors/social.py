@@ -43,6 +43,37 @@ SOCIAL_ADMITTED_SCHEMA_HASH = "social_admitted_post.v1"
 STOCKTWITS_API_BASE_URL = "https://api.stocktwits.com/api/2"
 
 
+import re
+
+def _read_bounded_response(response: Any, max_bytes: int = 2097152, chunk_size: int = 65536) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = response.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise SourceEvidenceError(f"Payload exceeded max byte limit ({max_bytes} bytes)")
+        chunks.append(chunk)
+        if len(chunk) < chunk_size:
+            break
+    return b"".join(chunks)
+
+
+def _to_rfc3339(val: Any) -> str:
+    s = _text(val)
+    if not s:
+        return _utc_now()
+    if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", s):
+        return s
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", s):
+        return s.replace(" ", "T") + "Z"
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return s + "T00:00:00Z"
+    return s
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -76,9 +107,9 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
             source_type=SourceType.SOCIAL,
             provider="StockTwits",
             license_scope="community_admitted",
-            auth_type=AuthType.API_KEY,
+            auth_type=AuthType.NONE,
             supported_modes=(ConnectorMode.BATCH,),
-            auth_policy=AuthPolicy(auth_type=AuthType.API_KEY, secret_ref=self.secret_ref_id),
+            auth_policy=AuthPolicy(auth_type=AuthType.NONE, secret_ref=self.secret_ref_id),
             license_policy=LicensePolicy(
                 license_scope="community_admitted",
                 allowed_use=("research", "search_index", "experiment", "sentiment_modeling"),
@@ -105,6 +136,7 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
                 "source_class": "social",
                 "source_type": "social",
                 "dataset_schema_hash": SOCIAL_ADMITTED_SCHEMA_HASH,
+                "auth_modes": ["none", "api_key"],
                 "entitlement_tags": ["social-research"],
                 "access_scope": ["research", "search_index"],
                 "allowed_host_patterns": ["api.stocktwits.com", "stocktwits.com"],
@@ -155,9 +187,7 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
             caller="source_ingest.stocktwits_discussion",
             timeout=timeout_seconds,
         ) as response:
-            raw_bytes = response.read()
-            if len(raw_bytes) > 5242880:
-                raise SourceEvidenceError("StockTwits payload exceeded byte limit")
+            raw_bytes = _read_bounded_response(response, max_bytes=2097152)
             return json.loads(raw_bytes.decode("utf-8"))
 
 
@@ -249,8 +279,12 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
         if not post_id:
             return None
 
-        # Author hashing (avoid leaking raw PII user handles directly)
-        raw_author = _text(raw.get("author") or raw.get("user_id") or raw.get("username") or "anonymous")
+        # Author hashing (avoid hashing mutable full user object or leaking raw PII user handles directly)
+        user_data = raw.get("user")
+        if isinstance(user_data, Mapping):
+            raw_author = _text(user_data.get("id") or user_data.get("username") or user_data.get("user_id") or "anonymous")
+        else:
+            raw_author = _text(raw.get("author") or raw.get("user_id") or raw.get("username") or "anonymous")
         author_id_hash = raw.get("author_id_hash") or hashlib.sha256(raw_author.encode("utf-8")).hexdigest()[:16]
 
         # Trust score
@@ -267,35 +301,54 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
             raise SourceEvidenceError("trust_score must be between 0.0 and 1.0")
 
         # Time handling
-        event_time_raw = _text(raw.get("event_time") or raw.get("created_at") or raw.get("published_at") or raw.get("time"))
-        if not event_time_raw:
-            event_time_raw = _utc_now()
-        available_time_raw = _text(raw.get("available_time") or event_time_raw)
+        event_time_raw = _to_rfc3339(raw.get("event_time") or raw.get("created_at") or raw.get("published_at") or raw.get("time") or _utc_now())
+        available_time_raw = _to_rfc3339(raw.get("available_time") or event_time_raw)
 
-        # Sentiment representation
+        # Sentiment representation: platform-tagged sentiment vs NLP model
         sentiment_payload = raw.get("sentiment")
+        entities_payload = raw.get("entities")
+        platform_sentiment = None
+        if isinstance(entities_payload, Mapping):
+            ent_sentiment = entities_payload.get("sentiment")
+            if isinstance(ent_sentiment, Mapping):
+                platform_sentiment = ent_sentiment.get("basic")
+
         if isinstance(sentiment_payload, Mapping):
             sentiment = {
                 "label": _text(sentiment_payload.get("label"), "neutral"),
                 "score": float(sentiment_payload.get("score", 0.0)),
-                "model_version": _text(sentiment_payload.get("model_version"), "fin-bert-sentiment.v1"),
-                "is_derived": True,
+                "model_version": _text(sentiment_payload.get("model_version"), "user_or_model_specified"),
+                "is_derived": bool(sentiment_payload.get("is_derived", True)),
+            }
+        elif platform_sentiment:
+            plat_label = str(platform_sentiment).strip().lower()
+            score = 1.0 if plat_label == "bullish" else (-1.0 if plat_label == "bearish" else 0.0)
+            sentiment = {
+                "label": plat_label,
+                "score": score,
+                "model_version": "stocktwits_platform_sentiment.v1",
+                "is_derived": False,
             }
         else:
             sentiment = {
                 "label": "neutral",
                 "score": 0.0,
-                "model_version": "fin-bert-sentiment.v1",
-                "is_derived": True,
+                "model_version": "unspecified",
+                "is_derived": False,
             }
 
         symbols = raw.get("symbols")
+        symbol_list: list[str] = []
         if isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
-            symbol_list = [str(s).strip().upper() for s in symbols if str(s).strip()]
+            for s in symbols:
+                if isinstance(s, Mapping):
+                    sym = _text(s.get("symbol") or s.get("ticker") or s.get("id"))
+                    if sym:
+                        symbol_list.append(sym.upper())
+                elif isinstance(s, str) and s.strip():
+                    symbol_list.append(s.strip().upper())
         elif isinstance(symbols, str) and symbols.strip():
-            symbol_list = [symbols.strip().upper()]
-        else:
-            symbol_list = []
+            symbol_list.append(symbols.strip().upper())
 
         return {
             "platform": platform,
@@ -313,7 +366,7 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
             "body": _text(raw.get("body") or raw.get("content") or raw.get("text")),
             "event_time": event_time_raw,
             "available_time": available_time_raw,
-            "ingest_time": _text(raw.get("ingest_time"), _utc_now()),
+            "ingest_time": _to_rfc3339(raw.get("ingest_time") or _utc_now()),
             "raw_row": dict(raw),
         }
 

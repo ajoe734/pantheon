@@ -866,7 +866,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         },
         secret_fields=(),
         required_pit_fields=("event_time", "available_time", "ingest_time"),
-        default_limits={"max_records": 100, "max_bytes": 2097152, "timeout_seconds": 20, "max_rate_per_second": 5.0},
+        default_limits={"max_records": 100, "max_bytes": 5242880, "timeout_seconds": 20, "max_rate_per_second": 5.0},
         allowed_host_patterns=("openapi.tdcc.com.tw", "smart.tdcc.com.tw", "www.tdcc.com.tw"),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/tw-tdcc-shareholding-distribution",
@@ -907,7 +907,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         source_types=("social",),
         source_classes=("social",),
         datasets=("social_admitted_post",),
-        auth_modes=("api_key",),
+        auth_modes=("none", "api_key"),
         fetch_modes=("provider_owned_adapter",),
         cursor_modes=("time_watermark",),
         config_schema={

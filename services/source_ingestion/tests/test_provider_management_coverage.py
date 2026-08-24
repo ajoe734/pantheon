@@ -10,6 +10,7 @@ Validates SD-SRCM-05 §7.1-§7.6 invariants:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -547,4 +548,143 @@ def test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted(mo
     )
     assert len(alpha_records) > 0
     assert alpha_records[0].metadata["source_class"] == "alpha_signal"
+
+
+def test_alpha_signal_record_rfc3339_validation_and_universe_normalization() -> None:
+    """Validate SD §7.5 AlphaSignalRecord RFC3339 enforcement, string universe normalization, and factor values."""
+    # 1. String universe must normalize to single-element tuple, not characters
+    rec = AlphaSignalRecord(
+        alpha_vendor_id="fmp-alpha-factors",
+        signal_id="technical_rsi_14d",
+        signal_version="v1",
+        field_schema_version="v1",
+        universe="US_EQUITY",
+        entity_id="AAPL",
+        event_time="2026-08-24T16:00:00Z",
+        as_of_time="2026-08-24T16:00:00Z",
+        available_time="2026-08-24T16:05:00Z",
+        values={"rsi": 58.2},
+        units={"rsi": "index"},
+    )
+    assert rec.universe == ("US_EQUITY",)
+    assert rec.universe != tuple("US_EQUITY")
+
+    # 2. Invalid timestamps must fail validation
+    with pytest.raises(SourceEvidenceError, match="RFC3339"):
+        AlphaSignalRecord(
+            alpha_vendor_id="fmp-alpha-factors",
+            signal_id="technical_rsi_14d",
+            signal_version="v1",
+            field_schema_version="v1",
+            universe=["US_EQUITY"],
+            entity_id="AAPL",
+            event_time="2026-08-24 16:00:00",  # Non-RFC3339
+            as_of_time="2026-08-24T16:00:00Z",
+            available_time="2026-08-24T16:05:00Z",
+            values={"rsi": 58.2},
+            units={"rsi": "index"},
+        )
+
+    # 3. FMP adapter normalizes non-RFC3339 date strings and excludes date from values
+    adapter = ExternalAlphaDbAdapter()
+    fmp_raw = [
+        {
+            "symbol": "AAPL",
+            "date": "2026-08-24 16:00:00",
+            "rsi": 58.2,
+        }
+    ]
+    records = adapter.records_from_payload(fmp_raw, signal_id="technical_rsi_14d")
+    assert len(records) == 1
+    assert records[0].metadata["event_time"] == "2026-08-24T16:00:00Z"
+    assert records[0].metadata["signal_id"] == "technical_rsi_14d"
+    assert "date" not in records[0].metadata["values"]
+    assert "Date" not in records[0].metadata["values"]
+    assert records[0].metadata["values"] == {"rsi": 58.2}
+
+
+def test_stocktwits_payload_normalization_and_platform_sentiment() -> None:
+    """Validate StockTwits symbol dict extraction, author id hashing, and platform sentiment."""
+    adapter = AdmittedSocialMediaAdapter()
+
+    # 1. StockTwits real payload shape with symbol dicts, user object, and platform sentiment
+    st_raw = [
+        {
+            "id": 55667788,
+            "body": "$AAPL breaking out above 230 on heavy volume!",
+            "created_at": "2026-08-24T15:30:00Z",
+            "user": {
+                "id": 998877,
+                "username": "breakout_trader",
+                "name": "Alex",
+                "followers": 1250,
+            },
+            "symbols": [
+                {"id": 686, "symbol": "AAPL", "title": "Apple Inc."},
+                {"id": 888, "symbol": "TSM", "title": "Taiwan Semiconductor"},
+            ],
+            "entities": {
+                "sentiment": {
+                    "basic": "Bullish",
+                }
+            },
+        }
+    ]
+
+    records = adapter.records_from_payload(st_raw, platform="stocktwits")
+    assert len(records) == 1
+    rec = records[0]
+
+    # Symbols extracted as uppercase strings
+    assert rec.metadata["symbols"] == ["AAPL", "TSM"]
+
+    # Author hash based on stable user ID, not mutable full user object
+    expected_author_hash = hashlib.sha256(b"998877").hexdigest()[:16]
+    assert rec.metadata["author_id_hash"] == expected_author_hash
+
+    # Platform sentiment accurately tagged
+    sentiment = rec.metadata["sentiment"]
+    assert sentiment["label"] == "bullish"
+    assert sentiment["score"] == 1.0
+    assert sentiment["model_version"] == "stocktwits_platform_sentiment.v1"
+    assert sentiment["is_derived"] is False
+
+    # 2. Neutral post without platform sentiment or NLP model
+    st_unlabeled = [
+        {
+            "id": 55667789,
+            "body": "Watching $AAPL into the close.",
+            "created_at": "2026-08-24T15:45:00Z",
+            "user": {"id": 112233, "username": "watcher"},
+            "symbols": ["AAPL"],
+        }
+    ]
+    unlabeled_records = adapter.records_from_payload(st_unlabeled, platform="stocktwits")
+    assert unlabeled_records[0].metadata["sentiment"]["label"] == "neutral"
+    assert unlabeled_records[0].metadata["sentiment"]["model_version"] == "unspecified"
+
+
+def test_tdcc_and_taifex_bounded_streaming_and_provenance_urls() -> None:
+    """Validate TDCC and TAIFEX bounded reading, early stopping, and real smart/OpenAPI provenance URLs."""
+    # 1. TDCC records cite real smart.tdcc endpoint
+    tdcc_adapter = TdccShareholdingDistributionAdapter(max_records=5)
+    tdcc_records = tdcc_adapter.records_from_payload(
+        [{"Date": "2026-08-21", "Code": "2330", "HoldLevel": 15, "PeopleCount": 1500, "Shares": 20000000000, "Percentage": 77.12}]
+    )
+    assert tdcc_records[0].metadata["api_endpoint"] == "https://smart.tdcc.com.tw/opendata/getOD.ashx?id=1-5"
+
+    # 2. TAIFEX records cite real openapi endpoints
+    taifex_adapter = TaifexDerivativesChipAdapter(max_records=5)
+    fut_records = taifex_adapter.records_from_payload(
+        [{"Date": "2026-08-24", "Contract": "TX", "ParticipantGroup": "foreign_investors", "LongVolume": 1000}],
+        dataset="taifex_futures_chip",
+    )
+    assert fut_records[0].metadata["api_endpoint"] == "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
+
+    opt_records = taifex_adapter.records_from_payload(
+        [{"Date": "2026-08-24", "Contract": "TXO", "CallVolume": 1000, "PutVolume": 1200}],
+        dataset="taifex_options_chip",
+    )
+    assert opt_records[0].metadata["api_endpoint"] == "https://openapi.taifex.com.tw/v1/PutCallRatio"
+
 

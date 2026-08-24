@@ -44,6 +44,42 @@ ALPHA_SIGNAL_SCHEMA_HASH = "alpha_signal_record.v1"
 FMP_API_BASE_URL = "https://financialmodelingprep.com/api/v3"
 
 
+import re
+
+def _read_bounded_response(response: Any, max_bytes: int = 4194304, chunk_size: int = 65536) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = response.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise SourceEvidenceError(f"Payload exceeded max byte limit ({max_bytes} bytes)")
+        chunks.append(chunk)
+        if len(chunk) < chunk_size:
+            break
+    return b"".join(chunks)
+
+
+def _to_rfc3339(val: Any) -> str:
+    s = _text(val)
+    if not s:
+        return _utc_now()
+    if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", s):
+        return s
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", s):
+        return s.replace(" ", "T") + "Z"
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return s + "T00:00:00Z"
+    return s
+
+
+def _validate_rfc3339(val: str, name: str) -> None:
+    if not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", val):
+        raise SourceEvidenceError(f"{name} must be a valid RFC3339 timestamp; got: {val!r}")
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -101,6 +137,20 @@ class AlphaSignalRecord:
         _require(self.event_time, "event_time")
         _require(self.as_of_time, "as_of_time")
         _require(self.available_time, "available_time")
+
+        # Validate RFC3339 timestamps
+        _validate_rfc3339(self.event_time, "event_time")
+        _validate_rfc3339(self.as_of_time, "as_of_time")
+        _validate_rfc3339(self.available_time, "available_time")
+        _validate_rfc3339(self.ingest_time, "ingest_time")
+
+        # Universe string vs sequence normalization
+        if isinstance(self.universe, str):
+            object.__setattr__(self, "universe", (self.universe,))
+        elif isinstance(self.universe, Sequence):
+            object.__setattr__(self, "universe", tuple(str(u).strip() for u in self.universe if str(u).strip()))
+        else:
+            object.__setattr__(self, "universe", tuple())
 
         if not self.universe:
             raise SourceEvidenceError("universe must not be empty for AlphaSignalRecord")
@@ -246,8 +296,8 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
             },
             "request": {
                 "alpha_vendor_id": "fmp-alpha-factors",
-                "signal_id": "momentum_quality_v1",
-                "universe": ["US_EQUITY", "TW_EQUITY"],
+                "signal_id": "technical_rsi_14d",
+                "universe": ["US_EQUITY"],
             },
             "next_watermark": None,
             "max_records": self.max_records,
@@ -256,7 +306,7 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
     def fetch_payload(
         self,
         entity_id: str = "AAPL",
-        signal_id: str = "technical_indicator",
+        signal_id: str = "technical_rsi_14d",
         *,
         timeout_seconds: float = 15.0,
     ) -> Any:
@@ -279,9 +329,7 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
             caller="source_ingest.alpha_db_vendor",
             timeout=timeout_seconds,
         ) as response:
-            raw_bytes = response.read()
-            if len(raw_bytes) > 5242880:
-                raise SourceEvidenceError("FMP payload exceeded byte limit")
+            raw_bytes = _read_bounded_response(response, max_bytes=4194304)
             return json.loads(raw_bytes.decode("utf-8"))
 
 
@@ -289,8 +337,8 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
         self,
         payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
         *,
-        alpha_vendor_id: str = "alpha-signals-vendor-1",
-        signal_id: str = "momentum_quality_v1",
+        alpha_vendor_id: str = "fmp-alpha-factors",
+        signal_id: str = "technical_rsi_14d",
         signal_version: str = "v1",
         field_schema_version: str = "v1",
         trace_id: str = "",
@@ -363,8 +411,8 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
         self,
         payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
         *,
-        alpha_vendor_id: str = "alpha-signals-vendor-1",
-        signal_id: str = "momentum_quality_v1",
+        alpha_vendor_id: str = "fmp-alpha-factors",
+        signal_id: str = "technical_rsi_14d",
         signal_version: str = "v1",
         field_schema_version: str = "v1",
     ) -> tuple[AlphaSignalRecord, ...]:
@@ -406,9 +454,9 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
         if not entity_id:
             return None
 
-        event_time = _text(raw.get("event_time") or raw.get("as_of_time") or raw.get("date") or _utc_now())
-        as_of_time = _text(raw.get("as_of_time") or event_time)
-        available_time = _text(raw.get("available_time") or as_of_time)
+        event_time = _to_rfc3339(raw.get("event_time") or raw.get("as_of_time") or raw.get("date") or _utc_now())
+        as_of_time = _to_rfc3339(raw.get("as_of_time") or event_time)
+        available_time = _to_rfc3339(raw.get("available_time") or as_of_time)
 
         # Values
         raw_values = raw.get("values")
@@ -416,15 +464,17 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
             values = dict(raw_values)
         else:
             # Extract non-metadata numerical/factor fields
+            excluded_keys = {
+                "entity_id", "symbol", "asset_id", "event_time", "as_of_time",
+                "available_time", "alpha_vendor_id", "signal_id", "signal_version",
+                "field_schema_version", "universe", "units", "currency",
+                "corporate_action_policy", "survivorship_policy", "license_scope",
+                "allowed_use", "entitlement_tags", "provider_record_ref",
+                "date", "Date", "time", "timestamp", "ingest_time", "body_hash", "schema_version",
+            }
             values = {
                 k: v for k, v in raw.items()
-                if k not in (
-                    "entity_id", "symbol", "asset_id", "event_time", "as_of_time",
-                    "available_time", "alpha_vendor_id", "signal_id", "signal_version",
-                    "field_schema_version", "universe", "units", "currency",
-                    "corporate_action_policy", "survivorship_policy", "license_scope",
-                    "allowed_use", "entitlement_tags", "provider_record_ref",
-                ) and isinstance(v, (int, float, str, bool))
+                if k not in excluded_keys and isinstance(v, (int, float, bool))
             }
         if not values:
             values = {"factor_score": 0.0}
@@ -435,9 +485,12 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
         universe_raw = raw.get("universe") or ["US_EQUITY"]
         universe = [str(u) for u in universe_raw] if isinstance(universe_raw, Sequence) else [str(universe_raw)]
 
+        resolved_signal_id = _text(raw.get("signal_id"), signal_id)
+        resolved_vendor_id = _text(raw.get("alpha_vendor_id"), alpha_vendor_id)
+
         return AlphaSignalRecord(
-            alpha_vendor_id=_text(raw.get("alpha_vendor_id"), alpha_vendor_id),
-            signal_id=_text(raw.get("signal_id"), signal_id),
+            alpha_vendor_id=resolved_vendor_id,
+            signal_id=resolved_signal_id,
             signal_version=_text(raw.get("signal_version"), signal_version),
             field_schema_version=_text(raw.get("field_schema_version"), field_schema_version),
             universe=universe,
@@ -453,8 +506,8 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
             license_scope=_text(raw.get("license_scope"), "vendor"),
             allowed_use=tuple(raw.get("allowed_use") or ("research", "experiment")),
             entitlement_tags=tuple(raw.get("entitlement_tags") or ("alpha_db-research",)),
-            provider_record_ref=_text(raw.get("provider_record_ref"), f"ref://{alpha_vendor_id}/{signal_id}/{entity_id}"),
-            ingest_time=_text(raw.get("ingest_time"), _utc_now()),
+            provider_record_ref=_text(raw.get("provider_record_ref"), f"ref://{resolved_vendor_id}/{resolved_signal_id}/{entity_id}"),
+            ingest_time=_to_rfc3339(raw.get("ingest_time") or _utc_now()),
         )
 
     def source_health_from_result(self, result: Any) -> SourceHealth:

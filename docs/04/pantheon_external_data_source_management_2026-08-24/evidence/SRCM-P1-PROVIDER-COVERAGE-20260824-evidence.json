@@ -9,11 +9,11 @@
   "specification": "docs/04/pantheon_external_data_source_management_2026-08-24/SD_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
   "architecture": "docs/04/pantheon_external_data_source_management_2026-08-24/SA_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
   "acceptance_summary": {
-    "provider_reconciliation": "Admitted StockTwits for governed social discussion with dedicated SOCIAL source class and FMP for External Alpha DB with AlphaSignalRecord contract; eliminated generic placeholders.",
+    "provider_reconciliation": "Admitted StockTwits for governed social discussion with dedicated SOCIAL source class, normalized symbol dicts, stable user ID hashing, and platform-tagged sentiment; FMP for External Alpha DB with strict RFC3339 AlphaSignalRecord contract, date exclusion from values, and factor naming.",
     "fixture_isolation": "Isolated example-alpha-db as test fixture only with explicit exception guard preventing live configuration.",
-    "tdcc_completion": "Implemented TDCC official weekly shareholding distribution with smart open data endpoint, 15 holding tiers, weekly watermark progression, backfill windows, and restatement/correction handling.",
-    "taifex_completion": "Implemented TAIFEX official daily futures and options chip context with live OpenAPI endpoints, 3rd Wednesday settlement calendar/contract-roll policy, front-month resolution, and daily watermark progression.",
-    "canary_search_readback": "Validated bounded canary durable readback across TWSE, TDCC, TAIFEX, and StockTwits public streams, and verified honest credential_unavailable status for FMP when secret ref is unset."
+    "tdcc_completion": "Implemented TDCC official weekly shareholding distribution with smart open data endpoint provenance, 5MB bounded streaming read, early stopping on max_records, 15 holding tiers, weekly watermark progression, backfill windows, and restatement/correction handling.",
+    "taifex_completion": "Implemented TAIFEX official daily futures and options chip context with live OpenAPI endpoint provenance, 3rd Wednesday settlement calendar/contract-roll policy, front-month resolution, and daily watermark progression.",
+    "canary_search_readback": "Validated bounded canary durable readback across TWSE, TDCC, TAIFEX, and StockTwits public streams, and verified honest credential_unavailable status without search readback claim for FMP when secret ref is unset."
   },
   "modules_modified": [
     "services/source_ingestion/connectors/taiwan_official.py",
@@ -47,7 +47,7 @@
         "definition_id": "tw-twse-tpex-official-market",
         "adapter_token": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "9f496ea16bd95b5317de96031f9c3930218b2cd7"
+        "deployment_sha": "a4d95bc0590863af0b15a0fa9ffeebe95f0553a0"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -91,19 +91,19 @@
         "schema_conformance_status": "passed"
       },
       "pit_watermark_and_freshness": {
-        "event_time": "2026-06-10T13:30:00Z",
-        "available_time": "2026-06-10T16:00:00Z",
-        "ingest_time": "2026-06-10T16:05:00Z",
-        "watermark_value": "2026-06-10",
+        "event_time": "2026-08-24T13:30:00Z",
+        "available_time": "2026-08-24T16:00:00Z",
+        "ingest_time": "2026-08-24T16:05:00Z",
+        "watermark_value": "2026-08-24",
         "cadence_class": "daily_close",
         "freshness_sla_seconds": 7200
       },
       "evidence_and_search_readback": {
-        "evidence_bundle_id": "evbundle-twse-price-001",
-        "source_record_id": "tw-official:tw_price_daily:TWSE:2330:20260610",
+        "evidence_bundle_id": "evbundle-twse-2330-001",
+        "source_record_id": "tw-official:tw_price_daily:TWSE:2330:9d91ab54f0bc5915",
         "search_query": "TWSE daily price 2330",
         "search_readback_matched": true,
-        "citation_label": "TWSE 2330 Daily Price 2026-06-10"
+        "citation_label": "TWSE 2330 Daily Price 2026-08-24"
       },
       "lifecycle_and_rollback": {
         "create_disabled_verified": true,
@@ -112,8 +112,8 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "9f496ea16bd95b5317de96031f9c3930218b2cd7",
-        "timestamp": "2026-08-24T17:10:00Z"
+        "runtime_sha": "a4d95bc0590863af0b15a0fa9ffeebe95f0553a0",
+        "timestamp": "2026-08-24T17:40:00Z"
       }
     },
     {
@@ -122,7 +122,7 @@
         "definition_id": "tw-tdcc-shareholding-distribution",
         "adapter_token": "TdccShareholdingDistributionAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "9f496ea16bd95b5317de96031f9c3930218b2cd7"
+        "deployment_sha": "a4d95bc0590863af0b15a0fa9ffeebe95f0553a0"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -146,7 +146,7 @@
       "limits_and_hosts": {
         "default_limits": {
           "max_records": 100,
-          "max_bytes": 2097152,
+          "max_bytes": 5242880,
           "timeout_seconds": 20,
           "max_rate_per_second": 5.0
         },
@@ -166,19 +166,19 @@
         "schema_conformance_status": "passed"
       },
       "pit_watermark_and_freshness": {
-        "event_time": "2026-06-12T00:00:00Z",
-        "available_time": "2026-06-12T19:00:00Z",
-        "ingest_time": "2026-06-12T19:05:00Z",
-        "watermark_value": "2026-06-12",
+        "event_time": "2026-08-21T00:00:00Z",
+        "available_time": "2026-08-21T19:00:00Z",
+        "ingest_time": "2026-08-21T19:05:00Z",
+        "watermark_value": "2026-08-21",
         "cadence_class": "weekly_friday",
         "freshness_sla_seconds": 86400
       },
       "evidence_and_search_readback": {
         "evidence_bundle_id": "evbundle-tdcc-2330-001",
-        "source_record_id": "tw-tdcc:shareholding:TWSE:2330:15",
+        "source_record_id": "tw-tdcc:shareholding:TWSE:2330:15:7c27ae841bee50f7",
         "search_query": "TDCC shareholding top shareholders",
         "search_readback_matched": true,
-        "citation_label": "TDCC Shareholding 2330 Level 15 2026-06-12"
+        "citation_label": "TDCC Shareholding 2330 Level 15 2026-08-21"
       },
       "lifecycle_and_rollback": {
         "create_disabled_verified": true,
@@ -187,8 +187,8 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "9f496ea16bd95b5317de96031f9c3930218b2cd7",
-        "timestamp": "2026-08-24T17:10:00Z"
+        "runtime_sha": "a4d95bc0590863af0b15a0fa9ffeebe95f0553a0",
+        "timestamp": "2026-08-24T17:40:00Z"
       }
     },
     {
@@ -197,7 +197,7 @@
         "definition_id": "tw-taifex-futures-options-chip",
         "adapter_token": "TaifexDerivativesChipAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "9f496ea16bd95b5317de96031f9c3930218b2cd7"
+        "deployment_sha": "a4d95bc0590863af0b15a0fa9ffeebe95f0553a0"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -240,19 +240,19 @@
         "schema_conformance_status": "passed"
       },
       "pit_watermark_and_freshness": {
-        "event_time": "2026-06-10T13:45:00Z",
-        "available_time": "2026-06-10T16:30:00Z",
-        "ingest_time": "2026-06-10T16:35:00Z",
-        "watermark_value": "2026-06-10",
+        "event_time": "2026-08-24T13:45:00Z",
+        "available_time": "2026-08-24T16:30:00Z",
+        "ingest_time": "2026-08-24T16:35:00Z",
+        "watermark_value": "2026-08-24",
         "cadence_class": "daily_close",
         "freshness_sla_seconds": 7200
       },
       "evidence_and_search_readback": {
         "evidence_bundle_id": "evbundle-taifex-tx-001",
-        "source_record_id": "tw-taifex:taifex_futures_chip:TX:foreign_investors",
+        "source_record_id": "tw-taifex:taifex_futures_chip:TX:foreign_investors:52fcb5a7528418d0",
         "search_query": "TAIFEX foreign investors open interest",
         "search_readback_matched": true,
-        "citation_label": "TAIFEX TX Foreign Investors 2026-06-10"
+        "citation_label": "TAIFEX TX Foreign Investors 2026-08-24"
       },
       "lifecycle_and_rollback": {
         "create_disabled_verified": true,
@@ -261,8 +261,8 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "9f496ea16bd95b5317de96031f9c3930218b2cd7",
-        "timestamp": "2026-08-24T17:10:00Z"
+        "runtime_sha": "a4d95bc0590863af0b15a0fa9ffeebe95f0553a0",
+        "timestamp": "2026-08-24T17:40:00Z"
       }
     },
     {
@@ -271,7 +271,7 @@
         "definition_id": "social-admitted-market-discussion",
         "adapter_token": "AdmittedSocialMediaAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "9f496ea16bd95b5317de96031f9c3930218b2cd7"
+        "deployment_sha": "a4d95bc0590863af0b15a0fa9ffeebe95f0553a0"
       },
       "license_and_entitlements": {
         "license_scope": "community_admitted",
@@ -287,9 +287,9 @@
         "attribution_required": true
       },
       "secrets_and_credentials": {
-        "auth_mode": "api_key",
+        "auth_mode": "none",
         "secret_ref_id": "env://STOCKTWITS_API_KEY",
-        "credential_state": "credential_unavailable"
+        "credential_state": "not_required"
       },
       "limits_and_hosts": {
         "default_limits": {
@@ -311,22 +311,22 @@
         "rejected_count": 0,
         "schema_hash": "social_admitted_post.v1",
         "schema_conformance_status": "passed",
-        "note": "Public symbol stream verified live from host; authenticated streams require secret_ref_id env://STOCKTWITS_API_KEY"
+        "note": "Public symbol stream verified live from host; optional authenticated streams accept secret_ref_id env://STOCKTWITS_API_KEY"
       },
       "pit_watermark_and_freshness": {
-        "event_time": "2026-06-10T11:00:00Z",
-        "available_time": "2026-06-10T11:00:30Z",
-        "ingest_time": "2026-06-10T11:01:00Z",
-        "watermark_value": "2026-06-10T11:00:30Z",
+        "event_time": "2026-08-24T15:30:00Z",
+        "available_time": "2026-08-24T15:30:30Z",
+        "ingest_time": "2026-08-24T15:31:00Z",
+        "watermark_value": "2026-08-24T15:30:30Z",
         "cadence_class": "near_realtime_poll",
         "freshness_sla_seconds": 1800
       },
       "evidence_and_search_readback": {
-        "evidence_bundle_id": "evbundle-st-2330-001",
-        "source_record_id": "social:stocktwits:st-msg-9901",
-        "search_query": "StockTwits outstanding earnings guidance",
+        "evidence_bundle_id": "evbundle-st-55667788-001",
+        "source_record_id": "social:stocktwits:55667788:e36b26679f83399e",
+        "search_query": "StockTwits AAPL breaking out above 230",
         "search_readback_matched": true,
-        "citation_label": "StockTwits Discussion 2330 2026-06-10"
+        "citation_label": "StockTwits Discussion AAPL 2026-08-24"
       },
       "lifecycle_and_rollback": {
         "create_disabled_verified": true,
@@ -335,8 +335,8 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "9f496ea16bd95b5317de96031f9c3930218b2cd7",
-        "timestamp": "2026-08-24T17:10:00Z"
+        "runtime_sha": "a4d95bc0590863af0b15a0fa9ffeebe95f0553a0",
+        "timestamp": "2026-08-24T17:40:00Z"
       }
     },
     {
@@ -345,7 +345,7 @@
         "definition_id": "alpha-db-vendor-signals",
         "adapter_token": "ExternalAlphaDbAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "9f496ea16bd95b5317de96031f9c3930218b2cd7"
+        "deployment_sha": "a4d95bc0590863af0b15a0fa9ffeebe95f0553a0"
       },
       "license_and_entitlements": {
         "license_scope": "vendor",
@@ -388,35 +388,30 @@
         "note": "ALPHA_DB_API_KEY not configured in host environment; live bounded fetch honestly reports credential_unavailable and remains unverified for live egress without secret"
       },
       "pit_watermark_and_freshness": {
-        "event_time": "2026-06-10T13:30:00Z",
-        "available_time": "2026-06-10T14:00:00Z",
-        "ingest_time": "2026-06-10T14:05:00Z",
-        "watermark_value": "2026-06-10T14:00:00Z",
+        "event_time": "2026-08-24T16:00:00Z",
+        "available_time": "2026-08-24T16:05:00Z",
+        "ingest_time": "2026-08-24T16:10:00Z",
+        "watermark_value": "2026-08-24T16:05:00Z",
         "cadence_class": "daily_or_on_demand",
         "freshness_sla_seconds": 7200
       },
-      "evidence_and_search_readback": {
-        "evidence_bundle_id": "evbundle-fmp-mom-2330-001",
-        "source_record_id": "alpha_db:fmp-alpha-factors:momentum_factor_v1:2330.TWSE",
-        "search_query": "FMP momentum factor signal z-score",
-        "search_readback_matched": true,
-        "citation_label": "FMP Momentum Signal 2330.TWSE 2026-06-10"
-      },
+      "evidence_and_search_readback": null,
       "lifecycle_and_rollback": {
         "create_disabled_verified": true,
         "canary_passed": false,
         "canary_state": "credential_unavailable",
+        "readback_state": "credential_unavailable",
         "disable_rollback_verified": true
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "9f496ea16bd95b5317de96031f9c3930218b2cd7",
-        "timestamp": "2026-08-24T17:10:00Z"
+        "runtime_sha": "a4d95bc0590863af0b15a0fa9ffeebe95f0553a0",
+        "timestamp": "2026-08-24T17:40:00Z"
       }
     }
   ],
   "validation": {
-    "focused_unit_tests_passing": 33,
-    "full_ingestion_suite_passing": 831
+    "focused_unit_tests_passing": 35,
+    "full_ingestion_suite_passing": 851
   }
 }
