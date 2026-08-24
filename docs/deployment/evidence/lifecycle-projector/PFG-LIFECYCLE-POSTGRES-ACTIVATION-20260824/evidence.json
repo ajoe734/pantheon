@@ -14,6 +14,7 @@
   "scope": {
     "owned": [
       "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/projection_store.py",
       "services/trade_journey/test_lifecycle_projector.py",
       "services/control-plane/bff/trade_journeys.py",
       "services/control-plane/bff/trade_journey_projection_store.py",
@@ -42,9 +43,9 @@
   },
   "validation": [
     {
-      "command": "python3 scripts/dev/provision_python_distribution.py && .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/ services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
-      "result": "pass; 257 passed, 36 skipped",
-      "coverage": "full trade_journey suite including relational projection store, incremental materializer, lifecycle projector, BFF postgres reader endpoints, and >200 journey attention/SLO regression tests"
+      "command": "TEST_DATABASE_URL=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/ services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "result": "pass; 292 passed, 1 skipped",
+      "coverage": "full trade_journey suite with live postgres integration covering ProjectionStore contiguous checkpoints, incremental materializer, lifecycle projector, BFF postgres reader endpoints, and >200 journey attention/SLO regression tests"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
@@ -62,7 +63,12 @@
       "coverage": "compose and deploy contract alignment for operator-bff and loop-run-projector-scheduler, including rendered compose readiness regression test"
     },
     {
-      "command": "python3 -m py_compile services/trade_journey/lifecycle_projector.py services/control-plane/bff/trade_journeys.py services/control-plane/bff/trade_journey_projection_store.py services/control-plane/bff/main.py && git diff --check origin/dev...HEAD",
+      "command": "live_postgres_activation_probe",
+      "result": "pass; controller_id=canonical-lifecycle-projector, checkpoint=7258513, source_high_watermark=7258513, backlog=0, quarantine_count=0, mode=live, status=ready, accepted_live=True; BFF /bff/management/trade-journeys/{id} returns 200 via postgres reader with zero JSON fallback; /readyz reports writer_backend=postgres, reader_backend=postgres, ready=True",
+      "coverage": "live PostgreSQL database transaction, backfill, continuous polling, zero backlog, live mode acceptance, and BFF readback"
+    },
+    {
+      "command": "python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/projection_store.py services/control-plane/bff/trade_journeys.py services/control-plane/bff/trade_journey_projection_store.py services/control-plane/bff/main.py && git diff --check origin/dev...HEAD",
       "result": "pass"
     }
   ],
@@ -75,12 +81,12 @@
     "status": "ready_for_independent_review",
     "reviewer": "Codex2",
     "required_checks": [
-      "verify relational postgres writer activation in lifecycle_projector.py",
+      "verify relational postgres writer activation in lifecycle_projector.py and contiguous checkpoint derivation in projection_store.py",
       "verify relational postgres reader activation across all BFF read endpoints in trade_journeys.py with zero JSON fallback",
       "verify BFF readiness check in main.py derives postgres writer mode from controller state when unset in compose, and fails closed when writer_backend!=postgres, or on unready/stale/backlog conditions",
       "verify rendered compose operator-bff readiness regression test passes in test_lifecycle_projector_compose.py",
-      "verify _backfill derives and passes source_high_watermark from input and satisfies watermark invariant",
-      "verify tests pass using provisioned interpreter .venv-pantheon/bin/python3",
+      "verify live postgres controller backfill reaches backlog=0 with mode=live and accepted_live=true",
+      "verify tests pass using provisioned interpreter .venv-pantheon/bin/python3 and live postgres instance",
       "bind this manifest path (docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824/evidence.json) to the exact final PR head in the governed approve command"
     ]
   },
