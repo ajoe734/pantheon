@@ -250,9 +250,11 @@ def _resolve_fmp_indicator(signal_id: str) -> tuple[str, int]:
             return ind_type, period
     if s in SUPPORTED_FMP_INDICATORS:
         return s, SUPPORTED_FMP_INDICATORS[s]
-    for ind, default_period in SUPPORTED_FMP_INDICATORS.items():
-        if ind in s:
-            return ind, default_period
+    m_tech = re.match(r"^technical_([a-z]+)$", s)
+    if m_tech:
+        ind_type = m_tech.group(1)
+        if ind_type in SUPPORTED_FMP_INDICATORS:
+            return ind_type, SUPPORTED_FMP_INDICATORS[ind_type]
     raise SourceEvidenceError(
         f"Unsupported signal_id or indicator type for FMP alpha DB: {signal_id!r}; "
         f"supported indicator types are: {sorted(SUPPORTED_FMP_INDICATORS.keys())}"
@@ -358,12 +360,12 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
         timeout_seconds: float = 15.0,
     ) -> Any:
         """Fetch live factor/signal payload from vendor OpenAPI endpoint."""
+        ind_type, period = _resolve_fmp_indicator(signal_id)
         api_key = self.resolve_api_key()
         if not api_key:
             raise SourceEvidenceError(
                 "External Alpha DB (FMP) fetch requires secret_ref_id env://ALPHA_DB_API_KEY; none found in environment"
             )
-        ind_type, period = _resolve_fmp_indicator(signal_id)
         url = f"{FMP_API_BASE_URL}/technical_indicator/daily/{entity_id}?type={ind_type}&period={period}&apikey={urllib.parse.quote(api_key)}"
         request = urllib.request.Request(
             url,

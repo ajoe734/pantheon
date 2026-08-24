@@ -766,7 +766,7 @@ def test_alpha_signal_calendar_validation_and_schema_pattern() -> None:
     jsonschema.validate(instance=rec.to_dict(), schema=schema)
 
 
-def test_alpha_db_signal_id_resolution_and_unsupported_rejection() -> None:
+def test_alpha_db_signal_id_resolution_and_unsupported_rejection(monkeypatch) -> None:
     """Validate FMP indicator resolution and rejection of unsupported signal_ids."""
     from services.source_ingestion.connectors.alpha_db import _resolve_fmp_indicator
 
@@ -783,13 +783,38 @@ def test_alpha_db_signal_id_resolution_and_unsupported_rejection() -> None:
     assert ind == "ema"
     assert period == 20
 
-    # Unsupported signal_id must raise SourceEvidenceError
+    ind, period = _resolve_fmp_indicator("technical_wma")
+    assert ind == "wma"
+    assert period == 20
+
+    ind, period = _resolve_fmp_indicator("technical_standarddeviation_20d")
+    assert ind == "standarddeviation"
+    assert period == 20
+
+    # Unsupported signal_ids must raise SourceEvidenceError (fail-closed, no substring matching)
+    with pytest.raises(SourceEvidenceError, match="Unsupported signal_id"):
+        _resolve_fmp_indicator("unsupported_sma_garbage")
+
     with pytest.raises(SourceEvidenceError, match="Unsupported signal_id"):
         _resolve_fmp_indicator("unsupported_random_signal_xyz")
 
+    # Clear any host FMP credentials
+    monkeypatch.delenv("ALPHA_DB_API_KEY", raising=False)
+    monkeypatch.delenv("FMP_API_KEY", raising=False)
+    monkeypatch.delenv("FINANCIAL_MODELING_PREP_API_KEY", raising=False)
+
     adapter = ExternalAlphaDbAdapter()
-    with pytest.raises(SourceEvidenceError, match="Unsupported signal_id|ALPHA_DB_API_KEY"):
+
+    # Signal validation must happen before credential lookup: invalid signal raises Unsupported signal_id
+    with pytest.raises(SourceEvidenceError, match="Unsupported signal_id"):
+        adapter.fetch_payload(signal_id="unsupported_sma_garbage")
+
+    with pytest.raises(SourceEvidenceError, match="Unsupported signal_id"):
         adapter.fetch_payload(signal_id="unsupported_random_signal_xyz")
+
+    # Valid signal_id with missing credentials raises secret_ref error
+    with pytest.raises(SourceEvidenceError, match="env://ALPHA_DB_API_KEY"):
+        adapter.fetch_payload(signal_id="technical_rsi_14d")
 
 
 def test_twse_10mb_limit_and_finmind_bulk_backfill_alias() -> None:
